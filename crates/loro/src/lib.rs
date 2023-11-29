@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 use either::Either;
+use loro_internal::change::Timestamp;
 use loro_internal::container::richtext::TextStyleInfoFlag;
 use loro_internal::container::IntoContainerId;
 use loro_internal::handler::TextDelta;
@@ -17,7 +18,10 @@ use std::ops::Range;
 
 pub use loro_internal::container::richtext::ExpandType;
 pub use loro_internal::container::{ContainerID, ContainerType};
+pub use loro_internal::obs::SubID;
+pub use loro_internal::obs::Subscriber;
 pub use loro_internal::version::{Frontiers, VersionVector};
+pub use loro_internal::DiffEvent;
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
 
 /// `LoroDoc` is the entry for the whole document.
@@ -126,6 +130,21 @@ impl LoroDoc {
         self.doc.commit_then_renew()
     }
 
+    /// Commit the cumulative auto commit transaction with custom configure.
+    ///
+    /// There is a transaction behind every operation.
+    /// It will automatically commit when users invoke export or import.
+    /// The event will be sent after a transaction is committed
+    pub fn commit_with(
+        &self,
+        origin: Option<&str>,
+        timestamp: Option<Timestamp>,
+        immediate_renew: bool,
+    ) {
+        self.doc
+            .commit_with(origin.map(|x| x.into()), timestamp, immediate_renew)
+    }
+
     pub fn is_detached(&self) -> bool {
         self.doc.is_detached()
     }
@@ -183,9 +202,63 @@ impl LoroDoc {
         self.doc.state_frontiers()
     }
 
-    #[cfg(feature = "test_utils")]
+    /// Change the PeerID
+    ///
+    /// NOTE: You need ot make sure there is no chance two peer have the same PeerID.
+    /// If it happens, the document will be corrupted.
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
         self.doc.set_peer_id(peer)
+    }
+
+    /// Subscribe the events of a container.
+    ///
+    /// The callback will be invoked when the container is changed.
+    /// Returns a subscription id that can be used to unsubscribe.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use loro::LoroDoc;
+    /// # use std::sync::{atomic::AtomicBool, Arc};
+    /// # use loro_internal::{delta::DeltaItem, DiffEvent, LoroResult};
+    /// #
+    /// let doc = LoroDoc::new();
+    /// let text = doc.get_text("text");
+    /// let ran = Arc::new(AtomicBool::new(false));
+    /// let ran2 = ran.clone();
+    /// doc.subscribe(
+    ///     &text.id(),
+    ///     Arc::new(move |event: DiffEvent| {
+    ///         assert!(event.doc.local);
+    ///         let event = event.container.diff.as_text().unwrap();
+    ///         let delta: Vec<_> = event.iter().cloned().collect();
+    ///         let d = DeltaItem::Insert {
+    ///             insert: "123".into(),
+    ///             attributes: Default::default(),
+    ///         };
+    ///         assert_eq!(delta, vec![d]);
+    ///         ran2.store(true, std::sync::atomic::Ordering::Relaxed);
+    ///     }),
+    /// );
+    /// text.insert(0, "123").unwrap();
+    /// doc.commit();
+    /// assert!(ran.load(std::sync::atomic::Ordering::Relaxed));
+    /// ```
+    pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> SubID {
+        self.doc.subscribe(container_id, callback)
+    }
+
+    /// Subscribe all the events.
+    ///
+    /// The callback will be invoked when any part of the [loro_internal::DocState] is changed.
+    /// Returns a subscription id that can be used to unsubscribe.
+    pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
+        self.doc.subscribe_root(callback)
+    }
+
+    /// Remove a subscription.
+    pub fn unsubscribe(&self, id: SubID) {
+        self.doc.unsubscribe(id)
     }
 }
 

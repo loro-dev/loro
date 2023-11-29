@@ -1,4 +1,4 @@
-use loro_internal::LoroResult;
+use loro_internal::{delta::DeltaItem, DiffEvent, LoroResult};
 
 #[test]
 fn list() -> LoroResult<()> {
@@ -153,4 +153,33 @@ fn save() {
     let new_doc = LoroDoc::new();
     new_doc.import(&snapshot).unwrap();
     assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
+}
+
+#[test]
+fn subscribe() {
+    use loro::LoroDoc;
+    use std::sync::{atomic::AtomicBool, Arc};
+
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    let ran = Arc::new(AtomicBool::new(false));
+    let ran2 = ran.clone();
+
+    doc.subscribe(
+        &text.id(),
+        Arc::new(move |event: DiffEvent| {
+            assert!(event.doc.local);
+            let event = event.container.diff.as_text().unwrap();
+            let delta: Vec<_> = event.iter().cloned().collect();
+            let d = DeltaItem::Insert {
+                insert: "123".into(),
+                attributes: Default::default(),
+            };
+            assert_eq!(delta, vec![d]);
+            ran2.store(true, std::sync::atomic::Ordering::Relaxed);
+        }),
+    );
+    text.insert(0, "123").unwrap();
+    doc.commit();
+    assert!(ran.load(std::sync::atomic::Ordering::Relaxed));
 }
