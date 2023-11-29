@@ -261,7 +261,7 @@ fn import_after_init_handlers() {
         Arc::new(|event| {
             assert!(matches!(
                 event.container.diff,
-                loro_internal::event::Diff::Text(_)
+                loro_internal::event::ResolvedDiff::Text(_)
             ))
         }),
     );
@@ -270,7 +270,7 @@ fn import_after_init_handlers() {
         Arc::new(|event| {
             assert!(matches!(
                 event.container.diff,
-                loro_internal::event::Diff::NewMap(_)
+                loro_internal::event::ResolvedDiff::NewMap(_)
             ))
         }),
     );
@@ -279,7 +279,7 @@ fn import_after_init_handlers() {
         Arc::new(|event| {
             assert!(matches!(
                 event.container.diff,
-                loro_internal::event::Diff::List(_)
+                loro_internal::event::ResolvedDiff::List(_)
             ))
         }),
     );

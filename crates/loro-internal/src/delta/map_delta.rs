@@ -5,6 +5,7 @@ use serde::{ser::SerializeStruct, Serialize};
 
 use crate::{
     change::Lamport,
+    handler::ValueOrContainer,
     id::{Counter, PeerID, ID},
     span::{HasId, HasLamport},
     InternalString, LoroValue,
@@ -48,6 +49,18 @@ impl MapDelta {
 pub struct MapValue {
     pub counter: Counter,
     pub value: Option<LoroValue>,
+    pub lamport: (Lamport, PeerID),
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct ResolvedMapDelta {
+    pub updated: FxHashMap<InternalString, ResolvedMapValue>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedMapValue {
+    pub counter: Counter,
+    pub value: Option<ValueOrContainer>,
     pub lamport: (Lamport, PeerID),
 }
 
@@ -100,15 +113,5 @@ impl Serialize for MapValue {
         s.serialize_field("value", &self.value)?;
         s.serialize_field("lamport", &self.lamport)?;
         s.end()
-    }
-}
-
-impl MapValue {
-    pub fn new(id: ID, lamport: Lamport, value: Option<LoroValue>) -> Self {
-        MapValue {
-            counter: id.counter,
-            value,
-            lamport: (lamport, id.peer),
-        }
     }
 }

@@ -18,7 +18,7 @@ use crate::{
 };
 use crate::{
     delta::TreeValue,
-    event::Index,
+    event::{Index, ResolvedDiff},
     handler::TreeHandler,
     loro::LoroDoc,
     value::{unresolved_to_collection, ToJson},
@@ -126,7 +126,7 @@ impl Actor {
                     let map = Arc::make_mut(map.as_map_mut().unwrap());
                     let meta = map.get_mut("meta").unwrap();
                     let meta = Arc::make_mut(meta.as_map_mut().unwrap());
-                    if let Diff::NewMap(update) = &event.container.diff {
+                    if let ResolvedDiff::NewMap(update) = &event.container.diff {
                         for (key, value) in update.updated.iter() {
                             match &value.value {
                                 Some(value) => {
@@ -142,7 +142,7 @@ impl Actor {
                     return;
                 }
                 let mut tree = tree.lock().unwrap();
-                if let Diff::Tree(tree_diff) = &event.container.diff {
+                if let ResolvedDiff::Tree(tree_diff) = &event.container.diff {
                     let mut v = TreeValue(&mut tree);
                     v.apply_diff(tree_diff);
                 } else {

@@ -122,7 +122,7 @@ impl Handler {
 }
 
 impl Handler {
-    fn new(
+    pub(crate) fn new(
         txn: Weak<Mutex<Option<Transaction>>>,
         idx: ContainerIdx,
         state: Weak<Mutex<DocState>>,

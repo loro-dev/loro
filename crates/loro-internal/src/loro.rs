@@ -68,8 +68,12 @@ impl LoroDoc {
     pub fn new() -> Self {
         let oplog = OpLog::new();
         let arena = oplog.arena.clone();
+        let txn = Arc::new(Mutex::new(None));
         // share arena
-        let state = Arc::new(Mutex::new(DocState::new(arena.clone())));
+        let state = Arc::new(Mutex::new(DocState::new(
+            arena.clone(),
+            Arc::downgrade(&txn),
+        )));
         Self {
             oplog: Arc::new(Mutex::new(oplog)),
             state,
@@ -77,7 +81,7 @@ impl LoroDoc {
             auto_commit: false,
             observer: Arc::new(Observer::new(arena.clone())),
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
-            txn: Arc::new(Mutex::new(None)),
+            txn,
             arena,
         }
     }

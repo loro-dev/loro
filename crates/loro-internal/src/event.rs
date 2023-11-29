@@ -5,7 +5,8 @@ use smallvec::SmallVec;
 
 use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
-    delta::{Delta, MapDelta, StyleMeta, TreeDelta, TreeDiff},
+    delta::{Delta, MapDelta, ResolvedMapDelta, StyleMeta, TreeDelta, TreeDiff},
+    handler::ValueOrContainer,
     op::SliceRanges,
     utils::string_slice::StringSlice,
     InternalString, LoroValue,
@@ -25,7 +26,7 @@ pub struct ContainerDiff {
     pub id: ContainerID,
     pub path: Vec<(ContainerID, Index)>,
     pub(crate) idx: ContainerIdx,
-    pub diff: Diff,
+    pub diff: ResolvedDiff,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +76,7 @@ pub(crate) struct InternalContainerDiff {
 pub(crate) enum DiffVariant {
     Internal(InternalDiff),
     External(Diff),
+    Resolved(ResolvedDiff),
 }
 
 /// It's used for transmitting and recording the diff internally.
@@ -105,30 +107,6 @@ impl<'a> InternalDocDiff<'a> {
 
     pub fn can_merge(&self, other: &Self) -> bool {
         self.origin == other.origin && self.local == other.local
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use std::sync::Arc;
-
-    use loro_common::LoroValue;
-
-    use crate::{ApplyDiff, LoroDoc};
-
-    #[test]
-    fn test_text_event() {
-        let loro = LoroDoc::new();
-        loro.subscribe_root(Arc::new(|event| {
-            let mut value = LoroValue::String(Default::default());
-            value.apply_diff(&[event.container.diff.clone()]);
-            assert_eq!(value, "h223ello".into());
-        }));
-        let mut txn = loro.txn().unwrap();
-        let text = loro.get_text("id");
-        text.insert_with_txn(&mut txn, 0, "hello").unwrap();
-        text.insert_with_txn(&mut txn, 1, "223").unwrap();
-        txn.commit().unwrap();
     }
 }
 
@@ -197,6 +175,17 @@ pub enum Diff {
     Tree(TreeDiff),
 }
 
+#[non_exhaustive]
+#[derive(Clone, Debug, EnumAsInner)]
+pub enum ResolvedDiff {
+    List(Delta<Vec<ValueOrContainer>>),
+    /// - When feature `wasm` is enabled, it should use utf16 indexes.
+    /// - When feature `wasm` is disabled, it should use unicode indexes.
+    Text(Delta<StringSlice, StyleMeta>),
+    NewMap(ResolvedMapDelta),
+    Tree(TreeDiff),
+}
+
 impl InternalDiff {
     pub(crate) fn is_empty(&self) -> bool {
         match self {
@@ -260,5 +249,29 @@ impl Diff {
             (Diff::Tree(a), Diff::Tree(b)) => Diff::Tree(a.extend(b.diff)),
             _ => unreachable!(),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+
+    use loro_common::LoroValue;
+
+    use crate::{ApplyDiff, LoroDoc};
+
+    #[test]
+    fn test_text_event() {
+        let loro = LoroDoc::new();
+        loro.subscribe_root(Arc::new(|event| {
+            let mut value = LoroValue::String(Default::default());
+            value.apply_diff(&[event.container.diff.clone()]);
+            assert_eq!(value, "h223ello".into());
+        }));
+        let mut txn = loro.txn().unwrap();
+        let text = loro.get_text("id");
+        text.insert_with_txn(&mut txn, 0, "hello").unwrap();
+        text.insert_with_txn(&mut txn, 1, "223").unwrap();
+        txn.commit().unwrap();
     }
 }

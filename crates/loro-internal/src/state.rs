@@ -1,4 +1,7 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::Cow,
+    sync::{Arc, Mutex, Weak},
+};
 
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
@@ -8,11 +11,14 @@ use loro_common::{ContainerID, LoroResult};
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, ContainerIdRaw},
-    event::{Diff, Index},
+    delta::{Delta, DeltaItem, ResolvedMapDelta, ResolvedMapValue},
+    event::{Diff, Index, ResolvedDiff},
     event::{InternalContainerDiff, InternalDiff},
     fx_map,
+    handler::{Handler, ValueOrContainer},
     id::PeerID,
     op::{Op, RawOp},
+    txn::Transaction,
     version::Frontiers,
     ContainerType, InternalString, LoroValue,
 };
@@ -39,6 +45,7 @@ pub struct DocState {
     pub(super) frontiers: Frontiers,
     pub(super) states: FxHashMap<ContainerIdx, State>,
     pub(super) arena: SharedArena,
+    global_txn: Weak<Mutex<Option<Transaction>>>,
 
     // txn related stuff
     in_txn: bool,
@@ -112,12 +119,13 @@ impl State {
 
 impl DocState {
     #[inline]
-    pub fn new(arena: SharedArena) -> Self {
+    pub fn new(arena: SharedArena, txn: Weak<Mutex<Option<Transaction>>>) -> Self {
         let peer = DefaultRandom.next_u64();
         // TODO: maybe we should switch to certain version in oplog?
         Self {
             peer,
             arena,
+            global_txn: txn,
             frontiers: Frontiers::default(),
             states: FxHashMap::default(),
             in_txn: false,
@@ -703,7 +711,10 @@ impl DocState {
                 ContainerDiff {
                     id,
                     idx,
-                    diff: diff.into_external().unwrap(),
+                    diff: self.external_diff_to_resolved(
+                        diff.into_external().unwrap(),
+                        Arc::downgrade(&Arc::new(Mutex::new(self.clone()))),
+                    ),
                     path,
                 }
             })
@@ -719,6 +730,76 @@ impl DocState {
             from_checkout,
             local,
             diff,
+        }
+    }
+
+    fn external_diff_to_resolved(&self, diff: Diff, state: Weak<Mutex<DocState>>) -> ResolvedDiff {
+        match diff {
+            Diff::List(list) => {
+                let vec = list
+                    .vec
+                    .into_iter()
+                    .map(|item| match item {
+                        DeltaItem::Insert { insert, attributes } => {
+                            let insert = insert
+                                .into_iter()
+                                .map(|v| {
+                                    if let LoroValue::Container(c) = v {
+                                        let idx = self.arena.id_to_idx(&c).unwrap();
+                                        ValueOrContainer::Container(Handler::new(
+                                            self.global_txn.clone(),
+                                            idx,
+                                            state.clone(),
+                                        ))
+                                    } else {
+                                        ValueOrContainer::Value(v)
+                                    }
+                                })
+                                .collect();
+                            DeltaItem::Insert { insert, attributes }
+                        }
+                        DeltaItem::Delete { delete, attributes } => {
+                            DeltaItem::Delete { delete, attributes }
+                        }
+                        DeltaItem::Retain { retain, attributes } => {
+                            DeltaItem::Retain { retain, attributes }
+                        }
+                    })
+                    .collect();
+                ResolvedDiff::List(Delta { vec })
+            }
+            Diff::NewMap(map) => {
+                let mut resolved_map = FxHashMap::default();
+                for (k, v) in map.updated.into_iter() {
+                    let counter = v.counter;
+                    let lamport = v.lamport;
+                    let value = v.value.map(|v| {
+                        if let LoroValue::Container(c) = v {
+                            let idx = self.arena.id_to_idx(&c).unwrap();
+                            ValueOrContainer::Container(Handler::new(
+                                self.global_txn.clone(),
+                                idx,
+                                state.clone(),
+                            ))
+                        } else {
+                            ValueOrContainer::Value(v)
+                        }
+                    });
+                    resolved_map.insert(
+                        k,
+                        ResolvedMapValue {
+                            counter,
+                            value,
+                            lamport,
+                        },
+                    );
+                }
+                ResolvedDiff::NewMap(ResolvedMapDelta {
+                    updated: resolved_map,
+                })
+            }
+            Diff::Text(t) => ResolvedDiff::Text(t),
+            Diff::Tree(t) => ResolvedDiff::Tree(t),
         }
     }
 

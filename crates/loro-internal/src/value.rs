@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use crate::{
     delta::{Delta, DeltaItem, Meta, StyleMeta, TreeValue},
-    event::{Diff, Index, Path},
+    event::{Index, Path, ResolvedDiff},
+    handler::ValueOrContainer,
     utils::string_slice::StringSlice,
 };
 
@@ -144,12 +145,12 @@ enum TypeHint {
 }
 
 pub trait ApplyDiff {
-    fn apply_diff(&mut self, diff: &[Diff]);
-    fn apply(&mut self, path: &Path, diff: &[Diff]);
+    fn apply_diff(&mut self, diff: &[ResolvedDiff]);
+    fn apply(&mut self, path: &Path, diff: &[ResolvedDiff]);
 }
 
 impl ApplyDiff for LoroValue {
-    fn apply_diff(&mut self, diff: &[Diff]) {
+    fn apply_diff(&mut self, diff: &[ResolvedDiff]) {
         match self {
             LoroValue::String(value) => {
                 let mut s = value.to_string();
@@ -174,7 +175,7 @@ impl ApplyDiff for LoroValue {
                 *value = Arc::new(s);
             }
             LoroValue::List(seq) => {
-                let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
+                let is_tree = matches!(diff.first(), Some(ResolvedDiff::Tree(_)));
                 if !is_tree {
                     let seq = Arc::make_mut(seq);
                     for item in diff.iter() {
@@ -202,7 +203,7 @@ impl ApplyDiff for LoroValue {
                     let seq = Arc::make_mut(seq);
                     for item in diff.iter() {
                         match item {
-                            Diff::Tree(tree) => {
+                            ResolvedDiff::Tree(tree) => {
                                 let mut v = TreeValue(seq);
                                 v.apply_diff(tree);
                             }
@@ -214,7 +215,7 @@ impl ApplyDiff for LoroValue {
             LoroValue::Map(map) => {
                 for item in diff.iter() {
                     match item {
-                        Diff::NewMap(diff) => {
+                        ResolvedDiff::NewMap(diff) => {
                             let map = Arc::make_mut(map);
                             for (key, value) in diff.updated.iter() {
                                 match &value.value {
@@ -238,16 +239,16 @@ impl ApplyDiff for LoroValue {
         }
     }
 
-    fn apply(&mut self, path: &Path, diff: &[Diff]) {
+    fn apply(&mut self, path: &Path, diff: &[ResolvedDiff]) {
         if diff.is_empty() {
             return;
         }
 
         let hint = match diff[0] {
-            Diff::List(_) => TypeHint::List,
-            Diff::Text(_) => TypeHint::Text,
-            Diff::NewMap(_) => TypeHint::Map,
-            Diff::Tree(_) => TypeHint::Tree,
+            ResolvedDiff::List(_) => TypeHint::List,
+            ResolvedDiff::Text(_) => TypeHint::Text,
+            ResolvedDiff::NewMap(_) => TypeHint::Map,
+            ResolvedDiff::Tree(_) => TypeHint::Tree,
         };
         let value = {
             let mut hints = Vec::with_capacity(path.len());
@@ -303,11 +304,10 @@ impl ApplyDiff for LoroValue {
     }
 }
 
-pub(crate) fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
-    if let Some(container) = v.as_container() {
-        container.container_type().default_value()
-    } else {
-        v.clone()
+pub(crate) fn unresolved_to_collection(v: &ValueOrContainer) -> LoroValue {
+    match v {
+        ValueOrContainer::Value(v) => v.clone(),
+        ValueOrContainer::Container(c) => c.c_type().default_value(),
     }
 }
 
