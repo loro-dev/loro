@@ -9,14 +9,10 @@ description = "A internal library of loro for storing and manipulating run-lengt
 
 [dependencies]
 smallvec = "1.8.0"
-bumpalo = { version = "3.11.1", features = ["collections", "boxed"] }
 num = "0.4.0"
-enum-as-inner = "0.5.1"
-ouroboros = "0.15.4"
+enum-as-inner = "0.6.0"
 arref = "0.1.0"
-crdt-list = { version = "0.4.0" }
 fxhash = "0.2.1"
-heapless = "0.7.16"
 debug-log = "0.2.2"
 append-only-bytes = { version = "0.1.11", features = ["u32_range"] }
 

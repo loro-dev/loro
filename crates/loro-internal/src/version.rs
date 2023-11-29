@@ -10,7 +10,6 @@ use fxhash::{FxHashMap, FxHashSet};
 
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use tracing::instrument;
 
 use crate::{
     change::Lamport,
@@ -714,13 +713,11 @@ impl VersionVector {
     }
 
     #[inline(always)]
-    #[instrument(skip_all)]
     pub fn encode(&self) -> Vec<u8> {
         postcard::to_allocvec(self).unwrap()
     }
 
     #[inline(always)]
-    #[instrument(skip_all)]
     pub fn decode(bytes: &[u8]) -> Result<Self, LoroError> {
         postcard::from_bytes(bytes).map_err(|_| LoroError::DecodeVersionVectorError)
     }
