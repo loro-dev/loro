@@ -68,7 +68,6 @@ pub mod idx {
 pub mod list;
 pub mod map;
 pub mod richtext;
-pub(crate) mod text;
 pub mod tree;
 
 use idx::ContainerIdx;
@@ -76,10 +75,6 @@ use idx::ContainerIdx;
 pub use loro_common::ContainerType;
 
 pub use loro_common::ContainerID;
-
-use crate::{event::Diff, VersionVector};
-
-use super::oplog::OpLog;
 
 pub enum ContainerIdRaw {
     Root { name: InternalString },

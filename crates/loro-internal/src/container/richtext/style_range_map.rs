@@ -275,6 +275,7 @@ impl BTreeTrait for RangeNumMapTrait {
     type Elem = Elem;
     type Cache = isize;
     type CacheDiff = isize;
+    const USE_DIFF: bool = true;
 
     fn calc_cache_internal(
         cache: &mut Self::Cache,

@@ -85,10 +85,9 @@ impl Mergeable for Elem {
 struct ListImpl;
 impl BTreeTrait for ListImpl {
     type Elem = Elem;
-
     type Cache = isize;
-
     type CacheDiff = isize;
+    const USE_DIFF: bool = true;
 
     #[inline(always)]
     fn calc_cache_internal(

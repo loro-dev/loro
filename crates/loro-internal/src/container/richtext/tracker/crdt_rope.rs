@@ -421,10 +421,9 @@ pub(super) struct Cache {
 
 impl BTreeTrait for CrdtRopeTrait {
     type Elem = FugueSpan;
-
     type Cache = Cache;
-
     type CacheDiff = Cache;
+    const USE_DIFF: bool = true;
 
     #[inline(always)]
     fn calc_cache_internal(

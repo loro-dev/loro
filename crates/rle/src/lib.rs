@@ -19,11 +19,8 @@
 //! - slice(from, to) returns a slice of atom elements from the index from to the index to.
 //!
 //!
-#![allow(dead_code)]
 #![deny(clippy::undocumented_unsafe_blocks)]
-pub mod range_map;
 mod rle_trait;
-pub mod rle_tree;
 mod rle_vec;
 mod rle_vec_old;
 pub use crate::rle_trait::{
@@ -32,8 +29,3 @@ pub use crate::rle_trait::{
 pub use crate::rle_vec::{slice_vec_by, RleVec, RleVecWithLen};
 pub use crate::rle_vec_old::{RleVecWithIndex, SearchResult, SliceIterator};
 pub mod rle_impl;
-pub use rle_tree::tree_trait::RleTreeTrait;
-pub use rle_tree::RleTree;
-mod small_set;
-#[cfg(test)]
-mod test;

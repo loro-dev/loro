@@ -18,14 +18,13 @@ use crate::{
             richtext_state::{RichtextStateChunk, TextChunk},
             AnchorType, CrdtRopeDelta, RichtextChunk, RichtextChunkValue, RichtextTracker, StyleOp,
         },
-        text::tracker::Tracker,
         tree::tree_op::TreeOp,
     },
     dag::DagUtils,
     delta::{Delta, MapDelta, MapValue, TreeInternalDiff},
     event::InternalDiff,
     id::Counter,
-    op::RichOp,
+    op::{RichOp, SliceRange},
     span::{HasId, HasLamport},
     version::Frontiers,
     InternalString, VersionVector,
@@ -496,7 +495,8 @@ mod compact_register {
 
 #[derive(Default)]
 struct ListDiffCalculator {
-    tracker: Tracker,
+    start_vv: VersionVector,
+    tracker: Box<RichtextTracker>,
 }
 
 impl std::fmt::Debug for ListDiffCalculator {
@@ -509,8 +509,9 @@ impl std::fmt::Debug for ListDiffCalculator {
 
 impl DiffCalculatorTrait for ListDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector) {
-        if !vv.includes_vv(self.tracker.start_vv()) || !self.tracker.all_vv().includes_vv(vv) {
-            self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
+        if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
+            self.tracker = Box::new(RichtextTracker::new_with_unknown());
+            self.start_vv = vv.clone();
         }
 
         self.tracker.checkout(vv);
@@ -525,7 +526,29 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         if let Some(vv) = vv {
             self.tracker.checkout(vv);
         }
-        self.tracker.track_apply(&op);
+
+        match &op.op().content {
+            crate::op::InnerContent::List(l) => match l {
+                crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
+                    self.tracker.insert(
+                        op.id_start(),
+                        *pos,
+                        RichtextChunk::new_text(slice.0.clone()),
+                    );
+                }
+                crate::container::list::list_op::InnerListOp::Delete(del) => {
+                    self.tracker.delete(
+                        op.id_start(),
+                        del.start() as usize,
+                        del.atom_len(),
+                        del.is_reversed(),
+                    );
+                }
+                _ => unreachable!(),
+            },
+            crate::op::InnerContent::Map(_) => unreachable!(),
+            crate::op::InnerContent::Tree(_) => unreachable!(),
+        }
     }
 
     fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
@@ -537,26 +560,32 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
-        let ans = self.tracker.diff(from, to);
-        // PERF: We may simplify list to avoid these getting
-        for v in ans.iter() {
-            if let crate::delta::DeltaItem::Insert {
-                insert: value,
-                attributes: _,
-            } = &v
-            {
-                for range in &value.0 {
-                    for i in range.0.clone() {
-                        let v = oplog.arena.get_value(i as usize);
-                        if let Some(LoroValue::Container(c)) = &v {
-                            on_new_container(c);
+        let mut delta = Delta::new();
+        for item in self.tracker.diff(from, to) {
+            match item {
+                CrdtRopeDelta::Retain(len) => {
+                    delta = delta.retain(len);
+                }
+                CrdtRopeDelta::Insert(value) => match value.value() {
+                    RichtextChunkValue::Text(range) => {
+                        for i in range.clone() {
+                            let v = oplog.arena.get_value(i as usize);
+                            if let Some(LoroValue::Container(c)) = &v {
+                                on_new_container(c);
+                            }
                         }
+                        delta = delta.insert(SliceRange(range));
                     }
+                    RichtextChunkValue::StyleAnchor { .. } => unreachable!(),
+                    RichtextChunkValue::Unknown(_) => unreachable!(),
+                },
+                CrdtRopeDelta::Delete(len) => {
+                    delta = delta.delete(len);
                 }
             }
         }
 
-        InternalDiff::SeqRaw(ans)
+        InternalDiff::SeqRaw(delta)
     }
 }
 
