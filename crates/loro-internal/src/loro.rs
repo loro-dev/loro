@@ -15,7 +15,7 @@ use crate::{
     handler::TreeHandler,
     id::PeerID,
     version::Frontiers,
-    InternalString, LoroError, VersionVector,
+    DocDiff, InternalString, LoroError, VersionVector,
 };
 
 use super::{
@@ -68,12 +68,8 @@ impl LoroDoc {
     pub fn new() -> Self {
         let oplog = OpLog::new();
         let arena = oplog.arena.clone();
-        let txn = Arc::new(Mutex::new(None));
         // share arena
-        let state = Arc::new(Mutex::new(DocState::new(
-            arena.clone(),
-            Arc::downgrade(&txn),
-        )));
+        let state = Arc::new(Mutex::new(DocState::new(arena.clone())));
         Self {
             oplog: Arc::new(Mutex::new(oplog)),
             state,
@@ -81,7 +77,7 @@ impl LoroDoc {
             auto_commit: false,
             observer: Arc::new(Observer::new(arena.clone())),
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
-            txn,
+            txn: Arc::new(Mutex::new(None)),
             arena,
         }
     }
@@ -326,12 +322,20 @@ impl LoroDoc {
         );
 
         let obs = self.observer.clone();
+        let weak_state = Arc::downgrade(&self.state);
+        let arena = self.arena.clone();
+        let weak_txn = Arc::downgrade(&self.txn);
         txn.set_on_commit(Box::new(move |state| {
             let mut state = state.try_lock().unwrap();
             let events = state.take_events();
             drop(state);
             for event in events {
-                obs.emit(event);
+                obs.emit(DocDiff::from_unsolved_diff(
+                    event,
+                    &weak_state,
+                    &arena,
+                    &weak_txn,
+                ));
             }
         }));
 
@@ -430,14 +434,20 @@ impl LoroDoc {
             }
             EncodeMode::Auto => unreachable!(),
         };
-        self.emit_events();
+        let mut state = self.state.lock().unwrap();
+        self.emit_events(&mut state);
         Ok(())
     }
 
-    fn emit_events(&self) {
-        let events = self.state.lock().unwrap().take_events();
+    fn emit_events(&self, state: &mut DocState) {
+        let events = state.take_events();
         for event in events {
-            self.observer.emit(event);
+            self.observer.emit(DocDiff::from_unsolved_diff(
+                event,
+                &Arc::downgrade(&self.state),
+                &self.arena,
+                &Arc::downgrade(&self.txn),
+            ));
         }
     }
 
@@ -635,10 +645,7 @@ impl LoroDoc {
             from_checkout: true,
             new_version: Cow::Owned(frontiers.clone()),
         });
-        let events = state.take_events();
-        for event in events {
-            self.observer.emit(event);
-        }
+        self.emit_events(&mut state);
         Ok(())
     }
 

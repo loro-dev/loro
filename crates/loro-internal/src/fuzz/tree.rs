@@ -13,12 +13,12 @@ use tabled::{TableIteratorExt, Tabled};
 
 #[allow(unused_imports)]
 use crate::{
-    array_mut_ref, container::ContainerID, delta::DeltaItem, event::Diff, id::PeerID,
+    array_mut_ref, container::ContainerID, delta::DeltaItem, event::UnresolvedDiff, id::PeerID,
     ContainerType, LoroValue,
 };
 use crate::{
     delta::TreeValue,
-    event::{Index, ResolvedDiff},
+    event::{Diff, Index},
     handler::TreeHandler,
     loro::LoroDoc,
     value::{unresolved_to_collection, ToJson},
@@ -126,7 +126,7 @@ impl Actor {
                     let map = Arc::make_mut(map.as_map_mut().unwrap());
                     let meta = map.get_mut("meta").unwrap();
                     let meta = Arc::make_mut(meta.as_map_mut().unwrap());
-                    if let ResolvedDiff::NewMap(update) = &event.container.diff {
+                    if let Diff::NewMap(update) = &event.container.diff {
                         for (key, value) in update.updated.iter() {
                             match &value.value {
                                 Some(value) => {
@@ -142,7 +142,7 @@ impl Actor {
                     return;
                 }
                 let mut tree = tree.lock().unwrap();
-                if let ResolvedDiff::Tree(tree_diff) = &event.container.diff {
+                if let Diff::Tree(tree_diff) = &event.container.diff {
                     let mut v = TreeValue(&mut tree);
                     v.apply_diff(tree_diff);
                 } else {

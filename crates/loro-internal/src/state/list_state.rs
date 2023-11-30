@@ -5,7 +5,7 @@ use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, ContainerID},
     delta::Delta,
-    event::{Diff, Index, InternalDiff},
+    event::{Index, InternalDiff, UnresolvedDiff},
     op::{ListSlice, Op, RawOp, RawOpContent},
     LoroValue,
 };
@@ -289,7 +289,11 @@ impl ListState {
 }
 
 impl ContainerState for ListState {
-    fn apply_diff_and_convert(&mut self, diff: InternalDiff, arena: &SharedArena) -> Diff {
+    fn apply_diff_and_convert(
+        &mut self,
+        diff: InternalDiff,
+        arena: &SharedArena,
+    ) -> UnresolvedDiff {
         let InternalDiff::SeqRaw(delta) = diff else {
             unreachable!()
         };
@@ -326,7 +330,7 @@ impl ContainerState for ListState {
             }
         }
 
-        Diff::List(ans)
+        UnresolvedDiff::List(ans)
     }
 
     fn apply_diff(&mut self, diff: InternalDiff, arena: &SharedArena) {
@@ -438,8 +442,8 @@ impl ContainerState for ListState {
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
-    fn to_diff(&mut self) -> Diff {
-        Diff::List(Delta::new().insert(self.to_vec()))
+    fn to_diff(&mut self) -> UnresolvedDiff {
+        UnresolvedDiff::List(Delta::new().insert(self.to_vec()))
     }
 
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {

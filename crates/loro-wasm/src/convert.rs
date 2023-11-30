@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use loro_internal::delta::{DeltaItem, ResolvedMapDelta};
-use loro_internal::event::ResolvedDiff;
+use loro_internal::event::Diff;
 use loro_internal::handler::{Handler, ValueOrContainer};
 use loro_internal::{LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
@@ -88,17 +88,17 @@ impl TryFrom<JsValue> for LoroMap {
     }
 }
 
-pub(crate) fn resolved_diff_to_js(value: ResolvedDiff, doc: Arc<Mutex<LoroDoc>>) -> JsValue {
+pub(crate) fn resolved_diff_to_js(value: Diff, doc: Arc<Mutex<LoroDoc>>) -> JsValue {
     // create a obj
     let obj = Object::new();
     match value {
-        ResolvedDiff::Tree(tree) => {
+        Diff::Tree(tree) => {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("tree"))
                 .unwrap();
 
             js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &tree.into()).unwrap();
         }
-        ResolvedDiff::List(list) => {
+        Diff::List(list) => {
             // set type as "list"
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("list"))
                 .unwrap();
@@ -114,14 +114,14 @@ pub(crate) fn resolved_diff_to_js(value: ResolvedDiff, doc: Arc<Mutex<LoroDoc>>)
             )
             .unwrap();
         }
-        ResolvedDiff::Text(text) => {
+        Diff::Text(text) => {
             // set type as "text"
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("text"))
                 .unwrap();
             // set diff as array
             js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &JsValue::from(text)).unwrap();
         }
-        ResolvedDiff::NewMap(map) => {
+        Diff::NewMap(map) => {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("map"))
                 .unwrap();
 

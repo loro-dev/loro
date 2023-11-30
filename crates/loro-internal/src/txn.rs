@@ -19,7 +19,7 @@ use crate::{
         IntoContainerId,
     },
     delta::{Delta, MapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem},
-    event::Diff,
+    event::UnresolvedDiff,
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
@@ -455,7 +455,7 @@ impl Drop for Transaction {
 #[derive(Debug, Clone)]
 pub(crate) struct TxnContainerDiff {
     pub(crate) idx: ContainerIdx,
-    pub(crate) diff: Diff,
+    pub(crate) diff: UnresolvedDiff,
 }
 
 // PERF: could be compacter
@@ -546,7 +546,7 @@ fn change_to_diff(
                         .retain_with_meta((end - start) as usize, meta);
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: Diff::Text(diff),
+                        diff: UnresolvedDiff::Text(diff),
                     });
                 }
                 EventHint::InsertText { styles, pos, .. } => {
@@ -561,7 +561,7 @@ fn change_to_diff(
                     }
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: Diff::Text(delta),
+                        diff: UnresolvedDiff::Text(delta),
                     })
                 }
                 EventHint::DeleteText {
@@ -571,7 +571,7 @@ fn change_to_diff(
                     // know what the events should be
                 } => ans.push(TxnContainerDiff {
                     idx: op.container,
-                    diff: Diff::Text(
+                    diff: UnresolvedDiff::Text(
                         Delta::new()
                             .retain(span.start() as usize)
                             .delete(span.len()),
@@ -583,19 +583,21 @@ fn change_to_diff(
                         let values = arena.get_values(range.to_range());
                         ans.push(TxnContainerDiff {
                             idx: op.container,
-                            diff: Diff::List(Delta::new().retain(*pos).insert(values)),
+                            diff: UnresolvedDiff::List(Delta::new().retain(*pos).insert(values)),
                         })
                     }
                 }
                 EventHint::DeleteList(s) => {
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: Diff::List(Delta::new().retain(s.start() as usize).delete(s.len())),
+                        diff: UnresolvedDiff::List(
+                            Delta::new().retain(s.start() as usize).delete(s.len()),
+                        ),
                     });
                 }
                 EventHint::Map { key, value } => ans.push(TxnContainerDiff {
                     idx: op.container,
-                    diff: Diff::NewMap(crate::delta::MapDelta::new().with_entry(
+                    diff: UnresolvedDiff::NewMap(crate::delta::MapDelta::new().with_entry(
                         key,
                         MapValue {
                             counter: op.counter,
@@ -607,7 +609,7 @@ fn change_to_diff(
                 EventHint::Tree(tree_diff) => {
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: Diff::Tree(TreeDiff::default().extend(tree_diff)),
+                        diff: UnresolvedDiff::Tree(TreeDiff::default().extend(tree_diff)),
                     });
                 }
                 EventHint::MarkEnd => {

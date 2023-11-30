@@ -7,7 +7,7 @@ use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, map::MapSet},
     delta::MapValue,
-    event::{Diff, Index, InternalDiff},
+    event::{Index, InternalDiff, UnresolvedDiff},
     op::{Op, RawOp, RawOpContent},
     InternalString, LoroValue,
 };
@@ -23,7 +23,11 @@ pub struct MapState {
 }
 
 impl ContainerState for MapState {
-    fn apply_diff_and_convert(&mut self, diff: InternalDiff, arena: &SharedArena) -> Diff {
+    fn apply_diff_and_convert(
+        &mut self,
+        diff: InternalDiff,
+        arena: &SharedArena,
+    ) -> UnresolvedDiff {
         let InternalDiff::Map(delta) = diff else {
             unreachable!()
         };
@@ -38,7 +42,7 @@ impl ContainerState for MapState {
             self.store_txn_snapshot(key.clone(), old);
         }
 
-        Diff::NewMap(delta)
+        UnresolvedDiff::NewMap(delta)
     }
 
     fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) -> LoroResult<()> {
@@ -104,8 +108,8 @@ impl ContainerState for MapState {
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
-    fn to_diff(&mut self) -> Diff {
-        Diff::NewMap(crate::delta::MapDelta {
+    fn to_diff(&mut self) -> UnresolvedDiff {
+        UnresolvedDiff::NewMap(crate::delta::MapDelta {
             updated: self.map.clone(),
         })
     }

@@ -13,7 +13,7 @@ use tabled::{TableIteratorExt, Tabled};
 
 #[allow(unused_imports)]
 use crate::{
-    array_mut_ref, container::ContainerID, delta::DeltaItem, event::Diff, id::PeerID,
+    array_mut_ref, container::ContainerID, delta::DeltaItem, event::UnresolvedDiff, id::PeerID,
     ContainerType, LoroValue,
 };
 use crate::{
@@ -21,7 +21,7 @@ use crate::{
         idx::ContainerIdx,
         richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
     },
-    event::ResolvedDiff,
+    event::Diff,
     handler::{TextHandler, ValueOrContainer},
     loro::LoroDoc,
     value::ToJson,
@@ -107,7 +107,7 @@ impl Actor {
 
                 let mut text = text.lock().unwrap();
                 match &event.container.diff {
-                    ResolvedDiff::Text(delta) => {
+                    Diff::Text(delta) => {
                         let mut index = 0;
                         for item in delta.iter() {
                             match item {
@@ -162,7 +162,7 @@ impl Actor {
                     return;
                 }
                 let mut map = map.lock().unwrap();
-                if let ResolvedDiff::NewMap(map_diff) = &event.container.diff {
+                if let Diff::NewMap(map_diff) = &event.container.diff {
                     for (key, value) in map_diff.updated.iter() {
                         match &value.value {
                             Some(value) => {
@@ -195,7 +195,7 @@ impl Actor {
                     return;
                 }
                 let mut list = list.lock().unwrap();
-                if let ResolvedDiff::List(delta) = &event.container.diff {
+                if let Diff::List(delta) = &event.container.diff {
                     let mut index = 0;
                     for item in delta.iter() {
                         match item {

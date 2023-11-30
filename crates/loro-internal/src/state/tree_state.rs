@@ -13,7 +13,7 @@ use crate::{
     arena::SharedArena,
     container::tree::tree_op::TreeOp,
     delta::TreeInternalDiff,
-    event::{Diff, Index},
+    event::{Index, UnresolvedDiff},
     op::RawOp,
 };
 
@@ -166,7 +166,7 @@ impl ContainerState for TreeState {
         &mut self,
         diff: crate::event::InternalDiff,
         _arena: &SharedArena,
-    ) -> Diff {
+    ) -> UnresolvedDiff {
         if let InternalDiff::Tree(tree) = &diff {
             // assert never cause cycle move
             for diff in tree.diff.iter() {
@@ -201,7 +201,7 @@ impl ContainerState for TreeState {
             .into_iter()
             .flat_map(TreeDiffItem::from_delta_item)
             .collect_vec();
-        Diff::Tree(TreeDiff { diff: ans })
+        UnresolvedDiff::Tree(TreeDiff { diff: ans })
     }
 
     fn apply_op(
@@ -219,7 +219,7 @@ impl ContainerState for TreeState {
         }
     }
 
-    fn to_diff(&mut self) -> Diff {
+    fn to_diff(&mut self) -> UnresolvedDiff {
         let mut diffs = vec![];
         // TODO: perf
         let forest = Forest::from_tree_state(&self.trees);
@@ -242,7 +242,7 @@ impl ContainerState for TreeState {
             q.extend(node.children);
         }
 
-        Diff::Tree(TreeDiff { diff: diffs })
+        UnresolvedDiff::Tree(TreeDiff { diff: diffs })
     }
 
     fn start_txn(&mut self) {

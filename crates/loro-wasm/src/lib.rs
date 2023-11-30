@@ -6,7 +6,7 @@ use loro_internal::{
         richtext::{ExpandType, TextStyleInfoFlag},
         ContainerID,
     },
-    event::{Index, ResolvedDiff},
+    event::{Diff, Index},
     handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrContainer},
     id::{Counter, PeerID, TreeID, ID},
     obs::SubID,
@@ -999,7 +999,7 @@ pub struct Event {
     origin: String,
     target: ContainerID,
     from_checkout: bool,
-    diff: ResolvedDiff,
+    diff: Diff,
     path: JsValue,
 }
 

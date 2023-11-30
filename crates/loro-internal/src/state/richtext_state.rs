@@ -16,7 +16,7 @@ use crate::{
     },
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
     delta::{Delta, DeltaItem, StyleMeta},
-    event::{Diff, InternalDiff},
+    event::{InternalDiff, UnresolvedDiff},
     op::{Op, RawOp},
     utils::{bitmap::BitMap, lazy::LazyLoad, string_slice::StringSlice},
     InternalString,
@@ -135,7 +135,11 @@ impl Mergeable for UndoItem {
 
 impl ContainerState for RichtextState {
     // TODO: refactor
-    fn apply_diff_and_convert(&mut self, diff: InternalDiff, _arena: &SharedArena) -> Diff {
+    fn apply_diff_and_convert(
+        &mut self,
+        diff: InternalDiff,
+        _arena: &SharedArena,
+    ) -> UnresolvedDiff {
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
         };
@@ -256,7 +260,7 @@ impl ContainerState for RichtextState {
         let ans = ans.compose(style_delta);
         debug_log::debug_dbg!(&ans);
         debug_log::group_end!();
-        Diff::Text(ans)
+        UnresolvedDiff::Text(ans)
     }
 
     fn apply_diff(&mut self, diff: InternalDiff, _arena: &SharedArena) {
@@ -392,7 +396,7 @@ impl ContainerState for RichtextState {
         Ok(())
     }
 
-    fn to_diff(&mut self) -> Diff {
+    fn to_diff(&mut self) -> UnresolvedDiff {
         let mut delta = crate::delta::Delta::new();
         for span in self.state.get_mut().iter() {
             delta.vec.push(DeltaItem::Insert {
@@ -401,7 +405,7 @@ impl ContainerState for RichtextState {
             })
         }
 
-        Diff::Text(delta)
+        UnresolvedDiff::Text(delta)
     }
 
     fn start_txn(&mut self) {
