@@ -76,7 +76,6 @@ pub(crate) struct InternalContainerDiff {
 pub(crate) enum DiffVariant {
     Internal(InternalDiff),
     External(Diff),
-    Resolved(ResolvedDiff),
 }
 
 /// It's used for transmitting and recording the diff internally.

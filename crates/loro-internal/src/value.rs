@@ -313,16 +313,14 @@ pub(crate) fn unresolved_to_collection(v: &ValueOrContainer) -> LoroValue {
 
 #[cfg(feature = "wasm")]
 pub mod wasm {
-    use std::sync::Arc;
 
-    use js_sys::{Array, Object, Uint8Array};
+    use js_sys::{Array, Object};
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
     use crate::{
-        delta::{Delta, DeltaItem, MapDelta, MapDiff, Meta, StyleMeta, TreeDiff, TreeExternalDiff},
-        event::{Diff, Index, ResolvedDiff},
+        delta::{Delta, DeltaItem, Meta, StyleMeta, TreeDiff, TreeExternalDiff},
+        event::Index,
         utils::string_slice::StringSlice,
-        LoroValue,
     };
 
     impl From<Index> for JsValue {

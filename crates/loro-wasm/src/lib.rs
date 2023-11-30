@@ -6,10 +6,8 @@ use loro_internal::{
         richtext::{ExpandType, TextStyleInfoFlag},
         ContainerID,
     },
-    event::{Diff, Index, ResolvedDiff},
-    handler::{
-        Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrContainer,
-    },
+    event::{Index, ResolvedDiff},
+    handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrContainer},
     id::{Counter, PeerID, TreeID, ID},
     obs::SubID,
     version::Frontiers,
