@@ -4,5 +4,7 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [wasm()],
-  // test: {},
+  // test: {
+  //   reporters:['hanging-process']
+  // },
 });

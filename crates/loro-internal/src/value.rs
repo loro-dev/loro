@@ -320,7 +320,7 @@ pub mod wasm {
 
     use crate::{
         delta::{Delta, DeltaItem, MapDelta, MapDiff, Meta, StyleMeta, TreeDiff, TreeExternalDiff},
-        event::{Diff, Index},
+        event::{Diff, Index, ResolvedDiff},
         utils::string_slice::StringSlice,
         LoroValue,
     };
@@ -332,107 +332,6 @@ pub mod wasm {
                 Index::Seq(num) => JsValue::from_f64(num as f64),
                 Index::Node(node) => JsValue::from_str(&node.to_string()),
             }
-        }
-    }
-
-    pub fn convert(value: LoroValue) -> JsValue {
-        match value {
-            LoroValue::Null => JsValue::NULL,
-            LoroValue::Bool(b) => JsValue::from_bool(b),
-            LoroValue::Double(f) => JsValue::from_f64(f),
-            LoroValue::I32(i) => JsValue::from_f64(i as f64),
-            LoroValue::String(s) => JsValue::from_str(&s),
-            LoroValue::List(list) => {
-                let list = Arc::try_unwrap(list).unwrap_or_else(|m| (*m).clone());
-                let arr = Array::new_with_length(list.len() as u32);
-                for (i, v) in list.into_iter().enumerate() {
-                    arr.set(i as u32, convert(v));
-                }
-                arr.into_js_result().unwrap()
-            }
-            LoroValue::Map(m) => {
-                let m = Arc::try_unwrap(m).unwrap_or_else(|m| (*m).clone());
-                let map = Object::new();
-                for (k, v) in m.into_iter() {
-                    let str: &str = &k;
-                    js_sys::Reflect::set(&map, &JsValue::from_str(str), &convert(v)).unwrap();
-                }
-
-                map.into_js_result().unwrap()
-            }
-            LoroValue::Container(container_id) => JsValue::from(container_id),
-            LoroValue::Binary(binary) => {
-                let binary = Arc::try_unwrap(binary).unwrap_or_else(|m| (*m).clone());
-                let arr = Uint8Array::new_with_length(binary.len() as u32);
-                for (i, v) in binary.into_iter().enumerate() {
-                    arr.set_index(i as u32, v);
-                }
-                arr.into_js_result().unwrap()
-            }
-        }
-    }
-
-    impl From<Diff> for JsValue {
-        fn from(value: Diff) -> Self {
-            // create a obj
-            let obj = Object::new();
-            match value {
-                Diff::Tree(tree) => {
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("tree"),
-                    )
-                    .unwrap();
-
-                    js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &tree.into()).unwrap();
-                }
-                Diff::List(list) => {
-                    // set type as "list"
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("list"),
-                    )
-                    .unwrap();
-                    // set diff as array
-                    let arr = Array::new_with_length(list.len() as u32);
-                    for (i, v) in list.iter().enumerate() {
-                        arr.set(i as u32, JsValue::from(v.clone()));
-                    }
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("diff"),
-                        &arr.into_js_result().unwrap(),
-                    )
-                    .unwrap();
-                }
-                Diff::Text(text) => {
-                    // set type as "text"
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("text"),
-                    )
-                    .unwrap();
-                    // set diff as array
-                    js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &JsValue::from(text))
-                        .unwrap();
-                }
-                Diff::NewMap(map) => {
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("map"),
-                    )
-                    .unwrap();
-
-                    js_sys::Reflect::set(&obj, &JsValue::from_str("updated"), &map.into()).unwrap();
-                }
-            };
-
-            // convert object to js value
-            obj.into_js_result().unwrap()
         }
     }
 
@@ -480,84 +379,6 @@ pub mod wasm {
                 js_sys::Reflect::set(&obj, &"target".into(), &diff.target.into()).unwrap();
                 js_sys::Reflect::set(&obj, &"action".into(), &diff.action.into()).unwrap();
             }
-            obj.into_js_result().unwrap()
-        }
-    }
-
-    impl From<MapDelta> for JsValue {
-        fn from(value: MapDelta) -> Self {
-            let obj = Object::new();
-            for (key, value) in value.updated.iter() {
-                js_sys::Reflect::set(
-                    &obj,
-                    &JsValue::from_str(key),
-                    &JsValue::from(value.value.clone()),
-                )
-                .unwrap();
-            }
-
-            obj.into_js_result().unwrap()
-        }
-    }
-
-    impl From<MapDiff<LoroValue>> for JsValue {
-        fn from(value: MapDiff<LoroValue>) -> Self {
-            let obj = Object::new();
-            {
-                let added = Object::new();
-                for (key, value) in value.added.iter() {
-                    js_sys::Reflect::set(
-                        &added,
-                        &JsValue::from_str(key),
-                        &JsValue::from(value.clone()),
-                    )
-                    .unwrap();
-                }
-
-                js_sys::Reflect::set(&obj, &JsValue::from_str("added"), &added).unwrap();
-            }
-
-            {
-                let deleted = Object::new();
-                for (key, value) in value.deleted.iter() {
-                    js_sys::Reflect::set(
-                        &deleted,
-                        &JsValue::from_str(key),
-                        &JsValue::from(value.clone()),
-                    )
-                    .unwrap();
-                }
-
-                js_sys::Reflect::set(&obj, &JsValue::from_str("deleted"), &deleted).unwrap();
-            }
-
-            {
-                let updated = Object::new();
-                for (key, pair) in value.updated.iter() {
-                    let pair_obj = Object::new();
-                    js_sys::Reflect::set(
-                        &pair_obj,
-                        &JsValue::from_str("old"),
-                        &pair.old.clone().into(),
-                    )
-                    .unwrap();
-                    js_sys::Reflect::set(
-                        &pair_obj,
-                        &JsValue::from_str("new"),
-                        &pair.new.clone().into(),
-                    )
-                    .unwrap();
-                    js_sys::Reflect::set(
-                        &updated,
-                        &JsValue::from_str(key),
-                        &pair_obj.into_js_result().unwrap(),
-                    )
-                    .unwrap();
-                }
-
-                js_sys::Reflect::set(&obj, &JsValue::from_str("updated"), &updated).unwrap();
-            }
-
             obj.into_js_result().unwrap()
         }
     }
@@ -648,45 +469,6 @@ pub mod wasm {
                     value.into()
                 };
                 js_sys::Reflect::set(&obj, &JsValue::from_str(&key.to_attr_key()), &value).unwrap();
-            }
-
-            obj.into_js_result().unwrap()
-        }
-    }
-
-    impl From<DeltaItem<Vec<LoroValue>, ()>> for JsValue {
-        fn from(value: DeltaItem<Vec<LoroValue>, ()>) -> Self {
-            let obj = Object::new();
-            match value {
-                DeltaItem::Retain { retain: len, .. } => {
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("retain"),
-                        &JsValue::from_f64(len as f64),
-                    )
-                    .unwrap();
-                }
-                DeltaItem::Insert { insert: value, .. } => {
-                    let arr = Array::new_with_length(value.len() as u32);
-                    for (i, v) in value.into_iter().enumerate() {
-                        arr.set(i as u32, convert(v));
-                    }
-
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("insert"),
-                        &arr.into_js_result().unwrap(),
-                    )
-                    .unwrap();
-                }
-                DeltaItem::Delete { delete: len, .. } => {
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("delete"),
-                        &JsValue::from_f64(len as f64),
-                    )
-                    .unwrap();
-                }
             }
 
             obj.into_js_result().unwrap()
