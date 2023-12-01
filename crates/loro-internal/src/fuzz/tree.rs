@@ -126,7 +126,7 @@ impl Actor {
                     let map = Arc::make_mut(map.as_map_mut().unwrap());
                     let meta = map.get_mut("meta").unwrap();
                     let meta = Arc::make_mut(meta.as_map_mut().unwrap());
-                    if let Diff::NewMap(update) = &event.container.diff {
+                    if let Diff::Map(update) = &event.container.diff {
                         for (key, value) in update.updated.iter() {
                             match &value.value {
                                 Some(value) => {

@@ -42,7 +42,7 @@ impl ContainerState for MapState {
             self.store_txn_snapshot(key.clone(), old);
         }
 
-        UnresolvedDiff::NewMap(delta)
+        UnresolvedDiff::Map(delta)
     }
 
     fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) -> LoroResult<()> {
@@ -109,7 +109,7 @@ impl ContainerState for MapState {
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
     fn to_diff(&mut self) -> UnresolvedDiff {
-        UnresolvedDiff::NewMap(crate::delta::MapDelta {
+        UnresolvedDiff::Map(crate::delta::MapDelta {
             updated: self.map.clone(),
         })
     }

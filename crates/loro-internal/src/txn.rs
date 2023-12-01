@@ -597,7 +597,7 @@ fn change_to_diff(
                 }
                 EventHint::Map { key, value } => ans.push(TxnContainerDiff {
                     idx: op.container,
-                    diff: UnresolvedDiff::NewMap(crate::delta::MapDelta::new().with_entry(
+                    diff: UnresolvedDiff::Map(crate::delta::MapDelta::new().with_entry(
                         key,
                         MapValue {
                             counter: op.counter,

@@ -220,7 +220,7 @@ pub enum UnresolvedDiff {
     /// - When feature `wasm` is enabled, it should use utf16 indexes.
     /// - When feature `wasm` is disabled, it should use unicode indexes.
     Text(Delta<StringSlice, StyleMeta>),
-    NewMap(MapDelta),
+    Map(MapDelta),
     Tree(TreeDiff),
 }
 
@@ -231,7 +231,7 @@ pub enum Diff {
     /// - When feature `wasm` is enabled, it should use utf16 indexes.
     /// - When feature `wasm` is disabled, it should use unicode indexes.
     Text(Delta<StringSlice, StyleMeta>),
-    NewMap(ResolvedMapDelta),
+    Map(ResolvedMapDelta),
     Tree(TreeDiff),
 }
 
@@ -271,8 +271,8 @@ impl UnresolvedDiff {
             (UnresolvedDiff::Text(a), UnresolvedDiff::Text(b)) => {
                 Ok(UnresolvedDiff::Text(a.compose(b)))
             }
-            (UnresolvedDiff::NewMap(a), UnresolvedDiff::NewMap(b)) => {
-                Ok(UnresolvedDiff::NewMap(a.compose(b)))
+            (UnresolvedDiff::Map(a), UnresolvedDiff::Map(b)) => {
+                Ok(UnresolvedDiff::Map(a.compose(b)))
             }
 
             (UnresolvedDiff::Tree(a), UnresolvedDiff::Tree(b)) => {
@@ -286,7 +286,7 @@ impl UnresolvedDiff {
         match self {
             UnresolvedDiff::List(s) => s.is_empty(),
             UnresolvedDiff::Text(t) => t.is_empty(),
-            UnresolvedDiff::NewMap(m) => m.updated.is_empty(),
+            UnresolvedDiff::Map(m) => m.updated.is_empty(),
             UnresolvedDiff::Tree(t) => t.diff.is_empty(),
         }
     }
@@ -299,12 +299,12 @@ impl UnresolvedDiff {
             (UnresolvedDiff::Text(a), UnresolvedDiff::Text(b)) => {
                 UnresolvedDiff::Text(a.compose(b))
             }
-            (UnresolvedDiff::NewMap(a), UnresolvedDiff::NewMap(b)) => {
+            (UnresolvedDiff::Map(a), UnresolvedDiff::Map(b)) => {
                 let mut a = a;
                 for (k, v) in b.updated {
                     a = a.with_entry(k, v);
                 }
-                UnresolvedDiff::NewMap(a)
+                UnresolvedDiff::Map(a)
             }
 
             (UnresolvedDiff::Tree(a), UnresolvedDiff::Tree(b)) => {
@@ -355,7 +355,7 @@ pub(crate) fn external_diff_to_resolved(
                 .collect();
             Diff::List(Delta { vec })
         }
-        UnresolvedDiff::NewMap(map) => {
+        UnresolvedDiff::Map(map) => {
             let mut resolved_map = FxHashMap::default();
             for (k, v) in map.updated.into_iter() {
                 let counter = v.counter;
@@ -377,7 +377,7 @@ pub(crate) fn external_diff_to_resolved(
                     },
                 );
             }
-            Diff::NewMap(ResolvedMapDelta {
+            Diff::Map(ResolvedMapDelta {
                 updated: resolved_map,
             })
         }

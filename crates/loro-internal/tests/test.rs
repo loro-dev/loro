@@ -270,7 +270,7 @@ fn import_after_init_handlers() {
         Arc::new(|event| {
             assert!(matches!(
                 event.container.diff,
-                loro_internal::event::Diff::NewMap(_)
+                loro_internal::event::Diff::Map(_)
             ))
         }),
     );

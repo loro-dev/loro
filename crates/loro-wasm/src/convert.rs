@@ -121,7 +121,7 @@ pub(crate) fn resolved_diff_to_js(value: Diff, doc: Arc<Mutex<LoroDoc>>) -> JsVa
             // set diff as array
             js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &JsValue::from(text)).unwrap();
         }
-        Diff::NewMap(map) => {
+        Diff::Map(map) => {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("map"))
                 .unwrap();
 

@@ -79,3 +79,7 @@ harness = false
 [[bench]]
 name = "pending"
 harness = false
+
+[[bench]]
+name = "event"
+harness = false

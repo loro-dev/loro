@@ -802,7 +802,7 @@ fn bring_back_sub_container(
                 }
             }
         }
-        UnresolvedDiff::NewMap(map) => {
+        UnresolvedDiff::Map(map) => {
             for (_, v) in map.updated.iter() {
                 if let Some(LoroValue::Container(id)) = &v.value {
                     let idx = arena.id_to_idx(id).unwrap();

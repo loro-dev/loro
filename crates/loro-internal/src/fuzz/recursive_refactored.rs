@@ -162,7 +162,7 @@ impl Actor {
                     return;
                 }
                 let mut map = map.lock().unwrap();
-                if let Diff::NewMap(map_diff) = &event.container.diff {
+                if let Diff::Map(map_diff) = &event.container.diff {
                     for (key, value) in map_diff.updated.iter() {
                         match &value.value {
                             Some(value) => {

@@ -215,7 +215,7 @@ impl ApplyDiff for LoroValue {
             LoroValue::Map(map) => {
                 for item in diff.iter() {
                     match item {
-                        Diff::NewMap(diff) => {
+                        Diff::Map(diff) => {
                             let map = Arc::make_mut(map);
                             for (key, value) in diff.updated.iter() {
                                 match &value.value {
@@ -247,7 +247,7 @@ impl ApplyDiff for LoroValue {
         let hint = match diff[0] {
             Diff::List(_) => TypeHint::List,
             Diff::Text(_) => TypeHint::Text,
-            Diff::NewMap(_) => TypeHint::Map,
+            Diff::Map(_) => TypeHint::Map,
             Diff::Tree(_) => TypeHint::Tree,
         };
         let value = {
