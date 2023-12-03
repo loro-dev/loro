@@ -236,6 +236,7 @@ describe("event", () => {
       text.insert(0, "123");
       await oneMs();
       loro.commit();
+      await oneMs();
       expect(times).toBe(2);
 
       // unsubscribe

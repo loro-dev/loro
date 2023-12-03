@@ -34,7 +34,7 @@ mod tree {
         });
 
         b.bench_function("1000 node checkout 10^3", |b| {
-            let mut loro = LoroDoc::default();
+            let loro = LoroDoc::default();
             let tree = loro.get_tree("tree");
             let mut ids = vec![];
             let mut versions = vec![];
@@ -69,7 +69,7 @@ mod tree {
 
         b.bench_function("300 deep node random checkout 10^3", |b| {
             let depth = 300;
-            let mut loro = LoroDoc::default();
+            let loro = LoroDoc::default();
             let tree = loro.get_tree("tree");
             let mut ids = vec![];
             let mut versions = vec![];

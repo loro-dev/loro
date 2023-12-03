@@ -1,7 +1,13 @@
 use std::{
     borrow::Cow,
     cmp::Ordering,
-    sync::{Arc, Mutex, Weak},
+    sync::{
+        atomic::{
+            AtomicBool,
+            Ordering::{Acquire, Release},
+        },
+        Arc, Mutex, Weak,
+    },
 };
 
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
@@ -54,8 +60,8 @@ pub struct LoroDoc {
     diff_calculator: Arc<Mutex<DiffCalculator>>,
     // when dropping the doc, the txn will be commited
     txn: Arc<Mutex<Option<Transaction>>>,
-    auto_commit: bool,
-    detached: bool,
+    auto_commit: AtomicBool,
+    detached: AtomicBool,
 }
 
 impl Default for LoroDoc {
@@ -73,8 +79,8 @@ impl LoroDoc {
         Self {
             oplog: Arc::new(Mutex::new(oplog)),
             state,
-            detached: false,
-            auto_commit: false,
+            detached: AtomicBool::new(false),
+            auto_commit: AtomicBool::new(false),
             observer: Arc::new(Observer::new(arena.clone())),
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
             txn: Arc::new(Mutex::new(None)),
@@ -113,7 +119,7 @@ impl LoroDoc {
     /// Whether [OpLog] ans [DocState] are detached.
     #[inline(always)]
     pub fn is_detached(&self) -> bool {
-        self.detached
+        self.detached.load(Acquire)
     }
 
     #[allow(unused)]
@@ -122,12 +128,12 @@ impl LoroDoc {
         Self {
             arena: oplog.arena.clone(),
             observer: Arc::new(obs),
-            auto_commit: false,
+            auto_commit: AtomicBool::new(false),
             oplog: Arc::new(Mutex::new(oplog)),
             state: Arc::new(Mutex::new(state)),
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
             txn: Arc::new(Mutex::new(None)),
-            detached: false,
+            detached: AtomicBool::new(false),
         }
     }
 
@@ -138,7 +144,7 @@ impl LoroDoc {
 
     #[inline(always)]
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
-        if self.auto_commit {
+        if self.auto_commit.load(Acquire) {
             let mut doc_state = self.state.lock().unwrap();
             doc_state.peer = peer;
             drop(doc_state);
@@ -171,12 +177,12 @@ impl LoroDoc {
     }
 
     #[inline(always)]
-    pub fn detach(&mut self) {
-        self.detached = true;
+    pub fn detach(&self) {
+        self.detached.store(true, Release);
     }
 
     #[inline(always)]
-    pub fn attach(&mut self) {
+    pub fn attach(&self) {
         self.checkout_to_latest()
     }
 
@@ -209,9 +215,9 @@ impl LoroDoc {
     }
 
     pub fn start_auto_commit(&mut self) {
-        self.auto_commit = true;
+        self.auto_commit.store(true, Release);
         let mut self_txn = self.txn.try_lock().unwrap();
-        if self_txn.is_some() || self.detached {
+        if self_txn.is_some() || self.detached.load(Acquire) {
             return;
         }
 
@@ -244,7 +250,7 @@ impl LoroDoc {
         timestamp: Option<Timestamp>,
         immediate_renew: bool,
     ) {
-        if !self.auto_commit {
+        if !self.auto_commit.load(Acquire) {
             return;
         }
 
@@ -267,7 +273,7 @@ impl LoroDoc {
         txn.commit().unwrap();
         if immediate_renew {
             let mut txn_guard = self.txn.try_lock().unwrap();
-            assert!(!self.detached);
+            assert!(!self.detached.load(std::sync::atomic::Ordering::Acquire));
             *txn_guard = Some(self.txn().unwrap());
         }
 
@@ -288,7 +294,7 @@ impl LoroDoc {
     }
 
     pub fn renew_txn_if_auto_commit(&self) {
-        if self.auto_commit && !self.detached {
+        if self.auto_commit.load(Acquire) && !self.detached.load(Acquire) {
             let mut self_txn = self.txn.try_lock().unwrap();
             if self_txn.is_some() {
                 return;
@@ -398,7 +404,7 @@ impl LoroDoc {
                 let old_vv = oplog.vv().clone();
                 let old_frontiers = oplog.frontiers().clone();
                 oplog.decode(bytes)?;
-                if !self.detached {
+                if !self.detached.load(Acquire) {
                     let mut diff = DiffCalculator::default();
                     let diff = diff.calc_diff_internal(
                         &oplog,
@@ -421,7 +427,7 @@ impl LoroDoc {
             }
             EncodeMode::Snapshot => {
                 if self.can_reset_with_snapshot() {
-                    decode_app_snapshot(self, input, !self.detached)?;
+                    decode_app_snapshot(self, input, !self.detached.load(Acquire))?;
                 } else {
                     let app = LoroDoc::new();
                     decode_app_snapshot(&app, input, false)?;
@@ -564,7 +570,7 @@ impl LoroDoc {
     }
 
     // PERF: opt
-    pub fn import_batch(&mut self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
         self.commit_then_stop();
         let is_detached = self.is_detached();
         self.detach();
@@ -608,10 +614,10 @@ impl LoroDoc {
         self.state.lock().unwrap().get_deep_value_with_id()
     }
 
-    pub fn checkout_to_latest(&mut self) {
+    pub fn checkout_to_latest(&self) {
         let f = self.oplog_frontiers();
         self.checkout(&f).unwrap();
-        self.detached = false;
+        self.detached.store(false, Release);
         self.renew_txn_if_auto_commit();
     }
 
@@ -619,11 +625,11 @@ impl LoroDoc {
     ///
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
-    pub fn checkout(&mut self, frontiers: &Frontiers) -> LoroResult<()> {
+    pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
         self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
         let mut state = self.state.lock().unwrap();
-        self.detached = true;
+        self.detached.store(true, Release);
         let mut calc = self.diff_calculator.lock().unwrap();
         let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
         let Some(after) = &oplog.dag.frontiers_to_vv(frontiers) else {
@@ -699,7 +705,7 @@ mod test {
 
     #[test]
     fn test_checkout() {
-        let mut loro = LoroDoc::new();
+        let loro = LoroDoc::new();
         loro.set_peer_id(1).unwrap();
         let text = loro.get_text("text");
         let map = loro.get_map("map");
@@ -711,7 +717,7 @@ mod test {
             list.insert_with_txn(&mut txn, 0, i.into()).unwrap();
         }
         txn.commit().unwrap();
-        let mut b = LoroDoc::new();
+        let b = LoroDoc::new();
         b.import(&loro.export_snapshot()).unwrap();
         loro.checkout(&Frontiers::default()).unwrap();
         {
@@ -745,7 +751,7 @@ mod test {
     fn import_batch_err_181() {
         let a = LoroDoc::new_auto_commit();
         let update_a = a.export_snapshot();
-        let mut b = LoroDoc::new_auto_commit();
+        let b = LoroDoc::new_auto_commit();
         b.import_batch(&[update_a]).unwrap();
         b.get_text("text").insert(0, "hello").unwrap();
         b.commit_then_renew();

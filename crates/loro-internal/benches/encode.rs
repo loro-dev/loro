@@ -88,7 +88,7 @@ mod run {
             let buf = loro.export_from(&Default::default());
 
             b.iter(|| {
-                let mut store2 = LoroDoc::default();
+                let store2 = LoroDoc::default();
                 store2.detach();
                 store2.import(&buf).unwrap();
             })
