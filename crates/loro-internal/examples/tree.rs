@@ -5,7 +5,7 @@ use rand::{rngs::StdRng, Rng};
 
 fn checkout() {
     let depth = 300;
-    let mut loro = LoroDoc::default();
+    let loro = LoroDoc::default();
     let tree = loro.get_tree("tree");
     let mut ids = vec![];
     let mut versions = vec![];
