@@ -16,13 +16,7 @@ use loro_internal::{
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::{
-    cell::RefCell,
-    cmp::Ordering,
-    panic,
-    rc::Rc,
-    sync::{Arc, Mutex},
-};
+use std::{cell::RefCell, cmp::Ordering, panic, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
 mod log;
 mod prelim;
@@ -1194,11 +1188,11 @@ impl LoroText {
     /// returns a subscription id, which can be used to unsubscribe.
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let doc = self.0.clone();
+        let doc = loro.0.clone();
         let ans = loro.0.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e,doc);
+                call_after_micro_task(observer.clone(), e, doc.clone());
             }),
         );
 

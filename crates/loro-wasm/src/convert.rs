@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use loro_internal::delta::{DeltaItem, ResolvedMapDelta};
@@ -88,7 +88,7 @@ impl TryFrom<JsValue> for LoroMap {
     }
 }
 
-pub(crate) fn resolved_diff_to_js(value: Diff, doc: Arc<Mutex<LoroDoc>>) -> JsValue {
+pub(crate) fn resolved_diff_to_js(value: Diff, doc: Arc<LoroDoc>) -> JsValue {
     // create a obj
     let obj = Object::new();
     match value {
@@ -139,10 +139,7 @@ pub(crate) fn resolved_diff_to_js(value: Diff, doc: Arc<Mutex<LoroDoc>>) -> JsVa
     obj.into_js_result().unwrap()
 }
 
-fn delta_item_to_js(
-    item: DeltaItem<Vec<ValueOrContainer>, ()>,
-    doc: Arc<Mutex<LoroDoc>>,
-) -> JsValue {
+fn delta_item_to_js(item: DeltaItem<Vec<ValueOrContainer>, ()>, doc: Arc<LoroDoc>) -> JsValue {
     let obj = Object::new();
     match item {
         DeltaItem::Retain { retain: len, .. } => {
@@ -220,7 +217,7 @@ pub fn convert(value: LoroValue) -> JsValue {
     }
 }
 
-fn map_delta_to_js(value: ResolvedMapDelta, doc: Arc<Mutex<LoroDoc>>) -> JsValue {
+fn map_delta_to_js(value: ResolvedMapDelta, doc: Arc<LoroDoc>) -> JsValue {
     let obj = Object::new();
     for (key, value) in value.updated.iter() {
         let value = if let Some(value) = value.value.clone() {
@@ -238,7 +235,7 @@ fn map_delta_to_js(value: ResolvedMapDelta, doc: Arc<Mutex<LoroDoc>>) -> JsValue
     obj.into_js_result().unwrap()
 }
 
-pub(crate) fn handler_to_js_value(handler: Handler, doc: Arc<Mutex<LoroDoc>>) -> JsValue {
+pub(crate) fn handler_to_js_value(handler: Handler, doc: Arc<LoroDoc>) -> JsValue {
     match handler {
         Handler::Text(t) => LoroText {
             handler: t,

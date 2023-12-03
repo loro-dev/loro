@@ -447,6 +447,9 @@ impl LoroDoc {
 
     fn emit_events(&self, state: &mut DocState) {
         let events = state.take_events();
+        {
+            println!("txn {:?}", self.txn.lock().unwrap().is_some());
+        }
         for event in events {
             self.observer.emit(DocDiff::from_unsolved_diff(
                 event,

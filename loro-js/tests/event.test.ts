@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   Delta,
   ListDiff,
   Loro,
+  LoroText,
   LoroEvent,
-  MapDiff as MapDiff,
+  MapDiff,
   TextDiff,
   setPanicHook,
 } from "../src";
@@ -292,6 +293,26 @@ describe("event", () => {
       loro.commit();
       await oneMs();
       expect(text.toString()).toBe(string);
+    });
+  });
+
+  describe("handler in event", () => {
+    it("test", async () => {
+      const loro = new Loro();
+      const list = loro.getList("list");
+      let first = true;
+      loro.subscribe((e) => {
+        if(first){
+          const diff = e.diff.diff;
+          const text = diff[0].insert[0] as LoroText;
+          text.insert(0, "abc");
+          first = false;
+        }
+      });
+      list.insertContainer(0, "Text");
+      loro.commit();
+      await oneMs();
+      expect(loro.toJson().list[0]).toBe('abc');
     });
   });
 });
