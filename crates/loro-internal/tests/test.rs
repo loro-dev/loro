@@ -8,7 +8,7 @@ use serde_json::json;
 
 #[test]
 fn event_from_checkout() {
-    let mut a = LoroDoc::new_auto_commit();
+    let a = LoroDoc::new_auto_commit();
     let sub_id = a.subscribe_root(Arc::new(|event| {
         assert!(!event.doc.from_checkout);
     }));
@@ -336,7 +336,7 @@ fn test_pending() {
 
 #[test]
 fn test_checkout() {
-    let mut doc_0 = LoroDoc::new();
+    let doc_0 = LoroDoc::new();
     doc_0.set_peer_id(0).unwrap();
     let doc_1 = LoroDoc::new();
     doc_1.set_peer_id(1).unwrap();
@@ -411,7 +411,7 @@ fn test_timestamp() {
 
 #[test]
 fn test_text_checkout() {
-    let mut doc = LoroDoc::new();
+    let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
     let text = doc.get_text("text");
     let mut txn = doc.txn().unwrap();
@@ -480,7 +480,7 @@ fn test_text_checkout() {
 
 #[test]
 fn map_checkout() {
-    let mut doc = LoroDoc::new();
+    let doc = LoroDoc::new();
     let meta = doc.get_map("meta");
     let v_empty = doc.oplog_frontiers();
     doc.with_txn(|txn| {
@@ -506,7 +506,7 @@ fn map_checkout() {
 
 #[test]
 fn a_list_of_map_checkout() {
-    let mut doc = LoroDoc::new();
+    let doc = LoroDoc::new();
     let entry = doc.get_map("entry");
     let (list, sub) = doc
         .with_txn(|txn| {
@@ -589,7 +589,7 @@ fn a_list_of_map_checkout() {
 
 #[test]
 fn map_concurrent_checkout() {
-    let mut doc_a = LoroDoc::new();
+    let doc_a = LoroDoc::new();
     let meta_a = doc_a.get_map("meta");
     let doc_b = LoroDoc::new();
     let meta_b = doc_b.get_map("meta");
@@ -637,7 +637,7 @@ fn map_concurrent_checkout() {
 
 #[test]
 fn tree_checkout() {
-    let mut doc_a = LoroDoc::new();
+    let doc_a = LoroDoc::new();
     doc_a.subscribe_root(Arc::new(|_e| {}));
     doc_a.set_peer_id(1).unwrap();
     let tree = doc_a.get_tree("root");

@@ -26,7 +26,7 @@ mod pending {
             }
             updates.reverse();
             b.iter(|| {
-                let mut store2 = LoroDoc::default();
+                let store2 = LoroDoc::default();
                 store2.detach();
                 for update in updates.iter() {
                     store2.import(update).unwrap();

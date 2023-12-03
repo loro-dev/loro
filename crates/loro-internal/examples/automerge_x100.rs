@@ -6,7 +6,7 @@ fn main() {
     use std::time::Instant;
 
     let actions = bench_utils::get_automerge_actions();
-    let mut loro = LoroDoc::default();
+    let loro = LoroDoc::default();
     let start = Instant::now();
     // loro.subscribe_deep(Box::new(|_| ()));
     let text = loro.get_text("text");
