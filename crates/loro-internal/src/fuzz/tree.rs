@@ -13,8 +13,7 @@ use tabled::{TableIteratorExt, Tabled};
 
 #[allow(unused_imports)]
 use crate::{
-    array_mut_ref, container::ContainerID, delta::DeltaItem, event::UnresolvedDiff, id::PeerID,
-    ContainerType, LoroValue,
+    array_mut_ref, container::ContainerID, delta::DeltaItem, id::PeerID, ContainerType, LoroValue,
 };
 use crate::{
     delta::TreeValue,

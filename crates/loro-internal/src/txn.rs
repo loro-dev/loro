@@ -18,8 +18,11 @@ use crate::{
         richtext::{Style, StyleKey, TextStyleInfoFlag},
         IntoContainerId,
     },
-    delta::{Delta, MapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem},
-    event::UnresolvedDiff,
+    delta::{
+        Delta, ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem,
+    },
+    event::Diff,
+    handler::ValueOrContainer,
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
@@ -292,6 +295,8 @@ impl Transaction {
             Some(change_to_diff(
                 &change,
                 &oplog.arena,
+                &self.global_txn,
+                &Arc::downgrade(&self.state),
                 std::mem::take(&mut self.event_hints),
             ))
         } else {
@@ -455,13 +460,15 @@ impl Drop for Transaction {
 #[derive(Debug, Clone)]
 pub(crate) struct TxnContainerDiff {
     pub(crate) idx: ContainerIdx,
-    pub(crate) diff: UnresolvedDiff,
+    pub(crate) diff: Diff,
 }
 
 // PERF: could be compacter
 fn change_to_diff(
     change: &Change,
     arena: &SharedArena,
+    txn: &Weak<Mutex<Option<Transaction>>>,
+    state: &Weak<Mutex<DocState>>,
     event_hints: Vec<EventHint>,
 ) -> Vec<TxnContainerDiff> {
     let mut ans: Vec<TxnContainerDiff> = Vec::with_capacity(change.ops.len());
@@ -546,7 +553,7 @@ fn change_to_diff(
                         .retain_with_meta((end - start) as usize, meta);
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: UnresolvedDiff::Text(diff),
+                        diff: Diff::Text(diff),
                     });
                 }
                 EventHint::InsertText { styles, pos, .. } => {
@@ -561,7 +568,7 @@ fn change_to_diff(
                     }
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: UnresolvedDiff::Text(delta),
+                        diff: Diff::Text(delta),
                     })
                 }
                 EventHint::DeleteText {
@@ -571,7 +578,7 @@ fn change_to_diff(
                     // know what the events should be
                 } => ans.push(TxnContainerDiff {
                     idx: op.container,
-                    diff: UnresolvedDiff::Text(
+                    diff: Diff::Text(
                         Delta::new()
                             .retain(span.start() as usize)
                             .delete(span.len()),
@@ -580,28 +587,31 @@ fn change_to_diff(
                 EventHint::InsertList { .. } => {
                     for op in ops.iter() {
                         let (range, pos) = op.content.as_list().unwrap().as_insert().unwrap();
-                        let values = arena.get_values(range.to_range());
+                        let values = arena
+                            .get_values(range.to_range())
+                            .into_iter()
+                            .map(|v| ValueOrContainer::from_value(v, arena, txn, state))
+                            .collect::<Vec<_>>();
                         ans.push(TxnContainerDiff {
                             idx: op.container,
-                            diff: UnresolvedDiff::List(Delta::new().retain(*pos).insert(values)),
+                            diff: Diff::List(Delta::new().retain(*pos).insert(values)),
                         })
                     }
                 }
                 EventHint::DeleteList(s) => {
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: UnresolvedDiff::List(
-                            Delta::new().retain(s.start() as usize).delete(s.len()),
-                        ),
+                        diff: Diff::List(Delta::new().retain(s.start() as usize).delete(s.len())),
                     });
                 }
                 EventHint::Map { key, value } => ans.push(TxnContainerDiff {
                     idx: op.container,
-                    diff: UnresolvedDiff::Map(crate::delta::MapDelta::new().with_entry(
+                    diff: Diff::Map(ResolvedMapDelta::new().with_entry(
                         key,
-                        MapValue {
+                        ResolvedMapValue {
                             counter: op.counter,
-                            value,
+                            value:
+                                value.map(|v| ValueOrContainer::from_value(v, arena, txn, state)),
                             lamport: (lamport, peer),
                         },
                     )),
@@ -609,7 +619,7 @@ fn change_to_diff(
                 EventHint::Tree(tree_diff) => {
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: UnresolvedDiff::Tree(TreeDiff::default().extend(tree_diff)),
+                        diff: Diff::Tree(TreeDiff::default().extend(tree_diff)),
                     });
                 }
                 EventHint::MarkEnd => {

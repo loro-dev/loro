@@ -1,4 +1,7 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::Cow,
+    sync::{Arc, Mutex, Weak},
+};
 
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
@@ -8,13 +11,15 @@ use loro_common::{ContainerID, LoroResult};
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, ContainerIdRaw},
-    event::{Index, UnresolvedDiff},
-    event::{InternalContainerDiff, InternalDiff, UnresolvedContainerDiff, UnresolvedDocDiff},
+    event::Index,
+    event::{Diff, InternalContainerDiff, InternalDiff},
     fx_map,
+    handler::ValueOrContainer,
     id::PeerID,
     op::{Op, RawOp},
+    txn::Transaction,
     version::Frontiers,
-    ContainerType, InternalString, LoroValue,
+    ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
 };
 
 mod list_state;
@@ -37,6 +42,9 @@ pub struct DocState {
     pub(super) states: FxHashMap<ContainerIdx, State>,
     pub(super) arena: SharedArena,
 
+    // resolve event stuff
+    weak_state: Weak<Mutex<DocState>>,
+    global_txn: Weak<Mutex<Option<Transaction>>>,
     // txn related stuff
     in_txn: bool,
     changed_idx_in_txn: FxHashSet<ContainerIdx>,
@@ -47,16 +55,32 @@ pub struct DocState {
 
 #[enum_dispatch]
 pub(crate) trait ContainerState: Clone {
-    fn apply_diff_and_convert(&mut self, diff: InternalDiff, arena: &SharedArena)
-        -> UnresolvedDiff;
+    fn apply_diff_and_convert(
+        &mut self,
+        diff: InternalDiff,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Diff;
 
-    fn apply_diff(&mut self, diff: InternalDiff, arena: &SharedArena) {
-        self.apply_diff_and_convert(diff, arena);
+    fn apply_diff(
+        &mut self,
+        diff: InternalDiff,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) {
+        self.apply_diff_and_convert(diff, arena, txn, state);
     }
 
     fn apply_op(&mut self, raw_op: &RawOp, op: &Op, arena: &SharedArena) -> LoroResult<()>;
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
-    fn to_diff(&mut self) -> UnresolvedDiff;
+    fn to_diff(
+        &mut self,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Diff;
 
     /// Start a transaction
     ///
@@ -110,18 +134,28 @@ impl State {
 
 impl DocState {
     #[inline]
-    pub fn new(arena: SharedArena) -> Self {
+    pub fn new_arc(
+        arena: SharedArena,
+        global_txn: Weak<Mutex<Option<Transaction>>>,
+    ) -> Arc<Mutex<Self>> {
         let peer = DefaultRandom.next_u64();
         // TODO: maybe we should switch to certain version in oplog?
-        Self {
+        let state = Arc::new(Mutex::new(Self {
             peer,
             arena,
             frontiers: Frontiers::default(),
             states: FxHashMap::default(),
+            weak_state: Weak::new(),
+            global_txn,
             in_txn: false,
             changed_idx_in_txn: FxHashSet::default(),
             event_recorder: Default::default(),
+        }));
+        {
+            let weak_state = Arc::downgrade(&state);
+            state.lock().unwrap().weak_state = weak_state;
         }
+        state
     }
 
     pub fn start_recording(&mut self) {
@@ -148,7 +182,7 @@ impl DocState {
     }
 
     /// Take all the diffs that are recorded and convert them to events.
-    pub fn take_events(&mut self) -> Vec<UnresolvedDocDiff> {
+    pub fn take_events(&mut self) -> Vec<DocDiff> {
         if !self.is_recording() {
             return vec![];
         }
@@ -256,7 +290,7 @@ impl DocState {
                         .states
                         .entry(diff.idx)
                         .or_insert_with(|| create_state(idx));
-                    let state_diff = state.to_diff();
+                    let state_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
                     if diff.diff.is_none() && state_diff.is_empty() {
                         // empty diff, skip it
                         continue;
@@ -271,6 +305,8 @@ impl DocState {
                             &mut self.states,
                             &mut idx2state_diff,
                             &self.arena,
+                            &self.global_txn,
+                            &self.weak_state,
                         );
                         idx2state_diff.insert(idx, state_diff);
                     }
@@ -307,6 +343,8 @@ impl DocState {
                     let external_diff = state.apply_diff_and_convert(
                         internal_diff.into_internal().unwrap(),
                         &self.arena,
+                        &self.global_txn,
+                        &self.weak_state,
                     );
                     if let Some(state_diff) = idx2state_diff.remove(&idx) {
                         // use `concat`(hierarchical and relative order) rather than `compose`
@@ -316,12 +354,21 @@ impl DocState {
                         external_diff
                     }
                 } else {
-                    state
-                        .apply_diff_and_convert(internal_diff.into_internal().unwrap(), &self.arena)
+                    state.apply_diff_and_convert(
+                        internal_diff.into_internal().unwrap(),
+                        &self.arena,
+                        &self.global_txn,
+                        &self.weak_state,
+                    )
                 };
                 diff.diff = Some(external_diff.into());
             } else {
-                state.apply_diff(internal_diff.into_internal().unwrap(), &self.arena);
+                state.apply_diff(
+                    internal_diff.into_internal().unwrap(),
+                    &self.arena,
+                    &self.global_txn,
+                    &self.weak_state,
+                );
             }
         }
 
@@ -421,7 +468,11 @@ impl DocState {
                     idx,
                     bring_back: false,
                     is_container_deleted: false,
-                    diff: Some(state.to_diff().into()),
+                    diff: Some(
+                        state
+                            .to_diff(&self.arena, &self.global_txn, &self.weak_state)
+                            .into(),
+                    ),
                 })
                 .collect();
             self.record_diff(InternalDocDiff {
@@ -654,11 +705,7 @@ impl DocState {
 
     // Because we need to calculate path based on [DocState], so we cannot extract
     // the event recorder to a separate module.
-    fn diffs_to_event(
-        &mut self,
-        diffs: Vec<InternalDocDiff<'_>>,
-        from: Frontiers,
-    ) -> UnresolvedDocDiff {
+    fn diffs_to_event(&mut self, diffs: Vec<InternalDocDiff<'_>>, from: Frontiers) -> DocDiff {
         if diffs.is_empty() {
             panic!("diffs is empty");
         }
@@ -701,7 +748,7 @@ impl DocState {
             .into_iter()
             .map(|(idx, (diff, path))| {
                 let id = self.arena.get_container_id(idx).unwrap();
-                UnresolvedContainerDiff {
+                ContainerDiff {
                     id,
                     idx,
                     diff: diff.into_external().unwrap(),
@@ -713,7 +760,7 @@ impl DocState {
         // Sort by path length, so caller can apply the diff from the root to the leaf.
         // Otherwise, the caller may use a wrong path to apply the diff.
         diff.sort_by_key(|x| x.path.len());
-        UnresolvedDocDiff {
+        DocDiff {
             from,
             to,
             origin,
@@ -754,21 +801,23 @@ impl DocState {
 }
 
 fn bring_back_sub_container(
-    state_diff: &UnresolvedDiff,
+    state_diff: &Diff,
     queue: &mut Vec<InternalContainerDiff>,
     mark_bring_back: &mut FxHashSet<ContainerIdx>,
     all_idx: &FxHashSet<ContainerIdx>,
     states: &mut FxHashMap<ContainerIdx, State>,
-    idx2state: &mut FxHashMap<ContainerIdx, UnresolvedDiff>,
+    idx2state: &mut FxHashMap<ContainerIdx, Diff>,
     arena: &SharedArena,
+    txn: &Weak<Mutex<Option<Transaction>>>,
+    weak_state: &Weak<Mutex<DocState>>,
 ) {
     match state_diff {
-        UnresolvedDiff::List(list) => {
+        Diff::List(list) => {
             for delta in list.iter() {
                 if delta.is_insert() {
                     for v in delta.as_insert().unwrap().0.iter() {
-                        if v.is_container() {
-                            let idx = arena.id_to_idx(v.as_container().unwrap()).unwrap();
+                        if matches!(v, ValueOrContainer::Container(_)) {
+                            let idx = v.as_container().unwrap().container_idx();
                             if all_idx.contains(&idx) {
                                 // There is one in subsequent elements that require applying the diff
                                 mark_bring_back.insert(idx);
@@ -777,7 +826,7 @@ fn bring_back_sub_container(
                                 // If the state is not empty, add this to queue and check
                                 // whether there are sub-containers created by it recursively
                                 // and finally cache the state
-                                let diff = state.to_diff();
+                                let diff = state.to_diff(arena, txn, weak_state);
                                 if !diff.is_empty() {
                                     queue.push(InternalContainerDiff {
                                         idx,
@@ -793,6 +842,8 @@ fn bring_back_sub_container(
                                         states,
                                         idx2state,
                                         arena,
+                                        txn,
+                                        weak_state,
                                     );
                                     idx2state.insert(idx, diff);
                                 }
@@ -802,14 +853,14 @@ fn bring_back_sub_container(
                 }
             }
         }
-        UnresolvedDiff::Map(map) => {
+        Diff::Map(map) => {
             for (_, v) in map.updated.iter() {
-                if let Some(LoroValue::Container(id)) = &v.value {
-                    let idx = arena.id_to_idx(id).unwrap();
+                if let Some(ValueOrContainer::Container(handler)) = &v.value {
+                    let idx = handler.container_idx();
                     if all_idx.contains(&idx) {
                         mark_bring_back.insert(idx);
                     } else if let Some(state) = states.get_mut(&idx) {
-                        let diff = state.to_diff();
+                        let diff = state.to_diff(arena, txn, weak_state);
                         if !diff.is_empty() {
                             queue.push(InternalContainerDiff {
                                 idx,
@@ -825,6 +876,8 @@ fn bring_back_sub_container(
                                 states,
                                 idx2state,
                                 arena,
+                                txn,
+                                weak_state,
                             );
                             idx2state.insert(idx, diff);
                         }
@@ -851,7 +904,7 @@ struct EventRecorder {
     // A batch of diffs will be converted to a event when
     // they cannot be merged with the next diff.
     diffs: Vec<InternalDocDiff<'static>>,
-    events: Vec<UnresolvedDocDiff>,
+    events: Vec<DocDiff>,
     diff_start_version: Option<Frontiers>,
 }
 

@@ -74,8 +74,9 @@ impl LoroDoc {
     pub fn new() -> Self {
         let oplog = OpLog::new();
         let arena = oplog.arena.clone();
+        let global_txn = Arc::new(Mutex::new(None));
         // share arena
-        let state = Arc::new(Mutex::new(DocState::new(arena.clone())));
+        let state = DocState::new_arc(arena.clone(), Arc::downgrade(&global_txn));
         Self {
             oplog: Arc::new(Mutex::new(oplog)),
             state,
@@ -83,7 +84,7 @@ impl LoroDoc {
             auto_commit: AtomicBool::new(false),
             observer: Arc::new(Observer::new(arena.clone())),
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
-            txn: Arc::new(Mutex::new(None)),
+            txn: global_txn,
             arena,
         }
     }
@@ -336,12 +337,7 @@ impl LoroDoc {
             let events = state.take_events();
             drop(state);
             for event in events {
-                obs.emit(DocDiff::from_unsolved_diff(
-                    event,
-                    &weak_state,
-                    &arena,
-                    &weak_txn,
-                ));
+                obs.emit(event);
             }
         }));
 
@@ -451,12 +447,7 @@ impl LoroDoc {
             println!("txn {:?}", self.txn.lock().unwrap().is_some());
         }
         for event in events {
-            self.observer.emit(DocDiff::from_unsolved_diff(
-                event,
-                &Arc::downgrade(&self.state),
-                &self.arena,
-                &Arc::downgrade(&self.txn),
-            ));
+            self.observer.emit(event);
         }
     }
 
@@ -673,6 +664,16 @@ impl LoroDoc {
     /// After `a.merge(b)` and `b.merge(a)`, `a` and `b` will have the same content if they are in attached mode.
     pub fn merge(&self, other: &Self) -> LoroResult<()> {
         self.import(&other.export_from(&self.oplog_vv()))
+    }
+
+    #[cfg(feature = "test_utils")]
+    pub(crate) fn arena(&self) -> &SharedArena {
+        &self.arena
+    }
+
+    #[cfg(feature = "test_utils")]
+    pub(crate) fn weak_state(&self) -> Weak<Mutex<DocState>> {
+        Arc::downgrade(&self.state)
     }
 }
 

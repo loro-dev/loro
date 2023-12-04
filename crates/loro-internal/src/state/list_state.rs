@@ -1,13 +1,18 @@
-use std::{ops::RangeBounds, sync::Arc};
+use std::{
+    ops::RangeBounds,
+    sync::{Arc, Mutex, Weak},
+};
 
 use super::ContainerState;
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, ContainerID},
     delta::Delta,
-    event::{Index, InternalDiff, UnresolvedDiff},
+    event::{Diff, Index, InternalDiff},
+    handler::ValueOrContainer,
     op::{ListSlice, Op, RawOp, RawOpContent},
-    LoroValue,
+    txn::Transaction,
+    DocState, LoroValue,
 };
 
 use fxhash::FxHashMap;
@@ -293,7 +298,9 @@ impl ContainerState for ListState {
         &mut self,
         diff: InternalDiff,
         arena: &SharedArena,
-    ) -> UnresolvedDiff {
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Diff {
         let InternalDiff::SeqRaw(delta) = diff else {
             unreachable!()
         };
@@ -318,7 +325,11 @@ impl ContainerState for ListState {
                             arr.push(value);
                         }
                     }
-                    ans = ans.insert(arr.clone());
+                    ans = ans.insert(
+                        arr.iter()
+                            .map(|v| ValueOrContainer::from_value(v.clone(), arena, txn, state))
+                            .collect::<Vec<_>>(),
+                    );
                     let len = arr.len();
                     self.insert_batch(index, arr);
                     index += len;
@@ -330,10 +341,16 @@ impl ContainerState for ListState {
             }
         }
 
-        UnresolvedDiff::List(ans)
+        Diff::List(ans)
     }
 
-    fn apply_diff(&mut self, diff: InternalDiff, arena: &SharedArena) {
+    fn apply_diff(
+        &mut self,
+        diff: InternalDiff,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) {
         match diff {
             InternalDiff::SeqRaw(delta) => {
                 let mut index = 0;
@@ -442,8 +459,20 @@ impl ContainerState for ListState {
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
-    fn to_diff(&mut self) -> UnresolvedDiff {
-        UnresolvedDiff::List(Delta::new().insert(self.to_vec()))
+    fn to_diff(
+        &mut self,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Diff {
+        Diff::List(
+            Delta::new().insert(
+                self.to_vec()
+                    .into_iter()
+                    .map(|v| ValueOrContainer::from_value(v, arena, txn, state))
+                    .collect::<Vec<_>>(),
+            ),
+        )
     }
 
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {

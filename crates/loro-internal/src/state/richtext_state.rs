@@ -1,4 +1,7 @@
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::Range,
+    sync::{Arc, Mutex, Weak},
+};
 
 use fxhash::FxHashMap;
 use generic_btree::rle::{HasLength, Mergeable};
@@ -16,10 +19,11 @@ use crate::{
     },
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
     delta::{Delta, DeltaItem, StyleMeta},
-    event::{InternalDiff, UnresolvedDiff},
+    event::{Diff, InternalDiff},
     op::{Op, RawOp},
+    txn::Transaction,
     utils::{bitmap::BitMap, lazy::LazyLoad, string_slice::StringSlice},
-    InternalString,
+    DocState, InternalString,
 };
 
 use super::ContainerState;
@@ -139,7 +143,9 @@ impl ContainerState for RichtextState {
         &mut self,
         diff: InternalDiff,
         _arena: &SharedArena,
-    ) -> UnresolvedDiff {
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Diff {
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
         };
@@ -260,10 +266,16 @@ impl ContainerState for RichtextState {
         let ans = ans.compose(style_delta);
         debug_log::debug_dbg!(&ans);
         debug_log::group_end!();
-        UnresolvedDiff::Text(ans)
+        Diff::Text(ans)
     }
 
-    fn apply_diff(&mut self, diff: InternalDiff, _arena: &SharedArena) {
+    fn apply_diff(
+        &mut self,
+        diff: InternalDiff,
+        _arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) {
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
         };
@@ -396,7 +408,12 @@ impl ContainerState for RichtextState {
         Ok(())
     }
 
-    fn to_diff(&mut self) -> UnresolvedDiff {
+    fn to_diff(
+        &mut self,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Diff {
         let mut delta = crate::delta::Delta::new();
         for span in self.state.get_mut().iter() {
             delta.vec.push(DeltaItem::Insert {
@@ -405,7 +422,7 @@ impl ContainerState for RichtextState {
             })
         }
 
-        UnresolvedDiff::Text(delta)
+        Diff::Text(delta)
     }
 
     fn start_txn(&mut self) {

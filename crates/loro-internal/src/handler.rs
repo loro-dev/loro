@@ -1,5 +1,6 @@
 use super::{state::DocState, txn::Transaction};
 use crate::{
+    arena::SharedArena,
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, ListOp},
@@ -140,6 +141,22 @@ impl Handler {
 pub enum ValueOrContainer {
     Value(LoroValue),
     Container(Handler),
+}
+
+impl ValueOrContainer {
+    pub(crate) fn from_value(
+        value: LoroValue,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Self {
+        if let LoroValue::Container(c) = value {
+            let idx = arena.id_to_idx(&c).unwrap();
+            ValueOrContainer::Container(Handler::new(txn.clone(), idx, state.clone()))
+        } else {
+            ValueOrContainer::Value(value)
+        }
+    }
 }
 
 impl TextHandler {
