@@ -140,22 +140,19 @@ impl DocState {
     ) -> Arc<Mutex<Self>> {
         let peer = DefaultRandom.next_u64();
         // TODO: maybe we should switch to certain version in oplog?
-        let state = Arc::new(Mutex::new(Self {
-            peer,
-            arena,
-            frontiers: Frontiers::default(),
-            states: FxHashMap::default(),
-            weak_state: Weak::new(),
-            global_txn,
-            in_txn: false,
-            changed_idx_in_txn: FxHashSet::default(),
-            event_recorder: Default::default(),
-        }));
-        {
-            let weak_state = Arc::downgrade(&state);
-            state.lock().unwrap().weak_state = weak_state;
-        }
-        state
+        Arc::new_cyclic(|weak| {
+            Mutex::new(Self {
+                peer,
+                arena,
+                frontiers: Frontiers::default(),
+                states: FxHashMap::default(),
+                weak_state: weak.clone(),
+                global_txn,
+                in_txn: false,
+                changed_idx_in_txn: FxHashSet::default(),
+                event_recorder: Default::default(),
+            })
+        })
     }
 
     pub fn start_recording(&mut self) {
