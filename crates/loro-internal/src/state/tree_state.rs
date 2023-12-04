@@ -167,8 +167,8 @@ impl ContainerState for TreeState {
         &mut self,
         diff: crate::event::InternalDiff,
         _arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
     ) -> Diff {
         if let InternalDiff::Tree(tree) = &diff {
             // assert never cause cycle move
@@ -224,9 +224,9 @@ impl ContainerState for TreeState {
 
     fn to_diff(
         &mut self,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        _arena: &SharedArena,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
     ) -> Diff {
         let mut diffs = vec![];
         // TODO: perf

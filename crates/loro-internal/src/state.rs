@@ -800,6 +800,7 @@ impl DocState {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bring_back_sub_container(
     state_diff: &Diff,
     queue: &mut Vec<InternalContainerDiff>,

@@ -20,8 +20,7 @@ use crate::{
     handler::TextHandler,
     handler::TreeHandler,
     id::PeerID,
-    version::Frontiers,
-    DocDiff, InternalString, LoroError, VersionVector,
+    version::Frontiers, InternalString, LoroError, VersionVector,
 };
 
 use super::{
@@ -329,9 +328,9 @@ impl LoroDoc {
         );
 
         let obs = self.observer.clone();
-        let weak_state = Arc::downgrade(&self.state);
-        let arena = self.arena.clone();
-        let weak_txn = Arc::downgrade(&self.txn);
+        let _weak_state = Arc::downgrade(&self.state);
+        let _arena = self.arena.clone();
+        let _weak_txn = Arc::downgrade(&self.txn);
         txn.set_on_commit(Box::new(move |state| {
             let mut state = state.try_lock().unwrap();
             let events = state.take_events();

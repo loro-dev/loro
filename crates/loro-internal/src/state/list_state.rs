@@ -348,8 +348,8 @@ impl ContainerState for ListState {
         &mut self,
         diff: InternalDiff,
         arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
     ) {
         match diff {
             InternalDiff::SeqRaw(delta) => {

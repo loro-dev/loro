@@ -1,26 +1,20 @@
 use enum_as_inner::EnumAsInner;
-use fxhash::{FxHashMap, FxHasher64};
+use fxhash::FxHasher64;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    arena::SharedArena,
     container::richtext::richtext_state::RichtextStateChunk,
-    delta::{
-        Delta, DeltaItem, MapDelta, ResolvedMapDelta, ResolvedMapValue, StyleMeta, TreeDelta,
-        TreeDiff,
-    },
-    handler::{Handler, ValueOrContainer},
+    delta::{Delta, MapDelta, ResolvedMapDelta, StyleMeta, TreeDelta, TreeDiff},
+    handler::ValueOrContainer,
     op::SliceRanges,
-    txn::Transaction,
     utils::string_slice::StringSlice,
-    DocState, InternalString, LoroValue,
+    InternalString,
 };
 
 use std::{
     borrow::Cow,
     hash::{Hash, Hasher},
-    sync::{Mutex, Weak},
 };
 
 use loro_common::{ContainerID, TreeID};

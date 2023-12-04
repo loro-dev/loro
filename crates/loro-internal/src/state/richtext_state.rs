@@ -143,8 +143,8 @@ impl ContainerState for RichtextState {
         &mut self,
         diff: InternalDiff,
         _arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
     ) -> Diff {
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
@@ -273,8 +273,8 @@ impl ContainerState for RichtextState {
         &mut self,
         diff: InternalDiff,
         _arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
     ) {
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
@@ -410,9 +410,9 @@ impl ContainerState for RichtextState {
 
     fn to_diff(
         &mut self,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        _arena: &SharedArena,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
     ) -> Diff {
         let mut delta = crate::delta::Delta::new();
         for span in self.state.get_mut().iter() {
