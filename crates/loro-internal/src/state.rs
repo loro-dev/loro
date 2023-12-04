@@ -271,15 +271,24 @@ impl DocState {
 
         let mut idx2state_diff = FxHashMap::default();
         let mut diffs = if is_recording {
+            let mut sub_container_diff_patch = SubContainerDiffPatch {
+                all_idx: inner.iter().map(|d| d.idx).collect(),
+                diff_queue: vec![],
+                mark_bring_back: FxHashSet::default(),
+                arena: self.arena.clone(),
+                txn: self.global_txn.clone(),
+                weak_state: self.weak_state.clone(),
+            };
+
             // To handle the `bring_back`, we need cache the state diff of current version first,
             // because the state that is applied diffs could be also set to `bring_back` later.
             // We recursively determine one by one whether we need to bring back and push the diff to the queue.
-            let mut diff_queue = vec![];
-            let mut need_bring_back = FxHashSet::default();
-            let all_idx: FxHashSet<ContainerIdx> = inner.iter().map(|d| d.idx).collect();
+            // let mut diff_queue = vec![];
+            // let mut need_bring_back = FxHashSet::default();
+            // let all_idx: FxHashSet<ContainerIdx> = inner.iter().map(|d| d.idx).collect();
             for mut diff in inner {
                 let idx = diff.idx;
-                if need_bring_back.contains(&idx) {
+                if sub_container_diff_patch.marked_bring_back(&idx) {
                     diff.bring_back = true;
                 }
                 if diff.bring_back {
@@ -292,26 +301,20 @@ impl DocState {
                         // empty diff, skip it
                         continue;
                     }
-                    diff_queue.push(diff);
+                    sub_container_diff_patch.push_diff(diff);
                     if !state_diff.is_empty() {
-                        bring_back_sub_container(
+                        sub_container_diff_patch.bring_back_sub_container(
                             &state_diff,
-                            &mut diff_queue,
-                            &mut need_bring_back,
-                            &all_idx,
                             &mut self.states,
                             &mut idx2state_diff,
-                            &self.arena,
-                            &self.global_txn,
-                            &self.weak_state,
                         );
                         idx2state_diff.insert(idx, state_diff);
                     }
                 } else {
-                    diff_queue.push(diff);
+                    sub_container_diff_patch.push_diff(diff);
                 }
             }
-            diff_queue
+            sub_container_diff_patch.take_diff()
         } else {
             inner
         };
@@ -797,94 +800,95 @@ impl DocState {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn bring_back_sub_container(
-    state_diff: &Diff,
-    queue: &mut Vec<InternalContainerDiff>,
-    mark_bring_back: &mut FxHashSet<ContainerIdx>,
-    all_idx: &FxHashSet<ContainerIdx>,
-    states: &mut FxHashMap<ContainerIdx, State>,
-    idx2state: &mut FxHashMap<ContainerIdx, Diff>,
-    arena: &SharedArena,
-    txn: &Weak<Mutex<Option<Transaction>>>,
-    weak_state: &Weak<Mutex<DocState>>,
-) {
-    match state_diff {
-        Diff::List(list) => {
-            for delta in list.iter() {
-                if delta.is_insert() {
-                    for v in delta.as_insert().unwrap().0.iter() {
-                        if matches!(v, ValueOrContainer::Container(_)) {
-                            let idx = v.as_container().unwrap().container_idx();
-                            if all_idx.contains(&idx) {
-                                // There is one in subsequent elements that require applying the diff
-                                mark_bring_back.insert(idx);
-                            } else if let Some(state) = states.get_mut(&idx) {
-                                // only bring back
-                                // If the state is not empty, add this to queue and check
-                                // whether there are sub-containers created by it recursively
-                                // and finally cache the state
-                                let diff = state.to_diff(arena, txn, weak_state);
-                                if !diff.is_empty() {
-                                    queue.push(InternalContainerDiff {
-                                        idx,
-                                        bring_back: true,
-                                        is_container_deleted: false,
-                                        diff: None,
-                                    });
-                                    bring_back_sub_container(
-                                        &diff,
-                                        queue,
-                                        mark_bring_back,
-                                        all_idx,
-                                        states,
-                                        idx2state,
-                                        arena,
-                                        txn,
-                                        weak_state,
-                                    );
-                                    idx2state.insert(idx, diff);
+struct SubContainerDiffPatch {
+    // All the container idx that are in the diff
+    all_idx: FxHashSet<ContainerIdx>,
+    // All diffs after resolving the bring_back
+    diff_queue: Vec<InternalContainerDiff>,
+    // All the container idx that need to be brought back
+    mark_bring_back: FxHashSet<ContainerIdx>,
+    arena: SharedArena,
+    txn: Weak<Mutex<Option<Transaction>>>,
+    weak_state: Weak<Mutex<DocState>>,
+}
+
+impl SubContainerDiffPatch {
+    fn take_diff(self) -> Vec<InternalContainerDiff> {
+        self.diff_queue
+    }
+
+    fn marked_bring_back(&self, idx: &ContainerIdx) -> bool {
+        self.mark_bring_back.contains(idx)
+    }
+
+    fn push_diff(&mut self, diff: InternalContainerDiff) {
+        self.diff_queue.push(diff);
+    }
+
+    fn bring_back_sub_container(
+        &mut self,
+        state_diff: &Diff,
+        states: &mut FxHashMap<ContainerIdx, State>,
+        idx2state: &mut FxHashMap<ContainerIdx, Diff>,
+    ) {
+        match state_diff {
+            Diff::List(list) => {
+                for delta in list.iter() {
+                    if delta.is_insert() {
+                        for v in delta.as_insert().unwrap().0.iter() {
+                            if matches!(v, ValueOrContainer::Container(_)) {
+                                let idx = v.as_container().unwrap().container_idx();
+                                if self.all_idx.contains(&idx) {
+                                    // There is one in subsequent elements that require applying the diff
+                                    self.mark_bring_back.insert(idx);
+                                } else if let Some(state) = states.get_mut(&idx) {
+                                    // only bring back
+                                    // If the state is not empty, add this to queue and check
+                                    // whether there are sub-containers created by it recursively
+                                    // and finally cache the state
+                                    let diff =
+                                        state.to_diff(&self.arena, &self.txn, &self.weak_state);
+                                    if !diff.is_empty() {
+                                        self.diff_queue.push(InternalContainerDiff {
+                                            idx,
+                                            bring_back: true,
+                                            is_container_deleted: false,
+                                            diff: None,
+                                        });
+                                        self.bring_back_sub_container(&diff, states, idx2state);
+                                        idx2state.insert(idx, diff);
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-        }
-        Diff::Map(map) => {
-            for (_, v) in map.updated.iter() {
-                if let Some(ValueOrContainer::Container(handler)) = &v.value {
-                    let idx = handler.container_idx();
-                    if all_idx.contains(&idx) {
-                        mark_bring_back.insert(idx);
-                    } else if let Some(state) = states.get_mut(&idx) {
-                        let diff = state.to_diff(arena, txn, weak_state);
-                        if !diff.is_empty() {
-                            queue.push(InternalContainerDiff {
-                                idx,
-                                bring_back: true,
-                                is_container_deleted: false,
-                                diff: None,
-                            });
-                            bring_back_sub_container(
-                                &diff,
-                                queue,
-                                mark_bring_back,
-                                all_idx,
-                                states,
-                                idx2state,
-                                arena,
-                                txn,
-                                weak_state,
-                            );
-                            idx2state.insert(idx, diff);
+            Diff::Map(map) => {
+                for (_, v) in map.updated.iter() {
+                    if let Some(ValueOrContainer::Container(handler)) = &v.value {
+                        let idx = handler.container_idx();
+                        if self.all_idx.contains(&idx) {
+                            self.mark_bring_back.insert(idx);
+                        } else if let Some(state) = states.get_mut(&idx) {
+                            let diff = state.to_diff(&self.arena, &self.txn, &self.weak_state);
+                            if !diff.is_empty() {
+                                self.diff_queue.push(InternalContainerDiff {
+                                    idx,
+                                    bring_back: true,
+                                    is_container_deleted: false,
+                                    diff: None,
+                                });
+                                self.bring_back_sub_container(&diff, states, idx2state);
+                                idx2state.insert(idx, diff);
+                            }
                         }
                     }
                 }
             }
-        }
-        _ => {}
-    };
+            _ => {}
+        };
+    }
 }
 
 pub fn create_state(idx: ContainerIdx) -> State {
