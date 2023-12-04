@@ -7,6 +7,23 @@ use loro_internal::{
 use serde_json::json;
 
 #[test]
+fn mark_with_the_same_key_value_should_be_skipped() {
+    let a = LoroDoc::new_auto_commit();
+    let text = a.get_text("text");
+    text.insert(0, "Hello world!").unwrap();
+    text.mark(0, 11, "key", "value".into(), TextStyleInfoFlag::BOLD)
+        .unwrap();
+    a.commit_then_renew();
+    let v = a.oplog_vv();
+    text.mark(0, 5, "key", "value".into(), TextStyleInfoFlag::BOLD)
+        .unwrap();
+    a.commit_then_renew();
+    let new_v = a.oplog_vv();
+    // new mark should be ignored, so vv should be the same
+    assert_eq!(v, new_v);
+}
+
+#[test]
 fn event_from_checkout() {
     let a = LoroDoc::new_auto_commit();
     let sub_id = a.subscribe_root(Arc::new(|event| {

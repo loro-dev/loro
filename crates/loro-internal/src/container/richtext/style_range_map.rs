@@ -2,8 +2,8 @@
 //!
 
 use std::{
-    collections::{BTreeSet, HashMap},
-    ops::Range,
+    collections::BTreeSet,
+    ops::{Deref, DerefMut, Range},
     sync::Arc,
     usize,
 };
@@ -32,10 +32,38 @@ pub(super) struct StyleRangeMap {
 #[derive(Debug, Clone)]
 pub(super) struct RangeNumMapTrait;
 
-pub(crate) type Styles = FxHashMap<StyleKey, StyleValue>;
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct Styles {
+    pub(crate) styles: FxHashMap<StyleKey, StyleValue>,
+}
 
-pub(super) static EMPTY_STYLES: Lazy<Styles> =
-    Lazy::new(|| HashMap::with_hasher(Default::default()));
+impl Styles {
+    pub(crate) fn has_key_value(&self, key: &str, value: &loro_common::LoroValue) -> bool {
+        match self.get(&StyleKey::Key(key.into())) {
+            Some(v) => match v.get() {
+                Some(v) => &v.value == value,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+}
+
+impl Deref for Styles {
+    type Target = FxHashMap<StyleKey, StyleValue>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.styles
+    }
+}
+
+impl DerefMut for Styles {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.styles
+    }
+}
+
+pub(super) static EMPTY_STYLES: Lazy<Styles> = Lazy::new(Default::default);
 
 #[derive(Debug, Clone)]
 pub(super) struct Elem {
@@ -101,6 +129,29 @@ impl StyleRangeMap {
 
                 None
             });
+    }
+
+    /// Get the styles of the range. If the range is not in the same leaf, return None.
+    pub(crate) fn get_styles_of_range(&self, range: Range<usize>) -> Option<&Styles> {
+        if !self.has_style {
+            return None;
+        }
+
+        let right = self
+            .tree
+            .query::<LengthFinder>(&(range.end - 1))
+            .unwrap()
+            .cursor;
+        let left = self
+            .tree
+            .query::<LengthFinder>(&range.start)
+            .unwrap()
+            .cursor;
+        if left.leaf == right.leaf {
+            Some(&self.tree.get_elem(left.leaf).unwrap().styles)
+        } else {
+            None
+        }
     }
 
     /// Insert entities at `pos` with length of `len`

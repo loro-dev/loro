@@ -3,7 +3,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, ListOp},
-        richtext::TextStyleInfoFlag,
+        richtext::{richtext_state::PosType, TextStyleInfoFlag},
         tree::tree_op::TreeOp,
     },
     delta::{TreeDiffItem, TreeExternalDiff},
@@ -442,24 +442,34 @@ impl TextHandler {
             return Err(LoroError::OutOfBound { pos: end, len });
         }
 
-        let (entity_start, entity_end) = self
+        let (entity_range, skip) = self
             .state
             .upgrade()
             .unwrap()
             .lock()
             .unwrap()
             .with_state_mut(self.container_idx, |state| {
-                (
-                    state
-                        .as_richtext_state_mut()
-                        .unwrap()
-                        .get_entity_index_for_text_insert(start),
-                    state
-                        .as_richtext_state_mut()
-                        .unwrap()
-                        .get_entity_index_for_text_insert(end),
-                )
+                let (entity_range, styles) = state
+                    .as_richtext_state_mut()
+                    .unwrap()
+                    .get_entity_range_and_styles_at_range(start..end, PosType::Event);
+
+                let skip = match styles {
+                    Some(styles) if styles.has_key_value(key, &value) => {
+                        // already has the same style, skip
+                        true
+                    }
+                    _ => false,
+                };
+                (entity_range, skip)
             });
+
+        if skip {
+            return Ok(());
+        }
+
+        let entity_start = entity_range.start;
+        let entity_end = entity_range.end;
 
         txn.apply_local_op(
             self.container_idx,

@@ -11,7 +11,7 @@ use crate::{
         idx::ContainerIdx,
         richtext::{
             richtext_state::{EntityRangeInfo, PosType},
-            AnchorType, RichtextState as InnerState, StyleOp, TextStyleInfoFlag,
+            AnchorType, RichtextState as InnerState, StyleOp, Styles, TextStyleInfoFlag,
         },
     },
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
@@ -480,26 +480,36 @@ impl RichtextState {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn len_unicode(&mut self) -> usize {
         self.state.get_mut().len_unicode()
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn get_entity_index_for_text_insert(&mut self, event_index: usize) -> usize {
         self.state
             .get_mut()
             .get_entity_index_for_text_insert(event_index, PosType::Event)
     }
 
-    #[inline(always)]
+    pub(crate) fn get_entity_range_and_styles_at_range(
+        &mut self,
+        range: Range<usize>,
+        pos_type: PosType,
+    ) -> (Range<usize>, Option<&Styles>) {
+        self.state
+            .get_mut()
+            .get_entity_range_and_text_styles_at_range(range, pos_type)
+    }
+
+    #[inline]
     pub(crate) fn get_styles_at_entity_index(&mut self, entity_index: usize) -> StyleMeta {
         self.state
             .get_mut()
             .get_styles_at_entity_index_for_insert(entity_index)
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn get_text_entity_ranges_in_event_index_range(
         &mut self,
         pos: usize,
@@ -510,12 +520,12 @@ impl RichtextState {
             .get_text_entity_ranges(pos, len, PosType::Event)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn get_richtext_value(&mut self) -> LoroValue {
         self.state.get_mut().get_richtext_value()
     }
 
-    #[inline(always)]
+    #[inline]
     fn get_loader() -> RichtextStateLoader {
         RichtextStateLoader {
             elements: Default::default(),
@@ -525,7 +535,7 @@ impl RichtextState {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn iter_chunk(&self) -> Box<dyn Iterator<Item = &RichtextStateChunk> + '_> {
         match &*self.state {
             LazyLoad::Src(s) => Box::new(s.elements.iter()),
