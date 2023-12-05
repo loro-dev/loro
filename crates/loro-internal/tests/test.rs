@@ -2,7 +2,10 @@ use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
 use loro_common::{ContainerID, ContainerType, LoroValue, ID};
 use loro_internal::{
-    container::richtext::TextStyleInfoFlag, version::Frontiers, ApplyDiff, LoroDoc, ToJson,
+    container::richtext::TextStyleInfoFlag,
+    handler::{Handler, ValueOrContainer},
+    version::Frontiers,
+    ApplyDiff, LoroDoc, ToJson,
 };
 use serde_json::json;
 
@@ -26,6 +29,34 @@ fn event_from_checkout() {
     }));
     a.checkout(&version).unwrap();
     assert!(ran_cloned.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+#[test]
+fn handler_in_event() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.subscribe_root(Arc::new(|e| {
+        let value = e
+            .container
+            .diff
+            .as_list()
+            .unwrap()
+            .iter()
+            .next()
+            .unwrap()
+            .as_insert()
+            .unwrap()
+            .0
+            .iter()
+            .next()
+            .unwrap();
+        assert!(matches!(
+            value,
+            ValueOrContainer::Container(Handler::Text(_))
+        ));
+    }));
+    let list = doc.get_list("list");
+    list.insert_container(0, ContainerType::Text).unwrap();
+    doc.commit_then_renew();
 }
 
 #[test]
@@ -270,7 +301,7 @@ fn import_after_init_handlers() {
         Arc::new(|event| {
             assert!(matches!(
                 event.container.diff,
-                loro_internal::event::Diff::NewMap(_)
+                loro_internal::event::Diff::Map(_)
             ))
         }),
     );

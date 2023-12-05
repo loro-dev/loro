@@ -13,15 +13,15 @@ use tabled::{TableIteratorExt, Tabled};
 
 #[allow(unused_imports)]
 use crate::{
-    array_mut_ref, container::ContainerID, delta::DeltaItem, event::Diff, id::PeerID,
-    ContainerType, LoroValue,
+    array_mut_ref, container::ContainerID, delta::DeltaItem, id::PeerID, ContainerType, LoroValue,
 };
 use crate::{
     container::{
         idx::ContainerIdx,
         richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
     },
-    handler::TextHandler,
+    event::Diff,
+    handler::{TextHandler, ValueOrContainer},
     loro::LoroDoc,
     value::ToJson,
     version::Frontiers,
@@ -152,7 +152,7 @@ impl Actor {
                 }
             }),
         );
-
+        let arena = actor.loro.oplog().lock().unwrap().arena.clone();
         let map = Arc::clone(&actor.map_tracker);
         actor.loro.subscribe(
             &ContainerID::new_root("map", ContainerType::Map),
@@ -161,11 +161,18 @@ impl Actor {
                     return;
                 }
                 let mut map = map.lock().unwrap();
-                if let Diff::NewMap(map_diff) = &event.container.diff {
+                if let Diff::Map(map_diff) = &event.container.diff {
                     for (key, value) in map_diff.updated.iter() {
                         match &value.value {
                             Some(value) => {
-                                map.insert(key.to_string(), value.clone());
+                                let value = match value {
+                                    ValueOrContainer::Container(c) => {
+                                        let id = arena.idx_to_id(c.container_idx()).unwrap();
+                                        LoroValue::Container(id)
+                                    }
+                                    ValueOrContainer::Value(v) => v.clone(),
+                                };
+                                map.insert(key.to_string(), value);
                             }
                             None => {
                                 map.remove(&key.to_string());
@@ -178,7 +185,7 @@ impl Actor {
                 }
             }),
         );
-
+        let arena = actor.loro.oplog().lock().unwrap().arena.clone();
         let list = Arc::clone(&actor.list_tracker);
         actor.loro.subscribe(
             &ContainerID::new_root("list", ContainerType::List),
@@ -202,7 +209,14 @@ impl Actor {
                                 attributes: _,
                             } => {
                                 for v in value {
-                                    list.insert(index, v.clone());
+                                    let value = match v {
+                                        ValueOrContainer::Container(c) => {
+                                            let id = arena.idx_to_id(c.container_idx()).unwrap();
+                                            LoroValue::Container(id)
+                                        }
+                                        ValueOrContainer::Value(v) => v.clone(),
+                                    };
+                                    list.insert(index, value);
                                     index += 1;
                                 }
                             }

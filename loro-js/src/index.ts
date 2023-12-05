@@ -1,13 +1,7 @@
 export * from "loro-wasm";
 import { Container, ContainerType, Delta, OpId, Value } from "loro-wasm";
 import { PrelimText, PrelimList, PrelimMap } from "loro-wasm";
-import {
-  ContainerID,
-  Loro,
-  LoroList,
-  LoroMap,
-  TreeID,
-} from "loro-wasm";
+import { ContainerID, Loro, LoroList, LoroMap, TreeID } from "loro-wasm";
 
 Loro.prototype.getTypedMap = function (...args) {
   return this.getMap(...args);
@@ -79,7 +73,7 @@ export interface LoroEvent {
 
 export type ListDiff = {
   type: "list";
-  diff: Delta<Value[]>[];
+  diff: Delta<(Value | Container)[]>[];
 };
 
 export type TextDiff = {
@@ -89,14 +83,14 @@ export type TextDiff = {
 
 export type MapDiff = {
   type: "map";
-  updated: Record<string, Value | undefined>;
+  updated: Record<string, Value | Container | undefined>;
 };
 
 export type TreeDiff = {
   type: "tree";
   diff:
-  | { target: TreeID; action: "create" | "delete" }
-  | { target: TreeID; action: "move"; parent: TreeID };
+    | { target: TreeID; action: "create" | "delete" }
+    | { target: TreeID; action: "move"; parent: TreeID };
 };
 
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
@@ -137,10 +131,10 @@ declare module "loro-wasm" {
 
   interface Loro<T extends Record<string, any> = Record<string, any>> {
     getTypedMap<Key extends keyof T & string>(
-      name: Key,
+      name: Key
     ): T[Key] extends LoroMap ? T[Key] : never;
     getTypedList<Key extends keyof T & string>(
-      name: Key,
+      name: Key
     ): T[Key] extends LoroList ? T[Key] : never;
   }
 
@@ -180,7 +174,7 @@ declare module "loro-wasm" {
     subscribe(txn: Loro, listener: Listener): number;
   }
 
-  interface LoroTree{
+  interface LoroTree {
     create(parent: TreeID | undefined): TreeID;
     mov(target: TreeID, parent: TreeID | undefined): void;
     delete(target: TreeID): void;

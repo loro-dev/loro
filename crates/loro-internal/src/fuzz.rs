@@ -5,6 +5,7 @@ use crate::{
     array_mut_ref,
     container::richtext::TextStyleInfoFlag,
     delta::{Delta, DeltaItem, StyleMeta},
+    event::Diff,
     loro::LoroDoc,
     state::ContainerState,
     utils::string_slice::StringSlice,
@@ -520,7 +521,7 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         loro.subscribe(
             &ContainerID::new_root("text", loro_common::ContainerType::Text),
             Arc::new(move |event| {
-                if let crate::event::Diff::Text(t) = &event.container.diff {
+                if let Diff::Text(t) = &event.container.diff {
                     let mut text = text_clone.lock().unwrap();
                     debug_log::debug_log!(
                         "RECEIVE site:{} event:{:#?}\nCURRENT: {:#?}",
@@ -569,7 +570,9 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     debug_log::group!("CheckTextEvent");
     for (i, (site, text)) in sites.iter().zip(texts.iter()).enumerate() {
         debug_log::group!("Check {}", i);
-        let diff = site.get_text("text").with_state_mut(|s| s.to_diff());
+        let diff = site.get_text("text").with_state_mut(|s| {
+            s.to_diff(site.arena(), &site.get_global_txn(), &site.weak_state())
+        });
         let mut diff = diff.into_text().unwrap();
         compact(&mut diff);
         let mut text = text.lock().unwrap();

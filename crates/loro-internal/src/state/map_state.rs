@@ -1,4 +1,7 @@
-use std::{mem, sync::Arc};
+use std::{
+    mem,
+    sync::{Arc, Mutex, Weak},
+};
 
 use fxhash::FxHashMap;
 use loro_common::{ContainerID, LoroResult};
@@ -6,10 +9,12 @@ use loro_common::{ContainerID, LoroResult};
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, map::MapSet},
-    delta::MapValue,
+    delta::{MapValue, ResolvedMapDelta, ResolvedMapValue},
     event::{Diff, Index, InternalDiff},
+    handler::ValueOrContainer,
     op::{Op, RawOp, RawOpContent},
-    InternalString, LoroValue,
+    txn::Transaction,
+    DocState, InternalString, LoroValue,
 };
 
 use super::ContainerState;
@@ -23,12 +28,18 @@ pub struct MapState {
 }
 
 impl ContainerState for MapState {
-    fn apply_diff_and_convert(&mut self, diff: InternalDiff, arena: &SharedArena) -> Diff {
+    fn apply_diff_and_convert(
+        &mut self,
+        diff: InternalDiff,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Diff {
         let InternalDiff::Map(delta) = diff else {
             unreachable!()
         };
-
-        for (key, value) in delta.updated.iter() {
+        let mut resolved_delta = ResolvedMapDelta::new();
+        for (key, value) in delta.updated.into_iter() {
             if let Some(LoroValue::Container(c)) = &value.value {
                 let idx = arena.register_container(c);
                 arena.set_parent(idx, Some(self.idx));
@@ -36,9 +47,19 @@ impl ContainerState for MapState {
 
             let old = self.map.insert(key.clone(), value.clone());
             self.store_txn_snapshot(key.clone(), old);
+            resolved_delta = resolved_delta.with_entry(
+                key,
+                ResolvedMapValue {
+                    counter: value.counter,
+                    lamport: value.lamport,
+                    value: value
+                        .value
+                        .map(|v| ValueOrContainer::from_value(v, arena, txn, state)),
+                },
+            )
         }
 
-        Diff::NewMap(delta)
+        Diff::Map(resolved_delta)
     }
 
     fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) -> LoroResult<()> {
@@ -104,9 +125,19 @@ impl ContainerState for MapState {
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
-    fn to_diff(&mut self) -> Diff {
-        Diff::NewMap(crate::delta::MapDelta {
-            updated: self.map.clone(),
+    fn to_diff(
+        &mut self,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Diff {
+        Diff::Map(ResolvedMapDelta {
+            updated: self
+                .map
+                .clone()
+                .into_iter()
+                .map(|(k, v)| (k, ResolvedMapValue::from_map_value(v, arena, txn, state)))
+                .collect::<FxHashMap<_, _>>(),
         })
     }
 

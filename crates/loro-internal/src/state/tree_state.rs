@@ -3,11 +3,12 @@ use itertools::Itertools;
 use loro_common::{ContainerID, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID};
 use serde::{Deserialize, Serialize};
 use std::collections::{hash_map::Iter, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::TreeDeletedSetTrait;
 use crate::event::InternalDiff;
+use crate::txn::Transaction;
 use crate::DocState;
 use crate::{
     arena::SharedArena,
@@ -166,6 +167,8 @@ impl ContainerState for TreeState {
         &mut self,
         diff: crate::event::InternalDiff,
         _arena: &SharedArena,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
     ) -> Diff {
         if let InternalDiff::Tree(tree) = &diff {
             // assert never cause cycle move
@@ -219,7 +222,12 @@ impl ContainerState for TreeState {
         }
     }
 
-    fn to_diff(&mut self) -> Diff {
+    fn to_diff(
+        &mut self,
+        _arena: &SharedArena,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
+    ) -> Diff {
         let mut diffs = vec![];
         // TODO: perf
         let forest = Forest::from_tree_state(&self.trees);

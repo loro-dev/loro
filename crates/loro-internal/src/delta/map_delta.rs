@@ -1,18 +1,60 @@
-use std::hash::Hash;
+use std::{
+    hash::Hash,
+    sync::{Mutex, Weak},
+};
 
 use fxhash::FxHashMap;
 use serde::{ser::SerializeStruct, Serialize};
 
 use crate::{
+    arena::SharedArena,
     change::Lamport,
+    handler::ValueOrContainer,
     id::{Counter, PeerID, ID},
     span::{HasId, HasLamport},
-    InternalString, LoroValue,
+    txn::Transaction,
+    DocState, InternalString, LoroValue,
 };
 
 #[derive(Default, Debug, Clone, Serialize)]
 pub struct MapDelta {
     pub updated: FxHashMap<InternalString, MapValue>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MapValue {
+    pub counter: Counter,
+    pub value: Option<LoroValue>,
+    pub lamport: (Lamport, PeerID),
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct ResolvedMapDelta {
+    pub updated: FxHashMap<InternalString, ResolvedMapValue>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedMapValue {
+    pub counter: Counter,
+    pub value: Option<ValueOrContainer>,
+    pub lamport: (Lamport, PeerID),
+}
+
+impl ResolvedMapValue {
+    pub(crate) fn from_map_value(
+        v: MapValue,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Self {
+        ResolvedMapValue {
+            counter: v.counter,
+            lamport: v.lamport,
+            value: v
+                .value
+                .map(|v| ValueOrContainer::from_value(v, arena, txn, state)),
+        }
+    }
 }
 
 impl MapDelta {
@@ -44,11 +86,33 @@ impl MapDelta {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct MapValue {
-    pub counter: Counter,
-    pub value: Option<LoroValue>,
-    pub lamport: (Lamport, PeerID),
+impl ResolvedMapDelta {
+    pub(crate) fn compose(&self, x: ResolvedMapDelta) -> ResolvedMapDelta {
+        let mut updated = self.updated.clone();
+        for (k, v) in x.updated.into_iter() {
+            if let Some(old) = updated.get_mut(&k) {
+                if v.lamport > old.lamport {
+                    *old = v;
+                }
+            } else {
+                updated.insert(k, v);
+            }
+        }
+        ResolvedMapDelta { updated }
+    }
+
+    #[inline]
+    pub fn new() -> Self {
+        ResolvedMapDelta {
+            updated: FxHashMap::default(),
+        }
+    }
+
+    #[inline]
+    pub fn with_entry(mut self, key: InternalString, map_value: ResolvedMapValue) -> Self {
+        self.updated.insert(key, map_value);
+        self
+    }
 }
 
 impl Hash for MapValue {
@@ -100,15 +164,5 @@ impl Serialize for MapValue {
         s.serialize_field("value", &self.value)?;
         s.serialize_field("lamport", &self.lamport)?;
         s.end()
-    }
-}
-
-impl MapValue {
-    pub fn new(id: ID, lamport: Lamport, value: Option<LoroValue>) -> Self {
-        MapValue {
-            counter: id.counter,
-            value,
-            lamport: (lamport, id.peer),
-        }
     }
 }

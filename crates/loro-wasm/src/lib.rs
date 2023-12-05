@@ -1,4 +1,5 @@
 #![allow(non_snake_case)]
+use convert::resolved_diff_to_js;
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
     change::Lamport,
@@ -7,9 +8,7 @@ use loro_internal::{
         ContainerID,
     },
     event::{Diff, Index},
-    handler::{
-        Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrContainer,
-    },
+    handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrContainer},
     id::{Counter, PeerID, TreeID, ID},
     obs::SubID,
     version::Frontiers,
@@ -22,6 +21,8 @@ use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
 mod log;
 mod prelim;
 pub use prelim::{PrelimList, PrelimMap, PrelimText};
+
+use crate::convert::handler_to_js_value;
 
 mod convert;
 
@@ -55,7 +56,7 @@ type JsResult<T> = Result<T, JsValue>;
 ///
 // When FinalizationRegistry is unavailable, it's the users' responsibility to free the document.
 #[wasm_bindgen]
-pub struct Loro(Rc<LoroDoc>);
+pub struct Loro(Arc<LoroDoc>);
 
 #[wasm_bindgen]
 extern "C" {
@@ -220,7 +221,7 @@ impl Loro {
     pub fn new() -> Self {
         let mut doc = LoroDoc::new();
         doc.start_auto_commit();
-        Self(Rc::new(doc))
+        Self(Arc::new(doc))
     }
 
     /// Get a loro document from the snapshot.
@@ -239,7 +240,7 @@ impl Loro {
     pub fn from_snapshot(snapshot: &[u8]) -> JsResult<Loro> {
         let mut doc = LoroDoc::from_snapshot(snapshot)?;
         doc.start_auto_commit();
-        Ok(Self(Rc::new(doc)))
+        Ok(Self(Arc::new(doc)))
     }
 
     /// Attach the document state to the latest known version.
@@ -702,9 +703,10 @@ impl Loro {
     // TODO: convert event and event sub config
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
         let observer = observer::Observer::new(f);
+        let doc = self.0.clone();
         self.0
             .subscribe_root(Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e)
+                call_after_micro_task(observer.clone(), e, doc.clone())
                 // call_subscriber(observer.clone(), e);
             }))
             .into_u32()
@@ -891,7 +893,7 @@ fn js_map_to_vv(map: js_sys::Map) -> JsResult<VersionVector> {
 }
 
 #[allow(unused)]
-fn call_subscriber(ob: observer::Observer, e: DiffEvent) {
+fn call_subscriber(ob: observer::Observer, e: DiffEvent, doc: Arc<LoroDoc>) {
     // We convert the event to js object here, so that we don't need to worry about GC.
     // In the future, when FinalizationRegistry[1] is stable, we can use `--weak-ref`[2] feature
     // in wasm-bindgen to avoid this.
@@ -912,7 +914,7 @@ fn call_subscriber(ob: observer::Observer, e: DiffEvent) {
         from_checkout: e.doc.from_checkout,
     }
     // PERF: converting the events into js values may hurt performance
-    .into_js();
+    .into_js(doc);
 
     if let Err(e) = ob.call1(&event) {
         console_error!("Error when calling observer: {:#?}", e);
@@ -920,7 +922,7 @@ fn call_subscriber(ob: observer::Observer, e: DiffEvent) {
 }
 
 #[allow(unused)]
-fn call_after_micro_task(ob: observer::Observer, e: DiffEvent) {
+fn call_after_micro_task(ob: observer::Observer, e: DiffEvent, doc: Arc<LoroDoc>) {
     let promise = Promise::resolve(&JsValue::NULL);
     type C = Closure<dyn FnMut(JsValue)>;
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
@@ -938,7 +940,7 @@ fn call_after_micro_task(ob: observer::Observer, e: DiffEvent) {
             e.container.path.iter().map(|x| &x.1),
         ),
     }
-    .into_js();
+    .into_js(doc);
 
     let closure = Closure::once(move |_: JsValue| {
         let ans = ob.call1(&event);
@@ -970,14 +972,14 @@ pub struct Event {
 }
 
 impl Event {
-    fn into_js(self) -> JsValue {
+    fn into_js(self, doc: Arc<LoroDoc>) -> JsValue {
         let obj = js_sys::Object::new();
         Reflect::set(&obj, &"local".into(), &self.local.into()).unwrap();
         Reflect::set(&obj, &"fromCheckout".into(), &self.from_checkout.into()).unwrap();
         Reflect::set(&obj, &"fromChildren".into(), &self.from_children.into()).unwrap();
         Reflect::set(&obj, &"origin".into(), &self.origin.into()).unwrap();
         Reflect::set(&obj, &"target".into(), &self.target.to_string().into()).unwrap();
-        Reflect::set(&obj, &"diff".into(), &self.diff.into()).unwrap();
+        Reflect::set(&obj, &"diff".into(), &resolved_diff_to_js(self.diff, doc)).unwrap();
         Reflect::set(&obj, &"path".into(), &self.path).unwrap();
         Reflect::set(&obj, &"id".into(), &self.id.into()).unwrap();
         obj.into()
@@ -997,7 +999,7 @@ impl Event {
 #[wasm_bindgen]
 pub struct LoroText {
     handler: TextHandler,
-    _doc: Rc<LoroDoc>,
+    _doc: Arc<LoroDoc>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1186,10 +1188,11 @@ impl LoroText {
     /// returns a subscription id, which can be used to unsubscribe.
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
+        let doc = loro.0.clone();
         let ans = loro.0.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                call_after_micro_task(observer.clone(), e, doc.clone());
             }),
         );
 
@@ -1229,7 +1232,7 @@ impl LoroText {
 #[wasm_bindgen]
 pub struct LoroMap {
     handler: MapHandler,
-    doc: Rc<LoroDoc>,
+    doc: Arc<LoroDoc>,
 }
 
 const CONTAINER_TYPE_ERR: &str = "Invalid container type, only supports Text, Map, List, Tree";
@@ -1458,10 +1461,11 @@ impl LoroMap {
     /// ```
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
+        let doc = loro.0.clone();
         let id = loro.0.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                call_after_micro_task(observer.clone(), e, doc.clone());
             }),
         );
 
@@ -1505,24 +1509,11 @@ impl LoroMap {
     }
 }
 
-fn handler_to_js_value(handler: Handler, doc: Rc<LoroDoc>) -> JsValue {
-    match handler {
-        Handler::Text(t) => LoroText {
-            handler: t,
-            _doc: doc,
-        }
-        .into(),
-        Handler::Map(m) => LoroMap { handler: m, doc }.into(),
-        Handler::List(l) => LoroList { handler: l, doc }.into(),
-        Handler::Tree(t) => LoroTree { handler: t, doc }.into(),
-    }
-}
-
 /// The handler of a list container.
 #[wasm_bindgen]
 pub struct LoroList {
     handler: ListHandler,
-    doc: Rc<LoroDoc>,
+    doc: Arc<LoroDoc>,
 }
 
 #[wasm_bindgen]
@@ -1717,10 +1708,11 @@ impl LoroList {
     /// ```
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
+        let doc = loro.0.clone();
         let ans = loro.0.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                call_after_micro_task(observer.clone(), e, doc.clone());
             }),
         );
         Ok(ans.into_u32())
@@ -1769,7 +1761,7 @@ impl LoroList {
 #[wasm_bindgen]
 pub struct LoroTree {
     handler: TreeHandler,
-    doc: Rc<LoroDoc>,
+    doc: Arc<LoroDoc>,
 }
 
 #[wasm_bindgen]
@@ -2020,10 +2012,11 @@ impl LoroTree {
     /// ```
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
+        let doc = loro.0.clone();
         let ans = loro.0.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                call_after_micro_task(observer.clone(), e, doc.clone());
             }),
         );
         Ok(ans.into_u32())
@@ -2107,7 +2100,7 @@ fn vv_to_js_value(vv: VersionVector) -> JsValue {
     map.into()
 }
 
-fn loro_value_to_js_value_or_container(value: ValueOrContainer, doc: &Rc<LoroDoc>) -> JsValue {
+fn loro_value_to_js_value_or_container(value: ValueOrContainer, doc: &Arc<LoroDoc>) -> JsValue {
     match value {
         ValueOrContainer::Value(v) => {
             let value: JsValue = v.into();

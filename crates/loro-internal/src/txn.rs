@@ -18,8 +18,11 @@ use crate::{
         richtext::{Style, StyleKey, TextStyleInfoFlag},
         IntoContainerId,
     },
-    delta::{Delta, MapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem},
+    delta::{
+        Delta, ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem,
+    },
     event::Diff,
+    handler::ValueOrContainer,
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
@@ -292,6 +295,8 @@ impl Transaction {
             Some(change_to_diff(
                 &change,
                 &oplog.arena,
+                &self.global_txn,
+                &Arc::downgrade(&self.state),
                 std::mem::take(&mut self.event_hints),
             ))
         } else {
@@ -462,6 +467,8 @@ pub(crate) struct TxnContainerDiff {
 fn change_to_diff(
     change: &Change,
     arena: &SharedArena,
+    txn: &Weak<Mutex<Option<Transaction>>>,
+    state: &Weak<Mutex<DocState>>,
     event_hints: Vec<EventHint>,
 ) -> Vec<TxnContainerDiff> {
     let mut ans: Vec<TxnContainerDiff> = Vec::with_capacity(change.ops.len());
@@ -580,7 +587,11 @@ fn change_to_diff(
                 EventHint::InsertList { .. } => {
                     for op in ops.iter() {
                         let (range, pos) = op.content.as_list().unwrap().as_insert().unwrap();
-                        let values = arena.get_values(range.to_range());
+                        let values = arena
+                            .get_values(range.to_range())
+                            .into_iter()
+                            .map(|v| ValueOrContainer::from_value(v, arena, txn, state))
+                            .collect::<Vec<_>>();
                         ans.push(TxnContainerDiff {
                             idx: op.container,
                             diff: Diff::List(Delta::new().retain(*pos).insert(values)),
@@ -595,11 +606,12 @@ fn change_to_diff(
                 }
                 EventHint::Map { key, value } => ans.push(TxnContainerDiff {
                     idx: op.container,
-                    diff: Diff::NewMap(crate::delta::MapDelta::new().with_entry(
+                    diff: Diff::Map(ResolvedMapDelta::new().with_entry(
                         key,
-                        MapValue {
+                        ResolvedMapValue {
                             counter: op.counter,
-                            value,
+                            value:
+                                value.map(|v| ValueOrContainer::from_value(v, arena, txn, state)),
                             lamport: (lamport, peer),
                         },
                     )),

@@ -1,4 +1,7 @@
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::Range,
+    sync::{Arc, Mutex, Weak},
+};
 
 use fxhash::FxHashMap;
 use generic_btree::rle::{HasLength, Mergeable};
@@ -18,8 +21,9 @@ use crate::{
     delta::{Delta, DeltaItem, StyleMeta},
     event::{Diff, InternalDiff},
     op::{Op, RawOp},
+    txn::Transaction,
     utils::{bitmap::BitMap, lazy::LazyLoad, string_slice::StringSlice},
-    InternalString,
+    DocState, InternalString,
 };
 
 use super::ContainerState;
@@ -135,7 +139,13 @@ impl Mergeable for UndoItem {
 
 impl ContainerState for RichtextState {
     // TODO: refactor
-    fn apply_diff_and_convert(&mut self, diff: InternalDiff, _arena: &SharedArena) -> Diff {
+    fn apply_diff_and_convert(
+        &mut self,
+        diff: InternalDiff,
+        _arena: &SharedArena,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
+    ) -> Diff {
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
         };
@@ -259,7 +269,13 @@ impl ContainerState for RichtextState {
         Diff::Text(ans)
     }
 
-    fn apply_diff(&mut self, diff: InternalDiff, _arena: &SharedArena) {
+    fn apply_diff(
+        &mut self,
+        diff: InternalDiff,
+        _arena: &SharedArena,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
+    ) {
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
         };
@@ -392,7 +408,12 @@ impl ContainerState for RichtextState {
         Ok(())
     }
 
-    fn to_diff(&mut self) -> Diff {
+    fn to_diff(
+        &mut self,
+        _arena: &SharedArena,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
+    ) -> Diff {
         let mut delta = crate::delta::Delta::new();
         for span in self.state.get_mut().iter() {
             delta.vec.push(DeltaItem::Insert {
