@@ -13,7 +13,8 @@
   "main": "nodejs/loro_wasm.js",
   "module": "bundler/loro_wasm.js",
   "scripts": {
-    "build": "deno task release"
+    "release": "deno run -A ./scripts/build.ts release",
+    "dev": "deno run -A ./scripts/build.ts dev"
   },
   "homepage": "https://loro.dev",
   "author": "",

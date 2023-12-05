@@ -5,7 +5,16 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "check-all": "cargo hack check --each-feature",
+    "build": "cargo build",
+    "test": "cargo nextest run --features=test_utils && cargo test --doc",
+    "test-all": "deno task test & deno task quick-fuzz & deno task test-wasm",
+    "test-wasm": "cd crates/loro-wasm && deno task dev && cd ../../loro-js && pnpm i && pnpm run test",
+    "release-wasm": "cd crates/loro-wasm && deno task release && cd ../../loro-js && pnpm i && pnpm build && pnpm run test",
+    "check": "cargo clippy --all-features",
+    "quick-fuzz": "cd crates/loro-internal && deno task quick-fuzz",
+    "fix": "cargo clippy --fix --features=test_utils",
+    "vet": "cargo vet"
   },
   "keywords": [],
   "author": "",
