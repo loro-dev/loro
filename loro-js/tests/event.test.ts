@@ -8,6 +8,7 @@ import {
   MapDiff,
   TextDiff,
   setPanicHook,
+  getType,
 } from "../src";
 
 setPanicHook();
@@ -302,9 +303,9 @@ describe("event", () => {
       const list = loro.getList("list");
       let first = true;
       loro.subscribe((e) => {
-        if(first){
-          const diff = e.diff.diff;
-          const text = diff[0].insert[0] as LoroText;
+        if (first) {
+          const diff = (e.diff as ListDiff).diff;
+          const text = diff[0].insert![0] as LoroText;
           text.insert(0, "abc");
           first = false;
         }
@@ -315,6 +316,32 @@ describe("event", () => {
       expect(loro.toJson().list[0]).toBe('abc');
     });
   });
+
+  it("diff can contain containers", async () => {
+    const doc = new Loro();
+    const list = doc.getList("list");
+    let ran = false;
+    doc.subscribe(event => {
+      if (event.diff.type === "list") {
+        for (const item of event.diff.diff) {
+          const t = item.insert![0] as LoroText;
+          expect(t.toString()).toBe("Hello")
+          expect(item.insert?.length).toBe(2);
+          expect(getType(item.insert![0])).toBe("Text")
+          expect(getType(item.insert![1])).toBe("Map")
+        }
+        ran = true;
+      }
+    })
+
+    list.insertContainer(0, "Map");
+    const t = list.insertContainer(0, "Text");
+    t.insert(0, "He");
+    t.insert(2, "llo");
+    doc.commit();
+    await new Promise(resolve => setTimeout(resolve, 1));
+    expect(ran).toBeTruthy()
+  })
 });
 
 function oneMs(): Promise<void> {

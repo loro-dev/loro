@@ -305,7 +305,6 @@ describe("type", () => {
   it("works for list type", () => {
     const loro = new Loro<{ list: LoroList<[string, number]> }>();
     const list = loro.getTypedList("list");
-    console.dir((list as any).__proto__);
     list.insertTyped(0, "123");
     list.insertTyped(1, 123);
     const v0 = list.getTyped(loro, 0);
@@ -331,7 +330,6 @@ describe("tree", () => {
   it("create move", () => {
     const id = tree.create();
     const childID = tree.create(id);
-    console.log(typeof id);
     assertEquals(tree.parent(childID), id);
   });
 

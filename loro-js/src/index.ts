@@ -128,7 +128,7 @@ export function isContainer(value: any): value is Container {
     return false;
   }
 
-  const p = value.__proto__;
+  const p = Object.getPrototypeOf(value);
   if (p == null || typeof p !== "object" || typeof p["kind"] !== "function") {
     return false;
   }

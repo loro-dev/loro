@@ -68,6 +68,5 @@ describe("Version", () => {
   it("get ops inside changes", () => {
     const change = a.getOpsInChange({ peer: 0n, counter: 2 });
     expect(change.length).toBe(1);
-    console.dir(change, { depth: 100 });
   });
 });
