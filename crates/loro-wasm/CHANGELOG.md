@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+### Patch Changes
+
+- 6753c2f: Refine loro-crdt api
+
 ## 0.6.0
 
 ### Minor Changes
