@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.3
+
+### Patch Changes
+
+- Fix isContainer issue
+
 ## 0.6.2
 
 ### Patch Changes
