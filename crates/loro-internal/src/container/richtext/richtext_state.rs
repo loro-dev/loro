@@ -1123,6 +1123,7 @@ impl RichtextState {
         };
 
         if let Some(c) = c {
+            // cache to reduce the cost of the next query
             self.cursor_cache
                 .record_cursor(entity_index, PosType::Entity, c, &self.tree);
             if !self.style_ranges.has_style() {
@@ -1132,6 +1133,27 @@ impl RichtextState {
         }
 
         entity_index
+    }
+
+    pub(crate) fn get_entity_range_and_text_styles_at_range(
+        &mut self,
+        range: Range<usize>,
+        pos_type: PosType,
+    ) -> (Range<usize>, Option<&Styles>) {
+        if self.tree.is_empty() {
+            return (0..0, None);
+        }
+
+        let start = self.get_entity_index_for_text_insert(range.start, pos_type);
+        let end = self.get_entity_index_for_text_insert(range.end, pos_type);
+        if self.style_ranges.has_style() {
+            (
+                start..end,
+                self.style_ranges.get_styles_of_range(start..end),
+            )
+        } else {
+            (start..end, None)
+        }
     }
 
     /// Get the insert text styles at the given entity index if we insert text at that position
