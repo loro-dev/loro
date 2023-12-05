@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   Loro,
   LoroList,
@@ -6,7 +6,7 @@ import {
   isContainer,
   setPanicHook,
   toEncodedVersion,
-  valueType,
+  getType,
 } from "../src";
 import { Container } from "../dist/loro";
 
@@ -106,8 +106,8 @@ describe("list", () => {
     list.insertContainer(2, "Text");
     const t = list.toArray()[2];
     expect(isContainer(t)).toBeTruthy();
-    expect(valueType(t)).toBe("Text");
-    expect(valueType(123)).toBe("Json");
+    expect(getType(t)).toBe("Text");
+    expect(getType(123)).toBe("Json");
   });
 });
 
@@ -241,3 +241,45 @@ it("handlers should still be usable after doc is dropped", () => {
   expect(map.toJson()).toStrictEqual({ k: 8 });
 });
 
+
+it("isContainer", () => {
+  expect(isContainer("123")).toBeFalsy();
+  expect(isContainer(123)).toBeFalsy();
+  expect(isContainer(123n)).toBeFalsy();
+  expect(isContainer(new Map())).toBeFalsy();
+  expect(isContainer(new Set())).toBeFalsy();
+  expect(isContainer({})).toBeFalsy();
+  expect(isContainer(undefined)).toBeFalsy();
+  expect(isContainer(null)).toBeFalsy();
+  const doc = new Loro();
+  const t = doc.getText("t");
+  expect(isContainer(t)).toBeTruthy();
+  expect(getType(t)).toBe("Text");
+  expect(getType(123)).toBe("Json");
+})
+
+it("getValueType", () => {
+  // Type tests
+  const doc = new Loro();
+  const t = doc.getText("t");
+  expectTypeOf(getType(t)).toEqualTypeOf<"Text">();
+  expect(getType(t)).toBe("Text");
+  expectTypeOf(getType(123)).toEqualTypeOf<"Json">();
+  expect(getType(123)).toBe("Json");
+  expectTypeOf(getType(undefined)).toEqualTypeOf<"Json">();
+  expect(getType(undefined)).toBe("Json");
+  expectTypeOf(getType(null)).toEqualTypeOf<"Json">();
+  expect(getType(null)).toBe("Json");
+  expectTypeOf(getType({})).toEqualTypeOf<"Json">();
+  expect(getType({})).toBe("Json");
+
+  const map = doc.getMap("map");
+  const list = doc.getList("list");
+  const tree = doc.getTree("tree");
+  expectTypeOf(getType(map)).toEqualTypeOf<"Map">();
+  expect(getType(map)).toBe("Map");
+  expectTypeOf(getType(list)).toEqualTypeOf<"List">();
+  expect(getType(list)).toBe("List");
+  expectTypeOf(getType(tree)).toEqualTypeOf<"Tree">();
+  expect(getType(tree)).toBe("Tree");
+})

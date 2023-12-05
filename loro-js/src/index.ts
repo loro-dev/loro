@@ -1,5 +1,5 @@
 export * from "loro-wasm";
-import { Container, ContainerType, Delta, OpId, Value } from "loro-wasm";
+import { Container, ContainerType, Delta, LoroText, LoroTree, OpId, Value } from "loro-wasm";
 import { PrelimText, PrelimList, PrelimMap } from "loro-wasm";
 import { ContainerID, Loro, LoroList, LoroMap, TreeID } from "loro-wasm";
 
@@ -89,8 +89,8 @@ export type MapDiff = {
 export type TreeDiff = {
   type: "tree";
   diff:
-    | { target: TreeID; action: "create" | "delete" }
-    | { target: TreeID; action: "move"; parent: TreeID };
+  | { target: TreeID; action: "create" | "delete" }
+  | { target: TreeID; action: "move"; parent: TreeID };
 };
 
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
@@ -107,21 +107,61 @@ export function isContainerId(s: string): s is ContainerID {
 
 export { Loro };
 
+/**  Whether the value is a container.
+ * 
+ * # Example
+ * 
+ * ```ts
+ * const doc = new Loro();
+ * const map = doc.getMap("map");
+ * const list = doc.getList("list");
+ * const text = doc.getText("text");
+ * isContainer(map); // true
+ * isContainer(list); // true
+ * isContainer(text); // true
+ * isContainer(123); // false
+ * isContainer("123"); // false
+ * isContainer({}); // false
+ */
 export function isContainer(value: any): value is Container {
   if (typeof value !== "object" || value == null) {
     return false;
   }
 
   const p = value.__proto__;
-  return p.hasOwnProperty("kind") && CONTAINER_TYPES.includes(value.kind());
+  if (p == null || typeof p !== "object" || typeof p["kind"] !== "function") {
+    return false;
+  }
+
+  return CONTAINER_TYPES.includes(value.kind());
 }
 
-export function valueType(value: any): "Json" | ContainerType {
+/**  Get the type of a value that may be a container.
+ * 
+ * # Example
+ * 
+ * ```ts
+ * const doc = new Loro();
+ * const map = doc.getMap("map");
+ * const list = doc.getList("list");
+ * const text = doc.getText("text");
+ * getType(map); // "Map"
+ * getType(list); // "List"
+ * getType(text); // "Text"
+ * getType(123); // "Json"
+ * getType("123"); // "Json"
+ * getType({}); // "Json"
+ * ```
+ */
+export function getType<T>(value: T): T extends LoroText ? "Text" :
+  T extends LoroMap ? "Map" :
+  T extends LoroTree ? "Tree" :
+  T extends LoroList ? "List" : "Json" {
   if (isContainer(value)) {
     return value.kind();
   }
 
-  return "Json";
+  return "Json" as any;
 }
 
 declare module "loro-wasm" {
