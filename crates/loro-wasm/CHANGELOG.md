@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.4
+
+### Patch Changes
+
+- Fix time travel issue #211
+
 ## 0.6.1
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.4
+
+### Patch Changes
+
+- Fix time travel issue #211
+- Updated dependencies
+  - loro-wasm@0.6.4
+
 ## 0.6.3
 
 ### Patch Changes
