@@ -151,6 +151,7 @@ impl std::fmt::Debug for OpLog {
 pub(crate) struct EnsureChangeDepsAreAtTheEnd;
 
 impl OpLog {
+    #[inline]
     pub fn new() -> Self {
         Self {
             dag: AppDag::default(),
@@ -164,6 +165,7 @@ impl OpLog {
         }
     }
 
+    #[inline]
     pub fn new_with_arena(arena: SharedArena) -> Self {
         Self {
             dag: AppDag::default(),
@@ -173,10 +175,12 @@ impl OpLog {
         }
     }
 
+    #[inline]
     pub fn latest_timestamp(&self) -> Timestamp {
         self.latest_timestamp
     }
 
+    #[inline]
     pub fn dag(&self) -> &AppDag {
         &self.dag
     }
@@ -192,10 +196,12 @@ impl OpLog {
         timestamp
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.dag.map.is_empty() && self.arena.can_import_snapshot()
     }
 
+    #[inline]
     pub fn changes(&self) -> &ClientChanges {
         &self.changes
     }
