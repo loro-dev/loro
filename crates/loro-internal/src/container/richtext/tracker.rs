@@ -71,9 +71,9 @@ impl Tracker {
 
     pub(crate) fn insert(&mut self, mut op_id: ID, mut pos: usize, mut content: RichtextChunk) {
         let last_id = op_id.inc(content.len() as Counter - 1);
-        let counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
-        if counter_end > last_id.counter {
-            // the op is included
+        let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
+        if applied_counter_end > last_id.counter {
+            // the op is included in the applied vv
             if !self.current_vv.includes_id(last_id) {
                 // PERF: may be slow
                 let mut updates = Default::default();
@@ -88,10 +88,10 @@ impl Tracker {
                 self.batch_update(updates, false);
             }
             return;
-        } else if counter_end > op_id.counter {
+        } else if applied_counter_end > op_id.counter {
             // need to slice the content
-            let start = (counter_end - op_id.counter) as usize;
-            op_id.counter = counter_end;
+            let start = (applied_counter_end - op_id.counter) as usize;
+            op_id.counter = applied_counter_end;
             pos += start;
             content = content.slice(start..);
         }
@@ -136,11 +136,9 @@ impl Tracker {
     /// If `reverse` is true, the deletion happens from the end of the range to the start.
     pub(crate) fn delete(&mut self, mut op_id: ID, mut pos: usize, mut len: usize, reverse: bool) {
         let last_id = op_id.inc(len as Counter - 1);
-        let counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
-        if counter_end > last_id.counter {
-            // the op is included
-            let last_id = op_id.inc(len as Counter - 1);
-            assert!(self.applied_vv.includes_id(last_id));
+        let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
+        if applied_counter_end > last_id.counter {
+            // the op is included in the applied_vv
             if !self.current_vv.includes_id(last_id) {
                 // PERF: may be slow
                 let mut updates = Default::default();
@@ -151,10 +149,10 @@ impl Tracker {
                 self.batch_update(updates, false);
             }
             return;
-        } else if counter_end > op_id.counter {
+        } else if applied_counter_end > op_id.counter {
             // need to slice the op
-            let start = (counter_end - op_id.counter) as usize;
-            op_id.counter = counter_end;
+            let start = (applied_counter_end - op_id.counter) as usize;
+            op_id.counter = applied_counter_end;
             len -= start;
             if reverse {
                 pos -= start;
