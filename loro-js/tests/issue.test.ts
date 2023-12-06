@@ -14,7 +14,7 @@ import { setDebug } from "loro-wasm";
 
 setPanicHook();
 
-it.only("#211", () => {
+it("#211", () => {
   const loro1 = new Loro()
   loro1.setPeerId(0n)
   const text1 = loro1.getText("text")
