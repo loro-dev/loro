@@ -211,7 +211,11 @@ impl OpLog {
         let entry = self.changes.entry(change.id.peer).or_default();
         match entry.last_mut() {
             Some(last) => {
-                assert_eq!(change.id.counter, last.ctr_end());
+                assert_eq!(
+                    change.id.counter,
+                    last.ctr_end(),
+                    "change id is not continuous"
+                );
                 let timestamp_change = change.timestamp - last.timestamp;
                 if !last.has_dependents && change.deps_on_self() && timestamp_change < 1000 {
                     for op in take(change.ops.vec_mut()) {
@@ -222,7 +226,7 @@ impl OpLog {
                 }
             }
             None => {
-                assert!(change.id.counter == 0);
+                assert!(change.id.counter == 0, "change id is not continuous");
                 entry.push(change);
             }
         }
@@ -304,16 +308,28 @@ impl OpLog {
             // don't need to push new element to dag because it only depends on itself
             let nodes = self.dag.map.get_mut(&change.id.peer).unwrap();
             let last = nodes.last_mut().unwrap();
-            assert_eq!(last.peer, change.id.peer);
-            assert_eq!(last.cnt + last.len as Counter, change.id.counter);
-            assert_eq!(last.lamport + last.len as Lamport, change.lamport);
+            assert_eq!(last.peer, change.id.peer, "peer id is not the same");
+            assert_eq!(
+                last.cnt + last.len as Counter,
+                change.id.counter,
+                "counter is not continuous"
+            );
+            assert_eq!(
+                last.lamport + last.len as Lamport,
+                change.lamport,
+                "lamport is not continuous"
+            );
             last.len = change.id.counter as usize + len - last.cnt as usize;
             last.has_succ = false;
         } else {
             let vv = self.dag.frontiers_to_im_vv(&change.deps);
             let dag_row = &mut self.dag.map.entry(change.id.peer).or_default();
             if change.id.counter > 0 {
-                assert_eq!(dag_row.last().unwrap().ctr_end(), change.id.counter);
+                assert_eq!(
+                    dag_row.last().unwrap().ctr_end(),
+                    change.id.counter,
+                    "counter is not continuous"
+                );
             }
             dag_row.push_rle_element(AppDagNode {
                 vv,

@@ -659,6 +659,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         Ok(changes) => changes,
         Err(err) => return Err(err),
     };
+
     let mut pending_remote_changes = Vec::new();
     debug_log::debug_dbg!(&changes);
     let mut latest_ids = Vec::new();
