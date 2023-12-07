@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 pub(super) mod tree;
-use debug_log::debug_dbg;
 use itertools::Itertools;
 pub(crate) use tree::TreeDeletedSetTrait;
 pub(super) use tree::TreeDiffCache;
@@ -76,7 +75,6 @@ impl DiffCalculator {
         after: &crate::VersionVector,
         after_frontiers: Option<&Frontiers>,
     ) -> Vec<InternalContainerDiff> {
-        debug_dbg!(&before, &after, &oplog);
         if self.has_all {
             let include_before = self.last_vv.includes_vv(before);
             let include_after = self.last_vv.includes_vv(after);
@@ -724,7 +722,6 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 
         // FIXME: handle new containers when inserting richtext style like comments
 
-        // debug_log::debug_dbg!(&delta, from, to);
         // debug_log::debug_dbg!(&self.tracker);
         InternalDiff::RichtextRaw(delta)
     }

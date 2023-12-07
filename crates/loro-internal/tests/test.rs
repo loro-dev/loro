@@ -1,6 +1,6 @@
 use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
-use loro_common::{ContainerID, ContainerType, LoroValue, ID};
+use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, ID};
 use loro_internal::{
     container::richtext::TextStyleInfoFlag,
     handler::{Handler, ValueOrContainer},
@@ -8,6 +8,33 @@ use loro_internal::{
     ApplyDiff, LoroDoc, ToJson,
 };
 use serde_json::json;
+
+#[test]
+fn issue_211() -> LoroResult<()> {
+    let doc1 = LoroDoc::new_auto_commit();
+    let doc2 = LoroDoc::new_auto_commit();
+    doc1.get_text("text").insert(0, "T")?;
+    doc2.merge(&doc1)?;
+    let v0 = doc1.oplog_frontiers();
+    doc1.get_text("text").insert(1, "A")?;
+    doc2.get_text("text").insert(1, "B")?;
+    doc1.checkout(&v0)?;
+    doc2.checkout(&v0)?;
+    doc1.checkout_to_latest();
+    doc2.checkout_to_latest();
+    // let v1_of_doc1 = doc1.oplog_frontiers();
+    let v1_of_doc2 = doc2.oplog_frontiers();
+    doc2.get_text("text").insert(2, "B")?;
+    doc2.checkout(&v1_of_doc2)?;
+    doc2.checkout(&v0)?;
+    assert_eq!(
+        doc2.get_deep_value().to_json_value(),
+        json!({
+            "text": "T"
+        })
+    );
+    Ok(())
+}
 
 #[test]
 fn mark_with_the_same_key_value_should_be_skipped() {

@@ -72,8 +72,7 @@ impl Tracker {
     pub(crate) fn insert(&mut self, mut op_id: ID, mut pos: usize, mut content: RichtextChunk) {
         let last_id = op_id.inc(content.len() as Counter - 1);
         let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
-        if applied_counter_end > last_id.counter {
-            // the op is included in the applied vv
+        if applied_counter_end > op_id.counter {
             if !self.current_vv.includes_id(last_id) {
                 // PERF: may be slow
                 let mut updates = Default::default();
@@ -87,9 +86,13 @@ impl Tracker {
                 );
                 self.batch_update(updates, false);
             }
-            return;
-        } else if applied_counter_end > op_id.counter {
-            // need to slice the content
+
+            if applied_counter_end > last_id.counter {
+                // the op is included in the applied vv
+                return;
+            }
+
+            // the op is partially included, need to slice the content
             let start = (applied_counter_end - op_id.counter) as usize;
             op_id.counter = applied_counter_end;
             pos += start;
@@ -137,8 +140,7 @@ impl Tracker {
     pub(crate) fn delete(&mut self, mut op_id: ID, mut pos: usize, mut len: usize, reverse: bool) {
         let last_id = op_id.inc(len as Counter - 1);
         let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
-        if applied_counter_end > last_id.counter {
-            // the op is included in the applied_vv
+        if applied_counter_end > op_id.counter {
             if !self.current_vv.includes_id(last_id) {
                 // PERF: may be slow
                 let mut updates = Default::default();
@@ -148,9 +150,12 @@ impl Tracker {
                 );
                 self.batch_update(updates, false);
             }
-            return;
-        } else if applied_counter_end > op_id.counter {
-            // need to slice the op
+
+            if applied_counter_end > last_id.counter {
+                return;
+            }
+
+            // the op is partially included, need to slice the op
             let start = (applied_counter_end - op_id.counter) as usize;
             op_id.counter = applied_counter_end;
             len -= start;
@@ -176,7 +181,6 @@ impl Tracker {
 
         let mut cur_id = op_id;
         for id_span in ans {
-            debug_log::debug_dbg!(&cur_id, id_span, reverse);
             let len = id_span.atom_len();
             self.id_to_cursor
                 .push(cur_id, id_to_cursor::Cursor::Delete(id_span));
