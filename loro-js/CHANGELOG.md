@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.5
+
+### Patch Changes
+
+- Fix checkout err on seq data
+- Updated dependencies
+  - loro-wasm@0.6.5
+
 ## 0.6.4
 
 ### Patch Changes
