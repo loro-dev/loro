@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0
+
+### Minor Changes
+
+- refactor: remove setPanicHook and call it internally when loaded
+
+### Patch Changes
+
+- Updated dependencies
+  - loro-wasm@0.7.0
+
 ## 0.6.5
 
 ### Patch Changes
