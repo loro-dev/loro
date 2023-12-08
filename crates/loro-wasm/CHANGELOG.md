@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+### Minor Changes
+
+- refactor: remove setPanicHook and call it internally when loaded
+
 ## 0.6.5
 
 ### Patch Changes
