@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Delta, Loro, setPanicHook } from "../src";
+import { Delta, Loro } from "../src";
 import { setDebug } from "loro-wasm";
-
-setPanicHook();
 
 describe("richtext", () => {
   it("mark", () => {

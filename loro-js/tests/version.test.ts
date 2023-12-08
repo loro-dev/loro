@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Loro, toReadableVersion, setPanicHook, OpId } from "../src";
 
-setPanicHook();
 describe("Frontiers", () => {
   it("two clients", () => {
     const doc = new Loro();

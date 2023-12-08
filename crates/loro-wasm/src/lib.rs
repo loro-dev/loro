@@ -26,8 +26,8 @@ use crate::convert::handler_to_js_value;
 
 mod convert;
 
-#[wasm_bindgen(js_name = setPanicHook)]
-pub fn set_panic_hook() {
+#[wasm_bindgen(start)]
+fn run() {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 }

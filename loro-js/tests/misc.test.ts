@@ -6,11 +6,8 @@ import {
   PrelimList,
   PrelimMap,
   PrelimText,
-  setPanicHook,
 } from "../src";
 import { expectTypeOf } from "vitest";
-
-setPanicHook();
 
 function assertEquals(a: any, b: any) {
   expect(a).toStrictEqual(b);

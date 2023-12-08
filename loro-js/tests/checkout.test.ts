@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   Loro,
-  setPanicHook,
 } from "../src";
 
-setPanicHook();
 describe("Checkout", () => {
   it("simple checkout", () => {
     const doc = new Loro();

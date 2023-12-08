@@ -2,17 +2,9 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   Loro,
-  LoroList,
-  LoroMap,
-  isContainer,
-  setPanicHook,
-  toEncodedVersion,
-  getType,
 } from "../src";
 import { Container, LoroText, OpId } from "../dist/loro";
 import { setDebug } from "loro-wasm";
-
-setPanicHook();
 
 it("#211", () => {
   const loro1 = new Loro()

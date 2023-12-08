@@ -4,13 +4,10 @@ import {
   LoroList,
   LoroMap,
   isContainer,
-  setPanicHook,
   toEncodedVersion,
   getType,
 } from "../src";
 import { Container } from "../dist/loro";
-
-setPanicHook();
 
 it("basic example", () => {
   const doc = new Loro();

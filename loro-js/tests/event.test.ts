@@ -7,11 +7,9 @@ import {
   LoroEvent,
   MapDiff,
   TextDiff,
-  setPanicHook,
   getType,
 } from "../src";
 
-setPanicHook();
 describe("event", () => {
   it("target", async () => {
     const loro = new Loro();

@@ -5,9 +5,7 @@
   import "quill/dist/quill.bubble.css";
   import "quill/dist/quill.snow.css";
   import { QuillBinding } from "./binding";
-  import { Loro, setPanicHook, toReadableVersion } from "loro-crdt";
-
-  setPanicHook();
+  import { Loro, toReadableVersion } from "loro-crdt";
 
   const editor1 = ref<null | HTMLDivElement>(null);
   const editor2 = ref<null | HTMLDivElement>(null);
