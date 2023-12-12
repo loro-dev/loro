@@ -19,8 +19,6 @@ use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, cmp::Ordering, panic, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
 mod log;
-mod prelim;
-pub use prelim::{PrelimList, PrelimMap, PrelimText};
 
 use crate::convert::handler_to_js_value;
 
@@ -2131,7 +2129,7 @@ const TYPES: &'static str = r#"
 * ```
 */
 export type ContainerType = "Text" | "Map" | "List"| "Tree";
-export PeerID = bigint;
+export type PeerID = bigint;
 /**
 * The unique id of each container.
 *

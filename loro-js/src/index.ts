@@ -1,7 +1,6 @@
 export * from "loro-wasm";
-import { Container, ContainerType, Delta, LoroText, LoroTree, OpId, Value } from "loro-wasm";
-import { PrelimText, PrelimList, PrelimMap } from "loro-wasm";
-import { ContainerID, Loro, LoroList, LoroMap, TreeID, PeerID } from "loro-wasm";
+import { Container, Delta, LoroText, LoroTree, OpId, Value, ContainerID, Loro, LoroList, LoroMap, TreeID } from "loro-wasm";
+
 
 Loro.prototype.getTypedMap = function (...args) {
   return this.getMap(...args);
@@ -32,7 +31,6 @@ LoroMap.prototype.setTyped = function (...args) {
   return this.set(...args);
 };
 
-export type Prelim = PrelimList | PrelimMap | PrelimText;
 export type Frontiers = OpId[];
 
 /**
@@ -188,7 +186,7 @@ declare module "loro-wasm" {
     get(index: number): undefined | Value | Container;
     getTyped<Key extends keyof T & number>(loro: Loro, index: Key): T[Key];
     insertTyped<Key extends keyof T & number>(pos: Key, value: T[Key]): void;
-    insert(pos: number, value: Value | Prelim): void;
+    insert(pos: number, value: Value): void;
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
   }
@@ -202,7 +200,7 @@ declare module "loro-wasm" {
 
     get(key: string): undefined | Value | Container;
     getTyped<Key extends keyof T & string>(txn: Loro, key: Key): T[Key];
-    set(key: string, value: Value | Prelim): void;
+    set(key: string, value: Value): void;
     setTyped<Key extends keyof T & string>(key: Key, value: T[Key]): void;
     delete(key: string): void;
     subscribe(txn: Loro, listener: Listener): number;

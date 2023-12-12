@@ -1,11 +1,8 @@
-import { assertType, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   Loro,
   LoroList,
   LoroMap,
-  PrelimList,
-  PrelimMap,
-  PrelimText,
 } from "../src";
 import { expectTypeOf } from "vitest";
 
@@ -176,73 +173,6 @@ describe("sync", () => {
     const map = loro.getMap("map");
     map.set("key", "value");
   });
-});
-
-describe("prelim", () => {
-    const loro = new Loro();
-    const map = loro.getMap("map");
-    const list = loro.getList("list");
-    const prelim_text = new PrelimText(undefined);
-    const prelim_map = new PrelimMap({ a: 1, b: 2 });
-    const prelim_list = new PrelimList([1, "2", { a: 4 }]);
-
-    it("prelim text", () => {
-      prelim_text.insert(0, "hello world");
-      assertEquals(prelim_text.value, "hello world");
-      prelim_text.delete(6, 5);
-      prelim_text.insert(6, "everyone");
-      assertEquals(prelim_text.value, "hello everyone");
-    });
-
-    it("prelim map", () => {
-      prelim_map.set("ab", 123);
-      assertEquals(prelim_map.value, { a: 1, b: 2, ab: 123 });
-      prelim_map.delete("b");
-      assertEquals(prelim_map.value, { a: 1, ab: 123 });
-    });
-
-    it("prelim list", () => {
-      prelim_list.insert(0, 0);
-      assertEquals(prelim_list.value, [0, 1, "2", { a: 4 }]);
-      prelim_list.delete(1, 2);
-      assertEquals(prelim_list.value, [0, { a: 4 }]);
-    });
-
-    it("prelim map integrate", () => {
-      map.set("text", prelim_text);
-      map.set("map", prelim_map);
-      map.set("list", prelim_list);
-      loro.commit();
-
-      assertEquals(map.toJson(), {
-        text: "hello everyone",
-        map: { a: 1, ab: 123 },
-        list: [0, { a: 4 }],
-      });
-    });
-
-    it("prelim list integrate", () => {
-      const prelim_text = new PrelimText("ttt");
-      const prelim_map = new PrelimMap({ a: 1, b: 2 });
-      const prelim_list = new PrelimList([1, "2", { a: 4 }]);
-      list.insert(0, prelim_text);
-      list.insert(1, prelim_map);
-      list.insert(2, prelim_list);
-      loro.commit();
-
-      assertEquals(list.toJson(), [
-        "ttt",
-        { a: 1, b: 2 },
-        [
-          1,
-          "2",
-          {
-            a: 4,
-          },
-        ],
-      ]);
-    });
-  
 });
 
 describe("wasm", () => {

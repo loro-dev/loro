@@ -7,7 +7,7 @@ use loro_internal::handler::{Handler, ValueOrContainer};
 use loro_internal::{LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
-use crate::{LoroList, LoroMap, LoroText, LoroTree, PrelimList, PrelimMap, PrelimText};
+use crate::{LoroList, LoroMap, LoroText, LoroTree};
 use wasm_bindgen::__rt::IntoJsResult;
 use wasm_bindgen::convert::FromWasmAbi;
 
@@ -37,30 +37,6 @@ pub(crate) fn js_to_any<T: FromWasmAbi<Abi = u32>>(
             )
             .as_str(),
         ));
-    }
-}
-
-impl TryFrom<JsValue> for PrelimText {
-    type Error = JsValue;
-
-    fn try_from(value: JsValue) -> Result<Self, Self::Error> {
-        js_to_any(value, "PrelimText")
-    }
-}
-
-impl TryFrom<JsValue> for PrelimList {
-    type Error = JsValue;
-
-    fn try_from(value: JsValue) -> Result<Self, Self::Error> {
-        js_to_any(value, "PrelimList")
-    }
-}
-
-impl TryFrom<JsValue> for PrelimMap {
-    type Error = JsValue;
-
-    fn try_from(value: JsValue) -> Result<Self, Self::Error> {
-        js_to_any(value, "PrelimMap")
     }
 }
 

@@ -95,18 +95,6 @@ impl ContainerType {
     }
 }
 
-// a weird dependency in Prelim in loro_internal need this convertion to work.
-// this can be removed after the Prelim is removed.
-impl From<ContainerType> for LoroValue {
-    fn from(value: ContainerType) -> Self {
-        LoroValue::Container(ContainerID::Normal {
-            peer: 0,
-            counter: 0,
-            container_type: value,
-        })
-    }
-}
-
 pub type IdSpanVector = fxhash::FxHashMap<PeerID, CounterSpan>;
 
 mod container {
