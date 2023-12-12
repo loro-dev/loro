@@ -179,7 +179,6 @@ describe("sync", () => {
 });
 
 describe("prelim", () => {
-  it("test prelim", async (t) => {
     const loro = new Loro();
     const map = loro.getMap("map");
     const list = loro.getList("list");
@@ -243,7 +242,7 @@ describe("prelim", () => {
         ],
       ]);
     });
-  });
+  
 });
 
 describe("wasm", () => {

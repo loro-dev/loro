@@ -1,7 +1,7 @@
 export * from "loro-wasm";
 import { Container, ContainerType, Delta, LoroText, LoroTree, OpId, Value } from "loro-wasm";
 import { PrelimText, PrelimList, PrelimMap } from "loro-wasm";
-import { ContainerID, Loro, LoroList, LoroMap, TreeID } from "loro-wasm";
+import { ContainerID, Loro, LoroList, LoroMap, TreeID, PeerID } from "loro-wasm";
 
 Loro.prototype.getTypedMap = function (...args) {
   return this.getMap(...args);

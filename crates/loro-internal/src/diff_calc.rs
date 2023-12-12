@@ -782,8 +782,6 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
         debug_log::debug_log!("from {:?} to {:?}", from, to);
-        let mut merged_vv = from.clone();
-        merged_vv.merge(to);
         let from_frontiers = from.to_frontiers(&oplog.dag);
         let to_frontiers = to.to_frontiers(&oplog.dag);
         let common_ancestors = oplog
