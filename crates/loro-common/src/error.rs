@@ -16,8 +16,6 @@ pub enum LoroError {
     JsError(Box<str>),
     #[error("Cannot get lock or the lock is poisoned")]
     LockError,
-    #[error("LoroValue::Unresolved cannot be converted to PrelimValue")]
-    PrelimError,
     #[error("Each AppState can only have one transaction at a time")]
     DuplicatedTransactionError,
     #[error("Cannot find ({0}) ")]

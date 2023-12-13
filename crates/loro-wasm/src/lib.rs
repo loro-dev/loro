@@ -19,8 +19,6 @@ use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, cmp::Ordering, panic, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
 mod log;
-mod prelim;
-pub use prelim::{PrelimList, PrelimMap, PrelimText};
 
 use crate::convert::handler_to_js_value;
 
@@ -68,7 +66,7 @@ extern "C" {
     pub type JsTransaction;
     #[wasm_bindgen(typescript_type = "string | undefined")]
     pub type JsOrigin;
-    #[wasm_bindgen(typescript_type = "{ peer: bigint, counter: number }")]
+    #[wasm_bindgen(typescript_type = "{ peer: PeerID, counter: number }")]
     pub type JsID;
     #[wasm_bindgen(
         typescript_type = "{ start: number, end: number, expand?: 'before'|'after'|'both'|'none' }"
@@ -80,13 +78,13 @@ extern "C" {
     pub type JsTreeID;
     #[wasm_bindgen(typescript_type = "Delta<string>[]")]
     pub type JsStringDelta;
-    #[wasm_bindgen(typescript_type = "Map<bigint, number>")]
+    #[wasm_bindgen(typescript_type = "Map<PeerID, number>")]
     pub type JsVersionVectorMap;
-    #[wasm_bindgen(typescript_type = "Map<BigInt, Change[]>")]
+    #[wasm_bindgen(typescript_type = "Map<PeerID, Change[]>")]
     pub type JsChanges;
     #[wasm_bindgen(typescript_type = "Change")]
     pub type JsChange;
-    #[wasm_bindgen(typescript_type = "Map<bigint, number> | Uint8Array")]
+    #[wasm_bindgen(typescript_type = "Map<PeerID, number> | Uint8Array")]
     pub type JsVersionVector;
     #[wasm_bindgen(typescript_type = "Value | Container")]
     pub type JsValueOrContainer;
@@ -2131,7 +2129,7 @@ const TYPES: &'static str = r#"
 * ```
 */
 export type ContainerType = "Text" | "Map" | "List"| "Tree";
-
+export type PeerID = bigint;
 /**
 * The unique id of each container.
 *
@@ -2197,12 +2195,12 @@ export type Delta<T> =
 /**
  * The unique id of each operation.
  */
-export type OpId = { peer: bigint, counter: number };
+export type OpId = { peer: PeerID, counter: number };
 /**
  * Change is a group of continuous operations
  */
 export interface Change {
-    peer: bigint,
+    peer: PeerID,
     counter: number,
     lamport: number,
     length: number,
