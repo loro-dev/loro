@@ -74,6 +74,28 @@ impl OpLog {
 
     pub(super) fn extend_pending_changes_with_unknown_lamport(
         &mut self,
+        remote_changes: Vec<Change>,
+        converter: &mut OpConverter,
+        latest_vv: &VersionVector,
+    ) {
+        for change in remote_changes {
+            let local_change = PendingChange::Unknown(change);
+            match remote_change_apply_state(latest_vv, &local_change) {
+                ChangeApplyState::AwaitingDependency(miss_dep) => self
+                    .pending_changes
+                    .changes
+                    .entry(miss_dep.peer)
+                    .or_default()
+                    .entry(miss_dep.counter)
+                    .or_default()
+                    .push(local_change),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    pub(super) fn extend_pending_remote_changes_with_unknown_lamport(
+        &mut self,
         remote_changes: Vec<Change<RemoteOp>>,
         converter: &mut OpConverter,
         latest_vv: &VersionVector,

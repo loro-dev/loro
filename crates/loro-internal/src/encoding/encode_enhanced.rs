@@ -466,8 +466,7 @@ fn extract_containers(
 }
 
 pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError> {
-    let encoded = iter_from_bytes::<DocEncoding>(input)
-        .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+    let encoded = iter_from_bytes::<DocEncoding>(input)?;
 
     let DocEncodingIter {
         changes: change_encodings,
@@ -729,7 +728,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         oplog.dag.refresh_frontiers();
     }
 
-    oplog.import_unknown_lamport_remote_changes(pending_remote_changes)?;
+    oplog.import_unknown_lamport_pending_remote_changes(pending_remote_changes)?;
     assert_eq!(str_index, str.len());
     Ok(())
 }

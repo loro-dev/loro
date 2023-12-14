@@ -47,7 +47,9 @@ pub struct SharedArena {
 }
 
 pub struct StrAllocResult {
+    /// unicode start
     pub start: usize,
+    /// unicode end
     pub end: usize,
     // TODO: remove this field?
     pub utf16_len: usize,
@@ -244,12 +246,11 @@ impl SharedArena {
     }
 
     /// return slice and unicode index
-    pub fn alloc_str_with_slice(&self, str: &str) -> (BytesSlice, usize) {
+    pub fn alloc_str_with_slice(&self, str: &str) -> (BytesSlice, StrAllocResult) {
         let mut text_lock = self.inner.str.lock().unwrap();
         let start = text_lock.len_bytes();
-        let unicode_start = text_lock.len_unicode();
-        text_lock.alloc(str);
-        (text_lock.slice_bytes(start..), unicode_start)
+        let ans = _alloc_str(&mut text_lock, str);
+        (text_lock.slice_bytes(start..), ans)
     }
 
     /// alloc str without extra info
@@ -426,13 +427,13 @@ impl SharedArena {
                         }
                     }
                     ListSlice::RawStr { str, unicode_len } => {
-                        let (slice, start) = self.alloc_str_with_slice(&str);
+                        let (slice, info) = self.alloc_str_with_slice(&str);
                         Op {
                             counter,
                             container,
                             content: crate::op::InnerContent::List(InnerListOp::InsertText {
                                 slice,
-                                unicode_start: start as u32,
+                                unicode_start: info.start as u32,
                                 unicode_len: unicode_len as u32,
                                 pos: pos as u32,
                             }),

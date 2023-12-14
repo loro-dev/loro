@@ -1,23 +1,18 @@
-use fxhash::FxHashMap;
-use loro_common::PeerID;
-
-use crate::{change::Change, op::RemoteOp};
-
-pub(crate) type RemoteClientChanges<'a> = FxHashMap<PeerID, Vec<Change<RemoteOp<'a>>>>;
-
 mod encode_enhanced;
+mod encode_reordered;
 pub(crate) mod encode_snapshot;
 mod encode_updates;
 
+use self::encode_updates::decode_oplog_updates;
+use crate::{change::Change, op::RemoteOp};
+use crate::{oplog::OpLog, LoroError, VersionVector};
+use fxhash::FxHashMap;
+use loro_common::PeerID;
 use rle::HasLength;
 
-use crate::{oplog::OpLog, LoroError, VersionVector};
-
-use self::encode_updates::decode_oplog_updates;
-
+pub(crate) type RemoteClientChanges<'a> = FxHashMap<PeerID, Vec<Change<RemoteOp<'a>>>>;
 pub(crate) use encode_enhanced::{decode_oplog_v2, encode_oplog_v2};
 pub(crate) use encode_updates::encode_oplog_updates;
-
 pub(crate) const COMPRESS_RLE_THRESHOLD: usize = 20 * 1024;
 // TODO: Test this threshold
 #[cfg(not(test))]

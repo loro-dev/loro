@@ -37,6 +37,9 @@ generic-btree = { version = "0.8.2" }
 miniz_oxide = "0.7.1"
 getrandom = "0.2.10"
 once_cell = "1.18.0"
+leb128 = "0.2.5"
+num-traits = "0.2"
+num-derive = "0.3"
 
 [dev-dependencies]
 serde_json = "1.0.87"

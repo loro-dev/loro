@@ -174,9 +174,7 @@ pub struct TextRanges {
 impl TextRanges {
     #[inline]
     pub fn decode_iter(bytes: &[u8]) -> LoroResult<impl Iterator<Item = TextRange> + '_> {
-        let iter = serde_columnar::iter_from_bytes::<TextRanges>(bytes).map_err(|e| {
-            LoroError::DecodeError(format!("Failed to decode TextRange: {}", e).into_boxed_str())
-        })?;
+        let iter = serde_columnar::iter_from_bytes::<TextRanges>(bytes)?;
         Ok(iter.ranges)
     }
 

@@ -643,13 +643,28 @@ impl OpLog {
         Ok(())
     }
 
-    pub(crate) fn import_unknown_lamport_remote_changes(
+    pub(crate) fn import_unknown_lamport_pending_changes(
+        &mut self,
+        remote_changes: Vec<Change>,
+    ) -> Result<(), LoroError> {
+        let latest_vv = self.dag.vv.clone();
+        self.arena.clone().with_op_converter(|converter| {
+            self.extend_pending_changes_with_unknown_lamport(remote_changes, converter, &latest_vv)
+        });
+        Ok(())
+    }
+
+    pub(crate) fn import_unknown_lamport_pending_remote_changes(
         &mut self,
         remote_changes: Vec<Change<RemoteOp>>,
     ) -> Result<(), LoroError> {
         let latest_vv = self.dag.vv.clone();
         self.arena.clone().with_op_converter(|converter| {
-            self.extend_pending_changes_with_unknown_lamport(remote_changes, converter, &latest_vv)
+            self.extend_pending_remote_changes_with_unknown_lamport(
+                remote_changes,
+                converter,
+                &latest_vv,
+            )
         });
         Ok(())
     }

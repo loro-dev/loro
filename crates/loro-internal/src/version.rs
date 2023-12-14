@@ -134,6 +134,11 @@ impl Frontiers {
     pub fn filter_peer(&mut self, peer: PeerID) {
         self.retain(|id| id.peer != peer);
     }
+
+    #[inline]
+    pub(crate) fn with_capacity(cap: usize) -> Frontiers {
+        Self(SmallVec::with_capacity(cap))
+    }
 }
 
 impl Deref for Frontiers {

@@ -380,8 +380,7 @@ impl OplogEncoded {
     fn decode_iter<'f: 'iter, 'iter>(
         data: &'f FinalPhase,
     ) -> Result<<Self as TableIter<'iter>>::Iter, LoroError> {
-        serde_columnar::iter_from_bytes::<Self>(&data.oplog)
-            .map_err(|e| LoroError::DecodeError(e.to_string().into_boxed_str()))
+        Ok(serde_columnar::iter_from_bytes::<Self>(&data.oplog)?)
     }
 
     fn encode(&self) -> Vec<u8> {
