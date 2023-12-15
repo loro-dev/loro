@@ -3,8 +3,6 @@ mod encode_reordered;
 mod encode_snapshot;
 mod encode_updates;
 
-use std::f64::consts::E;
-
 use self::encode_updates::decode_oplog_updates;
 use crate::encoding::encode_snapshot::encode_app_snapshot;
 use crate::LoroDoc;
@@ -19,6 +17,7 @@ use rle::HasLength;
 pub(crate) type RemoteClientChanges<'a> = FxHashMap<PeerID, Vec<Change<RemoteOp<'a>>>>;
 pub(crate) use encode_snapshot::decode_app_snapshot;
 
+#[allow(unused)]
 const COMPRESS_RLE_THRESHOLD: usize = 20 * 1024;
 // TODO: Test this threshold
 #[cfg(not(test))]
@@ -81,10 +80,8 @@ pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) 
             // EncodeMode::RleUpdates(vv)
             if update_total_len <= UPDATE_ENCODE_THRESHOLD {
                 EncodeMode::Updates
-            } else if update_total_len <= COMPRESS_RLE_THRESHOLD {
-                EncodeMode::RleUpdates
             } else {
-                EncodeMode::CompressedRleUpdates
+                EncodeMode::ReorderedRle
             }
         }
         mode => mode,

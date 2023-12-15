@@ -631,12 +631,8 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 
         match &op.op().content {
             crate::op::InnerContent::List(l) => match l {
-                crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
-                    self.tracker.insert(
-                        op.id_start(),
-                        *pos,
-                        RichtextChunk::new_text(slice.0.clone()),
-                    );
+                crate::container::list::list_op::InnerListOp::Insert { .. } => {
+                    unreachable!()
                 }
                 crate::container::list::list_op::InnerListOp::InsertText {
                     slice: _,

@@ -152,10 +152,12 @@ pub fn decode_oplog(
                         }
                         SnapshotOp::RichtextInsert { pos, start, len } => Op::new(
                             id,
-                            InnerContent::List(InnerListOp::new_insert(
-                                start as u32..start as u32 + (len as u32),
-                                pos,
-                            )),
+                            InnerContent::List(InnerListOp::InsertText {
+                                slice: arena.slice_by_unicode(start..start + len),
+                                unicode_start: start as u32,
+                                unicode_len: len as u32,
+                                pos: pos as u32,
+                            }),
                             container_idx,
                         ),
                     }

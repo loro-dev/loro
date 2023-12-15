@@ -11,8 +11,8 @@ use serde_columnar::columnar;
 
 use crate::{
     change::Change,
-    container::{idx::ContainerIdx, list::list_op::DeleteSpan},
-    encoding::encode_reordered::value::{ValueKind, ValueWriter},
+    container::{idx::ContainerIdx, list::list_op::DeleteSpan, richtext::TextStyleInfoFlag},
+    encoding::encode_reordered::value::{EncodedTreeMove, ValueKind, ValueWriter},
     op::{Op, SliceRange},
     version::Frontiers,
     OpLog, VersionVector,
@@ -133,6 +133,7 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                 &mut value_writer,
                 &mut register_key,
                 &mut register_cid,
+                &mut register_peer_id,
             );
 
             ops.push(EncodedOp {
@@ -170,6 +171,11 @@ pub(crate) fn decode(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
     let mut value_reader = ValueReader::new(raw_values);
     let mut ops_map: FxHashMap<PeerID, Vec<Op>> = FxHashMap::default();
     let arena = &oplog.arena;
+    let containers: Vec<_> = containers
+        .containers
+        .iter()
+        .map(|x| x.to_container_id(&keys.keys, &peer_ids.peer_ids))
+        .collect();
     for EncodedOp {
         container_index,
         prop,
@@ -178,11 +184,19 @@ pub(crate) fn decode(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
         counter,
     } in iter.ops
     {
-        let cid = containers.containers[container_index as usize]
-            .to_container_id(&keys.keys, &peer_ids.peer_ids);
+        let cid = &containers[container_index as usize];
         let c_idx = arena.register_container(&cid);
         let kind = ValueKind::from_u8(value_type).unwrap();
-        let content = decode_op(cid, kind, &mut value_reader, arena, prop, &keys);
+        let content = decode_op(
+            cid,
+            kind,
+            &mut value_reader,
+            arena,
+            prop,
+            &keys,
+            &peer_ids.peer_ids,
+            &containers,
+        );
 
         let peer = peer_ids.peer_ids[peer_idx as usize];
         ops_map.entry(peer).or_default().push(Op {
@@ -293,13 +307,14 @@ fn encode_op(
     value_writer: &mut ValueWriter,
     register_key: &mut impl FnMut(&string_cache::Atom<string_cache::EmptyStaticAtomSet>) -> usize,
     register_cid: &mut impl FnMut(&ContainerID) -> usize,
+    register_peer: &mut impl FnMut(u64) -> usize,
 ) -> (i32, ValueKind) {
     let (prop, value_type) = match &op.content {
         crate::op::InnerContent::List(list) => match list {
             crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
                 assert_eq!(op.container.get_type(), ContainerType::List);
                 let value = arena.get_values(slice.0.start as usize..slice.0.end as usize);
-                value_writer.write_value(&value.into(), register_key, register_cid);
+                value_writer.write_value_content(&value.into(), register_key, register_cid);
                 (*pos as i32, ValueKind::Array)
             }
             crate::container::list::list_op::InnerListOp::InsertText {
@@ -350,24 +365,32 @@ fn encode_op(
             let key = register_key(&map.key);
             match &map.value {
                 Some(v) => {
-                    let kind = value_writer.write_value(v, register_key, register_cid);
+                    let kind = value_writer.write_value_content(v, register_key, register_cid);
                     (key as i32, kind)
                 }
                 None => (key as i32, ValueKind::DeleteOnce),
             }
         }
-        crate::op::InnerContent::Tree(_) => todo!(),
+        crate::op::InnerContent::Tree(t) => {
+            assert_eq!(op.container.get_type(), ContainerType::Tree);
+            let op = EncodedTreeMove::from_tree_op(t, register_peer);
+            value_writer.write(&value::Value::TreeMove(op), register_key, register_cid);
+            (0, ValueKind::TreeMove)
+        }
     };
     (prop, value_type)
 }
 
+#[inline]
 fn decode_op(
-    cid: ContainerID,
+    cid: &ContainerID,
     kind: ValueKind,
     value_reader: &mut ValueReader<'_>,
     arena: &crate::arena::SharedArena,
     prop: i32,
     keys: &arena::KeyArena,
+    peers: &[u64],
+    cids: &[ContainerID],
 ) -> crate::op::InnerContent {
     let content = match cid.container_type() {
         ContainerType::Text => match kind {
@@ -389,6 +412,22 @@ fn decode_op(
                     DeleteSpan::new(prop as isize, len as isize),
                 ))
             }
+            ValueKind::MarkStart => {
+                let mark = value_reader.read_mark(&keys.keys, &cids);
+                let key = keys.keys[mark.key_idx as usize].clone();
+                crate::op::InnerContent::List(
+                    crate::container::list::list_op::InnerListOp::StyleStart {
+                        start: prop as u32,
+                        end: prop as u32 + mark.len,
+                        key,
+                        value: mark.value,
+                        info: TextStyleInfoFlag::from_byte(mark.info),
+                    },
+                )
+            }
+            ValueKind::Null => crate::op::InnerContent::List(
+                crate::container::list::list_op::InnerListOp::StyleEnd,
+            ),
             _ => unreachable!(),
         },
         ContainerType::Map => {
@@ -397,8 +436,8 @@ fn decode_op(
                 ValueKind::DeleteOnce => {
                     crate::op::InnerContent::Map(crate::container::map::MapSet { key, value: None })
                 }
-                _ => {
-                    let value = value_reader.read_value(&keys.keys);
+                kind => {
+                    let value = value_reader.read_value_content(kind, &keys.keys, &cids);
                     crate::op::InnerContent::Map(crate::container::map::MapSet {
                         key,
                         value: Some(value),
@@ -410,7 +449,7 @@ fn decode_op(
             let pos = prop as usize;
             match kind {
                 ValueKind::Array => {
-                    let arr = value_reader.read_value(&keys.keys);
+                    let arr = value_reader.read_value_content(ValueKind::Array, &keys.keys, &cids);
                     let range = arena.alloc_values(
                         Arc::try_unwrap(arr.into_list().unwrap())
                             .unwrap()
@@ -435,7 +474,13 @@ fn decode_op(
                 _ => unreachable!(),
             }
         }
-        ContainerType::Tree => todo!(),
+        ContainerType::Tree => match kind {
+            ValueKind::TreeMove => {
+                let op = value_reader.read_tree_move();
+                crate::op::InnerContent::Tree(op.into_tree_op(peers))
+            }
+            _ => unreachable!(),
+        },
     };
     content
 }
@@ -559,10 +604,13 @@ mod value {
     use std::sync::Arc;
 
     use fxhash::FxHashMap;
-    use loro_common::{ContainerID, InternalString, LoroValue};
+    use loro_common::{ContainerID, Counter, InternalString, LoroValue, TreeID};
     use num_derive::{FromPrimitive, ToPrimitive};
     use num_traits::{FromPrimitive, ToPrimitive};
 
+    use crate::container::tree::tree_op::TreeOp;
+
+    #[allow(unused)]
     #[non_exhaustive]
     pub enum Value<'a> {
         Null,
@@ -579,7 +627,7 @@ mod value {
         Map(FxHashMap<InternalString, Value<'a>>),
         Binary(&'a [u8]),
         MarkStart(MarkStart),
-        TreeMove(),
+        TreeMove(EncodedTreeMove),
         Unknown { kind: u8, data: &'a [u8] },
     }
 
@@ -590,8 +638,42 @@ mod value {
         pub info: u8,
     }
 
+    pub struct EncodedTreeMove {
+        pub subject_peer_idx: usize,
+        pub subject_cnt: usize,
+        pub is_parent_null: bool,
+        pub parent_peer_idx: usize,
+        pub parent_cnt: usize,
+    }
+
+    impl EncodedTreeMove {
+        pub fn into_tree_op(&self, peer_ids: &[u64]) -> TreeOp {
+            TreeOp {
+                target: TreeID::new(peer_ids[self.subject_peer_idx], self.subject_cnt as Counter),
+                parent: if self.is_parent_null {
+                    None
+                } else {
+                    Some(TreeID::new(
+                        peer_ids[self.parent_peer_idx],
+                        self.parent_cnt as Counter,
+                    ))
+                },
+            }
+        }
+
+        pub fn from_tree_op(op: &TreeOp, register_peer_id: &mut dyn FnMut(u64) -> usize) -> Self {
+            EncodedTreeMove {
+                subject_peer_idx: register_peer_id(op.target.peer),
+                subject_cnt: op.target.counter as usize,
+                is_parent_null: op.parent.is_none(),
+                parent_peer_idx: op.parent.map_or(0, |x| register_peer_id(x.peer)),
+                parent_cnt: op.parent.map_or(0, |x| x.counter as usize),
+            }
+        }
+    }
+
     #[non_exhaustive]
-    #[derive(FromPrimitive, ToPrimitive)]
+    #[derive(Debug, FromPrimitive, ToPrimitive)]
     pub enum ValueKind {
         Null = 0,
         True = 1,
@@ -627,7 +709,7 @@ mod value {
                 Value::Array(_) => ValueKind::Array,
                 Value::Map(_) => ValueKind::Map,
                 Value::MarkStart { .. } => ValueKind::MarkStart,
-                Value::TreeMove() => ValueKind::TreeMove,
+                Value::TreeMove(_) => ValueKind::TreeMove,
                 Value::Binary(_) => ValueKind::Binary,
                 Value::Unknown { .. } => ValueKind::Unknown,
             }
@@ -658,13 +740,22 @@ mod value {
             ValueWriter { buffer: Vec::new() }
         }
 
-        pub fn write_value(
+        pub fn write_value_type_and_content(
             &mut self,
             value: &LoroValue,
             register_key: &mut dyn FnMut(&InternalString) -> usize,
             register_cid: &mut dyn FnMut(&ContainerID) -> usize,
         ) -> ValueKind {
             self.write_u8(get_loro_value_kind(value).to_u8().unwrap());
+            self.write_value_content(value, register_key, register_cid)
+        }
+
+        pub fn write_value_content(
+            &mut self,
+            value: &LoroValue,
+            register_key: &mut dyn FnMut(&InternalString) -> usize,
+            register_cid: &mut dyn FnMut(&ContainerID) -> usize,
+        ) -> ValueKind {
             match value {
                 LoroValue::Null => ValueKind::Null,
                 LoroValue::Bool(true) => ValueKind::True,
@@ -678,13 +769,13 @@ mod value {
                     ValueKind::F64
                 }
                 LoroValue::String(value) => {
-                    self.write_str(&*value);
+                    self.write_str(value);
                     ValueKind::Str
                 }
                 LoroValue::List(value) => {
                     self.write_usize(value.len());
                     for value in value.iter() {
-                        self.write_value(value, register_key, register_cid);
+                        self.write_value_type_and_content(value, register_key, register_cid);
                     }
                     ValueKind::Array
                 }
@@ -694,16 +785,16 @@ mod value {
                         let key_idx = register_key(&key.as_str().into());
                         self.write_usize(key_idx);
                         self.write_kind(get_loro_value_kind(value));
-                        self.write_value(value, register_key, register_cid);
+                        self.write_value_type_and_content(value, register_key, register_cid);
                     }
                     ValueKind::Map
                 }
                 LoroValue::Binary(value) => {
-                    self.write_binary(&*value);
+                    self.write_binary(value);
                     ValueKind::Binary
                 }
                 LoroValue::Container(c) => {
-                    let idx = register_cid(&c);
+                    let idx = register_cid(c);
                     self.write_usize(idx);
                     ValueKind::ContainerIdx
                 }
@@ -728,11 +819,11 @@ mod value {
                 Value::DeltaInt(value) => self.write_i32(*value),
                 Value::Array(value) => self.write_array(value, register_key, register_cid),
                 Value::Map(value) => self.write_map(value, register_key, register_cid),
-                Value::MarkStart(value) => self.write_mark_start(value, register_key, register_cid),
-                Value::TreeMove() => self.write_tree_move(),
+                Value::MarkStart(value) => self.write_mark(value, register_key, register_cid),
+                Value::TreeMove(op) => self.write_tree_move(op),
                 Value::Binary(value) => self.write_binary(value),
                 Value::ContainerIdx(value) => self.write_usize(*value),
-                Value::Unknown { kind, data } => self.write_binary(data),
+                Value::Unknown { kind: _, data } => self.write_binary(data),
             }
         }
 
@@ -757,7 +848,7 @@ mod value {
             self.buffer.push(value);
         }
 
-        fn write_kind(&mut self, kind: ValueKind) {
+        pub fn write_kind(&mut self, kind: ValueKind) {
             self.write_u8(kind.to_u8().unwrap());
         }
 
@@ -794,20 +885,24 @@ mod value {
             self.buffer.extend_from_slice(value);
         }
 
-        fn write_mark_start(
+        fn write_mark(
             &mut self,
-            mark_start: &MarkStart,
+            mark: &MarkStart,
             register_key: &mut dyn FnMut(&InternalString) -> usize,
             register_cid: &mut dyn FnMut(&ContainerID) -> usize,
         ) {
-            self.write_u8(mark_start.info);
-            self.write_usize(mark_start.len as usize);
-            self.write_usize(mark_start.key_idx as usize);
-            self.write_value(&mark_start.value, register_key, register_cid);
+            self.write_u8(mark.info);
+            self.write_usize(mark.len as usize);
+            self.write_usize(mark.key_idx as usize);
+            self.write_value_type_and_content(&mark.value, register_key, register_cid);
         }
 
-        fn write_tree_move(&self) {
-            todo!()
+        fn write_tree_move(&mut self, op: &EncodedTreeMove) {
+            self.write_usize(op.subject_peer_idx);
+            self.write_usize(op.subject_cnt);
+            self.write_u8(op.is_parent_null as u8);
+            self.write_usize(op.parent_peer_idx);
+            self.write_usize(op.parent_cnt);
         }
 
         pub(crate) fn finish(self) -> Vec<u8> {
@@ -824,7 +919,12 @@ mod value {
             ValueReader { raw }
         }
 
-        pub fn read(&mut self, kind: u8, keys: &[InternalString]) -> Value<'a> {
+        pub fn read(
+            &mut self,
+            kind: u8,
+            keys: &[InternalString],
+            cids: &[ContainerID],
+        ) -> Value<'a> {
             let Some(kind) = ValueKind::from_u8(kind) else {
                 return Value::Unknown {
                     kind,
@@ -842,22 +942,31 @@ mod value {
                 ValueKind::Str => Value::Str(self.read_str()),
                 ValueKind::DeleteSeq => Value::DeleteSeq(self.read_i32()),
                 ValueKind::DeltaInt => Value::DeltaInt(self.read_i32()),
-                ValueKind::Array => Value::Array(self.read_array(keys)),
-                ValueKind::Map => Value::Map(self.read_map(keys)),
+                ValueKind::Array => Value::Array(self.read_array(keys, cids)),
+                ValueKind::Map => Value::Map(self.read_map(keys, cids)),
                 ValueKind::Binary => Value::Binary(self.read_binary()),
-                ValueKind::MarkStart => Value::MarkStart(self.read_mark_start(keys)),
-                ValueKind::TreeMove => Value::TreeMove(),
+                ValueKind::MarkStart => Value::MarkStart(self.read_mark(keys, cids)),
+                ValueKind::TreeMove => Value::TreeMove(self.read_tree_move()),
                 ValueKind::ContainerIdx => Value::ContainerIdx(self.read_usize()),
                 ValueKind::Unknown => unreachable!(),
             }
         }
 
-        pub fn read_value(&mut self, keys: &[InternalString]) -> LoroValue {
+        pub fn read_value_type_and_content(
+            &mut self,
+            keys: &[InternalString],
+            cids: &[ContainerID],
+        ) -> LoroValue {
             let kind = self.read_u8();
-            let Some(kind) = ValueKind::from_u8(kind) else {
-                unreachable!()
-            };
+            self.read_value_content(ValueKind::from_u8(kind).unwrap(), keys, cids)
+        }
 
+        pub fn read_value_content(
+            &mut self,
+            kind: ValueKind,
+            keys: &[InternalString],
+            cids: &[ContainerID],
+        ) -> LoroValue {
             match kind {
                 ValueKind::Null => LoroValue::Null,
                 ValueKind::True => LoroValue::Bool(true),
@@ -870,7 +979,7 @@ mod value {
                     let len = self.read_usize();
                     let mut ans = Vec::with_capacity(len);
                     for _ in 0..len {
-                        ans.push(self.read_value(keys));
+                        ans.push(self.read_value_type_and_content(keys, cids));
                     }
                     ans.into()
                 }
@@ -880,13 +989,14 @@ mod value {
                     for _ in 0..len {
                         let key_idx = self.read_usize();
                         let key = keys[key_idx].to_string();
-                        let value = self.read_value(keys);
+                        let value = self.read_value_type_and_content(keys, cids);
                         ans.insert(key, value);
                     }
                     ans.into()
                 }
                 ValueKind::Binary => LoroValue::Binary(Arc::new(self.read_binary().to_owned())),
-                _ => unreachable!("Unexpected value kind"),
+                ValueKind::ContainerIdx => LoroValue::Container(cids[self.read_usize()].clone()),
+                a => unreachable!("Unexpected value kind {:?}", a),
             }
         }
 
@@ -922,24 +1032,28 @@ mod value {
             ValueKind::from_u8(self.read_u8()).unwrap_or(ValueKind::Unknown)
         }
 
-        fn read_array(&mut self, keys: &[InternalString]) -> Vec<Value<'a>> {
+        fn read_array(&mut self, keys: &[InternalString], cids: &[ContainerID]) -> Vec<Value<'a>> {
             let len = self.read_usize();
             let mut ans = Vec::with_capacity(len);
             for _ in 0..len {
                 let kind = self.read_u8();
-                ans.push(self.read(kind, keys));
+                ans.push(self.read(kind, keys, cids));
             }
             ans
         }
 
-        fn read_map(&mut self, keys: &[InternalString]) -> FxHashMap<InternalString, Value<'a>> {
+        fn read_map(
+            &mut self,
+            keys: &[InternalString],
+            cids: &[ContainerID],
+        ) -> FxHashMap<InternalString, Value<'a>> {
             let len = self.read_usize();
             let mut ans = FxHashMap::with_capacity_and_hasher(len, Default::default());
             for _ in 0..len {
                 let key_idx = self.read_usize();
                 let key = keys[key_idx].clone();
                 let kind = self.read_u8();
-                let value = self.read(kind, keys);
+                let value = self.read(kind, keys, cids);
                 ans.insert(key, value);
             }
             ans
@@ -959,12 +1073,11 @@ mod value {
             ans
         }
 
-        fn read_mark_start(&mut self, keys: &[InternalString]) -> MarkStart {
+        pub fn read_mark(&mut self, keys: &[InternalString], cids: &[ContainerID]) -> MarkStart {
             let info = self.read_u8();
-            let start = self.read_usize();
             let len = self.read_usize();
             let key_idx = self.read_usize();
-            let value = self.read_value(keys);
+            let value = self.read_value_type_and_content(keys, cids);
             MarkStart {
                 len: len as u32,
                 key_idx: key_idx as u32,
@@ -972,15 +1085,29 @@ mod value {
                 info,
             }
         }
+
+        pub fn read_tree_move(&mut self) -> EncodedTreeMove {
+            let subject_peer_idx = self.read_usize();
+            let subject_cnt = self.read_usize();
+            let is_parent_null = self.read_u8() != 0;
+            let parent_peer_idx = self.read_usize();
+            let parent_cnt = self.read_usize();
+            EncodedTreeMove {
+                subject_peer_idx,
+                subject_cnt,
+                is_parent_null,
+                parent_peer_idx,
+                parent_cnt,
+            }
+        }
     }
 }
 
 mod arena {
     use crate::InternalString;
-    use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, PeerID, ID};
+    use loro_common::{ContainerID, ContainerType, LoroResult, PeerID, ID};
     use serde::{Deserialize, Serialize};
     use serde_columnar::columnar;
-    use std::borrow::Cow;
 
     use super::PeerIdx;
 

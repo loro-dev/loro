@@ -261,6 +261,11 @@ pub struct TreeID {
 }
 
 impl TreeID {
+    #[inline(always)]
+    pub fn new(peer: PeerID, counter: Counter) -> Self {
+        Self { peer, counter }
+    }
+
     /// return [`DELETED_TREE_ROOT`]
     pub const fn delete_root() -> Option<Self> {
         DELETED_TREE_ROOT

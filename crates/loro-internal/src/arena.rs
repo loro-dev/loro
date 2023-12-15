@@ -117,13 +117,15 @@ impl<'a> OpConverter<'a> {
                         str,
                         unicode_len: _,
                     } => {
-                        let slice = _alloc_str(&mut self.str, &str);
+                        let (slice, r) = _alloc_str_with_slice(&mut self.str, &str);
                         Op {
                             counter,
                             container,
-                            content: crate::op::InnerContent::List(InnerListOp::Insert {
-                                slice: SliceRange::from(slice.start as u32..slice.end as u32),
-                                pos,
+                            content: crate::op::InnerContent::List(InnerListOp::InsertText {
+                                slice,
+                                unicode_start: r.start as u32,
+                                unicode_len: (r.end - r.start) as u32,
+                                pos: pos as u32,
                             }),
                         }
                     }
@@ -241,9 +243,7 @@ impl SharedArena {
     /// return slice and unicode index
     pub fn alloc_str_with_slice(&self, str: &str) -> (BytesSlice, StrAllocResult) {
         let mut text_lock = self.inner.str.lock().unwrap();
-        let start = text_lock.len_bytes();
-        let ans = _alloc_str(&mut text_lock, str);
-        (text_lock.slice_bytes(start..), ans)
+        _alloc_str_with_slice(&mut text_lock, str)
     }
 
     /// alloc str without extra info
@@ -508,6 +508,15 @@ impl SharedArena {
             &self.inner.parents.lock().unwrap(),
         )
     }
+}
+
+fn _alloc_str_with_slice(
+    text_lock: &mut MutexGuard<'_, StrArena>,
+    str: &str,
+) -> (BytesSlice, StrAllocResult) {
+    let start = text_lock.len_bytes();
+    let ans = _alloc_str(text_lock, str);
+    (text_lock.slice_bytes(start..), ans)
 }
 
 fn _alloc_values(

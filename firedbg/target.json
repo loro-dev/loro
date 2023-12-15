@@ -1,0 +1,291 @@
+{
+  "binaries": [],
+  "examples": [
+    {
+      "name": "pending",
+      "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/examples/pending.rs"
+    },
+    {
+      "name": "list",
+      "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/examples/list.rs"
+    },
+    {
+      "name": "encoding_refactored",
+      "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/examples/encoding_refactored.rs"
+    },
+    {
+      "name": "encoding",
+      "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/examples/encoding.rs"
+    },
+    {
+      "name": "event",
+      "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/examples/event.rs"
+    },
+    {
+      "name": "many_actors",
+      "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/examples/many_actors.rs"
+    },
+    {
+      "name": "tree",
+      "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/examples/tree.rs"
+    },
+    {
+      "name": "automerge_x100",
+      "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/examples/automerge_x100.rs"
+    },
+    {
+      "name": "encoding_parallel",
+      "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/examples/encoding_parallel.rs"
+    },
+    {
+      "name": "obs",
+      "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/examples/obs.rs"
+    },
+    {
+      "name": "mem",
+      "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/examples/mem.rs"
+    }
+  ],
+  "integration_tests": [
+    {
+      "package_name": "loro",
+      "test": {
+        "name": "loro_rust_test",
+        "src_path": "/Users/zxch3n/Code/loro/crates/loro/tests/loro_rust_test.rs"
+      },
+      "test_cases": [
+        "list",
+        "map",
+        "richtext_test",
+        "save",
+        "subscribe",
+        "sync"
+      ]
+    },
+    {
+      "package_name": "loro-internal",
+      "test": {
+        "name": "fugue",
+        "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/tests/fugue.rs"
+      },
+      "test_cases": [
+        "test_backward_interleaving",
+        "test_forward_backward",
+        "test_forward_interleaving",
+        "test_yjs_interleave"
+      ]
+    },
+    {
+      "package_name": "loro-internal",
+      "test": {
+        "name": "test",
+        "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/tests/test.rs"
+      },
+      "test_cases": [
+        "a_list_of_map_checkout",
+        "concurrent_richtext_mark_event",
+        "event_from_checkout",
+        "handler_in_event",
+        "import",
+        "import_after_init_handlers",
+        "insert_richtext_event",
+        "issue_211",
+        "list",
+        "map_checkout",
+        "map_concurrent_checkout",
+        "mark_with_the_same_key_value_should_be_skipped",
+        "out_of_bound_test",
+        "richtext_mark_event",
+        "test_checkout",
+        "test_from_snapshot",
+        "test_pending",
+        "test_text_checkout",
+        "test_timestamp",
+        "tree_checkout"
+      ]
+    },
+    {
+      "package_name": "loro-internal",
+      "test": {
+        "name": "richtext",
+        "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/tests/richtext.rs"
+      },
+      "test_cases": [
+        "case0",
+        "case1",
+        "case2",
+        "case3",
+        "case5",
+        "case6",
+        "case7",
+        "case8",
+        "case9",
+        "insert_after_link"
+      ]
+    },
+    {
+      "package_name": "loro-internal",
+      "test": {
+        "name": "autocommit",
+        "src_path": "/Users/zxch3n/Code/loro/crates/loro-internal/tests/autocommit.rs"
+      },
+      "test_cases": [
+        "auto_commit",
+        "auto_commit_list",
+        "auto_commit_with_checkout"
+      ]
+    }
+  ],
+  "unit_tests": [
+    {
+      "package_name": "loro-common",
+      "test_cases": [
+        "span::test_id_span::backward",
+        "span::test_id_span::merge",
+        "span::test_id_span::slice",
+        "span::test_id_span::test_id_span_rle_vec",
+        "test::test_container_id_convert_to_and_from_str",
+        "test::test_convert_invalid_container_id_str"
+      ]
+    },
+    {
+      "package_name": "loro-internal",
+      "test_cases": [
+        "arena::str_arena::test::parse_unicode_correctly",
+        "arena::str_arena::test::slice_long_unicode_correctly",
+        "arena::str_arena::test::test",
+        "change::test::size_of_change",
+        "container::map::map_content::test::fix_fields_order",
+        "container::richtext::richtext_state::test::bold_and_link_at_the_same_place",
+        "container::richtext::richtext_state::test::bold_should_expand",
+        "container::richtext::richtext_state::test::continuous_text_insert_should_be_merged",
+        "container::richtext::richtext_state::test::continuous_text_insert_should_be_merged_and_have_bold",
+        "container::richtext::richtext_state::test::continuous_text_insert_should_not_be_merged_when_prev_is_link",
+        "container::richtext::richtext_state::test::delete_bold",
+        "container::richtext::richtext_state::test::delete_text",
+        "container::richtext::richtext_state::test::insert_cache_hit",
+        "container::richtext::richtext_state::test::link_should_not_expand",
+        "container::richtext::richtext_state::test::remove_style_anchors_should_also_delete_style",
+        "container::richtext::richtext_state::test::test",
+        "container::richtext::richtext_state::test::test_comments",
+        "container::richtext::style_range_map::test::delete_style",
+        "container::richtext::style_range_map::test::test_basic_insert",
+        "container::richtext::test::test",
+        "container::richtext::tracker::crdt_rope::test::checkout",
+        "container::richtext::tracker::crdt_rope::test::checkout_future",
+        "container::richtext::tracker::crdt_rope::test::checkout_future_with_delete",
+        "container::richtext::tracker::crdt_rope::test::content_insert_middle",
+        "container::richtext::tracker::crdt_rope::test::content_insert_should_ignore_tombstone",
+        "container::richtext::tracker::crdt_rope::test::get_origin_left_and_right",
+        "container::richtext::tracker::crdt_rope::test::get_origin_left_and_right_among_tombstones",
+        "container::richtext::tracker::crdt_rope::test::len_test",
+        "container::richtext::tracker::crdt_rope::test::should_ignore_future_spans_when_getting_origin_left",
+        "container::richtext::tracker::crdt_rope::test::update",
+        "container::richtext::tracker::id_to_cursor::test::test_id_to_cursor",
+        "container::richtext::tracker::test::test_checkout_in_doc_with_del_span",
+        "container::richtext::tracker::test::test_checkout_in_doc_with_reversed_del_span",
+        "container::richtext::tracker::test::test_len",
+        "container::richtext::tracker::test::test_retreat_and_forward_delete",
+        "container::test::container_id_convert",
+        "dag::test::dag_partial_iter::issue",
+        "dag::test::dag_partial_iter::proptest_iter_2",
+        "dag::test::find_common_ancestors::dep_in_middle",
+        "dag::test::find_common_ancestors::large_lamport_with_longer_path",
+        "dag::test::find_common_ancestors::no_common_ancestors",
+        "dag::test::find_common_ancestors::no_common_ancestors_when_there_is_an_redundant_node",
+        "dag::test::find_common_ancestors::siblings",
+        "dag::test::find_common_ancestors_proptest::issue_0",
+        "dag::test::find_common_ancestors_proptest::issue_1",
+        "dag::test::find_common_ancestors_proptest::test_10dags",
+        "dag::test::find_common_ancestors_proptest::test_2dags",
+        "dag::test::find_common_ancestors_proptest::test_4dags",
+        "dag::test::find_common_ancestors_proptest::test_mul_ancestors_10dags",
+        "dag::test::find_common_ancestors_proptest::test_mul_ancestors_15dags_2",
+        "dag::test::find_common_ancestors_proptest::test_mul_ancestors_5dags",
+        "dag::test::find_path::issue",
+        "dag::test::find_path::middle",
+        "dag::test::find_path::one_path",
+        "dag::test::find_path::proptest_path",
+        "dag::test::find_path::proptest_path_large",
+        "dag::test::find_path::retreat_to_beginning",
+        "dag::test::get_version_vector::vv",
+        "dag::test::iter::test",
+        "dag::test::mermaid::gen",
+        "dag::test::mermaid::simple",
+        "dag::test::mermaid::three",
+        "dag::test::test_dag",
+        "delta::seq::test::delete_delete",
+        "delta::seq::test::delete_entire",
+        "delta::seq::test::delete_failed",
+        "delta::seq::test::delete_insert",
+        "delta::seq::test::delete_retain",
+        "delta::seq::test::delta_compose",
+        "delta::seq::test::delta_push",
+        "delta::seq::test::insert_delete",
+        "delta::seq::test::insert_insert",
+        "delta::seq::test::insert_retain",
+        "delta::seq::test::remove_meta",
+        "delta::seq::test::retain_delete",
+        "delta::seq::test::retain_end_opt",
+        "delta::seq::test::retain_end_opt_join",
+        "delta::seq::test::retain_insert",
+        "delta::seq::test::retain_more",
+        "delta::seq::test::retain_retain",
+        "delta::seq::test::retain_start_opt",
+        "delta::seq::test::retain_start_opt_split",
+        "encoding::encode_snapshot::test::test_snapshot_encode",
+        "encoding::encode_snapshot::test::text_edit_snapshot_encode_decode",
+        "encoding::encode_snapshot::test::tree_encode_decode",
+        "event::test::test_text_event",
+        "handler::test::import",
+        "handler::test::richtext_apply_delta",
+        "handler::test::richtext_handler",
+        "handler::test::richtext_handler_concurrent",
+        "handler::test::richtext_handler_mark",
+        "handler::test::richtext_snapshot",
+        "handler::test::test",
+        "handler::test::tree_meta",
+        "handler::test::tree_meta_event",
+        "loro::test::import_batch_err_181",
+        "loro::test::test_checkout",
+        "loro::test::test_sync",
+        "macros::test_macro",
+        "obs::test::test_recursive_events",
+        "obs::test::unsubscribe",
+        "op::content::test::fix_fields_order",
+        "op::test::fix_fields_order",
+        "oplog::pending_changes::test::import_pending",
+        "oplog::pending_changes::test::need_deps_pending_import",
+        "oplog::pending_changes::test::pending_import_snapshot",
+        "oplog::pending_changes::test::should_activate_pending_change_when",
+        "state::list_state::test::test",
+        "state::tree_state::tests::delete_node",
+        "state::tree_state::tests::test_tree_state",
+        "state::tree_state::tests::tree_convert",
+        "tests::size_of",
+        "utils::bitmap::test::basic",
+        "utils::utf16::tests::test_2_byte",
+        "utils::utf16::tests::test_3_byte",
+        "utils::utf16::tests::test_4_byte",
+        "utils::utf16::tests::test_ascii",
+        "utils::utf16::tests::test_crazy_emoji_bytes",
+        "utils::utf16::tests::test_empty_string",
+        "utils::utf16::tests::test_long_string",
+        "utils::utf16::tests::test_single_char",
+        "utils::utf16::tests::test_utf8_with_bom",
+        "utils::utf16::tests::test_utf8_with_null_char",
+        "version::tests::cmp::test",
+        "version::tests::field_order",
+        "version::tests::im"
+      ]
+    },
+    {
+      "package_name": "loro-rle",
+      "test_cases": [
+        "rle_vec::test::slice",
+        "rle_vec_old::test::prime_value::get_at_atom_index",
+        "rle_vec_old::test::prime_value::slice"
+      ]
+    }
+  ]
+}
