@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
@@ -13,7 +13,7 @@ use crate::{
     change::Change,
     container::{idx::ContainerIdx, list::list_op::DeleteSpan},
     encoding::encode_reordered::value::{ValueKind, ValueWriter},
-    op::Op,
+    op::{Op, SliceRange},
     version::Frontiers,
     OpLog, VersionVector,
 };
@@ -271,25 +271,52 @@ pub(crate) fn decode(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
                 _ => unreachable!(),
             },
             ContainerType::Map => {
-                todo!()
-                // let key = keys.keys[prop as usize].clone();
-                // match kind {
-                //     ValueKind::DeleteOnce => {
-                //         crate::op::InnerContent::Map(crate::container::map::MapSet {
-                //             key,
-                //             value: None,
-                //         })
-                //     }
-                //     _ => {
-                //         let value = value_reader.read_value(&keys.keys);
-                //         crate::op::InnerContent::Map(crate::container::map::MapSet {
-                //             key,
-                //             value: Some(value),
-                //         })
-                //     }
-                // }
+                let key = keys.keys[prop as usize].clone();
+                match kind {
+                    ValueKind::DeleteOnce => {
+                        crate::op::InnerContent::Map(crate::container::map::MapSet {
+                            key,
+                            value: None,
+                        })
+                    }
+                    _ => {
+                        let value = value_reader.read_value(&keys.keys);
+                        crate::op::InnerContent::Map(crate::container::map::MapSet {
+                            key,
+                            value: Some(value),
+                        })
+                    }
+                }
             }
-            ContainerType::List => todo!(),
+            ContainerType::List => {
+                let pos = prop as usize;
+                match kind {
+                    ValueKind::Array => {
+                        let arr = value_reader.read_value(&keys.keys);
+                        let range = arena.alloc_values(
+                            Arc::try_unwrap(arr.into_list().unwrap())
+                                .unwrap()
+                                .into_iter(),
+                        );
+                        crate::op::InnerContent::List(
+                            crate::container::list::list_op::InnerListOp::Insert {
+                                slice: SliceRange::new(range.start as u32..range.end as u32),
+                                pos,
+                            },
+                        )
+                    }
+                    ValueKind::DeleteSeq => {
+                        let len = value_reader.read_i32();
+                        crate::op::InnerContent::List(
+                            crate::container::list::list_op::InnerListOp::Delete(DeleteSpan::new(
+                                pos as isize,
+                                len as isize,
+                            )),
+                        )
+                    }
+                    _ => unreachable!(),
+                }
+            }
             ContainerType::Tree => todo!(),
         };
 

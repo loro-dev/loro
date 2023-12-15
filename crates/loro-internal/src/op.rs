@@ -315,6 +315,11 @@ impl SliceRange {
     }
 
     #[inline(always)]
+    pub fn new(range: Range<u32>) -> Self {
+        Self(range)
+    }
+
+    #[inline(always)]
     pub fn to_range(&self) -> Range<usize> {
         self.0.start as usize..self.0.end as usize
     }
