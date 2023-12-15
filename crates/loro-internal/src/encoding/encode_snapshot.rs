@@ -14,8 +14,8 @@ use smallvec::smallvec;
 use crate::{
     change::{Change, Timestamp},
     container::{
-        idx::ContainerIdx, list::list_op::InnerListOp, map::InnerMapSet,
-        richtext::TextStyleInfoFlag, tree::tree_op::TreeOp,
+        idx::ContainerIdx, list::list_op::InnerListOp, map::MapSet, richtext::TextStyleInfoFlag,
+        tree::tree_op::TreeOp,
     },
     delta::MapValue,
     id::{Counter, PeerID},
@@ -170,11 +170,11 @@ pub fn decode_oplog(
                             let value = if value_idx_plus_one == 0 {
                                 None
                             } else {
-                                Some(value_idx_plus_one - 1)
+                                Some(arena.get_value(value_idx_plus_one as usize - 1).unwrap())
                             };
                             Op::new(
                                 id,
-                                InnerContent::Map(InnerMapSet {
+                                InnerContent::Map(MapSet {
                                     key: (&*keys[key]).into(),
                                     value,
                                 }),
@@ -983,7 +983,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                 },
                 InnerContent::Map(map) => {
                     let key = record_key(&map.key);
-                    let value = map.value.and_then(|v| oplog.arena.get_value(v as usize));
+                    let value = &map.value;
                     let value = if let Some(value) = value {
                         (record_value(&value) + 1) as u32
                     } else {

@@ -186,14 +186,10 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                 crate::op::InnerContent::Map(map) => {
                     assert_eq!(op.container.get_type(), ContainerType::Map);
                     let key = register_key(&map.key);
-                    match map.value {
+                    match &map.value {
                         Some(v) => {
-                            let value = arena.get_value(v as usize).unwrap();
-                            let kind = value_writer.write_value(
-                                &value,
-                                &mut register_key,
-                                &mut register_cid,
-                            );
+                            let kind =
+                                value_writer.write_value(&v, &mut register_key, &mut register_cid);
                             (key as i32, kind)
                         }
                         None => (key as i32, ValueKind::DeleteOnce),

@@ -14,7 +14,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         list::list_op::{InnerListOp, ListOp},
-        map::{InnerMapSet, MapSet},
+        map::MapSet,
         ContainerID,
     },
     id::Counter,
@@ -95,18 +95,11 @@ impl<'a> OpConverter<'a> {
         };
 
         match content {
-            crate::op::RawOpContent::Map(MapSet { key, value }) => {
-                let value = if let Some(value) = value {
-                    Some(_alloc_value(&mut self.values, value) as u32)
-                } else {
-                    None
-                };
-                Op {
-                    counter,
-                    container,
-                    content: crate::op::InnerContent::Map(InnerMapSet { key, value }),
-                }
-            }
+            crate::op::RawOpContent::Map(MapSet { key, value }) => Op {
+                counter,
+                container,
+                content: crate::op::InnerContent::Map(MapSet { key, value }),
+            },
             crate::op::RawOpContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(values) => {
@@ -405,14 +398,11 @@ impl SharedArena {
         container: ContainerIdx,
     ) -> Op {
         match content {
-            crate::op::RawOpContent::Map(MapSet { key, value }) => {
-                let value = value.map(|value| self.alloc_value(value) as u32);
-                Op {
-                    counter,
-                    container,
-                    content: crate::op::InnerContent::Map(InnerMapSet { key, value }),
-                }
-            }
+            crate::op::RawOpContent::Map(MapSet { key, value }) => Op {
+                counter,
+                container,
+                content: crate::op::InnerContent::Map(MapSet { key, value }),
+            },
             crate::op::RawOpContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(values) => {

@@ -379,7 +379,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
                 lamport: op.lamport(),
                 peer: op.client_id(),
                 counter: op.id_start().counter,
-                value: op.op().content.as_map().unwrap().value,
+                value: op.op().content.as_map().unwrap().value.clone(),
             });
     }
 
@@ -411,7 +411,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         for (key, value) in changed {
             let value = value
                 .map(|v| {
-                    let value = v.value.and_then(|v| oplog.arena.get_value(v as usize));
+                    let value = v.value.clone();
                     if let Some(LoroValue::Container(c)) = &value {
                         on_new_container(c);
                     }
@@ -434,12 +434,26 @@ impl DiffCalculatorTrait for MapDiffCalculator {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct CompactMapValue {
     lamport: Lamport,
     peer: PeerID,
     counter: Counter,
-    value: Option<u32>,
+    value: Option<LoroValue>,
+}
+
+impl Ord for CompactMapValue {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.lamport
+            .cmp(&other.lamport)
+            .then(self.peer.cmp(&other.peer))
+    }
+}
+
+impl PartialOrd for CompactMapValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl HasId for CompactMapValue {
@@ -469,19 +483,19 @@ mod compact_register {
             &self,
             a: &VersionVector,
             b: &VersionVector,
-        ) -> (Option<CompactMapValue>, Option<CompactMapValue>) {
-            let mut max_a: Option<CompactMapValue> = None;
-            let mut max_b: Option<CompactMapValue> = None;
+        ) -> (Option<&CompactMapValue>, Option<&CompactMapValue>) {
+            let mut max_a: Option<&CompactMapValue> = None;
+            let mut max_b: Option<&CompactMapValue> = None;
             for v in self.tree.iter().rev() {
                 if b.get(&v.peer).copied().unwrap_or(0) > v.counter {
-                    max_b = Some(*v);
+                    max_b = Some(v);
                     break;
                 }
             }
 
             for v in self.tree.iter().rev() {
                 if a.get(&v.peer).copied().unwrap_or(0) > v.counter {
-                    max_a = Some(*v);
+                    max_a = Some(v);
                     break;
                 }
             }
