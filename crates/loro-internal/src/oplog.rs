@@ -18,8 +18,8 @@ use crate::container::list::list_op;
 use crate::dag::DagUtils;
 use crate::diff_calc::tree::MoveLamportAndID;
 use crate::diff_calc::TreeDiffCache;
-use crate::encoding::RemoteClientChanges;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
+use crate::encoding::{ParsedHeaderAndBody, RemoteClientChanges};
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{ListSlice, RawOpContent, RemoteOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
@@ -697,7 +697,7 @@ impl OpLog {
     }
 
     #[inline(always)]
-    pub fn decode(&mut self, data: &[u8]) -> Result<(), LoroError> {
+    pub fn decode(&mut self, data: ParsedHeaderAndBody) -> Result<(), LoroError> {
         decode_oplog(self, data)
     }
 

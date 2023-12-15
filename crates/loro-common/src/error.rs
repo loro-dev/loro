@@ -13,6 +13,8 @@ pub enum LoroError {
     DecodeVersionVectorError,
     #[error("Decode error ({0})")]
     DecodeError(Box<str>),
+    #[error("Checksum mismatch. The data is corrupted.")]
+    DecodeDataCorruptionError,
     #[error("Js error ({0})")]
     JsError(Box<str>),
     #[error("Cannot get lock or the lock is poisoned")]

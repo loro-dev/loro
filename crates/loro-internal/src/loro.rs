@@ -16,7 +16,10 @@ use crate::{
     arena::SharedArena,
     change::Timestamp,
     container::{idx::ContainerIdx, IntoContainerId},
-    encoding::{EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
+    encoding::{
+        decode_app_snapshot, export_snapshot, parse_header_and_body, EncodeMode,
+        ParsedHeaderAndBody,
+    },
     handler::TextHandler,
     handler::TreeHandler,
     id::PeerID,
@@ -26,7 +29,6 @@ use crate::{
 
 use super::{
     diff_calc::DiffCalculator,
-    encoding::encode_snapshot::{decode_app_snapshot, encode_app_snapshot},
     event::InternalDocDiff,
     obs::{Observer, SubID, Subscriber},
     oplog::OpLog,
@@ -58,7 +60,7 @@ pub struct LoroDoc {
     arena: SharedArena,
     observer: Arc<Observer>,
     diff_calculator: Arc<Mutex<DiffCalculator>>,
-    // when dropping the doc, the txn will be commited
+    // when dropping the doc, the txn will be committed
     txn: Arc<Mutex<Option<Transaction>>>,
     auto_commit: AtomicBool,
     detached: AtomicBool,
@@ -99,10 +101,10 @@ impl LoroDoc {
 
     pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
         let doc = Self::new();
-        let (input, mode) = parse_encode_header(bytes)?;
+        let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes)?;
         match mode {
             EncodeMode::Snapshot => {
-                decode_app_snapshot(&doc, input, true)?;
+                decode_app_snapshot(&doc, body, true)?;
                 Ok(doc)
             }
             _ => Err(LoroError::DecodeError(
@@ -244,7 +246,7 @@ impl LoroDoc {
 
     /// Commit the cumulative auto commit transaction.
     /// This method only has effect when `auto_commit` is true.
-    /// If `immediate_renew` is true, a new transaction will be created after the old one is commited
+    /// If `immediate_renew` is true, a new transaction will be created after the old one is committed
     pub fn commit_with(
         &self,
         origin: Option<InternalString>,
@@ -388,15 +390,18 @@ impl LoroDoc {
         bytes: &[u8],
         origin: string_cache::Atom<string_cache::EmptyStaticAtomSet>,
     ) -> Result<(), LoroError> {
-        let (input, mode) = parse_encode_header(bytes)?;
-        match mode {
-            EncodeMode::Updates | EncodeMode::RleUpdates | EncodeMode::CompressedRleUpdates => {
+        let parsed = parse_header_and_body(bytes)?;
+        match parsed.mode {
+            EncodeMode::Updates
+            | EncodeMode::RleUpdates
+            | EncodeMode::CompressedRleUpdates
+            | EncodeMode::ReorderedRle => {
                 // TODO: need to throw error if state is in transaction
                 debug_log::group!("import to {}", self.peer_id());
                 let mut oplog = self.oplog.lock().unwrap();
                 let old_vv = oplog.vv().clone();
                 let old_frontiers = oplog.frontiers().clone();
-                oplog.decode(bytes)?;
+                oplog.decode(parsed)?;
                 if !self.detached.load(Acquire) {
                     let mut diff = DiffCalculator::default();
                     let diff = diff.calc_diff_internal(
@@ -420,10 +425,10 @@ impl LoroDoc {
             }
             EncodeMode::Snapshot => {
                 if self.can_reset_with_snapshot() {
-                    decode_app_snapshot(self, input, !self.detached.load(Acquire))?;
+                    decode_app_snapshot(self, parsed.body, !self.detached.load(Acquire))?;
                 } else {
                     let app = LoroDoc::new();
-                    decode_app_snapshot(&app, input, false)?;
+                    decode_app_snapshot(&app, parsed.body, false)?;
                     let oplog = self.oplog.lock().unwrap();
                     // TODO: PERF: the ser and de can be optimized out
                     let updates = app.export_from(oplog.vv());
@@ -447,14 +452,7 @@ impl LoroDoc {
 
     pub fn export_snapshot(&self) -> Vec<u8> {
         self.commit_then_stop();
-        debug_log::group!("export snapshot");
-        let version = ENCODE_SCHEMA_VERSION;
-        let mut ans = Vec::from(MAGIC_BYTES);
-        // maybe u8 is enough
-        ans.push(version);
-        ans.push((EncodeMode::Snapshot).to_byte());
-        ans.extend(encode_app_snapshot(self));
-        debug_log::group_end!();
+        let ans = export_snapshot(self);
         self.renew_txn_if_auto_commit();
         ans
     }
@@ -669,23 +667,6 @@ impl LoroDoc {
     pub(crate) fn weak_state(&self) -> Weak<Mutex<DocState>> {
         Arc::downgrade(&self.state)
     }
-}
-
-fn parse_encode_header(bytes: &[u8]) -> Result<(&[u8], EncodeMode), LoroError> {
-    if bytes.len() <= 6 {
-        return Err(LoroError::DecodeError("Invalid import data".into()));
-    }
-    let (magic_bytes, input) = bytes.split_at(4);
-    let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
-    if magic_bytes != MAGIC_BYTES {
-        return Err(LoroError::DecodeError("Invalid header bytes".into()));
-    }
-    let (version, input) = input.split_at(1);
-    if version != [ENCODE_SCHEMA_VERSION] {
-        return Err(LoroError::DecodeError("Invalid version".into()));
-    }
-    let mode: EncodeMode = input[0].try_into()?;
-    Ok((&input[1..], mode))
 }
 
 #[cfg(test)]
