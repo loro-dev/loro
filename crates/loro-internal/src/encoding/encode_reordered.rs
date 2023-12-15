@@ -20,7 +20,7 @@ use crate::{
 
 use self::{
     arena::{decode_arena, encode_arena, ContainerArena, DecodedArenas},
-    value::ValueReader,
+    value::{MarkStart, ValueReader},
 };
 
 pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
@@ -77,10 +77,14 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut keys: Vec<InternalString> = Vec::new();
     let mut key_to_idx: FxHashMap<InternalString, usize> = FxHashMap::default();
 
-    let mut register_key = |key: InternalString| -> usize {
+    let mut register_key = |key: &InternalString| -> usize {
+        if let Some(ans) = key_to_idx.get(key) {
+            return *ans;
+        }
+
         *key_to_idx.entry(key.clone()).or_insert_with(|| {
             let idx = keys.len();
-            keys.push(key);
+            keys.push(key.clone());
             idx
         })
     };
@@ -146,6 +150,7 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                         value_writer.write(
                             &value::Value::Str(std::str::from_utf8(slice.as_bytes()).unwrap()),
                             &mut register_key,
+                            &mut register_cid,
                         );
                         (*pos as i32, ValueKind::Str)
                     }
@@ -153,6 +158,7 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                         value_writer.write(
                             &value::Value::DeleteSeq(span.signed_len as i32),
                             &mut register_key,
+                            &mut register_cid,
                         );
                         (span.pos as i32, ValueKind::DeleteSeq)
                     }
@@ -162,12 +168,24 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                         key,
                         value,
                         info,
-                    } => todo!(),
+                    } => {
+                        value_writer.write(
+                            &value::Value::MarkStart(MarkStart {
+                                len: end - start,
+                                key_idx: register_key(key) as u32,
+                                value: value.clone(),
+                                info: info.to_byte(),
+                            }),
+                            &mut register_key,
+                            &mut register_cid,
+                        );
+                        (*start as i32, ValueKind::MarkStart)
+                    }
                     crate::container::list::list_op::InnerListOp::StyleEnd => (0, ValueKind::Null),
                 },
                 crate::op::InnerContent::Map(map) => {
                     assert_eq!(op.container.get_type(), ContainerType::Map);
-                    let key = register_key(map.key.clone());
+                    let key = register_key(&map.key);
                     match map.value {
                         Some(v) => {
                             let value = arena.get_value(v as usize).unwrap();
@@ -230,35 +248,51 @@ pub(crate) fn decode(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
         let cid = containers.containers[container_index as usize]
             .to_container_id(&keys.keys, &peer_ids.peer_ids);
         let c_idx = arena.register_container(&cid);
+        let kind = ValueKind::from_u8(value_type).unwrap();
         let content = match cid.container_type() {
-            ContainerType::Text => {
-                let kind = ValueKind::from_u8(value_type).unwrap();
-                match kind {
-                    ValueKind::Str => {
-                        let s = value_reader.read_str();
-                        let (slice, result) = arena.alloc_str_with_slice(s);
-                        crate::op::InnerContent::List(
-                            crate::container::list::list_op::InnerListOp::InsertText {
-                                slice,
-                                unicode_start: result.start as u32,
-                                unicode_len: (result.end - result.start) as u32,
-                                pos: prop as u32,
-                            },
-                        )
-                    }
-                    ValueKind::DeleteSeq => {
-                        let len = value_reader.read_i32();
-                        crate::op::InnerContent::List(
-                            crate::container::list::list_op::InnerListOp::Delete(DeleteSpan::new(
-                                prop as isize,
-                                len as isize,
-                            )),
-                        )
-                    }
-                    _ => unreachable!(),
+            ContainerType::Text => match kind {
+                ValueKind::Str => {
+                    let s = value_reader.read_str();
+                    let (slice, result) = arena.alloc_str_with_slice(s);
+                    crate::op::InnerContent::List(
+                        crate::container::list::list_op::InnerListOp::InsertText {
+                            slice,
+                            unicode_start: result.start as u32,
+                            unicode_len: (result.end - result.start) as u32,
+                            pos: prop as u32,
+                        },
+                    )
                 }
+                ValueKind::DeleteSeq => {
+                    let len = value_reader.read_i32();
+                    crate::op::InnerContent::List(
+                        crate::container::list::list_op::InnerListOp::Delete(DeleteSpan::new(
+                            prop as isize,
+                            len as isize,
+                        )),
+                    )
+                }
+                _ => unreachable!(),
+            },
+            ContainerType::Map => {
+                todo!()
+                // let key = keys.keys[prop as usize].clone();
+                // match kind {
+                //     ValueKind::DeleteOnce => {
+                //         crate::op::InnerContent::Map(crate::container::map::MapSet {
+                //             key,
+                //             value: None,
+                //         })
+                //     }
+                //     _ => {
+                //         let value = value_reader.read_value(&keys.keys);
+                //         crate::op::InnerContent::Map(crate::container::map::MapSet {
+                //             key,
+                //             value: Some(value),
+                //         })
+                //     }
+                // }
             }
-            ContainerType::Map => todo!(),
             ContainerType::List => todo!(),
             ContainerType::Tree => todo!(),
         };
@@ -506,9 +540,16 @@ mod value {
         Array(Vec<Value<'a>>),
         Map(FxHashMap<InternalString, Value<'a>>),
         Binary(&'a [u8]),
-        MarkStart(),
+        MarkStart(MarkStart),
         TreeMove(),
         Unknown { kind: u8, data: &'a [u8] },
+    }
+
+    pub struct MarkStart {
+        pub len: u32,
+        pub key_idx: u32,
+        pub value: LoroValue,
+        pub info: u8,
     }
 
     #[non_exhaustive]
@@ -547,7 +588,7 @@ mod value {
                 Value::DeltaInt(_) => ValueKind::DeltaInt,
                 Value::Array(_) => ValueKind::Array,
                 Value::Map(_) => ValueKind::Map,
-                Value::MarkStart() => ValueKind::MarkStart,
+                Value::MarkStart { .. } => ValueKind::MarkStart,
                 Value::TreeMove() => ValueKind::TreeMove,
                 Value::Binary(_) => ValueKind::Binary,
                 Value::Unknown { .. } => ValueKind::Unknown,
@@ -582,9 +623,10 @@ mod value {
         pub fn write_value(
             &mut self,
             value: &LoroValue,
-            register_key: &mut dyn FnMut(InternalString) -> usize,
+            register_key: &mut dyn FnMut(&InternalString) -> usize,
             register_cid: &mut dyn FnMut(&ContainerID) -> usize,
         ) -> ValueKind {
+            self.write_u8(get_loro_value_kind(value).to_u8().unwrap());
             match value {
                 LoroValue::Null => ValueKind::Null,
                 LoroValue::Bool(true) => ValueKind::True,
@@ -611,7 +653,7 @@ mod value {
                 LoroValue::Map(value) => {
                     self.write_usize(value.len());
                     for (key, value) in value.iter() {
-                        let key_idx = register_key(key.as_str().into());
+                        let key_idx = register_key(&key.as_str().into());
                         self.write_usize(key_idx);
                         self.write_kind(get_loro_value_kind(value));
                         self.write_value(value, register_key, register_cid);
@@ -633,7 +675,8 @@ mod value {
         pub fn write(
             &mut self,
             value: &Value,
-            register_key: &mut dyn FnMut(InternalString) -> usize,
+            register_key: &mut dyn FnMut(&InternalString) -> usize,
+            register_cid: &mut dyn FnMut(&ContainerID) -> usize,
         ) {
             match value {
                 Value::Null => {}
@@ -645,9 +688,9 @@ mod value {
                 Value::Str(value) => self.write_str(value),
                 Value::DeleteSeq(value) => self.write_i32(*value),
                 Value::DeltaInt(value) => self.write_i32(*value),
-                Value::Array(value) => self.write_array(value, register_key),
-                Value::Map(value) => self.write_map(value, register_key),
-                Value::MarkStart() => self.write_mark_start(),
+                Value::Array(value) => self.write_array(value, register_key, register_cid),
+                Value::Map(value) => self.write_map(value, register_key, register_cid),
+                Value::MarkStart(value) => self.write_mark_start(value, register_key, register_cid),
                 Value::TreeMove() => self.write_tree_move(),
                 Value::Binary(value) => self.write_binary(value),
                 Value::ContainerIdx(value) => self.write_usize(*value),
@@ -683,26 +726,28 @@ mod value {
         fn write_array(
             &mut self,
             value: &[Value],
-            register_key: &mut dyn FnMut(InternalString) -> usize,
+            register_key: &mut dyn FnMut(&InternalString) -> usize,
+            register_cid: &mut dyn FnMut(&ContainerID) -> usize,
         ) {
             self.write_usize(value.len());
             for value in value {
                 self.write_kind(value.kind());
-                self.write(value, register_key);
+                self.write(value, register_key, register_cid);
             }
         }
 
         fn write_map(
             &mut self,
             value: &FxHashMap<InternalString, Value>,
-            register_key: &mut dyn FnMut(InternalString) -> usize,
+            register_key: &mut dyn FnMut(&InternalString) -> usize,
+            register_cid: &mut dyn FnMut(&ContainerID) -> usize,
         ) {
             self.write_usize(value.len());
             for (key, value) in value {
-                let key_idx = register_key(key.clone());
+                let key_idx = register_key(key);
                 self.write_usize(key_idx);
                 self.write_kind(value.kind());
-                self.write(value, register_key);
+                self.write(value, register_key, register_cid);
             }
         }
 
@@ -711,8 +756,16 @@ mod value {
             self.buffer.extend_from_slice(value);
         }
 
-        fn write_mark_start(&mut self) {
-            todo!()
+        fn write_mark_start(
+            &mut self,
+            mark_start: &MarkStart,
+            register_key: &mut dyn FnMut(&InternalString) -> usize,
+            register_cid: &mut dyn FnMut(&ContainerID) -> usize,
+        ) {
+            self.write_u8(mark_start.info);
+            self.write_usize(mark_start.len as usize);
+            self.write_usize(mark_start.key_idx as usize);
+            self.write_value(&mark_start.value, register_key, register_cid);
         }
 
         fn write_tree_move(&self) {
@@ -754,14 +807,15 @@ mod value {
                 ValueKind::Array => Value::Array(self.read_array(keys)),
                 ValueKind::Map => Value::Map(self.read_map(keys)),
                 ValueKind::Binary => Value::Binary(self.read_binary()),
-                ValueKind::MarkStart => Value::MarkStart(),
+                ValueKind::MarkStart => Value::MarkStart(self.read_mark_start(keys)),
                 ValueKind::TreeMove => Value::TreeMove(),
                 ValueKind::ContainerIdx => Value::ContainerIdx(self.read_usize()),
                 ValueKind::Unknown => unreachable!(),
             }
         }
 
-        pub fn read_value(&mut self, kind: u8, keys: &[InternalString]) -> LoroValue {
+        pub fn read_value(&mut self, keys: &[InternalString]) -> LoroValue {
+            let kind = self.read_u8();
             let Some(kind) = ValueKind::from_u8(kind) else {
                 unreachable!()
             };
@@ -778,8 +832,7 @@ mod value {
                     let len = self.read_usize();
                     let mut ans = Vec::with_capacity(len);
                     for _ in 0..len {
-                        let kind = self.read_u8();
-                        ans.push(self.read_value(kind, keys));
+                        ans.push(self.read_value(keys));
                     }
                     ans.into()
                 }
@@ -789,8 +842,7 @@ mod value {
                     for _ in 0..len {
                         let key_idx = self.read_usize();
                         let key = keys[key_idx].to_string();
-                        let kind = self.read_u8();
-                        let value = self.read_value(kind, keys);
+                        let value = self.read_value(keys);
                         ans.insert(key, value);
                     }
                     ans.into()
@@ -811,7 +863,7 @@ mod value {
             f64::from_be_bytes(bytes)
         }
 
-        fn read_usize(&mut self) -> usize {
+        pub fn read_usize(&mut self) -> usize {
             leb128::read::unsigned(&mut self.raw).unwrap() as usize
         }
 
@@ -867,6 +919,20 @@ mod value {
             let ans = &self.raw[..len];
             self.raw = &self.raw[len..];
             ans
+        }
+
+        fn read_mark_start(&mut self, keys: &[InternalString]) -> MarkStart {
+            let info = self.read_u8();
+            let start = self.read_usize();
+            let len = self.read_usize();
+            let key_idx = self.read_usize();
+            let value = self.read_value(keys);
+            MarkStart {
+                len: len as u32,
+                key_idx: key_idx as u32,
+                value,
+                info,
+            }
         }
     }
 }
@@ -1040,7 +1106,7 @@ mod arena {
         pub fn from_containers(
             cids: Vec<ContainerID>,
             register_peer_id: &mut dyn FnMut(PeerID) -> usize,
-            register_key: &mut dyn FnMut(InternalString) -> usize,
+            register_key: &mut dyn FnMut(&InternalString) -> usize,
         ) -> Self {
             let mut ans = Self {
                 containers: Vec::with_capacity(cids.len()),
@@ -1056,13 +1122,13 @@ mod arena {
             &mut self,
             id: ContainerID,
             register_peer_id: &mut dyn FnMut(PeerID) -> usize,
-            register_key: &mut dyn FnMut(InternalString) -> usize,
+            register_key: &mut dyn FnMut(&InternalString) -> usize,
         ) {
             let (is_root, kind, peer_idx, key_idx_or_counter) = match id {
                 ContainerID::Root {
                     container_type,
                     name,
-                } => (true, container_type, 0, register_key(name) as i32),
+                } => (true, container_type, 0, register_key(&name) as i32),
                 ContainerID::Normal {
                     container_type,
                     peer,
