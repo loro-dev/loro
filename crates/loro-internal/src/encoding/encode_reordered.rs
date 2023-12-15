@@ -3,10 +3,10 @@ use std::{borrow::Cow, sync::Arc};
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
     ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan,
-    InternalString, LoroError, LoroResult, PeerID, ID,
+    InternalString, LoroResult, PeerID, ID,
 };
 use num_traits::{FromPrimitive, ToPrimitive};
-use rle::{HasLength, RleVec, Sliceable};
+use rle::{HasLength, Sliceable};
 use serde_columnar::columnar;
 
 use crate::{
@@ -58,8 +58,7 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         }
     }
 
-    let (mut containers, container_idx2index) =
-        extract_containers_in_order(&diff_changes, oplog, &mut peer_id_to_idx, &mut peers);
+    let (mut containers, container_idx2index) = extract_containers_in_order(&diff_changes, oplog);
 
     let mut cid2index = containers
         .iter()
@@ -128,75 +127,13 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
 
         for op in change.ops().iter() {
             let container_index = container_idx2index[&op.container] as u32;
-            let (prop, value_type) = match &op.content {
-                crate::op::InnerContent::List(list) => match list {
-                    crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
-                        assert_eq!(op.container.get_type(), ContainerType::List);
-                        let value = arena.get_values(slice.0.start as usize..slice.0.end as usize);
-                        value_writer.write_value(
-                            &value.into(),
-                            &mut register_key,
-                            &mut register_cid,
-                        );
-                        (*pos as i32, ValueKind::Array)
-                    }
-                    crate::container::list::list_op::InnerListOp::InsertText {
-                        slice,
-                        unicode_start: _,
-                        unicode_len: _,
-                        pos,
-                    } => {
-                        // TODO: refactor this from_utf8 can be done internally without checking
-                        value_writer.write(
-                            &value::Value::Str(std::str::from_utf8(slice.as_bytes()).unwrap()),
-                            &mut register_key,
-                            &mut register_cid,
-                        );
-                        (*pos as i32, ValueKind::Str)
-                    }
-                    crate::container::list::list_op::InnerListOp::Delete(span) => {
-                        value_writer.write(
-                            &value::Value::DeleteSeq(span.signed_len as i32),
-                            &mut register_key,
-                            &mut register_cid,
-                        );
-                        (span.pos as i32, ValueKind::DeleteSeq)
-                    }
-                    crate::container::list::list_op::InnerListOp::StyleStart {
-                        start,
-                        end,
-                        key,
-                        value,
-                        info,
-                    } => {
-                        value_writer.write(
-                            &value::Value::MarkStart(MarkStart {
-                                len: end - start,
-                                key_idx: register_key(key) as u32,
-                                value: value.clone(),
-                                info: info.to_byte(),
-                            }),
-                            &mut register_key,
-                            &mut register_cid,
-                        );
-                        (*start as i32, ValueKind::MarkStart)
-                    }
-                    crate::container::list::list_op::InnerListOp::StyleEnd => (0, ValueKind::Null),
-                },
-                crate::op::InnerContent::Map(map) => {
-                    assert_eq!(op.container.get_type(), ContainerType::Map);
-                    let key = register_key(&map.key);
-                    match &map.value {
-                        Some(v) => {
-                            let kind =
-                                value_writer.write_value(&v, &mut register_key, &mut register_cid);
-                            (key as i32, kind)
-                        }
-                        None => (key as i32, ValueKind::DeleteOnce),
-                    }
-                }
-                crate::op::InnerContent::Tree(_) => todo!(),
-            };
+            let (prop, value_type) = encode_op(
+                op,
+                arena,
+                &mut value_writer,
+                &mut register_key,
+                &mut register_cid,
+            );
 
             ops.push(EncodedOp {
                 container_index,
@@ -245,80 +182,7 @@ pub(crate) fn decode(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
             .to_container_id(&keys.keys, &peer_ids.peer_ids);
         let c_idx = arena.register_container(&cid);
         let kind = ValueKind::from_u8(value_type).unwrap();
-        let content = match cid.container_type() {
-            ContainerType::Text => match kind {
-                ValueKind::Str => {
-                    let s = value_reader.read_str();
-                    let (slice, result) = arena.alloc_str_with_slice(s);
-                    crate::op::InnerContent::List(
-                        crate::container::list::list_op::InnerListOp::InsertText {
-                            slice,
-                            unicode_start: result.start as u32,
-                            unicode_len: (result.end - result.start) as u32,
-                            pos: prop as u32,
-                        },
-                    )
-                }
-                ValueKind::DeleteSeq => {
-                    let len = value_reader.read_i32();
-                    crate::op::InnerContent::List(
-                        crate::container::list::list_op::InnerListOp::Delete(DeleteSpan::new(
-                            prop as isize,
-                            len as isize,
-                        )),
-                    )
-                }
-                _ => unreachable!(),
-            },
-            ContainerType::Map => {
-                let key = keys.keys[prop as usize].clone();
-                match kind {
-                    ValueKind::DeleteOnce => {
-                        crate::op::InnerContent::Map(crate::container::map::MapSet {
-                            key,
-                            value: None,
-                        })
-                    }
-                    _ => {
-                        let value = value_reader.read_value(&keys.keys);
-                        crate::op::InnerContent::Map(crate::container::map::MapSet {
-                            key,
-                            value: Some(value),
-                        })
-                    }
-                }
-            }
-            ContainerType::List => {
-                let pos = prop as usize;
-                match kind {
-                    ValueKind::Array => {
-                        let arr = value_reader.read_value(&keys.keys);
-                        let range = arena.alloc_values(
-                            Arc::try_unwrap(arr.into_list().unwrap())
-                                .unwrap()
-                                .into_iter(),
-                        );
-                        crate::op::InnerContent::List(
-                            crate::container::list::list_op::InnerListOp::Insert {
-                                slice: SliceRange::new(range.start as u32..range.end as u32),
-                                pos,
-                            },
-                        )
-                    }
-                    ValueKind::DeleteSeq => {
-                        let len = value_reader.read_i32();
-                        crate::op::InnerContent::List(
-                            crate::container::list::list_op::InnerListOp::Delete(DeleteSpan::new(
-                                pos as isize,
-                                len as isize,
-                            )),
-                        )
-                    }
-                    _ => unreachable!(),
-                }
-            }
-            ContainerType::Tree => todo!(),
-        };
+        let content = decode_op(cid, kind, &mut value_reader, arena, prop, &keys);
 
         let peer = peer_ids.peer_ids[peer_idx as usize];
         ops_map.entry(peer).or_default().push(Op {
@@ -423,6 +287,159 @@ pub(crate) fn decode(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
     Ok(())
 }
 
+fn encode_op(
+    op: &Op,
+    arena: &crate::arena::SharedArena,
+    value_writer: &mut ValueWriter,
+    register_key: &mut impl FnMut(&string_cache::Atom<string_cache::EmptyStaticAtomSet>) -> usize,
+    register_cid: &mut impl FnMut(&ContainerID) -> usize,
+) -> (i32, ValueKind) {
+    let (prop, value_type) = match &op.content {
+        crate::op::InnerContent::List(list) => match list {
+            crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
+                assert_eq!(op.container.get_type(), ContainerType::List);
+                let value = arena.get_values(slice.0.start as usize..slice.0.end as usize);
+                value_writer.write_value(&value.into(), register_key, register_cid);
+                (*pos as i32, ValueKind::Array)
+            }
+            crate::container::list::list_op::InnerListOp::InsertText {
+                slice,
+                unicode_start: _,
+                unicode_len: _,
+                pos,
+            } => {
+                // TODO: refactor this from_utf8 can be done internally without checking
+                value_writer.write(
+                    &value::Value::Str(std::str::from_utf8(slice.as_bytes()).unwrap()),
+                    register_key,
+                    register_cid,
+                );
+                (*pos as i32, ValueKind::Str)
+            }
+            crate::container::list::list_op::InnerListOp::Delete(span) => {
+                value_writer.write(
+                    &value::Value::DeleteSeq(span.signed_len as i32),
+                    register_key,
+                    register_cid,
+                );
+                (span.pos as i32, ValueKind::DeleteSeq)
+            }
+            crate::container::list::list_op::InnerListOp::StyleStart {
+                start,
+                end,
+                key,
+                value,
+                info,
+            } => {
+                value_writer.write(
+                    &value::Value::MarkStart(MarkStart {
+                        len: end - start,
+                        key_idx: register_key(key) as u32,
+                        value: value.clone(),
+                        info: info.to_byte(),
+                    }),
+                    register_key,
+                    register_cid,
+                );
+                (*start as i32, ValueKind::MarkStart)
+            }
+            crate::container::list::list_op::InnerListOp::StyleEnd => (0, ValueKind::Null),
+        },
+        crate::op::InnerContent::Map(map) => {
+            assert_eq!(op.container.get_type(), ContainerType::Map);
+            let key = register_key(&map.key);
+            match &map.value {
+                Some(v) => {
+                    let kind = value_writer.write_value(v, register_key, register_cid);
+                    (key as i32, kind)
+                }
+                None => (key as i32, ValueKind::DeleteOnce),
+            }
+        }
+        crate::op::InnerContent::Tree(_) => todo!(),
+    };
+    (prop, value_type)
+}
+
+fn decode_op(
+    cid: ContainerID,
+    kind: ValueKind,
+    value_reader: &mut ValueReader<'_>,
+    arena: &crate::arena::SharedArena,
+    prop: i32,
+    keys: &arena::KeyArena,
+) -> crate::op::InnerContent {
+    let content = match cid.container_type() {
+        ContainerType::Text => match kind {
+            ValueKind::Str => {
+                let s = value_reader.read_str();
+                let (slice, result) = arena.alloc_str_with_slice(s);
+                crate::op::InnerContent::List(
+                    crate::container::list::list_op::InnerListOp::InsertText {
+                        slice,
+                        unicode_start: result.start as u32,
+                        unicode_len: (result.end - result.start) as u32,
+                        pos: prop as u32,
+                    },
+                )
+            }
+            ValueKind::DeleteSeq => {
+                let len = value_reader.read_i32();
+                crate::op::InnerContent::List(crate::container::list::list_op::InnerListOp::Delete(
+                    DeleteSpan::new(prop as isize, len as isize),
+                ))
+            }
+            _ => unreachable!(),
+        },
+        ContainerType::Map => {
+            let key = keys.keys[prop as usize].clone();
+            match kind {
+                ValueKind::DeleteOnce => {
+                    crate::op::InnerContent::Map(crate::container::map::MapSet { key, value: None })
+                }
+                _ => {
+                    let value = value_reader.read_value(&keys.keys);
+                    crate::op::InnerContent::Map(crate::container::map::MapSet {
+                        key,
+                        value: Some(value),
+                    })
+                }
+            }
+        }
+        ContainerType::List => {
+            let pos = prop as usize;
+            match kind {
+                ValueKind::Array => {
+                    let arr = value_reader.read_value(&keys.keys);
+                    let range = arena.alloc_values(
+                        Arc::try_unwrap(arr.into_list().unwrap())
+                            .unwrap()
+                            .into_iter(),
+                    );
+                    crate::op::InnerContent::List(
+                        crate::container::list::list_op::InnerListOp::Insert {
+                            slice: SliceRange::new(range.start as u32..range.end as u32),
+                            pos,
+                        },
+                    )
+                }
+                ValueKind::DeleteSeq => {
+                    let len = value_reader.read_i32();
+                    crate::op::InnerContent::List(
+                        crate::container::list::list_op::InnerListOp::Delete(DeleteSpan::new(
+                            pos as isize,
+                            len as isize,
+                        )),
+                    )
+                }
+                _ => unreachable!(),
+            }
+        }
+        ContainerType::Tree => todo!(),
+    };
+    content
+}
+
 type PeerIdx = usize;
 
 /// Extract containers from oplog changes.
@@ -432,8 +449,6 @@ type PeerIdx = usize;
 fn extract_containers_in_order(
     diff_changes: &Vec<Cow<Change>>,
     oplog: &OpLog,
-    peer_id_to_idx: &mut FxHashMap<PeerID, PeerIdx>,
-    peers: &mut Vec<PeerID>,
 ) -> (Vec<ContainerID>, FxHashMap<ContainerIdx, usize>) {
     let mut containers = Vec::new();
     let mut visited = FxHashSet::default();
