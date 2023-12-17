@@ -25,7 +25,6 @@ const UPDATE_ENCODE_THRESHOLD: usize = 32;
 #[cfg(test)]
 const UPDATE_ENCODE_THRESHOLD: usize = 16;
 const MAGIC_BYTES: [u8; 4] = [0x6c, 0x6f, 0x72, 0x6f];
-const ENCODE_SCHEMA_VERSION: usize = 0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EncodeMode {
@@ -39,7 +38,7 @@ pub(crate) enum EncodeMode {
 }
 
 impl EncodeMode {
-    pub fn to_byte(self) -> u8 {
+    pub fn to_u16(self) -> u16 {
         match self {
             EncodeMode::Auto => 255,
             EncodeMode::Updates => 0,
@@ -47,6 +46,25 @@ impl EncodeMode {
             EncodeMode::RleUpdates => 2,
             EncodeMode::CompressedRleUpdates => 3,
             EncodeMode::ReorderedRle => 4,
+        }
+    }
+    pub fn to_bytes(self) -> [u8; 2] {
+        let value = self.to_u16();
+        value.to_be_bytes()
+    }
+}
+
+impl TryFrom<[u8; 2]> for EncodeMode {
+    type Error = LoroError;
+
+    fn try_from(value: [u8; 2]) -> Result<Self, Self::Error> {
+        match value[1] {
+            0 => Ok(EncodeMode::Updates),
+            1 => Ok(EncodeMode::Snapshot),
+            2 => Ok(EncodeMode::RleUpdates),
+            3 => Ok(EncodeMode::CompressedRleUpdates),
+            4 => Ok(EncodeMode::ReorderedRle),
+            _ => Err(LoroError::DecodeError("Unknown encode mode".into())),
         }
     }
 }
@@ -98,7 +116,7 @@ pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) 
         _ => unreachable!(),
     };
 
-    encode_header_and_body(mode, ENCODE_SCHEMA_VERSION, body)
+    encode_header_and_body(mode, body)
 }
 
 pub(crate) fn decode_oplog(
@@ -122,7 +140,6 @@ pub(crate) struct ParsedHeaderAndBody<'a> {
     pub checksum: [u8; 16],
     pub checksum_body: &'a [u8],
     pub mode: EncodeMode,
-    pub _version: usize,
     pub body: &'a [u8],
 }
 
@@ -152,18 +169,11 @@ pub(crate) fn parse_header_and_body(bytes: &[u8]) -> Result<ParsedHeaderAndBody,
 
     let (checksum, reader) = reader.split_at(16);
     let checksum_body = reader;
-    let (mode, mut reader) = reader.split_at(1);
-    let mode: EncodeMode = mode[0].try_into()?;
-    let version = leb128::read::unsigned(&mut reader).unwrap() as usize;
-    if version != ENCODE_SCHEMA_VERSION {
-        return Err(LoroError::DecodeError(
-            format!("Invalid schema version {}", version).into(),
-        ));
-    }
+    let (mode_bytes, reader) = reader.split_at(2);
+    let mode: EncodeMode = [mode_bytes[0], mode_bytes[1]].try_into()?;
 
     let ans = ParsedHeaderAndBody {
         mode,
-        _version: version,
         checksum_body,
         checksum: checksum.try_into().unwrap(),
         body: reader,
@@ -173,14 +183,13 @@ pub(crate) fn parse_header_and_body(bytes: &[u8]) -> Result<ParsedHeaderAndBody,
     Ok(ans)
 }
 
-fn encode_header_and_body(mode: EncodeMode, version: usize, body: Vec<u8>) -> Vec<u8> {
+fn encode_header_and_body(mode: EncodeMode, body: Vec<u8>) -> Vec<u8> {
     let mut ans = Vec::new();
     ans.extend(MAGIC_BYTES);
     let checksum = [0; 16];
-    ans.extend_from_slice(&checksum);
-    ans.push(mode.to_byte());
-    leb128::write::unsigned(&mut ans, version as u64).unwrap();
-    ans.extend_from_slice(&body);
+    ans.extend(checksum);
+    ans.extend(mode.to_bytes());
+    ans.extend(body);
     let checksum_body = &ans[20..];
     let checksum = md5::compute(checksum_body).0;
     ans[4..20].copy_from_slice(&checksum);
@@ -189,5 +198,5 @@ fn encode_header_and_body(mode: EncodeMode, version: usize, body: Vec<u8>) -> Ve
 
 pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
     let body = encode_app_snapshot(doc);
-    encode_header_and_body(EncodeMode::Snapshot, ENCODE_SCHEMA_VERSION, body)
+    encode_header_and_body(EncodeMode::Snapshot, body)
 }
