@@ -16,10 +16,7 @@ use crate::{
     arena::SharedArena,
     change::Timestamp,
     container::{idx::ContainerIdx, IntoContainerId},
-    encoding::{
-        decode_app_snapshot, export_snapshot, parse_header_and_body, EncodeMode,
-        ParsedHeaderAndBody,
-    },
+    encoding::{decode_doc_snapshot, export_snapshot, parse_header_and_body, ParsedHeaderAndBody},
     handler::TextHandler,
     handler::TreeHandler,
     id::PeerID,
@@ -102,14 +99,13 @@ impl LoroDoc {
     pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
         let doc = Self::new();
         let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes)?;
-        match mode {
-            EncodeMode::Snapshot => {
-                decode_app_snapshot(&doc, body, true)?;
-                Ok(doc)
-            }
-            _ => Err(LoroError::DecodeError(
+        if mode.is_snapshot() {
+            decode_doc_snapshot(&doc, mode, body, true)?;
+            Ok(doc)
+        } else {
+            Err(LoroError::DecodeError(
                 "Invalid encode mode".to_string().into(),
-            )),
+            ))
         }
     }
 
@@ -391,11 +387,8 @@ impl LoroDoc {
         origin: string_cache::Atom<string_cache::EmptyStaticAtomSet>,
     ) -> Result<(), LoroError> {
         let parsed = parse_header_and_body(bytes)?;
-        match parsed.mode {
-            EncodeMode::Updates
-            | EncodeMode::RleUpdates
-            | EncodeMode::CompressedRleUpdates
-            | EncodeMode::ReorderedRle => {
+        match parsed.mode.is_snapshot() {
+            false => {
                 // TODO: need to throw error if state is in transaction
                 debug_log::group!("import to {}", self.peer_id());
                 let mut oplog = self.oplog.lock().unwrap();
@@ -423,12 +416,17 @@ impl LoroDoc {
 
                 debug_log::group_end!();
             }
-            EncodeMode::Snapshot => {
+            true => {
                 if self.can_reset_with_snapshot() {
-                    decode_app_snapshot(self, parsed.body, !self.detached.load(Acquire))?;
+                    decode_doc_snapshot(
+                        self,
+                        parsed.mode,
+                        parsed.body,
+                        !self.detached.load(Acquire),
+                    )?;
                 } else {
                     let app = LoroDoc::new();
-                    decode_app_snapshot(&app, parsed.body, false)?;
+                    decode_doc_snapshot(&app, parsed.mode, parsed.body, false)?;
                     let oplog = self.oplog.lock().unwrap();
                     // TODO: PERF: the ser and de can be optimized out
                     let updates = app.export_from(oplog.vv());
@@ -436,7 +434,6 @@ impl LoroDoc {
                     return self.import_with(&updates, origin);
                 }
             }
-            EncodeMode::Auto => unreachable!(),
         };
         let mut state = self.state.lock().unwrap();
         self.emit_events(&mut state);

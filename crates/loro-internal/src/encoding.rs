@@ -1,6 +1,7 @@
 mod encode_enhanced;
 mod encode_reordered;
 mod encode_snapshot;
+mod encode_snapshot_reordered;
 mod encode_updates;
 
 use self::encode_updates::decode_oplog_updates;
@@ -15,7 +16,6 @@ use loro_common::{LoroResult, PeerID};
 use rle::HasLength;
 
 pub(crate) type RemoteClientChanges<'a> = FxHashMap<PeerID, Vec<Change<RemoteOp<'a>>>>;
-pub(crate) use encode_snapshot::decode_app_snapshot;
 
 #[allow(unused)]
 const COMPRESS_RLE_THRESHOLD: usize = 20 * 1024;
@@ -35,6 +35,7 @@ pub(crate) enum EncodeMode {
     RleUpdates = 2,
     CompressedRleUpdates = 3,
     ReorderedRle = 4,
+    ReorderedSnapshot = 5,
 }
 
 impl EncodeMode {
@@ -46,11 +47,17 @@ impl EncodeMode {
             EncodeMode::RleUpdates => 2,
             EncodeMode::CompressedRleUpdates => 3,
             EncodeMode::ReorderedRle => 4,
+            EncodeMode::ReorderedSnapshot => 5,
         }
     }
+
     pub fn to_bytes(self) -> [u8; 2] {
         let value = self.to_u16();
         value.to_be_bytes()
+    }
+
+    pub fn is_snapshot(self) -> bool {
+        self == EncodeMode::Snapshot
     }
 }
 
@@ -64,6 +71,7 @@ impl TryFrom<[u8; 2]> for EncodeMode {
             2 => Ok(EncodeMode::RleUpdates),
             3 => Ok(EncodeMode::CompressedRleUpdates),
             4 => Ok(EncodeMode::ReorderedRle),
+            5 => Ok(EncodeMode::ReorderedSnapshot),
             _ => Err(LoroError::IncompatibleFutureEncodingError(
                 value[0] as usize * 256 + value[1] as usize,
             )),
@@ -134,6 +142,7 @@ pub(crate) fn decode_oplog(
             .map_err(|_| LoroError::DecodeError("Invalid compressed data".into()))
             .and_then(|bytes| decode_oplog_v2(oplog, &bytes)),
         EncodeMode::ReorderedRle => encode_reordered::decode(oplog, body),
+        EncodeMode::ReorderedSnapshot => unimplemented!(),
         EncodeMode::Auto => unreachable!(),
     }
 }
@@ -201,4 +210,17 @@ fn encode_header_and_body(mode: EncodeMode, body: Vec<u8>) -> Vec<u8> {
 pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
     let body = encode_app_snapshot(doc);
     encode_header_and_body(EncodeMode::Snapshot, body)
+}
+
+pub(crate) fn decode_doc_snapshot(
+    doc: &LoroDoc,
+    mode: EncodeMode,
+    body: &[u8],
+    with_state: bool,
+) -> Result<(), LoroError> {
+    match mode {
+        EncodeMode::Snapshot => encode_snapshot::decode_app_snapshot(doc, body, with_state),
+        EncodeMode::ReorderedSnapshot => todo!(),
+        _ => unreachable!(),
+    }
 }
