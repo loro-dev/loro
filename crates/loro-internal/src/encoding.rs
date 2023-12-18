@@ -24,7 +24,7 @@ const COMPRESS_RLE_THRESHOLD: usize = 20 * 1024;
 const UPDATE_ENCODE_THRESHOLD: usize = 32;
 #[cfg(test)]
 const UPDATE_ENCODE_THRESHOLD: usize = 16;
-const MAGIC_BYTES: [u8; 4] = [0x6c, 0x6f, 0x72, 0x6f];
+const MAGIC_BYTES: [u8; 4] = *b"loro";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EncodeMode {
@@ -64,7 +64,9 @@ impl TryFrom<[u8; 2]> for EncodeMode {
             2 => Ok(EncodeMode::RleUpdates),
             3 => Ok(EncodeMode::CompressedRleUpdates),
             4 => Ok(EncodeMode::ReorderedRle),
-            _ => Err(LoroError::DecodeError("Unknown encode mode".into())),
+            _ => Err(LoroError::IncompatibleFutureEncodingError(
+                value[0] as usize * 256 + value[1] as usize,
+            )),
         }
     }
 }

@@ -987,7 +987,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                     let key = record_key(&map.key);
                     let value = &map.value;
                     let value = if let Some(value) = value {
-                        (record_value(&value) + 1) as u32
+                        (record_value(value) + 1) as u32
                     } else {
                         0
                     };

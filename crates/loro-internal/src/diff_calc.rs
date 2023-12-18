@@ -387,7 +387,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
 
     fn calculate_diff(
         &mut self,
-        oplog: &super::oplog::OpLog,
+        _oplog: &super::oplog::OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),

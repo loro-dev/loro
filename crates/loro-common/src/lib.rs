@@ -93,6 +93,18 @@ impl ContainerType {
             _ => unreachable!(),
         }
     }
+
+    pub fn try_from_u8(v: u8) -> LoroResult<Self> {
+        match v {
+            1 => Ok(ContainerType::Map),
+            2 => Ok(ContainerType::List),
+            3 => Ok(ContainerType::Text),
+            4 => Ok(ContainerType::Tree),
+            _ => Err(LoroError::DecodeError(
+                format!("Unknown container type {v}").into_boxed_str(),
+            )),
+        }
+    }
 }
 
 pub type IdSpanVector = fxhash::FxHashMap<PeerID, CounterSpan>;

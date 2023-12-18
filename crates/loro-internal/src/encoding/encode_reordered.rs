@@ -174,7 +174,7 @@ pub(crate) fn decode(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
     let containers: Vec<_> = containers
         .containers
         .iter()
-        .map(|x| x.to_container_id(&keys.keys, &peer_ids.peer_ids))
+        .map(|x| x.as_container_id(&keys.keys, &peer_ids.peer_ids))
         .collect();
     for EncodedOp {
         container_index,
@@ -185,8 +185,8 @@ pub(crate) fn decode(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
     } in iter.ops
     {
         let cid = &containers[container_index as usize];
-        let c_idx = arena.register_container(&cid);
-        let kind = ValueKind::from_u8(value_type).unwrap();
+        let c_idx = arena.register_container(cid);
+        let kind = ValueKind::from_u8(value_type).expect("Unknown value type");
         let content = decode_op(
             cid,
             kind,
@@ -301,6 +301,7 @@ pub(crate) fn decode(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
     Ok(())
 }
 
+#[inline]
 fn encode_op(
     op: &Op,
     arena: &crate::arena::SharedArena,
@@ -381,6 +382,7 @@ fn encode_op(
     (prop, value_type)
 }
 
+#[allow(clippy::too_many_arguments)]
 #[inline]
 fn decode_op(
     cid: &ContainerID,
@@ -413,7 +415,7 @@ fn decode_op(
                 ))
             }
             ValueKind::MarkStart => {
-                let mark = value_reader.read_mark(&keys.keys, &cids);
+                let mark = value_reader.read_mark(&keys.keys, cids);
                 let key = keys.keys[mark.key_idx as usize].clone();
                 crate::op::InnerContent::List(
                     crate::container::list::list_op::InnerListOp::StyleStart {
@@ -437,7 +439,7 @@ fn decode_op(
                     crate::op::InnerContent::Map(crate::container::map::MapSet { key, value: None })
                 }
                 kind => {
-                    let value = value_reader.read_value_content(kind, &keys.keys, &cids);
+                    let value = value_reader.read_value_content(kind, &keys.keys, cids);
                     crate::op::InnerContent::Map(crate::container::map::MapSet {
                         key,
                         value: Some(value),
@@ -449,7 +451,7 @@ fn decode_op(
             let pos = prop as usize;
             match kind {
                 ValueKind::Array => {
-                    let arr = value_reader.read_value_content(ValueKind::Array, &keys.keys, &cids);
+                    let arr = value_reader.read_value_content(ValueKind::Array, &keys.keys, cids);
                     let range = arena.alloc_values(
                         Arc::try_unwrap(arr.into_list().unwrap())
                             .unwrap()
@@ -477,7 +479,7 @@ fn decode_op(
         ContainerType::Tree => match kind {
             ValueKind::TreeMove => {
                 let op = value_reader.read_tree_move();
-                crate::op::InnerContent::Tree(op.into_tree_op(peers))
+                crate::op::InnerContent::Tree(op.as_tree_op(peers))
             }
             _ => unreachable!(),
         },
@@ -647,7 +649,7 @@ mod value {
     }
 
     impl EncodedTreeMove {
-        pub fn into_tree_op(&self, peer_ids: &[u64]) -> TreeOp {
+        pub fn as_tree_op(&self, peer_ids: &[u64]) -> TreeOp {
             TreeOp {
                 target: TreeID::new(peer_ids[self.subject_peer_idx], self.subject_cnt as Counter),
                 parent: if self.is_parent_null {
@@ -823,7 +825,7 @@ mod value {
                 Value::TreeMove(op) => self.write_tree_move(op),
                 Value::Binary(value) => self.write_binary(value),
                 Value::ContainerIdx(value) => self.write_usize(*value),
-                Value::Unknown { kind: _, data } => self.write_binary(data),
+                Value::Unknown { kind: _, data: _ } => unreachable!(),
             }
         }
 
@@ -919,6 +921,7 @@ mod value {
             ValueReader { raw }
         }
 
+        #[allow(unused)]
         pub fn read(
             &mut self,
             kind: u8,
@@ -958,7 +961,11 @@ mod value {
             cids: &[ContainerID],
         ) -> LoroValue {
             let kind = self.read_u8();
-            self.read_value_content(ValueKind::from_u8(kind).unwrap(), keys, cids)
+            self.read_value_content(
+                ValueKind::from_u8(kind).expect("Unknown value type"),
+                keys,
+                cids,
+            )
         }
 
         pub fn read_value_content(
@@ -1017,8 +1024,8 @@ mod value {
 
         pub fn read_str(&mut self) -> &'a str {
             let len = self.read_usize();
-            let ans = std::str::from_utf8(&self.raw[..len as usize]).unwrap();
-            self.raw = &self.raw[len as usize..];
+            let ans = std::str::from_utf8(&self.raw[..len]).unwrap();
+            self.raw = &self.raw[len..];
             ans
         }
 
@@ -1028,6 +1035,7 @@ mod value {
             ans
         }
 
+        #[allow(unused)]
         fn read_kind(&mut self) -> ValueKind {
             ValueKind::from_u8(self.read_u8()).unwrap_or(ValueKind::Unknown)
         }
@@ -1066,13 +1074,6 @@ mod value {
             ans
         }
 
-        fn read_unknown(&mut self) -> &'a [u8] {
-            let len = self.read_usize();
-            let ans = &self.raw[..len];
-            self.raw = &self.raw[len..];
-            ans
-        }
-
         pub fn read_mark(&mut self, keys: &[InternalString], cids: &[ContainerID]) -> MarkStart {
             let info = self.read_u8();
             let len = self.read_usize();
@@ -1105,7 +1106,7 @@ mod value {
 
 mod arena {
     use crate::InternalString;
-    use loro_common::{ContainerID, ContainerType, LoroResult, PeerID, ID};
+    use loro_common::{ContainerID, ContainerType, LoroResult, PeerID};
     use serde::{Deserialize, Serialize};
     use serde_columnar::columnar;
 
@@ -1222,7 +1223,7 @@ mod arena {
         #[columnar(strategy = "BoolRle")]
         is_root: bool,
         #[columnar(strategy = "Rle")]
-        kind: ContainerType,
+        kind: u8,
         #[columnar(strategy = "Rle")]
         peer_idx: usize,
         #[columnar(strategy = "DeltaRle")]
@@ -1230,19 +1231,19 @@ mod arena {
     }
 
     impl EncodedContainer {
-        pub fn to_container_id(
+        pub fn as_container_id(
             &self,
             key_arena: &[InternalString],
             peer_arena: &[u64],
         ) -> ContainerID {
             if self.is_root {
                 ContainerID::Root {
-                    container_type: self.kind,
+                    container_type: ContainerType::try_from_u8(self.kind).unwrap(),
                     name: key_arena[self.key_idx_or_counter as usize].clone(),
                 }
             } else {
                 ContainerID::Normal {
-                    container_type: self.kind,
+                    container_type: ContainerType::try_from_u8(self.kind).unwrap(),
                     peer: peer_arena[self.peer_idx],
                     counter: self.key_idx_or_counter,
                 }
@@ -1302,7 +1303,7 @@ mod arena {
             };
             self.containers.push(EncodedContainer {
                 is_root,
-                kind,
+                kind: kind.to_u8(),
                 peer_idx,
                 key_idx_or_counter,
             });
@@ -1330,19 +1331,11 @@ mod arena {
             self.deps.push(EncodedDep { peer_idx, counter });
         }
 
-        pub fn iter<'a>(&'a self, peer_arenas: &'a [PeerID]) -> impl Iterator<Item = ID> + 'a {
-            self.deps
-                .iter()
-                .map(|dep| ID::new(peer_arenas[dep.peer_idx], dep.counter))
-        }
-
         pub fn encode(&self) -> Vec<u8> {
             serde_columnar::to_vec(&self).unwrap()
         }
 
-        pub fn decode_iter<'a>(
-            bytes: &'a [u8],
-        ) -> LoroResult<impl Iterator<Item = EncodedDep> + 'a> {
+        pub fn decode_iter(bytes: &[u8]) -> LoroResult<impl Iterator<Item = EncodedDep> + '_> {
             let iter = serde_columnar::iter_from_bytes::<DepsArena>(bytes)?;
             Ok(iter.deps)
         }

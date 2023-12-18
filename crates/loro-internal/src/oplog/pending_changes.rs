@@ -75,7 +75,6 @@ impl OpLog {
     pub(super) fn extend_pending_changes_with_unknown_lamport(
         &mut self,
         remote_changes: Vec<Change>,
-        converter: &mut OpConverter,
         latest_vv: &VersionVector,
     ) {
         for change in remote_changes {

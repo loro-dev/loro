@@ -135,14 +135,14 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
             debug_assert_eq!(id, node.id_start());
             let mut vv = {
                 // calculate vv
-                let mut vv = None;
+                let mut vv: Option<VersionVector> = None;
                 for &dep_id in node.deps() {
                     let dep = self.dag.get(dep_id).unwrap();
                     let dep_vv = self.vv_map.get(&dep.id_start()).unwrap();
-                    if vv.is_none() {
-                        vv = Some(dep_vv.clone());
+                    if let Some(vv) = vv.as_mut() {
+                        vv.merge(dep_vv);
                     } else {
-                        vv.as_mut().unwrap().merge(dep_vv);
+                        vv = Some(dep_vv.clone());
                     }
 
                     if dep.id_start() != dep_id {
@@ -150,7 +150,7 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
                     }
                 }
 
-                vv.unwrap_or_else(VersionVector::new)
+                vv.unwrap_or_default()
             };
 
             vv.try_update_last(id);

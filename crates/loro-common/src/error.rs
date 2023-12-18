@@ -15,6 +15,8 @@ pub enum LoroError {
     DecodeError(Box<str>),
     #[error("Checksum mismatch. The data is corrupted.")]
     DecodeDataCorruptionError,
+    #[error("Encountered an incompatible Encoding version \"{0}\". Loro's encoding is backward compatible but not forward compatible. Please upgrade the version of Loro to support this version of the exported data.")]
+    IncompatibleFutureEncodingError(usize),
     #[error("Js error ({0})")]
     JsError(Box<str>),
     #[error("Cannot get lock or the lock is poisoned")]

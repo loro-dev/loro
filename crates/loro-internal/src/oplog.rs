@@ -648,9 +648,7 @@ impl OpLog {
         remote_changes: Vec<Change>,
     ) -> Result<(), LoroError> {
         let latest_vv = self.dag.vv.clone();
-        self.arena.clone().with_op_converter(|converter| {
-            self.extend_pending_changes_with_unknown_lamport(remote_changes, converter, &latest_vv)
-        });
+        self.extend_pending_changes_with_unknown_lamport(remote_changes, &latest_vv);
         Ok(())
     }
 
@@ -692,12 +690,12 @@ impl OpLog {
     }
 
     #[inline(always)]
-    pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
+    pub(crate) fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
         encode_oplog(self, vv, EncodeMode::Auto)
     }
 
     #[inline(always)]
-    pub fn decode(&mut self, data: ParsedHeaderAndBody) -> Result<(), LoroError> {
+    pub(crate) fn decode(&mut self, data: ParsedHeaderAndBody) -> Result<(), LoroError> {
         decode_oplog(self, data)
     }
 
