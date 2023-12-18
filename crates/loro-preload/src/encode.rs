@@ -148,6 +148,7 @@ pub struct EncodedRichtextState<'a> {
     /// This is encoded [TextRanges]
     #[serde(borrow)]
     pub text_bytes: Cow<'a, [u8]>,
+    pub ids: Vec<(u32, u32)>,
     /// Style anchor index in the style arena
     // TODO: can be optimized
     pub styles: Vec<CompactStyleOp>,

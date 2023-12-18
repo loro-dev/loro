@@ -355,7 +355,10 @@ impl CrdtRope {
                 match elem.diff() {
                     DiffStatus::NotChanged => {}
                     DiffStatus::Created => {
-                        let rt = Some(CrdtRopeDelta::Insert(elem.content));
+                        let rt = Some(CrdtRopeDelta::Insert {
+                            chunk: elem.content,
+                            id: elem.id,
+                        });
                         if index > last_pos {
                             next = rt;
                             let len = index - last_pos;
@@ -405,7 +408,7 @@ impl CrdtRope {
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub(crate) enum CrdtRopeDelta {
     Retain(usize),
-    Insert(RichtextChunk),
+    Insert { chunk: RichtextChunk, id: ID },
     Delete(usize),
 }
 
@@ -820,7 +823,10 @@ mod test {
                 CrdtRopeDelta::Retain(2),
                 CrdtRopeDelta::Delete(6),
                 CrdtRopeDelta::Retain(2),
-                CrdtRopeDelta::Insert(RichtextChunk::new_text(10..13))
+                CrdtRopeDelta::Insert {
+                    chunk: RichtextChunk::new_text(10..13),
+                    id: ID::new(1, 0)
+                }
             ],
             vec,
         );
@@ -841,7 +847,10 @@ mod test {
         );
         let vec: Vec<_> = rope.get_diff().collect();
         assert_eq!(
-            vec![CrdtRopeDelta::Insert(RichtextChunk::new_text(2..10))],
+            vec![CrdtRopeDelta::Insert {
+                chunk: RichtextChunk::new_text(2..10),
+                id: ID::new(0, 2)
+            }],
             vec,
         );
     }

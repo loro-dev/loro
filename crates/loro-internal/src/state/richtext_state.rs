@@ -349,9 +349,11 @@ impl ContainerState for RichtextState {
                     unicode_start: _,
                     pos,
                 } => {
-                    self.state
-                        .get_mut()
-                        .insert_at_entity_index(*pos as usize, slice.clone());
+                    self.state.get_mut().insert_at_entity_index(
+                        *pos as usize,
+                        slice.clone(),
+                        r_op.id,
+                    );
 
                     if self.in_txn {
                         self.push_undo(UndoItem::Insert {
@@ -571,6 +573,7 @@ impl RichtextState {
             text_bytes,
             styles,
             is_style_start,
+            ids,
         }: EncodedRichtextState,
         state_arena: &TempArena,
         common: &CommonArena,
@@ -588,12 +591,18 @@ impl RichtextState {
         let mut is_text = true;
         let mut text_range_iter = TextRanges::decode_iter(&text_bytes).unwrap();
         let mut style_iter = styles.iter();
+        let mut ids_iter = ids.iter();
         for &len in len.iter() {
             if is_text {
                 for _ in 0..len {
                     let range = text_range_iter.next().unwrap();
                     let text = arena.slice_by_utf8(range.start..range.start + range.len);
-                    loader.push(RichtextStateChunk::new_text(text));
+                    let (peer_idx, counter) = *ids_iter.next().unwrap();
+                    let peer = common.peer_ids[peer_idx as usize];
+                    loader.push(RichtextStateChunk::new_text(
+                        text,
+                        ID::new(peer, counter as Counter),
+                    ));
                 }
             } else {
                 for _ in 0..len {
@@ -633,6 +642,7 @@ impl RichtextState {
         let mut text_ranges: TextRanges = Default::default();
         let mut styles = Vec::new();
         let mut is_style_start = BitMap::new();
+        let mut ids = Vec::new();
 
         for chunk in self.iter_chunk() {
             match chunk {
@@ -646,6 +656,7 @@ impl RichtextState {
                         start: s.bytes().start(),
                         len: s.bytes().len(),
                     });
+                    ids.push((record_peer(s.id().peer), s.id().counter as u32));
                 }
                 RichtextStateChunk::Style { style, anchor_type } => {
                     if lengths.is_empty() {
@@ -678,6 +689,7 @@ impl RichtextState {
             len: lengths,
             text_bytes: std::borrow::Cow::Owned(text_bytes),
             styles,
+            ids,
             is_style_start: is_style_start.into_vec(),
         }
     }

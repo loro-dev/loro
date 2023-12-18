@@ -578,7 +578,10 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                 CrdtRopeDelta::Retain(len) => {
                     delta = delta.retain(len);
                 }
-                CrdtRopeDelta::Insert(value) => match value.value() {
+                CrdtRopeDelta::Insert {
+                    chunk: value,
+                    id: _,
+                } => match value.value() {
                     RichtextChunkValue::Text(range) => {
                         for i in range.clone() {
                             let v = oplog.arena.get_value(i as usize);
@@ -705,14 +708,15 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 CrdtRopeDelta::Retain(len) => {
                     delta = delta.retain(len);
                 }
-                CrdtRopeDelta::Insert(value) => match value.value() {
+                CrdtRopeDelta::Insert { chunk: value, id } => match value.value() {
                     RichtextChunkValue::Text(text) => {
                         delta = delta.insert(RichtextStateChunk::Text(
                             // PERF: can be speedup by acquiring lock on arena
-                            TextChunk::from_bytes(
+                            TextChunk::new(
                                 oplog
                                     .arena
                                     .slice_by_unicode(text.start as usize..text.end as usize),
+                                id,
                             ),
                         ));
                     }

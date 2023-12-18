@@ -4,7 +4,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor,
 };
-use loro_common::LoroValue;
+use loro_common::{LoroValue, ID};
 use serde::{ser::SerializeStruct, Serialize};
 use std::fmt::{Display, Formatter};
 use std::{
@@ -64,17 +64,18 @@ mod text_chunk {
     use std::ops::Range;
 
     use append_only_bytes::BytesSlice;
+    use loro_common::ID;
 
     #[derive(Clone, Debug)]
     pub(crate) struct TextChunk {
-        unicode_len: i32,
         bytes: BytesSlice,
-        // TODO: make this field only available in wasm mode
+        unicode_len: i32,
         utf16_len: i32,
+        start_op_id: ID,
     }
 
     impl TextChunk {
-        pub fn from_bytes(bytes: BytesSlice) -> Self {
+        pub fn new(bytes: BytesSlice, id: ID) -> Self {
             let mut utf16_len = 0;
             let mut unicode_len = 0;
             for c in std::str::from_utf8(&bytes).unwrap().chars() {
@@ -86,7 +87,12 @@ mod text_chunk {
                 unicode_len,
                 bytes,
                 utf16_len: utf16_len as i32,
+                start_op_id: id,
             }
+        }
+
+        pub fn id(&self) -> ID {
+            self.start_op_id
         }
 
         pub fn bytes(&self) -> &BytesSlice {
@@ -139,6 +145,9 @@ mod text_chunk {
                 unicode_len: 0,
                 bytes: BytesSlice::empty(),
                 utf16_len: 0,
+                // This is a dummy value.
+                // It's fine because the length is 0. We never actually use this value.
+                start_op_id: ID::new(0, 0),
             }
         }
 
@@ -186,6 +195,7 @@ mod text_chunk {
                 }
                 (true, false) => {
                     self.bytes.slice_(end_byte..);
+                    self.start_op_id = self.start_op_id.inc(unicode_offset as i32);
                     None
                 }
                 (false, true) => {
@@ -194,7 +204,7 @@ mod text_chunk {
                 }
                 (false, false) => {
                     let next = self.bytes.slice_clone(end_byte..);
-                    let next = Self::from_bytes(next);
+                    let next = Self::new(next, self.start_op_id.inc(unicode_offset as i32));
                     self.unicode_len -= next.unicode_len;
                     self.utf16_len -= next.utf16_len;
                     self.bytes.slice_(..start_byte);
@@ -283,6 +293,7 @@ mod text_chunk {
                 unicode_len: range.len() as i32,
                 bytes: self.bytes.slice_clone(start..end),
                 utf16_len: utf16_len as i32,
+                start_op_id: self.start_op_id.inc(range.start as i32),
             };
             ans.check();
             ans
@@ -303,6 +314,7 @@ mod text_chunk {
                 unicode_len: self.unicode_len - pos as i32,
                 bytes: self.bytes.slice_clone(byte_offset..),
                 utf16_len: self.utf16_len - utf16_len as i32,
+                start_op_id: self.start_op_id.inc(pos as i32),
             };
 
             self.unicode_len = pos as i32;
@@ -332,6 +344,7 @@ mod text_chunk {
             self.bytes = new;
             self.utf16_len += left.utf16_len;
             self.unicode_len += left.unicode_len;
+            self.start_op_id = left.start_op_id;
             self.check();
         }
     }
@@ -348,8 +361,8 @@ pub(crate) enum RichtextStateChunk {
 }
 
 impl RichtextStateChunk {
-    pub fn new_text(s: BytesSlice) -> Self {
-        Self::Text(TextChunk::from_bytes(s))
+    pub fn new_text(s: BytesSlice, id: ID) -> Self {
+        Self::Text(TextChunk::new(s, id))
     }
 
     pub fn new_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
@@ -398,9 +411,9 @@ impl Serialize for RichtextStateChunk {
 }
 
 impl RichtextStateChunk {
-    pub fn try_from_bytes(s: BytesSlice) -> Result<Self, Utf8Error> {
+    pub fn try_new(s: BytesSlice, id: ID) -> Result<Self, Utf8Error> {
         std::str::from_utf8(&s)?;
-        Ok(RichtextStateChunk::Text(TextChunk::from_bytes(s)))
+        Ok(RichtextStateChunk::Text(TextChunk::new(s, id)))
     }
 
     pub fn from_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
@@ -1172,8 +1185,8 @@ impl RichtextState {
     }
 
     /// This is used to accept changes from DiffCalculator
-    pub(crate) fn insert_at_entity_index(&mut self, entity_index: usize, text: BytesSlice) {
-        let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
+    pub(crate) fn insert_at_entity_index(&mut self, entity_index: usize, text: BytesSlice, id: ID) {
+        let elem = RichtextStateChunk::try_new(text, id).unwrap();
         self.style_ranges.insert(entity_index, elem.rle_len());
         let leaf;
         if let Some(cursor) =
@@ -1779,7 +1792,7 @@ mod test {
                 let state = &mut self.state;
                 let text = self.bytes.slice(start..);
                 let entity_index = state.get_entity_index_for_text_insert(pos, PosType::Unicode);
-                state.insert_at_entity_index(entity_index, text);
+                state.insert_at_entity_index(entity_index, text, ID::new(0, 0));
             };
         }
 
