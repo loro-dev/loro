@@ -16,7 +16,7 @@ use crate::{
     fx_map,
     handler::ValueOrContainer,
     id::PeerID,
-    op::{Op, RawOp, RichOp},
+    op::{Op, OpWithId, RawOp},
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue, OpLog,
@@ -104,11 +104,16 @@ pub(crate) trait ContainerState: Clone {
         Vec::new()
     }
 
-    /// Get a list of ops that can be used to restore the state to the current state
-    fn get_snapshot_ops(&self) -> Vec<IdSpan>;
+    /// Get a list of ops and a blob that can be used to restore the state to the current state
+    fn get_snapshot_ops(&self) -> (Vec<IdSpan>, Vec<u8>);
 
-    /// Restore the state to the state represented by the ops that exported by `get_snapshot_ops`
-    fn import_from_snapshot_ops(&mut self, oplog: &OpLog, ops: &mut dyn Iterator<Item = RichOp>);
+    /// Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`
+    fn import_from_snapshot_ops(
+        &mut self,
+        oplog: &OpLog,
+        ops: &mut dyn Iterator<Item = OpWithId>,
+        blob: &[u8],
+    );
 }
 
 #[allow(clippy::enum_variant_names)]

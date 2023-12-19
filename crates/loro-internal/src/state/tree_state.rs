@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, Weak};
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::TreeDeletedSetTrait;
 use crate::event::InternalDiff;
-use crate::op::RichOp;
+use crate::op::OpWithId;
 use crate::txn::Transaction;
 use crate::{
     arena::SharedArena,
@@ -414,18 +414,26 @@ impl ContainerState for TreeState {
     }
 
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
-    fn get_snapshot_ops(&self) -> Vec<IdSpan> {
-        self.trees
-            .values()
-            .map(|x| x.last_move_op.into())
-            .collect_vec()
+    fn get_snapshot_ops(&self) -> (Vec<IdSpan>, Vec<u8>) {
+        (
+            self.trees
+                .values()
+                .map(|x| x.last_move_op.into())
+                .collect_vec(),
+            Vec::new(),
+        )
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, _oplog: &OpLog, ops: &mut dyn Iterator<Item = RichOp>) {
+    fn import_from_snapshot_ops(
+        &mut self,
+        _oplog: &OpLog,
+        ops: &mut dyn Iterator<Item = OpWithId>,
+        _blob: &[u8],
+    ) {
         for op in ops {
-            assert_eq!(op.atom_len(), 1);
-            let content = op.op().content.as_tree().unwrap();
+            assert_eq!(op.op.atom_len(), 1);
+            let content = op.op.content.as_tree().unwrap();
             let target = content.target;
             let parent = content.parent;
             self.trees.insert(

@@ -13,8 +13,9 @@ use crate::{
     delta::{MapValue, ResolvedMapDelta, ResolvedMapValue},
     event::{Diff, Index, InternalDiff},
     handler::ValueOrContainer,
-    op::{Op, RawOp, RawOpContent, RichOp},
+    op::{Op, OpWithId, RawOp, RawOpContent},
     txn::Transaction,
+    utils::delta_rle_encoded_num::DeltaRleEncodedNums,
     DocState, InternalString, LoroValue, OpLog,
 };
 
@@ -165,15 +166,32 @@ impl ContainerState for MapState {
     }
 
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
-    fn get_snapshot_ops(&self) -> Vec<IdSpan> {
-        self.map.values().map(|v| v.id().into()).collect()
+    fn get_snapshot_ops(&self) -> (Vec<IdSpan>, Vec<u8>) {
+        let mut lamports = DeltaRleEncodedNums::new();
+        let a = self
+            .map
+            .values()
+            .map(|v| {
+                lamports.push(v.lamport.0);
+                v.id().into()
+            })
+            .collect();
+
+        (a, lamports.encode())
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, _oplog: &OpLog, ops: &mut dyn Iterator<Item = RichOp>) {
+    fn import_from_snapshot_ops(
+        &mut self,
+        _oplog: &OpLog,
+        ops: &mut dyn Iterator<Item = OpWithId>,
+        blob: &[u8],
+    ) {
+        let lamports = DeltaRleEncodedNums::decode(blob);
+        let mut iter = lamports.iter();
         for op in ops {
             debug_assert_eq!(
-                op.atom_len(),
+                op.op.atom_len(),
                 1,
                 "MapState::from_snapshot_ops: op.atom_len() != 1"
             );
@@ -184,7 +202,7 @@ impl ContainerState for MapState {
                 MapValue {
                     counter: op.op.counter,
                     value: content.value.clone(),
-                    lamport: (op.lamport, op.peer),
+                    lamport: (iter.next().unwrap(), op.peer),
                 },
             );
         }

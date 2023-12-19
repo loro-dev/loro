@@ -24,6 +24,21 @@ pub struct Op {
     pub(crate) content: InnerContent,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct OpWithId {
+    pub peer: PeerID,
+    pub op: Op,
+}
+
+impl OpWithId {
+    pub fn id(&self) -> ID {
+        ID {
+            peer: self.peer,
+            counter: self.op.counter,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteOp<'a> {
     pub(crate) counter: Counter,

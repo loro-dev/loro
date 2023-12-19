@@ -20,9 +20,12 @@ use crate::{
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
     delta::{Delta, DeltaItem, StyleMeta},
     event::{Diff, InternalDiff},
-    op::{Op, RawOp, RichOp},
+    op::{Op, OpWithId, RawOp},
     txn::Transaction,
-    utils::{bitmap::BitMap, lazy::LazyLoad, string_slice::StringSlice},
+    utils::{
+        bitmap::BitMap, delta_rle_encoded_num::DeltaRleEncodedNums, lazy::LazyLoad,
+        string_slice::StringSlice,
+    },
     DocState, InternalString, OpLog,
 };
 
@@ -447,7 +450,7 @@ impl ContainerState for RichtextState {
     }
 
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
-    fn get_snapshot_ops(&self) -> Vec<IdSpan> {
+    fn get_snapshot_ops(&self) -> (Vec<IdSpan>, Vec<u8>) {
         let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;
         let mut a;
         let mut b;
@@ -462,35 +465,57 @@ impl ContainerState for RichtextState {
             }
         }
 
-        iter.map(|x| x.get_id_span()).collect()
+        let mut lamports = DeltaRleEncodedNums::new();
+        let a = iter
+            .map(|x| {
+                match x {
+                    RichtextStateChunk::Style { style, anchor_type }
+                        if *anchor_type == AnchorType::Start =>
+                    {
+                        lamports.push(style.lamport);
+                    }
+                    _ => {}
+                }
+
+                x.get_id_span()
+            })
+            .collect();
+        (a, lamports.encode())
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, _oplog: &OpLog, ops: &mut dyn Iterator<Item = RichOp>) {
+    fn import_from_snapshot_ops(
+        &mut self,
+        _oplog: &OpLog,
+        ops: &mut dyn Iterator<Item = OpWithId>,
+        blob: &[u8],
+    ) {
+        let lamports = DeltaRleEncodedNums::decode(blob);
+        let mut lamport_iter = lamports.iter();
         let mut loader = RichtextStateLoader::default();
         let mut id_to_style = FxHashMap::default();
         for op in ops {
-            let o = op.get_sliced();
-            let chunk = match o.content.into_list().unwrap() {
+            let id = op.id();
+            let chunk = match op.op.content.into_list().unwrap() {
                 list_op::InnerListOp::InsertText { slice, .. } => {
-                    RichtextStateChunk::new_text(slice.clone(), op.id())
+                    RichtextStateChunk::new_text(slice.clone(), id)
                 }
                 list_op::InnerListOp::StyleStart {
                     key, value, info, ..
                 } => {
                     let style_op = Arc::new(StyleOp {
-                        lamport: op.lamport,
+                        lamport: lamport_iter.next().unwrap(),
                         peer: op.peer,
-                        cnt: o.counter,
+                        cnt: op.op.counter,
                         key,
                         value,
                         info,
                     });
-                    id_to_style.insert(op.id(), style_op.clone());
+                    id_to_style.insert(id, style_op.clone());
                     RichtextStateChunk::new_style(style_op, AnchorType::Start)
                 }
                 list_op::InnerListOp::StyleEnd => {
-                    let style = id_to_style.remove(&op.id().inc(-1)).unwrap();
+                    let style = id_to_style.remove(&id.inc(-1)).unwrap();
                     RichtextStateChunk::new_style(style, AnchorType::End)
                 }
                 a => unreachable!("richtext state should not have {a:?}"),

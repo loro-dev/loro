@@ -10,7 +10,7 @@ use crate::{
     delta::Delta,
     event::{Diff, Index, InternalDiff},
     handler::ValueOrContainer,
-    op::{ListSlice, Op, RawOp, RawOpContent, RichOp},
+    op::{ListSlice, Op, OpWithId, RawOp, RawOpContent},
     txn::Transaction,
     DocState, LoroValue, OpLog,
 };
@@ -516,16 +516,20 @@ impl ContainerState for ListState {
     }
 
     #[doc = "Get a list of ops that can be used to restore the state to the current state"]
-    fn get_snapshot_ops(&self) -> Vec<IdSpan> {
-        self.list.iter().map(|x| x.id.into()).collect()
+    fn get_snapshot_ops(&self) -> (Vec<IdSpan>, Vec<u8>) {
+        (self.list.iter().map(|x| x.id.into()).collect(), Vec::new())
     }
 
     #[doc = "Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, oplog: &OpLog, ops: &mut dyn Iterator<Item = RichOp>) {
+    fn import_from_snapshot_ops(
+        &mut self,
+        oplog: &OpLog,
+        ops: &mut dyn Iterator<Item = OpWithId>,
+        _blob: &[u8],
+    ) {
         let mut index = 0;
         for op in ops {
-            let get_sliced = op.get_sliced();
-            let value = get_sliced.content.as_list().unwrap().as_insert().unwrap().0;
+            let value = op.op.content.as_list().unwrap().as_insert().unwrap().0;
             let list = oplog
                 .arena
                 .get_values(value.0.start as usize..value.0.end as usize);
