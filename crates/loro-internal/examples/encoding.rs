@@ -45,6 +45,14 @@ fn main() {
         output.len()
     );
 
+    let updates = loro.export_from(&Default::default());
+    let output = miniz_oxide::deflate::compress_to_vec(&updates, 6);
+    println!(
+        "updates size {} after compression {}",
+        updates.len(),
+        output.len()
+    );
+
     // {
     //     // Delta encoding
 

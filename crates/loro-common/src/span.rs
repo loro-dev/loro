@@ -234,9 +234,9 @@ pub struct IdSpan {
 
 impl IdSpan {
     #[inline]
-    pub fn new(client_id: PeerID, from: Counter, to: Counter) -> Self {
+    pub fn new(peer: PeerID, from: Counter, to: Counter) -> Self {
         Self {
-            client_id,
+            client_id: peer,
             counter: CounterSpan {
                 start: from,
                 end: to,
