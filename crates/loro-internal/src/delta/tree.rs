@@ -4,7 +4,7 @@ use std::{
 };
 
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{ContainerType, LoroValue, TreeID};
+use loro_common::{ContainerType, LoroValue, TreeID, ID};
 use serde::Serialize;
 use smallvec::{smallvec, SmallVec};
 
@@ -92,6 +92,7 @@ pub struct TreeDelta {
 pub struct TreeDeltaItem {
     pub target: TreeID,
     pub action: TreeInternalDiff,
+    pub last_effective_move_op_id: ID,
 }
 
 /// The action of [`TreeDiff`]. It's the same as  [`crate::container::tree::tree_op::TreeOp`], but semantic.
@@ -120,6 +121,7 @@ impl TreeDeltaItem {
         target: TreeID,
         parent: Option<TreeID>,
         old_parent: Option<TreeID>,
+        op_id: ID,
         is_parent_deleted: bool,
         is_old_parent_deleted: bool,
     ) -> Self {
@@ -150,7 +152,11 @@ impl TreeDeltaItem {
                 unreachable!()
             }
         };
-        TreeDeltaItem { target, action }
+        TreeDeltaItem {
+            target,
+            action,
+            last_effective_move_op_id: op_id,
+        }
     }
 }
 

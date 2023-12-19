@@ -3,7 +3,8 @@ use std::{borrow::Cow, ops::Deref};
 use fxhash::FxHashMap;
 use loro_common::{ContainerType, HasLamport, TreeID, ID};
 use loro_preload::{
-    CommonArena, EncodedAppState, EncodedContainerState, FinalPhase, MapEntry, TempArena,
+    CommonArena, EncodedAppState, EncodedContainerState, EncodedTreeNode, FinalPhase, MapEntry,
+    TempArena,
 };
 use rle::{HasLength, RleVec};
 use serde::{Deserialize, Serialize};
@@ -19,8 +20,8 @@ use crate::{
     delta::MapValue,
     id::{Counter, PeerID},
     op::{InnerContent, Op},
-    state::RichtextState,
     state::TreeState,
+    state::{RichtextState, TreeStateNode},
     version::Frontiers,
     InternalString, LoroError, LoroValue,
 };
@@ -313,7 +314,12 @@ pub fn decode_state<'b>(
             }
             loro_preload::EncodedContainerState::Tree((tree_data, deleted)) => {
                 let mut tree = TreeState::new();
-                for (target, parent) in tree_data {
+                for EncodedTreeNode {
+                    node_idx: target,
+                    parent,
+                    id,
+                } in tree_data
+                {
                     let (peer, counter) = state_arena.tree_ids[target - 1];
                     let target_peer = common.peer_ids[peer as usize];
                     let target = TreeID {
@@ -330,7 +336,13 @@ pub fn decode_state<'b>(
                             TreeID { peer, counter }
                         })
                     };
-                    tree.trees.insert(target, parent);
+                    tree.trees.insert(
+                        target,
+                        TreeStateNode {
+                            parent,
+                            last_move_op: id,
+                        },
+                    );
                 }
 
                 for target in deleted {
@@ -714,10 +726,11 @@ fn encode_app_state(app_state: &DocState) -> PreEncodedState {
             State::TreeState(tree) => {
                 let v = tree
                     .iter()
-                    .map(|(target, parent)| {
+                    .map(|(target, node)| {
+                        let parent = node.parent;
                         let peer_idx = record_peer(target.peer);
                         let t = record_tree_id(*target, peer_idx);
-                        let p = if TreeID::is_deleted_root(*parent) {
+                        let p = if TreeID::is_deleted_root(parent) {
                             Some(0)
                         } else {
                             parent.map(|p| {
@@ -725,7 +738,11 @@ fn encode_app_state(app_state: &DocState) -> PreEncodedState {
                                 record_tree_id(p, peer_idx)
                             })
                         };
-                        (t, p)
+                        EncodedTreeNode {
+                            node_idx: t,
+                            parent: p,
+                            id: node.last_move_op,
+                        }
                     })
                     .collect::<Vec<_>>();
                 let d = tree

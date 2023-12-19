@@ -73,7 +73,7 @@ impl From<u128> for ID {
 
 impl ID {
     #[inline]
-    pub fn new(peer: PeerID, counter: Counter) -> Self {
+    pub const fn new(peer: PeerID, counter: Counter) -> Self {
         ID { peer, counter }
     }
 

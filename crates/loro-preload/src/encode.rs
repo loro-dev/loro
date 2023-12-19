@@ -138,7 +138,14 @@ pub enum EncodedContainerState<'a> {
     },
     #[serde(borrow)]
     Richtext(Box<EncodedRichtextState<'a>>),
-    Tree((Vec<(usize, Option<usize>)>, Vec<usize>)),
+    Tree((Vec<EncodedTreeNode>, Vec<usize>)),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncodedTreeNode {
+    pub node_idx: usize,
+    pub parent: Option<usize>,
+    pub id: ID,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

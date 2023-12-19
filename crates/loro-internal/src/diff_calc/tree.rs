@@ -159,6 +159,7 @@ impl TreeDiffCache {
                     op.target,
                     op.parent,
                     old_parent,
+                    op.id,
                     is_parent_deleted,
                     is_old_parent_deleted,
                 );
@@ -174,11 +175,12 @@ impl TreeDiffCache {
                         let children = self.get_children(t);
                         children.iter().for_each(|c| {
                             diff.push(TreeDeltaItem {
-                                target: *c,
+                                target: c.0,
                                 action: TreeInternalDiff::CreateMove(t),
+                                last_effective_move_op_id: c.1,
                             })
                         });
-                        s.extend(children);
+                        s.extend(children.iter().map(|x| x.0));
                     }
                 }
             }
@@ -291,6 +293,7 @@ impl TreeDiffCache {
                     op.target,
                     old_parent,
                     op.parent,
+                    op.id,
                     is_old_parent_deleted,
                     is_parent_deleted,
                 );
@@ -305,11 +308,12 @@ impl TreeDiffCache {
                         let children = self.get_children(t);
                         children.iter().for_each(|c| {
                             diffs.push(TreeDeltaItem {
-                                target: *c,
+                                target: c.0,
                                 action: TreeInternalDiff::CreateMove(t),
+                                last_effective_move_op_id: c.1,
                             })
                         });
-                        s.extend(children);
+                        s.extend(children.iter().map(|c| c.0));
                     }
                 }
             }
@@ -328,6 +332,24 @@ impl TreeDiffCache {
             for op in cache.iter().rev() {
                 if op.effected {
                     ans = op.parent;
+                    break;
+                }
+            }
+        }
+
+        ans
+    }
+
+    /// get the parent of the first effected op
+    fn get_last_effective_move(&self, tree_id: TreeID) -> Option<&MoveLamportAndID> {
+        if TreeID::is_deleted_root(Some(tree_id)) {
+            return None;
+        }
+        let mut ans = None;
+        if let Some(cache) = self.cache.get(&tree_id) {
+            for op in cache.iter().rev() {
+                if op.effected {
+                    ans = Some(op);
                     break;
                 }
             }
@@ -358,14 +380,14 @@ impl TreeDiffCache {
 pub(crate) trait TreeDeletedSetTrait {
     fn deleted(&self) -> &FxHashSet<TreeID>;
     fn deleted_mut(&mut self) -> &mut FxHashSet<TreeID>;
-    fn get_children(&self, target: TreeID) -> Vec<TreeID>;
-    fn get_children_recursively(&self, target: TreeID) -> Vec<TreeID> {
+    fn get_children(&self, target: TreeID) -> Vec<(TreeID, ID)>;
+    fn get_children_recursively(&self, target: TreeID) -> Vec<(TreeID, ID)> {
         let mut ans = vec![];
         let mut s = vec![target];
         while let Some(t) = s.pop() {
             let children = self.get_children(t);
             ans.extend(children.clone());
-            s.extend(children);
+            s.extend(children.iter().map(|x| x.0));
         }
         ans
     }
@@ -393,7 +415,7 @@ pub(crate) trait TreeDeletedSetTrait {
             self.deleted_mut().remove(&target);
         }
         let mut s = self.get_children(target);
-        while let Some(child) = s.pop() {
+        while let Some((child, _)) = s.pop() {
             if child == target {
                 continue;
             }
@@ -416,17 +438,21 @@ impl TreeDeletedSetTrait for TreeDiffCache {
         &mut self.deleted
     }
 
-    fn get_children(&self, target: TreeID) -> Vec<TreeID> {
+    fn get_children(&self, target: TreeID) -> Vec<(TreeID, ID)> {
         let mut ans = vec![];
         for (tree_id, _) in self.cache.iter() {
             if tree_id == &target {
                 continue;
             }
-            let parent = self.get_parent(*tree_id);
-            if parent == Some(target) {
-                ans.push(*tree_id)
+            let Some(op) = self.get_last_effective_move(*tree_id) else {
+                continue;
+            };
+
+            if op.parent == Some(target) {
+                ans.push((*tree_id, op.id));
             }
         }
+
         ans
     }
 }

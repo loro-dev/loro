@@ -30,7 +30,7 @@ mod tree_state;
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
-pub(crate) use tree_state::{get_meta_value, TreeState};
+pub(crate) use tree_state::{get_meta_value, TreeState, TreeStateNode};
 
 use super::{arena::SharedArena, event::InternalDocDiff};
 

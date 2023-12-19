@@ -17,7 +17,6 @@ pub use state::DocState;
 pub mod loro;
 pub mod obs;
 pub mod oplog;
-mod state;
 pub mod txn;
 
 pub mod change;
@@ -42,6 +41,7 @@ pub mod event;
 
 pub use error::{LoroError, LoroResult};
 pub(crate) mod macros;
+pub(crate) mod state;
 pub(crate) mod value;
 pub(crate) use change::Timestamp;
 pub(crate) use id::{PeerID, ID};
