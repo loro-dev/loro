@@ -23,7 +23,7 @@ use crate::{
     delta::{Delta, MapDelta, MapValue, TreeInternalDiff},
     event::InternalDiff,
     id::Counter,
-    op::{RichOp, SliceRange},
+    op::{RichOp, SliceRange, SliceRanges},
     span::{HasId, HasLamport},
     version::Frontiers,
     InternalString, VersionVector,
@@ -578,10 +578,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                 CrdtRopeDelta::Retain(len) => {
                     delta = delta.retain(len);
                 }
-                CrdtRopeDelta::Insert {
-                    chunk: value,
-                    id: _,
-                } => match value.value() {
+                CrdtRopeDelta::Insert { chunk: value, id } => match value.value() {
                     RichtextChunkValue::Text(range) => {
                         for i in range.clone() {
                             let v = oplog.arena.get_value(i as usize);
@@ -589,7 +586,10 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                                 on_new_container(c);
                             }
                         }
-                        delta = delta.insert(SliceRange(range));
+                        delta = delta.insert(SliceRanges {
+                            ranges: smallvec::smallvec![SliceRange(range)],
+                            id,
+                        });
                     }
                     RichtextChunkValue::StyleAnchor { .. } => unreachable!(),
                     RichtextChunkValue::Unknown(_) => unreachable!(),
@@ -600,7 +600,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             }
         }
 
-        InternalDiff::SeqRaw(delta)
+        InternalDiff::ListRaw(delta)
     }
 }
 

@@ -8,7 +8,7 @@ use crate::{delta::DeltaValue, LoroValue};
 use enum_as_inner::EnumAsInner;
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 use std::{borrow::Cow, ops::Range};
 
 mod content;
@@ -425,54 +425,58 @@ impl<'a> Mergable for ListSlice<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct SliceRanges(pub SmallVec<[SliceRange; 2]>);
+pub struct SliceRanges {
+    pub ranges: SmallVec<[SliceRange; 2]>,
+    pub id: ID,
+}
 
 impl Serialize for SliceRanges {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let mut s = serializer.serialize_seq(Some(self.0.len()))?;
-        for item in self.0.iter() {
+        let mut s = serializer.serialize_seq(Some(self.ranges.len()))?;
+        for item in self.ranges.iter() {
             s.serialize_element(item)?;
         }
         s.end()
     }
 }
 
-impl From<SliceRange> for SliceRanges {
-    fn from(value: SliceRange) -> Self {
-        Self(smallvec![value])
-    }
-}
-
 impl DeltaValue for SliceRanges {
     fn value_extend(&mut self, other: Self) -> Result<(), Self> {
-        self.0.extend(other.0);
+        self.ranges.extend(other.ranges);
         Ok(())
     }
 
+    // FIXME: this seems wrong
     fn take(&mut self, target_len: usize) -> Self {
-        let mut ret = SmallVec::new();
+        let mut right = Self {
+            ranges: Default::default(),
+            id: self.id.inc(target_len as i32),
+        };
         let mut cur_len = 0;
         while cur_len < target_len {
-            let range = self.0.pop().unwrap();
+            let range = self.ranges.pop().unwrap();
             let range_len = range.content_len();
             if cur_len + range_len <= target_len {
-                ret.push(range);
+                right.ranges.push(range);
                 cur_len += range_len;
             } else {
                 let new_range = range.slice(0, target_len - cur_len);
-                ret.push(new_range);
-                self.0.push(range.slice(target_len - cur_len, range_len));
+                right.ranges.push(new_range);
+                self.ranges
+                    .push(range.slice(target_len - cur_len, range_len));
                 cur_len = target_len;
             }
         }
-        SliceRanges(ret)
+
+        std::mem::swap(self, &mut right);
+        right // now it's left
     }
 
     fn length(&self) -> usize {
-        self.0.iter().fold(0, |acc, x| acc + x.atom_len())
+        self.ranges.iter().fold(0, |acc, x| acc + x.atom_len())
     }
 }
 

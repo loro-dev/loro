@@ -132,7 +132,10 @@ impl<'a> EncodedAppState<'a> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EncodedContainerState<'a> {
     Map(Vec<MapEntry>),
-    List(Vec<usize>),
+    List {
+        elem_idx: Vec<usize>,
+        elem_ids: Vec<ID>,
+    },
     #[serde(borrow)]
     Richtext(Box<EncodedRichtextState<'a>>),
     Tree((Vec<(usize, Option<usize>)>, Vec<usize>)),
@@ -189,7 +192,7 @@ impl<'a> EncodedContainerState<'a> {
     pub fn container_type(&self) -> loro_common::ContainerType {
         match self {
             EncodedContainerState::Map(_) => loro_common::ContainerType::Map,
-            EncodedContainerState::List(_) => loro_common::ContainerType::List,
+            EncodedContainerState::List { .. } => loro_common::ContainerType::List,
             EncodedContainerState::Tree(_) => loro_common::ContainerType::Tree,
             EncodedContainerState::Richtext { .. } => loro_common::ContainerType::Text,
         }

@@ -1,7 +1,6 @@
 use std::{borrow::Cow, ops::Deref};
 
 use fxhash::FxHashMap;
-use itertools::Itertools;
 use loro_common::{ContainerType, HasLamport, TreeID, ID};
 use loro_preload::{
     CommonArena, EncodedAppState, EncodedContainerState, FinalPhase, MapEntry, TempArena,
@@ -298,15 +297,13 @@ pub fn decode_state<'b>(
                 }
                 container_states.insert(idx, State::MapState(map));
             }
-            loro_preload::EncodedContainerState::List(list_data) => {
+            loro_preload::EncodedContainerState::List { elem_idx, elem_ids } => {
                 let mut list = ListState::new(idx);
-                list.insert_batch(
-                    0,
-                    list_data
-                        .iter()
-                        .map(|&x| state_arena.values[x].clone())
-                        .collect_vec(),
-                );
+                for i in 0..elem_ids.len() {
+                    let elem_id = elem_ids[i];
+                    let elem = state_arena.values[elem_idx[i]].clone();
+                    list.insert(i, elem, elem_id);
+                }
                 container_states.insert(idx, State::ListState(list));
             }
             loro_preload::EncodedContainerState::Richtext(richtext_data) => {
@@ -695,7 +692,10 @@ fn encode_app_state(app_state: &DocState) -> PreEncodedState {
         let Some(state) = app_state.states.get(&idx) else {
             match id.container_type() {
                 loro_common::ContainerType::List => {
-                    encoded.states.push(EncodedContainerState::List(Vec::new()))
+                    encoded.states.push(EncodedContainerState::List {
+                        elem_idx: Default::default(),
+                        elem_ids: Default::default(),
+                    })
                 }
                 loro_common::ContainerType::Map => {
                     encoded.states.push(EncodedContainerState::Map(Vec::new()))
@@ -739,8 +739,15 @@ fn encode_app_state(app_state: &DocState) -> PreEncodedState {
                 encoded.states.push(EncodedContainerState::Tree((v, d)))
             }
             State::ListState(list) => {
-                let v = list.iter().map(&mut record_value).collect();
-                encoded.states.push(EncodedContainerState::List(v))
+                let mut elem_ids = Vec::new();
+                let mut elem_idx = Vec::new();
+                for elem in list.iter_with_id() {
+                    elem_ids.push(elem.id);
+                    elem_idx.push(record_value(&elem.v));
+                }
+                encoded
+                    .states
+                    .push(EncodedContainerState::List { elem_idx, elem_ids })
             }
             State::MapState(map) => {
                 let v = map
