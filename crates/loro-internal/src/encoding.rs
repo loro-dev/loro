@@ -122,7 +122,7 @@ pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) 
             let bytes = encode_oplog_v2(oplog, vv);
             miniz_oxide::deflate::compress_to_vec(&bytes, 7)
         }
-        EncodeMode::ReorderedRle => encode_reordered::encode(oplog, vv),
+        EncodeMode::ReorderedRle => encode_reordered::encode_updates(oplog, vv),
         _ => unreachable!(),
     };
 
@@ -141,7 +141,7 @@ pub(crate) fn decode_oplog(
         EncodeMode::CompressedRleUpdates => miniz_oxide::inflate::decompress_to_vec(body)
             .map_err(|_| LoroError::DecodeError("Invalid compressed data".into()))
             .and_then(|bytes| decode_oplog_v2(oplog, &bytes)),
-        EncodeMode::ReorderedRle => encode_reordered::decode(oplog, body),
+        EncodeMode::ReorderedRle => encode_reordered::decode_updates(oplog, body),
         EncodeMode::ReorderedSnapshot => unimplemented!(),
         EncodeMode::Auto => unreachable!(),
     }

@@ -23,7 +23,7 @@ use self::{
     value::{MarkStart, ValueReader},
 };
 
-pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
+pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut peer_id_to_idx: FxHashMap<PeerID, PeerIdx> = FxHashMap::default();
     let mut peers = Vec::with_capacity(oplog.changes().len());
     let mut diff_changes = Vec::new();
@@ -178,21 +178,23 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let doc = EncodedDoc {
         ops: encoded_ops,
         changes,
+        states: Vec::new(),
         start_counters,
         raw_values: Cow::Owned(value_writer.finish()),
-        arenas: Cow::Owned(encode_arena(peers, container_arena, keys, dep_arena)),
+        arenas: Cow::Owned(encode_arena(peers, container_arena, keys, dep_arena, &[])),
     };
 
     serde_columnar::to_vec(&doc).unwrap()
 }
 
-pub(crate) fn decode(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
+pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
     let iter = serde_columnar::iter_from_bytes::<EncodedDoc>(bytes)?;
     let DecodedArenas {
         peer_ids,
         containers,
         keys,
         mut deps,
+        state_blob_arena: _,
     } = decode_arena(&iter.arenas)?;
     let raw_values = &iter.raw_values;
     let mut value_reader = ValueReader::new(raw_values);
@@ -593,6 +595,14 @@ struct EncodedDoc<'a> {
     changes: Vec<EncodedChange>,
     /// The first counter value for each change of each peer in `changes`
     start_counters: Vec<Counter>,
+    /// Container states snapshot.
+    ///
+    /// It's empty when the encoding mode is not snapshot.
+    ///
+    /// Each pair is (op_len, state_area_len).
+    /// - `op_len` is the number of ops that forms the state
+    /// - `state_area_len` is the length of bytes this container need in the state area
+    states: Vec<(usize, usize)>,
 
     #[columnar(borrow)]
     raw_values: Cow<'a, [u8]>,
@@ -602,6 +612,7 @@ struct EncodedDoc<'a> {
     /// - `container_arena`
     /// - `key_arena`
     /// - `deps_arena`
+    /// - `state_arena`
     /// - `others`, left for future use
     #[columnar(borrow)]
     arenas: Cow<'a, [u8]>,
@@ -1154,6 +1165,7 @@ mod arena {
         containers: ContainerArena,
         keys: Vec<InternalString>,
         deps: DepsArena,
+        state_blob_arena: &[u8],
     ) -> Vec<u8> {
         let peer_ids = PeerIdArena {
             peer_ids: peer_ids_arena,
@@ -1165,6 +1177,7 @@ mod arena {
             container_arena: &containers.encode(),
             key_arena: &key_arena.encode(),
             deps_arena: &deps.encode(),
+            state_blob_arena,
         };
 
         encoded.encode_arenas()
@@ -1175,6 +1188,7 @@ mod arena {
         pub containers: ContainerArena,
         pub keys: KeyArena,
         pub deps: Box<dyn Iterator<Item = EncodedDep> + 'a>,
+        pub state_blob_arena: &'a [u8],
     }
 
     pub fn decode_arena(bytes: &[u8]) -> LoroResult<DecodedArenas> {
@@ -1184,6 +1198,7 @@ mod arena {
             containers: ContainerArena::decode(arenas.container_arena)?,
             keys: KeyArena::decode(arenas.key_arena)?,
             deps: Box::new(DepsArena::decode_iter(arenas.deps_arena)?),
+            state_blob_arena: arenas.state_blob_arena,
         })
     }
 
@@ -1192,6 +1207,7 @@ mod arena {
         container_arena: &'a [u8],
         key_arena: &'a [u8],
         deps_arena: &'a [u8],
+        state_blob_arena: &'a [u8],
     }
 
     impl EncodedArenas<'_> {
@@ -1208,6 +1224,7 @@ mod arena {
             write_arena(&mut ans, self.container_arena);
             write_arena(&mut ans, self.key_arena);
             write_arena(&mut ans, self.deps_arena);
+            write_arena(&mut ans, self.state_blob_arena);
             ans
         }
 
@@ -1215,12 +1232,14 @@ mod arena {
             let (peer_id_arena, rest) = read_arena(bytes);
             let (container_arena, rest) = read_arena(rest);
             let (key_arena, rest) = read_arena(rest);
-            let (deps_arena, _) = read_arena(rest);
+            let (deps_arena, rest) = read_arena(rest);
+            let (state_blob_arena, _) = read_arena(rest);
             Ok(EncodedArenas {
                 peer_id_arena,
                 container_arena,
                 key_arena,
                 deps_arena,
+                state_blob_arena,
             })
         }
     }
