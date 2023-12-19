@@ -29,9 +29,16 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut diff_changes = Vec::new();
     let self_vv = oplog.vv();
     let start_vv = vv.trim(&oplog.vv());
+    let mut start_counters = Vec::new();
 
     for (change, _) in oplog.iter_causally(start_vv.clone(), self_vv.clone()) {
         let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
+        peer_id_to_idx.entry(change.id.peer).or_insert_with(|| {
+            let idx = peers.len();
+            peers.push(change.id.peer);
+            start_counters.push(start_cnt);
+            idx
+        });
         if change.id.counter < start_cnt {
             let offset = start_cnt - change.id.counter;
             diff_changes.push(Cow::Owned(change.slice(offset as usize, change.atom_len())));
@@ -41,6 +48,14 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     }
 
     let (mut containers, container_idx2index) = extract_containers_in_order(&diff_changes, oplog);
+
+    let mut register_peer_id = |peer_id: PeerID| -> usize {
+        *peer_id_to_idx.entry(peer_id).or_insert_with(|| {
+            let idx = peers.len();
+            peers.push(peer_id);
+            idx
+        })
+    };
 
     let mut cid2index = containers
         .iter()
@@ -66,14 +81,6 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         *key_to_idx.entry(key.clone()).or_insert_with(|| {
             let idx = keys.len();
             keys.push(key.clone());
-            idx
-        })
-    };
-
-    let mut register_peer_id = |peer_id: PeerID| -> usize {
-        *peer_id_to_idx.entry(peer_id).or_insert_with(|| {
-            let idx = peers.len();
-            peers.push(peer_id);
             idx
         })
     };
@@ -111,8 +118,6 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             dep_on_self,
             deps_len,
             peer_idx,
-            counter: change.id.counter,
-            lamport: change.lamport,
             len: change.atom_len(),
             timestamp: change.timestamp,
             msg_len: 0,
@@ -173,6 +178,7 @@ pub(crate) fn encode(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let doc = EncodedDoc {
         ops: encoded_ops,
         changes,
+        start_counters,
         raw_values: Cow::Owned(value_writer.finish()),
         arenas: Cow::Owned(encode_arena(peers, container_arena, keys, dep_arena)),
     };
@@ -233,10 +239,9 @@ pub(crate) fn decode(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
     }
 
     let mut changes = Vec::with_capacity(iter.changes.size_hint().0);
+    let mut counters = iter.start_counters;
     for EncodedChange {
         peer_idx,
-        counter,
-        lamport,
         mut len,
         timestamp,
         deps_len,
@@ -244,12 +249,14 @@ pub(crate) fn decode(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
         msg_len: _,
     } in iter.changes
     {
+        let counter = counters[peer_idx];
+        counters[peer_idx] += len as Counter;
         let peer = peer_ids.peer_ids[peer_idx];
         let mut change: Change = Change {
             id: ID::new(peer, counter),
             ops: Default::default(),
             deps: Frontiers::with_capacity((deps_len + if dep_on_self { 1 } else { 0 }) as usize),
-            lamport,
+            lamport: 0,
             timestamp,
             has_dependents: false,
         };
@@ -286,15 +293,11 @@ pub(crate) fn decode(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
 
         latest_ids.push(change.id_last());
         // calc lamport or pending if its deps are not satisfied
-        for dep in change.deps.iter() {
-            match oplog.dag.get_lamport(dep) {
-                Some(lamport) => {
-                    change.lamport = change.lamport.max(lamport + 1);
-                }
-                None => {
-                    pending_changes.push(change);
-                    continue 'outer;
-                }
+        match oplog.dag.get_change_lamport_from_deps(&change.deps) {
+            Some(lamport) => change.lamport = lamport,
+            None => {
+                pending_changes.push(change);
+                continue 'outer;
             }
         }
 
@@ -588,6 +591,8 @@ struct EncodedDoc<'a> {
     ops: Vec<EncodedOp>,
     #[columnar(class = "vec", iter = "EncodedChange")]
     changes: Vec<EncodedChange>,
+    /// The first counter value for each change of each peer in `changes`
+    start_counters: Vec<Counter>,
 
     #[columnar(borrow)]
     raw_values: Cow<'a, [u8]>,
@@ -622,10 +627,6 @@ struct EncodedOp {
 struct EncodedChange {
     #[columnar(strategy = "Rle")]
     peer_idx: usize,
-    #[columnar(strategy = "DeltaRle")]
-    counter: i32,
-    #[columnar(strategy = "DeltaRle")]
-    lamport: u32,
     #[columnar(strategy = "DeltaRle")]
     len: usize,
     #[columnar(strategy = "DeltaRle")]

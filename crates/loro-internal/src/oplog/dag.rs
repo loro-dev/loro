@@ -136,6 +136,16 @@ impl AppDag {
         })
     }
 
+    pub fn get_change_lamport_from_deps(&self, deps: &[ID]) -> Option<Lamport> {
+        let mut lamport = 0;
+        for id in deps.iter() {
+            let x = self.get_lamport(id)?;
+            lamport = lamport.max(x + 1);
+        }
+
+        Some(lamport)
+    }
+
     /// Convert a frontiers to a version vector
     ///
     /// If the frontiers version is not found in the dag, return None
