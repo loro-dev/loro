@@ -10,9 +10,9 @@ use crate::{
     delta::Delta,
     event::{Diff, Index, InternalDiff},
     handler::ValueOrContainer,
-    op::{ListSlice, Op, RawOp, RawOpContent},
+    op::{ListSlice, Op, RawOp, RawOpContent, RichOp},
     txn::Transaction,
-    DocState, LoroValue,
+    DocState, LoroValue, OpLog,
 };
 
 use fxhash::FxHashMap;
@@ -21,7 +21,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
-use loro_common::{LoroResult, ID};
+use loro_common::{IdSpan, LoroResult, ID};
 
 #[derive(Debug)]
 pub struct ListState {
@@ -454,6 +454,24 @@ impl ContainerState for ListState {
         Ok(())
     }
 
+    #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
+    #[doc = " the state will be the same as this state."]
+    fn to_diff(
+        &mut self,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Diff {
+        Diff::List(
+            Delta::new().insert(
+                self.to_vec()
+                    .into_iter()
+                    .map(|v| ValueOrContainer::from_value(v, arena, txn, state))
+                    .collect::<Vec<_>>(),
+            ),
+        )
+    }
+
     #[doc = " Start a transaction"]
     #[doc = ""]
     #[doc = " The transaction may be aborted later, then all the ops during this transaction need to be undone."]
@@ -483,24 +501,6 @@ impl ContainerState for ListState {
         LoroValue::List(Arc::new(ans))
     }
 
-    #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
-    #[doc = " the state will be the same as this state."]
-    fn to_diff(
-        &mut self,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) -> Diff {
-        Diff::List(
-            Delta::new().insert(
-                self.to_vec()
-                    .into_iter()
-                    .map(|v| ValueOrContainer::from_value(v, arena, txn, state))
-                    .collect::<Vec<_>>(),
-            ),
-        )
-    }
-
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
         self.get_child_container_index(id).map(Index::Seq)
     }
@@ -513,6 +513,25 @@ impl ContainerState for ListState {
             }
         }
         ans
+    }
+
+    #[doc = "Get a list of ops that can be used to restore the state to the current state"]
+    fn get_snapshot_ops(&self) -> Vec<IdSpan> {
+        self.list.iter().map(|x| x.id.into()).collect()
+    }
+
+    #[doc = "Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
+    fn import_from_snapshot_ops(&mut self, oplog: &OpLog, ops: &mut dyn Iterator<Item = RichOp>) {
+        let mut index = 0;
+        for op in ops {
+            let get_sliced = op.get_sliced();
+            let value = get_sliced.content.as_list().unwrap().as_insert().unwrap().0;
+            let list = oplog
+                .arena
+                .get_values(value.0.start as usize..value.0.end as usize);
+            index += list.len();
+            self.insert_batch(index, list, op.id());
+        }
     }
 }
 

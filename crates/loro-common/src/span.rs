@@ -425,6 +425,12 @@ impl HasId for (PeerID, CounterSpan) {
     }
 }
 
+impl From<ID> for IdSpan {
+    fn from(value: ID) -> Self {
+        Self::new(value.peer, value.counter, value.counter + 1)
+    }
+}
+
 #[cfg(test)]
 mod test_id_span {
     use rle::RleVecWithIndex;

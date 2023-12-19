@@ -1,8 +1,9 @@
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID, ID, NONE_ID,
+    ContainerID, IdSpan, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID, ID, NONE_ID,
 };
+use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, Weak};
@@ -10,8 +11,8 @@ use std::sync::{Arc, Mutex, Weak};
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::TreeDeletedSetTrait;
 use crate::event::InternalDiff;
+use crate::op::RichOp;
 use crate::txn::Transaction;
-use crate::DocState;
 use crate::{
     arena::SharedArena,
     container::tree::tree_op::TreeOp,
@@ -19,6 +20,7 @@ use crate::{
     event::{Diff, Index},
     op::RawOp,
 };
+use crate::{DocState, OpLog};
 
 use super::ContainerState;
 
@@ -217,6 +219,21 @@ impl TreeState {
             .max()
             .unwrap_or(0)
     }
+
+    fn get_is_deleted_by_query(&self, target: TreeID) -> bool {
+        match self.trees.get(&target) {
+            Some(x) => {
+                if x.parent.is_none() {
+                    false
+                } else if x.parent == TreeID::delete_root() {
+                    true
+                } else {
+                    self.get_is_deleted_by_query(x.parent.unwrap())
+                }
+            }
+            None => false,
+        }
+    }
 }
 
 impl ContainerState for TreeState {
@@ -394,6 +411,37 @@ impl ContainerState for TreeState {
             .into_iter()
             .map(|n| n.associated_meta_container())
             .collect_vec()
+    }
+
+    #[doc = " Get a list of ops that can be used to restore the state to the current state"]
+    fn get_snapshot_ops(&self) -> Vec<IdSpan> {
+        self.trees
+            .values()
+            .map(|x| x.last_move_op.into())
+            .collect_vec()
+    }
+
+    #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
+    fn import_from_snapshot_ops(&mut self, _oplog: &OpLog, ops: &mut dyn Iterator<Item = RichOp>) {
+        for op in ops {
+            assert_eq!(op.atom_len(), 1);
+            let content = op.op().content.as_tree().unwrap();
+            let target = content.target;
+            let parent = content.parent;
+            self.trees.insert(
+                target,
+                TreeStateNode {
+                    parent,
+                    last_move_op: op.id(),
+                },
+            );
+        }
+
+        for t in self.trees.keys() {
+            if self.get_is_deleted_by_query(*t) {
+                self.deleted.insert(*t);
+            }
+        }
     }
 }
 

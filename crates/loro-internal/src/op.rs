@@ -264,6 +264,13 @@ impl<'a> RichOp<'a> {
     pub fn end(&self) -> usize {
         self.end
     }
+
+    pub(crate) fn id(&self) -> ID {
+        ID {
+            peer: self.peer,
+            counter: self.op.counter + self.start as Counter,
+        }
+    }
 }
 
 impl OwnedRichOp {

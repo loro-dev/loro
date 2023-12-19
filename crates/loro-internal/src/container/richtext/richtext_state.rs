@@ -4,7 +4,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor,
 };
-use loro_common::{LoroValue, ID};
+use loro_common::{IdSpan, LoroValue, ID};
 use serde::{ser::SerializeStruct, Serialize};
 use std::fmt::{Display, Formatter};
 use std::{
@@ -367,6 +367,22 @@ impl RichtextStateChunk {
 
     pub fn new_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
         Self::Style { style, anchor_type }
+    }
+
+    pub(crate) fn get_id_span(&self) -> loro_common::IdSpan {
+        match self {
+            RichtextStateChunk::Text(t) => {
+                let id = t.id();
+                IdSpan::new(id.peer, id.counter, id.counter + t.unicode_len())
+            }
+            RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
+                AnchorType::Start => style.id().into(),
+                AnchorType::End => {
+                    let id = style.id();
+                    IdSpan::new(id.peer, id.counter + 1, id.counter + 2)
+                }
+            },
+        }
     }
 }
 

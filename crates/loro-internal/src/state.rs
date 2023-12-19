@@ -6,7 +6,7 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{ContainerID, LoroResult};
+use loro_common::{ContainerID, IdSpan, LoroResult};
 
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
@@ -16,10 +16,10 @@ use crate::{
     fx_map,
     handler::ValueOrContainer,
     id::PeerID,
-    op::{Op, RawOp},
+    op::{Op, RawOp, RichOp},
     txn::Transaction,
     version::Frontiers,
-    ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
+    ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue, OpLog,
 };
 
 mod list_state;
@@ -103,6 +103,12 @@ pub(crate) trait ContainerState: Clone {
     fn get_child_containers(&self) -> Vec<ContainerID> {
         Vec::new()
     }
+
+    /// Get a list of ops that can be used to restore the state to the current state
+    fn get_snapshot_ops(&self) -> Vec<IdSpan>;
+
+    /// Restore the state to the state represented by the ops that exported by `get_snapshot_ops`
+    fn import_from_snapshot_ops(&mut self, oplog: &OpLog, ops: &mut dyn Iterator<Item = RichOp>);
 }
 
 #[allow(clippy::enum_variant_names)]

@@ -4,7 +4,8 @@ use std::{
 };
 
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, LoroResult};
+use loro_common::{ContainerID, IdSpan, LoroResult};
+use rle::HasLength;
 
 use crate::{
     arena::SharedArena,
@@ -12,9 +13,9 @@ use crate::{
     delta::{MapValue, ResolvedMapDelta, ResolvedMapValue},
     event::{Diff, Index, InternalDiff},
     handler::ValueOrContainer,
-    op::{Op, RawOp, RawOpContent},
+    op::{Op, RawOp, RawOpContent, RichOp},
     txn::Transaction,
-    DocState, InternalString, LoroValue,
+    DocState, InternalString, LoroValue, OpLog,
 };
 
 use super::ContainerState;
@@ -97,6 +98,24 @@ impl ContainerState for MapState {
         }
     }
 
+    #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
+    #[doc = " the state will be the same as this state."]
+    fn to_diff(
+        &mut self,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Diff {
+        Diff::Map(ResolvedMapDelta {
+            updated: self
+                .map
+                .clone()
+                .into_iter()
+                .map(|(k, v)| (k, ResolvedMapValue::from_map_value(v, arena, txn, state)))
+                .collect::<FxHashMap<_, _>>(),
+        })
+    }
+
     fn start_txn(&mut self) {
         self.in_txn = true;
     }
@@ -123,24 +142,6 @@ impl ContainerState for MapState {
         LoroValue::Map(Arc::new(ans))
     }
 
-    #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
-    #[doc = " the state will be the same as this state."]
-    fn to_diff(
-        &mut self,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) -> Diff {
-        Diff::Map(ResolvedMapDelta {
-            updated: self
-                .map
-                .clone()
-                .into_iter()
-                .map(|(k, v)| (k, ResolvedMapValue::from_map_value(v, arena, txn, state)))
-                .collect::<FxHashMap<_, _>>(),
-        })
-    }
-
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
         for (key, value) in self.map.iter() {
             if let Some(LoroValue::Container(x)) = &value.value {
@@ -161,6 +162,32 @@ impl ContainerState for MapState {
             }
         }
         ans
+    }
+
+    #[doc = " Get a list of ops that can be used to restore the state to the current state"]
+    fn get_snapshot_ops(&self) -> Vec<IdSpan> {
+        self.map.values().map(|v| v.id().into()).collect()
+    }
+
+    #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
+    fn import_from_snapshot_ops(&mut self, _oplog: &OpLog, ops: &mut dyn Iterator<Item = RichOp>) {
+        for op in ops {
+            debug_assert_eq!(
+                op.atom_len(),
+                1,
+                "MapState::from_snapshot_ops: op.atom_len() != 1"
+            );
+
+            let content = op.op.content.as_map().unwrap();
+            self.map.insert(
+                content.key.clone(),
+                MapValue {
+                    counter: op.op.counter,
+                    value: content.value.clone(),
+                    lamport: (op.lamport, op.peer),
+                },
+            );
+        }
     }
 }
 

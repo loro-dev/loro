@@ -5,7 +5,7 @@ use std::{
 
 use fxhash::FxHashMap;
 use generic_btree::rle::{HasLength, Mergeable};
-use loro_common::{Counter, LoroResult, LoroValue, PeerID, ID};
+use loro_common::{Counter, IdSpan, LoroResult, LoroValue, PeerID, ID};
 use loro_preload::{CommonArena, EncodedRichtextState, TempArena, TextRanges};
 
 use crate::{
@@ -20,10 +20,10 @@ use crate::{
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
     delta::{Delta, DeltaItem, StyleMeta},
     event::{Diff, InternalDiff},
-    op::{Op, RawOp},
+    op::{Op, RawOp, RichOp},
     txn::Transaction,
     utils::{bitmap::BitMap, lazy::LazyLoad, string_slice::StringSlice},
-    DocState, InternalString,
+    DocState, InternalString, OpLog,
 };
 
 use super::ContainerState;
@@ -444,6 +444,62 @@ impl ContainerState for RichtextState {
     // value is a list
     fn get_value(&mut self) -> LoroValue {
         LoroValue::String(Arc::new(self.state.get_mut().to_string()))
+    }
+
+    #[doc = " Get a list of ops that can be used to restore the state to the current state"]
+    fn get_snapshot_ops(&self) -> Vec<IdSpan> {
+        let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;
+        let mut a;
+        let mut b;
+        match &*self.state {
+            LazyLoad::Src(s) => {
+                a = Some(s.elements.iter());
+                iter = &mut *a.as_mut().unwrap();
+            }
+            LazyLoad::Dst(s) => {
+                b = Some(s.iter_chunk());
+                iter = &mut *b.as_mut().unwrap();
+            }
+        }
+
+        iter.map(|x| x.get_id_span()).collect()
+    }
+
+    #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
+    fn import_from_snapshot_ops(&mut self, _oplog: &OpLog, ops: &mut dyn Iterator<Item = RichOp>) {
+        let mut loader = RichtextStateLoader::default();
+        let mut id_to_style = FxHashMap::default();
+        for op in ops {
+            let o = op.get_sliced();
+            let chunk = match o.content.into_list().unwrap() {
+                list_op::InnerListOp::InsertText { slice, .. } => {
+                    RichtextStateChunk::new_text(slice.clone(), op.id())
+                }
+                list_op::InnerListOp::StyleStart {
+                    key, value, info, ..
+                } => {
+                    let style_op = Arc::new(StyleOp {
+                        lamport: op.lamport,
+                        peer: op.peer,
+                        cnt: o.counter,
+                        key,
+                        value,
+                        info,
+                    });
+                    id_to_style.insert(op.id(), style_op.clone());
+                    RichtextStateChunk::new_style(style_op, AnchorType::Start)
+                }
+                list_op::InnerListOp::StyleEnd => {
+                    let style = id_to_style.remove(&op.id().inc(-1)).unwrap();
+                    RichtextStateChunk::new_style(style, AnchorType::End)
+                }
+                a => unreachable!("richtext state should not have {a:?}"),
+            };
+
+            loader.push(chunk);
+        }
+
+        *self.state = LazyLoad::Src(loader);
     }
 }
 
