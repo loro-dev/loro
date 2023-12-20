@@ -6,11 +6,12 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{ContainerID, IdSpan, LoroResult};
+use loro_common::{ContainerID, LoroResult};
 
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, ContainerIdRaw},
+    encoding::{EncodeMode, StateSnapshotEncoder},
     event::Index,
     event::{Diff, InternalContainerDiff, InternalDiff},
     fx_map,
@@ -105,7 +106,7 @@ pub(crate) trait ContainerState: Clone {
     }
 
     /// Get a list of ops and a blob that can be used to restore the state to the current state
-    fn get_snapshot_ops(&self) -> (Vec<IdSpan>, Vec<u8>);
+    fn encode_snapshot(&self, encoder: StateSnapshotEncoder) -> Vec<u8>;
 
     /// Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`
     fn import_from_snapshot_ops(
@@ -113,6 +114,7 @@ pub(crate) trait ContainerState: Clone {
         oplog: &OpLog,
         ops: &mut dyn Iterator<Item = OpWithId>,
         blob: &[u8],
+        mode: EncodeMode,
     );
 }
 
@@ -408,6 +410,14 @@ impl DocState {
     pub(crate) fn start_txn(&mut self, origin: InternalString, local: bool) {
         self.pre_txn(origin, local);
         self.in_txn = true;
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &State> {
+        self.states.values()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut State> {
+        self.states.values_mut()
     }
 
     #[inline]

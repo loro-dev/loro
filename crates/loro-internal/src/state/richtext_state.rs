@@ -5,7 +5,7 @@ use std::{
 
 use fxhash::FxHashMap;
 use generic_btree::rle::{HasLength, Mergeable};
-use loro_common::{Counter, IdSpan, LoroResult, LoroValue, PeerID, ID};
+use loro_common::{Counter, LoroResult, LoroValue, PeerID, ID};
 use loro_preload::{CommonArena, EncodedRichtextState, TempArena, TextRanges};
 
 use crate::{
@@ -19,6 +19,7 @@ use crate::{
     },
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
     delta::{Delta, DeltaItem, StyleMeta},
+    encoding::{EncodeMode, StateSnapshotEncoder},
     event::{Diff, InternalDiff},
     op::{Op, OpWithId, RawOp},
     txn::Transaction,
@@ -450,7 +451,7 @@ impl ContainerState for RichtextState {
     }
 
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
-    fn get_snapshot_ops(&self) -> (Vec<IdSpan>, Vec<u8>) {
+    fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
         let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;
         let mut a;
         let mut b;
@@ -466,21 +467,21 @@ impl ContainerState for RichtextState {
         }
 
         let mut lamports = DeltaRleEncodedNums::new();
-        let a = iter
-            .map(|x| {
-                match x {
-                    RichtextStateChunk::Style { style, anchor_type }
-                        if *anchor_type == AnchorType::Start =>
-                    {
-                        lamports.push(style.lamport);
-                    }
-                    _ => {}
+        for chunk in iter {
+            match chunk {
+                RichtextStateChunk::Style { style, anchor_type }
+                    if *anchor_type == AnchorType::Start =>
+                {
+                    lamports.push(style.lamport);
                 }
+                _ => {}
+            }
 
-                x.get_id_span()
-            })
-            .collect();
-        (a, lamports.encode())
+            let id_span = chunk.get_id_span();
+            encoder.encode_op(id_span, || unimplemented!());
+        }
+
+        lamports.encode()
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
@@ -489,7 +490,9 @@ impl ContainerState for RichtextState {
         _oplog: &OpLog,
         ops: &mut dyn Iterator<Item = OpWithId>,
         blob: &[u8],
+        mode: EncodeMode,
     ) {
+        assert_eq!(mode, EncodeMode::ReorderedSnapshot);
         let lamports = DeltaRleEncodedNums::decode(blob);
         let mut lamport_iter = lamports.iter();
         let mut loader = RichtextStateLoader::default();

@@ -6,13 +6,14 @@ mod encode_updates;
 
 use self::encode_updates::decode_oplog_updates;
 use crate::encoding::encode_snapshot::encode_app_snapshot;
+use crate::op::Op;
 use crate::LoroDoc;
 use crate::{change::Change, op::RemoteOp};
 use crate::{oplog::OpLog, LoroError, VersionVector};
 use encode_enhanced::{decode_oplog_v2, encode_oplog_v2};
 use encode_updates::encode_oplog_updates;
 use fxhash::FxHashMap;
-use loro_common::{LoroResult, PeerID};
+use loro_common::{IdSpan, LoroResult, PeerID};
 use rle::HasLength;
 
 pub(crate) type RemoteClientChanges<'a> = FxHashMap<PeerID, Vec<Change<RemoteOp<'a>>>>;
@@ -36,6 +37,46 @@ pub(crate) enum EncodeMode {
     CompressedRleUpdates = 3,
     ReorderedRle = 4,
     ReorderedSnapshot = 5,
+}
+
+/// The encoder used to encode the container states.
+///
+/// Each container state can be represented by a sequence of operations.
+/// For example, a list state can be represented by a sequence of insert
+/// operations that form its current state.
+/// We ignore the delete operations.
+///
+/// We will use a new encoder for each container state.
+/// Each container state should call encode_op multiple times until all the
+/// operations constituting its current state are encoded.
+pub(crate) struct StateSnapshotEncoder<'a> {
+    encoder_by_idspan: &'a mut dyn FnMut(IdSpan) -> Result<(), ()>,
+    encoder_by_op: &'a mut dyn FnMut(Op),
+    mode: EncodeMode,
+}
+
+impl StateSnapshotEncoder<'_> {
+    pub fn new<'a>(
+        encoder_by_idspan: &'a mut dyn FnMut(IdSpan) -> Result<(), ()>,
+        encoder_by_op: &'a mut dyn FnMut(Op),
+        mode: EncodeMode,
+    ) -> StateSnapshotEncoder<'a> {
+        StateSnapshotEncoder {
+            encoder_by_idspan,
+            encoder_by_op,
+            mode,
+        }
+    }
+
+    pub fn encode_op(&mut self, id_span: IdSpan, get_op: impl FnOnce() -> Op) {
+        if (self.encoder_by_idspan)(id_span).is_err() {
+            (self.encoder_by_op)(get_op());
+        }
+    }
+
+    pub fn mode(&self) -> EncodeMode {
+        self.mode
+    }
 }
 
 impl EncodeMode {

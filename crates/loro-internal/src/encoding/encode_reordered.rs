@@ -12,10 +12,13 @@ use serde_columnar::columnar;
 use crate::{
     change::{Change, Lamport},
     container::{idx::ContainerIdx, list::list_op::DeleteSpan, richtext::TextStyleInfoFlag},
-    encoding::encode_reordered::value::{EncodedTreeMove, ValueKind, ValueWriter},
+    encoding::encode_reordered::{
+        value::{EncodedTreeMove, ValueKind, ValueWriter},
+        value_register::ValueRegister,
+    },
     op::{Op, SliceRange},
     version::Frontiers,
-    OpLog, VersionVector,
+    DocState, LoroDoc, OpLog, VersionVector,
 };
 
 use self::{
@@ -23,84 +26,26 @@ use self::{
     value::{MarkStart, ValueReader},
 };
 
+struct TempOp<'a> {
+    op: &'a Op,
+    lamport: Lamport,
+    peer_idx: u32,
+    peer_id: PeerID,
+    container_index: u32,
+    prop: i32,
+}
+
 pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
-    let mut peer_id_to_idx: FxHashMap<PeerID, PeerIdx> = FxHashMap::default();
-    let mut peers = Vec::with_capacity(oplog.changes().len());
-    let mut diff_changes = Vec::new();
-    let self_vv = oplog.vv();
-    let start_vv = vv.trim(&oplog.vv());
-    let mut start_counters = Vec::new();
-
-    for (change, _) in oplog.iter_causally(start_vv.clone(), self_vv.clone()) {
-        let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
-        peer_id_to_idx.entry(change.id.peer).or_insert_with(|| {
-            let idx = peers.len();
-            peers.push(change.id.peer);
-            start_counters.push(start_cnt);
-            idx
-        });
-        if change.id.counter < start_cnt {
-            let offset = start_cnt - change.id.counter;
-            diff_changes.push(Cow::Owned(change.slice(offset as usize, change.atom_len())));
-        } else {
-            diff_changes.push(Cow::Borrowed(change));
-        }
-    }
-
-    let (mut containers, container_idx2index) = extract_containers_in_order(&diff_changes, oplog);
-
-    let mut register_peer_id = |peer_id: PeerID| -> usize {
-        *peer_id_to_idx.entry(peer_id).or_insert_with(|| {
-            let idx = peers.len();
-            peers.push(peer_id);
-            idx
-        })
-    };
-
-    let mut cid2index = containers
-        .iter()
-        .enumerate()
-        .map(|(i, cid)| (cid.clone(), i))
-        .collect::<FxHashMap<_, _>>();
-    let mut register_cid = |cid: &ContainerID| -> usize {
-        *cid2index.entry(cid.clone()).or_insert_with(|| {
-            let idx = containers.len();
-            containers.push(cid.clone());
-            idx
-        })
-    };
-
-    let mut keys: Vec<InternalString> = Vec::new();
-    let mut key_to_idx: FxHashMap<InternalString, usize> = FxHashMap::default();
-
-    let mut register_key = |key: &InternalString| -> usize {
-        if let Some(ans) = key_to_idx.get(key) {
-            return *ans;
-        }
-
-        *key_to_idx.entry(key.clone()).or_insert_with(|| {
-            let idx = keys.len();
-            keys.push(key.clone());
-            idx
-        })
-    };
-
+    let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
+    let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
+    let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
+    let (containers, container_idx2index) = extract_containers_in_order(&diff_changes, oplog);
+    let mut cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
     let mut dep_arena = arena::DepsArena::default();
     let mut changes: Vec<EncodedChange> = Vec::with_capacity(diff_changes.len());
     let mut value_writer = ValueWriter::new();
-
-    struct TempOp<'a> {
-        op: &'a Op,
-        lamport: Lamport,
-        peer_idx: u32,
-        peer_id: PeerID,
-        container_index: u32,
-        prop: i32,
-    }
-
     let mut ops: Vec<TempOp> = Vec::new();
     let arena = &oplog.arena;
-
     for change in &diff_changes {
         let mut dep_on_self = false;
         let mut deps_len = 0;
@@ -109,11 +54,11 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                 dep_on_self = true;
             } else {
                 deps_len += 1;
-                dep_arena.push(register_peer_id(dep.peer), dep.counter);
+                dep_arena.push(peer_register.register(&dep.peer), dep.counter);
             }
         }
 
-        let peer_idx = register_peer_id(change.id.peer);
+        let peer_idx = peer_register.register(&change.id.peer);
         changes.push(EncodedChange {
             dep_on_self,
             deps_len,
@@ -128,7 +73,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             ops.push(TempOp {
                 op,
                 lamport,
-                prop: get_op_prop(op, &mut register_key),
+                prop: get_op_prop(op, &mut key_register),
                 peer_idx: peer_idx as u32,
                 peer_id: change.id.peer,
                 container_index: container_idx2index[&op.container] as u32,
@@ -158,9 +103,9 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             op,
             arena,
             &mut value_writer,
-            &mut register_key,
-            &mut register_cid,
-            &mut register_peer_id,
+            &mut key_register,
+            &mut cid_register,
+            &mut peer_register,
         );
 
         encoded_ops.push(EncodedOp {
@@ -172,8 +117,11 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         });
     }
 
-    let container_arena =
-        ContainerArena::from_containers(containers, &mut register_peer_id, &mut register_key);
+    let container_arena = ContainerArena::from_containers(
+        cid_register.unwrap_vec(),
+        &mut peer_register,
+        &mut key_register,
+    );
 
     let doc = EncodedDoc {
         ops: encoded_ops,
@@ -181,10 +129,94 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         states: Vec::new(),
         start_counters,
         raw_values: Cow::Owned(value_writer.finish()),
-        arenas: Cow::Owned(encode_arena(peers, container_arena, keys, dep_arena, &[])),
+        arenas: Cow::Owned(encode_arena(
+            peer_register.unwrap_vec(),
+            container_arena,
+            key_register.unwrap_vec(),
+            dep_arena,
+            &[],
+        )),
     };
 
     serde_columnar::to_vec(&doc).unwrap()
+}
+
+mod value_register {
+    use fxhash::FxHashMap;
+
+    pub(super) struct ValueRegister<T> {
+        map_value_to_index: FxHashMap<T, usize>,
+        vec: Vec<T>,
+    }
+
+    impl<T: std::hash::Hash + Clone + PartialEq + Eq> ValueRegister<T> {
+        pub fn new() -> Self {
+            Self {
+                map_value_to_index: FxHashMap::default(),
+                vec: Vec::new(),
+            }
+        }
+
+        pub fn from_existing(vec: Vec<T>) -> Self {
+            let mut map = FxHashMap::with_capacity_and_hasher(vec.len(), Default::default());
+            for (i, value) in vec.iter().enumerate() {
+                map.insert(value.clone(), i);
+            }
+
+            Self {
+                map_value_to_index: map,
+                vec,
+            }
+        }
+
+        /// Return the index of the given value. If it does not exist,
+        /// insert it and return the new index.
+        pub fn register(&mut self, key: &T) -> usize {
+            if let Some(index) = self.map_value_to_index.get(key) {
+                *index
+            } else {
+                let idx = self.vec.len();
+                self.vec.push(key.clone());
+                self.map_value_to_index.insert(key.clone(), idx);
+                idx
+            }
+        }
+
+        pub fn contains(&self, key: &T) -> bool {
+            self.map_value_to_index.contains_key(key)
+        }
+
+        pub fn unwrap_vec(self) -> Vec<T> {
+            self.vec
+        }
+    }
+}
+
+fn init_encode<'a>(
+    oplog: &'a OpLog,
+    vv: &'_ VersionVector,
+    peer_register: &mut ValueRegister<PeerID>,
+) -> (Vec<i32>, Vec<Cow<'a, Change>>) {
+    let self_vv = oplog.vv();
+    let start_vv = vv.trim(&oplog.vv());
+    let mut start_counters = Vec::new();
+
+    let mut diff_changes = Vec::new();
+    for (change, _) in oplog.iter_causally(start_vv.clone(), self_vv.clone()) {
+        let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
+        if !peer_register.contains(&change.id.peer) {
+            peer_register.register(&change.id.peer);
+            start_counters.push(start_cnt);
+        }
+        if change.id.counter < start_cnt {
+            let offset = start_cnt - change.id.counter;
+            diff_changes.push(Cow::Owned(change.slice(offset as usize, change.atom_len())));
+        } else {
+            diff_changes.push(Cow::Borrowed(change));
+        }
+    }
+
+    (start_counters, diff_changes)
 }
 
 pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
@@ -327,10 +359,15 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
     Ok(())
 }
 
-fn get_op_prop(
-    op: &Op,
-    register_key: &mut impl FnMut(&string_cache::Atom<string_cache::EmptyStaticAtomSet>) -> usize,
-) -> i32 {
+pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVector) -> Vec<u8> {
+    todo!()
+}
+
+pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
+    todo!();
+}
+
+fn get_op_prop(op: &Op, register_key: &mut ValueRegister<InternalString>) -> i32 {
     match &op.content {
         crate::op::InnerContent::List(list) => match list {
             crate::container::list::list_op::InnerListOp::Insert { pos, .. } => *pos as i32,
@@ -340,7 +377,7 @@ fn get_op_prop(
             crate::container::list::list_op::InnerListOp::StyleEnd => 0,
         },
         crate::op::InnerContent::Map(map) => {
-            let key = register_key(&map.key);
+            let key = register_key.register(&map.key);
             key as i32
         }
         crate::op::InnerContent::Tree(..) => 0,
@@ -352,9 +389,9 @@ fn encode_op(
     op: &Op,
     arena: &crate::arena::SharedArena,
     value_writer: &mut ValueWriter,
-    register_key: &mut impl FnMut(&string_cache::Atom<string_cache::EmptyStaticAtomSet>) -> usize,
-    register_cid: &mut impl FnMut(&ContainerID) -> usize,
-    register_peer: &mut impl FnMut(u64) -> usize,
+    register_key: &mut ValueRegister<InternalString>,
+    register_cid: &mut ValueRegister<ContainerID>,
+    register_peer: &mut ValueRegister<PeerID>,
 ) -> ValueKind {
     match &op.content {
         crate::op::InnerContent::List(list) => match list {
@@ -396,7 +433,7 @@ fn encode_op(
                 value_writer.write(
                     &value::Value::MarkStart(MarkStart {
                         len: end - start,
-                        key_idx: register_key(key) as u32,
+                        key_idx: register_key.register(key) as u32,
                         value: value.clone(),
                         info: info.to_byte(),
                     }),
@@ -654,11 +691,13 @@ mod value {
     use std::sync::Arc;
 
     use fxhash::FxHashMap;
-    use loro_common::{ContainerID, Counter, InternalString, LoroValue, TreeID};
+    use loro_common::{ContainerID, Counter, InternalString, LoroValue, PeerID, TreeID};
     use num_derive::{FromPrimitive, ToPrimitive};
     use num_traits::{FromPrimitive, ToPrimitive};
 
     use crate::container::tree::tree_op::TreeOp;
+
+    use super::value_register::ValueRegister;
 
     #[allow(unused)]
     #[non_exhaustive]
@@ -711,12 +750,12 @@ mod value {
             }
         }
 
-        pub fn from_tree_op(op: &TreeOp, register_peer_id: &mut dyn FnMut(u64) -> usize) -> Self {
+        pub fn from_tree_op(op: &TreeOp, register_peer_id: &mut ValueRegister<PeerID>) -> Self {
             EncodedTreeMove {
-                subject_peer_idx: register_peer_id(op.target.peer),
+                subject_peer_idx: register_peer_id.register(&op.target.peer),
                 subject_cnt: op.target.counter as usize,
                 is_parent_null: op.parent.is_none(),
-                parent_peer_idx: op.parent.map_or(0, |x| register_peer_id(x.peer)),
+                parent_peer_idx: op.parent.map_or(0, |x| register_peer_id.register(&x.peer)),
                 parent_cnt: op.parent.map_or(0, |x| x.counter as usize),
             }
         }
@@ -793,8 +832,8 @@ mod value {
         pub fn write_value_type_and_content(
             &mut self,
             value: &LoroValue,
-            register_key: &mut dyn FnMut(&InternalString) -> usize,
-            register_cid: &mut dyn FnMut(&ContainerID) -> usize,
+            register_key: &mut ValueRegister<InternalString>,
+            register_cid: &mut ValueRegister<ContainerID>,
         ) -> ValueKind {
             self.write_u8(get_loro_value_kind(value).to_u8().unwrap());
             self.write_value_content(value, register_key, register_cid)
@@ -803,8 +842,8 @@ mod value {
         pub fn write_value_content(
             &mut self,
             value: &LoroValue,
-            register_key: &mut dyn FnMut(&InternalString) -> usize,
-            register_cid: &mut dyn FnMut(&ContainerID) -> usize,
+            register_key: &mut ValueRegister<InternalString>,
+            register_cid: &mut ValueRegister<ContainerID>,
         ) -> ValueKind {
             match value {
                 LoroValue::Null => ValueKind::Null,
@@ -832,7 +871,7 @@ mod value {
                 LoroValue::Map(value) => {
                     self.write_usize(value.len());
                     for (key, value) in value.iter() {
-                        let key_idx = register_key(&key.as_str().into());
+                        let key_idx = register_key.register(&key.as_str().into());
                         self.write_usize(key_idx);
                         self.write_kind(get_loro_value_kind(value));
                         self.write_value_type_and_content(value, register_key, register_cid);
@@ -844,7 +883,7 @@ mod value {
                     ValueKind::Binary
                 }
                 LoroValue::Container(c) => {
-                    let idx = register_cid(c);
+                    let idx = register_cid.register(c);
                     self.write_usize(idx);
                     ValueKind::ContainerIdx
                 }
@@ -854,8 +893,8 @@ mod value {
         pub fn write(
             &mut self,
             value: &Value,
-            register_key: &mut dyn FnMut(&InternalString) -> usize,
-            register_cid: &mut dyn FnMut(&ContainerID) -> usize,
+            register_key: &mut ValueRegister<InternalString>,
+            register_cid: &mut ValueRegister<ContainerID>,
         ) {
             match value {
                 Value::Null => {}
@@ -905,8 +944,8 @@ mod value {
         fn write_array(
             &mut self,
             value: &[Value],
-            register_key: &mut dyn FnMut(&InternalString) -> usize,
-            register_cid: &mut dyn FnMut(&ContainerID) -> usize,
+            register_key: &mut ValueRegister<InternalString>,
+            register_cid: &mut ValueRegister<ContainerID>,
         ) {
             self.write_usize(value.len());
             for value in value {
@@ -918,12 +957,12 @@ mod value {
         fn write_map(
             &mut self,
             value: &FxHashMap<InternalString, Value>,
-            register_key: &mut dyn FnMut(&InternalString) -> usize,
-            register_cid: &mut dyn FnMut(&ContainerID) -> usize,
+            register_key: &mut ValueRegister<InternalString>,
+            register_cid: &mut ValueRegister<ContainerID>,
         ) {
             self.write_usize(value.len());
             for (key, value) in value {
-                let key_idx = register_key(key);
+                let key_idx = register_key.register(key);
                 self.write_usize(key_idx);
                 self.write_kind(value.kind());
                 self.write(value, register_key, register_cid);
@@ -938,8 +977,8 @@ mod value {
         fn write_mark(
             &mut self,
             mark: &MarkStart,
-            register_key: &mut dyn FnMut(&InternalString) -> usize,
-            register_cid: &mut dyn FnMut(&ContainerID) -> usize,
+            register_key: &mut ValueRegister<InternalString>,
+            register_cid: &mut ValueRegister<ContainerID>,
         ) {
             self.write_u8(mark.info);
             self.write_usize(mark.len as usize);
@@ -1158,7 +1197,7 @@ mod arena {
     use serde::{Deserialize, Serialize};
     use serde_columnar::columnar;
 
-    use super::PeerIdx;
+    use super::{value_register::ValueRegister, PeerIdx};
 
     pub fn encode_arena(
         peer_ids_arena: Vec<u64>,
@@ -1327,14 +1366,14 @@ mod arena {
 
         pub fn from_containers(
             cids: Vec<ContainerID>,
-            register_peer_id: &mut dyn FnMut(PeerID) -> usize,
-            register_key: &mut dyn FnMut(&InternalString) -> usize,
+            peer_register: &mut ValueRegister<PeerID>,
+            key_reg: &mut ValueRegister<InternalString>,
         ) -> Self {
             let mut ans = Self {
                 containers: Vec::with_capacity(cids.len()),
             };
             for cid in cids {
-                ans.push(cid, register_peer_id, register_key);
+                ans.push(cid, peer_register, key_reg);
             }
 
             ans
@@ -1343,19 +1382,24 @@ mod arena {
         pub fn push(
             &mut self,
             id: ContainerID,
-            register_peer_id: &mut dyn FnMut(PeerID) -> usize,
-            register_key: &mut dyn FnMut(&InternalString) -> usize,
+            peer_register: &mut ValueRegister<PeerID>,
+            register_key: &mut ValueRegister<InternalString>,
         ) {
             let (is_root, kind, peer_idx, key_idx_or_counter) = match id {
                 ContainerID::Root {
                     container_type,
                     name,
-                } => (true, container_type, 0, register_key(&name) as i32),
+                } => (true, container_type, 0, register_key.register(&name) as i32),
                 ContainerID::Normal {
                     container_type,
                     peer,
                     counter,
-                } => (false, container_type, register_peer_id(peer), counter),
+                } => (
+                    false,
+                    container_type,
+                    peer_register.register(&peer),
+                    counter,
+                ),
             };
             self.containers.push(EncodedContainer {
                 is_root,

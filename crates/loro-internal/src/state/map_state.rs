@@ -4,13 +4,14 @@ use std::{
 };
 
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, IdSpan, LoroResult};
+use loro_common::{ContainerID, LoroResult};
 use rle::HasLength;
 
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, map::MapSet},
     delta::{MapValue, ResolvedMapDelta, ResolvedMapValue},
+    encoding::{EncodeMode, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     handler::ValueOrContainer,
     op::{Op, OpWithId, RawOp, RawOpContent},
@@ -166,18 +167,14 @@ impl ContainerState for MapState {
     }
 
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
-    fn get_snapshot_ops(&self) -> (Vec<IdSpan>, Vec<u8>) {
+    fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
         let mut lamports = DeltaRleEncodedNums::new();
-        let a = self
-            .map
-            .values()
-            .map(|v| {
-                lamports.push(v.lamport.0);
-                v.id().into()
-            })
-            .collect();
+        for v in self.map.values() {
+            lamports.push(v.lamport.0);
+            encoder.encode_op(v.id().into(), || unimplemented!());
+        }
 
-        (a, lamports.encode())
+        lamports.encode()
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
@@ -186,7 +183,9 @@ impl ContainerState for MapState {
         _oplog: &OpLog,
         ops: &mut dyn Iterator<Item = OpWithId>,
         blob: &[u8],
+        mode: EncodeMode,
     ) {
+        assert_eq!(mode, EncodeMode::ReorderedSnapshot);
         let lamports = DeltaRleEncodedNums::decode(blob);
         let mut iter = lamports.iter();
         for op in ops {

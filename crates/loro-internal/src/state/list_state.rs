@@ -8,6 +8,7 @@ use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, ContainerID},
     delta::Delta,
+    encoding::{EncodeMode, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     handler::ValueOrContainer,
     op::{ListSlice, Op, OpWithId, RawOp, RawOpContent},
@@ -21,7 +22,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
-use loro_common::{IdSpan, LoroResult, ID};
+use loro_common::{LoroResult, ID};
 
 #[derive(Debug)]
 pub struct ListState {
@@ -516,8 +517,12 @@ impl ContainerState for ListState {
     }
 
     #[doc = "Get a list of ops that can be used to restore the state to the current state"]
-    fn get_snapshot_ops(&self) -> (Vec<IdSpan>, Vec<u8>) {
-        (self.list.iter().map(|x| x.id.into()).collect(), Vec::new())
+    fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
+        for span in self.list.iter() {
+            encoder.encode_op(span.id.into(), || unimplemented!())
+        }
+
+        Vec::new()
     }
 
     #[doc = "Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
@@ -526,7 +531,9 @@ impl ContainerState for ListState {
         oplog: &OpLog,
         ops: &mut dyn Iterator<Item = OpWithId>,
         _blob: &[u8],
+        mode: EncodeMode,
     ) {
+        assert_eq!(mode, EncodeMode::ReorderedSnapshot);
         let mut index = 0;
         for op in ops {
             let value = op.op.content.as_list().unwrap().as_insert().unwrap().0;

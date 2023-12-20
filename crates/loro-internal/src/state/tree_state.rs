@@ -1,7 +1,7 @@
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, IdSpan, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID, ID, NONE_ID,
+    ContainerID, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID, ID, NONE_ID,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::TreeDeletedSetTrait;
+use crate::encoding::{EncodeMode, StateSnapshotEncoder};
 use crate::event::InternalDiff;
 use crate::op::OpWithId;
 use crate::txn::Transaction;
@@ -179,7 +180,7 @@ impl TreeState {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&TreeID, &TreeStateNode)> + '_ {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&TreeID, &TreeStateNode)> + '_ {
         self.trees.iter()
     }
 
@@ -233,6 +234,12 @@ impl TreeState {
             }
             None => false,
         }
+    }
+}
+
+impl Default for TreeState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -414,14 +421,12 @@ impl ContainerState for TreeState {
     }
 
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
-    fn get_snapshot_ops(&self) -> (Vec<IdSpan>, Vec<u8>) {
-        (
-            self.trees
-                .values()
-                .map(|x| x.last_move_op.into())
-                .collect_vec(),
-            Vec::new(),
-        )
+    fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
+        for node in self.trees.values() {
+            encoder.encode_op(node.last_move_op.into(), || unimplemented!());
+        }
+
+        Vec::new()
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
@@ -430,7 +435,9 @@ impl ContainerState for TreeState {
         _oplog: &OpLog,
         ops: &mut dyn Iterator<Item = OpWithId>,
         _blob: &[u8],
+        mode: EncodeMode,
     ) {
+        assert_eq!(mode, EncodeMode::ReorderedSnapshot);
         for op in ops {
             assert_eq!(op.op.atom_len(), 1);
             let content = op.op.content.as_tree().unwrap();
