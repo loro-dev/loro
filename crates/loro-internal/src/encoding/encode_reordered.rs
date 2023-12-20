@@ -5,17 +5,14 @@ use loro_common::{
     ContainerID, ContainerType, Counter, HasCounterSpan, HasIdSpan, HasLamportSpan, InternalString,
     LoroResult, PeerID, ID,
 };
-use num_traits::{FromPrimitive, ToPrimitive};
-use rle::{HasLength, Sliceable};
+use num_traits::FromPrimitive;
+use rle::HasLength;
 use serde_columnar::columnar;
 
 use crate::{
-    change::{Change, Lamport},
+    change::Change,
     container::{idx::ContainerIdx, list::list_op::DeleteSpan, richtext::TextStyleInfoFlag},
-    encoding::encode_reordered::{
-        value::{EncodedTreeMove, ValueKind, ValueWriter},
-        value_register::ValueRegister,
-    },
+    encoding::encode_reordered::value::{ValueKind, ValueWriter},
     op::{Op, SliceRange},
     version::Frontiers,
     DocState, LoroDoc, OpLog, VersionVector,
@@ -23,17 +20,9 @@ use crate::{
 
 use self::{
     arena::{decode_arena, encode_arena, ContainerArena, DecodedArenas},
-    value::{MarkStart, ValueReader},
+    encode::{encode_changes, encode_ops, init_encode, TempOp, ValueRegister},
+    value::ValueReader,
 };
-
-struct TempOp<'a> {
-    op: &'a Op,
-    lamport: Lamport,
-    peer_idx: u32,
-    peer_id: PeerID,
-    container_index: u32,
-    prop: i32,
-}
 
 pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
@@ -42,44 +31,17 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let (containers, container_idx2index) = extract_containers_in_order(&diff_changes, oplog);
     let mut cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
     let mut dep_arena = arena::DepsArena::default();
-    let mut changes: Vec<EncodedChange> = Vec::with_capacity(diff_changes.len());
     let mut value_writer = ValueWriter::new();
     let mut ops: Vec<TempOp> = Vec::new();
     let arena = &oplog.arena;
-    for change in &diff_changes {
-        let mut dep_on_self = false;
-        let mut deps_len = 0;
-        for dep in change.deps.iter() {
-            if dep.peer == change.id.peer {
-                dep_on_self = true;
-            } else {
-                deps_len += 1;
-                dep_arena.push(peer_register.register(&dep.peer), dep.counter);
-            }
-        }
-
-        let peer_idx = peer_register.register(&change.id.peer);
-        changes.push(EncodedChange {
-            dep_on_self,
-            deps_len,
-            peer_idx,
-            len: change.atom_len(),
-            timestamp: change.timestamp,
-            msg_len: 0,
-        });
-
-        for (i, op) in change.ops().iter().enumerate() {
-            let lamport = i as Lamport + change.lamport();
-            ops.push(TempOp {
-                op,
-                lamport,
-                prop: get_op_prop(op, &mut key_register),
-                peer_idx: peer_idx as u32,
-                peer_id: change.id.peer,
-                container_index: container_idx2index[&op.container] as u32,
-            });
-        }
-    }
+    let changes = encode_changes(
+        &diff_changes,
+        &mut dep_arena,
+        &mut peer_register,
+        &mut ops,
+        &mut key_register,
+        container_idx2index,
+    );
 
     ops.sort_by(move |a, b| {
         a.container_index
@@ -89,33 +51,14 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             .then_with(|| a.peer_id.cmp(&b.peer_id).reverse())
     });
 
-    let mut encoded_ops = Vec::with_capacity(ops.len());
-    for TempOp {
-        op,
-        lamport: _,
-        peer_id: _,
-        peer_idx,
-        container_index,
-        prop,
-    } in ops
-    {
-        let value_type = encode_op(
-            op,
-            arena,
-            &mut value_writer,
-            &mut key_register,
-            &mut cid_register,
-            &mut peer_register,
-        );
-
-        encoded_ops.push(EncodedOp {
-            container_index,
-            peer_idx,
-            counter: op.counter,
-            prop,
-            value_type: value_type.to_u8().unwrap(),
-        });
-    }
+    let encoded_ops = encode_ops(
+        ops,
+        arena,
+        &mut value_writer,
+        &mut key_register,
+        &mut cid_register,
+        &mut peer_register,
+    );
 
     let container_arena = ContainerArena::from_containers(
         cid_register.unwrap_vec(),
@@ -139,84 +82,6 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     };
 
     serde_columnar::to_vec(&doc).unwrap()
-}
-
-mod value_register {
-    use fxhash::FxHashMap;
-
-    pub(super) struct ValueRegister<T> {
-        map_value_to_index: FxHashMap<T, usize>,
-        vec: Vec<T>,
-    }
-
-    impl<T: std::hash::Hash + Clone + PartialEq + Eq> ValueRegister<T> {
-        pub fn new() -> Self {
-            Self {
-                map_value_to_index: FxHashMap::default(),
-                vec: Vec::new(),
-            }
-        }
-
-        pub fn from_existing(vec: Vec<T>) -> Self {
-            let mut map = FxHashMap::with_capacity_and_hasher(vec.len(), Default::default());
-            for (i, value) in vec.iter().enumerate() {
-                map.insert(value.clone(), i);
-            }
-
-            Self {
-                map_value_to_index: map,
-                vec,
-            }
-        }
-
-        /// Return the index of the given value. If it does not exist,
-        /// insert it and return the new index.
-        pub fn register(&mut self, key: &T) -> usize {
-            if let Some(index) = self.map_value_to_index.get(key) {
-                *index
-            } else {
-                let idx = self.vec.len();
-                self.vec.push(key.clone());
-                self.map_value_to_index.insert(key.clone(), idx);
-                idx
-            }
-        }
-
-        pub fn contains(&self, key: &T) -> bool {
-            self.map_value_to_index.contains_key(key)
-        }
-
-        pub fn unwrap_vec(self) -> Vec<T> {
-            self.vec
-        }
-    }
-}
-
-fn init_encode<'a>(
-    oplog: &'a OpLog,
-    vv: &'_ VersionVector,
-    peer_register: &mut ValueRegister<PeerID>,
-) -> (Vec<i32>, Vec<Cow<'a, Change>>) {
-    let self_vv = oplog.vv();
-    let start_vv = vv.trim(&oplog.vv());
-    let mut start_counters = Vec::new();
-
-    let mut diff_changes = Vec::new();
-    for (change, _) in oplog.iter_causally(start_vv.clone(), self_vv.clone()) {
-        let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
-        if !peer_register.contains(&change.id.peer) {
-            peer_register.register(&change.id.peer);
-            start_counters.push(start_cnt);
-        }
-        if change.id.counter < start_cnt {
-            let offset = start_cnt - change.id.counter;
-            diff_changes.push(Cow::Owned(change.slice(offset as usize, change.atom_len())));
-        } else {
-            diff_changes.push(Cow::Borrowed(change));
-        }
-    }
-
-    (start_counters, diff_changes)
 }
 
 pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
@@ -367,95 +232,294 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     todo!();
 }
 
-fn get_op_prop(op: &Op, register_key: &mut ValueRegister<InternalString>) -> i32 {
-    match &op.content {
-        crate::op::InnerContent::List(list) => match list {
-            crate::container::list::list_op::InnerListOp::Insert { pos, .. } => *pos as i32,
-            crate::container::list::list_op::InnerListOp::InsertText { pos, .. } => *pos as i32,
-            crate::container::list::list_op::InnerListOp::Delete(span) => span.pos as i32,
-            crate::container::list::list_op::InnerListOp::StyleStart { start, .. } => *start as i32,
-            crate::container::list::list_op::InnerListOp::StyleEnd => 0,
-        },
-        crate::op::InnerContent::Map(map) => {
-            let key = register_key.register(&map.key);
-            key as i32
-        }
-        crate::op::InnerContent::Tree(..) => 0,
-    }
-}
+mod encode {
+    use loro_common::{ContainerID, ContainerType, PeerID};
+    use num_traits::ToPrimitive;
+    use rle::{HasLength, Sliceable};
+    use std::borrow::Cow;
 
-#[inline]
-fn encode_op(
-    op: &Op,
-    arena: &crate::arena::SharedArena,
-    value_writer: &mut ValueWriter,
-    register_key: &mut ValueRegister<InternalString>,
-    register_cid: &mut ValueRegister<ContainerID>,
-    register_peer: &mut ValueRegister<PeerID>,
-) -> ValueKind {
-    match &op.content {
-        crate::op::InnerContent::List(list) => match list {
-            crate::container::list::list_op::InnerListOp::Insert { slice, .. } => {
-                assert_eq!(op.container.get_type(), ContainerType::List);
-                let value = arena.get_values(slice.0.start as usize..slice.0.end as usize);
-                value_writer.write_value_content(&value.into(), register_key, register_cid);
-                ValueKind::Array
+    use crate::{
+        change::{Change, Lamport},
+        container::idx::ContainerIdx,
+        encoding::encode_reordered::value::{EncodedTreeMove, ValueWriter},
+        op::Op,
+        InternalString,
+    };
+
+    pub(super) struct TempOp<'a> {
+        pub op: &'a Op,
+        pub lamport: Lamport,
+        pub peer_idx: u32,
+        pub peer_id: PeerID,
+        pub container_index: u32,
+        pub prop: i32,
+    }
+
+    pub(super) fn encode_ops(
+        ops: Vec<TempOp<'_>>,
+        arena: &crate::arena::SharedArena,
+        value_writer: &mut ValueWriter,
+        key_register: &mut ValueRegister<string_cache::Atom<string_cache::EmptyStaticAtomSet>>,
+        cid_register: &mut ValueRegister<ContainerID>,
+        peer_register: &mut ValueRegister<u64>,
+    ) -> Vec<EncodedOp> {
+        let mut encoded_ops = Vec::with_capacity(ops.len());
+        for TempOp {
+            op,
+            lamport: _,
+            peer_id: _,
+            peer_idx,
+            container_index,
+            prop,
+        } in ops
+        {
+            let value_type = encode_op(
+                op,
+                arena,
+                value_writer,
+                key_register,
+                cid_register,
+                peer_register,
+            );
+
+            encoded_ops.push(EncodedOp {
+                container_index,
+                peer_idx,
+                counter: op.counter,
+                prop,
+                value_type: value_type.to_u8().unwrap(),
+            });
+        }
+        encoded_ops
+    }
+
+    pub(super) fn encode_changes<'a>(
+        diff_changes: &'a Vec<Cow<'a, Change>>,
+        dep_arena: &mut super::arena::DepsArena,
+        peer_register: &mut ValueRegister<u64>,
+        ops: &mut Vec<TempOp<'a>>,
+        key_register: &mut ValueRegister<string_cache::Atom<string_cache::EmptyStaticAtomSet>>,
+        container_idx2index: std::collections::HashMap<
+            ContainerIdx,
+            usize,
+            std::hash::BuildHasherDefault<fxhash::FxHasher>,
+        >,
+    ) -> Vec<EncodedChange> {
+        let mut changes: Vec<EncodedChange> = Vec::with_capacity(diff_changes.len());
+        for change in diff_changes.iter() {
+            let mut dep_on_self = false;
+            let mut deps_len = 0;
+            for dep in change.deps.iter() {
+                if dep.peer == change.id.peer {
+                    dep_on_self = true;
+                } else {
+                    deps_len += 1;
+                    dep_arena.push(peer_register.register(&dep.peer), dep.counter);
+                }
             }
-            crate::container::list::list_op::InnerListOp::InsertText {
-                slice,
-                unicode_start: _,
-                unicode_len: _,
-                ..
-            } => {
-                // TODO: refactor this from_utf8 can be done internally without checking
-                value_writer.write(
-                    &value::Value::Str(std::str::from_utf8(slice.as_bytes()).unwrap()),
-                    register_key,
-                    register_cid,
-                );
-                ValueKind::Str
-            }
-            crate::container::list::list_op::InnerListOp::Delete(span) => {
-                value_writer.write(
-                    &value::Value::DeleteSeq(span.signed_len as i32),
-                    register_key,
-                    register_cid,
-                );
-                ValueKind::DeleteSeq
-            }
-            crate::container::list::list_op::InnerListOp::StyleStart {
-                start,
-                end,
-                key,
-                value,
-                info,
-            } => {
-                value_writer.write(
-                    &value::Value::MarkStart(MarkStart {
-                        len: end - start,
-                        key_idx: register_key.register(key) as u32,
-                        value: value.clone(),
-                        info: info.to_byte(),
-                    }),
-                    register_key,
-                    register_cid,
-                );
-                ValueKind::MarkStart
-            }
-            crate::container::list::list_op::InnerListOp::StyleEnd => ValueKind::Null,
-        },
-        crate::op::InnerContent::Map(map) => {
-            assert_eq!(op.container.get_type(), ContainerType::Map);
-            match &map.value {
-                Some(v) => value_writer.write_value_content(v, register_key, register_cid),
-                None => ValueKind::DeleteOnce,
+
+            let peer_idx = peer_register.register(&change.id.peer);
+            changes.push(EncodedChange {
+                dep_on_self,
+                deps_len,
+                peer_idx,
+                len: change.atom_len(),
+                timestamp: change.timestamp,
+                msg_len: 0,
+            });
+
+            for (i, op) in change.ops().iter().enumerate() {
+                let lamport = i as Lamport + change.lamport();
+                ops.push(TempOp {
+                    op,
+                    lamport,
+                    prop: get_op_prop(op, key_register),
+                    peer_idx: peer_idx as u32,
+                    peer_id: change.id.peer,
+                    container_index: container_idx2index[&op.container] as u32,
+                });
             }
         }
-        crate::op::InnerContent::Tree(t) => {
-            assert_eq!(op.container.get_type(), ContainerType::Tree);
-            let op = EncodedTreeMove::from_tree_op(t, register_peer);
-            value_writer.write(&value::Value::TreeMove(op), register_key, register_cid);
-            ValueKind::TreeMove
+        changes
+    }
+
+    use crate::{OpLog, VersionVector};
+    pub(super) use value_register::ValueRegister;
+
+    use super::{
+        value::{MarkStart, Value, ValueKind},
+        EncodedChange, EncodedOp,
+    };
+    mod value_register {
+        use fxhash::FxHashMap;
+
+        pub struct ValueRegister<T> {
+            map_value_to_index: FxHashMap<T, usize>,
+            vec: Vec<T>,
+        }
+
+        impl<T: std::hash::Hash + Clone + PartialEq + Eq> ValueRegister<T> {
+            pub fn new() -> Self {
+                Self {
+                    map_value_to_index: FxHashMap::default(),
+                    vec: Vec::new(),
+                }
+            }
+
+            pub fn from_existing(vec: Vec<T>) -> Self {
+                let mut map = FxHashMap::with_capacity_and_hasher(vec.len(), Default::default());
+                for (i, value) in vec.iter().enumerate() {
+                    map.insert(value.clone(), i);
+                }
+
+                Self {
+                    map_value_to_index: map,
+                    vec,
+                }
+            }
+
+            /// Return the index of the given value. If it does not exist,
+            /// insert it and return the new index.
+            pub fn register(&mut self, key: &T) -> usize {
+                if let Some(index) = self.map_value_to_index.get(key) {
+                    *index
+                } else {
+                    let idx = self.vec.len();
+                    self.vec.push(key.clone());
+                    self.map_value_to_index.insert(key.clone(), idx);
+                    idx
+                }
+            }
+
+            pub fn contains(&self, key: &T) -> bool {
+                self.map_value_to_index.contains_key(key)
+            }
+
+            pub fn unwrap_vec(self) -> Vec<T> {
+                self.vec
+            }
+        }
+    }
+
+    pub(super) fn init_encode<'a>(
+        oplog: &'a OpLog,
+        vv: &'_ VersionVector,
+        peer_register: &mut ValueRegister<PeerID>,
+    ) -> (Vec<i32>, Vec<Cow<'a, Change>>) {
+        let self_vv = oplog.vv();
+        let start_vv = vv.trim(&oplog.vv());
+        let mut start_counters = Vec::new();
+
+        let mut diff_changes = Vec::new();
+        for (change, _) in oplog.iter_causally(start_vv.clone(), self_vv.clone()) {
+            let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
+            if !peer_register.contains(&change.id.peer) {
+                peer_register.register(&change.id.peer);
+                start_counters.push(start_cnt);
+            }
+            if change.id.counter < start_cnt {
+                let offset = start_cnt - change.id.counter;
+                diff_changes.push(Cow::Owned(change.slice(offset as usize, change.atom_len())));
+            } else {
+                diff_changes.push(Cow::Borrowed(change));
+            }
+        }
+
+        (start_counters, diff_changes)
+    }
+
+    fn get_op_prop(op: &Op, register_key: &mut ValueRegister<InternalString>) -> i32 {
+        match &op.content {
+            crate::op::InnerContent::List(list) => match list {
+                crate::container::list::list_op::InnerListOp::Insert { pos, .. } => *pos as i32,
+                crate::container::list::list_op::InnerListOp::InsertText { pos, .. } => *pos as i32,
+                crate::container::list::list_op::InnerListOp::Delete(span) => span.pos as i32,
+                crate::container::list::list_op::InnerListOp::StyleStart { start, .. } => {
+                    *start as i32
+                }
+                crate::container::list::list_op::InnerListOp::StyleEnd => 0,
+            },
+            crate::op::InnerContent::Map(map) => {
+                let key = register_key.register(&map.key);
+                key as i32
+            }
+            crate::op::InnerContent::Tree(..) => 0,
+        }
+    }
+
+    #[inline]
+    fn encode_op(
+        op: &Op,
+        arena: &crate::arena::SharedArena,
+        value_writer: &mut ValueWriter,
+        register_key: &mut ValueRegister<InternalString>,
+        register_cid: &mut ValueRegister<ContainerID>,
+        register_peer: &mut ValueRegister<PeerID>,
+    ) -> ValueKind {
+        match &op.content {
+            crate::op::InnerContent::List(list) => match list {
+                crate::container::list::list_op::InnerListOp::Insert { slice, .. } => {
+                    assert_eq!(op.container.get_type(), ContainerType::List);
+                    let value = arena.get_values(slice.0.start as usize..slice.0.end as usize);
+                    value_writer.write_value_content(&value.into(), register_key, register_cid);
+                    ValueKind::Array
+                }
+                crate::container::list::list_op::InnerListOp::InsertText {
+                    slice,
+                    unicode_start: _,
+                    unicode_len: _,
+                    ..
+                } => {
+                    // TODO: refactor this from_utf8 can be done internally without checking
+                    value_writer.write(
+                        &Value::Str(std::str::from_utf8(slice.as_bytes()).unwrap()),
+                        register_key,
+                        register_cid,
+                    );
+                    ValueKind::Str
+                }
+                crate::container::list::list_op::InnerListOp::Delete(span) => {
+                    value_writer.write(
+                        &Value::DeleteSeq(span.signed_len as i32),
+                        register_key,
+                        register_cid,
+                    );
+                    ValueKind::DeleteSeq
+                }
+                crate::container::list::list_op::InnerListOp::StyleStart {
+                    start,
+                    end,
+                    key,
+                    value,
+                    info,
+                } => {
+                    value_writer.write(
+                        &Value::MarkStart(MarkStart {
+                            len: end - start,
+                            key_idx: register_key.register(key) as u32,
+                            value: value.clone(),
+                            info: info.to_byte(),
+                        }),
+                        register_key,
+                        register_cid,
+                    );
+                    ValueKind::MarkStart
+                }
+                crate::container::list::list_op::InnerListOp::StyleEnd => ValueKind::Null,
+            },
+            crate::op::InnerContent::Map(map) => {
+                assert_eq!(op.container.get_type(), ContainerType::Map);
+                match &map.value {
+                    Some(v) => value_writer.write_value_content(v, register_key, register_cid),
+                    None => ValueKind::DeleteOnce,
+                }
+            }
+            crate::op::InnerContent::Tree(t) => {
+                assert_eq!(op.container.get_type(), ContainerType::Tree);
+                let op = EncodedTreeMove::from_tree_op(t, register_peer);
+                value_writer.write(&Value::TreeMove(op), register_key, register_cid);
+                ValueKind::TreeMove
+            }
         }
     }
 }
@@ -697,7 +761,7 @@ mod value {
 
     use crate::container::tree::tree_op::TreeOp;
 
-    use super::value_register::ValueRegister;
+    use super::encode::ValueRegister;
 
     #[allow(unused)]
     #[non_exhaustive]
@@ -1197,7 +1261,7 @@ mod arena {
     use serde::{Deserialize, Serialize};
     use serde_columnar::columnar;
 
-    use super::{value_register::ValueRegister, PeerIdx};
+    use super::{encode::ValueRegister, PeerIdx};
 
     pub fn encode_arena(
         peer_ids_arena: Vec<u64>,
