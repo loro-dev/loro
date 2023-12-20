@@ -6,6 +6,7 @@ use crate::{
 };
 use crate::{delta::DeltaValue, LoroValue};
 use enum_as_inner::EnumAsInner;
+use loro_common::IdSpan;
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -36,6 +37,14 @@ impl OpWithId {
             peer: self.peer,
             counter: self.op.counter,
         }
+    }
+
+    pub fn id_span(&self) -> IdSpan {
+        IdSpan::new(
+            self.peer,
+            self.op.counter,
+            self.op.counter + self.op.atom_len() as Counter,
+        )
     }
 }
 

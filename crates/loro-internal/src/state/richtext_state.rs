@@ -142,6 +142,17 @@ impl Mergeable for UndoItem {
 }
 
 impl ContainerState for RichtextState {
+    fn container_idx(&self) -> ContainerIdx {
+        self.idx
+    }
+
+    fn is_state_empty(&self) -> bool {
+        match &*self.state {
+            LazyLoad::Src(s) => s.is_empty(),
+            LazyLoad::Dst(s) => s.is_emtpy(),
+        }
+    }
+
     // TODO: refactor
     fn apply_diff_and_convert(
         &mut self,
@@ -828,5 +839,9 @@ impl RichtextStateLoader {
         }
 
         state
+    }
+
+    fn is_empty(&self) -> bool {
+        self.elements.is_empty()
     }
 }

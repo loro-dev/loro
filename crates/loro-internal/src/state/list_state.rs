@@ -321,6 +321,14 @@ impl ListState {
 }
 
 impl ContainerState for ListState {
+    fn container_idx(&self) -> ContainerIdx {
+        self.idx
+    }
+
+    fn is_state_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,

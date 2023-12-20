@@ -1,4 +1,4 @@
-use loro_common::IdSpanVector;
+use loro_common::{HasCounter, HasCounterSpan, IdSpanVector};
 use smallvec::smallvec;
 use std::{
     cmp::Ordering,
@@ -611,13 +611,13 @@ impl VersionVector {
         false
     }
 
-    pub fn intersect_span<S: HasIdSpan>(&self, target: &S) -> Option<CounterSpan> {
-        let id = target.id_start();
-        if let Some(end) = self.get(&id.peer) {
-            if *end > id.counter {
+    pub fn intersect_span(&self, target: IdSpan) -> Option<CounterSpan> {
+        if let Some(&end) = self.get(&target.client_id) {
+            if end > target.ctr_start() {
+                let count_end = target.ctr_end();
                 return Some(CounterSpan {
-                    start: id.counter,
-                    end: *end,
+                    start: target.ctr_start(),
+                    end: end.min(count_end),
                 });
             }
         }

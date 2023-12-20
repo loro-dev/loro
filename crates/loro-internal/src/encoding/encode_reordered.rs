@@ -2,18 +2,21 @@ use std::{borrow::Cow, sync::Arc};
 
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
-    ContainerID, ContainerType, Counter, HasCounterSpan, HasIdSpan, HasLamportSpan, InternalString,
-    LoroResult, PeerID, ID,
+    ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdSpan,
+    InternalString, LoroResult, PeerID, ID,
 };
 use num_traits::FromPrimitive;
 use rle::HasLength;
 use serde_columnar::columnar;
 
 use crate::{
+    arena::SharedArena,
     change::Change,
     container::{idx::ContainerIdx, list::list_op::DeleteSpan, richtext::TextStyleInfoFlag},
     encoding::encode_reordered::value::{ValueKind, ValueWriter},
     op::{Op, SliceRange},
+    state::ContainerState,
+    utils::id_int_map::IdIntMap,
     version::Frontiers,
     DocState, LoroDoc, OpLog, VersionVector,
 };
@@ -28,7 +31,13 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
-    let (containers, container_idx2index) = extract_containers_in_order(&diff_changes, oplog);
+    let (containers, _, container_idx2index) = extract_containers_in_order(
+        &mut diff_changes
+            .iter()
+            .flat_map(|x| x.ops.iter())
+            .map(|x| x.container),
+        &oplog.arena,
+    );
     let mut cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
     let mut dep_arena = arena::DepsArena::default();
     let mut value_writer = ValueWriter::new();
@@ -40,7 +49,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &mut peer_register,
         &mut ops,
         &mut key_register,
-        container_idx2index,
+        &container_idx2index,
     );
 
     ops.sort_by(move |a, b| {
@@ -225,14 +234,119 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
 }
 
 pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVector) -> Vec<u8> {
-    todo!()
+    let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
+    let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
+    let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
+    let (containers, c_pairs, container_idx2index) =
+        extract_containers_in_order(&mut state.iter().map(|x| x.container_idx()), &oplog.arena);
+    let mut cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
+    let mut dep_arena = arena::DepsArena::default();
+    let mut value_writer = ValueWriter::new();
+    let mut ops: Vec<TempOp> = Vec::new();
+    let arena = &oplog.arena;
+    let changes = encode_changes(
+        &diff_changes,
+        &mut dep_arena,
+        &mut peer_register,
+        &mut ops,
+        &mut key_register,
+        &container_idx2index,
+    );
+
+    // This stores the required op positions of each container state.
+    // The states can be encoded in these positions in the next step.
+    // This data structure stores that mapping from op id to the required total order.
+    let mut state_op_id_to_pos = IdIntMap::new();
+    for (_, c_idx) in c_pairs.iter() {
+        let state = state.get_state(*c_idx).unwrap();
+        if state.is_state_empty() {
+            continue;
+        }
+
+        let container_index = *container_idx2index.get(c_idx).unwrap() as u32;
+        state.encode_snapshot(super::StateSnapshotEncoder {
+            check_idspan: &|id_span| {
+                if let Some(counter) = vv.intersect_span(id_span) {
+                    Err(IdSpan {
+                        client_id: id_span.client_id,
+                        counter,
+                    })
+                } else {
+                    Ok(())
+                }
+            },
+            encoder_by_op: &mut |op| {
+                ops.push(TempOp {
+                    op: Cow::Owned(op.op),
+                    peer_idx: peer_register.register(&op.peer) as u32,
+                    peer_id: op.peer,
+                    container_index,
+                    // Prop is fake and will be encoded in the snapshot.
+                    // But it will not be used when decoding, because this op is not included in the vv so it's not in the encoded changes.
+                    // TODO: we need to make sure this property ↑
+                    prop: -1,
+                    // lamport value is fake, but it's only used for sorting and will not be encoded
+                    lamport: 0,
+                });
+            },
+            record_idspan: &mut |id_span| {
+                state_op_id_to_pos.insert(id_span);
+            },
+            mode: super::EncodeMode::ReorderedSnapshot,
+        });
+    }
+
+    ops.sort_by(move |a, b| {
+        a.container_index
+            .cmp(&b.container_index)
+            .then_with(|| {
+                todo!(
+                    "sort by state_op_id_to_pos if possible otherwise sort by lamport and peer_id"
+                )
+            })
+            .then_with(|| a.lamport.cmp(&b.lamport).reverse())
+            .then_with(|| a.peer_id.cmp(&b.peer_id).reverse())
+    });
+
+    let encoded_ops = encode_ops(
+        ops,
+        arena,
+        &mut value_writer,
+        &mut key_register,
+        &mut cid_register,
+        &mut peer_register,
+    );
+
+    let container_arena = ContainerArena::from_containers(
+        cid_register.unwrap_vec(),
+        &mut peer_register,
+        &mut key_register,
+    );
+
+    let doc = EncodedDoc {
+        ops: encoded_ops,
+        changes,
+        states: Vec::new(),
+        start_counters,
+        raw_values: Cow::Owned(value_writer.finish()),
+        arenas: Cow::Owned(encode_arena(
+            peer_register.unwrap_vec(),
+            container_arena,
+            key_register.unwrap_vec(),
+            dep_arena,
+            &[],
+        )),
+    };
+
+    serde_columnar::to_vec(&doc).unwrap()
 }
 
 pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
-    todo!();
+    todo!()
 }
 
 mod encode {
+    use fxhash::FxHashMap;
     use loro_common::{ContainerID, ContainerType, PeerID};
     use num_traits::ToPrimitive;
     use rle::{HasLength, Sliceable};
@@ -247,7 +361,7 @@ mod encode {
     };
 
     pub(super) struct TempOp<'a> {
-        pub op: &'a Op,
+        pub op: Cow<'a, Op>,
         pub lamport: Lamport,
         pub peer_idx: u32,
         pub peer_id: PeerID,
@@ -274,7 +388,7 @@ mod encode {
         } in ops
         {
             let value_type = encode_op(
-                op,
+                &op,
                 arena,
                 value_writer,
                 key_register,
@@ -299,11 +413,7 @@ mod encode {
         peer_register: &mut ValueRegister<u64>,
         ops: &mut Vec<TempOp<'a>>,
         key_register: &mut ValueRegister<string_cache::Atom<string_cache::EmptyStaticAtomSet>>,
-        container_idx2index: std::collections::HashMap<
-            ContainerIdx,
-            usize,
-            std::hash::BuildHasherDefault<fxhash::FxHasher>,
-        >,
+        container_idx2index: &FxHashMap<ContainerIdx, usize>,
     ) -> Vec<EncodedChange> {
         let mut changes: Vec<EncodedChange> = Vec::with_capacity(diff_changes.len());
         for change in diff_changes.iter() {
@@ -331,7 +441,7 @@ mod encode {
             for (i, op) in change.ops().iter().enumerate() {
                 let lamport = i as Lamport + change.lamport();
                 ops.push(TempOp {
-                    op,
+                    op: Cow::Borrowed(op),
                     lamport,
                     prop: get_op_prop(op, key_register),
                     peer_idx: peer_idx as u32,
@@ -636,22 +746,23 @@ type PeerIdx = usize;
 /// Containers are sorted by their peer_id and counter so that
 /// they can be compressed by using delta encoding.
 fn extract_containers_in_order(
-    diff_changes: &Vec<Cow<Change>>,
-    oplog: &OpLog,
-) -> (Vec<ContainerID>, FxHashMap<ContainerIdx, usize>) {
+    c_iter: &mut dyn Iterator<Item = ContainerIdx>,
+    arena: &SharedArena,
+) -> (
+    Vec<ContainerID>,
+    Vec<(ContainerID, ContainerIdx)>,
+    FxHashMap<ContainerIdx, usize>,
+) {
     let mut containers = Vec::new();
     let mut visited = FxHashSet::default();
-    for change in diff_changes {
-        for op in change.ops.iter() {
-            let container = op.container;
-            if visited.contains(&container) {
-                continue;
-            }
-
-            visited.insert(container);
-            let id = oplog.arena.get_container_id(container).unwrap();
-            containers.push((id, container));
+    for c in c_iter {
+        if visited.contains(&c) {
+            continue;
         }
+
+        visited.insert(c);
+        let id = arena.get_container_id(c).unwrap();
+        containers.push((id, c));
     }
 
     containers.sort_unstable_by(|(a, _), (b, _)| {
@@ -683,7 +794,8 @@ fn extract_containers_in_order(
         .collect();
 
     (
-        containers.into_iter().map(|x| x.0).collect(),
+        containers.iter().map(|x| x.0.clone()).collect(),
+        containers,
         container_idx2index,
     )
 }

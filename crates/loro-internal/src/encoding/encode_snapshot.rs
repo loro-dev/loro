@@ -313,7 +313,7 @@ pub fn decode_state<'b>(
                 container_states.insert(idx, State::RichtextState(richtext));
             }
             loro_preload::EncodedContainerState::Tree((tree_data, deleted)) => {
-                let mut tree = TreeState::new();
+                let mut tree = TreeState::new(idx);
                 for EncodedTreeNode {
                     node_idx: target,
                     parent,

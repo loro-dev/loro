@@ -56,6 +56,10 @@ pub struct DocState {
 
 #[enum_dispatch]
 pub(crate) trait ContainerState: Clone {
+    fn container_idx(&self) -> ContainerIdx;
+
+    fn is_state_empty(&self) -> bool;
+
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
@@ -105,7 +109,11 @@ pub(crate) trait ContainerState: Clone {
         Vec::new()
     }
 
-    /// Get a list of ops and a blob that can be used to restore the state to the current state
+    /// Encode the ops and the blob that can be used to restore the state to the current state.
+    ///
+    /// State will use the provided encoder to encode the ops and export a blob.
+    /// The ops should be encoded into the snapshot as well as the blob.
+    /// The users then can use the ops and the blob to restore the state to the current state.
     fn encode_snapshot(&self, encoder: StateSnapshotEncoder) -> Vec<u8>;
 
     /// Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`
@@ -917,7 +925,7 @@ pub fn create_state(idx: ContainerIdx) -> State {
         ContainerType::Map => State::MapState(MapState::new(idx)),
         ContainerType::List => State::ListState(ListState::new(idx)),
         ContainerType::Text => State::RichtextState(RichtextState::new(idx)),
-        ContainerType::Tree => State::TreeState(TreeState::new()),
+        ContainerType::Tree => State::TreeState(TreeState::new(idx)),
     }
 }
 

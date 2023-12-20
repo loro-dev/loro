@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, Weak};
 
+use crate::container::idx::ContainerIdx;
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::TreeDeletedSetTrait;
 use crate::encoding::{EncodeMode, StateSnapshotEncoder};
@@ -30,6 +31,7 @@ use super::ContainerState;
 /// using flat representation
 #[derive(Debug, Clone)]
 pub struct TreeState {
+    idx: ContainerIdx,
     pub(crate) trees: FxHashMap<TreeID, TreeStateNode>,
     pub(crate) deleted: FxHashSet<TreeID>,
     in_txn: bool,
@@ -69,7 +71,7 @@ struct TreeUndoItem {
 }
 
 impl TreeState {
-    pub fn new() -> Self {
+    pub fn new(idx: ContainerIdx) -> Self {
         let mut trees = FxHashMap::default();
         trees.insert(
             TreeID::delete_root().unwrap(),
@@ -88,6 +90,7 @@ impl TreeState {
         let mut deleted = FxHashSet::default();
         deleted.insert(TreeID::delete_root().unwrap());
         Self {
+            idx,
             trees,
             deleted,
             in_txn: false,
@@ -237,13 +240,15 @@ impl TreeState {
     }
 }
 
-impl Default for TreeState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ContainerState for TreeState {
+    fn container_idx(&self) -> crate::container::idx::ContainerIdx {
+        self.idx
+    }
+
+    fn is_state_empty(&self) -> bool {
+        self.trees.is_empty()
+    }
+
     fn apply_diff_and_convert(
         &mut self,
         diff: crate::event::InternalDiff,
@@ -610,14 +615,20 @@ mod tests {
 
     #[test]
     fn test_tree_state() {
-        let mut state = TreeState::new();
+        let mut state = TreeState::new(ContainerIdx::from_index_and_type(
+            0,
+            loro_common::ContainerType::Tree,
+        ));
         state.mov(ID1, None, NONE_ID).unwrap();
         state.mov(ID2, Some(ID1), NONE_ID).unwrap();
     }
 
     #[test]
     fn tree_convert() {
-        let mut state = TreeState::new();
+        let mut state = TreeState::new(ContainerIdx::from_index_and_type(
+            0,
+            loro_common::ContainerType::Tree,
+        ));
         state.mov(ID1, None, NONE_ID).unwrap();
         state.mov(ID2, Some(ID1), NONE_ID).unwrap();
         let roots = Forest::from_tree_state(&state.trees);
@@ -630,7 +641,10 @@ mod tests {
 
     #[test]
     fn delete_node() {
-        let mut state = TreeState::new();
+        let mut state = TreeState::new(ContainerIdx::from_index_and_type(
+            0,
+            loro_common::ContainerType::Tree,
+        ));
         state.mov(ID1, None, NONE_ID).unwrap();
         state.mov(ID2, Some(ID1), NONE_ID).unwrap();
         state.mov(ID3, Some(ID2), NONE_ID).unwrap();

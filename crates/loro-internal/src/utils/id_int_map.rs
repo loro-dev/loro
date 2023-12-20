@@ -124,6 +124,41 @@ impl IdIntMap {
                 }),
         }
     }
+
+    pub fn get_values_in_span(&self, target: IdSpan, mut next: impl FnMut(IdSpan, usize)) {
+        todo!("check if this is correct");
+        match &self.inner {
+            Either::Left(map) => {
+                let mut iter = map.range(..=&target.id_start());
+                while let Some((entry_key, value)) = iter.next_back() {
+                    if entry_key.peer != target.id_start().peer {
+                        break;
+                    } else if entry_key.counter + value.len > target.id_start().counter {
+                        let start = entry_key.counter.max(target.id_start().counter);
+                        let end = (entry_key.counter + value.len).min(target.id_end().counter);
+                        next(
+                            IdSpan::new(entry_key.peer, start, end),
+                            (end - start) as usize,
+                        );
+                    }
+                }
+            }
+            Either::Right(vec) => {
+                for (id_span, value) in vec.iter().rev() {
+                    if id_span.id_end() <= target.id_start() {
+                        break;
+                    } else if id_span.id_start() < target.id_end() {
+                        let start = id_span.ctr_start().max(target.ctr_start());
+                        let end = id_span.ctr_end().min(target.ctr_end());
+                        next(
+                            IdSpan::new(id_span.client_id, start, end),
+                            (end - start) as usize,
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

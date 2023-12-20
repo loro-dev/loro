@@ -6,15 +6,15 @@ mod encode_updates;
 
 use self::encode_updates::decode_oplog_updates;
 use crate::encoding::encode_snapshot::encode_app_snapshot;
-use crate::op::Op;
+use crate::op::{Op, OpWithId};
 use crate::LoroDoc;
 use crate::{change::Change, op::RemoteOp};
 use crate::{oplog::OpLog, LoroError, VersionVector};
 use encode_enhanced::{decode_oplog_v2, encode_oplog_v2};
 use encode_updates::encode_oplog_updates;
 use fxhash::FxHashMap;
-use loro_common::{IdSpan, LoroResult, PeerID};
-use rle::HasLength;
+use loro_common::{HasCounter, IdSpan, LoroResult, PeerID};
+use rle::{HasLength, Sliceable};
 
 pub(crate) type RemoteClientChanges<'a> = FxHashMap<PeerID, Vec<Change<RemoteOp<'a>>>>;
 
@@ -50,28 +50,50 @@ pub(crate) enum EncodeMode {
 /// Each container state should call encode_op multiple times until all the
 /// operations constituting its current state are encoded.
 pub(crate) struct StateSnapshotEncoder<'a> {
-    encoder_by_idspan: &'a mut dyn FnMut(IdSpan) -> Result<(), ()>,
-    encoder_by_op: &'a mut dyn FnMut(Op),
+    check_idspan: &'a dyn Fn(IdSpan) -> Result<(), IdSpan>,
+    encoder_by_op: &'a mut dyn FnMut(OpWithId),
+    record_idspan: &'a mut dyn FnMut(IdSpan),
     mode: EncodeMode,
 }
 
 impl StateSnapshotEncoder<'_> {
+    /// Create a new encoder.
+    ///
+    /// The `check_idspan` function is used to check if the id span is valid.
+    /// If the id span is invalid, the function should return an error that
+    /// contains the missing id span.
+    ///
+    /// The `encoder_by_op` function is used to encode an operation.
+    ///
+    /// The `record_idspan` function is used to record the id span to track the
+    /// encoded order.
     pub fn new<'a>(
-        encoder_by_idspan: &'a mut dyn FnMut(IdSpan) -> Result<(), ()>,
-        encoder_by_op: &'a mut dyn FnMut(Op),
+        check_idspan: &'a dyn Fn(IdSpan) -> Result<(), IdSpan>,
+        encoder_by_op: &'a mut dyn FnMut(OpWithId),
+        record_idspan: &'a mut dyn FnMut(IdSpan),
         mode: EncodeMode,
     ) -> StateSnapshotEncoder<'a> {
         StateSnapshotEncoder {
-            encoder_by_idspan,
+            check_idspan,
             encoder_by_op,
+            record_idspan,
             mode,
         }
     }
 
-    pub fn encode_op(&mut self, id_span: IdSpan, get_op: impl FnOnce() -> Op) {
-        if (self.encoder_by_idspan)(id_span).is_err() {
-            (self.encoder_by_op)(get_op());
+    pub fn encode_op(&mut self, id_span: IdSpan, get_op: impl FnOnce() -> OpWithId) {
+        if let Err(span) = (self.check_idspan)(id_span) {
+            let mut op = get_op();
+            if span == id_span {
+                (self.encoder_by_op)(op);
+            } else {
+                debug_assert_eq!(span.ctr_start(), id_span.ctr_start());
+                op.op = op.op.slice(span.atom_len(), op.op.atom_len());
+                (self.encoder_by_op)(op);
+            }
         }
+
+        (self.record_idspan)(id_span);
     }
 
     pub fn mode(&self) -> EncodeMode {
