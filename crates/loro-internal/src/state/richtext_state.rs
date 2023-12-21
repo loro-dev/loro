@@ -82,7 +82,7 @@ impl Clone for RichtextState {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum UndoItem {
     Insert {
         index: u32,
@@ -123,9 +123,9 @@ impl Mergeable for UndoItem {
                     index: r_i,
                 },
             ) => {
-                if *r_i + r_c.rle_len() as u32 == *index {
+                // when self is delete, the rhs is the one that has the bigger index
+                if *index + content.rle_len() as u32 == *r_i {
                     content.merge_right(r_c);
-                    *index = *r_i
                 }
             }
             _ => unreachable!(),
@@ -366,12 +366,16 @@ impl ContainerState for RichtextState {
                         rle::HasLength::atom_len(&del),
                         |span| {
                             if self.in_txn {
-                                let item = UndoItem::Delete {
+                                let mut item = UndoItem::Delete {
                                     index: del.start() as u32,
                                     content: span,
                                 };
                                 match self.undo_stack.last_mut() {
                                     Some(last) if last.can_merge(&item) => {
+                                        if matches!(last, UndoItem::Delete { .. }) {
+                                            // item has smaller index
+                                            std::mem::swap(last, &mut item);
+                                        }
                                         last.merge_right(&item);
                                     }
                                     _ => {
@@ -472,9 +476,13 @@ impl RichtextState {
         }
     }
 
-    fn push_undo(&mut self, item: UndoItem) {
+    fn push_undo(&mut self, mut item: UndoItem) {
         match self.undo_stack.last_mut() {
             Some(last) if last.can_merge(&item) => {
+                if matches!(last, UndoItem::Delete { .. }) {
+                    // item has smaller index
+                    std::mem::swap(last, &mut item);
+                }
                 last.merge_right(&item);
             }
             _ => {
@@ -732,5 +740,40 @@ impl RichtextStateLoader {
         }
 
         state
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use append_only_bytes::AppendOnlyBytes;
+    use generic_btree::rle::Mergeable;
+
+    use crate::container::richtext::richtext_state::{RichtextStateChunk, TextChunk};
+
+    use super::UndoItem;
+
+    #[test]
+    fn merge_delete_undo() {
+        let mut bytes = AppendOnlyBytes::new();
+        bytes.push_slice(&[1u8, 2, 3, 4]);
+        let last_bytes = bytes.slice(2..4);
+        let new_bytes = bytes.slice(0..2);
+
+        let mut last = UndoItem::Delete {
+            index: 20,
+            content: RichtextStateChunk::Text(TextChunk::from_bytes(last_bytes)),
+        };
+        let mut new = UndoItem::Delete {
+            index: 18,
+            content: RichtextStateChunk::Text(TextChunk::from_bytes(new_bytes)),
+        };
+        let merged = UndoItem::Delete {
+            index: 18,
+            content: RichtextStateChunk::Text(TextChunk::from_bytes(bytes.to_slice())),
+        };
+        assert!(last.can_merge(&new));
+        std::mem::swap(&mut last, &mut new);
+        last.merge_right(&new);
+        assert_eq!(last, merged);
     }
 }

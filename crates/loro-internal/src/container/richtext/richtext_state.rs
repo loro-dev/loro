@@ -65,7 +65,7 @@ mod text_chunk {
 
     use append_only_bytes::BytesSlice;
 
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Debug, PartialEq)]
     pub(crate) struct TextChunk {
         unicode_len: i32,
         bytes: BytesSlice,
@@ -338,7 +338,7 @@ mod text_chunk {
 }
 
 // TODO: change visibility back to crate after #116 is done
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum RichtextStateChunk {
     Text(TextChunk),
     Style {
