@@ -160,6 +160,16 @@ impl CounterSpan {
     fn next_pos(&self) -> i32 {
         self.end
     }
+
+    fn get_intersection(&self, counter: &CounterSpan) -> Option<Self> {
+        let start = self.start.max(counter.start);
+        let end = self.end.min(counter.end);
+        if start < end {
+            Some(CounterSpan { start, end })
+        } else {
+            None
+        }
+    }
 }
 
 impl HasLength for CounterSpan {
@@ -228,6 +238,7 @@ impl Mergable for CounterSpan {
 /// We need this because it'll make merging deletions easier.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct IdSpan {
+    // TODO: rename this to peer_id
     pub client_id: PeerID,
     pub counter: CounterSpan,
 }
@@ -280,6 +291,18 @@ impl IdSpan {
         let mut out = IdSpanVector::default();
         out.insert(self.client_id, self.counter);
         out
+    }
+
+    pub fn get_intersection(&self, other: &Self) -> Option<Self> {
+        if self.client_id != other.client_id {
+            return None;
+        }
+
+        let counter = self.counter.get_intersection(&other.counter)?;
+        Some(Self {
+            client_id: self.client_id,
+            counter,
+        })
     }
 }
 
