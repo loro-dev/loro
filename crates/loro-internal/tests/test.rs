@@ -3,11 +3,36 @@ use std::sync::{atomic::AtomicBool, Arc, Mutex};
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, ID};
 use loro_internal::{
     container::richtext::TextStyleInfoFlag,
-    handler::{Handler, ValueOrContainer},
+    handler::{Handler, TextDelta, ValueOrContainer},
     version::Frontiers,
     ApplyDiff, LoroDoc, ToJson,
 };
 use serde_json::json;
+
+#[test]
+fn issue_225() -> LoroResult<()> {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert(0, "123")?;
+    text.mark(0, 3, "bold", true.into(), TextStyleInfoFlag::BOLD)?;
+    // when apply_delta, the attributes of insert should override the current styles
+    text.apply_delta(&[
+        TextDelta::Retain {
+            retain: 3,
+            attributes: None,
+        },
+        TextDelta::Insert {
+            insert: "new".into(),
+            attributes: None,
+        },
+    ])?;
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{ "insert": "123", "attributes": { "bold": true } }, { "insert": "new" }])
+    );
+
+    Ok(())
+}
 
 #[test]
 fn issue_211() -> LoroResult<()> {

@@ -303,8 +303,21 @@ impl TextHandler {
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
     pub fn insert_with_txn(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
+        self.insert_with_txn_and_attr(txn, pos, s, None)?;
+        Ok(())
+    }
+
+    /// If attr is specified, it will be used as the attribute of the inserted text.
+    /// It will override the existing attribute of the text.
+    fn insert_with_txn_and_attr(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        s: &str,
+        attr: Option<&FxHashMap<String, LoroValue>>,
+    ) -> Result<Vec<(String, LoroValue)>, LoroError> {
         if s.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         if pos > self.len_event() {
@@ -327,12 +340,38 @@ impl TextHandler {
                 (pos, styles)
             });
 
+        let mut override_styles = Vec::new();
+        if let Some(attr) = attr {
+            // current styles
+            let map: FxHashMap<_, _> = styles
+                .iter()
+                .map(|x| (x.0.to_attr_key(), x.1.data))
+                .collect();
+            for (key, style) in map.iter() {
+                match attr.get(key) {
+                    Some(v) if v == style => {}
+                    new_style_value => {
+                        // need to override
+                        let new_style_value = new_style_value.cloned().unwrap_or(LoroValue::Null);
+                        override_styles.push((key.clone(), new_style_value));
+                    }
+                }
+            }
+
+            for (key, style) in attr.iter() {
+                if !map.contains_key(key) {
+                    override_styles.push((key.clone(), style.clone()));
+                }
+            }
+        }
+
         let unicode_len = s.chars().count();
         let event_len = if cfg!(feature = "wasm") {
             count_utf16_len(s.as_bytes())
         } else {
             unicode_len
         };
+
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
@@ -349,7 +388,9 @@ impl TextHandler {
                 event_len: event_len as u32,
             },
             &self.state,
-        )
+        )?;
+
+        Ok(override_styles)
     }
 
     /// `pos` is a Event Index:
@@ -534,14 +575,15 @@ impl TextHandler {
             match d {
                 TextDelta::Insert { insert, attributes } => {
                     let end = index + event_len(insert.as_str());
-                    self.insert_with_txn(txn, index, insert.as_str())?;
-                    match attributes {
-                        Some(attr) if !attr.is_empty() => {
-                            for (key, value) in attr {
-                                marks.push((index, end, key.as_str(), value.clone()));
-                            }
-                        }
-                        _ => {}
+                    let override_styles = self.insert_with_txn_and_attr(
+                        txn,
+                        index,
+                        insert.as_str(),
+                        Some(attributes.as_ref().unwrap_or(&Default::default())),
+                    )?;
+
+                    for (key, value) in override_styles {
+                        marks.push((index, end, Cow::Owned(key), value));
                     }
 
                     index = end;
@@ -554,7 +596,12 @@ impl TextHandler {
                     match attributes {
                         Some(attr) if !attr.is_empty() => {
                             for (key, value) in attr {
-                                marks.push((index, end, key.as_str(), value.clone()));
+                                marks.push((
+                                    index,
+                                    end,
+                                    Cow::Borrowed(key.as_str()),
+                                    value.clone(),
+                                ));
                             }
                         }
                         _ => {}
@@ -566,7 +613,7 @@ impl TextHandler {
 
         for (start, end, key, value) in marks {
             // FIXME: allow users to set a config table to store the flag, so that we can use it directly
-            self.mark_with_txn(txn, start, end, key, value, TextStyleInfoFlag::BOLD)?;
+            self.mark_with_txn(txn, start, end, &key, value, TextStyleInfoFlag::BOLD)?;
         }
 
         Ok(())

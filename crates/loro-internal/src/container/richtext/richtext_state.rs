@@ -17,7 +17,7 @@ use crate::{
     container::richtext::query_by_len::{
         EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex,
     },
-    delta::{DeltaValue, Meta, StyleMeta},
+    delta::{DeltaValue, StyleMeta},
 };
 
 // FIXME: Check splice and other things are using unicode index
@@ -1697,7 +1697,7 @@ impl RichtextState {
                 LoroValue::String(Arc::new(span.text.as_str().into())),
             );
 
-            if !span.attributes.is_empty() {
+            if !attributes.as_map().unwrap().is_empty() {
                 value.insert("attributes".into(), attributes.clone());
             }
 
@@ -2066,10 +2066,7 @@ mod test {
                     }
                 },
                 {
-                    "insert": " World!",
-                    "attributes": {
-                        "bold": null
-                    }
+                    "insert": " World!"
                 }
             ])
         );
@@ -2085,9 +2082,6 @@ mod test {
                 },
                 {
                     "insert": " World!",
-                    "attributes": {
-                        "bold": null
-                    }
                 }
             ])
         );
@@ -2107,9 +2101,6 @@ mod test {
                 },
                 {
                     "insert": " World!",
-                    "attributes": {
-                        "bold": null
-                    }
                 }
             ])
         );
