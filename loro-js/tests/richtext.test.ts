@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Delta, Loro } from "../src";
+import { Delta, Loro, TextDiff } from "../src";
 import { setDebug } from "loro-wasm";
 
 describe("richtext", () => {
@@ -103,4 +103,22 @@ describe("richtext", () => {
       },
     ]);
   });
+
+  it("apply delta", async () => {
+    const doc = new Loro();
+    const text = doc.getText("text");
+    const doc2 = new Loro();
+    const text2 = doc2.getText("text");
+    text.subscribe(doc, (event) => {
+      const e = event.diff as TextDiff;
+      text2.applyDelta(e.diff);
+    });
+    text.insert(0, "foo");
+    text.mark({ start: 0, end: 3, expand: "none" }, "link", true);
+    doc.commit();
+    text.insert(3, "baz");
+    doc.commit();
+    await new Promise((r) => setTimeout(r, 1));
+    expect(text2.toDelta()).toStrictEqual([{ insert: 'foo', attributes: { link: true } }, { insert: 'baz' }]);
+  })
 });
