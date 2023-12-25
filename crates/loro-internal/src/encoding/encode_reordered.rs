@@ -319,16 +319,18 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     let mut states = Vec::new();
     let mut state_bytes = Vec::new();
     for (_, c_idx) in c_pairs.iter() {
-        let state = state.get_state(*c_idx).unwrap();
         let container_index = *container_idx2index.get(c_idx).unwrap() as u32;
-        if state.is_state_empty() {
-            states.push(EncodedStateInfo {
-                container_index,
-                op_len: 0,
-                state_bytes_len: 0,
-            });
-            continue;
-        }
+        let state = match state.get_state(*c_idx) {
+            Some(state) if !state.is_state_empty() => state,
+            _ => {
+                states.push(EncodedStateInfo {
+                    container_index,
+                    op_len: 0,
+                    state_bytes_len: 0,
+                });
+                continue;
+            }
+        };
 
         let mut op_len = 0;
         let bytes = state.encode_snapshot(super::StateSnapshotEncoder {
