@@ -1,9 +1,9 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, cmp::Ordering, mem::take, sync::Arc};
 
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
-    ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdSpan,
-    InternalString, LoroResult, PeerID, ID,
+    ContainerID, ContainerType, Counter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan,
+    InternalString, LoroError, LoroResult, PeerID, ID,
 };
 use num_traits::FromPrimitive;
 use rle::HasLength;
@@ -13,8 +13,11 @@ use crate::{
     arena::SharedArena,
     change::Change,
     container::{idx::ContainerIdx, list::list_op::DeleteSpan, richtext::TextStyleInfoFlag},
-    encoding::encode_reordered::value::{ValueKind, ValueWriter},
-    op::{Op, SliceRange},
+    encoding::{
+        encode_reordered::value::{ValueKind, ValueWriter},
+        StateSnapshotDecodeContext,
+    },
+    op::{Op, OpWithId, SliceRange},
     state::ContainerState,
     utils::id_int_map::IdIntMap,
     version::Frontiers,
@@ -47,7 +50,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &diff_changes,
         &mut dep_arena,
         &mut peer_register,
-        &mut ops,
+        &mut |op| ops.push(op),
         &mut key_register,
         &container_idx2index,
     );
@@ -55,7 +58,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     ops.sort_by(move |a, b| {
         a.container_index
             .cmp(&b.container_index)
-            .then_with(|| a.prop.cmp(&b.prop))
+            .then_with(|| a.prop_that_used_for_sort.cmp(&b.prop_that_used_for_sort))
             .then_with(|| a.lamport.cmp(&b.lamport).reverse())
             .then_with(|| a.peer_id.cmp(&b.peer_id).reverse())
     });
@@ -75,6 +78,11 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &mut key_register,
     );
 
+    let frontiers = oplog
+        .frontiers()
+        .iter()
+        .map(|x| (peer_register.register(&x.peer), x.counter))
+        .collect();
     let doc = EncodedDoc {
         ops: encoded_ops,
         changes,
@@ -88,6 +96,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             dep_arena,
             &[],
         )),
+        frontiers,
     };
 
     serde_columnar::to_vec(&doc).unwrap()
@@ -99,55 +108,79 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
         peer_ids,
         containers,
         keys,
-        mut deps,
+        deps,
         state_blob_arena: _,
     } = decode_arena(&iter.arenas)?;
-    let raw_values = &iter.raw_values;
-    let mut value_reader = ValueReader::new(raw_values);
-    let mut ops_map: FxHashMap<PeerID, Vec<Op>> = FxHashMap::default();
-    let arena = &oplog.arena;
-    let containers: Vec<_> = containers
-        .containers
-        .iter()
-        .map(|x| x.as_container_id(&keys.keys, &peer_ids.peer_ids))
-        .collect();
-    for EncodedOp {
-        container_index,
-        prop,
-        peer_idx,
-        value_type,
-        counter,
-    } in iter.ops
-    {
-        let cid = &containers[container_index as usize];
-        let c_idx = arena.register_container(cid);
-        let kind = ValueKind::from_u8(value_type).expect("Unknown value type");
-        let content = decode_op(
-            cid,
-            kind,
-            &mut value_reader,
-            arena,
-            prop,
-            &keys,
-            &peer_ids.peer_ids,
-            &containers,
-        );
+    let ops_map = extract_ops(
+        &iter.raw_values,
+        iter.ops,
+        oplog,
+        &containers,
+        &keys,
+        &peer_ids,
+        false,
+    )
+    .0;
 
-        let peer = peer_ids.peer_ids[peer_idx as usize];
-        ops_map.entry(peer).or_default().push(Op {
-            counter,
-            container: c_idx,
-            content,
+    let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map);
+    import_changes_to_oplog(changes, oplog)?;
+    Ok(())
+}
+
+fn import_changes_to_oplog(changes: Vec<Change>, oplog: &mut OpLog) -> Result<(), LoroError> {
+    let mut pending_changes = Vec::new();
+    debug_log::debug_dbg!(&changes);
+    let mut latest_ids = Vec::new();
+    'outer: for mut change in changes {
+        if change.ctr_end() <= oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
+            // skip included changes
+            continue;
+        }
+
+        latest_ids.push(change.id_last());
+        // calc lamport or pending if its deps are not satisfied
+        match oplog.dag.get_change_lamport_from_deps(&change.deps) {
+            Some(lamport) => change.lamport = lamport,
+            None => {
+                pending_changes.push(change);
+                continue 'outer;
+            }
+        }
+
+        let Some(change) = oplog.trim_the_known_part_of_change(change) else {
+            continue;
+        };
+        // update dag and push the change
+        let mark = oplog.insert_dag_node_on_new_change(&change);
+        oplog.next_lamport = oplog.next_lamport.max(change.lamport_end());
+        oplog.latest_timestamp = oplog.latest_timestamp.max(change.timestamp);
+        oplog.dag.vv.extend_to_include_end_id(ID {
+            peer: change.id.peer,
+            counter: change.id.counter + change.atom_len() as Counter,
         });
+        oplog.insert_new_change(change, mark);
     }
-
-    for (_, ops) in ops_map.iter_mut() {
-        // sort op by counter in the reversed order
-        ops.sort_by_key(|x| -x.counter);
+    let mut vv = oplog.dag.vv.clone();
+    oplog.try_apply_pending(latest_ids, &mut vv);
+    if !oplog.batch_importing {
+        oplog.dag.refresh_frontiers();
     }
+    oplog.import_unknown_lamport_pending_changes(pending_changes)?;
+    Ok(())
+}
 
-    let mut changes = Vec::with_capacity(iter.changes.size_hint().0);
-    let mut counters = iter.start_counters;
+fn decode_changes<'a>(
+    encoded_changes: IterableEncodedChange<'_>,
+    mut counters: Vec<i32>,
+    peer_ids: arena::PeerIdArena,
+    mut deps: impl Iterator<Item = arena::EncodedDep> + 'a,
+    mut ops_map: std::collections::HashMap<
+        u64,
+        Vec<Op>,
+        std::hash::BuildHasherDefault<fxhash::FxHasher>,
+    >,
+) -> Vec<Change> {
+    let mut changes = Vec::with_capacity(encoded_changes.size_hint().0);
     for EncodedChange {
         peer_idx,
         mut len,
@@ -155,7 +188,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
         deps_len,
         dep_on_self,
         msg_len: _,
-    } in iter.changes
+    } in encoded_changes
     {
         let counter = counters[peer_idx];
         counters[peer_idx] += len as Counter;
@@ -190,50 +223,76 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
         changes.push(change);
     }
 
-    let mut pending_changes = Vec::new();
-    debug_log::debug_dbg!(&changes);
-    let mut latest_ids = Vec::new();
-    'outer: for mut change in changes {
-        if change.ctr_end() <= oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
-            // skip included changes
-            continue;
-        }
+    changes
+}
 
-        latest_ids.push(change.id_last());
-        // calc lamport or pending if its deps are not satisfied
-        match oplog.dag.get_change_lamport_from_deps(&change.deps) {
-            Some(lamport) => change.lamport = lamport,
-            None => {
-                pending_changes.push(change);
-                continue 'outer;
-            }
-        }
+fn extract_ops(
+    raw_values: &[u8],
+    iter: impl Iterator<Item = EncodedOp>,
+    oplog: &mut OpLog,
+    containers: &ContainerArena,
+    keys: &arena::KeyArena,
+    peer_ids: &arena::PeerIdArena,
+    should_extract_ops_with_ids: bool,
+) -> (FxHashMap<PeerID, Vec<Op>>, Vec<OpWithId>, Vec<ContainerID>) {
+    let mut value_reader = ValueReader::new(raw_values);
+    let mut ops_map: FxHashMap<PeerID, Vec<Op>> = FxHashMap::default();
+    let arena = &oplog.arena;
+    let containers: Vec<_> = containers
+        .containers
+        .iter()
+        .map(|x| x.as_container_id(&keys.keys, &peer_ids.peer_ids))
+        .collect();
+    let mut ops = Vec::new();
+    for EncodedOp {
+        container_index,
+        prop,
+        peer_idx,
+        value_type,
+        counter,
+    } in iter
+    {
+        let cid = &containers[container_index as usize];
+        let c_idx = arena.register_container(cid);
+        let kind = ValueKind::from_u8(value_type).expect("Unknown value type");
+        let content = decode_op(
+            cid,
+            kind,
+            &mut value_reader,
+            arena,
+            prop,
+            keys,
+            &peer_ids.peer_ids,
+            &containers,
+        );
 
-        let Some(change) = oplog.trim_the_known_part_of_change(change) else {
-            continue;
+        let peer = peer_ids.peer_ids[peer_idx as usize];
+        let op = Op {
+            counter,
+            container: c_idx,
+            content,
         };
-        // update dag and push the change
-        let mark = oplog.insert_dag_node_on_new_change(&change);
-        oplog.next_lamport = oplog.next_lamport.max(change.lamport_end());
-        oplog.latest_timestamp = oplog.latest_timestamp.max(change.timestamp);
-        oplog.dag.vv.extend_to_include_end_id(ID {
-            peer: change.id.peer,
-            counter: change.id.counter + change.atom_len() as Counter,
-        });
-        oplog.insert_new_change(change, mark);
+
+        if should_extract_ops_with_ids {
+            ops.push(OpWithId {
+                peer,
+                op: op.clone(),
+            });
+        }
+
+        ops_map.entry(peer).or_default().push(op);
     }
 
-    let mut vv = oplog.dag.vv.clone();
-    oplog.try_apply_pending(latest_ids, &mut vv);
-    if !oplog.batch_importing {
-        oplog.dag.refresh_frontiers();
+    for (_, ops) in ops_map.iter_mut() {
+        // sort op by counter in the reversed order
+        ops.sort_by_key(|x| -x.counter);
     }
 
-    oplog.import_unknown_lamport_pending_changes(pending_changes)?;
-    Ok(())
+    (ops_map, ops, containers)
 }
 
 pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVector) -> Vec<u8> {
+    assert_eq!(oplog.frontiers(), &state.frontiers);
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
@@ -243,20 +302,15 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     let mut dep_arena = arena::DepsArena::default();
     let mut value_writer = ValueWriter::new();
     let mut ops: Vec<TempOp> = Vec::new();
-    let arena = &oplog.arena;
-    let changes = encode_changes(
-        &diff_changes,
-        &mut dep_arena,
-        &mut peer_register,
-        &mut ops,
-        &mut key_register,
-        &container_idx2index,
-    );
 
+    debug_log::debug_dbg!(&diff_changes);
+    debug_log::debug_dbg!(&ops);
     // This stores the required op positions of each container state.
     // The states can be encoded in these positions in the next step.
     // This data structure stores that mapping from op id to the required total order.
-    let mut state_op_id_to_pos = IdIntMap::new();
+    let mut map_op_to_pos = IdIntMap::new();
+    let mut states = Vec::new();
+    let mut state_bytes = Vec::new();
     for (_, c_idx) in c_pairs.iter() {
         let state = state.get_state(*c_idx).unwrap();
         if state.is_state_empty() {
@@ -264,7 +318,8 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         }
 
         let container_index = *container_idx2index.get(c_idx).unwrap() as u32;
-        state.encode_snapshot(super::StateSnapshotEncoder {
+        let mut op_len = 0;
+        let bytes = state.encode_snapshot(super::StateSnapshotEncoder {
             check_idspan: &|id_span| {
                 if let Some(counter) = vv.intersect_span(id_span) {
                     Err(IdSpan {
@@ -284,33 +339,64 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
                     // Prop is fake and will be encoded in the snapshot.
                     // But it will not be used when decoding, because this op is not included in the vv so it's not in the encoded changes.
                     // TODO: we need to make sure this property ↑
-                    prop: -1,
+                    prop_that_used_for_sort: -1,
                     // lamport value is fake, but it's only used for sorting and will not be encoded
                     lamport: 0,
                 });
             },
             record_idspan: &mut |id_span| {
-                state_op_id_to_pos.insert(id_span);
+                op_len += id_span.atom_len();
+                map_op_to_pos.insert(id_span);
             },
             mode: super::EncodeMode::ReorderedSnapshot,
         });
+
+        states.push(EncodedStateInfo {
+            container_index,
+            op_len: op_len as u32,
+            state_bytes_len: bytes.len() as u32,
+        });
+        state_bytes.extend(bytes);
     }
 
+    let changes = encode_changes(
+        &diff_changes,
+        &mut dep_arena,
+        &mut peer_register,
+        &mut |op| {
+            let mut count = 0;
+            let o_len = op.atom_len();
+            ops.extend(map_op_to_pos.split(op).map(|x| {
+                count += x.atom_len();
+                x
+            }));
+
+            debug_assert_eq!(count, o_len);
+        },
+        &mut key_register,
+        &container_idx2index,
+    );
+    debug_log::debug_dbg!(&map_op_to_pos);
+    debug_log::debug_dbg!(&ops);
     ops.sort_by(move |a, b| {
-        a.container_index
-            .cmp(&b.container_index)
-            .then_with(|| {
-                todo!(
-                    "sort by state_op_id_to_pos if possible otherwise sort by lamport and peer_id"
-                )
-            })
-            .then_with(|| a.lamport.cmp(&b.lamport).reverse())
-            .then_with(|| a.peer_id.cmp(&b.peer_id).reverse())
+        a.container_index.cmp(&b.container_index).then_with(|| {
+            match (map_op_to_pos.get(a.id()), map_op_to_pos.get(b.id())) {
+                (None, None) => a
+                    .lamport
+                    .cmp(&b.lamport)
+                    .reverse()
+                    .then_with(|| a.peer_id.cmp(&b.peer_id).reverse()),
+                (None, Some(_)) => Ordering::Greater,
+                (Some(_), None) => Ordering::Less,
+                (Some(a), Some(b)) => a.0.cmp(&b.0),
+            }
+        })
     });
 
+    debug_log::debug_dbg!(&ops);
     let encoded_ops = encode_ops(
         ops,
-        arena,
+        &oplog.arena,
         &mut value_writer,
         &mut key_register,
         &mut cid_register,
@@ -323,10 +409,15 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         &mut key_register,
     );
 
+    let frontiers = oplog
+        .frontiers()
+        .iter()
+        .map(|x| (peer_register.register(&x.peer), x.counter))
+        .collect();
     let doc = EncodedDoc {
         ops: encoded_ops,
         changes,
-        states: Vec::new(),
+        states,
         start_counters,
         raw_values: Cow::Owned(value_writer.finish()),
         arenas: Cow::Owned(encode_arena(
@@ -334,20 +425,133 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
             container_arena,
             key_register.unwrap_vec(),
             dep_arena,
-            &[],
+            &state_bytes,
         )),
+        frontiers,
     };
 
     serde_columnar::to_vec(&doc).unwrap()
 }
 
 pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
-    todo!()
+    let mut state = doc.app_state().try_lock().map_err(|_| {
+        LoroError::DecodeError(
+            "decode_snapshot: failed to lock app state"
+                .to_string()
+                .into_boxed_str(),
+        )
+    })?;
+
+    state.check_before_decode_snapshot()?;
+    let mut oplog = doc.oplog().try_lock().map_err(|_| {
+        LoroError::DecodeError(
+            "decode_snapshot: failed to lock oplog"
+                .to_string()
+                .into_boxed_str(),
+        )
+    })?;
+
+    if !oplog.is_empty() {
+        unimplemented!("You can only import snapshot to a empty loro doc now");
+    }
+
+    let iter = serde_columnar::iter_from_bytes::<EncodedDoc>(bytes)?;
+    let DecodedArenas {
+        peer_ids,
+        containers,
+        keys,
+        deps,
+        state_blob_arena,
+    } = decode_arena(&iter.arenas)?;
+    let frontiers: Frontiers = iter
+        .frontiers
+        .iter()
+        .map(|x| ID::new(peer_ids.peer_ids[x.0], x.1))
+        .collect();
+    let (ops_map, ops, containers) = extract_ops(
+        &iter.raw_values,
+        iter.ops,
+        &mut oplog,
+        &containers,
+        &keys,
+        &peer_ids,
+        true,
+    );
+
+    debug_log::debug_dbg!(&ops);
+    decode_states(
+        &mut state,
+        frontiers,
+        iter.states,
+        containers,
+        state_blob_arena,
+        ops,
+        &oplog,
+    );
+    let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map);
+    import_changes_to_oplog(changes, &mut oplog)?;
+    assert_eq!(&state.frontiers, oplog.frontiers());
+    Ok(())
+}
+
+fn decode_states(
+    state: &mut DocState,
+    frontiers: Frontiers,
+    encoded_state_iter: IterableEncodedStateInfo<'_>,
+    containers: Vec<ContainerID>,
+    state_blob_arena: &[u8],
+    ops: Vec<OpWithId>,
+    oplog: &std::sync::MutexGuard<'_, OpLog>,
+) {
+    let mut state_blob_index: usize = 0;
+    let mut ops_index: usize = 0;
+    for EncodedStateInfo {
+        container_index,
+        mut op_len,
+        state_bytes_len,
+    } in encoded_state_iter
+    {
+        if op_len == 0 && state_bytes_len == 0 {
+            continue;
+        }
+
+        let container_id = &containers[container_index as usize];
+        let idx = state.arena.register_container(container_id);
+        debug_log::debug_dbg!(container_id, idx, op_len, state_bytes_len);
+        let state_bytes =
+            &state_blob_arena[state_blob_index..state_blob_index + state_bytes_len as usize];
+        state_blob_index += state_bytes_len as usize;
+        let mut next_ops = ops[ops_index..]
+            .iter()
+            .skip_while(|x| x.op.container != idx)
+            .take_while(|x| {
+                if op_len == 0 {
+                    false
+                } else {
+                    op_len -= x.op.atom_len() as u32;
+                    ops_index += 1;
+                    true
+                }
+            })
+            .cloned();
+        state.init_container(
+            container_id.clone(),
+            StateSnapshotDecodeContext {
+                oplog,
+                ops: &mut next_ops,
+                blob: state_bytes,
+                mode: crate::encoding::EncodeMode::ReorderedSnapshot,
+            },
+        );
+    }
+
+    let s = take(&mut state.states);
+    state.init_with_states_and_version(s, frontiers);
 }
 
 mod encode {
     use fxhash::FxHashMap;
-    use loro_common::{ContainerID, ContainerType, PeerID};
+    use loro_common::{ContainerID, ContainerType, HasId, PeerID, ID};
     use num_traits::ToPrimitive;
     use rle::{HasLength, Sliceable};
     use std::borrow::Cow;
@@ -360,13 +564,63 @@ mod encode {
         InternalString,
     };
 
+    #[derive(Debug)]
     pub(super) struct TempOp<'a> {
         pub op: Cow<'a, Op>,
         pub lamport: Lamport,
         pub peer_idx: u32,
         pub peer_id: PeerID,
         pub container_index: u32,
-        pub prop: i32,
+        /// Prop is fake and will be encoded in the snapshot.
+        /// But it will not be used when decoding, because this op is not included in the vv so it's not in the encoded changes.
+        pub prop_that_used_for_sort: i32,
+    }
+
+    impl TempOp<'_> {
+        pub(crate) fn id(&self) -> loro_common::ID {
+            loro_common::ID {
+                peer: self.peer_id,
+                counter: self.op.counter,
+            }
+        }
+    }
+
+    impl HasId for TempOp<'_> {
+        fn id_start(&self) -> loro_common::ID {
+            ID::new(self.peer_id, self.op.counter)
+        }
+    }
+
+    impl HasLength for TempOp<'_> {
+        #[inline(always)]
+        fn atom_len(&self) -> usize {
+            self.op.atom_len()
+        }
+
+        #[inline(always)]
+        fn content_len(&self) -> usize {
+            self.op.atom_len()
+        }
+    }
+    impl<'a> generic_btree::rle::HasLength for TempOp<'a> {
+        #[inline(always)]
+        fn rle_len(&self) -> usize {
+            self.op.atom_len()
+        }
+    }
+
+    impl<'a> generic_btree::rle::Sliceable for TempOp<'a> {
+        fn _slice(&self, range: std::ops::Range<usize>) -> TempOp<'a> {
+            let op = self.op.slice(range.start, range.end);
+            Self {
+                op: Cow::Owned(op),
+                lamport: self.lamport + range.start as Lamport,
+                peer_idx: self.peer_idx,
+                peer_id: self.peer_id,
+                container_index: self.container_index,
+                prop_that_used_for_sort: self.prop_that_used_for_sort,
+            }
+        }
     }
 
     pub(super) fn encode_ops(
@@ -384,7 +638,7 @@ mod encode {
             peer_id: _,
             peer_idx,
             container_index,
-            prop,
+            prop_that_used_for_sort: prop,
         } in ops
         {
             let value_type = encode_op(
@@ -411,7 +665,7 @@ mod encode {
         diff_changes: &'a Vec<Cow<'a, Change>>,
         dep_arena: &mut super::arena::DepsArena,
         peer_register: &mut ValueRegister<u64>,
-        ops: &mut Vec<TempOp<'a>>,
+        push_op: &mut impl FnMut(TempOp<'a>),
         key_register: &mut ValueRegister<string_cache::Atom<string_cache::EmptyStaticAtomSet>>,
         container_idx2index: &FxHashMap<ContainerIdx, usize>,
     ) -> Vec<EncodedChange> {
@@ -440,10 +694,10 @@ mod encode {
 
             for (i, op) in change.ops().iter().enumerate() {
                 let lamport = i as Lamport + change.lamport();
-                ops.push(TempOp {
+                push_op(TempOp {
                     op: Cow::Borrowed(op),
                     lamport,
-                    prop: get_op_prop(op, key_register),
+                    prop_that_used_for_sort: get_op_prop(op, key_register),
                     peer_idx: peer_idx as u32,
                     peer_id: change.id.peer,
                     container_index: container_idx2index[&op.container] as u32,
@@ -806,17 +1060,14 @@ struct EncodedDoc<'a> {
     ops: Vec<EncodedOp>,
     #[columnar(class = "vec", iter = "EncodedChange")]
     changes: Vec<EncodedChange>,
-    /// The first counter value for each change of each peer in `changes`
-    start_counters: Vec<Counter>,
     /// Container states snapshot.
     ///
     /// It's empty when the encoding mode is not snapshot.
-    ///
-    /// Each pair is (op_len, state_area_len).
-    /// - `op_len` is the number of ops that forms the state
-    /// - `state_area_len` is the length of bytes this container need in the state area
-    states: Vec<(usize, usize)>,
-
+    #[columnar(class = "vec", iter = "EncodedStateInfo")]
+    states: Vec<EncodedStateInfo>,
+    /// The first counter value for each change of each peer in `changes`
+    start_counters: Vec<Counter>,
+    frontiers: Vec<(PeerIdx, Counter)>,
     #[columnar(borrow)]
     raw_values: Cow<'a, [u8]>,
 
@@ -861,6 +1112,17 @@ struct EncodedChange {
     dep_on_self: bool,
     #[columnar(strategy = "DeltaRle")]
     msg_len: i32,
+}
+
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
+struct EncodedStateInfo {
+    #[columnar(strategy = "DeltaRle")]
+    container_index: u32,
+    #[columnar(strategy = "DeltaRle")]
+    op_len: u32,
+    #[columnar(strategy = "DeltaRle")]
+    state_bytes_len: u32,
 }
 
 mod value {

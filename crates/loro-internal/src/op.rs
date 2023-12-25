@@ -127,7 +127,7 @@ impl HasLength for Op {
 
 impl Sliceable for Op {
     fn slice(&self, from: usize, to: usize) -> Self {
-        assert!(to > from);
+        assert!(to > from, "{to} should be greater than {from}");
         let content: InnerContent = self.content.slice(from, to);
         Op {
             counter: (self.counter + from as Counter),

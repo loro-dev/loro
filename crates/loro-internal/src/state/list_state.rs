@@ -8,7 +8,7 @@ use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, ContainerID},
     delta::Delta,
-    encoding::{EncodeMode, StateSnapshotEncoder},
+    encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     handler::ValueOrContainer,
     op::{ListSlice, Op, OpWithId, RawOp, RawOpContent},
@@ -181,6 +181,10 @@ impl ListState {
     }
 
     pub fn insert(&mut self, index: usize, value: LoroValue, id: ID) {
+        if index > self.len() {
+            panic!("Index {index} out of range. The length is {}", self.len());
+        }
+
         if self.list.is_empty() {
             let idx = self.list.push(Elem {
                 v: value.clone(),
@@ -534,22 +538,18 @@ impl ContainerState for ListState {
     }
 
     #[doc = "Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(
-        &mut self,
-        oplog: &OpLog,
-        ops: &mut dyn Iterator<Item = OpWithId>,
-        _blob: &[u8],
-        mode: EncodeMode,
-    ) {
-        assert_eq!(mode, EncodeMode::ReorderedSnapshot);
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+        assert_eq!(ctx.mode, EncodeMode::ReorderedSnapshot);
         let mut index = 0;
-        for op in ops {
+        for op in ctx.ops {
             let value = op.op.content.as_list().unwrap().as_insert().unwrap().0;
-            let list = oplog
+            let list = ctx
+                .oplog
                 .arena
                 .get_values(value.0.start as usize..value.0.end as usize);
-            index += list.len();
+            let len = list.len();
             self.insert_batch(index, list, op.id());
+            index += len;
         }
     }
 }

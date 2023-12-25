@@ -82,6 +82,7 @@ impl StateSnapshotEncoder<'_> {
     }
 
     pub fn encode_op(&mut self, id_span: IdSpan, get_op: impl FnOnce() -> OpWithId) {
+        debug_log::debug_dbg!(id_span);
         if let Err(span) = (self.check_idspan)(id_span) {
             let mut op = get_op();
             if span == id_span {
@@ -99,6 +100,13 @@ impl StateSnapshotEncoder<'_> {
     pub fn mode(&self) -> EncodeMode {
         self.mode
     }
+}
+
+pub(crate) struct StateSnapshotDecodeContext<'a> {
+    pub oplog: &'a OpLog,
+    pub ops: &'a mut dyn Iterator<Item = OpWithId>,
+    pub blob: &'a [u8],
+    pub mode: EncodeMode,
 }
 
 impl EncodeMode {
@@ -120,7 +128,7 @@ impl EncodeMode {
     }
 
     pub fn is_snapshot(self) -> bool {
-        self == EncodeMode::Snapshot
+        matches!(self, EncodeMode::ReorderedSnapshot | EncodeMode::Snapshot)
     }
 }
 
@@ -205,7 +213,7 @@ pub(crate) fn decode_oplog(
             .map_err(|_| LoroError::DecodeError("Invalid compressed data".into()))
             .and_then(|bytes| decode_oplog_v2(oplog, &bytes)),
         EncodeMode::ReorderedRle => encode_reordered::decode_updates(oplog, body),
-        EncodeMode::ReorderedSnapshot => unimplemented!(),
+        EncodeMode::ReorderedSnapshot => unreachable!(),
         EncodeMode::Auto => unreachable!(),
     }
 }
@@ -271,11 +279,15 @@ fn encode_header_and_body(mode: EncodeMode, body: Vec<u8>) -> Vec<u8> {
 }
 
 pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
-    let body = encode_app_snapshot(doc);
-    encode_header_and_body(EncodeMode::Snapshot, body)
+    let body = encode_reordered::encode_snapshot(
+        &doc.oplog().try_lock().unwrap(),
+        &doc.app_state().try_lock().unwrap(),
+        &Default::default(),
+    );
+    encode_header_and_body(EncodeMode::ReorderedSnapshot, body)
 }
 
-pub(crate) fn decode_doc_snapshot(
+pub(crate) fn decode_snapshot(
     doc: &LoroDoc,
     mode: EncodeMode,
     body: &[u8],
@@ -283,7 +295,7 @@ pub(crate) fn decode_doc_snapshot(
 ) -> Result<(), LoroError> {
     match mode {
         EncodeMode::Snapshot => encode_snapshot::decode_app_snapshot(doc, body, with_state),
-        EncodeMode::ReorderedSnapshot => todo!(),
+        EncodeMode::ReorderedSnapshot => encode_reordered::decode_snapshot(doc, body),
         _ => unreachable!(),
     }
 }

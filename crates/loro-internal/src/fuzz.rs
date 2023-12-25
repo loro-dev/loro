@@ -1980,25 +1980,19 @@ mod test {
             &mut [
                 Ins {
                     content: 41009,
-                    pos: 10884953820616207167,
-                    site: 151,
+                    pos: 0,
+                    site: 1,
                 },
                 Mark {
-                    pos: 150995095,
-                    len: 7502773972505002496,
-                    site: 0,
-                    style_key: 0,
-                },
-                Mark {
-                    pos: 11821702543106517760,
-                    len: 4251403153421165732,
-                    site: 151,
+                    pos: 0,
+                    len: 2,
+                    site: 1,
                     style_key: 151,
                 },
                 Mark {
-                    pos: 589824,
-                    len: 2233786514697303298,
-                    site: 51,
+                    pos: 0,
+                    len: 1,
+                    site: 0,
                     style_key: 151,
                 },
             ],

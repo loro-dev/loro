@@ -16,7 +16,7 @@ use crate::{
     arena::SharedArena,
     change::Timestamp,
     container::{idx::ContainerIdx, IntoContainerId},
-    encoding::{decode_doc_snapshot, export_snapshot, parse_header_and_body, ParsedHeaderAndBody},
+    encoding::{decode_snapshot, export_snapshot, parse_header_and_body, ParsedHeaderAndBody},
     handler::TextHandler,
     handler::TreeHandler,
     id::PeerID,
@@ -100,7 +100,7 @@ impl LoroDoc {
         let doc = Self::new();
         let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes)?;
         if mode.is_snapshot() {
-            decode_doc_snapshot(&doc, mode, body, true)?;
+            decode_snapshot(&doc, mode, body, true)?;
             Ok(doc)
         } else {
             Err(LoroError::DecodeError(
@@ -418,15 +418,10 @@ impl LoroDoc {
             }
             true => {
                 if self.can_reset_with_snapshot() {
-                    decode_doc_snapshot(
-                        self,
-                        parsed.mode,
-                        parsed.body,
-                        !self.detached.load(Acquire),
-                    )?;
+                    decode_snapshot(self, parsed.mode, parsed.body, !self.detached.load(Acquire))?;
                 } else {
                     let app = LoroDoc::new();
-                    decode_doc_snapshot(&app, parsed.mode, parsed.body, false)?;
+                    decode_snapshot(&app, parsed.mode, parsed.body, false)?;
                     let oplog = self.oplog.lock().unwrap();
                     // TODO: PERF: the ser and de can be optimized out
                     let updates = app.export_from(oplog.vv());

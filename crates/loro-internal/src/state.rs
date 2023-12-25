@@ -6,12 +6,12 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{ContainerID, LoroResult};
+use loro_common::{ContainerID, LoroError, LoroResult};
 
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, ContainerIdRaw},
-    encoding::{EncodeMode, StateSnapshotEncoder},
+    encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::Index,
     event::{Diff, InternalContainerDiff, InternalDiff},
     fx_map,
@@ -117,13 +117,7 @@ pub(crate) trait ContainerState: Clone {
     fn encode_snapshot(&self, encoder: StateSnapshotEncoder) -> Vec<u8>;
 
     /// Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`
-    fn import_from_snapshot_ops(
-        &mut self,
-        oplog: &OpLog,
-        ops: &mut dyn Iterator<Item = OpWithId>,
-        blob: &[u8],
-        mode: EncodeMode,
-    );
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext);
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -426,6 +420,12 @@ impl DocState {
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut State> {
         self.states.values_mut()
+    }
+
+    pub fn init_container(&mut self, cid: ContainerID, decode_ctx: StateSnapshotDecodeContext) {
+        let idx = self.arena.register_container(&cid);
+        let state = self.states.entry(idx).or_insert_with(|| create_state(idx));
+        state.import_from_snapshot_ops(decode_ctx);
     }
 
     #[inline]
@@ -826,6 +826,24 @@ impl DocState {
         ans.reverse();
         debug_log::group_end!();
         Some(ans)
+    }
+
+    pub(crate) fn check_before_decode_snapshot(&self) -> LoroResult<()> {
+        if self.is_in_txn() {
+            return Err(LoroError::DecodeError(
+                "State is in txn".to_string().into_boxed_str(),
+            ));
+        }
+
+        if !self.is_empty() {
+            return Err(LoroError::DecodeError(
+                "State is not empty, cannot import snapshot directly"
+                    .to_string()
+                    .into_boxed_str(),
+            ));
+        }
+
+        Ok(())
     }
 }
 

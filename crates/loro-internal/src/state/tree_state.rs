@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, Weak};
 use crate::container::idx::ContainerIdx;
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::TreeDeletedSetTrait;
-use crate::encoding::{EncodeMode, StateSnapshotEncoder};
+use crate::encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder};
 use crate::event::InternalDiff;
 use crate::op::OpWithId;
 use crate::txn::Transaction;
@@ -428,6 +428,9 @@ impl ContainerState for TreeState {
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
         for node in self.trees.values() {
+            if node.last_move_op == NONE_ID {
+                continue;
+            }
             encoder.encode_op(node.last_move_op.into(), || unimplemented!());
         }
 
@@ -435,15 +438,9 @@ impl ContainerState for TreeState {
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(
-        &mut self,
-        _oplog: &OpLog,
-        ops: &mut dyn Iterator<Item = OpWithId>,
-        _blob: &[u8],
-        mode: EncodeMode,
-    ) {
-        assert_eq!(mode, EncodeMode::ReorderedSnapshot);
-        for op in ops {
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+        assert_eq!(ctx.mode, EncodeMode::ReorderedSnapshot);
+        for op in ctx.ops {
             assert_eq!(op.op.atom_len(), 1);
             let content = op.op.content.as_tree().unwrap();
             let target = content.target;
@@ -589,7 +586,7 @@ pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
         let map = Arc::make_mut(node.as_map_mut().unwrap());
         let meta = map.get_mut("meta").unwrap();
         let id = meta.as_container().unwrap();
-        *meta = state.get_container_deep_value(state.arena.id_to_idx(id).unwrap());
+        *meta = state.get_container_deep_value(state.arena.register_container(id));
     }
 }
 

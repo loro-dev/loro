@@ -11,7 +11,7 @@ use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, map::MapSet},
     delta::{MapValue, ResolvedMapDelta, ResolvedMapValue},
-    encoding::{EncodeMode, StateSnapshotEncoder},
+    encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     handler::ValueOrContainer,
     op::{Op, OpWithId, RawOp, RawOpContent},
@@ -186,17 +186,11 @@ impl ContainerState for MapState {
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(
-        &mut self,
-        _oplog: &OpLog,
-        ops: &mut dyn Iterator<Item = OpWithId>,
-        blob: &[u8],
-        mode: EncodeMode,
-    ) {
-        assert_eq!(mode, EncodeMode::ReorderedSnapshot);
-        let lamports = DeltaRleEncodedNums::decode(blob);
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+        assert_eq!(ctx.mode, EncodeMode::ReorderedSnapshot);
+        let lamports = DeltaRleEncodedNums::decode(ctx.blob);
         let mut iter = lamports.iter();
-        for op in ops {
+        for op in ctx.ops {
             debug_assert_eq!(
                 op.op.atom_len(),
                 1,

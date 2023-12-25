@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use debug_log::debug_dbg;
+use generic_btree::rle::Sliceable;
 use itertools::Either;
 use loro_common::{HasCounter, HasCounterSpan, HasId, HasIdSpan, IdSpan, ID};
 use rle::HasLength;
@@ -106,7 +108,7 @@ impl IdIntMap {
 
     /// Return (value, length) that starts at the given ID.
     pub fn get(&self, target: ID) -> Option<(i32, usize)> {
-        match &self.inner {
+        let ans = match &self.inner {
             Either::Left(map) => map.range(..=&target).last().and_then(|(entry_key, value)| {
                 if entry_key.peer != target.peer {
                     None
@@ -129,7 +131,9 @@ impl IdIntMap {
                         (id_span.ctr_end() - target.counter) as usize,
                     )
                 }),
-        }
+        };
+        debug_log::debug_log!("Get {target} = {ans:?}");
+        ans
     }
 
     /// Call `next` for each key-value pair that is in the given span.
@@ -177,15 +181,19 @@ impl IdIntMap {
             }
             Either::Right(vec) => {
                 for (id_span, value) in vec.iter() {
+                    if id_span.client_id < target_peer {
+                        continue;
+                    }
+
                     if id_span.client_id > target_peer {
                         break;
                     }
 
-                    if id_span.ctr_end() < target.ctr_start() {
+                    if target.ctr_start() >= id_span.ctr_end() {
                         continue;
                     }
 
-                    if id_span.counter.start > target.ctr_end() {
+                    if target.ctr_end() <= id_span.counter.start {
                         break;
                     }
 
@@ -198,6 +206,49 @@ impl IdIntMap {
                 }
             }
         }
+    }
+
+    /// If the given item has overlapped section with the content in the map,
+    /// split the item into pieces where each piece maps to a continuous series of values or maps to none.
+    pub(crate) fn split<'a, T: HasIdSpan + generic_btree::rle::Sliceable + 'a>(
+        &'a self,
+        item: T,
+    ) -> impl Iterator<Item = T> + 'a {
+        let len = item.rle_len();
+        let span = item.id_span();
+        // PERF: we may avoid this alloc if get_values_in_span returns an iter
+        let mut ans = Vec::new();
+        let mut ctr_start = span.ctr_start();
+        let mut index = 0;
+        let ctr_end = span.ctr_end();
+        self.get_values_in_span(span, |id_span: IdSpan, _| {
+            if id_span.counter.start == ctr_start && id_span.counter.end == ctr_end {
+                return;
+            }
+
+            if id_span.counter.start > ctr_start {
+                ans.push(
+                    item.slice(
+                        index as usize..(index + id_span.counter.start - ctr_start) as usize,
+                    ),
+                );
+                index += id_span.counter.start - ctr_start;
+            }
+
+            ans.push(item.slice(
+                index as usize..(index + id_span.counter.end - id_span.counter.start) as usize,
+            ));
+            index += id_span.counter.end - id_span.counter.start;
+            ctr_start = id_span.ctr_end();
+        });
+
+        if ans.is_empty() && len > 0 {
+            ans.push(item);
+        } else if index as usize != len {
+            ans.push(item.slice(index as usize..len));
+        }
+
+        ans.into_iter()
     }
 }
 

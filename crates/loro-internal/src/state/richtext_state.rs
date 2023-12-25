@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
+use debug_log::debug_dbg;
 use fxhash::FxHashMap;
 use generic_btree::rle::{HasLength, Mergeable};
 use loro_common::{Counter, LoroResult, LoroValue, PeerID, ID};
@@ -19,7 +20,7 @@ use crate::{
     },
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
     delta::{Delta, DeltaItem, StyleMeta},
-    encoding::{EncodeMode, StateSnapshotEncoder},
+    encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, InternalDiff},
     op::{Op, OpWithId, RawOp},
     txn::Transaction,
@@ -479,6 +480,7 @@ impl ContainerState for RichtextState {
 
         let mut lamports = DeltaRleEncodedNums::new();
         for chunk in iter {
+            debug_log::debug_dbg!(&chunk);
             match chunk {
                 RichtextStateChunk::Style { style, anchor_type }
                     if *anchor_type == AnchorType::Start =>
@@ -496,19 +498,13 @@ impl ContainerState for RichtextState {
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(
-        &mut self,
-        _oplog: &OpLog,
-        ops: &mut dyn Iterator<Item = OpWithId>,
-        blob: &[u8],
-        mode: EncodeMode,
-    ) {
-        assert_eq!(mode, EncodeMode::ReorderedSnapshot);
-        let lamports = DeltaRleEncodedNums::decode(blob);
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+        assert_eq!(ctx.mode, EncodeMode::ReorderedSnapshot);
+        let lamports = DeltaRleEncodedNums::decode(ctx.blob);
         let mut lamport_iter = lamports.iter();
         let mut loader = RichtextStateLoader::default();
         let mut id_to_style = FxHashMap::default();
-        for op in ops {
+        for op in ctx.ops {
             let id = op.id();
             let chunk = match op.op.content.into_list().unwrap() {
                 list_op::InnerListOp::InsertText { slice, .. } => {
