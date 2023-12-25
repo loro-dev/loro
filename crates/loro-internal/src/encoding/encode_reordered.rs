@@ -313,11 +313,16 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     let mut state_bytes = Vec::new();
     for (_, c_idx) in c_pairs.iter() {
         let state = state.get_state(*c_idx).unwrap();
+        let container_index = *container_idx2index.get(c_idx).unwrap() as u32;
         if state.is_state_empty() {
+            states.push(EncodedStateInfo {
+                container_index,
+                op_len: 0,
+                state_bytes_len: 0,
+            });
             continue;
         }
 
-        let container_index = *container_idx2index.get(c_idx).unwrap() as u32;
         let mut op_len = 0;
         let bytes = state.encode_snapshot(super::StateSnapshotEncoder {
             check_idspan: &|id_span| {
@@ -479,7 +484,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     );
 
     debug_log::debug_dbg!(&ops);
-    decode_states(
+    decode_snapshot_states(
         &mut state,
         frontiers,
         iter.states,
@@ -494,7 +499,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     Ok(())
 }
 
-fn decode_states(
+fn decode_snapshot_states(
     state: &mut DocState,
     frontiers: Frontiers,
     encoded_state_iter: IterableEncodedStateInfo<'_>,
@@ -611,9 +616,16 @@ mod encode {
 
     impl<'a> generic_btree::rle::Sliceable for TempOp<'a> {
         fn _slice(&self, range: std::ops::Range<usize>) -> TempOp<'a> {
-            let op = self.op.slice(range.start, range.end);
             Self {
-                op: Cow::Owned(op),
+                op: if range.start == 0 && range.end == self.op.atom_len() {
+                    match &self.op {
+                        Cow::Borrowed(o) => Cow::Borrowed(o),
+                        Cow::Owned(o) => Cow::Owned(o.clone()),
+                    }
+                } else {
+                    let op = self.op.slice(range.start, range.end);
+                    Cow::Owned(op)
+                },
                 lamport: self.lamport + range.start as Lamport,
                 peer_idx: self.peer_idx,
                 peer_id: self.peer_id,
@@ -634,11 +646,9 @@ mod encode {
         let mut encoded_ops = Vec::with_capacity(ops.len());
         for TempOp {
             op,
-            lamport: _,
-            peer_id: _,
             peer_idx,
             container_index,
-            prop_that_used_for_sort: prop,
+            ..
         } in ops
         {
             let value_type = encode_op(
@@ -650,6 +660,7 @@ mod encode {
                 peer_register,
             );
 
+            let prop = get_op_prop(&op, key_register);
             encoded_ops.push(EncodedOp {
                 container_index,
                 peer_idx,

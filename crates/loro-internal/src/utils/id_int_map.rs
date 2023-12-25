@@ -1,10 +1,7 @@
-use std::collections::BTreeMap;
-
-use debug_log::debug_dbg;
-use generic_btree::rle::Sliceable;
 use itertools::Either;
 use loro_common::{HasCounter, HasCounterSpan, HasId, HasIdSpan, IdSpan, ID};
 use rle::HasLength;
+use std::collections::BTreeMap;
 
 /// A map that maps spans of continuous [ID]s to spans of continuous integers.
 ///
@@ -33,6 +30,15 @@ impl IdIntMap {
     }
 
     pub fn insert(&mut self, id_span: IdSpan) {
+        if cfg!(debug_assertions) {
+            let target = self.get(id_span.id_start());
+            assert!(
+                target.is_none(),
+                "ID already exists {id_span:?} {target:?} {:#?}",
+                self
+            );
+        }
+
         match &mut self.inner {
             Either::Left(map) => {
                 let value = self.next_value;
@@ -216,6 +222,7 @@ impl IdIntMap {
     ) -> impl Iterator<Item = T> + 'a {
         let len = item.rle_len();
         let span = item.id_span();
+        debug_log::debug_log!("Target {span:?} self {:#?}", self);
         // PERF: we may avoid this alloc if get_values_in_span returns an iter
         let mut ans = Vec::new();
         let mut ctr_start = span.ctr_start();
@@ -226,6 +233,7 @@ impl IdIntMap {
                 return;
             }
 
+            debug_log::debug_log!("Found {id_span:?}");
             if id_span.counter.start > ctr_start {
                 ans.push(
                     item.slice(

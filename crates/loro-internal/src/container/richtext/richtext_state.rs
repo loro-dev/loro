@@ -147,7 +147,7 @@ mod text_chunk {
                 utf16_len: 0,
                 // This is a dummy value.
                 // It's fine because the length is 0. We never actually use this value.
-                start_op_id: ID::new(0, 0),
+                start_op_id: ID::new(u64::MAX, 0),
             }
         }
 
@@ -195,7 +195,7 @@ mod text_chunk {
                 }
                 (true, false) => {
                     self.bytes.slice_(end_byte..);
-                    self.start_op_id = self.start_op_id.inc(unicode_offset as i32);
+                    self.start_op_id = self.start_op_id.inc(end_unicode_index as i32);
                     None
                 }
                 (false, true) => {
@@ -204,7 +204,7 @@ mod text_chunk {
                 }
                 (false, false) => {
                     let next = self.bytes.slice_clone(end_byte..);
-                    let next = Self::new(next, self.start_op_id.inc(unicode_offset as i32));
+                    let next = Self::new(next, self.start_op_id.inc(end_unicode_index as i32));
                     self.unicode_len -= next.unicode_len;
                     self.utf16_len -= next.utf16_len;
                     self.bytes.slice_(..start_byte);
@@ -329,6 +329,7 @@ mod text_chunk {
     impl generic_btree::rle::Mergeable for TextChunk {
         fn can_merge(&self, rhs: &Self) -> bool {
             self.bytes.can_merge(&rhs.bytes)
+                && self.start_op_id.inc(self.unicode_len) == rhs.start_op_id
         }
 
         fn merge_right(&mut self, rhs: &Self) {

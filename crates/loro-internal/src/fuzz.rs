@@ -1337,6 +1337,35 @@ mod test {
     }
 
     #[test]
+    fn snapshot_fuzz_test() {
+        test_multi_sites(
+            8,
+            &mut [
+                Ins {
+                    content: 163,
+                    pos: 0,
+                    site: 3,
+                },
+                Ins {
+                    content: 163,
+                    pos: 1,
+                    site: 3,
+                },
+                Ins {
+                    content: 113,
+                    pos: 2,
+                    site: 3,
+                },
+                Ins {
+                    content: 888,
+                    pos: 3,
+                    site: 3,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn text_fuzz_2() {
         test_multi_sites(
             8,
