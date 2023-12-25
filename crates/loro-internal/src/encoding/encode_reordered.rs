@@ -296,8 +296,15 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
-    let (containers, c_pairs, container_idx2index) =
-        extract_containers_in_order(&mut state.iter().map(|x| x.container_idx()), &oplog.arena);
+    let (containers, c_pairs, container_idx2index) = extract_containers_in_order(
+        &mut state.iter().map(|x| x.container_idx()).chain(
+            diff_changes
+                .iter()
+                .flat_map(|x| x.ops.iter())
+                .map(|x| x.container),
+        ),
+        &oplog.arena,
+    );
     let mut cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
     let mut dep_arena = arena::DepsArena::default();
     let mut value_writer = ValueWriter::new();

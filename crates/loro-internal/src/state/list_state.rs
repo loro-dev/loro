@@ -11,9 +11,9 @@ use crate::{
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     handler::ValueOrContainer,
-    op::{ListSlice, Op, OpWithId, RawOp, RawOpContent},
+    op::{ListSlice, Op, RawOp, RawOpContent},
     txn::Transaction,
-    DocState, LoroValue, OpLog,
+    DocState, LoroValue,
 };
 
 use fxhash::FxHashMap;
@@ -22,7 +22,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
-use loro_common::{LoroResult, ID};
+use loro_common::{IdSpan, LoroResult, ID};
 
 #[derive(Debug)]
 pub struct ListState {
@@ -530,8 +530,9 @@ impl ContainerState for ListState {
 
     #[doc = "Get a list of ops that can be used to restore the state to the current state"]
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
-        for span in self.list.iter() {
-            encoder.encode_op(span.id.into(), || unimplemented!())
+        for elem in self.list.iter() {
+            let id_span: IdSpan = elem.id.into();
+            encoder.encode_op(id_span, || unimplemented!());
         }
 
         Vec::new()

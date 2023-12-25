@@ -476,6 +476,14 @@ impl Serialize for SliceRanges {
 
 impl DeltaValue for SliceRanges {
     fn value_extend(&mut self, other: Self) -> Result<(), Self> {
+        if self.id.peer != other.id.peer {
+            return Err(other);
+        }
+
+        if self.id.counter + self.length() as Counter != other.id.counter {
+            return Err(other);
+        }
+
         self.ranges.extend(other.ranges);
         Ok(())
     }
@@ -494,10 +502,9 @@ impl DeltaValue for SliceRanges {
                 right.ranges.push(range);
                 cur_len += range_len;
             } else {
-                let new_range = range.slice(0, target_len - cur_len);
+                let new_range = range.slice(target_len - cur_len, range_len);
                 right.ranges.push(new_range);
-                self.ranges
-                    .push(range.slice(target_len - cur_len, range_len));
+                self.ranges.push(range.slice(0, target_len - cur_len));
                 cur_len = target_len;
             }
         }
