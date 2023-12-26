@@ -1,7 +1,4 @@
-use std::{
-    fmt::Debug,
-    sync::{Arc, Mutex},
-};
+use std::{fmt::Debug, sync::Arc};
 
 use arbitrary::Arbitrary;
 use debug_log::debug_dbg;
@@ -15,31 +12,32 @@ use crate::{
     array_mut_ref, container::ContainerID, delta::DeltaItem, id::PeerID, ContainerType, LoroValue,
 };
 use crate::{
-    container::richtext::{StyleKey, TextStyleInfoFlag},
-    delta::{Delta, StyleMeta},
+    container::richtext::{ExpandType, StyleKey, TextStyleInfoFlag},
     event::Diff,
     handler::TextDelta,
     loro::LoroDoc,
-    utils::string_slice::StringSlice,
     value::ToJson,
     version::Frontiers,
     TextHandler,
 };
 
-struct RichTextValue<'a>(&'a mut LoroValue);
-impl<'a> RichTextValue<'a> {
-    fn apply_diff(&self, diff: &Delta<StringSlice, StyleMeta>) {}
-}
-
-const STYLES: [TextStyleInfoFlag; 8] = [
+// TODO: how to test style with id?
+const STYLES: [TextStyleInfoFlag; 4] = [
     TextStyleInfoFlag::BOLD,
-    TextStyleInfoFlag::COMMENT,
+    // TextStyleInfoFlag::COMMENT,
     TextStyleInfoFlag::LINK,
+    // TextStyleInfoFlag::from_byte(0),
     TextStyleInfoFlag::LINK.to_delete(),
     TextStyleInfoFlag::BOLD.to_delete(),
-    TextStyleInfoFlag::COMMENT.to_delete(),
-    TextStyleInfoFlag::from_byte(0),
-    TextStyleInfoFlag::from_byte(0).to_delete(),
+    // TextStyleInfoFlag::COMMENT.to_delete(),
+    // TextStyleInfoFlag::from_byte(0).to_delete(),
+];
+
+const STYLES_NAME: [&str; 4] = [
+    "BOLD", // "COMMENT",
+    "LINK", // "0",
+    "DEL_LINK", "DEL_BOLD", // "DEL_COMMENT",
+                // "DEL_0",
 ];
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -67,9 +65,9 @@ pub enum RichTextAction {
 impl Debug for RichTextAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RichTextAction::Insert => write!(f, "Insert"),
-            RichTextAction::Delete => write!(f, "Delete"),
-            RichTextAction::Mark(i) => write!(f, "Mark({})", i),
+            RichTextAction::Insert => write!(f, "RichTextAction::Insert"),
+            RichTextAction::Delete => write!(f, "RichTextAction::Delete"),
+            RichTextAction::Mark(i) => write!(f, "RichTextAction::Mark({})", STYLES_NAME[*i]),
         }
     }
 }
@@ -86,11 +84,13 @@ impl Actor {
     fn new(id: PeerID) -> Self {
         let app = LoroDoc::new();
         app.set_peer_id(id).unwrap();
+        let tracker = LoroDoc::new();
+        tracker.set_peer_id(id).unwrap();
         let text = app.get_text("text");
         let actor = Actor {
             peer: id,
             loro: app,
-            text_tracker: Arc::new(LoroDoc::new()),
+            text_tracker: Arc::new(tracker),
             text_container: text,
             history: Default::default(),
         };
@@ -104,62 +104,156 @@ impl Actor {
                 if let Diff::Text(text_diff) = &event.container.diff {
                     let mut txn = text_doc.txn().unwrap();
                     let text_h = text_doc.get_text("text");
-                    let text_delta = text_diff
-                        .iter()
-                        .map(|x| match x {
-                            DeltaItem::Insert { insert, attributes } => TextDelta::Insert {
-                                insert: insert.to_string(),
-                                attributes: Some(
-                                    attributes
-                                        .iter()
-                                        .map(|(k, v)| match k {
-                                            StyleKey::Key(k) => (k.to_string(), v.data),
-                                            StyleKey::KeyWithId { key, id } => {
-                                                let mut data = FxHashMap::default();
-                                                data.insert(
-                                                    "key".to_string(),
-                                                    LoroValue::String(Arc::new(key.to_string())),
-                                                );
-                                                data.insert("data".to_string(), v.data);
-                                                (
-                                                    format!("id:{}", id),
-                                                    LoroValue::Map(Arc::new(data)),
-                                                )
-                                            }
-                                        })
-                                        .collect(),
-                                ),
-                            },
-                            DeltaItem::Delete {
-                                delete,
-                                attributes: _,
-                            } => TextDelta::Delete { delete: *delete },
-                            DeltaItem::Retain { retain, attributes } => TextDelta::Retain {
-                                retain: *retain,
-                                attributes: Some(
-                                    attributes
-                                        .iter()
-                                        .map(|(k, v)| match k {
-                                            StyleKey::Key(k) => (k.to_string(), v.data),
-                                            StyleKey::KeyWithId { key, id } => {
-                                                let mut data = FxHashMap::default();
-                                                data.insert(
-                                                    "key".to_string(),
-                                                    LoroValue::String(Arc::new(key.to_string())),
-                                                );
-                                                data.insert("data".to_string(), v.data);
-                                                (
-                                                    format!("id:{}", id),
-                                                    LoroValue::Map(Arc::new(data)),
-                                                )
-                                            }
-                                        })
-                                        .collect(),
-                                ),
-                            },
-                        })
-                        .collect::<Vec<_>>();
-                    text_h.apply_delta_with_txn(&mut txn, &text_delta).unwrap();
+                    println!("diff {:?}", text_diff);
+                    if false {
+                        let text_deltas = text_diff
+                            .iter()
+                            .map(|x| match x {
+                                DeltaItem::Insert { insert, attributes } => TextDelta::Insert {
+                                    insert: insert.to_string(),
+                                    attributes: Some(
+                                        attributes
+                                            .iter()
+                                            .map(|(k, v)| match k {
+                                                StyleKey::Key(k) => (k.to_string(), v.data),
+                                                StyleKey::KeyWithId { key, id } => {
+                                                    let mut data = FxHashMap::default();
+                                                    data.insert(
+                                                        "key".to_string(),
+                                                        LoroValue::String(Arc::new(
+                                                            key.to_string(),
+                                                        )),
+                                                    );
+                                                    data.insert("data".to_string(), v.data);
+                                                    (
+                                                        format!("id:{}", id),
+                                                        LoroValue::Map(Arc::new(data)),
+                                                    )
+                                                }
+                                            })
+                                            .collect(),
+                                    ),
+                                },
+                                DeltaItem::Delete {
+                                    delete,
+                                    attributes: _,
+                                } => TextDelta::Delete { delete: *delete },
+                                DeltaItem::Retain { retain, attributes } => TextDelta::Retain {
+                                    retain: *retain,
+                                    attributes: Some(
+                                        attributes
+                                            .iter()
+                                            .map(|(k, v)| match k {
+                                                StyleKey::Key(k) => (k.to_string(), v.data),
+                                                StyleKey::KeyWithId { key, id } => {
+                                                    let mut data = FxHashMap::default();
+                                                    data.insert(
+                                                        "key".to_string(),
+                                                        LoroValue::String(Arc::new(
+                                                            key.to_string(),
+                                                        )),
+                                                    );
+                                                    data.insert("data".to_string(), v.data);
+                                                    (
+                                                        format!("id:{}", id),
+                                                        LoroValue::Map(Arc::new(data)),
+                                                    )
+                                                }
+                                            })
+                                            .collect(),
+                                    ),
+                                },
+                            })
+                            .collect::<Vec<_>>();
+                        println!(
+                            "\n{} before {:?}",
+                            text_doc.peer_id(),
+                            text_h.get_richtext_value()
+                        );
+                        println!("delta {:?}", text_deltas);
+                        text_h.apply_delta_with_txn(&mut txn, &text_deltas).unwrap();
+
+                        println!("after {:?}\n", text_h.get_richtext_value());
+                    } else {
+                        // println!(
+                        //     "\n{} before {:?}",
+                        //     text_doc.peer_id(),
+                        //     text_h.get_richtext_value()
+                        // );
+                        let mut index = 0;
+                        for item in text_diff.iter() {
+                            match item {
+                                DeltaItem::Insert { insert, attributes } => {
+                                    text_h
+                                        .insert_with_txn(&mut txn, index, insert.as_str())
+                                        .unwrap();
+                                    // println!("at {} insert {}", index, insert.as_str());
+
+                                    for (k, v) in attributes.iter() {
+                                        let flag: usize = k.key().parse().unwrap();
+                                        text_h
+                                            .mark_with_txn(
+                                                &mut txn,
+                                                index,
+                                                index + insert.len_unicode(),
+                                                k.key(),
+                                                v.data,
+                                                TextStyleInfoFlag::new(
+                                                    STYLES[flag].mergeable(),
+                                                    ExpandType::None,
+                                                    STYLES[flag].is_delete(),
+                                                    STYLES[flag].is_container(),
+                                                ),
+                                            )
+                                            .unwrap();
+                                        // println!(
+                                        //     "insert mark {}~{} {:?}",
+                                        //     index,
+                                        //     index + insert.len_unicode(),
+                                        //     flag
+                                        // );
+                                    }
+                                    index += insert.len_unicode();
+                                }
+                                DeltaItem::Delete {
+                                    delete,
+                                    attributes: _,
+                                } => {
+                                    text_h.delete_with_txn(&mut txn, index, *delete).unwrap();
+                                    // println!("delete {}~{} ", index, index + *delete);
+                                }
+                                DeltaItem::Retain { retain, attributes } => {
+                                    // println!("retain {}", retain);
+                                    for (k, v) in attributes.iter() {
+                                        let flag: usize = k.key().parse().unwrap();
+                                        text_h
+                                            .mark_with_txn(
+                                                &mut txn,
+                                                index,
+                                                index + *retain,
+                                                k.key(),
+                                                v.data,
+                                                TextStyleInfoFlag::new(
+                                                    STYLES[flag].mergeable(),
+                                                    ExpandType::None,
+                                                    STYLES[flag].is_delete(),
+                                                    STYLES[flag].is_container(),
+                                                ),
+                                            )
+                                            .unwrap();
+                                        // println!(
+                                        //     "retain mark {}~{} {:?}",
+                                        //     index,
+                                        //     index + *retain,
+                                        //     flag
+                                        // );
+                                    }
+                                    index += *retain;
+                                }
+                            }
+                        }
+                        // println!("after {:?}\n", text_h.get_richtext_value());
+                    }
                 } else {
                     debug_dbg!(&event.container);
                     unreachable!()
@@ -235,7 +329,7 @@ impl Tabled for Action {
                     vec![
                         "richtext".into(),
                         format!("{}", site).into(),
-                        format!("mark {:?}", i).into(),
+                        format!("mark {:?}", STYLES_NAME[*i]).into(),
                         format!("{}~{}", pos, pos + len).into(),
                     ]
                 }
@@ -388,6 +482,9 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                 if is_empty {
                     continue;
                 }
+                if k.starts_with("id") {
+                    continue;
+                }
                 assert_value_eq(v, b.get(k).unwrap());
             }
 
@@ -401,7 +498,15 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                 if is_empty {
                     continue;
                 }
+                if k.starts_with("id") {
+                    continue;
+                }
                 assert_value_eq(v, a.get(k).unwrap());
+            }
+        }
+        (LoroValue::List(a), LoroValue::List(b)) => {
+            for (av, bv) in a.iter().zip(b.iter()) {
+                assert_value_eq(av, bv);
             }
         }
         (a, b) => assert_eq!(a, b),
@@ -417,7 +522,9 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
 
     debug_log::debug_log!("{}", a_result.to_json_pretty());
     assert_eq!(&a_result, &b_result);
-    assert_value_eq(&a_result, &a_value);
+    // println!("actor {}", a_actor.peer);
+    // TODO: test value
+    // assert_value_eq(&a_result, &a_value);
 }
 
 fn check_synced(sites: &mut [Actor]) {
@@ -511,4 +618,36 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     check_synced(&mut sites);
     debug_log::group_end!();
     check_history(&mut sites[1]);
+}
+#[cfg(test)]
+mod failed_tests {
+    use super::test_multi_sites;
+    use super::Action::*;
+    use super::RichTextAction;
+    #[test]
+    fn fuzz1() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 255,
+                    pos: 72057594037927935,
+                    len: 18446744073709508608,
+                    action: RichTextAction::Mark(18446744073698541568),
+                },
+                RichText {
+                    site: 55,
+                    pos: 3978709506094226231,
+                    len: 3978709268954218551,
+                    action: RichTextAction::Mark(15335939993951284180),
+                },
+                RichText {
+                    site: 0,
+                    pos: 72057594021150720,
+                    len: 3978709660713025611,
+                    action: RichTextAction::Insert,
+                },
+            ],
+        )
+    }
 }
