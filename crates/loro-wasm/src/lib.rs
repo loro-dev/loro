@@ -2183,6 +2183,7 @@ export type TreeID = `${number}@${string}`;
 
 interface Loro {
     exportFrom(version?: Uint8Array): Uint8Array;
+    exportFromV0(version?: Uint8Array): Uint8Array;
     getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
 }
 /**

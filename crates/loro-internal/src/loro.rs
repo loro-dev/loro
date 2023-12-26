@@ -17,8 +17,8 @@ use crate::{
     change::Timestamp,
     container::{idx::ContainerIdx, IntoContainerId},
     encoding::{
-        decode_snapshot, encode_oplog, export_snapshot, parse_header_and_body, EncodeMode,
-        ParsedHeaderAndBody,
+        decode_snapshot, encode_oplog, export_snapshot, export_snapshot_v0, parse_header_and_body,
+        EncodeMode, ParsedHeaderAndBody,
     },
     handler::TextHandler,
     handler::TreeHandler,
@@ -369,6 +369,7 @@ impl LoroDoc {
         self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
         let ans = encode_oplog(&oplog, vv, EncodeMode::RleUpdates);
+        drop(oplog);
         self.renew_txn_if_auto_commit();
         ans
     }
@@ -480,7 +481,7 @@ impl LoroDoc {
 
     pub fn export_snapshot_v0(&self) -> Vec<u8> {
         self.commit_then_stop();
-        let ans = export_snapshot(self);
+        let ans = export_snapshot_v0(self);
         self.renew_txn_if_auto_commit();
         ans
     }

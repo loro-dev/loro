@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.2-alpha.1
+
+### Patch Changes
+
+- Fix v0 exports
+
 ## 0.7.2-alpha.0
 
 ### Patch Changes

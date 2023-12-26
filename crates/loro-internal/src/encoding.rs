@@ -288,7 +288,7 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
 }
 
 pub(crate) fn export_snapshot_v0(doc: &LoroDoc) -> Vec<u8> {
-    let body = encode_app_snapshot(&doc);
+    let body = encode_app_snapshot(doc);
     encode_header_and_body(EncodeMode::Snapshot, body)
 }
 
