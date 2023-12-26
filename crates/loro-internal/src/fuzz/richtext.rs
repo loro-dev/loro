@@ -12,7 +12,7 @@ use crate::{
     array_mut_ref, container::ContainerID, delta::DeltaItem, id::PeerID, ContainerType, LoroValue,
 };
 use crate::{
-    container::richtext::{ExpandType, StyleKey, TextStyleInfoFlag},
+    container::richtext::{StyleKey, TextStyleInfoFlag},
     event::Diff,
     handler::TextDelta,
     loro::LoroDoc,
@@ -21,23 +21,26 @@ use crate::{
     TextHandler,
 };
 
-// TODO: how to test style with id?
-const STYLES: [TextStyleInfoFlag; 4] = [
+const STYLES: [TextStyleInfoFlag; 8] = [
     TextStyleInfoFlag::BOLD,
-    // TextStyleInfoFlag::COMMENT,
+    TextStyleInfoFlag::COMMENT,
     TextStyleInfoFlag::LINK,
-    // TextStyleInfoFlag::from_byte(0),
+    TextStyleInfoFlag::from_byte(0),
     TextStyleInfoFlag::LINK.to_delete(),
     TextStyleInfoFlag::BOLD.to_delete(),
-    // TextStyleInfoFlag::COMMENT.to_delete(),
-    // TextStyleInfoFlag::from_byte(0).to_delete(),
+    TextStyleInfoFlag::COMMENT.to_delete(),
+    TextStyleInfoFlag::from_byte(0).to_delete(),
 ];
 
-const STYLES_NAME: [&str; 4] = [
-    "BOLD", // "COMMENT",
-    "LINK", // "0",
-    "DEL_LINK", "DEL_BOLD", // "DEL_COMMENT",
-                // "DEL_0",
+const STYLES_NAME: [&str; 8] = [
+    "BOLD",
+    "COMMENT",
+    "LINK",
+    "0",
+    "DEL_LINK",
+    "DEL_BOLD",
+    "DEL_COMMENT",
+    "DEL_0",
 ];
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -45,7 +48,7 @@ pub enum Action {
     RichText {
         site: u8,
         pos: usize,
-        len: usize,
+        value: usize,
         action: RichTextAction,
     },
     Sync {
@@ -105,155 +108,78 @@ impl Actor {
                     let mut txn = text_doc.txn().unwrap();
                     let text_h = text_doc.get_text("text");
                     // println!("diff {:?}", text_diff);
-                    if true {
-                        let text_deltas = text_diff
-                            .iter()
-                            .map(|x| match x {
-                                DeltaItem::Insert { insert, attributes } => TextDelta::Insert {
+                    let text_deltas = text_diff
+                        .iter()
+                        .map(|x| match x {
+                            DeltaItem::Insert { insert, attributes } => {
+                                let attributes: FxHashMap<_, _> = attributes
+                                    .iter()
+                                    .filter(|(_, v)| !v.data.is_null())
+                                    .map(|(k, v)| match k {
+                                        StyleKey::Key(k) => (k.to_string(), v.data),
+                                        StyleKey::KeyWithId { key, id } => {
+                                            let mut data = FxHashMap::default();
+                                            data.insert(
+                                                "key".to_string(),
+                                                LoroValue::String(Arc::new(key.to_string())),
+                                            );
+                                            data.insert("data".to_string(), v.data);
+                                            (format!("id:{}", id), LoroValue::Map(Arc::new(data)))
+                                        }
+                                    })
+                                    .collect();
+                                let attributes = if attributes.is_empty() {
+                                    None
+                                } else {
+                                    Some(attributes)
+                                };
+                                TextDelta::Insert {
                                     insert: insert.to_string(),
-                                    attributes: Some(
-                                        attributes
-                                            .iter()
-                                            .map(|(k, v)| match k {
-                                                StyleKey::Key(k) => (k.to_string(), v.data),
-                                                StyleKey::KeyWithId { key, id } => {
-                                                    let mut data = FxHashMap::default();
-                                                    data.insert(
-                                                        "key".to_string(),
-                                                        LoroValue::String(Arc::new(
-                                                            key.to_string(),
-                                                        )),
-                                                    );
-                                                    data.insert("data".to_string(), v.data);
-                                                    (
-                                                        format!("id:{}", id),
-                                                        LoroValue::Map(Arc::new(data)),
-                                                    )
-                                                }
-                                            })
-                                            .collect(),
-                                    ),
-                                },
-                                DeltaItem::Delete {
-                                    delete,
-                                    attributes: _,
-                                } => TextDelta::Delete { delete: *delete },
-                                DeltaItem::Retain { retain, attributes } => TextDelta::Retain {
-                                    retain: *retain,
-                                    attributes: Some(
-                                        attributes
-                                            .iter()
-                                            .map(|(k, v)| match k {
-                                                StyleKey::Key(k) => (k.to_string(), v.data),
-                                                StyleKey::KeyWithId { key, id } => {
-                                                    let mut data = FxHashMap::default();
-                                                    data.insert(
-                                                        "key".to_string(),
-                                                        LoroValue::String(Arc::new(
-                                                            key.to_string(),
-                                                        )),
-                                                    );
-                                                    data.insert("data".to_string(), v.data);
-                                                    (
-                                                        format!("id:{}", id),
-                                                        LoroValue::Map(Arc::new(data)),
-                                                    )
-                                                }
-                                            })
-                                            .collect(),
-                                    ),
-                                },
-                            })
-                            .collect::<Vec<_>>();
-                        println!(
-                            "\n{} before {:?}",
-                            text_doc.peer_id(),
-                            text_h.get_richtext_value()
-                        );
-                        println!("delta {:?}", text_deltas);
-                        text_h.apply_delta_with_txn(&mut txn, &text_deltas).unwrap();
-
-                        println!("after {:?}\n", text_h.get_richtext_value());
-                    } else {
-                        // println!(
-                        //     "\n{} before {:?}",
-                        //     text_doc.peer_id(),
-                        //     text_h.get_richtext_value()
-                        // );
-                        let mut index = 0;
-                        for item in text_diff.iter() {
-                            match item {
-                                DeltaItem::Insert { insert, attributes } => {
-                                    text_h
-                                        .insert_with_txn(&mut txn, index, insert.as_str())
-                                        .unwrap();
-                                    // println!("at {} insert {}", index, insert.as_str());
-
-                                    for (k, v) in attributes.iter() {
-                                        let flag: usize = k.key().parse().unwrap();
-                                        text_h
-                                            .mark_with_txn(
-                                                &mut txn,
-                                                index,
-                                                index + insert.len_unicode(),
-                                                k.key(),
-                                                v.data,
-                                                TextStyleInfoFlag::new(
-                                                    STYLES[flag].mergeable(),
-                                                    ExpandType::None,
-                                                    STYLES[flag].is_delete(),
-                                                    STYLES[flag].is_container(),
-                                                ),
-                                            )
-                                            .unwrap();
-                                        // println!(
-                                        //     "insert mark {}~{} {:?}",
-                                        //     index,
-                                        //     index + insert.len_unicode(),
-                                        //     flag
-                                        // );
-                                    }
-                                    index += insert.len_unicode();
-                                }
-                                DeltaItem::Delete {
-                                    delete,
-                                    attributes: _,
-                                } => {
-                                    text_h.delete_with_txn(&mut txn, index, *delete).unwrap();
-                                    // println!("delete {}~{} ", index, index + *delete);
-                                }
-                                DeltaItem::Retain { retain, attributes } => {
-                                    // println!("retain {}", retain);
-                                    for (k, v) in attributes.iter() {
-                                        let flag: usize = k.key().parse().unwrap();
-                                        text_h
-                                            .mark_with_txn(
-                                                &mut txn,
-                                                index,
-                                                index + *retain,
-                                                k.key(),
-                                                v.data,
-                                                TextStyleInfoFlag::new(
-                                                    STYLES[flag].mergeable(),
-                                                    ExpandType::None,
-                                                    STYLES[flag].is_delete(),
-                                                    STYLES[flag].is_container(),
-                                                ),
-                                            )
-                                            .unwrap();
-                                        // println!(
-                                        //     "retain mark {}~{} {:?}",
-                                        //     index,
-                                        //     index + *retain,
-                                        //     flag
-                                        // );
-                                    }
-                                    index += *retain;
+                                    attributes,
                                 }
                             }
-                        }
-                        // println!("after {:?}\n", text_h.get_richtext_value());
-                    }
+                            DeltaItem::Delete {
+                                delete,
+                                attributes: _,
+                            } => TextDelta::Delete { delete: *delete },
+                            DeltaItem::Retain { retain, attributes } => {
+                                let attributes: FxHashMap<_, _> = attributes
+                                    .iter()
+                                    .filter(|(_, v)| !v.data.is_null())
+                                    .map(|(k, v)| match k {
+                                        StyleKey::Key(k) => (k.to_string(), v.data),
+                                        StyleKey::KeyWithId { key, id } => {
+                                            let mut data = FxHashMap::default();
+                                            data.insert(
+                                                "key".to_string(),
+                                                LoroValue::String(Arc::new(key.to_string())),
+                                            );
+                                            data.insert("data".to_string(), v.data);
+                                            (format!("id:{}", id), LoroValue::Map(Arc::new(data)))
+                                        }
+                                    })
+                                    .collect();
+                                let attributes = if attributes.is_empty() {
+                                    None
+                                } else {
+                                    Some(attributes)
+                                };
+                                TextDelta::Retain {
+                                    retain: *retain,
+                                    attributes,
+                                }
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    // println!(
+                    //     "\n{} before {:?}",
+                    //     text_doc.peer_id(),
+                    //     text_h.get_richtext_value()
+                    // );
+                    // println!("delta {:?}", text_deltas);
+                    text_h.apply_delta_with_txn(&mut txn, &text_deltas).unwrap();
+
+                    // println!("after {:?}\n", text_h.get_richtext_value());
                 } else {
                     debug_dbg!(&event.container);
                     unreachable!()
@@ -305,7 +231,7 @@ impl Tabled for Action {
             Action::RichText {
                 site,
                 pos,
-                len,
+                value,
                 action,
             } => match action {
                 RichTextAction::Insert => {
@@ -313,7 +239,7 @@ impl Tabled for Action {
                         "richtext".into(),
                         format!("{}", site).into(),
                         format!("insert {}", pos).into(),
-                        format!("[{:?}]", len).into(),
+                        format!("[{:?}]", value).into(),
                     ]
                 }
                 RichTextAction::Delete => {
@@ -321,7 +247,7 @@ impl Tabled for Action {
                         "richtext".into(),
                         format!("{}", site).into(),
                         "delete".to_string().into(),
-                        format!("{}~{}", pos, pos + len).into(),
+                        format!("{}~{}", pos, pos + value).into(),
                         "".into(),
                     ]
                 }
@@ -330,7 +256,7 @@ impl Tabled for Action {
                         "richtext".into(),
                         format!("{}", site).into(),
                         format!("mark {:?}", STYLES_NAME[*i]).into(),
-                        format!("{}~{}", pos, pos + len).into(),
+                        format!("{}~{}", pos, pos + value).into(),
                     ]
                 }
             },
@@ -362,7 +288,7 @@ impl Actionable for Vec<Actor> {
             Action::RichText {
                 site,
                 pos,
-                len,
+                value: len,
                 action,
             } => {
                 *site %= max_users;
@@ -428,7 +354,7 @@ impl Actionable for Vec<Actor> {
             Action::RichText {
                 site,
                 pos,
-                len,
+                value: len,
                 action,
             } => match action {
                 RichTextAction::Insert => {
@@ -482,9 +408,6 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                 if is_empty {
                     continue;
                 }
-                if k.starts_with("id") {
-                    continue;
-                }
                 assert_value_eq(v, b.get(k).unwrap());
             }
 
@@ -496,9 +419,6 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                     _ => false,
                 };
                 if is_empty {
-                    continue;
-                }
-                if k.starts_with("id") {
                     continue;
                 }
                 assert_value_eq(v, a.get(k).unwrap());
@@ -514,16 +434,12 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
 }
 
 fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
-    // let a_doc = &mut a_actor.loro;
-    // let b_doc = &mut b_actor.loro;
     let a_result = a_actor.text_container.get_richtext_value();
     let b_result = b_actor.text_container.get_richtext_value();
     let a_value = a_actor.text_tracker.get_text("text").get_richtext_value();
 
     debug_log::debug_log!("{}", a_result.to_json_pretty());
     assert_eq!(&a_result, &b_result);
-    // println!("actor {}", a_actor.peer);
-    // TODO: test value
     assert_value_eq(&a_result, &a_value);
 }
 
@@ -565,8 +481,6 @@ fn check_history(actor: &mut Actor) {
     assert!(!actor.history.is_empty());
     for (c, (f, v)) in actor.history.iter().enumerate() {
         let f = Frontiers::from(f);
-        // println!("\nfrom {:?} checkout {:?}", actor.loro.oplog_vv(), f);
-        // println!("before state {:?}", actor.loro.get_deep_value());
         actor.loro.checkout(&f).unwrap();
         let actual = actor.loro.get_deep_value();
         assert_eq!(v, &actual, "Version mismatched at {:?}, cnt={}", f, c);
@@ -611,7 +525,6 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         sites.preprocess(action);
         applied.push(action.clone());
         debug_log::debug_log!("\n{}", (&applied).table());
-        println!("{:?}", applied);
         sites.apply_action(action);
     }
 
@@ -633,19 +546,19 @@ mod failed_tests {
                 RichText {
                     site: 255,
                     pos: 72057594037927935,
-                    len: 18446744073709508608,
+                    value: 18446744073709508608,
                     action: RichTextAction::Mark(18446744073698541568),
                 },
                 RichText {
                     site: 55,
                     pos: 3978709506094226231,
-                    len: 3978709268954218551,
+                    value: 3978709268954218551,
                     action: RichTextAction::Mark(15335939993951284180),
                 },
                 RichText {
                     site: 0,
                     pos: 72057594021150720,
-                    len: 3978709660713025611,
+                    value: 3978709660713025611,
                     action: RichTextAction::Insert,
                 },
             ],
@@ -660,123 +573,123 @@ mod failed_tests {
                 RichText {
                     site: 0,
                     pos: 0,
-                    len: 18437736874454765568,
+                    value: 18437736874454765568,
                     action: RichTextAction::Insert,
                 },
                 RichText {
                     site: 0,
                     pos: 9,
-                    len: 11156776183901913088,
+                    value: 11156776183901913088,
                     action: RichTextAction::Insert,
                 },
                 RichText {
                     site: 0,
                     pos: 8,
-                    len: 28,
+                    value: 28,
                     action: RichTextAction::Mark(0),
                 },
                 SyncAll,
                 RichText {
                     site: 0,
                     pos: 24,
-                    len: 3558932692,
+                    value: 3558932692,
                     action: RichTextAction::Insert,
                 },
                 RichText {
                     site: 0,
                     pos: 10,
-                    len: 18374685380159995904,
+                    value: 18374685380159995904,
                     action: RichTextAction::Insert,
                 },
                 RichText {
                     site: 0,
                     pos: 60,
-                    len: 6,
+                    value: 6,
                     action: RichTextAction::Mark(0),
                 },
                 RichText {
                     site: 4,
                     pos: 0,
-                    len: 3158382343024284628,
+                    value: 3158382343024284628,
                     action: RichTextAction::Insert,
                 },
                 RichText {
                     site: 3,
                     pos: 4,
-                    len: 21,
+                    value: 21,
                     action: RichTextAction::Mark(0),
                 },
                 RichText {
                     site: 0,
                     pos: 3,
-                    len: 12,
+                    value: 12,
                     action: RichTextAction::Mark(0),
                 },
                 RichText {
                     site: 0,
                     pos: 78,
-                    len: 120259084288,
+                    value: 120259084288,
                     action: RichTextAction::Insert,
                 },
                 RichText {
                     site: 0,
                     pos: 32,
-                    len: 5,
+                    value: 5,
                     action: RichTextAction::Mark(2),
                 },
                 RichText {
                     site: 3,
                     pos: 12,
-                    len: 181419418583088,
+                    value: 181419418583088,
                     action: RichTextAction::Insert,
                 },
                 RichText {
                     site: 0,
                     pos: 48,
-                    len: 23,
+                    value: 23,
                     action: RichTextAction::Mark(3),
                 },
                 RichText {
                     site: 0,
                     pos: 40,
-                    len: 21,
+                    value: 21,
                     action: RichTextAction::Mark(0),
                 },
                 RichText {
                     site: 3,
                     pos: 2,
-                    len: 11140450636105252867,
+                    value: 11140450636105252867,
                     action: RichTextAction::Insert,
                 },
                 SyncAll,
                 RichText {
                     site: 0,
                     pos: 116,
-                    len: 212,
+                    value: 212,
                     action: RichTextAction::Insert,
                 },
                 RichText {
                     site: 0,
                     pos: 66,
-                    len: 2421481759735939069,
+                    value: 2421481759735939069,
                     action: RichTextAction::Insert,
                 },
                 RichText {
                     site: 0,
                     pos: 13,
-                    len: 3917287250882199552,
+                    value: 3917287250882199552,
                     action: RichTextAction::Insert,
                 },
                 RichText {
                     site: 0,
                     pos: 176,
-                    len: 6917529027792076800,
+                    value: 6917529027792076800,
                     action: RichTextAction::Insert,
                 },
                 RichText {
                     site: 4,
                     pos: 83,
-                    len: 62,
+                    value: 62,
                     action: RichTextAction::Delete,
                 },
             ],
