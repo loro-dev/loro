@@ -169,7 +169,7 @@ impl TreeDiffCache {
                     this_diff.action,
                     TreeInternalDiff::Restore | TreeInternalDiff::RestoreMove(_)
                 ) {
-                    // TODO: perf how to get children faster
+                    // TODO: per
                     let mut s = vec![op.target];
                     while let Some(t) = s.pop() {
                         let children = self.get_children(t);
@@ -202,18 +202,20 @@ impl TreeDiffCache {
         self.current_version = vv.clone();
     }
 
-    /// return true if it can be effected
+    /// return true if this apply op has effect on the tree
+    ///
+    /// This method assumes that `node` has the greatest lamport value
     fn apply(&mut self, mut node: MoveLamportAndID) -> bool {
-        let mut ans = true;
+        let mut effected = true;
         if node.parent.is_some() && self.is_ancestor_of(node.target, node.parent.unwrap()) {
-            ans = false;
+            effected = false;
         }
-        node.effected = ans;
+        node.effected = effected;
         let old_parent = self.get_parent(node.target);
         self.update_deleted_cache(node.target, node.parent, old_parent);
         self.cache.entry(node.target).or_default().insert(node);
         self.current_version.set_last(node.id);
-        ans
+        effected
     }
 
     fn forward(&mut self, vv: &VersionVector, max_lamport: Lamport) -> Vec<MoveLamportAndID> {
@@ -275,7 +277,15 @@ impl TreeDiffCache {
             }
         }
         for op in retreat_ops.iter_mut().sorted().rev() {
-            self.cache.get_mut(&op.target).unwrap().remove(op);
+            let btree_set = &mut self.cache.get_mut(&op.target).unwrap();
+            btree_set.remove(op);
+            let last_effective_move_op_id = ID::new(op.target.peer, op.target.counter);
+            for op in btree_set.iter().rev() {
+                if op.effected {
+                    break;
+                }
+            }
+
             self.pending.insert(*op);
             self.current_version.shrink_to_exclude(IdSpan {
                 client_id: op.id.peer,
@@ -293,7 +303,7 @@ impl TreeDiffCache {
                     op.target,
                     old_parent,
                     op.parent,
-                    op.id,
+                    last_effective_move_op_id,
                     is_old_parent_deleted,
                     is_parent_deleted,
                 );
@@ -345,6 +355,7 @@ impl TreeDiffCache {
         if TreeID::is_deleted_root(Some(tree_id)) {
             return None;
         }
+
         let mut ans = None;
         if let Some(cache) = self.cache.get(&tree_id) {
             for op in cache.iter().rev() {

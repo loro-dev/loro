@@ -102,9 +102,9 @@ pub enum TreeInternalDiff {
     Create,
     /// Recreate the node, the node has been deleted before
     Restore,
-    /// Same as move to `None` and the node is exist
+    /// Same as move to `None` and the node exists
     AsRoot,
-    /// Move the node to the parent, the node is exist
+    /// Move the node to the parent, the node exists
     Move(TreeID),
     /// First create the node and move it to the parent
     CreateMove(TreeID),

@@ -138,7 +138,6 @@ impl IdIntMap {
                     )
                 }),
         };
-        debug_log::debug_log!("Get {target} = {ans:?}");
         ans
     }
 
@@ -222,7 +221,6 @@ impl IdIntMap {
     ) -> impl Iterator<Item = T> + 'a {
         let len = item.rle_len();
         let span = item.id_span();
-        debug_log::debug_log!("Target {span:?} self {:#?}", self);
         // PERF: we may avoid this alloc if get_values_in_span returns an iter
         let mut ans = Vec::new();
         let mut ctr_start = span.ctr_start();
@@ -233,7 +231,6 @@ impl IdIntMap {
                 return;
             }
 
-            debug_log::debug_log!("Found {id_span:?}");
             if id_span.counter.start > ctr_start {
                 ans.push(
                     item.slice(

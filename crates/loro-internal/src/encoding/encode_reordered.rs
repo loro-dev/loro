@@ -129,7 +129,6 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
 
 fn import_changes_to_oplog(changes: Vec<Change>, oplog: &mut OpLog) -> Result<(), LoroError> {
     let mut pending_changes = Vec::new();
-    debug_log::debug_dbg!(&changes);
     let mut latest_ids = Vec::new();
     'outer: for mut change in changes {
         if change.ctr_end() <= oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
@@ -293,6 +292,7 @@ fn extract_ops(
 
 pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVector) -> Vec<u8> {
     assert_eq!(oplog.frontiers(), &state.frontiers);
+    debug_log::debug_dbg!(oplog.changes());
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
@@ -310,8 +310,6 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     let mut value_writer = ValueWriter::new();
     let mut ops: Vec<TempOp> = Vec::new();
 
-    debug_log::debug_dbg!(&diff_changes);
-    debug_log::debug_dbg!(&ops);
     // This stores the required op positions of each container state.
     // The states can be encoded in these positions in the next step.
     // This data structure stores that mapping from op id to the required total order.
@@ -390,8 +388,6 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         &mut key_register,
         &container_idx2index,
     );
-    debug_log::debug_dbg!(&map_op_to_pos);
-    debug_log::debug_dbg!(&ops);
     ops.sort_by(move |a, b| {
         a.container_index.cmp(&b.container_index).then_with(|| {
             match (map_op_to_pos.get(a.id()), map_op_to_pos.get(b.id())) {
@@ -492,7 +488,6 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         true,
     );
 
-    debug_log::debug_dbg!(&ops);
     decode_snapshot_states(
         &mut state,
         frontiers,
@@ -531,7 +526,6 @@ fn decode_snapshot_states(
 
         let container_id = &containers[container_index as usize];
         let idx = state.arena.register_container(container_id);
-        debug_log::debug_dbg!(container_id, idx, op_len, state_bytes_len);
         let state_bytes =
             &state_blob_arena[state_blob_index..state_blob_index + state_bytes_len as usize];
         state_blob_index += state_bytes_len as usize;
@@ -1448,6 +1442,10 @@ mod value {
             self.write_usize(op.subject_peer_idx);
             self.write_usize(op.subject_cnt);
             self.write_u8(op.is_parent_null as u8);
+            if op.is_parent_null {
+                return;
+            }
+
             self.write_usize(op.parent_peer_idx);
             self.write_usize(op.parent_cnt);
         }
@@ -1636,8 +1634,13 @@ mod value {
             let subject_peer_idx = self.read_usize();
             let subject_cnt = self.read_usize();
             let is_parent_null = self.read_u8() != 0;
-            let parent_peer_idx = self.read_usize();
-            let parent_cnt = self.read_usize();
+            let mut parent_peer_idx = 0;
+            let mut parent_cnt = 0;
+            if !is_parent_null {
+                parent_peer_idx = self.read_usize();
+                parent_cnt = self.read_usize();
+            }
+
             EncodedTreeMove {
                 subject_peer_idx,
                 subject_cnt,
