@@ -265,6 +265,47 @@ describe("tree", () => {
     meta.set("a", 123);
     assertEquals(meta.get("a"), 123);
   });
+
+  it("test", ()=>{
+    const MIN_INT = BigInt(0);
+    const MAX_INT = BigInt(Number.MAX_SAFE_INTEGER)
+    const MASK = ~((1n << 32n) - 1n);
+     const generateKey = (hash, left?, right?) => {
+    const h = BigInt(hash)
+    const lo = left || []
+    const hi = right || []
+    const result = []
+    let depth = 0
+    for (;; depth++) {
+      console.log(lo[depth] , (MIN_INT|h));
+      
+        let x = BigInt(depth < lo.length ? lo[depth] : (MIN_INT|h))
+        let y = BigInt(depth < hi.length ? hi[depth] : MAX_INT)
+        if (x === y) {
+            result.push(Number(x))
+        } else if ((x >> 32n) + 1n >= (y >> 32n)) {
+            // continue
+            let n = Number(x)
+            result.push(n)
+        } else {
+            // there's a spare space between hi and lo at current position
+            // use it and return
+            let n = Number(((x + (1n << 32n)) & MASK) | h)
+            result.push(n)
+            break;
+        }
+    }
+    return result
+}
+let a = generateKey(100);
+let b = generateKey(100, a);
+const c = generateKey(100, a, b);
+const c2 = generateKey(101, a, b);
+const d = generateKey(100, c, b);
+const e = generateKey(100, d, b);
+console.log(a,b,c,c2,d,e);
+
+  })
 });
 
 function one_ms(): Promise<void> {

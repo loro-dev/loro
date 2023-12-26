@@ -67,7 +67,7 @@ impl Debug for RichTextAction {
         match self {
             RichTextAction::Insert => write!(f, "RichTextAction::Insert"),
             RichTextAction::Delete => write!(f, "RichTextAction::Delete"),
-            RichTextAction::Mark(i) => write!(f, "RichTextAction::Mark({})", STYLES_NAME[*i]),
+            RichTextAction::Mark(i) => write!(f, "RichTextAction::Mark({})", i),
         }
     }
 }
@@ -104,8 +104,8 @@ impl Actor {
                 if let Diff::Text(text_diff) = &event.container.diff {
                     let mut txn = text_doc.txn().unwrap();
                     let text_h = text_doc.get_text("text");
-                    println!("diff {:?}", text_diff);
-                    if false {
+                    // println!("diff {:?}", text_diff);
+                    if true {
                         let text_deltas = text_diff
                             .iter()
                             .map(|x| match x {
@@ -524,7 +524,7 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     assert_eq!(&a_result, &b_result);
     // println!("actor {}", a_actor.peer);
     // TODO: test value
-    // assert_value_eq(&a_result, &a_value);
+    assert_value_eq(&a_result, &a_value);
 }
 
 fn check_synced(sites: &mut [Actor]) {
@@ -611,6 +611,7 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         sites.preprocess(action);
         applied.push(action.clone());
         debug_log::debug_log!("\n{}", (&applied).table());
+        println!("{:?}", applied);
         sites.apply_action(action);
     }
 
@@ -646,6 +647,137 @@ mod failed_tests {
                     pos: 72057594021150720,
                     len: 3978709660713025611,
                     action: RichTextAction::Insert,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_2() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 0,
+                    pos: 0,
+                    len: 18437736874454765568,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 0,
+                    pos: 9,
+                    len: 11156776183901913088,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 0,
+                    pos: 8,
+                    len: 28,
+                    action: RichTextAction::Mark(0),
+                },
+                SyncAll,
+                RichText {
+                    site: 0,
+                    pos: 24,
+                    len: 3558932692,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 0,
+                    pos: 10,
+                    len: 18374685380159995904,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 0,
+                    pos: 60,
+                    len: 6,
+                    action: RichTextAction::Mark(0),
+                },
+                RichText {
+                    site: 4,
+                    pos: 0,
+                    len: 3158382343024284628,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 3,
+                    pos: 4,
+                    len: 21,
+                    action: RichTextAction::Mark(0),
+                },
+                RichText {
+                    site: 0,
+                    pos: 3,
+                    len: 12,
+                    action: RichTextAction::Mark(0),
+                },
+                RichText {
+                    site: 0,
+                    pos: 78,
+                    len: 120259084288,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 0,
+                    pos: 32,
+                    len: 5,
+                    action: RichTextAction::Mark(2),
+                },
+                RichText {
+                    site: 3,
+                    pos: 12,
+                    len: 181419418583088,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 0,
+                    pos: 48,
+                    len: 23,
+                    action: RichTextAction::Mark(3),
+                },
+                RichText {
+                    site: 0,
+                    pos: 40,
+                    len: 21,
+                    action: RichTextAction::Mark(0),
+                },
+                RichText {
+                    site: 3,
+                    pos: 2,
+                    len: 11140450636105252867,
+                    action: RichTextAction::Insert,
+                },
+                SyncAll,
+                RichText {
+                    site: 0,
+                    pos: 116,
+                    len: 212,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 0,
+                    pos: 66,
+                    len: 2421481759735939069,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 0,
+                    pos: 13,
+                    len: 3917287250882199552,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 0,
+                    pos: 176,
+                    len: 6917529027792076800,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 4,
+                    pos: 83,
+                    len: 62,
+                    action: RichTextAction::Delete,
                 },
             ],
         )
