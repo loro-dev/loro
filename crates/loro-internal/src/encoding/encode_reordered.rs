@@ -59,8 +59,8 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         a.container_index
             .cmp(&b.container_index)
             .then_with(|| a.prop_that_used_for_sort.cmp(&b.prop_that_used_for_sort))
-            .then_with(|| a.lamport.cmp(&b.lamport).reverse())
-            .then_with(|| a.peer_id.cmp(&b.peer_id).reverse())
+            .then_with(|| a.peer_idx.cmp(&b.peer_idx))
+            .then_with(|| a.lamport.cmp(&b.lamport))
     });
 
     let encoded_ops = encode_ops(
@@ -392,10 +392,9 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         a.container_index.cmp(&b.container_index).then_with(|| {
             match (map_op_to_pos.get(a.id()), map_op_to_pos.get(b.id())) {
                 (None, None) => a
-                    .lamport
-                    .cmp(&b.lamport)
-                    .reverse()
-                    .then_with(|| a.peer_id.cmp(&b.peer_id).reverse()),
+                    .peer_idx
+                    .cmp(&b.peer_idx)
+                    .then_with(|| a.lamport.cmp(&b.lamport)),
                 (None, Some(_)) => Ordering::Greater,
                 (Some(_), None) => Ordering::Less,
                 (Some(a), Some(b)) => a.0.cmp(&b.0),
@@ -711,7 +710,7 @@ mod encode {
                 push_op(TempOp {
                     op: Cow::Borrowed(op),
                     lamport,
-                    prop_that_used_for_sort: get_op_prop(op, key_register),
+                    prop_that_used_for_sort: get_sorting_prop(op, key_register),
                     peer_idx: peer_idx as u32,
                     peer_id: change.id.peer,
                     container_index: container_idx2index[&op.container] as u32,
@@ -817,6 +816,17 @@ mod encode {
                 }
                 crate::container::list::list_op::InnerListOp::StyleEnd => 0,
             },
+            crate::op::InnerContent::Map(map) => {
+                let key = register_key.register(&map.key);
+                key as i32
+            }
+            crate::op::InnerContent::Tree(..) => 0,
+        }
+    }
+
+    fn get_sorting_prop(op: &Op, register_key: &mut ValueRegister<InternalString>) -> i32 {
+        match &op.content {
+            crate::op::InnerContent::List(_) => 0,
             crate::op::InnerContent::Map(map) => {
                 let key = register_key.register(&map.key);
                 key as i32
