@@ -90,7 +90,7 @@ impl TreeDiffCache {
 
     // When we cache local ops, we can apply these directly.
     // Because importing the local op must not cause circular references, it has been checked.
-    pub(crate) fn add_node_uncheck(&mut self, node: MoveLamportAndID) {
+    pub(crate) fn add_node_from_local(&mut self, node: MoveLamportAndID) {
         if !self.all_version.includes_id(node.id) {
             let old_parent = self.get_parent(node.target);
 

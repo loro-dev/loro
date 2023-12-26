@@ -157,7 +157,7 @@ fn import_changes_to_oplog(changes: Vec<Change>, oplog: &mut OpLog) -> Result<()
             peer: change.id.peer,
             counter: change.id.counter + change.atom_len() as Counter,
         });
-        oplog.insert_new_change(change, mark);
+        oplog.insert_new_change(change, mark, false);
     }
     let mut vv = oplog.dag.vv.clone();
     oplog.try_apply_pending(latest_ids, &mut vv);

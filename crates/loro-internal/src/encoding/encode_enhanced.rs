@@ -718,7 +718,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 peer: change.id.peer,
                 counter: change.id.counter + change.atom_len() as Counter,
             });
-            oplog.insert_new_change(change, mark);
+            oplog.insert_new_change(change, mark, false);
         }
     });
 

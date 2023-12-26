@@ -207,7 +207,13 @@ impl OpLog {
     }
 
     /// This is the only place to update the `OpLog.changes`
-    pub(crate) fn insert_new_change(&mut self, mut change: Change, _: EnsureChangeDepsAreAtTheEnd) {
+    pub(crate) fn insert_new_change(
+        &mut self,
+        mut change: Change,
+        _: EnsureChangeDepsAreAtTheEnd,
+        local: bool,
+    ) {
+        self.update_tree_cache(&change, local);
         let entry = self.changes.entry(change.id.peer).or_default();
         match entry.last_mut() {
             Some(last) => {
@@ -242,7 +248,7 @@ impl OpLog {
     ///
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
-    pub fn import_local_change(&mut self, change: Change, from_txn: bool) -> Result<(), LoroError> {
+    pub fn import_local_change(&mut self, change: Change, local: bool) -> Result<(), LoroError> {
         let Some(change) = self.trim_the_known_part_of_change(change) else {
             return Ok(());
         };
@@ -269,7 +275,11 @@ impl OpLog {
         self.dag.frontiers.filter_peer(change.id.peer);
         self.dag.frontiers.push(change.id_last());
         let mark = self.insert_dag_node_on_new_change(&change);
+        self.insert_new_change(change, mark, local);
+        Ok(())
+    }
 
+    fn update_tree_cache(&mut self, change: &Change, local: bool) {
         // Update tree cache
         let mut tree_cache = self.tree_parent_cache.lock().unwrap();
         for op in change.ops().iter() {
@@ -285,17 +295,14 @@ impl OpLog {
                     parent: tree.parent,
                     effected: true,
                 };
-                if from_txn {
-                    tree_cache.add_node_uncheck(node);
+                if local {
+                    tree_cache.add_node_from_local(node);
                 } else {
                     tree_cache.add_node(node);
                 }
             }
         }
-
         drop(tree_cache);
-        self.insert_new_change(change, mark);
-        Ok(())
     }
 
     /// Every time we import a new change, it should run this function to update the dag
