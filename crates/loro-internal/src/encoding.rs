@@ -287,6 +287,11 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
     encode_header_and_body(EncodeMode::ReorderedSnapshot, body)
 }
 
+pub(crate) fn export_snapshot_v0(doc: &LoroDoc) -> Vec<u8> {
+    let body = encode_app_snapshot(&doc);
+    encode_header_and_body(EncodeMode::Snapshot, body)
+}
+
 pub(crate) fn decode_snapshot(
     doc: &LoroDoc,
     mode: EncodeMode,

@@ -575,6 +575,13 @@ impl Loro {
         Ok(self.0.export_snapshot())
     }
 
+    /// Export the snapshot of current version, it's include all content of
+    /// operations and states
+    #[wasm_bindgen(js_name = "exportSnapshotV0")]
+    pub fn export_snapshot_v0(&self) -> JsResult<Vec<u8>> {
+        Ok(self.0.export_snapshot_v0())
+    }
+
     /// Export updates from the specific version to the current version
     ///
     /// @example
@@ -596,6 +603,29 @@ impl Loro {
         // `version` may be null or undefined
         let vv = js_value_to_version(version)?;
         Ok(self.0.export_from(&vv))
+    }
+
+    /// Export updates from the specific version to the current version
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// // get all updates of the doc
+    /// const updates = doc.exportFrom();
+    /// const version = doc.oplogVersion();
+    /// text.insert(5, " World");
+    /// // get updates from specific version to the latest version
+    /// const updates2 = doc.exportFrom(version);
+    /// ```
+    #[wasm_bindgen(skip_typescript, js_name = "exportFromV0")]
+    pub fn export_from_v0(&self, version: &JsValue) -> JsResult<Vec<u8>> {
+        // `version` may be null or undefined
+        let vv = js_value_to_version(version)?;
+        Ok(self.0.export_from_v0(&vv))
     }
 
     /// Import a snapshot or a update to current doc.

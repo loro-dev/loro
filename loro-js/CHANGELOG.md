@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.2-alpha.0
+
+### Patch Changes
+
+- Add experimental encode methods
+- Updated dependencies
+  - loro-wasm@0.7.2
+
 ## 0.7.1
 
 ### Patch Changes

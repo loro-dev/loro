@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.2-alpha.0
+
+### Patch Changes
+
+- Add experimental encode methods
+
 ## 0.7.1
 
 ### Patch Changes
