@@ -1,4 +1,5 @@
 pub mod recursive_refactored;
+pub mod richtext;
 pub mod tree;
 
 use crate::{
