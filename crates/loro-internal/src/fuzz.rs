@@ -312,7 +312,7 @@ impl Actionable for Vec<LoroDoc> {
                 *site %= self.len() as u8;
                 let app_state = &mut self[*site as usize].app_state().lock().unwrap();
                 let text = app_state.get_text("text").unwrap();
-                if text.is_empty() {
+                if text.len_unicode() == 0 {
                     *len = 0;
                     *pos = 0;
                 } else {
