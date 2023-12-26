@@ -788,7 +788,7 @@ mod encode {
         let mut start_counters = Vec::new();
 
         let mut diff_changes = Vec::new();
-        for (change, _) in oplog.iter_causally(start_vv.clone(), self_vv.clone()) {
+        for change in oplog.iter_causally_without_vv(start_vv.clone(), self_vv.clone()) {
             let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
             if !peer_register.contains(&change.id.peer) {
                 peer_register.register(&change.id.peer);
