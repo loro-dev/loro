@@ -857,6 +857,7 @@ impl RichtextStateLoader {
 mod tests {
     use append_only_bytes::AppendOnlyBytes;
     use generic_btree::rle::Mergeable;
+    use loro_common::ID;
 
     use crate::container::richtext::richtext_state::{RichtextStateChunk, TextChunk};
 
@@ -871,15 +872,15 @@ mod tests {
 
         let mut last = UndoItem::Delete {
             index: 20,
-            content: RichtextStateChunk::Text(TextChunk::from_bytes(last_bytes)),
+            content: RichtextStateChunk::Text(TextChunk::new(last_bytes, ID::new(0, 2))),
         };
         let mut new = UndoItem::Delete {
             index: 18,
-            content: RichtextStateChunk::Text(TextChunk::from_bytes(new_bytes)),
+            content: RichtextStateChunk::Text(TextChunk::new(new_bytes, ID::new(0, 0))),
         };
         let merged = UndoItem::Delete {
             index: 18,
-            content: RichtextStateChunk::Text(TextChunk::from_bytes(bytes.to_slice())),
+            content: RichtextStateChunk::Text(TextChunk::new(bytes.to_slice(), ID::new(0, 0))),
         };
         assert!(last.can_merge(&new));
         std::mem::swap(&mut last, &mut new);
