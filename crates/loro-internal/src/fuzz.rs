@@ -436,8 +436,8 @@ where
     let f_ref: *const _ = &f;
     let f_ref: usize = f_ref as usize;
     #[allow(clippy::redundant_clone)]
-    let actions_clone = actions.clone();
-    let action_ref: usize = (&actions_clone) as *const _ as usize;
+    let mut actions_clone = actions.clone();
+    let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
     #[allow(clippy::blocks_in_if_conditions)]
     if std::panic::catch_unwind(|| {
         // SAFETY: test
@@ -465,8 +465,8 @@ where
     while let Some(candidate) = candidates.pop() {
         let f_ref: *const _ = &f;
         let f_ref: usize = f_ref as usize;
-        let actions_clone = candidate.clone();
-        let action_ref: usize = (&actions_clone) as *const _ as usize;
+        let mut actions_clone = candidate.clone();
+        let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
         #[allow(clippy::blocks_in_if_conditions)]
         if std::panic::catch_unwind(|| {
             // SAFETY: test
