@@ -397,19 +397,25 @@ impl LoroDoc {
                 debug_log::group_end!();
             }
             true => {
+                debug_log::group!("Import snapshot to {}", self.peer_id());
                 if self.can_reset_with_snapshot() {
+                    debug_log::debug_log!("Init by snapshot");
                     decode_snapshot(self, parsed.mode, parsed.body, !self.detached.load(Acquire))?;
                 } else if parsed.mode == EncodeMode::ReorderedSnapshot {
+                    debug_log::debug_log!("Import by updates");
                     self._import_by_delta_updates(parsed, origin)?;
                 } else {
+                    debug_log::debug_log!("Import from new doc");
                     let app = LoroDoc::new();
                     decode_snapshot(&app, parsed.mode, parsed.body, false)?;
                     let oplog = self.oplog.lock().unwrap();
                     // TODO: PERF: the ser and de can be optimized out
                     let updates = app.export_from(oplog.vv());
                     drop(oplog);
+                    debug_log::group_end!();
                     return self.import_with(&updates, origin);
                 }
+                debug_log::group_end!();
             }
         };
 

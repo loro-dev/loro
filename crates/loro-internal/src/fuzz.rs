@@ -2311,7 +2311,78 @@ mod test {
     }
 
     #[test]
+    fn fuzz_snapshot() {
+        test_multi_sites(
+            5,
+            &mut [
+                Ins {
+                    content: 52480,
+                    pos: 0,
+                    site: 1,
+                },
+                Mark {
+                    pos: 6,
+                    len: 1,
+                    site: 1,
+                    style_key: 5,
+                },
+                Ins {
+                    content: 8224,
+                    pos: 0,
+                    site: 1,
+                },
+                Del {
+                    pos: 12,
+                    len: 1,
+                    site: 1,
+                },
+                Ins {
+                    content: 257,
+                    pos: 10,
+                    site: 1,
+                },
+                Ins {
+                    content: 332,
+                    pos: 11,
+                    site: 1,
+                },
+                Del {
+                    pos: 1,
+                    len: 21,
+                    site: 1,
+                },
+                Del {
+                    pos: 0,
+                    len: 1,
+                    site: 1,
+                },
+                Ins {
+                    content: 11309,
+                    pos: 0,
+                    site: 4,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn mini_r() {
-        minify_error(5, vec![], test_multi_sites, |_, ans| ans.to_vec())
+        minify_error(5, vec![], test_multi_sites, |site_num, ans| {
+            let mut sites = Vec::new();
+            for i in 0..site_num {
+                let loro = LoroDoc::new();
+                loro.set_peer_id(i as u64).unwrap();
+                sites.push(loro);
+            }
+
+            let mut applied = Vec::new();
+            for action in ans.iter_mut() {
+                sites.preprocess(action);
+                applied.push(action.clone());
+                sites.apply_action(action);
+            }
+
+            ans.to_vec()
+        })
     }
 }

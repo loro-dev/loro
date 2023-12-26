@@ -1766,8 +1766,8 @@ impl RichtextState {
     }
 
     #[inline(always)]
-    pub fn is_emtpy(&self) -> bool {
-        self.tree.root_cache().bytes == 0
+    pub fn is_empty(&self) -> bool {
+        self.tree.root_cache().entity_len == 0
     }
 
     #[inline(always)]

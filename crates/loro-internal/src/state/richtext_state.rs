@@ -64,7 +64,7 @@ impl RichtextState {
     pub(crate) fn is_empty(&self) -> bool {
         match &*self.state {
             LazyLoad::Src(s) => s.elements.is_empty(),
-            LazyLoad::Dst(d) => d.is_emtpy(),
+            LazyLoad::Dst(d) => d.is_empty(),
         }
     }
 
@@ -150,7 +150,7 @@ impl ContainerState for RichtextState {
     fn is_state_empty(&self) -> bool {
         match &*self.state {
             LazyLoad::Src(s) => s.is_empty(),
-            LazyLoad::Dst(s) => s.is_emtpy(),
+            LazyLoad::Dst(s) => s.is_empty(),
         }
     }
 
@@ -478,6 +478,7 @@ impl ContainerState for RichtextState {
             }
         }
 
+        debug_log::group!("encode_snapshot");
         let mut lamports = DeltaRleEncodedNums::new();
         for chunk in iter {
             debug_log::debug_dbg!(&chunk);
@@ -494,6 +495,7 @@ impl ContainerState for RichtextState {
             encoder.encode_op(id_span, || unimplemented!());
         }
 
+        debug_log::group_end!();
         lamports.encode()
     }
 
@@ -531,6 +533,7 @@ impl ContainerState for RichtextState {
                 a => unreachable!("richtext state should not have {a:?}"),
             };
 
+            debug_log::debug_dbg!(&chunk);
             loader.push(chunk);
         }
 
