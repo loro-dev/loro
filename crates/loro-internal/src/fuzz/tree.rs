@@ -1879,6 +1879,30 @@ mod failed_tests {
     }
 
     #[test]
+    fn history() {
+        test_multi_sites(
+            3,
+            &mut [
+                Tree {
+                    site: 2,
+                    container_idx: 0,
+                    action: TreeAction::Create,
+                    target: (2, 0),
+                    parent: (11863787638307726561, 0),
+                },
+                Sync { from: 2, to: 0 },
+                Tree {
+                    site: 2,
+                    container_idx: 0,
+                    action: TreeAction::Delete,
+                    target: (2, 0),
+                    parent: (18446537369818038270, 320017407),
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn to_minify() {
         minify_error(5, vec![], test_multi_sites, normalize)
     }

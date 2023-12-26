@@ -213,7 +213,7 @@ pub(crate) fn decode_oplog(
             .map_err(|_| LoroError::DecodeError("Invalid compressed data".into()))
             .and_then(|bytes| decode_oplog_v2(oplog, &bytes)),
         EncodeMode::ReorderedRle => encode_reordered::decode_updates(oplog, body),
-        EncodeMode::ReorderedSnapshot => unreachable!(),
+        EncodeMode::ReorderedSnapshot => encode_reordered::decode_updates(oplog, body),
         EncodeMode::Auto => unreachable!(),
     }
 }

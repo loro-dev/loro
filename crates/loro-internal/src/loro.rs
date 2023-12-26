@@ -16,7 +16,9 @@ use crate::{
     arena::SharedArena,
     change::Timestamp,
     container::{idx::ContainerIdx, IntoContainerId},
-    encoding::{decode_snapshot, export_snapshot, parse_header_and_body, ParsedHeaderAndBody},
+    encoding::{
+        decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
+    },
     handler::TextHandler,
     handler::TreeHandler,
     id::PeerID,
@@ -391,34 +393,14 @@ impl LoroDoc {
             false => {
                 // TODO: need to throw error if state is in transaction
                 debug_log::group!("import to {}", self.peer_id());
-                let mut oplog = self.oplog.lock().unwrap();
-                let old_vv = oplog.vv().clone();
-                let old_frontiers = oplog.frontiers().clone();
-                oplog.decode(parsed)?;
-                if !self.detached.load(Acquire) {
-                    let mut diff = DiffCalculator::default();
-                    let diff = diff.calc_diff_internal(
-                        &oplog,
-                        &old_vv,
-                        Some(&old_frontiers),
-                        oplog.vv(),
-                        Some(oplog.dag.get_frontiers()),
-                    );
-                    let mut state = self.state.lock().unwrap();
-                    state.apply_diff(InternalDocDiff {
-                        origin,
-                        local: false,
-                        diff: (diff).into(),
-                        from_checkout: false,
-                        new_version: Cow::Owned(oplog.frontiers().clone()),
-                    });
-                }
-
+                self._import_by_delta_updates(parsed, origin)?;
                 debug_log::group_end!();
             }
             true => {
                 if self.can_reset_with_snapshot() {
                     decode_snapshot(self, parsed.mode, parsed.body, !self.detached.load(Acquire))?;
+                } else if parsed.mode == EncodeMode::ReorderedSnapshot {
+                    self._import_by_delta_updates(parsed, origin)?;
                 } else {
                     let app = LoroDoc::new();
                     decode_snapshot(&app, parsed.mode, parsed.body, false)?;
@@ -430,8 +412,39 @@ impl LoroDoc {
                 }
             }
         };
+
         let mut state = self.state.lock().unwrap();
         self.emit_events(&mut state);
+        Ok(())
+    }
+
+    fn _import_by_delta_updates(
+        &self,
+        parsed: ParsedHeaderAndBody<'_>,
+        origin: string_cache::Atom<string_cache::EmptyStaticAtomSet>,
+    ) -> Result<(), LoroError> {
+        let mut oplog = self.oplog.lock().unwrap();
+        let old_vv = oplog.vv().clone();
+        let old_frontiers = oplog.frontiers().clone();
+        oplog.decode(parsed)?;
+        if !self.detached.load(Acquire) {
+            let mut diff = DiffCalculator::default();
+            let diff = diff.calc_diff_internal(
+                &oplog,
+                &old_vv,
+                Some(&old_frontiers),
+                oplog.vv(),
+                Some(oplog.dag.get_frontiers()),
+            );
+            let mut state = self.state.lock().unwrap();
+            state.apply_diff(InternalDocDiff {
+                origin,
+                local: false,
+                diff: (diff).into(),
+                from_checkout: false,
+                new_version: Cow::Owned(oplog.frontiers().clone()),
+            });
+        }
         Ok(())
     }
 
