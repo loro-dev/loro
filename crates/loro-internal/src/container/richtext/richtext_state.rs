@@ -17,7 +17,7 @@ use crate::{
     container::richtext::query_by_len::{
         EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex,
     },
-    delta::{DeltaValue, Meta, StyleMeta},
+    delta::{DeltaValue, StyleMeta},
 };
 
 // FIXME: Check splice and other things are using unicode index
@@ -66,7 +66,7 @@ mod text_chunk {
     use append_only_bytes::BytesSlice;
     use loro_common::ID;
 
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Debug, PartialEq)]
     pub(crate) struct TextChunk {
         bytes: BytesSlice,
         unicode_len: i32,
@@ -352,7 +352,7 @@ mod text_chunk {
 }
 
 // TODO: change visibility back to crate after #116 is done
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum RichtextStateChunk {
     Text(TextChunk),
     Style {
@@ -1727,7 +1727,7 @@ impl RichtextState {
                 LoroValue::String(Arc::new(span.text.as_str().into())),
             );
 
-            if !span.attributes.is_empty() {
+            if !attributes.as_map().unwrap().is_empty() {
                 value.insert("attributes".into(), attributes.clone());
             }
 
@@ -2096,10 +2096,7 @@ mod test {
                     }
                 },
                 {
-                    "insert": " World!",
-                    "attributes": {
-                        "bold": null
-                    }
+                    "insert": " World!"
                 }
             ])
         );
@@ -2115,9 +2112,6 @@ mod test {
                 },
                 {
                     "insert": " World!",
-                    "attributes": {
-                        "bold": null
-                    }
                 }
             ])
         );
@@ -2137,9 +2131,6 @@ mod test {
                 },
                 {
                     "insert": " World!",
-                    "attributes": {
-                        "bold": null
-                    }
                 }
             ])
         );

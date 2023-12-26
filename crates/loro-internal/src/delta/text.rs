@@ -98,8 +98,12 @@ impl StyleMeta {
         LoroValue::Map(Arc::new(
             self.map
                 .iter()
-                .map(|(key, value)| {
-                    (
+                .filter_map(|(key, value)| {
+                    if value.value.is_null() {
+                        return None;
+                    }
+
+                    Some((
                         key.to_attr_key(),
                         if key.contains_id() {
                             let mut map: FxHashMap<String, LoroValue> = Default::default();
@@ -109,7 +113,7 @@ impl StyleMeta {
                         } else {
                             value.value.clone()
                         },
-                    )
+                    ))
                 })
                 .collect(),
         ))

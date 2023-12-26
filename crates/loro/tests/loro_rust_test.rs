@@ -109,8 +109,7 @@ fn richtext_test() {
         text.to_delta().to_json_value(),
         json!([
              { "insert": "Hel", "attributes": {"bold": true} },
-             { "insert": "lo", "attributes": {"bold": null} },
-             { "insert": " world!" },
+             { "insert": "lo world!" },
         ])
     );
 }
