@@ -51,6 +51,10 @@ pub enum Action {
         value: usize,
         action: RichTextAction,
     },
+    Checkout {
+        site: u8,
+        to: u32,
+    },
     Sync {
         from: u8,
         to: u8,
@@ -90,12 +94,14 @@ impl Actor {
         let tracker = LoroDoc::new();
         tracker.set_peer_id(id).unwrap();
         let text = app.get_text("text");
+        let mut default_history = FxHashMap::default();
+        default_history.insert(Vec::new(), app.get_deep_value());
         let actor = Actor {
             peer: id,
             loro: app,
             text_tracker: Arc::new(tracker),
             text_container: text,
-            history: Default::default(),
+            history: default_history,
         };
 
         let text_value = Arc::clone(&actor.text_tracker);
@@ -191,6 +197,7 @@ impl Actor {
     }
 
     fn record_history(&mut self) {
+        self.loro.attach();
         let f = self.loro.oplog_frontiers();
         let value = self.loro.get_deep_value();
         let mut ids: Vec<ID> = f.iter().cloned().collect();
@@ -228,6 +235,12 @@ impl Tabled for Action {
                 "".into(),
             ],
             Action::SyncAll => vec!["sync all".into(), "".into(), "".into()],
+            Action::Checkout { site, to } => vec![
+                "checkout".into(),
+                format!("{}", site).into(),
+                format!("to {}", to).into(),
+                "".into(),
+            ],
             Action::RichText {
                 site,
                 pos,
@@ -285,6 +298,10 @@ impl Actionable for Vec<Actor> {
                 }
             }
             Action::SyncAll => {}
+            Action::Checkout { site, to } => {
+                *site %= max_users;
+                *to %= self[*site as usize].history.len() as u32;
+            }
             Action::RichText {
                 site,
                 pos,
@@ -322,7 +339,6 @@ impl Actionable for Vec<Actor> {
         match action {
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(self, [*from as usize, *to as usize]);
-
                 a.loro
                     .import(&b.loro.export_from(&a.loro.oplog_vv()))
                     .unwrap();
@@ -348,48 +364,57 @@ impl Actionable for Vec<Actor> {
                         .import(&a.loro.export_from(&b.loro.oplog_vv()))
                         .unwrap();
                 }
-
                 self[1].record_history();
+            }
+            Action::Checkout { site, to } => {
+                let actor = &mut self[*site as usize];
+                let f = actor.history.keys().nth(*to as usize).unwrap();
+                let f = Frontiers::from(f);
+                actor.loro.checkout(&f).unwrap();
             }
             Action::RichText {
                 site,
                 pos,
                 value: len,
                 action,
-            } => match action {
-                RichTextAction::Insert => {
+            } => {
+                let (mut txn, text) = {
                     let actor = &mut self[*site as usize];
-                    let mut txn = actor.loro.txn().unwrap();
+                    let txn = actor.loro.txn().unwrap();
                     let text = &mut self[*site as usize].text_container;
-                    text.insert_with_txn(&mut txn, *pos, &format!("[{}]", len))
+                    (txn, text)
+                };
+                match action {
+                    RichTextAction::Insert => {
+                        text.insert_with_txn(&mut txn, *pos, &format!("[{}]", len))
+                            .unwrap();
+                    }
+                    RichTextAction::Delete => {
+                        text.delete_with_txn(&mut txn, *pos, *len).unwrap();
+                    }
+                    RichTextAction::Mark(i) => {
+                        let style = STYLES[*i];
+                        text.mark_with_txn(
+                            &mut txn,
+                            *pos,
+                            *pos + *len,
+                            &i.to_string(),
+                            if style.is_delete() {
+                                LoroValue::Null
+                            } else {
+                                true.into()
+                            },
+                            style,
+                        )
                         .unwrap();
+                    }
                 }
-                RichTextAction::Delete => {
-                    let actor = &mut self[*site as usize];
-                    let mut txn = actor.loro.txn().unwrap();
-                    let text = &mut self[*site as usize].text_container;
-                    text.delete_with_txn(&mut txn, *pos, *len).unwrap();
+                drop(txn);
+                let actor = &mut self[*site as usize];
+                if actor.peer == 1 {
+                    actor.record_history();
                 }
-                RichTextAction::Mark(i) => {
-                    let actor = &mut self[*site as usize];
-                    let mut txn = actor.loro.txn().unwrap();
-                    let text = &mut self[*site as usize].text_container;
-                    let style = STYLES[*i];
-                    text.mark_with_txn(
-                        &mut txn,
-                        *pos,
-                        *pos + *len,
-                        &i.to_string(),
-                        if style.is_delete() {
-                            LoroValue::Null
-                        } else {
-                            true.into()
-                        },
-                        style,
-                    )
-                    .unwrap();
-                }
-            },
+            }
         }
     }
 }
@@ -450,6 +475,8 @@ fn check_synced(sites: &mut [Actor]) {
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
+            a_doc.attach();
+            b_doc.attach();
             if (i + j) % 2 == 0 {
                 debug_log::group!("Updates {} to {}", j, i);
                 a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
@@ -691,6 +718,31 @@ mod failed_tests {
                     pos: 83,
                     value: 62,
                     action: RichTextAction::Delete,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn checkout() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 212,
+                    pos: 6542548,
+                    value: 165,
+                    action: RichTextAction::Delete,
+                },
+                RichText {
+                    site: 106,
+                    pos: 7668058320836127338,
+                    value: 7668058320836127338,
+                    action: RichTextAction::Delete,
+                },
+                Checkout {
+                    site: 106,
+                    to: 1785358954,
                 },
             ],
         )
