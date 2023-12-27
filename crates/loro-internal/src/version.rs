@@ -15,7 +15,7 @@ use crate::{
     change::Lamport,
     id::{Counter, ID},
     oplog::AppDag,
-    span::{CounterSpan, HasIdSpan, IdSpan},
+    span::{CounterSpan, IdSpan},
     LoroError, PeerID,
 };
 

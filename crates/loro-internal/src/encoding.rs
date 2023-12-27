@@ -1,41 +1,40 @@
-mod encode_enhanced;
 mod encode_reordered;
-mod encode_snapshot;
-mod encode_updates;
 
-use self::encode_updates::decode_oplog_updates;
-use crate::encoding::encode_snapshot::encode_app_snapshot;
 use crate::op::OpWithId;
 use crate::LoroDoc;
-use crate::{change::Change, op::RemoteOp};
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use encode_enhanced::{decode_oplog_v2, encode_oplog_v2};
-use encode_updates::encode_oplog_updates;
-use fxhash::FxHashMap;
-use loro_common::{HasCounter, IdSpan, LoroResult, PeerID};
+use loro_common::{HasCounter, IdSpan, LoroResult};
+use num_derive::{FromPrimitive, ToPrimitive};
+use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
-
-pub(crate) type RemoteClientChanges<'a> = FxHashMap<PeerID, Vec<Change<RemoteOp<'a>>>>;
-
-#[allow(unused)]
-const COMPRESS_RLE_THRESHOLD: usize = 20 * 1024;
-// TODO: Test this threshold
-#[cfg(not(test))]
-const UPDATE_ENCODE_THRESHOLD: usize = 32;
-#[cfg(test)]
-const UPDATE_ENCODE_THRESHOLD: usize = 16;
 const MAGIC_BYTES: [u8; 4] = *b"loro";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, ToPrimitive)]
 pub(crate) enum EncodeMode {
     // This is a config option, it won't be used in encoding.
     Auto = 255,
-    Updates = 0,
-    Snapshot = 1,
-    RleUpdates = 2,
-    CompressedRleUpdates = 3,
-    ReorderedRle = 4,
-    ReorderedSnapshot = 5,
+    Rle = 1,
+    Snapshot = 2,
+}
+
+impl EncodeMode {
+    pub fn to_bytes(self) -> [u8; 2] {
+        let value = self.to_u16().unwrap();
+        value.to_be_bytes()
+    }
+
+    pub fn is_snapshot(self) -> bool {
+        matches!(self, EncodeMode::Snapshot)
+    }
+}
+
+impl TryFrom<[u8; 2]> for EncodeMode {
+    type Error = LoroError;
+
+    fn try_from(value: [u8; 2]) -> Result<Self, Self::Error> {
+        let value = u16::from_be_bytes(value);
+        Self::from_u16(value).ok_or(LoroError::IncompatibleFutureEncodingError(value as usize))
+    }
 }
 
 /// The encoder used to encode the container states.
@@ -49,37 +48,20 @@ pub(crate) enum EncodeMode {
 /// Each container state should call encode_op multiple times until all the
 /// operations constituting its current state are encoded.
 pub(crate) struct StateSnapshotEncoder<'a> {
+    /// The `check_idspan` function is used to check if the id span is valid.
+    /// If the id span is invalid, the function should return an error that
+    /// contains the missing id span.
     check_idspan: &'a dyn Fn(IdSpan) -> Result<(), IdSpan>,
+    /// The `encoder_by_op` function is used to encode an operation.
     encoder_by_op: &'a mut dyn FnMut(OpWithId),
+    /// The `record_idspan` function is used to record the id span to track the
+    /// encoded order.
     record_idspan: &'a mut dyn FnMut(IdSpan),
+    #[allow(unused)]
     mode: EncodeMode,
 }
 
 impl StateSnapshotEncoder<'_> {
-    /// Create a new encoder.
-    ///
-    /// The `check_idspan` function is used to check if the id span is valid.
-    /// If the id span is invalid, the function should return an error that
-    /// contains the missing id span.
-    ///
-    /// The `encoder_by_op` function is used to encode an operation.
-    ///
-    /// The `record_idspan` function is used to record the id span to track the
-    /// encoded order.
-    pub fn new<'a>(
-        check_idspan: &'a dyn Fn(IdSpan) -> Result<(), IdSpan>,
-        encoder_by_op: &'a mut dyn FnMut(OpWithId),
-        record_idspan: &'a mut dyn FnMut(IdSpan),
-        mode: EncodeMode,
-    ) -> StateSnapshotEncoder<'a> {
-        StateSnapshotEncoder {
-            check_idspan,
-            encoder_by_op,
-            record_idspan,
-            mode,
-        }
-    }
-
     pub fn encode_op(&mut self, id_span: IdSpan, get_op: impl FnOnce() -> OpWithId) {
         debug_log::debug_dbg!(id_span);
         if let Err(span) = (self.check_idspan)(id_span) {
@@ -96,6 +78,7 @@ impl StateSnapshotEncoder<'_> {
         (self.record_idspan)(id_span);
     }
 
+    #[allow(unused)]
     pub fn mode(&self) -> EncodeMode {
         self.mode
     }
@@ -108,91 +91,14 @@ pub(crate) struct StateSnapshotDecodeContext<'a> {
     pub mode: EncodeMode,
 }
 
-impl EncodeMode {
-    pub fn to_u16(self) -> u16 {
-        match self {
-            EncodeMode::Auto => 255,
-            EncodeMode::Updates => 0,
-            EncodeMode::Snapshot => 1,
-            EncodeMode::RleUpdates => 2,
-            EncodeMode::CompressedRleUpdates => 3,
-            EncodeMode::ReorderedRle => 4,
-            EncodeMode::ReorderedSnapshot => 5,
-        }
-    }
-
-    pub fn to_bytes(self) -> [u8; 2] {
-        let value = self.to_u16();
-        value.to_be_bytes()
-    }
-
-    pub fn is_snapshot(self) -> bool {
-        matches!(self, EncodeMode::ReorderedSnapshot | EncodeMode::Snapshot)
-    }
-}
-
-impl TryFrom<[u8; 2]> for EncodeMode {
-    type Error = LoroError;
-
-    fn try_from(value: [u8; 2]) -> Result<Self, Self::Error> {
-        match value[1] {
-            0 => Ok(EncodeMode::Updates),
-            1 => Ok(EncodeMode::Snapshot),
-            2 => Ok(EncodeMode::RleUpdates),
-            3 => Ok(EncodeMode::CompressedRleUpdates),
-            4 => Ok(EncodeMode::ReorderedRle),
-            5 => Ok(EncodeMode::ReorderedSnapshot),
-            _ => Err(LoroError::IncompatibleFutureEncodingError(
-                value[0] as usize * 256 + value[1] as usize,
-            )),
-        }
-    }
-}
-
-impl TryFrom<u8> for EncodeMode {
-    type Error = LoroError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(EncodeMode::Updates),
-            1 => Ok(EncodeMode::Snapshot),
-            2 => Ok(EncodeMode::RleUpdates),
-            3 => Ok(EncodeMode::CompressedRleUpdates),
-            4 => Ok(EncodeMode::ReorderedRle),
-            _ => Err(LoroError::DecodeError("Unknown encode mode".into())),
-        }
-    }
-}
-
 pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) -> Vec<u8> {
     let mode = match mode {
-        EncodeMode::Auto => {
-            let self_vv = oplog.vv();
-            let diff = self_vv.diff(vv);
-            let update_total_len = diff
-                .left
-                .values()
-                .map(|value| value.atom_len())
-                .sum::<usize>();
-
-            // EncodeMode::RleUpdates(vv)
-            if update_total_len <= UPDATE_ENCODE_THRESHOLD {
-                EncodeMode::Updates
-            } else {
-                EncodeMode::ReorderedRle
-            }
-        }
+        EncodeMode::Auto => EncodeMode::Rle,
         mode => mode,
     };
 
     let body = match &mode {
-        EncodeMode::Updates => encode_oplog_updates(oplog, vv),
-        EncodeMode::RleUpdates => encode_oplog_v2(oplog, vv),
-        EncodeMode::CompressedRleUpdates => {
-            let bytes = encode_oplog_v2(oplog, vv);
-            miniz_oxide::deflate::compress_to_vec(&bytes, 7)
-        }
-        EncodeMode::ReorderedRle => encode_reordered::encode_updates(oplog, vv),
+        EncodeMode::Rle => encode_reordered::encode_updates(oplog, vv),
         _ => unreachable!(),
     };
 
@@ -205,14 +111,9 @@ pub(crate) fn decode_oplog(
 ) -> Result<(), LoroError> {
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     match mode {
-        EncodeMode::Updates => decode_oplog_updates(oplog, body),
-        EncodeMode::Snapshot => unimplemented!(),
-        EncodeMode::RleUpdates => decode_oplog_v2(oplog, body),
-        EncodeMode::CompressedRleUpdates => miniz_oxide::inflate::decompress_to_vec(body)
-            .map_err(|_| LoroError::DecodeError("Invalid compressed data".into()))
-            .and_then(|bytes| decode_oplog_v2(oplog, &bytes)),
-        EncodeMode::ReorderedRle => encode_reordered::decode_updates(oplog, body),
-        EncodeMode::ReorderedSnapshot => encode_reordered::decode_updates(oplog, body),
+        // EncodeMode::Updates => decode_oplog_updates(oplog, body),
+        EncodeMode::Rle => encode_reordered::decode_updates(oplog, body),
+        EncodeMode::Snapshot => encode_reordered::decode_updates(oplog, body),
         EncodeMode::Auto => unreachable!(),
     }
 }
@@ -283,11 +184,6 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
         &doc.app_state().try_lock().unwrap(),
         &Default::default(),
     );
-    encode_header_and_body(EncodeMode::ReorderedSnapshot, body)
-}
-
-pub(crate) fn export_snapshot_v0(doc: &LoroDoc) -> Vec<u8> {
-    let body = encode_app_snapshot(doc);
     encode_header_and_body(EncodeMode::Snapshot, body)
 }
 
@@ -295,11 +191,9 @@ pub(crate) fn decode_snapshot(
     doc: &LoroDoc,
     mode: EncodeMode,
     body: &[u8],
-    with_state: bool,
 ) -> Result<(), LoroError> {
     match mode {
-        EncodeMode::Snapshot => encode_snapshot::decode_app_snapshot(doc, body, with_state),
-        EncodeMode::ReorderedSnapshot => encode_reordered::decode_snapshot(doc, body),
+        EncodeMode::Snapshot => encode_reordered::decode_snapshot(doc, body),
         _ => unreachable!(),
     }
 }

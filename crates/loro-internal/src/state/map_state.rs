@@ -14,10 +14,10 @@ use crate::{
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     handler::ValueOrContainer,
-    op::{Op, OpWithId, RawOp, RawOpContent},
+    op::{Op, RawOp, RawOpContent},
     txn::Transaction,
     utils::delta_rle_encoded_num::DeltaRleEncodedNums,
-    DocState, InternalString, LoroValue, OpLog,
+    DocState, InternalString, LoroValue,
 };
 
 use super::ContainerState;
@@ -187,7 +187,7 @@ impl ContainerState for MapState {
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
-        assert_eq!(ctx.mode, EncodeMode::ReorderedSnapshot);
+        assert_eq!(ctx.mode, EncodeMode::Snapshot);
         let lamports = DeltaRleEncodedNums::decode(ctx.blob);
         let mut iter = lamports.iter();
         for op in ctx.ops {

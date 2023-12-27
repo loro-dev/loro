@@ -11,16 +11,16 @@ use loro_common::{ContainerID, LoroError, LoroResult};
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, ContainerIdRaw},
-    encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
+    encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::Index,
     event::{Diff, InternalContainerDiff, InternalDiff},
     fx_map,
     handler::ValueOrContainer,
     id::PeerID,
-    op::{Op, OpWithId, RawOp},
+    op::{Op, RawOp},
     txn::Transaction,
     version::Frontiers,
-    ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue, OpLog,
+    ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
 };
 
 mod list_state;
@@ -31,7 +31,7 @@ mod tree_state;
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
-pub(crate) use tree_state::{get_meta_value, TreeState, TreeStateNode};
+pub(crate) use tree_state::{get_meta_value, TreeState};
 
 use super::{arena::SharedArena, event::InternalDocDiff};
 
@@ -422,7 +422,11 @@ impl DocState {
         self.states.values_mut()
     }
 
-    pub fn init_container(&mut self, cid: ContainerID, decode_ctx: StateSnapshotDecodeContext) {
+    pub(crate) fn init_container(
+        &mut self,
+        cid: ContainerID,
+        decode_ctx: StateSnapshotDecodeContext,
+    ) {
         let idx = self.arena.register_container(&cid);
         let state = self.states.entry(idx).or_insert_with(|| create_state(idx));
         state.import_from_snapshot_ops(decode_ctx);

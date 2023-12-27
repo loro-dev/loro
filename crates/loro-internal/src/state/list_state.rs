@@ -289,6 +289,7 @@ impl ListState {
         self.list.iter().map(|x| &x.v)
     }
 
+    #[allow(unused)]
     pub(crate) fn iter_with_id(&self) -> impl Iterator<Item = &Elem> {
         self.list.iter()
     }
@@ -540,7 +541,7 @@ impl ContainerState for ListState {
 
     #[doc = "Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
-        assert_eq!(ctx.mode, EncodeMode::ReorderedSnapshot);
+        assert_eq!(ctx.mode, EncodeMode::Snapshot);
         let mut index = 0;
         for op in ctx.ops {
             let value = op.op.content.as_list().unwrap().as_insert().unwrap().0;

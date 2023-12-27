@@ -402,7 +402,6 @@ fn test_from_snapshot() {
     assert_eq!(a.get_deep_value(), c.get_deep_value());
     assert_eq!(a.oplog_frontiers(), c.oplog_frontiers());
     assert_eq!(a.state_frontiers(), c.state_frontiers());
-    a.export_from_v0(&Default::default());
     let updates = a.export_from(&Default::default());
     let d = match LoroDoc::from_snapshot(&updates) {
         Ok(_) => panic!(),

@@ -34,7 +34,11 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
-    let (containers, _, container_idx2index) = extract_containers_in_order(
+    let ExtractedContainer {
+        containers,
+        cid_idx_pairs: _,
+        idx_to_index: container_idx2index,
+    } = extract_containers_in_order(
         &mut diff_changes
             .iter()
             .flat_map(|x| x.ops.iter())
@@ -296,7 +300,11 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
-    let (containers, c_pairs, container_idx2index) = extract_containers_in_order(
+    let ExtractedContainer {
+        containers,
+        cid_idx_pairs: c_pairs,
+        idx_to_index: container_idx2index,
+    } = extract_containers_in_order(
         &mut state.iter().map(|x| x.container_idx()).chain(
             diff_changes
                 .iter()
@@ -360,7 +368,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
                 op_len += id_span.atom_len();
                 map_op_to_pos.insert(id_span);
             },
-            mode: super::EncodeMode::ReorderedSnapshot,
+            mode: super::EncodeMode::Snapshot,
         });
 
         states.push(EncodedStateInfo {
@@ -547,7 +555,7 @@ fn decode_snapshot_states(
                 oplog,
                 ops: &mut next_ops,
                 blob: state_bytes,
-                mode: crate::encoding::EncodeMode::ReorderedSnapshot,
+                mode: crate::encoding::EncodeMode::Snapshot,
             },
         );
     }
@@ -1019,6 +1027,12 @@ fn decode_op(
 
 type PeerIdx = usize;
 
+struct ExtractedContainer {
+    containers: Vec<ContainerID>,
+    cid_idx_pairs: Vec<(ContainerID, ContainerIdx)>,
+    idx_to_index: FxHashMap<ContainerIdx, usize>,
+}
+
 /// Extract containers from oplog changes.
 ///
 /// Containers are sorted by their peer_id and counter so that
@@ -1026,11 +1040,7 @@ type PeerIdx = usize;
 fn extract_containers_in_order(
     c_iter: &mut dyn Iterator<Item = ContainerIdx>,
     arena: &SharedArena,
-) -> (
-    Vec<ContainerID>,
-    Vec<(ContainerID, ContainerIdx)>,
-    FxHashMap<ContainerIdx, usize>,
-) {
+) -> ExtractedContainer {
     let mut containers = Vec::new();
     let mut visited = FxHashSet::default();
     for c in c_iter {
@@ -1071,11 +1081,11 @@ fn extract_containers_in_order(
         .map(|(i, (_, c))| (*c, i))
         .collect();
 
-    (
-        containers.iter().map(|x| x.0.clone()).collect(),
-        containers,
-        container_idx2index,
-    )
+    ExtractedContainer {
+        containers: containers.iter().map(|x| x.0.clone()).collect(),
+        cid_idx_pairs: containers,
+        idx_to_index: container_idx2index,
+    }
 }
 
 #[columnar(ser, de)]

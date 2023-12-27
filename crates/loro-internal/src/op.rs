@@ -39,6 +39,7 @@ impl OpWithId {
         }
     }
 
+    #[allow(unused)]
     pub fn id_span(&self) -> IdSpan {
         IdSpan::new(
             self.peer,
@@ -87,6 +88,7 @@ pub struct OwnedRichOp {
 
 impl Op {
     #[inline]
+    #[allow(unused)]
     pub(crate) fn new(id: ID, content: InnerContent, container: ContainerIdx) -> Self {
         Op {
             counter: id.counter,
@@ -289,6 +291,7 @@ impl<'a> RichOp<'a> {
         self.end
     }
 
+    #[allow(unused)]
     pub(crate) fn id(&self) -> ID {
         ID {
             peer: self.peer,

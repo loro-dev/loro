@@ -13,8 +13,8 @@ use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::TreeDeletedSetTrait;
 use crate::encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder};
 use crate::event::InternalDiff;
-use crate::op::OpWithId;
 use crate::txn::Transaction;
+use crate::DocState;
 use crate::{
     arena::SharedArena,
     container::tree::tree_op::TreeOp,
@@ -22,7 +22,6 @@ use crate::{
     event::{Diff, Index},
     op::RawOp,
 };
-use crate::{DocState, OpLog};
 
 use super::ContainerState;
 
@@ -181,10 +180,6 @@ impl TreeState {
                 None => return false,
             }
         }
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&TreeID, &TreeStateNode)> + '_ {
-        self.trees.iter()
     }
 
     pub fn contains(&self, target: TreeID) -> bool {
@@ -439,7 +434,7 @@ impl ContainerState for TreeState {
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
-        assert_eq!(ctx.mode, EncodeMode::ReorderedSnapshot);
+        assert_eq!(ctx.mode, EncodeMode::Snapshot);
         for op in ctx.ops {
             assert_eq!(op.op.atom_len(), 1);
             let content = op.op.content.as_tree().unwrap();

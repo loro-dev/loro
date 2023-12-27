@@ -17,8 +17,7 @@ use crate::{
     change::Timestamp,
     container::{idx::ContainerIdx, IntoContainerId},
     encoding::{
-        decode_snapshot, encode_oplog, export_snapshot, export_snapshot_v0, parse_header_and_body,
-        EncodeMode, ParsedHeaderAndBody,
+        decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
     handler::TextHandler,
     handler::TreeHandler,
@@ -103,7 +102,7 @@ impl LoroDoc {
         let doc = Self::new();
         let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes)?;
         if mode.is_snapshot() {
-            decode_snapshot(&doc, mode, body, true)?;
+            decode_snapshot(&doc, mode, body)?;
             Ok(doc)
         } else {
             Err(LoroError::DecodeError(
@@ -365,16 +364,6 @@ impl LoroDoc {
     }
 
     #[inline(always)]
-    pub fn export_from_v0(&self, vv: &VersionVector) -> Vec<u8> {
-        self.commit_then_stop();
-        let oplog = self.oplog.lock().unwrap();
-        let ans = encode_oplog(&oplog, vv, EncodeMode::RleUpdates);
-        drop(oplog);
-        self.renew_txn_if_auto_commit();
-        ans
-    }
-
-    #[inline(always)]
     pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
         self.import_with(bytes, Default::default())
     }
@@ -411,14 +400,14 @@ impl LoroDoc {
                 debug_log::group!("Import snapshot to {}", self.peer_id());
                 if self.can_reset_with_snapshot() {
                     debug_log::debug_log!("Init by snapshot");
-                    decode_snapshot(self, parsed.mode, parsed.body, !self.detached.load(Acquire))?;
-                } else if parsed.mode == EncodeMode::ReorderedSnapshot {
+                    decode_snapshot(self, parsed.mode, parsed.body)?;
+                } else if parsed.mode == EncodeMode::Snapshot {
                     debug_log::debug_log!("Import by updates");
                     self._import_by_delta_updates(parsed, origin)?;
                 } else {
                     debug_log::debug_log!("Import from new doc");
                     let app = LoroDoc::new();
-                    decode_snapshot(&app, parsed.mode, parsed.body, false)?;
+                    decode_snapshot(&app, parsed.mode, parsed.body)?;
                     let oplog = self.oplog.lock().unwrap();
                     // TODO: PERF: the ser and de can be optimized out
                     let updates = app.export_from(oplog.vv());
@@ -475,13 +464,6 @@ impl LoroDoc {
     pub fn export_snapshot(&self) -> Vec<u8> {
         self.commit_then_stop();
         let ans = export_snapshot(self);
-        self.renew_txn_if_auto_commit();
-        ans
-    }
-
-    pub fn export_snapshot_v0(&self) -> Vec<u8> {
-        self.commit_then_stop();
-        let ans = export_snapshot_v0(self);
         self.renew_txn_if_auto_commit();
         ans
     }

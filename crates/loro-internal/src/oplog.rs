@@ -18,8 +18,8 @@ use crate::container::list::list_op;
 use crate::dag::DagUtils;
 use crate::diff_calc::tree::MoveLamportAndID;
 use crate::diff_calc::TreeDiffCache;
+use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
-use crate::encoding::{ParsedHeaderAndBody, RemoteClientChanges};
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{ListSlice, RawOpContent, RemoteOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
@@ -456,41 +456,6 @@ impl OpLog {
         self.dag.cmp_frontiers(other)
     }
 
-    pub(crate) fn export_changes_from(&self, from: &VersionVector) -> RemoteClientChanges {
-        let mut changes = RemoteClientChanges::default();
-        for (&peer, &cnt) in self.vv().iter() {
-            let start_cnt = from.get(&peer).copied().unwrap_or(0);
-            if cnt <= start_cnt {
-                continue;
-            }
-
-            let mut temp = Vec::new();
-            if let Some(peer_changes) = self.changes.get(&peer) {
-                if let Some(result) = peer_changes.get_by_atom_index(start_cnt) {
-                    for change in &peer_changes[result.merged_index..] {
-                        if change.id.counter < start_cnt {
-                            if change.id.counter + change.atom_len() as Counter <= start_cnt {
-                                continue;
-                            }
-
-                            let sliced = change
-                                .slice((start_cnt - change.id.counter) as usize, change.atom_len());
-                            temp.push(self.convert_change_to_remote(&sliced));
-                        } else {
-                            temp.push(self.convert_change_to_remote(change));
-                        }
-                    }
-                }
-            }
-
-            if !temp.is_empty() {
-                changes.insert(peer, temp);
-            }
-        }
-
-        changes
-    }
-
     pub(crate) fn get_min_lamport_at(&self, id: ID) -> Lamport {
         self.get_change_at(id).map(|c| c.lamport).unwrap_or(0)
     }
@@ -629,48 +594,12 @@ impl OpLog {
         ans
     }
 
-    // Changes are expected to be sorted by counter in each value in the hashmap
-    // They should also be continuous  (TODO: check this)
-    pub(crate) fn import_remote_changes(
-        &mut self,
-        remote_changes: RemoteClientChanges,
-    ) -> Result<(), LoroError> {
-        // check whether we can append the new changes
-        self.check_changes(&remote_changes)?;
-        let latest_vv = self.dag.vv.clone();
-        // op_converter is faster than using arena directly
-        let ids = self.arena.clone().with_op_converter(|converter| {
-            self.apply_appliable_changes_and_cache_pending(remote_changes, converter, latest_vv)
-        });
-        let mut latest_vv = self.dag.vv.clone();
-        self.try_apply_pending(ids, &mut latest_vv);
-        if !self.batch_importing {
-            self.dag.refresh_frontiers();
-        }
-        Ok(())
-    }
-
     pub(crate) fn import_unknown_lamport_pending_changes(
         &mut self,
         remote_changes: Vec<Change>,
     ) -> Result<(), LoroError> {
         let latest_vv = self.dag.vv.clone();
         self.extend_pending_changes_with_unknown_lamport(remote_changes, &latest_vv);
-        Ok(())
-    }
-
-    pub(crate) fn import_unknown_lamport_pending_remote_changes(
-        &mut self,
-        remote_changes: Vec<Change<RemoteOp>>,
-    ) -> Result<(), LoroError> {
-        let latest_vv = self.dag.vv.clone();
-        self.arena.clone().with_op_converter(|converter| {
-            self.extend_pending_remote_changes_with_unknown_lamport(
-                remote_changes,
-                converter,
-                &latest_vv,
-            )
-        });
         Ok(())
     }
 
@@ -867,52 +796,7 @@ impl OpLog {
         })
     }
 
-    pub(crate) fn iter_causally(
-        &self,
-        from: VersionVector,
-        to: VersionVector,
-    ) -> impl Iterator<Item = (&Change, Rc<RefCell<VersionVector>>)> {
-        let from_frontiers = from.to_frontiers(&self.dag);
-        let diff = from.diff(&to).right;
-        let mut iter = self.dag.iter_causal(&from_frontiers, diff);
-        let mut node = iter.next();
-        let mut cur_cnt = 0;
-        let vv = Rc::new(RefCell::new(VersionVector::default()));
-        std::iter::from_fn(move || {
-            if let Some(inner) = &node {
-                let mut inner_vv = vv.borrow_mut();
-                inner_vv.clear();
-                inner_vv.extend_to_include_vv(inner.data.vv.iter());
-                let peer = inner.data.peer;
-                let cnt = inner
-                    .data
-                    .cnt
-                    .max(cur_cnt)
-                    .max(from.get(&peer).copied().unwrap_or(0));
-                let end = (inner.data.cnt + inner.data.len as Counter)
-                    .min(to.get(&peer).copied().unwrap_or(0));
-                let change = self
-                    .changes
-                    .get(&peer)
-                    .and_then(|x| x.get_by_atom_index(cnt).map(|x| x.element))
-                    .unwrap();
-
-                if change.ctr_end() < end {
-                    cur_cnt = change.ctr_end();
-                } else {
-                    node = iter.next();
-                    cur_cnt = 0;
-                }
-
-                inner_vv.extend_to_include_end_id(change.id);
-                Some((change, vv.clone()))
-            } else {
-                None
-            }
-        })
-    }
-
-    pub(crate) fn len_changes(&self) -> usize {
+    pub fn len_changes(&self) -> usize {
         self.changes.values().map(|x| x.len()).sum()
     }
 
