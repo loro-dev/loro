@@ -101,6 +101,18 @@ impl Tracker {
 
         // debug_log::group!("before insert {} pos={}", op_id, pos);
         // debug_log::debug_dbg!(&self);
+        println!(
+            "\nspan {:?}\n",
+            FugueSpan {
+                content,
+                id: op_id,
+                status: Status::default(),
+                diff_status: None,
+                origin_left: None,
+                origin_right: None,
+            }
+        );
+        println!("\nbefore {:?}", self.rope.tree());
         let result = self.rope.insert(
             pos,
             FugueSpan {
@@ -113,6 +125,7 @@ impl Tracker {
             },
             |id| self.id_to_cursor.get_insert(id).unwrap(),
         );
+        println!("after {:?}\n", self.rope.tree());
         self.id_to_cursor.push(
             op_id,
             id_to_cursor::Cursor::new_insert(result.leaf, content.len()),
@@ -204,12 +217,18 @@ impl Tracker {
         // debug_log::debug_log!("Checkout to {:?} from {:?}", vv, self.current_vv);
         if on_diff_status {
             self.rope.clear_diff_status();
+            println!("tree {:?}", self.rope.tree());
         }
 
         let current_vv = std::mem::take(&mut self.current_vv);
+
+        if on_diff_status {
+            let (retreat, forward) = current_vv.diff_iter(vv);
+            println!("retreat {:?}", retreat.collect::<Vec<_>>());
+            println!("forward {:?}", forward.collect::<Vec<_>>());
+        }
         let (retreat, forward) = current_vv.diff_iter(vv);
         let mut updates = Vec::new();
-
         for span in retreat {
             for c in self.id_to_cursor.iter(span) {
                 match c {
