@@ -39,18 +39,22 @@ fn main() {
 
     let snapshot = loro.export_snapshot();
     let output = miniz_oxide::deflate::compress_to_vec(&snapshot, 6);
+    let zstd_output = loro.export_snapshot_compressed();
     println!(
-        "snapshot size {} after compression {}",
+        "snapshot size {} after compression {}, {}",
         snapshot.len(),
-        output.len()
+        output.len(),
+        zstd_output.len()
     );
 
     let updates = loro.export_from(&Default::default());
     let output = miniz_oxide::deflate::compress_to_vec(&updates, 6);
+    let zstd_output = loro.export_from_compressed(&Default::default());
     println!(
-        "updates size {} after compression {}",
+        "updates size {} after compression {}, {}",
         updates.len(),
-        output.len()
+        output.len(),
+        zstd_output.len()
     );
 
     // {

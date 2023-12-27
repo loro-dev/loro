@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.2-alpha.2
+
+### Patch Changes
+
+- Add compressed method
+
 ## 0.7.2-alpha.1
 
 ### Patch Changes

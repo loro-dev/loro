@@ -1,12 +1,11 @@
 mod encode_enhanced;
 mod encode_reordered;
 mod encode_snapshot;
-mod encode_snapshot_reordered;
 mod encode_updates;
 
 use self::encode_updates::decode_oplog_updates;
 use crate::encoding::encode_snapshot::encode_app_snapshot;
-use crate::op::{Op, OpWithId};
+use crate::op::OpWithId;
 use crate::LoroDoc;
 use crate::{change::Change, op::RemoteOp};
 use crate::{oplog::OpLog, LoroError, VersionVector};
@@ -37,6 +36,8 @@ pub(crate) enum EncodeMode {
     CompressedRleUpdates = 3,
     ReorderedRle = 4,
     ReorderedSnapshot = 5,
+    CompressedReorderedRle = 6,
+    CompressedReorderedSnapshot = 7,
 }
 
 /// The encoder used to encode the container states.
@@ -119,6 +120,8 @@ impl EncodeMode {
             EncodeMode::CompressedRleUpdates => 3,
             EncodeMode::ReorderedRle => 4,
             EncodeMode::ReorderedSnapshot => 5,
+            EncodeMode::CompressedReorderedRle => 6,
+            EncodeMode::CompressedReorderedSnapshot => 7,
         }
     }
 
@@ -128,7 +131,12 @@ impl EncodeMode {
     }
 
     pub fn is_snapshot(self) -> bool {
-        matches!(self, EncodeMode::ReorderedSnapshot | EncodeMode::Snapshot)
+        matches!(
+            self,
+            EncodeMode::CompressedReorderedSnapshot
+                | EncodeMode::ReorderedSnapshot
+                | EncodeMode::Snapshot
+        )
     }
 }
 
@@ -194,6 +202,10 @@ pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) 
             miniz_oxide::deflate::compress_to_vec(&bytes, 7)
         }
         EncodeMode::ReorderedRle => encode_reordered::encode_updates(oplog, vv),
+        EncodeMode::CompressedReorderedRle => {
+            let bytes = encode_reordered::encode_updates(oplog, vv);
+            zstd::bulk::compress(&bytes, 10).unwrap()
+        }
         _ => unreachable!(),
     };
 
@@ -214,6 +226,12 @@ pub(crate) fn decode_oplog(
             .and_then(|bytes| decode_oplog_v2(oplog, &bytes)),
         EncodeMode::ReorderedRle => encode_reordered::decode_updates(oplog, body),
         EncodeMode::ReorderedSnapshot => encode_reordered::decode_updates(oplog, body),
+        EncodeMode::CompressedReorderedRle => zstd::bulk::decompress(body, 1_000_000_000)
+            .map_err(|_| LoroError::DecodeError("Invalid compressed data".into()))
+            .and_then(|bytes| encode_reordered::decode_updates(oplog, &bytes)),
+        EncodeMode::CompressedReorderedSnapshot => zstd::bulk::decompress(body, 1_000_000_000)
+            .map_err(|_| LoroError::DecodeError("Invalid compressed data".into()))
+            .and_then(|bytes| encode_reordered::decode_updates(oplog, &bytes)),
         EncodeMode::Auto => unreachable!(),
     }
 }
@@ -276,6 +294,17 @@ fn encode_header_and_body(mode: EncodeMode, body: Vec<u8>) -> Vec<u8> {
     let checksum = md5::compute(checksum_body).0;
     ans[4..20].copy_from_slice(&checksum);
     ans
+}
+
+pub(crate) fn export_snapshot_compressed(doc: &LoroDoc) -> Vec<u8> {
+    let body = encode_reordered::encode_snapshot(
+        &doc.oplog().try_lock().unwrap(),
+        &doc.app_state().try_lock().unwrap(),
+        &Default::default(),
+    );
+
+    let body = zstd::bulk::compress(&body, 10).unwrap();
+    encode_header_and_body(EncodeMode::CompressedReorderedSnapshot, body)
 }
 
 pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
