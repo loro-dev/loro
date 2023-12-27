@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.2-alpha.4
+
+### Patch Changes
+
+- Fix encoding value err
+- Updated dependencies
+  - loro-wasm@0.7.2
+
 ## 0.7.2-alpha.3
 
 ### Patch Changes

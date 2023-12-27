@@ -1335,7 +1335,6 @@ mod value {
                     for (key, value) in value.iter() {
                         let key_idx = register_key.register(&key.as_str().into());
                         self.write_usize(key_idx);
-                        self.write_kind(get_loro_value_kind(value));
                         self.write_value_type_and_content(value, register_key, register_cid);
                     }
                     ValueKind::Map
@@ -1937,5 +1936,54 @@ mod arena {
         let reader = &mut buffer;
         let len = leb128::read::unsigned(reader).unwrap();
         (reader[..len as usize].as_ref(), &reader[len as usize..])
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use loro_common::LoroValue;
+
+    use crate::fx_map;
+
+    use super::*;
+
+    fn test_loro_value_read_write(v: impl Into<LoroValue>) {
+        let v = v.into();
+        let mut key_reg: ValueRegister<InternalString> = ValueRegister::new();
+        let mut cid_reg: ValueRegister<ContainerID> = ValueRegister::new();
+        let mut writer = ValueWriter::new();
+        let kind = writer.write_value_content(&v, &mut key_reg, &mut cid_reg);
+
+        let binding = writer.finish();
+        let mut reader = ValueReader::new(binding.as_slice());
+        let keys = &key_reg.unwrap_vec();
+        let cids = &cid_reg.unwrap_vec();
+        let ans = reader.read_value_content(kind, keys, cids);
+        assert_eq!(v, ans)
+    }
+
+    #[test]
+    fn test_value_read_write() {
+        test_loro_value_read_write(true);
+        test_loro_value_read_write(false);
+        test_loro_value_read_write(123);
+        test_loro_value_read_write(1.23);
+        test_loro_value_read_write(LoroValue::Null);
+        test_loro_value_read_write(LoroValue::Binary(Arc::new(vec![123, 223, 255, 0, 1, 2, 3])));
+        test_loro_value_read_write("sldk;ajfas;dlkfas测试");
+        test_loro_value_read_write(LoroValue::Container(ContainerID::new_root(
+            "name",
+            ContainerType::Text,
+        )));
+        test_loro_value_read_write(LoroValue::Container(ContainerID::new_normal(
+            ID::new(u64::MAX, 123),
+            ContainerType::Tree,
+        )));
+        test_loro_value_read_write(vec![1.into(), 2.into(), 3.into()]);
+        test_loro_value_read_write(LoroValue::Map(Arc::new(fx_map![
+            "1".into() => 123.into(),
+            "2".into() => "123".into(),
+            "3".into() => vec![true.into()].into()
+        ])));
     }
 }
