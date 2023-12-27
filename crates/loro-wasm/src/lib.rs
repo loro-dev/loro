@@ -586,7 +586,7 @@ impl Loro {
     /// operations and states
     #[wasm_bindgen(js_name = "exportSnapshotCompressed")]
     pub fn export_snapshot_compressed(&self) -> JsResult<Vec<u8>> {
-        Ok(self.0.export_snapshot_v0())
+        Ok(self.0.export_snapshot_compressed())
     }
 
     /// Export updates from the specific version to the current version

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.2-alpha.3
+
+### Patch Changes
+
+- Fix export compressed snapshot
+
 ## 0.7.2-alpha.2
 
 ### Patch Changes
