@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use benches::draw::{run_async_draw_workflow, run_realtime_collab_draw_workflow};
 use loro::LoroDoc;
-use tabled::{Table, Tabled};
+use tabled::{settings::Style, Table, Tabled};
 
 #[derive(Tabled)]
 struct BenchResult {
@@ -41,7 +41,10 @@ pub fn main() {
         run_realtime_collab(10, 100000, seed),
         run_realtime_collab(10, 100000, 1000),
     ];
-    println!("{}", Table::new(ans));
+    let mut table = Table::new(ans);
+    let style = Style::markdown();
+    table.with(style);
+    println!("{}", table);
 }
 
 fn run_async(peer_num: usize, action_num: usize, seed: u64) -> BenchResult {
