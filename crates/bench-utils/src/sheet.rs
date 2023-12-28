@@ -1,6 +1,8 @@
 use arbitrary::Arbitrary;
 
-#[derive(Debug, Arbitrary, PartialEq, Eq)]
+use crate::ActionTrait;
+
+#[derive(Debug, Clone, Arbitrary, PartialEq, Eq)]
 pub enum SheetAction {
     SetValue {
         row: usize,
@@ -15,12 +17,10 @@ pub enum SheetAction {
     },
 }
 
-impl SheetAction {
-    pub const MAX_ROW: usize = 1_048_576;
-    pub const MAX_COL: usize = 16_384;
+impl ActionTrait for SheetAction {
     /// Excel has a limit of 1,048,576 rows and 16,384 columns per sheet.
-    // We need to normalize the action to fit the limit.
-    pub fn normalize(&mut self) {
+    /// We need to normalize the action to fit the limit.
+    fn normalize(&mut self) {
         match self {
             SheetAction::SetValue { row, col, .. } => {
                 *row %= Self::MAX_ROW;
@@ -34,4 +34,9 @@ impl SheetAction {
             }
         }
     }
+}
+
+impl SheetAction {
+    pub const MAX_ROW: usize = 1_048_576;
+    pub const MAX_COL: usize = 16_384;
 }

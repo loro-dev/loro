@@ -18,6 +18,10 @@ pub struct TextAction {
     pub del: usize,
 }
 
+pub trait ActionTrait: Clone {
+    fn normalize(&mut self);
+}
+
 pub fn get_automerge_actions() -> Vec<TextAction> {
     const RAW_DATA: &[u8; 901823] =
         include_bytes!("../../loro-internal/benches/automerge-paper.json.gz");
@@ -72,7 +76,7 @@ impl<T: Clone> Clone for Action<T> {
     }
 }
 
-pub fn gen_realtime_actions<'a, T: Arbitrary<'a>>(
+pub fn gen_realtime_actions<'a, T: Arbitrary<'a> + ActionTrait>(
     action_num: usize,
     peer_num: usize,
     seed: &'a [u8],
@@ -96,7 +100,8 @@ pub fn gen_realtime_actions<'a, T: Arbitrary<'a>>(
             }
         };
         match &mut action {
-            Action::Action { peer, .. } => {
+            Action::Action { peer, action } => {
+                action.normalize();
                 *peer %= peer_num;
             }
             Action::SyncAll => {
@@ -119,7 +124,7 @@ pub fn gen_realtime_actions<'a, T: Arbitrary<'a>>(
     Ok(ans)
 }
 
-pub fn gen_async_actions<'a, T: Arbitrary<'a>>(
+pub fn gen_async_actions<'a, T: Arbitrary<'a> + ActionTrait>(
     action_num: usize,
     peer_num: usize,
     seed: &'a [u8],
@@ -144,7 +149,8 @@ pub fn gen_async_actions<'a, T: Arbitrary<'a>>(
             .arbitrary()
             .map_err(|e| e.to_string().into_boxed_str())?;
         match &mut action {
-            Action::Action { peer, .. } => {
+            Action::Action { peer, action } => {
+                action.normalize();
                 *peer %= peer_num;
             }
             Action::SyncAll => {

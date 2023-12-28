@@ -122,8 +122,12 @@ impl DrawActor {
                 let pos_map = map.get("pos").unwrap().unwrap_right().into_map().unwrap();
                 let x = pos_map.get("x").unwrap().unwrap_left().into_i32().unwrap();
                 let y = pos_map.get("y").unwrap().unwrap_left().into_i32().unwrap();
-                pos_map.insert("x", x + relative_to.x).unwrap();
-                pos_map.insert("y", y + relative_to.y).unwrap();
+                pos_map
+                    .insert("x", x.overflowing_add(relative_to.x).0)
+                    .unwrap();
+                pos_map
+                    .insert("y", y.overflowing_add(relative_to.y).0)
+                    .unwrap();
             }
         }
     }
