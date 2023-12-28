@@ -400,8 +400,9 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         a.container_index.cmp(&b.container_index).then_with(|| {
             match (map_op_to_pos.get(a.id()), map_op_to_pos.get(b.id())) {
                 (None, None) => a
-                    .peer_idx
-                    .cmp(&b.peer_idx)
+                    .prop_that_used_for_sort
+                    .cmp(&b.prop_that_used_for_sort)
+                    .then_with(|| a.peer_idx.cmp(&b.peer_idx))
                     .then_with(|| a.lamport.cmp(&b.lamport)),
                 (None, Some(_)) => Ordering::Greater,
                 (Some(_), None) => Ordering::Less,
