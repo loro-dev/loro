@@ -106,6 +106,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "benches"
+version = "0.1.0"
+dependencies = [
+ "bench-utils",
+ "loro",
+ "tabled 0.15.0",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -798,7 +807,7 @@ dependencies = [
  "smallvec",
  "static_assertions",
  "string_cache",
- "tabled",
+ "tabled 0.10.0",
  "thiserror",
  "wasm-bindgen",
 ]
@@ -1029,6 +1038,17 @@ name = "papergrid"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1526bb6aa9f10ec339fb10360f22c57edf81d5678d0278e93bc12a47ffbe4b01"
+dependencies = [
+ "bytecount",
+ "fnv",
+ "unicode-width",
+]
+
+[[package]]
+name = "papergrid"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ad43c07024ef767f9160710b3a6773976194758c7919b17e63b863db0bdf7fb"
 dependencies = [
  "bytecount",
  "fnv",
@@ -1645,8 +1665,19 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56c3ee73732ffceaea7b8f6b719ce3bb17f253fa27461ffeaf568ebd0cdb4b85"
 dependencies = [
- "papergrid",
- "tabled_derive",
+ "papergrid 0.7.1",
+ "tabled_derive 0.5.0",
+ "unicode-width",
+]
+
+[[package]]
+name = "tabled"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c998b0c8b921495196a48aabaf1901ff28be0760136e31604f7967b0792050e"
+dependencies = [
+ "papergrid 0.11.0",
+ "tabled_derive 0.7.0",
  "unicode-width",
 ]
 
@@ -1655,6 +1686,19 @@ name = "tabled_derive"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "beca1b4eaceb4f2755df858b88d9b9315b7ccfd1ffd0d7a48a52602301f01a57"
+dependencies = [
+ "heck",
+ "proc-macro-error",
+ "proc-macro2 1.0.67",
+ "quote 1.0.29",
+ "syn 1.0.107",
+]
+
+[[package]]
+name = "tabled_derive"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c138f99377e5d653a371cdad263615634cfc8467685dfe8e73e2b8e98f44b17"
 dependencies = [
  "heck",
  "proc-macro-error",
