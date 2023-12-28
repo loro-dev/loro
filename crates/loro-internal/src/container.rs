@@ -109,10 +109,23 @@ impl IntoContainerId for ContainerID {
     }
 }
 
+impl IntoContainerId for &ContainerID {
+    fn into_container_id(self, _arena: &SharedArena, _kind: ContainerType) -> ContainerID {
+        self.clone()
+    }
+}
+
 impl IntoContainerId for ContainerIdx {
     fn into_container_id(self, arena: &SharedArena, kind: ContainerType) -> ContainerID {
         assert_eq!(self.get_type(), kind);
         arena.get_container_id(self).unwrap()
+    }
+}
+
+impl IntoContainerId for &ContainerIdx {
+    fn into_container_id(self, arena: &SharedArena, kind: ContainerType) -> ContainerID {
+        assert_eq!(self.get_type(), kind);
+        arena.get_container_id(*self).unwrap()
     }
 }
 
