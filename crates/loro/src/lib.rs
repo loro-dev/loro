@@ -186,6 +186,16 @@ impl LoroDoc {
         self.doc.state_vv()
     }
 
+    /// Get the total number of operations in the `OpLog`
+    pub fn len_ops(&self) -> usize {
+        self.doc.len_ops()
+    }
+
+    /// Get the total number of changes in the `OpLog`
+    pub fn len_changes(&self) -> usize {
+        self.doc.len_changes()
+    }
+
     pub fn get_deep_value(&self) -> LoroValue {
         self.doc.get_deep_value()
     }
@@ -322,6 +332,12 @@ impl LoroList {
     #[inline]
     pub fn push(&self, v: LoroValue) -> LoroResult<()> {
         self.handler.push(v)
+    }
+
+    #[inline]
+    pub fn push_container(&self, c_type: ContainerType) -> LoroResult<Container> {
+        let pos = self.handler.len();
+        Ok(Container::from(self.handler.insert_container(pos, c_type)?))
     }
 
     pub fn for_each<I>(&self, f: I)

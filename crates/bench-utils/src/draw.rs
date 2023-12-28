@@ -1,33 +1,27 @@
-use arbitrary::{Arbitrary, Unstructured};
+use arbitrary::Arbitrary;
 
-#[derive(Arbitrary)]
+#[derive(Debug, Arbitrary, PartialEq, Eq)]
 pub struct Point {
     pub x: i32,
     pub y: i32,
 }
 
-#[derive(Arbitrary)]
+#[derive(Debug, Arbitrary, PartialEq, Eq)]
 pub enum DrawAction {
-    DrawPath {
+    CreatePath {
         points: Vec<Point>,
-        color: i32,
     },
     Text {
-        id: i32,
         text: String,
         pos: Point,
-        width: i32,
-        height: i32,
+        size: Point,
     },
-}
-
-pub fn gen_draw_actions(seed: u64, num: usize) -> Vec<DrawAction> {
-    let be_bytes = seed.to_be_bytes();
-    let mut gen = Unstructured::new(&be_bytes);
-    let mut ans = vec![];
-    for _ in 0..num {
-        ans.push(gen.arbitrary().unwrap());
-    }
-
-    ans
+    CreateRect {
+        pos: Point,
+        size: Point,
+    },
+    Move {
+        id: u32,
+        relative_to: Point,
+    },
 }

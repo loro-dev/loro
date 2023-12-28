@@ -669,6 +669,16 @@ impl LoroDoc {
     pub(crate) fn weak_state(&self) -> Weak<Mutex<DocState>> {
         Arc::downgrade(&self.state)
     }
+
+    pub fn len_ops(&self) -> usize {
+        let oplog = self.oplog.lock().unwrap();
+        oplog.vv().iter().map(|(_, ops)| *ops).sum::<i32>() as usize
+    }
+
+    pub fn len_changes(&self) -> usize {
+        let oplog = self.oplog.lock().unwrap();
+        oplog.len_changes()
+    }
 }
 
 fn parse_encode_header(bytes: &[u8]) -> Result<(&[u8], EncodeMode), LoroError> {

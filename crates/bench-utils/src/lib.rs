@@ -1,7 +1,7 @@
 pub mod draw;
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use enum_as_inner::EnumAsInner;
-use rand::{rngs::StdRng, RngCore, SeedableRng};
+use rand::{RngCore, SeedableRng};
 use std::io::Read;
 
 use flate2::read::GzDecoder;
@@ -45,19 +45,20 @@ pub fn get_automerge_actions() -> Vec<TextAction> {
     actions
 }
 
-#[derive(EnumAsInner, Arbitrary)]
-pub enum Action {
-    Text { client: usize, action: TextAction },
+#[derive(Debug, EnumAsInner, Arbitrary, PartialEq, Eq)]
+pub enum Action<T> {
+    Action { peer: usize, action: T },
+    Sync { from: usize, to: usize },
     SyncAll,
 }
 
-pub fn gen_realtime_actions(action_num: usize, client_num: usize, seed: u64) -> Vec<Action> {
-    let mut gen = StdRng::seed_from_u64(seed);
-    let size = Action::size_hint(1);
-    let size = size.1.unwrap_or(size.0);
-    let mut dest = vec![0; action_num * size];
-    gen.fill_bytes(&mut dest);
-    let mut arb = arbitrary::Unstructured::new(&dest);
+pub fn gen_realtime_actions<'a, T: Arbitrary<'a>>(
+    action_num: usize,
+    peer_num: usize,
+    seed: &'a [u8],
+    mut preprocess: impl FnMut(&mut Action<T>),
+) -> Result<Vec<Action<T>>, Box<str>> {
+    let mut arb = Unstructured::new(seed);
     let mut ans = Vec::new();
     let mut last_sync_all = 0;
     for i in 0..action_num {
@@ -65,25 +66,82 @@ pub fn gen_realtime_actions(action_num: usize, client_num: usize, seed: u64) -> 
             break;
         }
 
-        let mut action = arb.arbitrary().unwrap();
+        let mut action: Action<T> = arb
+            .arbitrary()
+            .map_err(|e| e.to_string().into_boxed_str())?;
         match &mut action {
-            Action::Text { client, action } => {
-                *client %= client_num;
-                if !action.ins.is_empty() {
-                    action.ins = (action.ins.as_bytes()[0]).to_string();
-                }
+            Action::Action { peer, .. } => {
+                *peer %= peer_num;
             }
             Action::SyncAll => {
                 last_sync_all = i;
             }
+            Action::Sync { from, to } => {
+                *from %= peer_num;
+                *to %= peer_num;
+            }
         }
 
+        preprocess(&mut action);
         ans.push(action);
-        if i - last_sync_all > 100 {
+        if i - last_sync_all > 10 {
             ans.push(Action::SyncAll);
             last_sync_all = i;
         }
     }
 
+    Ok(ans)
+}
+
+pub fn gen_async_actions<'a, T: Arbitrary<'a>>(
+    action_num: usize,
+    peer_num: usize,
+    seed: &'a [u8],
+    actions_before_sync: usize,
+    mut preprocess: impl FnMut(&mut Action<T>),
+) -> Result<Vec<Action<T>>, Box<str>> {
+    let mut arb = Unstructured::new(seed);
+    let mut ans = Vec::new();
+    let mut last_sync_all = 0;
+    while ans.len() < action_num {
+        if ans.len() >= action_num {
+            break;
+        }
+
+        if arb.is_empty() {
+            return Err("not enough actions".into());
+        }
+
+        let mut action: Action<T> = arb
+            .arbitrary()
+            .map_err(|e| e.to_string().into_boxed_str())?;
+        match &mut action {
+            Action::Action { peer, .. } => {
+                *peer %= peer_num;
+            }
+            Action::SyncAll => {
+                if ans.len() - last_sync_all < actions_before_sync {
+                    continue;
+                }
+
+                last_sync_all = ans.len();
+            }
+            Action::Sync { from, to } => {
+                *from %= peer_num;
+                *to %= peer_num;
+            }
+        }
+
+        preprocess(&mut action);
+        ans.push(action);
+    }
+
+    Ok(ans)
+}
+
+pub fn create_seed(seed: u64, size: usize) -> Vec<u8> {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut ans = vec![0; size];
+    rng.fill_bytes(&mut ans);
     ans
 }
