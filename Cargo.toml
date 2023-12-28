@@ -1,2 +1,11 @@
 [workspace]
-members = ["crates/*"]
+members = [
+    "crates/loro",
+    "crates/examples",
+    "crates/bench-utils",
+    "crates/rle",
+    "crates/loro-common",
+    "crates/loro-internal",
+    "crates/loro-preload",
+    "crates/loro-wasm",
+]

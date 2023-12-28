@@ -1,6 +1,9 @@
 use std::{collections::HashMap, time::Instant};
 
-use bench_utils::{create_seed, draw::DrawAction, gen_async_actions, gen_realtime_actions, Action};
+use bench_utils::{
+    create_seed, draw::DrawAction, gen_async_actions, gen_realtime_actions, make_actions_async,
+    Action,
+};
 use loro::{ContainerID, ContainerType};
 
 pub struct DrawActor {
@@ -55,7 +58,7 @@ impl DrawActor {
                     map.insert("y", p.y).unwrap();
                 }
                 let len = self.id_to_obj.len();
-                self.id_to_obj.insert(len, path.id());
+                self.id_to_obj.insert(len, path_map.id());
             }
             DrawAction::Text { text, pos, size } => {
                 let text_container = self
@@ -161,6 +164,14 @@ impl DrawActors {
             doc.doc.import(&first[0].doc.export_from(&vv)).unwrap();
         }
     }
+
+    pub fn check_sync(&self) {
+        let first = &self.docs[0];
+        let content = first.doc.get_deep_value();
+        for doc in self.docs.iter().skip(1) {
+            assert_eq!(content, doc.doc.get_deep_value());
+        }
+    }
 }
 
 pub fn run_async_draw_workflow(
@@ -197,4 +208,18 @@ pub fn run_realtime_collab_draw_workflow(
     }
 
     (actors, start)
+}
+
+pub fn run_actions_fuzz_in_async_mode(
+    peer_num: usize,
+    sync_all_interval: usize,
+    actions: &[Action<DrawAction>],
+) {
+    let mut actions = make_actions_async(peer_num, actions, sync_all_interval);
+    let mut actors = DrawActors::new(peer_num);
+    for action in actions.iter_mut() {
+        actors.apply_action(action);
+    }
+    actors.sync_all();
+    actors.check_sync();
 }

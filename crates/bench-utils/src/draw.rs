@@ -1,12 +1,12 @@
 use arbitrary::Arbitrary;
 
-#[derive(Debug, Arbitrary, PartialEq, Eq)]
+#[derive(Debug, Arbitrary, PartialEq, Eq, Clone)]
 pub struct Point {
     pub x: i32,
     pub y: i32,
 }
 
-#[derive(Debug, Arbitrary, PartialEq, Eq)]
+#[derive(Debug, Arbitrary, PartialEq, Eq, Clone)]
 pub enum DrawAction {
     CreatePath {
         points: Vec<Point>,

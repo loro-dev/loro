@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use benches::draw::{run_async_draw_workflow, run_realtime_collab_draw_workflow};
+use examples::draw::{run_async_draw_workflow, run_realtime_collab_draw_workflow};
 use loro::LoroDoc;
 use tabled::{settings::Style, Table, Tabled};
 
