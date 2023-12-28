@@ -64,7 +64,7 @@ mod text_chunk {
     use std::ops::Range;
 
     use append_only_bytes::BytesSlice;
-    use loro_common::ID;
+    use loro_common::{ID, NONE_ID};
 
     #[derive(Clone, Debug, PartialEq)]
     pub(crate) struct TextChunk {
@@ -147,7 +147,7 @@ mod text_chunk {
                 utf16_len: 0,
                 // This is a dummy value.
                 // It's fine because the length is 0. We never actually use this value.
-                start_op_id: ID::new(u64::MAX, 0),
+                start_op_id: ID::NONE_ID,
             }
         }
 

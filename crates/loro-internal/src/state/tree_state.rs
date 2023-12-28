@@ -1,8 +1,6 @@
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
-use loro_common::{
-    ContainerID, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID, ID, NONE_ID,
-};
+use loro_common::{ContainerID, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID, ID};
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -46,7 +44,7 @@ pub(crate) struct TreeStateNode {
 impl TreeStateNode {
     pub const UNEXIST_ROOT: TreeStateNode = TreeStateNode {
         parent: TreeID::unexist_root(),
-        last_move_op: NONE_ID,
+        last_move_op: ID::NONE_ID,
     };
 }
 
@@ -76,14 +74,14 @@ impl TreeState {
             TreeID::delete_root().unwrap(),
             TreeStateNode {
                 parent: None,
-                last_move_op: NONE_ID,
+                last_move_op: ID::NONE_ID,
             },
         );
         trees.insert(
             TreeID::unexist_root().unwrap(),
             TreeStateNode {
                 parent: None,
-                last_move_op: NONE_ID,
+                last_move_op: ID::NONE_ID,
             },
         );
         let mut deleted = FxHashSet::default();
@@ -366,7 +364,7 @@ impl ContainerState for TreeState {
                     )
                     .unwrap_or(TreeStateNode {
                         parent: TreeID::unexist_root(),
-                        last_move_op: NONE_ID,
+                        last_move_op: ID::NONE_ID,
                     });
                 self.update_deleted_cache(target, old_parent, parent.parent);
             }
@@ -423,7 +421,7 @@ impl ContainerState for TreeState {
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
         for node in self.trees.values() {
-            if node.last_move_op == NONE_ID {
+            if node.last_move_op == ID::NONE_ID {
                 continue;
             }
             encoder.encode_op(node.last_move_op.into(), || unimplemented!());
@@ -611,8 +609,8 @@ mod tests {
             0,
             loro_common::ContainerType::Tree,
         ));
-        state.mov(ID1, None, NONE_ID).unwrap();
-        state.mov(ID2, Some(ID1), NONE_ID).unwrap();
+        state.mov(ID1, None, ID::NONE_ID).unwrap();
+        state.mov(ID2, Some(ID1), ID::NONE_ID).unwrap();
     }
 
     #[test]
@@ -621,8 +619,8 @@ mod tests {
             0,
             loro_common::ContainerType::Tree,
         ));
-        state.mov(ID1, None, NONE_ID).unwrap();
-        state.mov(ID2, Some(ID1), NONE_ID).unwrap();
+        state.mov(ID1, None, ID::NONE_ID).unwrap();
+        state.mov(ID2, Some(ID1), ID::NONE_ID).unwrap();
         let roots = Forest::from_tree_state(&state.trees);
         let json = serde_json::to_string(&roots).unwrap();
         assert_eq!(
@@ -637,11 +635,11 @@ mod tests {
             0,
             loro_common::ContainerType::Tree,
         ));
-        state.mov(ID1, None, NONE_ID).unwrap();
-        state.mov(ID2, Some(ID1), NONE_ID).unwrap();
-        state.mov(ID3, Some(ID2), NONE_ID).unwrap();
-        state.mov(ID4, Some(ID1), NONE_ID).unwrap();
-        state.mov(ID2, TreeID::delete_root(), NONE_ID).unwrap();
+        state.mov(ID1, None, ID::NONE_ID).unwrap();
+        state.mov(ID2, Some(ID1), ID::NONE_ID).unwrap();
+        state.mov(ID3, Some(ID2), ID::NONE_ID).unwrap();
+        state.mov(ID4, Some(ID1), ID::NONE_ID).unwrap();
+        state.mov(ID2, TreeID::delete_root(), ID::NONE_ID).unwrap();
         let roots = Forest::from_tree_state(&state.trees);
         let json = serde_json::to_string(&roots).unwrap();
         assert_eq!(

@@ -280,12 +280,6 @@ impl TreeDiffCache {
             let btree_set = &mut self.cache.get_mut(&op.target).unwrap();
             btree_set.remove(op);
             let last_effective_move_op_id = ID::new(op.target.peer, op.target.counter);
-            for op in btree_set.iter().rev() {
-                if op.effected {
-                    break;
-                }
-            }
-
             self.pending.insert(*op);
             self.current_version.shrink_to_exclude(IdSpan {
                 client_id: op.id.peer,

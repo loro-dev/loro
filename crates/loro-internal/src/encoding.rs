@@ -111,7 +111,6 @@ pub(crate) fn decode_oplog(
 ) -> Result<(), LoroError> {
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     match mode {
-        // EncodeMode::Updates => decode_oplog_updates(oplog, body),
         EncodeMode::Rle => encode_reordered::decode_updates(oplog, body),
         EncodeMode::Snapshot => encode_reordered::decode_updates(oplog, body),
         EncodeMode::Auto => unreachable!(),
