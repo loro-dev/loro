@@ -1,4 +1,5 @@
 pub mod draw;
+pub mod sheet;
 use arbitrary::{Arbitrary, Unstructured};
 use enum_as_inner::EnumAsInner;
 use rand::{RngCore, SeedableRng};

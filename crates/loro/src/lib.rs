@@ -330,8 +330,8 @@ impl LoroList {
     }
 
     #[inline]
-    pub fn push(&self, v: LoroValue) -> LoroResult<()> {
-        self.handler.push(v)
+    pub fn push(&self, v: impl Into<LoroValue>) -> LoroResult<()> {
+        self.handler.push(v.into())
     }
 
     #[inline]
