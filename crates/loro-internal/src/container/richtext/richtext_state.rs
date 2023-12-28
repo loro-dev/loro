@@ -64,7 +64,7 @@ mod text_chunk {
     use std::ops::Range;
 
     use append_only_bytes::BytesSlice;
-    use loro_common::{ID, NONE_ID};
+    use loro_common::ID;
 
     #[derive(Clone, Debug, PartialEq)]
     pub(crate) struct TextChunk {
