@@ -68,11 +68,3 @@ impl ActorTrait for JsonActor {
 pub fn fuzz(peer_num: usize, inputs: &[Action<JsonAction>]) {
     run_actions_fuzz_in_async_mode::<JsonActor>(peer_num, 20, inputs);
 }
-
-#[cfg(test)]
-mod test {
-    #[test]
-    fn test() {
-        assert_eq!(f64::NAN, f64::NAN)
-    }
-}

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use examples::draw::{run_async_draw_workflow, run_realtime_collab_draw_workflow};
+use examples::{draw::DrawActor, run_async_workflow, run_realtime_collab_workflow};
 use loro::LoroDoc;
 use tabled::{settings::Style, Table, Tabled};
 
@@ -52,7 +52,7 @@ fn run_async(peer_num: usize, action_num: usize, seed: u64) -> BenchResult {
         "run_async(peer_num: {}, action_num: {})",
         peer_num, action_num
     );
-    let (mut actors, start) = run_async_draw_workflow(peer_num, action_num, 200, seed);
+    let (mut actors, start) = run_async_workflow::<DrawActor>(peer_num, action_num, 200, seed);
     actors.sync_all();
     let apply_duration = start.elapsed().as_secs_f64() * 1000.;
 
@@ -96,7 +96,7 @@ fn run_realtime_collab(peer_num: usize, action_num: usize, seed: u64) -> BenchRe
         "run_realtime_collab(peer_num: {}, action_num: {})",
         peer_num, action_num
     );
-    let (mut actors, start) = run_realtime_collab_draw_workflow(peer_num, action_num, seed);
+    let (mut actors, start) = run_realtime_collab_workflow::<DrawActor>(peer_num, action_num, seed);
     actors.sync_all();
     let apply_duration = start.elapsed().as_secs_f64() * 1000.;
 
