@@ -30,11 +30,25 @@ impl<T: ActorTrait> ActorGroup<T> {
             Action::Action { peer, action } => {
                 self.docs[*peer].apply_action(action);
             }
-            Action::Sync { from, to } => {
-                let vv = self.docs[*to].doc().oplog_vv();
-                let data = self.docs[*from].doc().export_from(&vv);
-                self.docs[*to].doc().import(&data).unwrap();
-            }
+            Action::Sync { from, to, kind } => match kind {
+                bench_utils::SyncKind::Fit => {
+                    let vv = self.docs[*to].doc().oplog_vv();
+                    let data = self.docs[*from].doc().export_from(&vv);
+                    self.docs[*to].doc().import(&data).unwrap();
+                }
+                bench_utils::SyncKind::Snapshot => {
+                    let data = self.docs[*from].doc().export_snapshot();
+                    self.docs[*to].doc().import(&data).unwrap();
+                }
+                bench_utils::SyncKind::Pending => {
+                    let mut vv = self.docs[*from].doc().oplog_vv();
+                    for cnt in vv.values_mut() {
+                        *cnt -= 1;
+                    }
+                    let data = self.docs[*from].doc().export_from(&vv);
+                    self.docs[*to].doc().import(&data).unwrap();
+                }
+            },
             Action::SyncAll => self.sync_all(),
         }
     }

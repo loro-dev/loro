@@ -244,6 +244,7 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "bench-utils",
+ "debug-log",
  "loro",
  "tabled",
 ]

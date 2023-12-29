@@ -55,27 +55,25 @@ pub fn get_automerge_actions() -> Vec<TextAction> {
     actions
 }
 
-#[derive(Debug, EnumAsInner, Arbitrary, PartialEq, Eq)]
-pub enum Action<T> {
-    Action { peer: usize, action: T },
-    Sync { from: usize, to: usize },
-    SyncAll,
+#[derive(Debug, EnumAsInner, Arbitrary, PartialEq, Eq, Clone, Copy)]
+pub enum SyncKind {
+    Fit,
+    Snapshot,
+    Pending,
 }
 
-impl<T: Clone> Clone for Action<T> {
-    fn clone(&self) -> Self {
-        match self {
-            Action::Action { peer, action } => Action::Action {
-                peer: *peer,
-                action: action.clone(),
-            },
-            Action::Sync { from, to } => Action::Sync {
-                from: *from,
-                to: *to,
-            },
-            Action::SyncAll => Action::SyncAll,
-        }
-    }
+#[derive(Debug, EnumAsInner, Arbitrary, PartialEq, Eq, Clone)]
+pub enum Action<T> {
+    Action {
+        peer: usize,
+        action: T,
+    },
+    Sync {
+        from: usize,
+        to: usize,
+        kind: SyncKind,
+    },
+    SyncAll,
 }
 
 pub fn gen_realtime_actions<'a, T: Arbitrary<'a> + ActionTrait>(
@@ -109,7 +107,7 @@ pub fn gen_realtime_actions<'a, T: Arbitrary<'a> + ActionTrait>(
             Action::SyncAll => {
                 last_sync_all = i;
             }
-            Action::Sync { from, to } => {
+            Action::Sync { from, to, .. } => {
                 *from %= peer_num;
                 *to %= peer_num;
             }
@@ -162,7 +160,7 @@ pub fn gen_async_actions<'a, T: Arbitrary<'a> + ActionTrait>(
 
                 last_sync_all = ans.len();
             }
-            Action::Sync { from, to } => {
+            Action::Sync { from, to, .. } => {
                 *from %= peer_num;
                 *to %= peer_num;
             }
@@ -188,7 +186,7 @@ pub fn preprocess_actions<T: Clone>(
             Action::Action { peer, .. } => {
                 *peer %= peer_num;
             }
-            Action::Sync { from, to } => {
+            Action::Sync { from, to, .. } => {
                 *from %= peer_num;
                 *to %= peer_num;
             }
