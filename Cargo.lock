@@ -107,6 +107,7 @@ dependencies = [
  "arbitrary",
  "enum-as-inner 0.5.1",
  "flate2",
+ "loro-common",
  "rand",
  "serde_json",
 ]
@@ -483,6 +484,7 @@ dependencies = [
 name = "examples"
 version = "0.1.0"
 dependencies = [
+ "arbitrary",
  "bench-utils",
  "loro",
  "tabled 0.15.0",

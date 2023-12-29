@@ -28,3 +28,9 @@ name = "draw"
 path = "fuzz_targets/draw.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "json"
+path = "fuzz_targets/json.rs"
+test = false
+doc = false

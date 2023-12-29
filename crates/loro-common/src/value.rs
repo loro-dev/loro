@@ -25,6 +25,22 @@ pub enum LoroValue {
     Container(ContainerID),
 }
 
+impl<'a> arbitrary::Arbitrary<'a> for LoroValue {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        match u.int_in_range(0..=7).unwrap() {
+            0 => Ok(LoroValue::Null),
+            1 => Ok(LoroValue::Bool(u.arbitrary()?)),
+            2 => Ok(LoroValue::Double(u.arbitrary()?)),
+            3 => Ok(LoroValue::I32(u.arbitrary()?)),
+            4 => Ok(LoroValue::Binary(Arc::new(u.arbitrary()?))),
+            5 => Ok(LoroValue::String(Arc::new(u.arbitrary()?))),
+            6 => Ok(LoroValue::List(Arc::new(u.arbitrary()?))),
+            7 => Ok(LoroValue::Map(Arc::new(u.arbitrary()?))),
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl LoroValue {
     pub fn get_by_key(&self, key: &str) -> Option<&LoroValue> {
         match self {

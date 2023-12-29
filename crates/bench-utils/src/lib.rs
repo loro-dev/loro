@@ -1,5 +1,7 @@
 pub mod draw;
+pub mod json;
 pub mod sheet;
+
 use arbitrary::{Arbitrary, Unstructured};
 use enum_as_inner::EnumAsInner;
 use rand::{RngCore, SeedableRng};
@@ -229,7 +231,7 @@ pub fn make_actions_realtime<T: Clone>(peer_num: usize, actions: &[Action<T>]) -
     )
 }
 
-pub fn make_actions_async<T: Clone>(
+pub fn make_actions_async<T: Clone + ActionTrait>(
     peer_num: usize,
     actions: &[Action<T>],
     sync_all_interval: usize,
@@ -257,6 +259,10 @@ pub fn make_actions_async<T: Clone>(
         |action| {
             if since_last_sync_all_2.load(std::sync::atomic::Ordering::Relaxed) > 10 {
                 *action = Action::SyncAll;
+            }
+
+            if let Action::Action { action, .. } = action {
+                action.normalize();
             }
         },
     )
