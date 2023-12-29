@@ -1,6 +1,7 @@
 use std::{borrow::Cow, cmp::Ordering, mem::take, sync::Arc};
 
 use fxhash::{FxHashMap, FxHashSet};
+use itertools::Itertools;
 use loro_common::{
     ContainerID, ContainerType, Counter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan,
     InternalString, LoroError, LoroResult, PeerID, ID,
@@ -29,6 +30,13 @@ use self::{
     encode::{encode_changes, encode_ops, init_encode, TempOp, ValueRegister},
     value::ValueReader,
 };
+
+/// If any section of the document is longer than this, we will not decode it.
+/// It will return an data corruption error instead.
+const MAX_DECODED_SIZE: usize = 1 << 30;
+/// If any collection in the document is longer than this, we will not decode it.
+/// It will return an data corruption error instead.
+const MAX_COLLECTION_SIZE: usize = 1 << 28;
 
 pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
@@ -123,10 +131,10 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
         &keys,
         &peer_ids,
         false,
-    )
+    )?
     .0;
 
-    let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map);
+    let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
     import_changes_to_oplog(changes, oplog)?;
     Ok(())
 }
@@ -182,7 +190,7 @@ fn decode_changes<'a>(
         Vec<Op>,
         std::hash::BuildHasherDefault<fxhash::FxHasher>,
     >,
-) -> Vec<Change> {
+) -> LoroResult<Vec<Change>> {
     let mut changes = Vec::with_capacity(encoded_changes.size_hint().0);
     for EncodedChange {
         peer_idx,
@@ -193,6 +201,10 @@ fn decode_changes<'a>(
         msg_len: _,
     } in encoded_changes
     {
+        if peer_ids.peer_ids.len() <= peer_idx || counters.len() <= peer_idx {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+
         let counter = counters[peer_idx];
         counters[peer_idx] += len as Counter;
         let peer = peer_ids.peer_ids[peer_idx];
@@ -210,15 +222,17 @@ fn decode_changes<'a>(
         }
 
         for _ in 0..deps_len {
-            let dep = deps.next().unwrap();
+            let dep = deps.next().ok_or(LoroError::DecodeDataCorruptionError)?;
             change
                 .deps
                 .push(ID::new(peer_ids.peer_ids[dep.peer_idx], dep.counter));
         }
 
-        let ops = ops_map.get_mut(&peer).unwrap();
+        let ops = ops_map
+            .get_mut(&peer)
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
         while len > 0 {
-            let op = ops.pop().unwrap();
+            let op = ops.pop().ok_or(LoroError::DecodeDataCorruptionError)?;
             len -= op.atom_len();
             change.ops.push(op);
         }
@@ -226,7 +240,7 @@ fn decode_changes<'a>(
         changes.push(change);
     }
 
-    changes
+    Ok(changes)
 }
 
 fn extract_ops(
@@ -237,7 +251,7 @@ fn extract_ops(
     keys: &arena::KeyArena,
     peer_ids: &arena::PeerIdArena,
     should_extract_ops_with_ids: bool,
-) -> (FxHashMap<PeerID, Vec<Op>>, Vec<OpWithId>, Vec<ContainerID>) {
+) -> LoroResult<(FxHashMap<PeerID, Vec<Op>>, Vec<OpWithId>, Vec<ContainerID>)> {
     let mut value_reader = ValueReader::new(raw_values);
     let mut ops_map: FxHashMap<PeerID, Vec<Op>> = FxHashMap::default();
     let arena = &oplog.arena;
@@ -245,7 +259,7 @@ fn extract_ops(
         .containers
         .iter()
         .map(|x| x.as_container_id(&keys.keys, &peer_ids.peer_ids))
-        .collect();
+        .try_collect()?;
     let mut ops = Vec::new();
     for EncodedOp {
         container_index,
@@ -255,6 +269,12 @@ fn extract_ops(
         counter,
     } in iter
     {
+        if containers.len() <= container_index as usize
+            || peer_ids.peer_ids.len() <= peer_idx as usize
+        {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+
         let cid = &containers[container_index as usize];
         let c_idx = arena.register_container(cid);
         let kind = ValueKind::from_u8(value_type).expect("Unknown value type");
@@ -267,7 +287,7 @@ fn extract_ops(
             keys,
             &peer_ids.peer_ids,
             &containers,
-        );
+        )?;
 
         let peer = peer_ids.peer_ids[peer_idx as usize];
         let op = Op {
@@ -291,7 +311,7 @@ fn extract_ops(
         ops.sort_by_key(|x| -x.counter);
     }
 
-    (ops_map, ops, containers)
+    Ok((ops_map, ops, containers))
 }
 
 pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVector) -> Vec<u8> {
@@ -484,8 +504,15 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     let frontiers: Frontiers = iter
         .frontiers
         .iter()
-        .map(|x| ID::new(peer_ids.peer_ids[x.0], x.1))
-        .collect();
+        .map(|x| {
+            let peer = peer_ids
+                .peer_ids
+                .get(x.0)
+                .ok_or(LoroError::DecodeDataCorruptionError)?;
+            let ans: Result<ID, LoroError> = Ok(ID::new(*peer, x.1));
+            ans
+        })
+        .try_collect()?;
     let (ops_map, ops, containers) = extract_ops(
         &iter.raw_values,
         iter.ops,
@@ -494,7 +521,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         &keys,
         &peer_ids,
         true,
-    );
+    )?;
 
     decode_snapshot_states(
         &mut state,
@@ -505,7 +532,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         ops,
         &oplog,
     );
-    let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map);
+    let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
     import_changes_to_oplog(changes, &mut oplog)?;
     assert_eq!(&state.frontiers, oplog.frontiers());
     Ok(())
@@ -519,7 +546,7 @@ fn decode_snapshot_states(
     state_blob_arena: &[u8],
     ops: Vec<OpWithId>,
     oplog: &std::sync::MutexGuard<'_, OpLog>,
-) {
+) -> LoroResult<()> {
     let mut state_blob_index: usize = 0;
     let mut ops_index: usize = 0;
     for EncodedStateInfo {
@@ -532,11 +559,24 @@ fn decode_snapshot_states(
             continue;
         }
 
+        if container_index >= containers.len() as u32 {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+
         let container_id = &containers[container_index as usize];
         let idx = state.arena.register_container(container_id);
+        if state_blob_arena.len() < state_blob_index + state_bytes_len as usize {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+
         let state_bytes =
             &state_blob_arena[state_blob_index..state_blob_index + state_bytes_len as usize];
         state_blob_index += state_bytes_len as usize;
+
+        if ops.len() < ops_index {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+
         let mut next_ops = ops[ops_index..]
             .iter()
             .skip_while(|x| x.op.container != idx)
@@ -563,6 +603,7 @@ fn decode_snapshot_states(
 
     let s = take(&mut state.states);
     state.init_with_states_and_version(s, frontiers);
+    Ok(())
 }
 
 mod encode {
@@ -932,11 +973,11 @@ fn decode_op(
     keys: &arena::KeyArena,
     peers: &[u64],
     cids: &[ContainerID],
-) -> crate::op::InnerContent {
+) -> LoroResult<crate::op::InnerContent> {
     let content = match cid.container_type() {
         ContainerType::Text => match kind {
             ValueKind::Str => {
-                let s = value_reader.read_str();
+                let s = value_reader.read_str()?;
                 let (slice, result) = arena.alloc_str_with_slice(s);
                 crate::op::InnerContent::List(
                     crate::container::list::list_op::InnerListOp::InsertText {
@@ -948,14 +989,18 @@ fn decode_op(
                 )
             }
             ValueKind::DeleteSeq => {
-                let len = value_reader.read_i32();
+                let len = value_reader.read_i32()?;
                 crate::op::InnerContent::List(crate::container::list::list_op::InnerListOp::Delete(
                     DeleteSpan::new(prop as isize, len as isize),
                 ))
             }
             ValueKind::MarkStart => {
-                let mark = value_reader.read_mark(&keys.keys, cids);
-                let key = keys.keys[mark.key_idx as usize].clone();
+                let mark = value_reader.read_mark(&keys.keys, cids)?;
+                let key = keys
+                    .keys
+                    .get(mark.key_idx as usize)
+                    .ok_or_else(|| LoroError::DecodeDataCorruptionError)?
+                    .clone();
                 crate::op::InnerContent::List(
                     crate::container::list::list_op::InnerListOp::StyleStart {
                         start: prop as u32,
@@ -972,13 +1017,17 @@ fn decode_op(
             _ => unreachable!(),
         },
         ContainerType::Map => {
-            let key = keys.keys[prop as usize].clone();
+            let key = keys
+                .keys
+                .get(prop as usize)
+                .ok_or(LoroError::DecodeDataCorruptionError)?
+                .clone();
             match kind {
                 ValueKind::DeleteOnce => {
                     crate::op::InnerContent::Map(crate::container::map::MapSet { key, value: None })
                 }
                 kind => {
-                    let value = value_reader.read_value_content(kind, &keys.keys, cids);
+                    let value = value_reader.read_value_content(kind, &keys.keys, cids)?;
                     crate::op::InnerContent::Map(crate::container::map::MapSet {
                         key,
                         value: Some(value),
@@ -990,11 +1039,15 @@ fn decode_op(
             let pos = prop as usize;
             match kind {
                 ValueKind::Array => {
-                    let arr = value_reader.read_value_content(ValueKind::Array, &keys.keys, cids);
+                    let arr =
+                        value_reader.read_value_content(ValueKind::Array, &keys.keys, cids)?;
                     let range = arena.alloc_values(
-                        Arc::try_unwrap(arr.into_list().unwrap())
-                            .unwrap()
-                            .into_iter(),
+                        Arc::try_unwrap(
+                            arr.into_list()
+                                .map_err(|_| LoroError::DecodeDataCorruptionError)?,
+                        )
+                        .unwrap()
+                        .into_iter(),
                     );
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
@@ -1004,7 +1057,7 @@ fn decode_op(
                     )
                 }
                 ValueKind::DeleteSeq => {
-                    let len = value_reader.read_i32();
+                    let len = value_reader.read_i32()?;
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Delete(DeleteSpan::new(
                             pos as isize,
@@ -1017,13 +1070,14 @@ fn decode_op(
         }
         ContainerType::Tree => match kind {
             ValueKind::TreeMove => {
-                let op = value_reader.read_tree_move();
-                crate::op::InnerContent::Tree(op.as_tree_op(peers))
+                let op = value_reader.read_tree_move()?;
+                crate::op::InnerContent::Tree(op.as_tree_op(peers)?)
             }
             _ => unreachable!(),
         },
     };
-    content
+
+    Ok(content)
 }
 
 type PeerIdx = usize;
@@ -1164,13 +1218,15 @@ mod value {
     use std::sync::Arc;
 
     use fxhash::FxHashMap;
-    use loro_common::{ContainerID, Counter, InternalString, LoroValue, PeerID, TreeID};
+    use loro_common::{
+        ContainerID, Counter, InternalString, LoroError, LoroResult, LoroValue, PeerID, TreeID,
+    };
     use num_derive::{FromPrimitive, ToPrimitive};
     use num_traits::{FromPrimitive, ToPrimitive};
 
     use crate::container::tree::tree_op::TreeOp;
 
-    use super::encode::ValueRegister;
+    use super::{encode::ValueRegister, MAX_COLLECTION_SIZE};
 
     #[allow(unused)]
     #[non_exhaustive]
@@ -1209,18 +1265,25 @@ mod value {
     }
 
     impl EncodedTreeMove {
-        pub fn as_tree_op(&self, peer_ids: &[u64]) -> TreeOp {
-            TreeOp {
-                target: TreeID::new(peer_ids[self.subject_peer_idx], self.subject_cnt as Counter),
+        pub fn as_tree_op(&self, peer_ids: &[u64]) -> LoroResult<TreeOp> {
+            Ok(TreeOp {
+                target: TreeID::new(
+                    *(peer_ids
+                        .get(self.subject_peer_idx)
+                        .ok_or(LoroError::DecodeDataCorruptionError)?),
+                    self.subject_cnt as Counter,
+                ),
                 parent: if self.is_parent_null {
                     None
                 } else {
                     Some(TreeID::new(
-                        peer_ids[self.parent_peer_idx],
+                        *(peer_ids
+                            .get(self.parent_peer_idx)
+                            .ok_or(LoroError::DecodeDataCorruptionError)?),
                         self.parent_cnt as Counter,
                     ))
                 },
-            }
+            })
         }
 
         pub fn from_tree_op(op: &TreeOp, register_peer_id: &mut ValueRegister<PeerID>) -> Self {
@@ -1490,40 +1553,40 @@ mod value {
             kind: u8,
             keys: &[InternalString],
             cids: &[ContainerID],
-        ) -> Value<'a> {
+        ) -> LoroResult<Value<'a>> {
             let Some(kind) = ValueKind::from_u8(kind) else {
-                return Value::Unknown {
+                return Ok(Value::Unknown {
                     kind,
-                    data: self.read_binary(),
-                };
+                    data: self.read_binary()?,
+                });
             };
 
-            match kind {
+            Ok(match kind {
                 ValueKind::Null => Value::Null,
                 ValueKind::True => Value::True,
                 ValueKind::False => Value::False,
                 ValueKind::DeleteOnce => Value::DeleteOnce,
-                ValueKind::I32 => Value::I32(self.read_i32()),
-                ValueKind::F64 => Value::F64(self.read_f64()),
-                ValueKind::Str => Value::Str(self.read_str()),
-                ValueKind::DeleteSeq => Value::DeleteSeq(self.read_i32()),
-                ValueKind::DeltaInt => Value::DeltaInt(self.read_i32()),
-                ValueKind::Array => Value::Array(self.read_array(keys, cids)),
-                ValueKind::Map => Value::Map(self.read_map(keys, cids)),
-                ValueKind::Binary => Value::Binary(self.read_binary()),
-                ValueKind::MarkStart => Value::MarkStart(self.read_mark(keys, cids)),
-                ValueKind::TreeMove => Value::TreeMove(self.read_tree_move()),
-                ValueKind::ContainerIdx => Value::ContainerIdx(self.read_usize()),
+                ValueKind::I32 => Value::I32(self.read_i32()?),
+                ValueKind::F64 => Value::F64(self.read_f64()?),
+                ValueKind::Str => Value::Str(self.read_str()?),
+                ValueKind::DeleteSeq => Value::DeleteSeq(self.read_i32()?),
+                ValueKind::DeltaInt => Value::DeltaInt(self.read_i32()?),
+                ValueKind::Array => Value::Array(self.read_array(keys, cids)?),
+                ValueKind::Map => Value::Map(self.read_map(keys, cids)?),
+                ValueKind::Binary => Value::Binary(self.read_binary()?),
+                ValueKind::MarkStart => Value::MarkStart(self.read_mark(keys, cids)?),
+                ValueKind::TreeMove => Value::TreeMove(self.read_tree_move()?),
+                ValueKind::ContainerIdx => Value::ContainerIdx(self.read_usize()?),
                 ValueKind::Unknown => unreachable!(),
-            }
+            })
         }
 
         pub fn read_value_type_and_content(
             &mut self,
             keys: &[InternalString],
             cids: &[ContainerID],
-        ) -> LoroValue {
-            let kind = self.read_u8();
+        ) -> LoroResult<LoroValue> {
+            let kind = self.read_u8()?;
             self.read_value_content(
                 ValueKind::from_u8(kind).expect("Unknown value type"),
                 keys,
@@ -1536,149 +1599,197 @@ mod value {
             kind: ValueKind,
             keys: &[InternalString],
             cids: &[ContainerID],
-        ) -> LoroValue {
-            match kind {
+        ) -> LoroResult<LoroValue> {
+            Ok(match kind {
                 ValueKind::Null => LoroValue::Null,
                 ValueKind::True => LoroValue::Bool(true),
                 ValueKind::False => LoroValue::Bool(false),
-                ValueKind::I32 => LoroValue::I32(self.read_i32()),
-                ValueKind::F64 => LoroValue::Double(self.read_f64()),
-                ValueKind::Str => LoroValue::String(Arc::new(self.read_str().to_owned())),
-                ValueKind::DeltaInt => LoroValue::I32(self.read_i32()),
+                ValueKind::I32 => LoroValue::I32(self.read_i32()?),
+                ValueKind::F64 => LoroValue::Double(self.read_f64()?),
+                ValueKind::Str => LoroValue::String(Arc::new(self.read_str()?.to_owned())),
+                ValueKind::DeltaInt => LoroValue::I32(self.read_i32()?),
                 ValueKind::Array => {
-                    let len = self.read_usize();
+                    let len = self.read_usize()?;
+                    if len > MAX_COLLECTION_SIZE {
+                        return Err(LoroError::DecodeDataCorruptionError);
+                    }
+
                     let mut ans = Vec::with_capacity(len);
                     for _ in 0..len {
-                        ans.push(self.read_value_type_and_content(keys, cids));
+                        ans.push(self.read_value_type_and_content(keys, cids)?);
                     }
                     ans.into()
                 }
                 ValueKind::Map => {
-                    let len = self.read_usize();
+                    let len = self.read_usize()?;
+                    if len > MAX_COLLECTION_SIZE {
+                        return Err(LoroError::DecodeDataCorruptionError);
+                    }
+
                     let mut ans = FxHashMap::with_capacity_and_hasher(len, Default::default());
                     for _ in 0..len {
-                        let key_idx = self.read_usize();
-                        let key = keys[key_idx].to_string();
-                        let value = self.read_value_type_and_content(keys, cids);
+                        let key_idx = self.read_usize()?;
+                        let key = keys
+                            .get(key_idx)
+                            .ok_or(LoroError::DecodeDataCorruptionError)?
+                            .to_string();
+                        let value = self.read_value_type_and_content(keys, cids)?;
                         ans.insert(key, value);
                     }
                     ans.into()
                 }
-                ValueKind::Binary => LoroValue::Binary(Arc::new(self.read_binary().to_owned())),
-                ValueKind::ContainerIdx => LoroValue::Container(cids[self.read_usize()].clone()),
+                ValueKind::Binary => LoroValue::Binary(Arc::new(self.read_binary()?.to_owned())),
+                ValueKind::ContainerIdx => LoroValue::Container(
+                    cids.get(self.read_usize()?)
+                        .ok_or(LoroError::DecodeDataCorruptionError)?
+                        .clone(),
+                ),
                 a => unreachable!("Unexpected value kind {:?}", a),
+            })
+        }
+
+        pub fn read_i32(&mut self) -> LoroResult<i32> {
+            leb128::read::signed(&mut self.raw)
+                .map(|x| x as i32)
+                .map_err(|_| LoroError::DecodeDataCorruptionError)
+        }
+
+        fn read_f64(&mut self) -> LoroResult<f64> {
+            if self.raw.len() < 8 {
+                return Err(LoroError::DecodeDataCorruptionError);
             }
-        }
 
-        pub fn read_i32(&mut self) -> i32 {
-            leb128::read::signed(&mut self.raw).unwrap() as i32
-        }
-
-        fn read_f64(&mut self) -> f64 {
             let mut bytes = [0; 8];
             bytes.copy_from_slice(&self.raw[..8]);
             self.raw = &self.raw[8..];
-            f64::from_be_bytes(bytes)
+            Ok(f64::from_be_bytes(bytes))
         }
 
-        pub fn read_usize(&mut self) -> usize {
-            leb128::read::unsigned(&mut self.raw).unwrap() as usize
+        pub fn read_usize(&mut self) -> LoroResult<usize> {
+            Ok(leb128::read::unsigned(&mut self.raw)
+                .map_err(|_| LoroError::DecodeDataCorruptionError)? as usize)
         }
 
-        pub fn read_str(&mut self) -> &'a str {
-            let len = self.read_usize();
+        pub fn read_str(&mut self) -> LoroResult<&'a str> {
+            let len = self.read_usize()?;
+            if self.raw.len() < len {
+                return Err(LoroError::DecodeDataCorruptionError);
+            }
+
             let ans = std::str::from_utf8(&self.raw[..len]).unwrap();
             self.raw = &self.raw[len..];
-            ans
+            Ok(ans)
         }
 
-        fn read_u8(&mut self) -> u8 {
+        fn read_u8(&mut self) -> LoroResult<u8> {
+            if self.raw.is_empty() {
+                return Err(LoroError::DecodeDataCorruptionError);
+            }
+
             let ans = self.raw[0];
             self.raw = &self.raw[1..];
-            ans
+            Ok(ans)
         }
 
-        #[allow(unused)]
-        fn read_kind(&mut self) -> ValueKind {
-            ValueKind::from_u8(self.read_u8()).unwrap_or(ValueKind::Unknown)
-        }
+        fn read_array(
+            &mut self,
+            keys: &[InternalString],
+            cids: &[ContainerID],
+        ) -> LoroResult<Vec<Value<'a>>> {
+            let len = self.read_usize()?;
+            if len > MAX_COLLECTION_SIZE {
+                return Err(LoroError::DecodeDataCorruptionError);
+            }
 
-        fn read_array(&mut self, keys: &[InternalString], cids: &[ContainerID]) -> Vec<Value<'a>> {
-            let len = self.read_usize();
             let mut ans = Vec::with_capacity(len);
             for _ in 0..len {
-                let kind = self.read_u8();
-                ans.push(self.read(kind, keys, cids));
+                let kind = self.read_u8()?;
+                ans.push(self.read(kind, keys, cids)?);
             }
-            ans
+            Ok(ans)
         }
 
         fn read_map(
             &mut self,
             keys: &[InternalString],
             cids: &[ContainerID],
-        ) -> FxHashMap<InternalString, Value<'a>> {
-            let len = self.read_usize();
+        ) -> LoroResult<FxHashMap<InternalString, Value<'a>>> {
+            let len = self.read_usize()?;
+            if len > MAX_COLLECTION_SIZE {
+                return Err(LoroError::DecodeDataCorruptionError);
+            }
+
             let mut ans = FxHashMap::with_capacity_and_hasher(len, Default::default());
             for _ in 0..len {
-                let key_idx = self.read_usize();
-                let key = keys[key_idx].clone();
-                let kind = self.read_u8();
-                let value = self.read(kind, keys, cids);
+                let key_idx = self.read_usize()?;
+                let key = keys
+                    .get(key_idx)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?
+                    .clone();
+                let kind = self.read_u8()?;
+                let value = self.read(kind, keys, cids)?;
                 ans.insert(key, value);
             }
-            ans
+            Ok(ans)
         }
 
-        fn read_binary(&mut self) -> &'a [u8] {
-            let len = self.read_usize();
+        fn read_binary(&mut self) -> LoroResult<&'a [u8]> {
+            let len = self.read_usize()?;
+            if self.raw.len() < len {
+                return Err(LoroError::DecodeDataCorruptionError);
+            }
+
             let ans = &self.raw[..len];
             self.raw = &self.raw[len..];
-            ans
+            Ok(ans)
         }
 
-        pub fn read_mark(&mut self, keys: &[InternalString], cids: &[ContainerID]) -> MarkStart {
-            let info = self.read_u8();
-            let len = self.read_usize();
-            let key_idx = self.read_usize();
-            let value = self.read_value_type_and_content(keys, cids);
-            MarkStart {
+        pub fn read_mark(
+            &mut self,
+            keys: &[InternalString],
+            cids: &[ContainerID],
+        ) -> LoroResult<MarkStart> {
+            let info = self.read_u8()?;
+            let len = self.read_usize()?;
+            let key_idx = self.read_usize()?;
+            let value = self.read_value_type_and_content(keys, cids)?;
+            Ok(MarkStart {
                 len: len as u32,
                 key_idx: key_idx as u32,
                 value,
                 info,
-            }
+            })
         }
 
-        pub fn read_tree_move(&mut self) -> EncodedTreeMove {
-            let subject_peer_idx = self.read_usize();
-            let subject_cnt = self.read_usize();
-            let is_parent_null = self.read_u8() != 0;
+        pub fn read_tree_move(&mut self) -> LoroResult<EncodedTreeMove> {
+            let subject_peer_idx = self.read_usize()?;
+            let subject_cnt = self.read_usize()?;
+            let is_parent_null = self.read_u8()? != 0;
             let mut parent_peer_idx = 0;
             let mut parent_cnt = 0;
             if !is_parent_null {
-                parent_peer_idx = self.read_usize();
-                parent_cnt = self.read_usize();
+                parent_peer_idx = self.read_usize()?;
+                parent_cnt = self.read_usize()?;
             }
 
-            EncodedTreeMove {
+            Ok(EncodedTreeMove {
                 subject_peer_idx,
                 subject_cnt,
                 is_parent_null,
                 parent_peer_idx,
                 parent_cnt,
-            }
+            })
         }
     }
 }
 
 mod arena {
     use crate::InternalString;
-    use loro_common::{ContainerID, ContainerType, LoroResult, PeerID};
+    use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, PeerID};
     use serde::{Deserialize, Serialize};
     use serde_columnar::columnar;
 
-    use super::{encode::ValueRegister, PeerIdx};
+    use super::{encode::ValueRegister, PeerIdx, MAX_DECODED_SIZE};
 
     pub fn encode_arena(
         peer_ids_arena: Vec<u64>,
@@ -1749,11 +1860,11 @@ mod arena {
         }
 
         fn decode_arenas(bytes: &[u8]) -> LoroResult<EncodedArenas> {
-            let (peer_id_arena, rest) = read_arena(bytes);
-            let (container_arena, rest) = read_arena(rest);
-            let (key_arena, rest) = read_arena(rest);
-            let (deps_arena, rest) = read_arena(rest);
-            let (state_blob_arena, _) = read_arena(rest);
+            let (peer_id_arena, rest) = read_arena(bytes)?;
+            let (container_arena, rest) = read_arena(rest)?;
+            let (key_arena, rest) = read_arena(rest)?;
+            let (deps_arena, rest) = read_arena(rest)?;
+            let (state_blob_arena, _) = read_arena(rest)?;
             Ok(EncodedArenas {
                 peer_id_arena,
                 container_arena,
@@ -1781,8 +1892,17 @@ mod arena {
 
         fn decode(peer_id_arena: &[u8]) -> LoroResult<Self> {
             let mut reader = peer_id_arena;
-            let len = leb128::read::unsigned(&mut reader).unwrap();
+            let len = leb128::read::unsigned(&mut reader)
+                .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+            if len > MAX_DECODED_SIZE as u64 {
+                return Err(LoroError::DecodeDataCorruptionError);
+            }
+
             let mut peer_ids = Vec::with_capacity(len as usize);
+            if reader.len() < len as usize * 8 {
+                return Err(LoroError::DecodeDataCorruptionError);
+            }
+
             for _ in 0..len {
                 let mut peer_id_bytes = [0; 8];
                 peer_id_bytes.copy_from_slice(&reader[..8]);
@@ -1811,18 +1931,23 @@ mod arena {
             &self,
             key_arena: &[InternalString],
             peer_arena: &[u64],
-        ) -> ContainerID {
+        ) -> LoroResult<ContainerID> {
             if self.is_root {
-                ContainerID::Root {
-                    container_type: ContainerType::try_from_u8(self.kind).unwrap(),
-                    name: key_arena[self.key_idx_or_counter as usize].clone(),
-                }
+                Ok(ContainerID::Root {
+                    container_type: ContainerType::try_from_u8(self.kind)?,
+                    name: key_arena
+                        .get(self.key_idx_or_counter as usize)
+                        .ok_or(LoroError::DecodeDataCorruptionError)?
+                        .clone(),
+                })
             } else {
-                ContainerID::Normal {
-                    container_type: ContainerType::try_from_u8(self.kind).unwrap(),
-                    peer: peer_arena[self.peer_idx],
+                Ok(ContainerID::Normal {
+                    container_type: ContainerType::try_from_u8(self.kind)?,
+                    peer: *(peer_arena
+                        .get(self.peer_idx)
+                        .ok_or(LoroError::DecodeDataCorruptionError)?),
                     counter: self.key_idx_or_counter,
-                }
+                })
             }
         }
     }
@@ -1943,10 +2068,19 @@ mod arena {
     }
 
     /// Return (next_arena, rest)
-    fn read_arena(mut buffer: &[u8]) -> (&[u8], &[u8]) {
+    fn read_arena(mut buffer: &[u8]) -> LoroResult<(&[u8], &[u8])> {
         let reader = &mut buffer;
-        let len = leb128::read::unsigned(reader).unwrap();
-        (reader[..len as usize].as_ref(), &reader[len as usize..])
+        let len = leb128::read::unsigned(reader)
+            .map_err(|_| LoroError::DecodeDataCorruptionError)? as usize;
+        if len > MAX_DECODED_SIZE {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+
+        if len > reader.len() {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+
+        Ok((reader[..len as usize].as_ref(), &reader[len as usize..]))
     }
 }
 
@@ -1969,7 +2103,7 @@ mod test {
         let mut reader = ValueReader::new(binding.as_slice());
         let keys = &key_reg.unwrap_vec();
         let cids = &cid_reg.unwrap_vec();
-        let ans = reader.read_value_content(kind, keys, cids);
+        let ans = reader.read_value_content(kind, keys, cids).unwrap();
         assert_eq!(v, ans)
     }
 

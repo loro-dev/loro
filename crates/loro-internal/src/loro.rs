@@ -369,13 +369,6 @@ impl LoroDoc {
     }
 
     #[inline]
-    pub fn import_without_state(&mut self, bytes: &[u8]) -> Result<(), LoroError> {
-        self.commit_then_stop();
-        self.detach();
-        self.import(bytes)
-    }
-
-    #[inline]
     pub fn import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
         self.commit_then_stop();
         let ans = self._import_with(bytes, origin);
@@ -452,6 +445,50 @@ impl LoroDoc {
             });
         }
         Ok(())
+    }
+
+    /// For fuzzing tests
+    #[cfg(feature = "test_utils")]
+    pub fn import_delta_updates_unchecked(&self, body: &[u8]) -> LoroResult<()> {
+        self.commit_then_stop();
+        let mut oplog = self.oplog.lock().unwrap();
+        let old_vv = oplog.vv().clone();
+        let old_frontiers = oplog.frontiers().clone();
+        let ans = oplog.decode(ParsedHeaderAndBody {
+            checksum: [0; 16],
+            checksum_body: body,
+            mode: EncodeMode::Rle,
+            body,
+        });
+        if ans.is_ok() && !self.detached.load(Acquire) {
+            let mut diff = DiffCalculator::default();
+            let diff = diff.calc_diff_internal(
+                &oplog,
+                &old_vv,
+                Some(&old_frontiers),
+                oplog.vv(),
+                Some(oplog.dag.get_frontiers()),
+            );
+            let mut state = self.state.lock().unwrap();
+            state.apply_diff(InternalDocDiff {
+                origin: "".into(),
+                local: false,
+                diff: (diff).into(),
+                from_checkout: false,
+                new_version: Cow::Owned(oplog.frontiers().clone()),
+            });
+        }
+        self.renew_txn_if_auto_commit();
+        ans
+    }
+
+    /// For fuzzing tests
+    #[cfg(feature = "test_utils")]
+    pub fn import_snapshot_unchecked(&self, bytes: &[u8]) -> LoroResult<()> {
+        self.commit_then_stop();
+        let ans = decode_snapshot(self, EncodeMode::Snapshot, bytes);
+        self.renew_txn_if_auto_commit();
+        ans
     }
 
     fn emit_events(&self, state: &mut DocState) {
