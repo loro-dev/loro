@@ -9,13 +9,14 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 use fxhash::FxHashMap;
+use loro_common::HasId;
 use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
 // use tabled::measurment::Percent;
 
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op;
-use crate::dag::DagUtils;
+use crate::dag::{Dag, DagUtils};
 use crate::diff_calc::tree::MoveLamportAndID;
 use crate::diff_calc::TreeDiffCache;
 use crate::encoding::ParsedHeaderAndBody;
@@ -326,7 +327,7 @@ impl OpLog {
                 change.lamport,
                 "lamport is not continuous"
             );
-            last.len = change.id.counter as usize + len - last.cnt as usize;
+            last.len = (change.id.counter - last.cnt) as usize + len;
             last.has_succ = false;
         } else {
             let vv = self.dag.frontiers_to_im_vv(&change.deps);
@@ -822,6 +823,15 @@ impl OpLog {
             total_ops,
             total_atom_ops,
             total_dag_node,
+        }
+    }
+
+    #[allow(unused)]
+    pub(crate) fn debug_check(&self) {
+        for (_, changes) in self.changes().iter() {
+            let c = changes.last().unwrap();
+            let node = self.dag.get(c.id_start()).unwrap();
+            assert_eq!(c.id_end(), node.id_end());
         }
     }
 }

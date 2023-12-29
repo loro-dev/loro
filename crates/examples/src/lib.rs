@@ -31,7 +31,7 @@ impl<T: ActorTrait> ActorGroup<T> {
                 self.docs[*peer].apply_action(action);
             }
             Action::Sync { from, to } => {
-                let vv = self.docs[*from].doc().oplog_vv();
+                let vv = self.docs[*to].doc().oplog_vv();
                 let data = self.docs[*from].doc().export_from(&vv);
                 self.docs[*to].doc().import(&data).unwrap();
             }
@@ -40,6 +40,7 @@ impl<T: ActorTrait> ActorGroup<T> {
     }
 
     pub fn sync_all(&mut self) {
+        debug_log::group!("SyncAll");
         let (first, rest) = self.docs.split_at_mut(1);
         for doc in rest.iter_mut() {
             let vv = first[0].doc().oplog_vv();
@@ -49,14 +50,17 @@ impl<T: ActorTrait> ActorGroup<T> {
             let vv = doc.doc().oplog_vv();
             doc.doc().import(&first[0].doc().export_from(&vv)).unwrap();
         }
+        debug_log::group_end!();
     }
 
     pub fn check_sync(&self) {
+        debug_log::group!("Check sync");
         let first = &self.docs[0];
         let content = first.doc().get_deep_value();
         for doc in self.docs.iter().skip(1) {
             assert_eq!(content, doc.doc().get_deep_value());
         }
+        debug_log::group_end!();
     }
 }
 
@@ -115,6 +119,7 @@ pub fn run_actions_fuzz_in_async_mode<T: ActorTrait>(
     let mut actions = make_actions_async::<T::ActionKind>(peer_num, actions, sync_all_interval);
     let mut actors = ActorGroup::<T>::new(peer_num);
     for action in actions.iter_mut() {
+        debug_log::debug_log!("[ApplyAction] {:#?}", &action);
         actors.apply_action(action);
     }
     actors.sync_all();

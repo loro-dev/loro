@@ -464,7 +464,6 @@ impl ContainerState for ListState {
                 crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),
             },
         }
-        debug_log::debug_dbg!(&self);
         Ok(())
     }
 

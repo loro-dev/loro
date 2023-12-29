@@ -218,6 +218,10 @@ fn decode_changes<'a>(
         };
 
         if dep_on_self {
+            if counter <= 0 {
+                return Err(LoroError::DecodeDataCorruptionError);
+            }
+
             change.deps.push(ID::new(peer, counter - 1));
         }
 

@@ -20,7 +20,7 @@ pub struct TextAction {
     pub del: usize,
 }
 
-pub trait ActionTrait: Clone {
+pub trait ActionTrait: Clone + std::fmt::Debug {
     fn normalize(&mut self);
 }
 
