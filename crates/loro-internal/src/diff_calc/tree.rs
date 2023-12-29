@@ -92,7 +92,7 @@ impl TreeDiffCache {
     // Because importing the local op must not cause circular references, it has been checked.
     pub(crate) fn add_node_from_local(&mut self, node: MoveLamportAndID) {
         if !self.all_version.includes_id(node.id) {
-            let old_parent = self.get_parent(node.target);
+            let (old_parent, _id) = self.get_parent(node.target);
 
             self.update_deleted_cache(node.target, node.parent, old_parent);
 
@@ -147,7 +147,7 @@ impl TreeDiffCache {
         let apply_ops = self.forward(to, to_max_lamport);
         debug_log::debug_log!("apply ops {:?}", apply_ops);
         for op in apply_ops.into_iter() {
-            let old_parent = self.get_parent(op.target);
+            let (old_parent, _id) = self.get_parent(op.target);
             let is_parent_deleted =
                 op.parent.is_some() && self.is_deleted(op.parent.as_ref().unwrap());
             let is_old_parent_deleted =
@@ -211,7 +211,7 @@ impl TreeDiffCache {
             effected = false;
         }
         node.effected = effected;
-        let old_parent = self.get_parent(node.target);
+        let (old_parent, _id) = self.get_parent(node.target);
         self.update_deleted_cache(node.target, node.parent, old_parent);
         self.cache.entry(node.target).or_default().insert(node);
         self.current_version.set_last(node.id);
@@ -256,7 +256,7 @@ impl TreeDiffCache {
             });
             if op.effected {
                 // update deleted cache
-                let old_parent = self.get_parent(op.target);
+                let (old_parent, _id) = self.get_parent(op.target);
                 self.update_deleted_cache(op.target, old_parent, op.parent);
             }
         }
@@ -279,14 +279,13 @@ impl TreeDiffCache {
         for op in retreat_ops.iter_mut().sorted().rev() {
             let btree_set = &mut self.cache.get_mut(&op.target).unwrap();
             btree_set.remove(op);
-            let last_effective_move_op_id = ID::new(op.target.peer, op.target.counter);
             self.pending.insert(*op);
             self.current_version.shrink_to_exclude(IdSpan {
                 client_id: op.id.peer,
                 counter: CounterSpan::new(op.id.counter, op.id.counter + 1),
             });
             // calc old parent
-            let old_parent = self.get_parent(op.target);
+            let (old_parent, last_effective_move_op_id) = self.get_parent(op.target);
             if op.effected {
                 // we need to know whether old_parent is deleted
                 let is_parent_deleted =
@@ -327,15 +326,15 @@ impl TreeDiffCache {
     }
 
     /// get the parent of the first effected op
-    fn get_parent(&self, tree_id: TreeID) -> Option<TreeID> {
+    fn get_parent(&self, tree_id: TreeID) -> (Option<TreeID>, ID) {
         if TreeID::is_deleted_root(Some(tree_id)) {
-            return None;
+            return (None, ID::NONE_ID);
         }
-        let mut ans = TreeID::unexist_root();
+        let mut ans = (TreeID::unexist_root(), ID::NONE_ID);
         if let Some(cache) = self.cache.get(&tree_id) {
             for op in cache.iter().rev() {
                 if op.effected {
-                    ans = op.parent;
+                    ans = (op.parent, op.id);
                     break;
                 }
             }
@@ -369,7 +368,7 @@ impl TreeDiffCache {
         }
 
         loop {
-            let parent = self.get_parent(node_id);
+            let (parent, _id) = self.get_parent(node_id);
             match parent {
                 Some(parent_id) if parent_id == maybe_ancestor => return true,
                 Some(parent_id) if parent_id == node_id => panic!("loop detected"),
