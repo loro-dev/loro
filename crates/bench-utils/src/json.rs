@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use arbitrary::{Arbitrary, Unstructured};
-use loro_common::LoroValue;
+pub use loro_common::LoroValue;
 
 use crate::ActionTrait;
 

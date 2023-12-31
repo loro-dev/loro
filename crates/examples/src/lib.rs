@@ -7,6 +7,12 @@ use bench_utils::{
 pub mod draw;
 pub mod json;
 pub mod sheet;
+pub mod test_preload {
+    pub use bench_utils::json::JsonAction::*;
+    pub use bench_utils::json::LoroValue::*;
+    pub use bench_utils::Action::*;
+    pub use bench_utils::SyncKind::*;
+}
 
 pub trait ActorTrait {
     type ActionKind: ActionTrait;
@@ -133,8 +139,9 @@ pub fn run_actions_fuzz_in_async_mode<T: ActorTrait>(
     let mut actions = make_actions_async::<T::ActionKind>(peer_num, actions, sync_all_interval);
     let mut actors = ActorGroup::<T>::new(peer_num);
     for action in actions.iter_mut() {
-        debug_log::debug_log!("[ApplyAction] {:#?}", &action);
+        debug_log::group!("[ApplyAction] {:?}", &action);
         actors.apply_action(action);
+        debug_log::group_end!();
     }
     actors.sync_all();
     actors.check_sync();
