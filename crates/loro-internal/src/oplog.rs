@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 use fxhash::FxHashMap;
-use loro_common::HasId;
+use loro_common::{HasCounter, HasId};
 use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
 // use tabled::measurment::Percent;
@@ -757,46 +757,6 @@ impl OpLog {
         )
     }
 
-    pub(crate) fn iter_causally_without_vv(
-        &self,
-        from: VersionVector,
-        to: VersionVector,
-    ) -> impl Iterator<Item = &Change> {
-        let from_frontiers = from.to_frontiers(&self.dag);
-        let diff = from.diff(&to).right;
-        let mut iter = self.dag.iter_causal(&from_frontiers, diff);
-        let mut node = iter.next();
-        let mut cur_cnt = 0;
-        std::iter::from_fn(move || {
-            if let Some(inner) = &node {
-                let peer = inner.data.peer;
-                let cnt = inner
-                    .data
-                    .cnt
-                    .max(cur_cnt)
-                    .max(from.get(&peer).copied().unwrap_or(0));
-                let end = (inner.data.cnt + inner.data.len as Counter)
-                    .min(to.get(&peer).copied().unwrap_or(0));
-                let change = self
-                    .changes
-                    .get(&peer)
-                    .and_then(|x| x.get_by_atom_index(cnt).map(|x| x.element))
-                    .unwrap();
-
-                if change.ctr_end() < end {
-                    cur_cnt = change.ctr_end();
-                } else {
-                    node = iter.next();
-                    cur_cnt = 0;
-                }
-
-                Some(change)
-            } else {
-                None
-            }
-        })
-    }
-
     pub fn len_changes(&self) -> usize {
         self.changes.values().map(|x| x.len()).sum()
     }
@@ -833,6 +793,24 @@ impl OpLog {
             let node = self.dag.get(c.id_start()).unwrap();
             assert_eq!(c.id_end(), node.id_end());
         }
+    }
+
+    pub(crate) fn iter_changes<'a>(
+        &'a self,
+        from: &VersionVector,
+        to: &VersionVector,
+    ) -> impl Iterator<Item = &'a Change> + 'a {
+        let spans: Vec<_> = from.diff_iter(to).1.collect();
+        spans.into_iter().flat_map(move |span| {
+            let peer = span.client_id;
+            let cnt = span.counter.start;
+            let end_cnt = span.counter.end;
+            let peer_changes = self.changes.get(&peer).unwrap();
+            let index = peer_changes.search_atom_index(cnt);
+            peer_changes[index..]
+                .iter()
+                .take_while(move |x| x.ctr_start() < end_cnt)
+        })
     }
 }
 

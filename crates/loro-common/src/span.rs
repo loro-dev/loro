@@ -113,6 +113,8 @@ impl CounterSpan {
     }
 
     #[inline(always)]
+    /// Normalized end value.
+    ///
     /// This is different from end. start may be greater than end. This is the max of start+1 and end
     pub fn norm_end(&self) -> i32 {
         if self.start < self.end {

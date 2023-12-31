@@ -612,7 +612,7 @@ fn decode_snapshot_states(
 
 mod encode {
     use fxhash::FxHashMap;
-    use loro_common::{ContainerID, ContainerType, HasId, PeerID, ID};
+    use loro_common::{ContainerID, ContainerType, HasId, HasLamport, PeerID, ID};
     use num_traits::ToPrimitive;
     use rle::{HasLength, Sliceable};
     use std::borrow::Cow;
@@ -841,8 +841,8 @@ mod encode {
         let start_vv = vv.trim(&oplog.vv());
         let mut start_counters = Vec::new();
 
-        let mut diff_changes = Vec::new();
-        for change in oplog.iter_causally_without_vv(start_vv.clone(), self_vv.clone()) {
+        let mut diff_changes: Vec<Cow<'a, Change>> = Vec::new();
+        for change in oplog.iter_changes(&start_vv, self_vv) {
             let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
             if !peer_register.contains(&change.id.peer) {
                 peer_register.register(&change.id.peer);
@@ -856,6 +856,7 @@ mod encode {
             }
         }
 
+        diff_changes.sort_by_key(|x| x.lamport);
         (start_counters, diff_changes)
     }
 
