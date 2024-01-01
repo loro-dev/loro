@@ -628,3 +628,7 @@ impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
         }
     }
 }
+
+pub fn to_value<T: Into<LoroValue>>(value: T) -> LoroValue {
+    value.into()
+}

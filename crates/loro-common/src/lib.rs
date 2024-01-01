@@ -6,12 +6,15 @@ use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Serialize};
 mod error;
 mod id;
+mod macros;
 mod span;
 mod value;
 
 pub use error::{LoroError, LoroResult, LoroTreeError};
+#[doc(hidden)]
+pub use fxhash::FxHashMap;
 pub use span::*;
-pub use value::LoroValue;
+pub use value::{to_value, LoroValue};
 
 /// Unique id for each peer. It's usually random
 pub type PeerID = u64;
