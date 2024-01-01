@@ -25,18 +25,25 @@ pub enum LoroValue {
     Container(ContainerID),
 }
 
+const MAX_DEPTH: usize = 128;
 impl<'a> arbitrary::Arbitrary<'a> for LoroValue {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        match u.int_in_range(0..=7).unwrap() {
-            0 => Ok(LoroValue::Null),
-            1 => Ok(LoroValue::Bool(u.arbitrary()?)),
-            2 => Ok(LoroValue::Double(u.arbitrary()?)),
-            3 => Ok(LoroValue::I32(u.arbitrary()?)),
-            4 => Ok(LoroValue::Binary(Arc::new(u.arbitrary()?))),
-            5 => Ok(LoroValue::String(Arc::new(u.arbitrary()?))),
-            6 => Ok(LoroValue::List(Arc::new(u.arbitrary()?))),
-            7 => Ok(LoroValue::Map(Arc::new(u.arbitrary()?))),
+        let value = match u.int_in_range(0..=7).unwrap() {
+            0 => LoroValue::Null,
+            1 => LoroValue::Bool(u.arbitrary()?),
+            2 => LoroValue::Double(u.arbitrary()?),
+            3 => LoroValue::I32(u.arbitrary()?),
+            4 => LoroValue::Binary(Arc::new(u.arbitrary()?)),
+            5 => LoroValue::String(Arc::new(u.arbitrary()?)),
+            6 => LoroValue::List(Arc::new(u.arbitrary()?)),
+            7 => LoroValue::Map(Arc::new(u.arbitrary()?)),
             _ => unreachable!(),
+        };
+
+        if value.get_depth() > MAX_DEPTH {
+            Err(arbitrary::Error::IncorrectFormat)
+        } else {
+            Ok(value)
         }
     }
 }
@@ -54,6 +61,37 @@ impl LoroValue {
             LoroValue::List(list) => list.get(index),
             _ => None,
         }
+    }
+
+    pub fn get_depth(&self) -> usize {
+        let mut max_depth = 0;
+        let mut value_depth_pairs = vec![(self, 0)];
+        while let Some((value, depth)) = value_depth_pairs.pop() {
+            match value {
+                LoroValue::List(arr) => {
+                    for v in arr.iter() {
+                        value_depth_pairs.push((v, depth + 1));
+                    }
+                    max_depth = max_depth.max(depth + 1);
+                }
+                LoroValue::Map(map) => {
+                    for (_, v) in map.iter() {
+                        value_depth_pairs.push((v, depth + 1));
+                    }
+
+                    max_depth = max_depth.max(depth + 1);
+                }
+                _ => {}
+            }
+        }
+
+        max_depth
+    }
+
+    // TODO: add checks for too deep value, and return err if users 
+    // try to insert such value into a container
+    pub fn is_too_deep(&self) -> bool {
+        self.get_depth() > MAX_DEPTH
     }
 }
 

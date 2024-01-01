@@ -338,27 +338,24 @@ fn fuzz_json() {
 #[test]
 fn fuzz_json_1() {
     use examples::test_preload::*;
+    let mut map = loro_value!({"": "test"});
+    for _ in 0..64 {
+        map = loro_value!({"": map});
+    }
+
+    let mut list = loro_value!([map]);
+    for _ in 0..64 {
+        list = loro_value!([list, 9]);
+    }
+
     fuzz(
         5,
-        &[
-            Action {
-                peer: 71797091386531840,
-                action: InsertList {
-                    index: 311,
-                    value: Bool(true),
-                },
+        &[Action {
+            peer: 35184913762633,
+            action: InsertMap {
+                key: "\0IIIIIIIIIIIIIIIIIII\0\0".into(),
+                value: list,
             },
-            Action {
-                peer: 35184913762633,
-                action: InsertMap {
-                    key: "\0IIIIIIIIIIIIIIIIIII\0\0".into(),
-                    value: loro_value!({
-                        "\u{12}": 1258310400,
-                        "\u{13}1IIIII\u{4}\0\0\0IIIIIIIIIIIIIIIK\0IIIIIIIIIIIIIIIKII\u{1a}\0": {},
-                        "\u{13}\u{13}\0": "",
-                    }),
-                },
-            },
-        ],
+        }],
     );
 }

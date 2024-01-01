@@ -1621,7 +1621,7 @@ mod value {
 
                     let mut ans = Vec::with_capacity(len);
                     for _ in 0..len {
-                        ans.push(self.read_value_type_and_content(keys, cids)?);
+                        ans.push(self.recursive_read_value_type_and_content(keys, cids)?);
                     }
                     ans.into()
                 }
@@ -1638,7 +1638,7 @@ mod value {
                             .get(key_idx)
                             .ok_or(LoroError::DecodeDataCorruptionError)?
                             .to_string();
-                        let value = self.read_value_type_and_content(keys, cids)?;
+                        let value = self.recursive_read_value_type_and_content(keys, cids)?;
                         ans.insert(key, value);
                     }
                     ans.into()
@@ -1651,6 +1651,193 @@ mod value {
                 ),
                 a => unreachable!("Unexpected value kind {:?}", a),
             })
+        }
+
+        fn recursive_read_value_type_and_content(
+            &mut self,
+            keys: &[InternalString],
+            cids: &[ContainerID],
+        ) -> LoroResult<LoroValue> {
+            #[derive(Debug)]
+            enum Task {
+                Init,
+                ReadList {
+                    left: usize,
+                    vec: Vec<LoroValue>,
+
+                    key_idx_in_parent: usize,
+                },
+                ReadMap {
+                    left: usize,
+                    map: FxHashMap<String, LoroValue>,
+
+                    key_idx_in_parent: usize,
+                },
+            }
+            impl Task {
+                fn should_read(&self) -> bool {
+                    !matches!(
+                        self,
+                        Self::ReadList { left: 0, .. } | Self::ReadMap { left: 0, .. }
+                    )
+                }
+
+                fn key_idx(&self) -> usize {
+                    match self {
+                        Self::ReadList {
+                            key_idx_in_parent, ..
+                        } => *key_idx_in_parent,
+                        Self::ReadMap {
+                            key_idx_in_parent, ..
+                        } => *key_idx_in_parent,
+                        _ => unreachable!(),
+                    }
+                }
+
+                fn into_value(self) -> LoroValue {
+                    match self {
+                        Self::ReadList { vec, .. } => vec.into(),
+                        Self::ReadMap { map, .. } => map.into(),
+                        _ => unreachable!(),
+                    }
+                }
+            }
+            let mut stack = vec![Task::Init];
+            while let Some(mut task) = stack.pop() {
+                debug_log::debug_dbg!(&task);
+                if task.should_read() {
+                    let key_idx = if matches!(task, Task::ReadMap { .. }) {
+                        self.read_usize()?
+                    } else {
+                        0
+                    };
+                    let kind = self.read_u8()?;
+                    let kind = ValueKind::from_u8(kind).expect("Unknown value type");
+                    let value = match kind {
+                        ValueKind::Null => LoroValue::Null,
+                        ValueKind::True => LoroValue::Bool(true),
+                        ValueKind::False => LoroValue::Bool(false),
+                        ValueKind::I32 => LoroValue::I32(self.read_i32()?),
+                        ValueKind::F64 => LoroValue::Double(self.read_f64()?),
+                        ValueKind::Str => LoroValue::String(Arc::new(self.read_str()?.to_owned())),
+                        ValueKind::DeltaInt => LoroValue::I32(self.read_i32()?),
+                        ValueKind::Array => {
+                            let len = self.read_usize()?;
+                            if len > MAX_COLLECTION_SIZE {
+                                return Err(LoroError::DecodeDataCorruptionError);
+                            }
+
+                            let ans = Vec::with_capacity(len);
+                            stack.push(task);
+                            stack.push(Task::ReadList {
+                                left: len,
+                                vec: ans,
+                                key_idx_in_parent: key_idx,
+                            });
+                            continue;
+                        }
+                        ValueKind::Map => {
+                            let len = self.read_usize()?;
+                            if len > MAX_COLLECTION_SIZE {
+                                return Err(LoroError::DecodeDataCorruptionError);
+                            }
+
+                            let ans = FxHashMap::with_capacity_and_hasher(len, Default::default());
+                            stack.push(task);
+                            stack.push(Task::ReadMap {
+                                left: len,
+                                map: ans,
+                                key_idx_in_parent: key_idx,
+                            });
+                            continue;
+                        }
+                        ValueKind::Binary => {
+                            LoroValue::Binary(Arc::new(self.read_binary()?.to_owned()))
+                        }
+                        ValueKind::ContainerIdx => LoroValue::Container(
+                            cids.get(self.read_usize()?)
+                                .ok_or(LoroError::DecodeDataCorruptionError)?
+                                .clone(),
+                        ),
+                        a => unreachable!("Unexpected value kind {:?}", a),
+                    };
+
+                    task = match task {
+                        Task::Init => {
+                            debug_log::debug_log!("DONE");
+                            return Ok(value);
+                        }
+                        Task::ReadList {
+                            mut left,
+                            mut vec,
+                            key_idx_in_parent,
+                        } => {
+                            left -= 1;
+                            vec.push(value);
+                            let task = Task::ReadList {
+                                left,
+                                vec,
+                                key_idx_in_parent,
+                            };
+                            if left != 0 {
+                                stack.push(task);
+                                continue;
+                            }
+
+                            task
+                        }
+                        Task::ReadMap {
+                            mut left,
+                            mut map,
+                            key_idx_in_parent,
+                        } => {
+                            left -= 1;
+                            let key = keys
+                                .get(key_idx)
+                                .ok_or(LoroError::DecodeDataCorruptionError)?
+                                .to_string();
+                            map.insert(key, value);
+                            let task = Task::ReadMap {
+                                left,
+                                map,
+                                key_idx_in_parent,
+                            };
+                            if left != 0 {
+                                stack.push(task);
+                                continue;
+                            }
+                            task
+                        }
+                    };
+                }
+
+                let key_index = task.key_idx();
+                let value = task.into_value();
+                if let Some(last) = stack.last_mut() {
+                    match last {
+                        Task::Init => {
+                            return Ok(value);
+                        }
+                        Task::ReadList { left, vec, .. } => {
+                            *left -= 1;
+                            vec.push(value);
+                        }
+                        Task::ReadMap { left, map, .. } => {
+                            *left -= 1;
+                            let key = keys
+                                .get(key_index)
+                                .ok_or(LoroError::DecodeDataCorruptionError)?
+                                .to_string();
+                            map.insert(key, value);
+                        }
+                    }
+                } else {
+                    debug_log::debug_log!("DONE");
+                    return Ok(value);
+                }
+            }
+
+            unreachable!();
         }
 
         pub fn read_i32(&mut self) -> LoroResult<i32> {
