@@ -863,11 +863,11 @@ impl Loro {
         let value: JsValue = vv.into();
         let is_bytes = value.is_instance_of::<js_sys::Uint8Array>();
         let vv = if is_bytes {
-            let bytes = js_sys::Uint8Array::try_from(value.clone()).unwrap_throw();
+            let bytes = js_sys::Uint8Array::from(value.clone());
             let bytes = bytes.to_vec();
             VersionVector::decode(&bytes)?
         } else {
-            let map = js_sys::Map::try_from(value).unwrap_throw();
+            let map = js_sys::Map::from(value);
             js_map_to_vv(map)?
         };
 
@@ -1074,7 +1074,7 @@ impl LoroText {
     /// ```
     pub fn mark(&self, range: JsRange, key: &str, value: JsValue) -> Result<(), JsError> {
         let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
-        let value: LoroValue = LoroValue::try_from(value)?;
+        let value: LoroValue = LoroValue::from(value);
         let expand = range
             .expand
             .map(|x| {
@@ -2081,7 +2081,7 @@ pub fn to_readable_version(version: &[u8]) -> Result<JsVersionVectorMap, JsValue
 #[wasm_bindgen(js_name = "toEncodedVersion")]
 pub fn to_encoded_version(version: JsVersionVectorMap) -> Result<Vec<u8>, JsValue> {
     let map: JsValue = version.into();
-    let map: js_sys::Map = map.try_into().unwrap_throw();
+    let map: js_sys::Map = map.into();
     let vv = js_map_to_vv(map)?;
     let encoded = vv.encode();
     Ok(encoded)

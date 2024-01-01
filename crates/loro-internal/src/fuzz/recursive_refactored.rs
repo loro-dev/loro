@@ -784,7 +784,7 @@ fn check_synced(sites: &mut [Actor]) {
 
 fn check_history(actor: &mut Actor) {
     assert!(!actor.history.is_empty());
-    for (_, (f, v)) in actor.history.iter().enumerate() {
+    for (f, v) in actor.history.iter() {
         let f = Frontiers::from(f);
         debug_log::group!(
             "Checkout from {:?} to {:?}",

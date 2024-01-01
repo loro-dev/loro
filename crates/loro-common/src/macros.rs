@@ -247,7 +247,6 @@ macro_rules! json_internal_vec {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     #[test]
     fn test_value_macro() {
         let v = loro_value!([1, 2, 3]);

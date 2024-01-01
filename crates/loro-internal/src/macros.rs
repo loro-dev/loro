@@ -83,7 +83,6 @@ macro_rules! array_mut_ref {
 
 #[cfg(test)]
 mod test {
-    use super::*;
 
     #[test]
     fn test_macro() {

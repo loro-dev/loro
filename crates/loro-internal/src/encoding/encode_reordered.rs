@@ -132,7 +132,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
         &peer_ids,
         false,
     )?
-    .0;
+    .ops_map;
 
     let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
     import_changes_to_oplog(changes, oplog)?;
@@ -247,6 +247,12 @@ fn decode_changes<'a>(
     Ok(changes)
 }
 
+struct ExtracedOps {
+    ops_map: FxHashMap<PeerID, Vec<Op>>,
+    ops: Vec<OpWithId>,
+    containers: Vec<ContainerID>,
+}
+
 fn extract_ops(
     raw_values: &[u8],
     iter: impl Iterator<Item = EncodedOp>,
@@ -255,7 +261,7 @@ fn extract_ops(
     keys: &arena::KeyArena,
     peer_ids: &arena::PeerIdArena,
     should_extract_ops_with_ids: bool,
-) -> LoroResult<(FxHashMap<PeerID, Vec<Op>>, Vec<OpWithId>, Vec<ContainerID>)> {
+) -> LoroResult<ExtracedOps> {
     let mut value_reader = ValueReader::new(raw_values);
     let mut ops_map: FxHashMap<PeerID, Vec<Op>> = FxHashMap::default();
     let arena = &oplog.arena;
@@ -315,7 +321,11 @@ fn extract_ops(
         ops.sort_by_key(|x| -x.counter);
     }
 
-    Ok((ops_map, ops, containers))
+    Ok(ExtracedOps {
+        ops_map,
+        ops,
+        containers,
+    })
 }
 
 pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVector) -> Vec<u8> {
@@ -497,6 +507,8 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         unimplemented!("You can only import snapshot to a empty loro doc now");
     }
 
+    assert!(state.frontiers.is_empty());
+    assert!(oplog.frontiers().is_empty());
     let iter = serde_columnar::iter_from_bytes::<EncodedDoc>(bytes)?;
     let DecodedArenas {
         peer_ids,
@@ -517,7 +529,11 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
             ans
         })
         .try_collect()?;
-    let (ops_map, ops, containers) = extract_ops(
+    let ExtracedOps {
+        ops_map,
+        ops,
+        containers,
+    } = extract_ops(
         &iter.raw_values,
         iter.ops,
         &mut oplog,
@@ -535,7 +551,8 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         state_blob_arena,
         ops,
         &oplog,
-    );
+    )
+    .unwrap();
     let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
     import_changes_to_oplog(changes, &mut oplog)?;
     assert_eq!(&state.frontiers, oplog.frontiers());
@@ -612,7 +629,7 @@ fn decode_snapshot_states(
 
 mod encode {
     use fxhash::FxHashMap;
-    use loro_common::{ContainerID, ContainerType, HasId, HasLamport, PeerID, ID};
+    use loro_common::{ContainerID, ContainerType, HasId, PeerID, ID};
     use num_traits::ToPrimitive;
     use rle::{HasLength, Sliceable};
     use std::borrow::Cow;

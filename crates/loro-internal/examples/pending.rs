@@ -8,7 +8,7 @@ pub fn main() {
     let actions = bench_utils::get_automerge_actions();
     let action_length = actions.len();
     let text = loro.get_text("text");
-    for (_, chunks) in actions.chunks(action_length / 10).enumerate() {
+    for chunks in actions.chunks(action_length / 10) {
         for TextAction { pos, ins, del } in chunks {
             let mut txn = loro.txn().unwrap();
             text.delete_with_txn(&mut txn, *pos, *del).unwrap();
