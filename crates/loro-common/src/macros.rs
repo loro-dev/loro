@@ -5,7 +5,7 @@
 ///
 /// ```
 /// use loro_common::loro_value;
-/// loro_value({
+/// loro_value!({
 ///     "name": "John",
 ///     "age": 12,
 ///     "collections": [

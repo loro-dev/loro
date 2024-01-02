@@ -255,12 +255,6 @@ impl<S: Into<String>, M> From<HashMap<S, LoroValue, M>> for LoroValue {
     }
 }
 
-impl From<Vec<LoroValue>> for LoroValue {
-    fn from(vec: Vec<LoroValue>) -> Self {
-        LoroValue::List(Arc::new(vec))
-    }
-}
-
 impl From<Vec<u8>> for LoroValue {
     fn from(vec: Vec<u8>) -> Self {
         LoroValue::Binary(Arc::new(vec))
@@ -285,12 +279,6 @@ impl From<i32> for LoroValue {
     }
 }
 
-impl From<u8> for LoroValue {
-    fn from(v: u8) -> Self {
-        LoroValue::I32(v as i32)
-    }
-}
-
 impl From<u16> for LoroValue {
     fn from(v: u16) -> Self {
         LoroValue::I32(v as i32)
@@ -312,6 +300,13 @@ impl From<f64> for LoroValue {
 impl From<bool> for LoroValue {
     fn from(v: bool) -> Self {
         LoroValue::Bool(v)
+    }
+}
+
+impl<T: Into<LoroValue>> From<Vec<T>> for LoroValue {
+    fn from(value: Vec<T>) -> Self {
+        let vec: Vec<LoroValue> = value.into_iter().map(|x| x.into()).collect();
+        Self::List(Arc::new(vec))
     }
 }
 

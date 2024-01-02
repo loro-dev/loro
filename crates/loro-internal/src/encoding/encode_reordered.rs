@@ -2354,11 +2354,11 @@ mod test {
             ID::new(u64::MAX, 123),
             ContainerType::Tree,
         )));
-        test_loro_value_read_write(vec![1.into(), 2.into(), 3.into()]);
+        test_loro_value_read_write(vec![1i32, 2, 3]);
         test_loro_value_read_write(LoroValue::Map(Arc::new(fx_map![
             "1".into() => 123.into(),
             "2".into() => "123".into(),
-            "3".into() => vec![true.into()].into()
+            "3".into() => vec![true].into()
         ])));
     }
 }
