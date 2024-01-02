@@ -6,11 +6,12 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{ContainerID, LoroResult};
+use loro_common::{ContainerID, LoroError, LoroResult};
 
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, ContainerIdRaw},
+    encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::Index,
     event::{Diff, InternalContainerDiff, InternalDiff},
     fx_map,
@@ -55,6 +56,10 @@ pub struct DocState {
 
 #[enum_dispatch]
 pub(crate) trait ContainerState: Clone {
+    fn container_idx(&self) -> ContainerIdx;
+
+    fn is_state_empty(&self) -> bool;
+
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
@@ -103,6 +108,16 @@ pub(crate) trait ContainerState: Clone {
     fn get_child_containers(&self) -> Vec<ContainerID> {
         Vec::new()
     }
+
+    /// Encode the ops and the blob that can be used to restore the state to the current state.
+    ///
+    /// State will use the provided encoder to encode the ops and export a blob.
+    /// The ops should be encoded into the snapshot as well as the blob.
+    /// The users then can use the ops and the blob to restore the state to the current state.
+    fn encode_snapshot(&self, encoder: StateSnapshotEncoder) -> Vec<u8>;
+
+    /// Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext);
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -397,6 +412,24 @@ impl DocState {
     pub(crate) fn start_txn(&mut self, origin: InternalString, local: bool) {
         self.pre_txn(origin, local);
         self.in_txn = true;
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &State> {
+        self.states.values()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut State> {
+        self.states.values_mut()
+    }
+
+    pub(crate) fn init_container(
+        &mut self,
+        cid: ContainerID,
+        decode_ctx: StateSnapshotDecodeContext,
+    ) {
+        let idx = self.arena.register_container(&cid);
+        let state = self.states.entry(idx).or_insert_with(|| create_state(idx));
+        state.import_from_snapshot_ops(decode_ctx);
     }
 
     #[inline]
@@ -798,6 +831,24 @@ impl DocState {
         debug_log::group_end!();
         Some(ans)
     }
+
+    pub(crate) fn check_before_decode_snapshot(&self) -> LoroResult<()> {
+        if self.is_in_txn() {
+            return Err(LoroError::DecodeError(
+                "State is in txn".to_string().into_boxed_str(),
+            ));
+        }
+
+        if !self.is_empty() {
+            return Err(LoroError::DecodeError(
+                "State is not empty, cannot import snapshot directly"
+                    .to_string()
+                    .into_boxed_str(),
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 struct SubContainerDiffPatch {
@@ -896,7 +947,7 @@ pub fn create_state(idx: ContainerIdx) -> State {
         ContainerType::Map => State::MapState(MapState::new(idx)),
         ContainerType::List => State::ListState(ListState::new(idx)),
         ContainerType::Text => State::RichtextState(RichtextState::new(idx)),
-        ContainerType::Tree => State::TreeState(TreeState::new()),
+        ContainerType::Tree => State::TreeState(TreeState::new(idx)),
     }
 }
 

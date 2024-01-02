@@ -312,7 +312,7 @@ impl Actionable for Vec<LoroDoc> {
                 *site %= self.len() as u8;
                 let app_state = &mut self[*site as usize].app_state().lock().unwrap();
                 let text = app_state.get_text("text").unwrap();
-                if text.is_empty() {
+                if text.len_unicode() == 0 {
                     *len = 0;
                     *pos = 0;
                 } else {
@@ -436,8 +436,8 @@ where
     let f_ref: *const _ = &f;
     let f_ref: usize = f_ref as usize;
     #[allow(clippy::redundant_clone)]
-    let actions_clone = actions.clone();
-    let action_ref: usize = (&actions_clone) as *const _ as usize;
+    let mut actions_clone = actions.clone();
+    let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
     #[allow(clippy::blocks_in_if_conditions)]
     if std::panic::catch_unwind(|| {
         // SAFETY: test
@@ -465,8 +465,8 @@ where
     while let Some(candidate) = candidates.pop() {
         let f_ref: *const _ = &f;
         let f_ref: usize = f_ref as usize;
-        let actions_clone = candidate.clone();
-        let action_ref: usize = (&actions_clone) as *const _ as usize;
+        let mut actions_clone = candidate.clone();
+        let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
         #[allow(clippy::blocks_in_if_conditions)]
         if std::panic::catch_unwind(|| {
             // SAFETY: test
@@ -1337,6 +1337,35 @@ mod test {
     }
 
     #[test]
+    fn snapshot_fuzz_test() {
+        test_multi_sites(
+            8,
+            &mut [
+                Ins {
+                    content: 163,
+                    pos: 0,
+                    site: 3,
+                },
+                Ins {
+                    content: 163,
+                    pos: 1,
+                    site: 3,
+                },
+                Ins {
+                    content: 113,
+                    pos: 2,
+                    site: 3,
+                },
+                Ins {
+                    content: 888,
+                    pos: 3,
+                    site: 3,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn text_fuzz_2() {
         test_multi_sites(
             8,
@@ -1980,25 +2009,19 @@ mod test {
             &mut [
                 Ins {
                     content: 41009,
-                    pos: 10884953820616207167,
-                    site: 151,
+                    pos: 0,
+                    site: 1,
                 },
                 Mark {
-                    pos: 150995095,
-                    len: 7502773972505002496,
-                    site: 0,
-                    style_key: 0,
-                },
-                Mark {
-                    pos: 11821702543106517760,
-                    len: 4251403153421165732,
-                    site: 151,
+                    pos: 0,
+                    len: 2,
+                    site: 1,
                     style_key: 151,
                 },
                 Mark {
-                    pos: 589824,
-                    len: 2233786514697303298,
-                    site: 51,
+                    pos: 0,
+                    len: 1,
+                    site: 0,
                     style_key: 151,
                 },
             ],
@@ -2288,7 +2311,78 @@ mod test {
     }
 
     #[test]
+    fn fuzz_snapshot() {
+        test_multi_sites(
+            5,
+            &mut [
+                Ins {
+                    content: 52480,
+                    pos: 0,
+                    site: 1,
+                },
+                Mark {
+                    pos: 6,
+                    len: 1,
+                    site: 1,
+                    style_key: 5,
+                },
+                Ins {
+                    content: 8224,
+                    pos: 0,
+                    site: 1,
+                },
+                Del {
+                    pos: 12,
+                    len: 1,
+                    site: 1,
+                },
+                Ins {
+                    content: 257,
+                    pos: 10,
+                    site: 1,
+                },
+                Ins {
+                    content: 332,
+                    pos: 11,
+                    site: 1,
+                },
+                Del {
+                    pos: 1,
+                    len: 21,
+                    site: 1,
+                },
+                Del {
+                    pos: 0,
+                    len: 1,
+                    site: 1,
+                },
+                Ins {
+                    content: 11309,
+                    pos: 0,
+                    site: 4,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn mini_r() {
-        minify_error(5, vec![], test_multi_sites, |_, ans| ans.to_vec())
+        minify_error(5, vec![], test_multi_sites, |site_num, ans| {
+            let mut sites = Vec::new();
+            for i in 0..site_num {
+                let loro = LoroDoc::new();
+                loro.set_peer_id(i as u64).unwrap();
+                sites.push(loro);
+            }
+
+            let mut applied = Vec::new();
+            for action in ans.iter_mut() {
+                sites.preprocess(action);
+                applied.push(action.clone());
+                sites.apply_action(action);
+            }
+
+            ans.to_vec()
+        })
     }
 }

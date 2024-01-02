@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 arbitrary = { version = "1.2.0", features = ["derive"] }
+loro-common = { path = "../loro-common" }
 enum-as-inner = "0.5.1"
 flate2 = "1.0.25"
 rand = "0.8.5"

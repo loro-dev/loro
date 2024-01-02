@@ -14,7 +14,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         list::list_op::{InnerListOp, ListOp},
-        map::{InnerMapSet, MapSet},
+        map::MapSet,
         ContainerID,
     },
     id::Counter,
@@ -47,147 +47,12 @@ pub struct SharedArena {
 }
 
 pub struct StrAllocResult {
+    /// unicode start
     pub start: usize,
+    /// unicode end
     pub end: usize,
     // TODO: remove this field?
     pub utf16_len: usize,
-}
-
-pub(crate) struct OpConverter<'a> {
-    container_idx_to_id: MutexGuard<'a, Vec<ContainerID>>,
-    container_id_to_idx: MutexGuard<'a, FxHashMap<ContainerID, ContainerIdx>>,
-    container_idx_depth: MutexGuard<'a, Vec<u16>>,
-    str: MutexGuard<'a, StrArena>,
-    values: MutexGuard<'a, Vec<LoroValue>>,
-    root_c_idx: MutexGuard<'a, Vec<ContainerIdx>>,
-    parents: MutexGuard<'a, FxHashMap<ContainerIdx, Option<ContainerIdx>>>,
-}
-
-impl<'a> OpConverter<'a> {
-    pub fn convert_single_op(
-        &mut self,
-        id: &ContainerID,
-        _peer: PeerID,
-        counter: Counter,
-        _lamport: Lamport,
-        content: RawOpContent,
-    ) -> Op {
-        let container = 'out: {
-            if let Some(&idx) = self.container_id_to_idx.get(id) {
-                break 'out idx;
-            }
-
-            let container_idx_to_id = &mut self.container_idx_to_id;
-            let idx = container_idx_to_id.len();
-            container_idx_to_id.push(id.clone());
-            let idx = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
-            self.container_id_to_idx.insert(id.clone(), idx);
-            if id.is_root() {
-                self.root_c_idx.push(idx);
-                self.parents.insert(idx, None);
-                self.container_idx_depth.push(1);
-            } else {
-                self.container_idx_depth.push(0);
-            }
-            idx
-        };
-
-        match content {
-            crate::op::RawOpContent::Map(MapSet { key, value }) => {
-                let value = if let Some(value) = value {
-                    Some(_alloc_value(&mut self.values, value) as u32)
-                } else {
-                    None
-                };
-                Op {
-                    counter,
-                    container,
-                    content: crate::op::InnerContent::Map(InnerMapSet { key, value }),
-                }
-            }
-            crate::op::RawOpContent::List(list) => match list {
-                ListOp::Insert { slice, pos } => match slice {
-                    ListSlice::RawData(values) => {
-                        let range = _alloc_values(&mut self.values, values.iter().cloned());
-                        Op {
-                            counter,
-                            container,
-                            content: crate::op::InnerContent::List(InnerListOp::Insert {
-                                slice: SliceRange::from(range.start as u32..range.end as u32),
-                                pos,
-                            }),
-                        }
-                    }
-                    ListSlice::RawStr {
-                        str,
-                        unicode_len: _,
-                    } => {
-                        let slice = _alloc_str(&mut self.str, &str);
-                        Op {
-                            counter,
-                            container,
-                            content: crate::op::InnerContent::List(InnerListOp::Insert {
-                                slice: SliceRange::from(slice.start as u32..slice.end as u32),
-                                pos,
-                            }),
-                        }
-                    }
-                },
-                ListOp::Delete(span) => Op {
-                    counter,
-                    container,
-                    content: InnerContent::List(InnerListOp::Delete(span)),
-                },
-                ListOp::StyleStart {
-                    start,
-                    end,
-                    info,
-                    key,
-                    value,
-                } => Op {
-                    counter,
-                    container,
-                    content: InnerContent::List(InnerListOp::StyleStart {
-                        start,
-                        end,
-                        info,
-                        key,
-                        value,
-                    }),
-                },
-                ListOp::StyleEnd => Op {
-                    counter,
-                    container,
-                    content: InnerContent::List(InnerListOp::StyleEnd),
-                },
-            },
-            crate::op::RawOpContent::Tree(tree) => {
-                // we need create every meta container associated with target TreeID
-                let id = tree.target;
-                let meta_container_id = id.associated_meta_container();
-
-                if self.container_id_to_idx.get(&meta_container_id).is_none() {
-                    let container_idx_to_id = &mut self.container_idx_to_id;
-                    let idx = container_idx_to_id.len();
-                    container_idx_to_id.push(meta_container_id.clone());
-                    self.container_idx_depth.push(0);
-                    let idx = ContainerIdx::from_index_and_type(
-                        idx as u32,
-                        meta_container_id.container_type(),
-                    );
-                    self.container_id_to_idx.insert(meta_container_id, idx);
-                    let parent = &mut self.parents;
-                    parent.insert(idx, Some(container));
-                }
-
-                Op {
-                    container,
-                    counter,
-                    content: crate::op::InnerContent::Tree(tree),
-                }
-            }
-        }
-    }
 }
 
 impl SharedArena {
@@ -244,12 +109,9 @@ impl SharedArena {
     }
 
     /// return slice and unicode index
-    pub fn alloc_str_with_slice(&self, str: &str) -> (BytesSlice, usize) {
+    pub fn alloc_str_with_slice(&self, str: &str) -> (BytesSlice, StrAllocResult) {
         let mut text_lock = self.inner.str.lock().unwrap();
-        let start = text_lock.len_bytes();
-        let unicode_start = text_lock.len_unicode();
-        text_lock.alloc(str);
-        (text_lock.slice_bytes(start..), unicode_start)
+        _alloc_str_with_slice(&mut text_lock, str)
     }
 
     /// alloc str without extra info
@@ -365,20 +227,6 @@ impl SharedArena {
         (self.inner.values.lock().unwrap()[range]).to_vec()
     }
 
-    #[inline(always)]
-    pub(crate) fn with_op_converter<R>(&self, f: impl FnOnce(&mut OpConverter) -> R) -> R {
-        let mut op_converter = OpConverter {
-            container_idx_to_id: self.inner.container_idx_to_id.lock().unwrap(),
-            container_id_to_idx: self.inner.container_id_to_idx.lock().unwrap(),
-            container_idx_depth: self.inner.depth.lock().unwrap(),
-            str: self.inner.str.lock().unwrap(),
-            values: self.inner.values.lock().unwrap(),
-            root_c_idx: self.inner.root_c_idx.lock().unwrap(),
-            parents: self.inner.parents.lock().unwrap(),
-        };
-        f(&mut op_converter)
-    }
-
     pub fn convert_single_op(
         &self,
         container: &ContainerID,
@@ -404,14 +252,11 @@ impl SharedArena {
         container: ContainerIdx,
     ) -> Op {
         match content {
-            crate::op::RawOpContent::Map(MapSet { key, value }) => {
-                let value = value.map(|value| self.alloc_value(value) as u32);
-                Op {
-                    counter,
-                    container,
-                    content: crate::op::InnerContent::Map(InnerMapSet { key, value }),
-                }
-            }
+            crate::op::RawOpContent::Map(MapSet { key, value }) => Op {
+                counter,
+                container,
+                content: crate::op::InnerContent::Map(MapSet { key, value }),
+            },
             crate::op::RawOpContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(values) => {
@@ -426,13 +271,13 @@ impl SharedArena {
                         }
                     }
                     ListSlice::RawStr { str, unicode_len } => {
-                        let (slice, start) = self.alloc_str_with_slice(&str);
+                        let (slice, info) = self.alloc_str_with_slice(&str);
                         Op {
                             counter,
                             container,
                             content: crate::op::InnerContent::List(InnerListOp::InsertText {
                                 slice,
-                                unicode_start: start as u32,
+                                unicode_start: info.start as u32,
                                 unicode_len: unicode_len as u32,
                                 pos: pos as u32,
                             }),
@@ -517,6 +362,15 @@ impl SharedArena {
             &self.inner.parents.lock().unwrap(),
         )
     }
+}
+
+fn _alloc_str_with_slice(
+    text_lock: &mut MutexGuard<'_, StrArena>,
+    str: &str,
+) -> (BytesSlice, StrAllocResult) {
+    let start = text_lock.len_bytes();
+    let ans = _alloc_str(text_lock, str);
+    (text_lock.slice_bytes(start..), ans)
 }
 
 fn _alloc_values(

@@ -23,7 +23,7 @@ use crate::{
     delta::{Delta, MapDelta, MapValue, TreeInternalDiff},
     event::InternalDiff,
     id::Counter,
-    op::{RichOp, SliceRange},
+    op::{RichOp, SliceRange, SliceRanges},
     span::{HasId, HasLamport},
     version::Frontiers,
     InternalString, VersionVector,
@@ -130,7 +130,6 @@ impl DiffCalculator {
                     .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
                     .unwrap_or_else(|e| e);
                 let mut visited = FxHashSet::default();
-                debug_log::debug_dbg!(&change, iter_start);
                 for mut op in &change.ops.vec()[iter_start..] {
                     // slice the op if needed
                     let stack_sliced_op;
@@ -272,7 +271,6 @@ impl DiffCalculator {
                 }
             }
 
-            debug_log::debug_dbg!(&new_containers);
             if len == all.len() {
                 debug_log::debug_log!("Container might be deleted");
                 debug_log::debug_dbg!(&all);
@@ -306,7 +304,7 @@ impl DiffCalculator {
                 );
             }
         }
-        debug_log::debug_dbg!(&ans);
+        // debug_log::debug_dbg!(&ans);
         ans.into_values()
             .sorted_by_key(|x| x.0)
             .map(|x| x.1)
@@ -379,7 +377,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
                 lamport: op.lamport(),
                 peer: op.client_id(),
                 counter: op.id_start().counter,
-                value: op.op().content.as_map().unwrap().value,
+                value: op.op().content.as_map().unwrap().value.clone(),
             });
     }
 
@@ -387,7 +385,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
 
     fn calculate_diff(
         &mut self,
-        oplog: &super::oplog::OpLog,
+        _oplog: &super::oplog::OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
@@ -411,7 +409,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         for (key, value) in changed {
             let value = value
                 .map(|v| {
-                    let value = v.value.and_then(|v| oplog.arena.get_value(v as usize));
+                    let value = v.value.clone();
                     if let Some(LoroValue::Container(c)) = &value {
                         on_new_container(c);
                     }
@@ -434,12 +432,26 @@ impl DiffCalculatorTrait for MapDiffCalculator {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct CompactMapValue {
     lamport: Lamport,
     peer: PeerID,
     counter: Counter,
-    value: Option<u32>,
+    value: Option<LoroValue>,
+}
+
+impl Ord for CompactMapValue {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.lamport
+            .cmp(&other.lamport)
+            .then(self.peer.cmp(&other.peer))
+    }
+}
+
+impl PartialOrd for CompactMapValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl HasId for CompactMapValue {
@@ -469,19 +481,19 @@ mod compact_register {
             &self,
             a: &VersionVector,
             b: &VersionVector,
-        ) -> (Option<CompactMapValue>, Option<CompactMapValue>) {
-            let mut max_a: Option<CompactMapValue> = None;
-            let mut max_b: Option<CompactMapValue> = None;
+        ) -> (Option<&CompactMapValue>, Option<&CompactMapValue>) {
+            let mut max_a: Option<&CompactMapValue> = None;
+            let mut max_b: Option<&CompactMapValue> = None;
             for v in self.tree.iter().rev() {
                 if b.get(&v.peer).copied().unwrap_or(0) > v.counter {
-                    max_b = Some(*v);
+                    max_b = Some(v);
                     break;
                 }
             }
 
             for v in self.tree.iter().rev() {
                 if a.get(&v.peer).copied().unwrap_or(0) > v.counter {
-                    max_a = Some(*v);
+                    max_a = Some(v);
                     break;
                 }
             }
@@ -564,7 +576,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                 CrdtRopeDelta::Retain(len) => {
                     delta = delta.retain(len);
                 }
-                CrdtRopeDelta::Insert(value) => match value.value() {
+                CrdtRopeDelta::Insert { chunk: value, id } => match value.value() {
                     RichtextChunkValue::Text(range) => {
                         for i in range.clone() {
                             let v = oplog.arena.get_value(i as usize);
@@ -572,7 +584,10 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                                 on_new_container(c);
                             }
                         }
-                        delta = delta.insert(SliceRange(range));
+                        delta = delta.insert(SliceRanges {
+                            ranges: smallvec::smallvec![SliceRange(range)],
+                            id,
+                        });
                     }
                     RichtextChunkValue::StyleAnchor { .. } => unreachable!(),
                     RichtextChunkValue::Unknown(_) => unreachable!(),
@@ -583,7 +598,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             }
         }
 
-        InternalDiff::SeqRaw(delta)
+        InternalDiff::ListRaw(delta)
     }
 }
 
@@ -617,12 +632,8 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 
         match &op.op().content {
             crate::op::InnerContent::List(l) => match l {
-                crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
-                    self.tracker.insert(
-                        op.id_start(),
-                        *pos,
-                        RichtextChunk::new_text(slice.0.clone()),
-                    );
+                crate::container::list::list_op::InnerListOp::Insert { .. } => {
+                    unreachable!()
                 }
                 crate::container::list::list_op::InnerListOp::InsertText {
                     slice: _,
@@ -695,14 +706,15 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 CrdtRopeDelta::Retain(len) => {
                     delta = delta.retain(len);
                 }
-                CrdtRopeDelta::Insert(value) => match value.value() {
+                CrdtRopeDelta::Insert { chunk: value, id } => match value.value() {
                     RichtextChunkValue::Text(text) => {
                         delta = delta.insert(RichtextStateChunk::Text(
                             // PERF: can be speedup by acquiring lock on arena
-                            TextChunk::from_bytes(
+                            TextChunk::new(
                                 oplog
                                     .arena
                                     .slice_by_unicode(text.start as usize..text.end as usize),
+                                id,
                             ),
                         ));
                     }

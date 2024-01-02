@@ -1,5 +1,5 @@
-import __ from "https://deno.land/x/dirname@1.1.2/mod.ts";
-const { __dirname } = __(import.meta);
+import * as path from "https://deno.land/std@0.105.0/path/mod.ts";
+const __dirname = path.dirname(path.fromFileUrl(import.meta.url));
 import { resolve } from "https://deno.land/std@0.105.0/path/mod.ts";
 
 export const Tasks = [

@@ -1879,6 +1879,257 @@ mod failed_tests {
     }
 
     #[test]
+    fn history() {
+        test_multi_sites(
+            3,
+            &mut [
+                Tree {
+                    site: 2,
+                    container_idx: 0,
+                    action: TreeAction::Create,
+                    target: (2, 0),
+                    parent: (11863787638307726561, 0),
+                },
+                Sync { from: 2, to: 0 },
+                Tree {
+                    site: 2,
+                    container_idx: 0,
+                    action: TreeAction::Delete,
+                    target: (2, 0),
+                    parent: (18446537369818038270, 320017407),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn encoding_err() {
+        test_multi_sites(
+            5,
+            &mut [
+                Tree {
+                    site: 255,
+                    container_idx: 255,
+                    action: TreeAction::Meta,
+                    target: (13186597159363543035, 0),
+                    parent: (34380633367117824, 913864704),
+                },
+                Tree {
+                    site: 255,
+                    container_idx: 255,
+                    action: TreeAction::Move,
+                    target: (18409103694470982982, 1174405120),
+                    parent: (34417214799359302, 913864704),
+                },
+                Tree {
+                    site: 255,
+                    container_idx: 255,
+                    action: TreeAction::Move,
+                    target: (5063812098665360710, 1180190267),
+                    parent: (5063812098663728710, 1480997702),
+                },
+                Tree {
+                    site: 70,
+                    container_idx: 70,
+                    action: TreeAction::Move,
+                    target: (5063812098665367110, 1179010630),
+                    parent: (5063812098665349190, 0),
+                },
+                Tree {
+                    site: 120,
+                    container_idx: 58,
+                    action: TreeAction::Meta,
+                    target: (5063784610870067200, 1179010630),
+                    parent: (5063812098666546747, 1179010630),
+                },
+                Tree {
+                    site: 70,
+                    container_idx: 70,
+                    action: TreeAction::Create,
+                    target: (5049942557165879296, 1179010630),
+                    parent: (201210795607622, 0),
+                },
+                Tree {
+                    site: 122,
+                    container_idx: 0,
+                    action: TreeAction::Create,
+                    target: (281470890949240, 759580160),
+                    parent: (280900630103622, 759580160),
+                },
+                Tree {
+                    site: 122,
+                    container_idx: 0,
+                    action: TreeAction::Create,
+                    target: (281470890949240, 759580160),
+                    parent: (13835902485686273606, 1179010648),
+                },
+                Tree {
+                    site: 70,
+                    container_idx: 70,
+                    action: TreeAction::Move,
+                    target: (5063812098665367110, 1179010630),
+                    parent: (5063812098665367110, 1179010630),
+                },
+                Tree {
+                    site: 70,
+                    container_idx: 70,
+                    action: TreeAction::Move,
+                    target: (18446476309249406584, 1174405120),
+                    parent: (5063812098665360710, 1180190267),
+                },
+                Tree {
+                    site: 70,
+                    container_idx: 70,
+                    action: TreeAction::Move,
+                    target: (5063812098665367110, 1179010630),
+                    parent: (5063989120037438976, 0),
+                },
+                Tree {
+                    site: 120,
+                    container_idx: 58,
+                    action: TreeAction::Meta,
+                    target: (5063784610870067200, 1179010630),
+                    parent: (5063812098666546747, 1179010630),
+                },
+                Tree {
+                    site: 70,
+                    container_idx: 70,
+                    action: TreeAction::Move,
+                    target: (5208490236694644294, 1212696648),
+                    parent: (5208492444341520456, 1212696648),
+                },
+                Tree {
+                    site: 72,
+                    container_idx: 72,
+                    action: TreeAction::Move,
+                    target: (5208492444341520456, 1212696648),
+                    parent: (5208492444341520456, 1212696648),
+                },
+                Tree {
+                    site: 72,
+                    container_idx: 72,
+                    action: TreeAction::Move,
+                    target: (5208492444341520456, 1212696648),
+                    parent: (5208492444341520456, 1212696648),
+                },
+                Tree {
+                    site: 72,
+                    container_idx: 72,
+                    action: TreeAction::Move,
+                    target: (5063812098665367110, 1179010630),
+                    parent: (5053397524527072838, 70),
+                },
+                Tree {
+                    site: 0,
+                    container_idx: 0,
+                    action: TreeAction::Create,
+                    target: (0, 0),
+                    parent: (5063812098665349120, 1179010630),
+                },
+                Tree {
+                    site: 70,
+                    container_idx: 70,
+                    action: TreeAction::Move,
+                    target: (18446476309249406584, 1174405120),
+                    parent: (5063812098665360710, 1179010619),
+                },
+                Tree {
+                    site: 70,
+                    container_idx: 70,
+                    action: TreeAction::Move,
+                    target: (5063812098665367110, 1179010630),
+                    parent: (5063812098665367110, 1174423110),
+                },
+                Tree {
+                    site: 0,
+                    container_idx: 0,
+                    action: TreeAction::Create,
+                    target: (0, 0),
+                    parent: (0, 0),
+                },
+                Tree {
+                    site: 0,
+                    container_idx: 0,
+                    action: TreeAction::Create,
+                    target: (0, 0),
+                    parent: (0, 0),
+                },
+                Tree {
+                    site: 0,
+                    container_idx: 0,
+                    action: TreeAction::Create,
+                    target: (0, 0),
+                    parent: (4412786865808080896, 2013281677),
+                },
+                Sync { from: 12, to: 255 },
+                Tree {
+                    site: 70,
+                    container_idx: 45,
+                    action: TreeAction::Move,
+                    target: (5063812175974057542, 1179010630),
+                    parent: (5063812098665367110, 1179010630),
+                },
+                Tree {
+                    site: 72,
+                    container_idx: 72,
+                    action: TreeAction::Move,
+                    target: (5208492444341520456, 1212696648),
+                    parent: (5208492444341520456, 1212696648),
+                },
+                Tree {
+                    site: 72,
+                    container_idx: 72,
+                    action: TreeAction::Move,
+                    target: (5208492444341520456, 1212696648),
+                    parent: (5208492444341520456, 1212696648),
+                },
+                Tree {
+                    site: 72,
+                    container_idx: 72,
+                    action: TreeAction::Move,
+                    target: (5063812098665367624, 1179010630),
+                    parent: (5063812098665367110, 1179001158),
+                },
+                Tree {
+                    site: 0,
+                    container_idx: 0,
+                    action: TreeAction::Create,
+                    target: (0, 0),
+                    parent: (5063812098665349120, 1179010630),
+                },
+                Tree {
+                    site: 70,
+                    container_idx: 70,
+                    action: TreeAction::Move,
+                    target: (19780516010411520, 0),
+                    parent: (18378196371912030344, 255),
+                },
+                Tree {
+                    site: 177,
+                    container_idx: 185,
+                    action: TreeAction::Create,
+                    target: (5063812098967361606, 1179010630),
+                    parent: (5063812098665367110, 1179010630),
+                },
+                Tree {
+                    site: 70,
+                    container_idx: 72,
+                    action: TreeAction::Move,
+                    target: (5208492444341520456, 1212696648),
+                    parent: (5208492444341520456, 1212696648),
+                },
+                Tree {
+                    site: 72,
+                    container_idx: 72,
+                    action: TreeAction::Move,
+                    target: (4271743721848457288, 1179015238),
+                    parent: (0, 0),
+                },
+            ],
+        );
+    }
+
+    #[test]
     fn to_minify() {
         minify_error(5, vec![], test_multi_sites, normalize)
     }

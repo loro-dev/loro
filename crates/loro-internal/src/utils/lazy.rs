@@ -5,10 +5,6 @@ pub enum LazyLoad<Src, Dst: From<Src>> {
 }
 
 impl<Src: Default, Dst: From<Src>> LazyLoad<Src, Dst> {
-    pub fn new(src: Src) -> Self {
-        LazyLoad::Src(src)
-    }
-
     pub fn new_dst(dst: Dst) -> Self {
         LazyLoad::Dst(dst)
     }

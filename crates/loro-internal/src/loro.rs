@@ -16,7 +16,9 @@ use crate::{
     arena::SharedArena,
     change::Timestamp,
     container::{idx::ContainerIdx, IntoContainerId},
-    encoding::{EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
+    encoding::{
+        decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
+    },
     handler::TextHandler,
     handler::TreeHandler,
     id::PeerID,
@@ -26,7 +28,6 @@ use crate::{
 
 use super::{
     diff_calc::DiffCalculator,
-    encoding::encode_snapshot::{decode_app_snapshot, encode_app_snapshot},
     event::InternalDocDiff,
     obs::{Observer, SubID, Subscriber},
     oplog::OpLog,
@@ -58,7 +59,7 @@ pub struct LoroDoc {
     arena: SharedArena,
     observer: Arc<Observer>,
     diff_calculator: Arc<Mutex<DiffCalculator>>,
-    // when dropping the doc, the txn will be commited
+    // when dropping the doc, the txn will be committed
     txn: Arc<Mutex<Option<Transaction>>>,
     auto_commit: AtomicBool,
     detached: AtomicBool,
@@ -99,15 +100,14 @@ impl LoroDoc {
 
     pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
         let doc = Self::new();
-        let (input, mode) = parse_encode_header(bytes)?;
-        match mode {
-            EncodeMode::Snapshot => {
-                decode_app_snapshot(&doc, input, true)?;
-                Ok(doc)
-            }
-            _ => Err(LoroError::DecodeError(
+        let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes)?;
+        if mode.is_snapshot() {
+            decode_snapshot(&doc, mode, body)?;
+            Ok(doc)
+        } else {
+            Err(LoroError::DecodeError(
                 "Invalid encode mode".to_string().into(),
-            )),
+            ))
         }
     }
 
@@ -244,7 +244,7 @@ impl LoroDoc {
 
     /// Commit the cumulative auto commit transaction.
     /// This method only has effect when `auto_commit` is true.
-    /// If `immediate_renew` is true, a new transaction will be created after the old one is commited
+    /// If `immediate_renew` is true, a new transaction will be created after the old one is committed
     pub fn commit_with(
         &self,
         origin: Option<InternalString>,
@@ -369,13 +369,6 @@ impl LoroDoc {
     }
 
     #[inline]
-    pub fn import_without_state(&mut self, bytes: &[u8]) -> Result<(), LoroError> {
-        self.commit_then_stop();
-        self.detach();
-        self.import(bytes)
-    }
-
-    #[inline]
     pub fn import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
         self.commit_then_stop();
         let ans = self._import_with(bytes, origin);
@@ -388,54 +381,120 @@ impl LoroDoc {
         bytes: &[u8],
         origin: string_cache::Atom<string_cache::EmptyStaticAtomSet>,
     ) -> Result<(), LoroError> {
-        let (input, mode) = parse_encode_header(bytes)?;
-        match mode {
-            EncodeMode::Updates | EncodeMode::RleUpdates | EncodeMode::CompressedRleUpdates => {
+        let parsed = parse_header_and_body(bytes)?;
+        match parsed.mode.is_snapshot() {
+            false => {
                 // TODO: need to throw error if state is in transaction
-                debug_log::group!("import to {}", self.peer_id());
-                let mut oplog = self.oplog.lock().unwrap();
-                let old_vv = oplog.vv().clone();
-                let old_frontiers = oplog.frontiers().clone();
-                oplog.decode(bytes)?;
-                if !self.detached.load(Acquire) {
-                    let mut diff = DiffCalculator::default();
-                    let diff = diff.calc_diff_internal(
-                        &oplog,
-                        &old_vv,
-                        Some(&old_frontiers),
-                        oplog.vv(),
-                        Some(oplog.dag.get_frontiers()),
-                    );
-                    let mut state = self.state.lock().unwrap();
-                    state.apply_diff(InternalDocDiff {
-                        origin,
-                        local: false,
-                        diff: (diff).into(),
-                        from_checkout: false,
-                        new_version: Cow::Owned(oplog.frontiers().clone()),
-                    });
-                }
-
+                debug_log::group!("Import updates to {}", self.peer_id());
+                self.update_oplog_and_apply_delta_to_state_if_needed(
+                    |oplog| oplog.decode(parsed),
+                    origin,
+                )?;
                 debug_log::group_end!();
             }
-            EncodeMode::Snapshot => {
+            true => {
+                debug_log::group!("Import snapshot to {}", self.peer_id());
                 if self.can_reset_with_snapshot() {
-                    decode_app_snapshot(self, input, !self.detached.load(Acquire))?;
+                    debug_log::debug_log!("Init by snapshot");
+                    decode_snapshot(self, parsed.mode, parsed.body)?;
+                } else if parsed.mode == EncodeMode::Snapshot {
+                    debug_log::debug_log!("Import by updates");
+                    self.update_oplog_and_apply_delta_to_state_if_needed(
+                        |oplog| oplog.decode(parsed),
+                        origin,
+                    )?;
                 } else {
+                    debug_log::debug_log!("Import from new doc");
                     let app = LoroDoc::new();
-                    decode_app_snapshot(&app, input, false)?;
+                    decode_snapshot(&app, parsed.mode, parsed.body)?;
                     let oplog = self.oplog.lock().unwrap();
                     // TODO: PERF: the ser and de can be optimized out
                     let updates = app.export_from(oplog.vv());
                     drop(oplog);
+                    debug_log::group_end!();
                     return self.import_with(&updates, origin);
                 }
+                debug_log::group_end!();
             }
-            EncodeMode::Auto => unreachable!(),
         };
+
         let mut state = self.state.lock().unwrap();
         self.emit_events(&mut state);
         Ok(())
+    }
+
+    pub(crate) fn update_oplog_and_apply_delta_to_state_if_needed(
+        &self,
+        f: impl FnOnce(&mut OpLog) -> Result<(), LoroError>,
+        origin: InternalString,
+    ) -> Result<(), LoroError> {
+        let mut oplog = self.oplog.lock().unwrap();
+        let old_vv = oplog.vv().clone();
+        let old_frontiers = oplog.frontiers().clone();
+        f(&mut oplog)?;
+        if !self.detached.load(Acquire) {
+            let mut diff = DiffCalculator::default();
+            let diff = diff.calc_diff_internal(
+                &oplog,
+                &old_vv,
+                Some(&old_frontiers),
+                oplog.vv(),
+                Some(oplog.dag.get_frontiers()),
+            );
+            let mut state = self.state.lock().unwrap();
+            state.apply_diff(InternalDocDiff {
+                origin,
+                local: false,
+                diff: (diff).into(),
+                from_checkout: false,
+                new_version: Cow::Owned(oplog.frontiers().clone()),
+            });
+        }
+        Ok(())
+    }
+
+    /// For fuzzing tests
+    #[cfg(feature = "test_utils")]
+    pub fn import_delta_updates_unchecked(&self, body: &[u8]) -> LoroResult<()> {
+        self.commit_then_stop();
+        let mut oplog = self.oplog.lock().unwrap();
+        let old_vv = oplog.vv().clone();
+        let old_frontiers = oplog.frontiers().clone();
+        let ans = oplog.decode(ParsedHeaderAndBody {
+            checksum: [0; 16],
+            checksum_body: body,
+            mode: EncodeMode::Rle,
+            body,
+        });
+        if ans.is_ok() && !self.detached.load(Acquire) {
+            let mut diff = DiffCalculator::default();
+            let diff = diff.calc_diff_internal(
+                &oplog,
+                &old_vv,
+                Some(&old_frontiers),
+                oplog.vv(),
+                Some(oplog.dag.get_frontiers()),
+            );
+            let mut state = self.state.lock().unwrap();
+            state.apply_diff(InternalDocDiff {
+                origin: "".into(),
+                local: false,
+                diff: (diff).into(),
+                from_checkout: false,
+                new_version: Cow::Owned(oplog.frontiers().clone()),
+            });
+        }
+        self.renew_txn_if_auto_commit();
+        ans
+    }
+
+    /// For fuzzing tests
+    #[cfg(feature = "test_utils")]
+    pub fn import_snapshot_unchecked(&self, bytes: &[u8]) -> LoroResult<()> {
+        self.commit_then_stop();
+        let ans = decode_snapshot(self, EncodeMode::Snapshot, bytes);
+        self.renew_txn_if_auto_commit();
+        ans
     }
 
     fn emit_events(&self, state: &mut DocState) {
@@ -447,14 +506,7 @@ impl LoroDoc {
 
     pub fn export_snapshot(&self) -> Vec<u8> {
         self.commit_then_stop();
-        debug_log::group!("export snapshot");
-        let version = ENCODE_SCHEMA_VERSION;
-        let mut ans = Vec::from(MAGIC_BYTES);
-        // maybe u8 is enough
-        ans.push(version);
-        ans.push((EncodeMode::Snapshot).to_byte());
-        ans.extend(encode_app_snapshot(self));
-        debug_log::group_end!();
+        let ans = export_snapshot(self);
         self.renew_txn_if_auto_commit();
         ans
     }
@@ -679,23 +731,6 @@ impl LoroDoc {
         let oplog = self.oplog.lock().unwrap();
         oplog.len_changes()
     }
-}
-
-fn parse_encode_header(bytes: &[u8]) -> Result<(&[u8], EncodeMode), LoroError> {
-    if bytes.len() <= 6 {
-        return Err(LoroError::DecodeError("Invalid import data".into()));
-    }
-    let (magic_bytes, input) = bytes.split_at(4);
-    let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
-    if magic_bytes != MAGIC_BYTES {
-        return Err(LoroError::DecodeError("Invalid header bytes".into()));
-    }
-    let (version, input) = input.split_at(1);
-    if version != [ENCODE_SCHEMA_VERSION] {
-        return Err(LoroError::DecodeError("Invalid version".into()));
-    }
-    let mode: EncodeMode = input[0].try_into()?;
-    Ok((&input[1..], mode))
 }
 
 #[cfg(test)]

@@ -72,8 +72,11 @@ impl From<u128> for ID {
 }
 
 impl ID {
+    /// The ID of the null object. This should be use rarely.
+    pub const NONE_ID: ID = ID::new(u64::MAX, 0);
+
     #[inline]
-    pub fn new(peer: PeerID, counter: Counter) -> Self {
+    pub const fn new(peer: PeerID, counter: Counter) -> Self {
         ID { peer, counter }
     }
 

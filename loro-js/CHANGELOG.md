@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.7.2-alpha.4
+
+### Patch Changes
+
+- Fix encoding value err
+- Updated dependencies
+  - loro-wasm@0.7.2
+
+## 0.7.2-alpha.3
+
+### Patch Changes
+
+- Fix export compressed snapshot
+- Updated dependencies
+  - loro-wasm@0.7.2
+
+## 0.7.2-alpha.2
+
+### Patch Changes
+
+- Add compressed method
+- Updated dependencies
+  - loro-wasm@0.7.2
+
+## 0.7.2-alpha.1
+
+### Patch Changes
+
+- Fix v0 exports
+- Updated dependencies
+  - loro-wasm@0.7.2
+
+## 0.7.2-alpha.0
+
+### Patch Changes
+
+- Add experimental encode methods
+- Updated dependencies
+  - loro-wasm@0.7.2
+
 ## 0.7.1
 
 ### Patch Changes

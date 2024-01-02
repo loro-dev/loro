@@ -1,4 +1,4 @@
-use benches::sheet::init_sheet;
+use examples::sheet::init_sheet;
 use std::time::Instant;
 
 pub fn main() {

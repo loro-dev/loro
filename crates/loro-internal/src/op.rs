@@ -6,9 +6,10 @@ use crate::{
 };
 use crate::{delta::DeltaValue, LoroValue};
 use enum_as_inner::EnumAsInner;
+use loro_common::IdSpan;
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 use std::{borrow::Cow, ops::Range};
 
 mod content;
@@ -22,6 +23,30 @@ pub struct Op {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerIdx,
     pub(crate) content: InnerContent,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct OpWithId {
+    pub peer: PeerID,
+    pub op: Op,
+}
+
+impl OpWithId {
+    pub fn id(&self) -> ID {
+        ID {
+            peer: self.peer,
+            counter: self.op.counter,
+        }
+    }
+
+    #[allow(unused)]
+    pub fn id_span(&self) -> IdSpan {
+        IdSpan::new(
+            self.peer,
+            self.op.counter,
+            self.op.counter + self.op.atom_len() as Counter,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +88,7 @@ pub struct OwnedRichOp {
 
 impl Op {
     #[inline]
+    #[allow(unused)]
     pub(crate) fn new(id: ID, content: InnerContent, container: ContainerIdx) -> Self {
         Op {
             counter: id.counter,
@@ -103,7 +129,7 @@ impl HasLength for Op {
 
 impl Sliceable for Op {
     fn slice(&self, from: usize, to: usize) -> Self {
-        assert!(to > from);
+        assert!(to > from, "{to} should be greater than {from}");
         let content: InnerContent = self.content.slice(from, to);
         Op {
             counter: (self.counter + from as Counter),
@@ -264,6 +290,14 @@ impl<'a> RichOp<'a> {
     pub fn end(&self) -> usize {
         self.end
     }
+
+    #[allow(unused)]
+    pub(crate) fn id(&self) -> ID {
+        ID {
+            peer: self.peer,
+            counter: self.op.counter + self.start as Counter,
+        }
+    }
 }
 
 impl OwnedRichOp {
@@ -312,6 +346,11 @@ impl SliceRange {
     #[inline(always)]
     pub fn new_unknown(size: u32) -> Self {
         Self(UNKNOWN_START..UNKNOWN_START + size)
+    }
+
+    #[inline(always)]
+    pub fn new(range: Range<u32>) -> Self {
+        Self(range)
     }
 
     #[inline(always)]
@@ -420,54 +459,65 @@ impl<'a> Mergable for ListSlice<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct SliceRanges(pub SmallVec<[SliceRange; 2]>);
+pub struct SliceRanges {
+    pub ranges: SmallVec<[SliceRange; 2]>,
+    pub id: ID,
+}
 
 impl Serialize for SliceRanges {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let mut s = serializer.serialize_seq(Some(self.0.len()))?;
-        for item in self.0.iter() {
+        let mut s = serializer.serialize_seq(Some(self.ranges.len()))?;
+        for item in self.ranges.iter() {
             s.serialize_element(item)?;
         }
         s.end()
     }
 }
 
-impl From<SliceRange> for SliceRanges {
-    fn from(value: SliceRange) -> Self {
-        Self(smallvec![value])
-    }
-}
-
 impl DeltaValue for SliceRanges {
     fn value_extend(&mut self, other: Self) -> Result<(), Self> {
-        self.0.extend(other.0);
+        if self.id.peer != other.id.peer {
+            return Err(other);
+        }
+
+        if self.id.counter + self.length() as Counter != other.id.counter {
+            return Err(other);
+        }
+
+        self.ranges.extend(other.ranges);
         Ok(())
     }
 
+    // FIXME: this seems wrong
     fn take(&mut self, target_len: usize) -> Self {
-        let mut ret = SmallVec::new();
+        let mut right = Self {
+            ranges: Default::default(),
+            id: self.id.inc(target_len as i32),
+        };
         let mut cur_len = 0;
         while cur_len < target_len {
-            let range = self.0.pop().unwrap();
+            let range = self.ranges.pop().unwrap();
             let range_len = range.content_len();
             if cur_len + range_len <= target_len {
-                ret.push(range);
+                right.ranges.push(range);
                 cur_len += range_len;
             } else {
-                let new_range = range.slice(0, target_len - cur_len);
-                ret.push(new_range);
-                self.0.push(range.slice(target_len - cur_len, range_len));
+                let new_range = range.slice(target_len - cur_len, range_len);
+                right.ranges.push(new_range);
+                self.ranges.push(range.slice(0, target_len - cur_len));
                 cur_len = target_len;
             }
         }
-        SliceRanges(ret)
+
+        std::mem::swap(self, &mut right);
+        right // now it's left
     }
 
     fn length(&self) -> usize {
-        self.0.iter().fold(0, |acc, x| acc + x.atom_len())
+        self.ranges.iter().fold(0, |acc, x| acc + x.atom_len())
     }
 }
 

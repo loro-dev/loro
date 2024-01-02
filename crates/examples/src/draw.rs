@@ -1,7 +1,9 @@
-use std::{collections::HashMap, time::Instant};
+use std::collections::HashMap;
 
-use bench_utils::{create_seed, draw::DrawAction, gen_async_actions, gen_realtime_actions, Action};
+use bench_utils::{draw::DrawAction, Action};
 use loro::{ContainerID, ContainerType};
+
+use crate::{run_actions_fuzz_in_async_mode, ActorTrait};
 
 pub struct DrawActor {
     pub doc: loro::LoroDoc,
@@ -27,8 +29,16 @@ impl DrawActor {
             id_to_obj,
         }
     }
+}
 
-    pub fn apply_action(&mut self, action: &mut DrawAction) {
+impl ActorTrait for DrawActor {
+    type ActionKind = DrawAction;
+
+    fn create(peer_id: u64) -> Self {
+        Self::new(peer_id)
+    }
+
+    fn apply_action(&mut self, action: &mut Self::ActionKind) {
         match action {
             DrawAction::CreatePath { points } => {
                 let path = self.paths.insert_container(0, ContainerType::Map).unwrap();
@@ -55,7 +65,7 @@ impl DrawActor {
                     map.insert("y", p.y).unwrap();
                 }
                 let len = self.id_to_obj.len();
-                self.id_to_obj.insert(len, path.id());
+                self.id_to_obj.insert(len, path_map.id());
             }
             DrawAction::Text { text, pos, size } => {
                 let text_container = self
@@ -119,82 +129,21 @@ impl DrawActor {
                 let pos_map = map.get("pos").unwrap().unwrap_right().into_map().unwrap();
                 let x = pos_map.get("x").unwrap().unwrap_left().into_i32().unwrap();
                 let y = pos_map.get("y").unwrap().unwrap_left().into_i32().unwrap();
-                pos_map.insert("x", x + relative_to.x).unwrap();
-                pos_map.insert("y", y + relative_to.y).unwrap();
+                pos_map
+                    .insert("x", x.overflowing_add(relative_to.x).0)
+                    .unwrap();
+                pos_map
+                    .insert("y", y.overflowing_add(relative_to.y).0)
+                    .unwrap();
             }
         }
     }
-}
 
-pub struct DrawActors {
-    pub docs: Vec<DrawActor>,
-}
-
-impl DrawActors {
-    pub fn new(size: usize) -> Self {
-        let docs = (0..size).map(|i| DrawActor::new(i as u64)).collect();
-        Self { docs }
-    }
-
-    pub fn apply_action(&mut self, action: &mut Action<DrawAction>) {
-        match action {
-            Action::Action { peer, action } => {
-                self.docs[*peer].apply_action(action);
-            }
-            Action::Sync { from, to } => {
-                let vv = self.docs[*from].doc.oplog_vv();
-                let data = self.docs[*from].doc.export_from(&vv);
-                self.docs[*to].doc.import(&data).unwrap();
-            }
-            Action::SyncAll => self.sync_all(),
-        }
-    }
-
-    pub fn sync_all(&mut self) {
-        let (first, rest) = self.docs.split_at_mut(1);
-        for doc in rest.iter_mut() {
-            let vv = first[0].doc.oplog_vv();
-            first[0].doc.import(&doc.doc.export_from(&vv)).unwrap();
-        }
-        for doc in rest.iter_mut() {
-            let vv = doc.doc.oplog_vv();
-            doc.doc.import(&first[0].doc.export_from(&vv)).unwrap();
-        }
+    fn doc(&self) -> &loro::LoroDoc {
+        &self.doc
     }
 }
 
-pub fn run_async_draw_workflow(
-    peer_num: usize,
-    action_num: usize,
-    actions_before_sync: usize,
-    seed: u64,
-) -> (DrawActors, Instant) {
-    let seed = create_seed(seed, action_num * 32);
-    let mut actions =
-        gen_async_actions::<DrawAction>(action_num, peer_num, &seed, actions_before_sync, |_| {})
-            .unwrap();
-    let mut actors = DrawActors::new(peer_num);
-    let start = Instant::now();
-    for action in actions.iter_mut() {
-        actors.apply_action(action);
-    }
-
-    (actors, start)
-}
-
-pub fn run_realtime_collab_draw_workflow(
-    peer_num: usize,
-    action_num: usize,
-    seed: u64,
-) -> (DrawActors, Instant) {
-    let seed = create_seed(seed, action_num * 32);
-    let mut actions =
-        gen_realtime_actions::<DrawAction>(action_num, peer_num, &seed, |_| {}).unwrap();
-    let mut actors = DrawActors::new(peer_num);
-    let start = Instant::now();
-    for action in actions.iter_mut() {
-        actors.apply_action(action);
-    }
-
-    (actors, start)
+pub fn fuzz(peer_num: usize, sync_all_interval: usize, actions: &[Action<DrawAction>]) {
+    run_actions_fuzz_in_async_mode::<DrawActor>(peer_num, sync_all_interval, actions);
 }

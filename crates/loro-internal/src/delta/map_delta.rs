@@ -28,6 +28,12 @@ pub struct MapValue {
     pub lamport: (Lamport, PeerID),
 }
 
+impl MapValue {
+    pub fn id(&self) -> ID {
+        ID::new(self.lamport.1, self.counter)
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct ResolvedMapDelta {
     pub updated: FxHashMap<InternalString, ResolvedMapValue>,

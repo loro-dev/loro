@@ -132,10 +132,20 @@ impl<'a> EncodedAppState<'a> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EncodedContainerState<'a> {
     Map(Vec<MapEntry>),
-    List(Vec<usize>),
+    List {
+        elem_idx: Vec<usize>,
+        elem_ids: Vec<ID>,
+    },
     #[serde(borrow)]
     Richtext(Box<EncodedRichtextState<'a>>),
-    Tree((Vec<(usize, Option<usize>)>, Vec<usize>)),
+    Tree((Vec<EncodedTreeNode>, Vec<usize>)),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncodedTreeNode {
+    pub node_idx: usize,
+    pub parent: Option<usize>,
+    pub id: ID,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -148,6 +158,7 @@ pub struct EncodedRichtextState<'a> {
     /// This is encoded [TextRanges]
     #[serde(borrow)]
     pub text_bytes: Cow<'a, [u8]>,
+    pub ids: Vec<(u32, u32)>,
     /// Style anchor index in the style arena
     // TODO: can be optimized
     pub styles: Vec<CompactStyleOp>,
@@ -174,9 +185,7 @@ pub struct TextRanges {
 impl TextRanges {
     #[inline]
     pub fn decode_iter(bytes: &[u8]) -> LoroResult<impl Iterator<Item = TextRange> + '_> {
-        let iter = serde_columnar::iter_from_bytes::<TextRanges>(bytes).map_err(|e| {
-            LoroError::DecodeError(format!("Failed to decode TextRange: {}", e).into_boxed_str())
-        })?;
+        let iter = serde_columnar::iter_from_bytes::<TextRanges>(bytes)?;
         Ok(iter.ranges)
     }
 
@@ -190,7 +199,7 @@ impl<'a> EncodedContainerState<'a> {
     pub fn container_type(&self) -> loro_common::ContainerType {
         match self {
             EncodedContainerState::Map(_) => loro_common::ContainerType::Map,
-            EncodedContainerState::List(_) => loro_common::ContainerType::List,
+            EncodedContainerState::List { .. } => loro_common::ContainerType::List,
             EncodedContainerState::Tree(_) => loro_common::ContainerType::Tree,
             EncodedContainerState::Richtext { .. } => loro_common::ContainerType::Text,
         }

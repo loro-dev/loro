@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::container::{
     list::list_op::{InnerListOp, ListOp},
-    map::{InnerMapSet, MapSet},
+    map::MapSet,
     tree::tree_op::TreeOp,
 };
 
@@ -24,7 +24,7 @@ pub enum ContentType {
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum InnerContent {
     List(InnerListOp),
-    Map(InnerMapSet),
+    Map(MapSet),
     Tree(TreeOp),
 }
 

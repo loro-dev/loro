@@ -5,6 +5,7 @@ use serde_json::json;
 #[test]
 fn auto_commit() {
     let mut doc_a = LoroDoc::default();
+    doc_a.set_peer_id(1).unwrap();
     doc_a.start_auto_commit();
     let text_a = doc_a.get_text("text");
     text_a.insert(0, "hello").unwrap();
@@ -14,6 +15,7 @@ fn auto_commit() {
 
     let mut doc_b = LoroDoc::default();
     doc_b.start_auto_commit();
+    doc_b.set_peer_id(2).unwrap();
     let text_b = doc_b.get_text("text");
     text_b.insert(0, "100").unwrap();
     doc_b.import(&bytes).unwrap();

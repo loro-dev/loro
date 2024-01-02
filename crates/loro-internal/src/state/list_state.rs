@@ -8,6 +8,7 @@ use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, ContainerID},
     delta::Delta,
+    encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     handler::ValueOrContainer,
     op::{ListSlice, Op, RawOp, RawOpContent},
@@ -21,7 +22,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
-use loro_common::LoroResult;
+use loro_common::{IdSpan, LoroResult, ID};
 
 #[derive(Debug)]
 pub struct ListState {
@@ -46,13 +47,21 @@ impl Clone for ListState {
 
 #[derive(Debug)]
 enum UndoItem {
-    Insert { index: usize, len: usize },
-    Delete { index: usize, value: LoroValue },
+    Insert {
+        index: usize,
+        len: usize,
+    },
+    Delete {
+        index: usize,
+        value: LoroValue,
+        id: ID,
+    },
 }
 
 #[derive(Debug, Clone)]
-struct Elem {
-    v: LoroValue,
+pub(crate) struct Elem {
+    pub v: LoroValue,
+    pub id: ID,
 }
 
 impl HasLength for Elem {
@@ -171,9 +180,16 @@ impl ListState {
         Some(index as usize)
     }
 
-    pub fn insert(&mut self, index: usize, value: LoroValue) {
+    pub fn insert(&mut self, index: usize, value: LoroValue, id: ID) {
+        if index > self.len() {
+            panic!("Index {index} out of range. The length is {}", self.len());
+        }
+
         if self.list.is_empty() {
-            let idx = self.list.push(Elem { v: value.clone() });
+            let idx = self.list.push(Elem {
+                v: value.clone(),
+                id,
+            });
 
             if value.is_container() {
                 self.child_container_to_leaf
@@ -182,9 +198,13 @@ impl ListState {
             return;
         }
 
-        let (leaf, data) = self
-            .list
-            .insert::<LengthFinder>(&index, Elem { v: value.clone() });
+        let (leaf, data) = self.list.insert::<LengthFinder>(
+            &index,
+            Elem {
+                v: value.clone(),
+                id,
+            },
+        );
 
         if value.is_container() {
             self.child_container_to_leaf
@@ -210,7 +230,11 @@ impl ListState {
         let elem = self.list.remove_leaf(leaf.unwrap().cursor).unwrap();
         let value = elem.v;
         if self.in_txn {
-            self.undo_stack.push(UndoItem::Delete { index, value });
+            self.undo_stack.push(UndoItem::Delete {
+                index,
+                value,
+                id: elem.id,
+            });
         }
     }
 
@@ -239,6 +263,7 @@ impl ListState {
                 self.undo_stack.push(UndoItem::Delete {
                     index: start,
                     value: elem.v,
+                    id: elem.id,
                 })
             }
         } else {
@@ -252,14 +277,21 @@ impl ListState {
 
     // PERF: use &[LoroValue]
     // PERF: batch
-    pub fn insert_batch(&mut self, index: usize, values: Vec<LoroValue>) {
+    pub fn insert_batch(&mut self, index: usize, values: Vec<LoroValue>, start_id: ID) {
+        let mut id = start_id;
         for (i, value) in values.into_iter().enumerate() {
-            self.insert(index + i, value);
+            self.insert(index + i, value, id);
+            id = id.inc(1);
         }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &LoroValue> {
         self.list.iter().map(|x| &x.v)
+    }
+
+    #[allow(unused)]
+    pub(crate) fn iter_with_id(&self) -> impl Iterator<Item = &Elem> {
+        self.list.iter()
     }
 
     pub fn len(&self) -> usize {
@@ -294,6 +326,14 @@ impl ListState {
 }
 
 impl ContainerState for ListState {
+    fn container_idx(&self) -> ContainerIdx {
+        self.idx
+    }
+
+    fn is_state_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
@@ -301,7 +341,7 @@ impl ContainerState for ListState {
         txn: &Weak<Mutex<Option<Transaction>>>,
         state: &Weak<Mutex<DocState>>,
     ) -> Diff {
-        let InternalDiff::SeqRaw(delta) = diff else {
+        let InternalDiff::ListRaw(delta) = diff else {
             unreachable!()
         };
         let mut ans: Delta<_> = Delta::default();
@@ -314,7 +354,7 @@ impl ContainerState for ListState {
                 }
                 crate::delta::DeltaItem::Insert { insert: value, .. } => {
                     let mut arr = Vec::new();
-                    for slices in value.0.iter() {
+                    for slices in value.ranges.iter() {
                         for i in slices.0.start..slices.0.end {
                             let value = arena.get_value(i as usize).unwrap();
                             if value.is_container() {
@@ -331,7 +371,7 @@ impl ContainerState for ListState {
                             .collect::<Vec<_>>(),
                     );
                     let len = arr.len();
-                    self.insert_batch(index, arr);
+                    self.insert_batch(index, arr, value.id);
                     index += len;
                 }
                 crate::delta::DeltaItem::Delete { delete: len, .. } => {
@@ -351,8 +391,9 @@ impl ContainerState for ListState {
         _txn: &Weak<Mutex<Option<Transaction>>>,
         _state: &Weak<Mutex<DocState>>,
     ) {
+        // debug_log::debug_dbg!(&diff);
         match diff {
-            InternalDiff::SeqRaw(delta) => {
+            InternalDiff::ListRaw(delta) => {
                 let mut index = 0;
                 for span in delta.iter() {
                     match span {
@@ -361,7 +402,7 @@ impl ContainerState for ListState {
                         }
                         crate::delta::DeltaItem::Insert { insert: value, .. } => {
                             let mut arr = Vec::new();
-                            for slices in value.0.iter() {
+                            for slices in value.ranges.iter() {
                                 for i in slices.0.start..slices.0.end {
                                     let value = arena.get_value(i as usize).unwrap();
                                     if value.is_container() {
@@ -374,7 +415,7 @@ impl ContainerState for ListState {
                             }
                             let len = arr.len();
 
-                            self.insert_batch(index, arr);
+                            self.insert_batch(index, arr, value.id);
                             index += len;
                         }
                         crate::delta::DeltaItem::Delete { delete: len, .. } => {
@@ -402,7 +443,7 @@ impl ContainerState for ListState {
                                     arena.set_parent(idx, Some(self.idx));
                                 }
                             }
-                            self.insert_batch(*pos, list.to_vec());
+                            self.insert_batch(*pos, list.to_vec(), op.id);
                         }
                         std::borrow::Cow::Owned(list) => {
                             for value in list.iter() {
@@ -412,7 +453,7 @@ impl ContainerState for ListState {
                                     arena.set_parent(idx, Some(self.idx));
                                 }
                             }
-                            self.insert_batch(*pos, list.clone());
+                            self.insert_batch(*pos, list.clone(), op.id);
                         }
                     },
                     _ => unreachable!(),
@@ -424,37 +465,7 @@ impl ContainerState for ListState {
                 crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),
             },
         }
-        debug_log::debug_dbg!(&self);
         Ok(())
-    }
-
-    #[doc = " Start a transaction"]
-    #[doc = ""]
-    #[doc = " The transaction may be aborted later, then all the ops during this transaction need to be undone."]
-    fn start_txn(&mut self) {
-        self.in_txn = true;
-    }
-
-    fn abort_txn(&mut self) {
-        self.in_txn = false;
-        while let Some(op) = self.undo_stack.pop() {
-            match op {
-                UndoItem::Insert { index, len } => {
-                    self.delete_range(index..index + len);
-                }
-                UndoItem::Delete { index, value } => self.insert(index, value),
-            }
-        }
-    }
-
-    fn commit_txn(&mut self) {
-        self.undo_stack.clear();
-        self.in_txn = false;
-    }
-
-    fn get_value(&mut self) -> LoroValue {
-        let ans = self.to_vec();
-        LoroValue::List(Arc::new(ans))
     }
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
@@ -475,6 +486,35 @@ impl ContainerState for ListState {
         )
     }
 
+    #[doc = " Start a transaction"]
+    #[doc = ""]
+    #[doc = " The transaction may be aborted later, then all the ops during this transaction need to be undone."]
+    fn start_txn(&mut self) {
+        self.in_txn = true;
+    }
+
+    fn abort_txn(&mut self) {
+        self.in_txn = false;
+        while let Some(op) = self.undo_stack.pop() {
+            match op {
+                UndoItem::Insert { index, len } => {
+                    self.delete_range(index..index + len);
+                }
+                UndoItem::Delete { index, value, id } => self.insert(index, value, id),
+            }
+        }
+    }
+
+    fn commit_txn(&mut self) {
+        self.undo_stack.clear();
+        self.in_txn = false;
+    }
+
+    fn get_value(&mut self) -> LoroValue {
+        let ans = self.to_vec();
+        LoroValue::List(Arc::new(ans))
+    }
+
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
         self.get_child_container_index(id).map(Index::Seq)
     }
@@ -487,6 +527,32 @@ impl ContainerState for ListState {
             }
         }
         ans
+    }
+
+    #[doc = "Get a list of ops that can be used to restore the state to the current state"]
+    fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
+        for elem in self.list.iter() {
+            let id_span: IdSpan = elem.id.into();
+            encoder.encode_op(id_span, || unimplemented!());
+        }
+
+        Vec::new()
+    }
+
+    #[doc = "Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+        assert_eq!(ctx.mode, EncodeMode::Snapshot);
+        let mut index = 0;
+        for op in ctx.ops {
+            let value = op.op.content.as_list().unwrap().as_insert().unwrap().0;
+            let list = ctx
+                .oplog
+                .arena
+                .get_values(value.0.start as usize..value.0.end as usize);
+            let len = list.len();
+            self.insert_batch(index, list, op.id());
+            index += len;
+        }
     }
 }
 
@@ -503,11 +569,11 @@ mod test {
         fn id(name: &str) -> ContainerID {
             ContainerID::new_root(name, crate::ContainerType::List)
         }
-        list.insert(0, LoroValue::Container(id("abc")));
-        list.insert(0, LoroValue::Container(id("x")));
+        list.insert(0, LoroValue::Container(id("abc")), ID::new(0, 0));
+        list.insert(0, LoroValue::Container(id("x")), ID::new(0, 0));
         assert_eq!(list.get_child_container_index(&id("x")), Some(0));
         assert_eq!(list.get_child_container_index(&id("abc")), Some(1));
-        list.insert(1, LoroValue::Bool(false));
+        list.insert(1, LoroValue::Bool(false), ID::new(0, 0));
         assert_eq!(list.get_child_container_index(&id("x")), Some(0));
         assert_eq!(list.get_child_container_index(&id("abc")), Some(2));
     }

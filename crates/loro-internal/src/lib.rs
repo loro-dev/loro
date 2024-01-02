@@ -10,6 +10,7 @@ pub mod arena;
 pub mod diff_calc;
 pub mod handler;
 pub use event::{ContainerDiff, DiffEvent, DocDiff};
+pub use fxhash::FxHashMap;
 pub use handler::{ListHandler, MapHandler, TextHandler, TreeHandler};
 pub use loro::LoroDoc;
 pub use oplog::OpLog;
@@ -17,7 +18,6 @@ pub use state::DocState;
 pub mod loro;
 pub mod obs;
 pub mod oplog;
-mod state;
 pub mod txn;
 
 pub mod change;
@@ -42,6 +42,7 @@ pub mod event;
 
 pub use error::{LoroError, LoroResult};
 pub(crate) mod macros;
+pub(crate) mod state;
 pub(crate) mod value;
 pub(crate) use change::Timestamp;
 pub(crate) use id::{PeerID, ID};
@@ -50,7 +51,7 @@ pub(crate) use id::{PeerID, ID};
 pub(crate) type InternalString = DefaultAtom;
 
 pub use container::ContainerType;
-pub use fxhash::FxHashMap;
+pub use loro_common::{loro_value, to_value};
 pub use value::{ApplyDiff, LoroValue, ToJson};
 pub use version::VersionVector;
 

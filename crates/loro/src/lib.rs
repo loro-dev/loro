@@ -22,6 +22,7 @@ pub use loro_internal::obs::SubID;
 pub use loro_internal::obs::Subscriber;
 pub use loro_internal::version::{Frontiers, VersionVector};
 pub use loro_internal::DiffEvent;
+pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
 
 /// `LoroDoc` is the entry for the whole document.

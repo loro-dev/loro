@@ -49,6 +49,7 @@ pub enum InnerListOp {
     },
     Delete(DeleteSpan),
     /// StyleStart and StyleEnd must be paired.
+    /// The next op of StyleStart must be StyleEnd.
     StyleStart {
         start: u32,
         end: u32,

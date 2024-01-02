@@ -131,9 +131,25 @@ impl AppDag {
 
     pub fn get_lamport(&self, id: &ID) -> Option<Lamport> {
         self.map.get(&id.peer).and_then(|rle| {
-            rle.get_by_atom_index(id.counter)
-                .map(|x| x.element.lamport + (id.counter - x.element.cnt) as Lamport)
+            rle.get_by_atom_index(id.counter).and_then(|node| {
+                assert!(id.counter >= node.element.cnt);
+                if node.element.cnt + node.element.len as Counter > id.counter {
+                    Some(node.element.lamport + (id.counter - node.element.cnt) as Lamport)
+                } else {
+                    None
+                }
+            })
         })
+    }
+
+    pub fn get_change_lamport_from_deps(&self, deps: &[ID]) -> Option<Lamport> {
+        let mut lamport = 0;
+        for id in deps.iter() {
+            let x = self.get_lamport(id)?;
+            lamport = lamport.max(x + 1);
+        }
+
+        Some(lamport)
     }
 
     /// Convert a frontiers to a version vector

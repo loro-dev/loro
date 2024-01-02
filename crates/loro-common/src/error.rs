@@ -1,3 +1,4 @@
+use serde_columnar::ColumnarError;
 use thiserror::Error;
 
 use crate::{PeerID, TreeID, ID};
@@ -12,6 +13,10 @@ pub enum LoroError {
     DecodeVersionVectorError,
     #[error("Decode error ({0})")]
     DecodeError(Box<str>),
+    #[error("Checksum mismatch. The data is corrupted.")]
+    DecodeDataCorruptionError,
+    #[error("Encountered an incompatible Encoding version \"{0}\". Loro's encoding is backward compatible but not forward compatible. Please upgrade the version of Loro to support this version of the exported data.")]
+    IncompatibleFutureEncodingError(usize),
     #[error("Js error ({0})")]
     JsError(Box<str>),
     #[error("Cannot get lock or the lock is poisoned")]
@@ -23,9 +28,6 @@ pub enum LoroError {
     // TODO: more details transaction error
     #[error("Transaction error ({0})")]
     TransactionError(Box<str>),
-    // TODO:
-    #[error("TempContainer cannot execute this function")]
-    TempContainerError,
     #[error("Index out of bound. The given pos is {pos}, but the length is {len}")]
     OutOfBound { pos: usize, len: usize },
     #[error("Every op id should be unique. ID {id} has been used. You should use a new PeerID to edit the content. ")]
@@ -36,14 +38,8 @@ pub enum LoroError {
     ArgErr(Box<str>),
     #[error("Auto commit has not started. The doc is readonly when detached. You should ensure autocommit is on and the doc and the state is attached.")]
     AutoCommitNotStarted,
-    #[error("The doc is already dropped")]
-    DocDropError,
-    // #[error("the data for key `{0}` is not available")]
-    // Redaction(String),
-    // #[error("invalid header (expected {expected:?}, found {found:?})")]
-    // InvalidHeader { expected: String, found: String },
-    // #[error("unknown data store error")]
-    // Unknown,
+    #[error("Unknown Error ({0})")]
+    Unknown(Box<str>),
 }
 
 #[derive(Error, Debug)]
@@ -75,6 +71,20 @@ pub mod wasm {
                     .unwrap_or_else(|| "unknown error".to_owned())
                     .into_boxed_str(),
             )
+        }
+    }
+}
+
+impl From<ColumnarError> for LoroError {
+    fn from(e: ColumnarError) -> Self {
+        match e {
+            ColumnarError::ColumnarDecodeError(_)
+            | ColumnarError::RleEncodeError(_)
+            | ColumnarError::RleDecodeError(_)
+            | ColumnarError::OverflowError => {
+                LoroError::DecodeError(format!("Failed to decode Columnar: {}", e).into_boxed_str())
+            }
+            e => LoroError::Unknown(e.to_string().into_boxed_str()),
         }
     }
 }

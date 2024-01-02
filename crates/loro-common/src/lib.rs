@@ -6,12 +6,15 @@ use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Serialize};
 mod error;
 mod id;
+mod macros;
 mod span;
 mod value;
 
 pub use error::{LoroError, LoroResult, LoroTreeError};
+#[doc(hidden)]
+pub use fxhash::FxHashMap;
 pub use span::*;
-pub use value::LoroValue;
+pub use value::{to_value, LoroValue};
 
 /// Unique id for each peer. It's usually random
 pub type PeerID = u64;
@@ -91,6 +94,18 @@ impl ContainerType {
             3 => ContainerType::Text,
             4 => ContainerType::Tree,
             _ => unreachable!(),
+        }
+    }
+
+    pub fn try_from_u8(v: u8) -> LoroResult<Self> {
+        match v {
+            1 => Ok(ContainerType::Map),
+            2 => Ok(ContainerType::List),
+            3 => Ok(ContainerType::Text),
+            4 => Ok(ContainerType::Tree),
+            _ => Err(LoroError::DecodeError(
+                format!("Unknown container type {v}").into_boxed_str(),
+            )),
         }
     }
 }
@@ -261,6 +276,11 @@ pub struct TreeID {
 }
 
 impl TreeID {
+    #[inline(always)]
+    pub fn new(peer: PeerID, counter: Counter) -> Self {
+        Self { peer, counter }
+    }
+
     /// return [`DELETED_TREE_ROOT`]
     pub const fn delete_root() -> Option<Self> {
         DELETED_TREE_ROOT

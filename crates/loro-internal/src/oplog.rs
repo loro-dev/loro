@@ -9,16 +9,17 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 use fxhash::FxHashMap;
+use loro_common::{HasCounter, HasId};
 use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
 // use tabled::measurment::Percent;
 
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op;
-use crate::dag::DagUtils;
+use crate::dag::{Dag, DagUtils};
 use crate::diff_calc::tree::MoveLamportAndID;
 use crate::diff_calc::TreeDiffCache;
-use crate::encoding::RemoteClientChanges;
+use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{ListSlice, RawOpContent, RemoteOp};
@@ -72,6 +73,8 @@ pub struct AppDagNode {
     pub(crate) lamport: Lamport,
     pub(crate) deps: Frontiers,
     pub(crate) vv: ImVersionVector,
+    /// A flag indicating whether any other nodes depend on this node.
+    /// The calculation of frontiers is based on this value.
     pub(crate) has_succ: bool,
     pub(crate) len: usize,
 }
@@ -207,7 +210,13 @@ impl OpLog {
     }
 
     /// This is the only place to update the `OpLog.changes`
-    pub(crate) fn insert_new_change(&mut self, mut change: Change, _: EnsureChangeDepsAreAtTheEnd) {
+    pub(crate) fn insert_new_change(
+        &mut self,
+        mut change: Change,
+        _: EnsureChangeDepsAreAtTheEnd,
+        local: bool,
+    ) {
+        self.update_tree_cache(&change, local);
         let entry = self.changes.entry(change.id.peer).or_default();
         match entry.last_mut() {
             Some(last) => {
@@ -217,6 +226,7 @@ impl OpLog {
                     "change id is not continuous"
                 );
                 let timestamp_change = change.timestamp - last.timestamp;
+                // TODO: make this a config
                 if !last.has_dependents && change.deps_on_self() && timestamp_change < 1000 {
                     for op in take(change.ops.vec_mut()) {
                         last.ops.push(op);
@@ -242,7 +252,7 @@ impl OpLog {
     ///
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
-    pub fn import_local_change(&mut self, change: Change, from_txn: bool) -> Result<(), LoroError> {
+    pub fn import_local_change(&mut self, change: Change, local: bool) -> Result<(), LoroError> {
         let Some(change) = self.trim_the_known_part_of_change(change) else {
             return Ok(());
         };
@@ -268,8 +278,12 @@ impl OpLog {
         self.dag.frontiers.retain_non_included(&change.deps);
         self.dag.frontiers.filter_peer(change.id.peer);
         self.dag.frontiers.push(change.id_last());
-        let mark = self.insert_dag_node_on_new_change(&change);
+        let mark = self.update_dag_on_new_change(&change);
+        self.insert_new_change(change, mark, local);
+        Ok(())
+    }
 
+    fn update_tree_cache(&mut self, change: &Change, local: bool) {
         // Update tree cache
         let mut tree_cache = self.tree_parent_cache.lock().unwrap();
         for op in change.ops().iter() {
@@ -285,21 +299,18 @@ impl OpLog {
                     parent: tree.parent,
                     effected: true,
                 };
-                if from_txn {
-                    tree_cache.add_node_uncheck(node);
+                if local {
+                    tree_cache.add_node_from_local(node);
                 } else {
                     tree_cache.add_node(node);
                 }
             }
         }
-
         drop(tree_cache);
-        self.insert_new_change(change, mark);
-        Ok(())
     }
 
     /// Every time we import a new change, it should run this function to update the dag
-    pub(crate) fn insert_dag_node_on_new_change(
+    pub(crate) fn update_dag_on_new_change(
         &mut self,
         change: &Change,
     ) -> EnsureChangeDepsAreAtTheEnd {
@@ -319,7 +330,7 @@ impl OpLog {
                 change.lamport,
                 "lamport is not continuous"
             );
-            last.len = change.id.counter as usize + len - last.cnt as usize;
+            last.len = (change.id.counter - last.cnt) as usize + len;
             last.has_succ = false;
         } else {
             let vv = self.dag.frontiers_to_im_vv(&change.deps);
@@ -449,41 +460,6 @@ impl OpLog {
         self.dag.cmp_frontiers(other)
     }
 
-    pub(crate) fn export_changes_from(&self, from: &VersionVector) -> RemoteClientChanges {
-        let mut changes = RemoteClientChanges::default();
-        for (&peer, &cnt) in self.vv().iter() {
-            let start_cnt = from.get(&peer).copied().unwrap_or(0);
-            if cnt <= start_cnt {
-                continue;
-            }
-
-            let mut temp = Vec::new();
-            if let Some(peer_changes) = self.changes.get(&peer) {
-                if let Some(result) = peer_changes.get_by_atom_index(start_cnt) {
-                    for change in &peer_changes[result.merged_index..] {
-                        if change.id.counter < start_cnt {
-                            if change.id.counter + change.atom_len() as Counter <= start_cnt {
-                                continue;
-                            }
-
-                            let sliced = change
-                                .slice((start_cnt - change.id.counter) as usize, change.atom_len());
-                            temp.push(self.convert_change_to_remote(&sliced));
-                        } else {
-                            temp.push(self.convert_change_to_remote(change));
-                        }
-                    }
-                }
-            }
-
-            if !temp.is_empty() {
-                changes.insert(peer, temp);
-            }
-        }
-
-        changes
-    }
-
     pub(crate) fn get_min_lamport_at(&self, id: ID) -> Lamport {
         self.get_change_at(id).map(|c| c.lamport).unwrap_or(0)
     }
@@ -602,7 +578,7 @@ impl OpLog {
                 }
             },
             crate::op::InnerContent::Map(map) => {
-                let value = map.value.and_then(|v| self.arena.get_value(v as usize));
+                let value = map.value.clone();
                 contents.push(RawOpContent::Map(crate::container::map::MapSet {
                     key: map.key.clone(),
                     value,
@@ -622,35 +598,12 @@ impl OpLog {
         ans
     }
 
-    // Changes are expected to be sorted by counter in each value in the hashmap
-    // They should also be continuous  (TODO: check this)
-    pub(crate) fn import_remote_changes(
+    pub(crate) fn import_unknown_lamport_pending_changes(
         &mut self,
-        remote_changes: RemoteClientChanges,
-    ) -> Result<(), LoroError> {
-        // check whether we can append the new changes
-        self.check_changes(&remote_changes)?;
-        let latest_vv = self.dag.vv.clone();
-        // op_converter is faster than using arena directly
-        let ids = self.arena.clone().with_op_converter(|converter| {
-            self.apply_appliable_changes_and_cache_pending(remote_changes, converter, latest_vv)
-        });
-        let mut latest_vv = self.dag.vv.clone();
-        self.try_apply_pending(ids, &mut latest_vv);
-        if !self.batch_importing {
-            self.dag.refresh_frontiers();
-        }
-        Ok(())
-    }
-
-    pub(crate) fn import_unknown_lamport_remote_changes(
-        &mut self,
-        remote_changes: Vec<Change<RemoteOp>>,
+        remote_changes: Vec<Change>,
     ) -> Result<(), LoroError> {
         let latest_vv = self.dag.vv.clone();
-        self.arena.clone().with_op_converter(|converter| {
-            self.extend_pending_changes_with_unknown_lamport(remote_changes, converter, &latest_vv)
-        });
+        self.extend_pending_changes_with_unknown_lamport(remote_changes, &latest_vv);
         Ok(())
     }
 
@@ -677,12 +630,12 @@ impl OpLog {
     }
 
     #[inline(always)]
-    pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
+    pub(crate) fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
         encode_oplog(self, vv, EncodeMode::Auto)
     }
 
     #[inline(always)]
-    pub fn decode(&mut self, data: &[u8]) -> Result<(), LoroError> {
+    pub(crate) fn decode(&mut self, data: ParsedHeaderAndBody) -> Result<(), LoroError> {
         decode_oplog(self, data)
     }
 
@@ -807,52 +760,7 @@ impl OpLog {
         )
     }
 
-    pub(crate) fn iter_causally(
-        &self,
-        from: VersionVector,
-        to: VersionVector,
-    ) -> impl Iterator<Item = (&Change, Rc<RefCell<VersionVector>>)> {
-        let from_frontiers = from.to_frontiers(&self.dag);
-        let diff = from.diff(&to).right;
-        let mut iter = self.dag.iter_causal(&from_frontiers, diff);
-        let mut node = iter.next();
-        let mut cur_cnt = 0;
-        let vv = Rc::new(RefCell::new(VersionVector::default()));
-        std::iter::from_fn(move || {
-            if let Some(inner) = &node {
-                let mut inner_vv = vv.borrow_mut();
-                inner_vv.clear();
-                inner_vv.extend_to_include_vv(inner.data.vv.iter());
-                let peer = inner.data.peer;
-                let cnt = inner
-                    .data
-                    .cnt
-                    .max(cur_cnt)
-                    .max(from.get(&peer).copied().unwrap_or(0));
-                let end = (inner.data.cnt + inner.data.len as Counter)
-                    .min(to.get(&peer).copied().unwrap_or(0));
-                let change = self
-                    .changes
-                    .get(&peer)
-                    .and_then(|x| x.get_by_atom_index(cnt).map(|x| x.element))
-                    .unwrap();
-
-                if change.ctr_end() < end {
-                    cur_cnt = change.ctr_end();
-                } else {
-                    node = iter.next();
-                    cur_cnt = 0;
-                }
-
-                inner_vv.extend_to_include_end_id(change.id);
-                Some((change, vv.clone()))
-            } else {
-                None
-            }
-        })
-    }
-
-    pub(crate) fn len_changes(&self) -> usize {
+    pub fn len_changes(&self) -> usize {
         self.changes.values().map(|x| x.len()).sum()
     }
 
@@ -879,6 +787,33 @@ impl OpLog {
             total_atom_ops,
             total_dag_node,
         }
+    }
+
+    #[allow(unused)]
+    pub(crate) fn debug_check(&self) {
+        for (_, changes) in self.changes().iter() {
+            let c = changes.last().unwrap();
+            let node = self.dag.get(c.id_start()).unwrap();
+            assert_eq!(c.id_end(), node.id_end());
+        }
+    }
+
+    pub(crate) fn iter_changes<'a>(
+        &'a self,
+        from: &VersionVector,
+        to: &VersionVector,
+    ) -> impl Iterator<Item = &'a Change> + 'a {
+        let spans: Vec<_> = from.diff_iter(to).1.collect();
+        spans.into_iter().flat_map(move |span| {
+            let peer = span.client_id;
+            let cnt = span.counter.start;
+            let end_cnt = span.counter.end;
+            let peer_changes = self.changes.get(&peer).unwrap();
+            let index = peer_changes.search_atom_index(cnt);
+            peer_changes[index..]
+                .iter()
+                .take_while(move |x| x.ctr_start() < end_cnt)
+        })
     }
 }
 

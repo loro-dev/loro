@@ -113,6 +113,8 @@ impl CounterSpan {
     }
 
     #[inline(always)]
+    /// Normalized end value.
+    ///
     /// This is different from end. start may be greater than end. This is the max of start+1 and end
     pub fn norm_end(&self) -> i32 {
         if self.start < self.end {
@@ -159,6 +161,16 @@ impl CounterSpan {
     /// if we can merge element on the right, this method return the first atom of it
     fn next_pos(&self) -> i32 {
         self.end
+    }
+
+    fn get_intersection(&self, counter: &CounterSpan) -> Option<Self> {
+        let start = self.start.max(counter.start);
+        let end = self.end.min(counter.end);
+        if start < end {
+            Some(CounterSpan { start, end })
+        } else {
+            None
+        }
     }
 }
 
@@ -228,15 +240,16 @@ impl Mergable for CounterSpan {
 /// We need this because it'll make merging deletions easier.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct IdSpan {
+    // TODO: rename this to peer_id
     pub client_id: PeerID,
     pub counter: CounterSpan,
 }
 
 impl IdSpan {
     #[inline]
-    pub fn new(client_id: PeerID, from: Counter, to: Counter) -> Self {
+    pub fn new(peer: PeerID, from: Counter, to: Counter) -> Self {
         Self {
-            client_id,
+            client_id: peer,
             counter: CounterSpan {
                 start: from,
                 end: to,
@@ -280,6 +293,18 @@ impl IdSpan {
         let mut out = IdSpanVector::default();
         out.insert(self.client_id, self.counter);
         out
+    }
+
+    pub fn get_intersection(&self, other: &Self) -> Option<Self> {
+        if self.client_id != other.client_id {
+            return None;
+        }
+
+        let counter = self.counter.get_intersection(&other.counter)?;
+        Some(Self {
+            client_id: self.client_id,
+            counter,
+        })
     }
 }
 
@@ -422,6 +447,12 @@ impl HasId for (PeerID, CounterSpan) {
             peer: self.0,
             counter: self.1.min(),
         }
+    }
+}
+
+impl From<ID> for IdSpan {
+    fn from(value: ID) -> Self {
+        Self::new(value.peer, value.counter, value.counter + 1)
     }
 }
 

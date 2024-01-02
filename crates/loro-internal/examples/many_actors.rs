@@ -5,8 +5,8 @@ use loro_internal::{LoroDoc, LoroValue};
 // static ALLOC: dhat::Alloc = dhat::Alloc;
 
 fn main() {
-    with_100k_actors_then_action();
-    // import_with_many_actors();
+    // with_100k_actors_then_action();
+    import_with_many_actors();
 }
 
 #[allow(unused)]

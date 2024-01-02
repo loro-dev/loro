@@ -88,7 +88,6 @@
     "https://deno.land/x/cliui@v7.0.4-deno/build/lib/index.js": "fb6030c7b12602a4fca4d81de3ddafa301ba84fd9df73c53de6f3bdda7b482d5",
     "https://deno.land/x/cliui@v7.0.4-deno/build/lib/string-utils.js": "b3eb9d2e054a43a3064af17332fb1839a7dadb205c5371af4789616afb1a117f",
     "https://deno.land/x/cliui@v7.0.4-deno/deno.ts": "d07bc3338661f8011e3a5fd215061d17a52107a5383c29f40ce0c1ecb8bb8cc3",
-    "https://deno.land/x/dirname@1.1.2/mod.ts": "4029ca6b49da58d262d65f826ba9b3a89cc0b92a94c7220d5feb7bd34e498a54",
     "https://deno.land/x/dirname@1.1.2/types.ts": "c1ed1667545bc4b1d69bdb2fc26a5fa8edae3a56e3081209c16a408a322a2319",
     "https://deno.land/x/escalade@v3.0.3/sync.ts": "493bc66563292c5c10c4a75a467a5933f24dad67d74b0f5a87e7b988fe97c104",
     "https://deno.land/x/y18n@v5.0.0-deno/build/lib/index.d.ts": "11f40d97041eb271cc1a1c7b296c6e7a068d4843759575e7416f0d14ebf8239c",

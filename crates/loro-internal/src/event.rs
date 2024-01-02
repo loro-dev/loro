@@ -135,7 +135,7 @@ impl DiffVariant {
 #[non_exhaustive]
 #[derive(Clone, Debug, EnumAsInner, Serialize)]
 pub(crate) enum InternalDiff {
-    SeqRaw(Delta<SliceRanges>),
+    ListRaw(Delta<SliceRanges>),
     /// This always uses entity indexes.
     RichtextRaw(Delta<RichtextStateChunk>),
     Map(MapDelta),
@@ -177,7 +177,7 @@ impl From<Diff> for DiffVariant {
 impl InternalDiff {
     pub(crate) fn is_empty(&self) -> bool {
         match self {
-            InternalDiff::SeqRaw(s) => s.is_empty(),
+            InternalDiff::ListRaw(s) => s.is_empty(),
             InternalDiff::RichtextRaw(t) => t.is_empty(),
             InternalDiff::Map(m) => m.updated.is_empty(),
             InternalDiff::Tree(t) => t.is_empty(),
@@ -187,8 +187,8 @@ impl InternalDiff {
     pub(crate) fn compose(self, diff: InternalDiff) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {
-            (InternalDiff::SeqRaw(a), InternalDiff::SeqRaw(b)) => {
-                Ok(InternalDiff::SeqRaw(a.compose(b)))
+            (InternalDiff::ListRaw(a), InternalDiff::ListRaw(b)) => {
+                Ok(InternalDiff::ListRaw(a.compose(b)))
             }
             (InternalDiff::RichtextRaw(a), InternalDiff::RichtextRaw(b)) => {
                 Ok(InternalDiff::RichtextRaw(a.compose(b)))

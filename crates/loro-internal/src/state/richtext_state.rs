@@ -5,8 +5,7 @@ use std::{
 
 use fxhash::FxHashMap;
 use generic_btree::rle::{HasLength, Mergeable};
-use loro_common::{Counter, LoroResult, LoroValue, PeerID, ID};
-use loro_preload::{CommonArena, EncodedRichtextState, TempArena, TextRanges};
+use loro_common::{LoroResult, LoroValue, ID};
 
 use crate::{
     arena::SharedArena,
@@ -14,16 +13,19 @@ use crate::{
         idx::ContainerIdx,
         richtext::{
             richtext_state::{EntityRangeInfo, PosType},
-            AnchorType, RichtextState as InnerState, StyleOp, Styles, TextStyleInfoFlag,
+            AnchorType, RichtextState as InnerState, StyleOp, Styles,
         },
     },
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
     delta::{Delta, DeltaItem, StyleMeta},
+    encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, InternalDiff},
     op::{Op, RawOp},
     txn::Transaction,
-    utils::{bitmap::BitMap, lazy::LazyLoad, string_slice::StringSlice},
-    DocState, InternalString,
+    utils::{
+        delta_rle_encoded_num::DeltaRleEncodedNums, lazy::LazyLoad, string_slice::StringSlice,
+    },
+    DocState,
 };
 
 use super::ContainerState;
@@ -55,11 +57,12 @@ impl RichtextState {
         self.state.get_mut().to_string()
     }
 
+    #[allow(unused)]
     #[inline(always)]
     pub(crate) fn is_empty(&self) -> bool {
         match &*self.state {
             LazyLoad::Src(s) => s.elements.is_empty(),
-            LazyLoad::Dst(d) => d.is_emtpy(),
+            LazyLoad::Dst(d) => d.is_empty(),
         }
     }
 
@@ -138,6 +141,17 @@ impl Mergeable for UndoItem {
 }
 
 impl ContainerState for RichtextState {
+    fn container_idx(&self) -> ContainerIdx {
+        self.idx
+    }
+
+    fn is_state_empty(&self) -> bool {
+        match &*self.state {
+            LazyLoad::Src(s) => s.is_empty(),
+            LazyLoad::Dst(s) => s.is_empty(),
+        }
+    }
+
     // TODO: refactor
     fn apply_diff_and_convert(
         &mut self,
@@ -349,9 +363,11 @@ impl ContainerState for RichtextState {
                     unicode_start: _,
                     pos,
                 } => {
-                    self.state
-                        .get_mut()
-                        .insert_at_entity_index(*pos as usize, slice.clone());
+                    self.state.get_mut().insert_at_entity_index(
+                        *pos as usize,
+                        slice.clone(),
+                        r_op.id,
+                    );
 
                     if self.in_txn {
                         self.push_undo(UndoItem::Insert {
@@ -446,6 +462,84 @@ impl ContainerState for RichtextState {
     // value is a list
     fn get_value(&mut self) -> LoroValue {
         LoroValue::String(Arc::new(self.state.get_mut().to_string()))
+    }
+
+    #[doc = " Get a list of ops that can be used to restore the state to the current state"]
+    fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
+        let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;
+        let mut a;
+        let mut b;
+        match &*self.state {
+            LazyLoad::Src(s) => {
+                a = Some(s.elements.iter());
+                iter = &mut *a.as_mut().unwrap();
+            }
+            LazyLoad::Dst(s) => {
+                b = Some(s.iter_chunk());
+                iter = &mut *b.as_mut().unwrap();
+            }
+        }
+
+        debug_log::group!("encode_snapshot");
+        let mut lamports = DeltaRleEncodedNums::new();
+        for chunk in iter {
+            debug_log::debug_dbg!(&chunk);
+            match chunk {
+                RichtextStateChunk::Style { style, anchor_type }
+                    if *anchor_type == AnchorType::Start =>
+                {
+                    lamports.push(style.lamport);
+                }
+                _ => {}
+            }
+
+            let id_span = chunk.get_id_span();
+            encoder.encode_op(id_span, || unimplemented!());
+        }
+
+        debug_log::group_end!();
+        lamports.encode()
+    }
+
+    #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+        assert_eq!(ctx.mode, EncodeMode::Snapshot);
+        let lamports = DeltaRleEncodedNums::decode(ctx.blob);
+        let mut lamport_iter = lamports.iter();
+        let mut loader = RichtextStateLoader::default();
+        let mut id_to_style = FxHashMap::default();
+        for op in ctx.ops {
+            let id = op.id();
+            let chunk = match op.op.content.into_list().unwrap() {
+                list_op::InnerListOp::InsertText { slice, .. } => {
+                    RichtextStateChunk::new_text(slice.clone(), id)
+                }
+                list_op::InnerListOp::StyleStart {
+                    key, value, info, ..
+                } => {
+                    let style_op = Arc::new(StyleOp {
+                        lamport: lamport_iter.next().unwrap(),
+                        peer: op.peer,
+                        cnt: op.op.counter,
+                        key,
+                        value,
+                        info,
+                    });
+                    id_to_style.insert(id, style_op.clone());
+                    RichtextStateChunk::new_style(style_op, AnchorType::Start)
+                }
+                list_op::InnerListOp::StyleEnd => {
+                    let style = id_to_style.remove(&id.inc(-1)).unwrap();
+                    RichtextStateChunk::new_style(style, AnchorType::End)
+                }
+                a => unreachable!("richtext state should not have {a:?}"),
+            };
+
+            debug_log::debug_dbg!(&chunk);
+            loader.push(chunk);
+        }
+
+        *self.state = LazyLoad::Src(loader);
     }
 }
 
@@ -553,142 +647,6 @@ impl RichtextState {
     pub fn get_richtext_value(&mut self) -> LoroValue {
         self.state.get_mut().get_richtext_value()
     }
-
-    #[inline]
-    fn get_loader() -> RichtextStateLoader {
-        RichtextStateLoader {
-            elements: Default::default(),
-            start_anchor_pos: Default::default(),
-            entity_index: 0,
-            style_ranges: Default::default(),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn iter_chunk(&self) -> Box<dyn Iterator<Item = &RichtextStateChunk> + '_> {
-        match &*self.state {
-            LazyLoad::Src(s) => Box::new(s.elements.iter()),
-            LazyLoad::Dst(s) => Box::new(s.iter_chunk()),
-        }
-    }
-
-    pub(crate) fn decode_snapshot(
-        &mut self,
-        EncodedRichtextState {
-            len,
-            text_bytes,
-            styles,
-            is_style_start,
-        }: EncodedRichtextState,
-        state_arena: &TempArena,
-        common: &CommonArena,
-        arena: &SharedArena,
-    ) {
-        assert!(self.is_empty());
-        if text_bytes.is_empty() {
-            return;
-        }
-
-        let bit_len = is_style_start.len() * 8;
-        let is_style_start = BitMap::from_vec(is_style_start, bit_len);
-        let mut is_style_start_iter = is_style_start.iter();
-        let mut loader = Self::get_loader();
-        let mut is_text = true;
-        let mut text_range_iter = TextRanges::decode_iter(&text_bytes).unwrap();
-        let mut style_iter = styles.iter();
-        for &len in len.iter() {
-            if is_text {
-                for _ in 0..len {
-                    let range = text_range_iter.next().unwrap();
-                    let text = arena.slice_by_utf8(range.start..range.start + range.len);
-                    loader.push(RichtextStateChunk::new_text(text));
-                }
-            } else {
-                for _ in 0..len {
-                    let is_start = is_style_start_iter.next().unwrap();
-                    let style_compact = style_iter.next().unwrap();
-                    loader.push(RichtextStateChunk::new_style(
-                        Arc::new(StyleOp {
-                            lamport: style_compact.lamport,
-                            peer: common.peer_ids[style_compact.peer_idx as usize],
-                            cnt: style_compact.counter as Counter,
-                            key: state_arena.keywords[style_compact.key_idx as usize].clone(),
-                            value: style_compact.value.clone(),
-                            info: TextStyleInfoFlag::from_byte(style_compact.style_info),
-                        }),
-                        if is_start {
-                            AnchorType::Start
-                        } else {
-                            AnchorType::End
-                        },
-                    ))
-                }
-            }
-
-            is_text = !is_text;
-        }
-
-        self.state = Box::new(LazyLoad::new(loader));
-    }
-
-    pub(crate) fn encode_snapshot(
-        &self,
-        record_peer: &mut impl FnMut(PeerID) -> u32,
-        record_key: &mut impl FnMut(&InternalString) -> usize,
-    ) -> EncodedRichtextState {
-        // lengths are interleaved [text_elem_len, style_elem_len, ..]
-        let mut lengths = Vec::new();
-        let mut text_ranges: TextRanges = Default::default();
-        let mut styles = Vec::new();
-        let mut is_style_start = BitMap::new();
-
-        for chunk in self.iter_chunk() {
-            match chunk {
-                RichtextStateChunk::Text(s) => {
-                    if lengths.len() % 2 == 0 {
-                        lengths.push(0);
-                    }
-
-                    *lengths.last_mut().unwrap() += 1;
-                    text_ranges.ranges.push(loro_preload::TextRange {
-                        start: s.bytes().start(),
-                        len: s.bytes().len(),
-                    });
-                }
-                RichtextStateChunk::Style { style, anchor_type } => {
-                    if lengths.is_empty() {
-                        lengths.reserve(2);
-                        lengths.push(0);
-                        lengths.push(0);
-                    }
-
-                    if lengths.len() % 2 == 1 {
-                        lengths.push(0);
-                    }
-
-                    *lengths.last_mut().unwrap() += 1;
-                    is_style_start.push(*anchor_type == AnchorType::Start);
-                    styles.push(loro_preload::CompactStyleOp {
-                        peer_idx: record_peer(style.peer),
-                        key_idx: record_key(&style.key) as u32,
-                        counter: style.cnt as u32,
-                        lamport: style.lamport,
-                        style_info: style.info.to_byte(),
-                        value: style.value.clone(),
-                    })
-                }
-            }
-        }
-
-        let text_bytes = text_ranges.encode();
-        // eprintln!("bytes len={}", text_bytes.len());
-        EncodedRichtextState {
-            len: lengths,
-            text_bytes: std::borrow::Cow::Owned(text_bytes),
-            styles,
-            is_style_start: is_style_start.into_vec(),
-        }
-    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -741,12 +699,17 @@ impl RichtextStateLoader {
 
         state
     }
+
+    fn is_empty(&self) -> bool {
+        self.elements.is_empty()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use append_only_bytes::AppendOnlyBytes;
     use generic_btree::rle::Mergeable;
+    use loro_common::ID;
 
     use crate::container::richtext::richtext_state::{RichtextStateChunk, TextChunk};
 
@@ -761,15 +724,15 @@ mod tests {
 
         let mut last = UndoItem::Delete {
             index: 20,
-            content: RichtextStateChunk::Text(TextChunk::from_bytes(last_bytes)),
+            content: RichtextStateChunk::Text(TextChunk::new(last_bytes, ID::new(0, 2))),
         };
         let mut new = UndoItem::Delete {
             index: 18,
-            content: RichtextStateChunk::Text(TextChunk::from_bytes(new_bytes)),
+            content: RichtextStateChunk::Text(TextChunk::new(new_bytes, ID::new(0, 0))),
         };
         let merged = UndoItem::Delete {
             index: 18,
-            content: RichtextStateChunk::Text(TextChunk::from_bytes(bytes.to_slice())),
+            content: RichtextStateChunk::Text(TextChunk::new(bytes.to_slice(), ID::new(0, 0))),
         };
         assert!(last.can_merge(&new));
         std::mem::swap(&mut last, &mut new);

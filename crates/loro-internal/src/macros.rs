@@ -81,14 +81,18 @@ macro_rules! array_mut_ref {
     }};
 }
 
-#[test]
-fn test_macro() {
-    let mut arr = vec![100, 101, 102, 103];
-    let (a, b, _c) = array_mut_ref!(&mut arr, [1, 2, 3]);
-    assert_eq!(*a, 101);
-    assert_eq!(*b, 102);
-    *a = 50;
-    *b = 51;
-    assert!(arr[1] == 50);
-    assert!(arr[2] == 51);
+#[cfg(test)]
+mod test {
+
+    #[test]
+    fn test_macro() {
+        let mut arr = vec![100, 101, 102, 103];
+        let (a, b, _c) = array_mut_ref!(&mut arr, [1, 2, 3]);
+        assert_eq!(*a, 101);
+        assert_eq!(*b, 102);
+        *a = 50;
+        *b = 51;
+        assert!(arr[1] == 50);
+        assert!(arr[2] == 51);
+    }
 }

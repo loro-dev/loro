@@ -1,15 +1,8 @@
 use std::{collections::BTreeMap, ops::Deref};
 
-use crate::{
-    arena::OpConverter, change::Change, encoding::RemoteClientChanges, op::RemoteOp, OpLog,
-    VersionVector,
-};
+use crate::{change::Change, OpLog, VersionVector};
 use fxhash::FxHashMap;
-use itertools::Itertools;
-use loro_common::{
-    Counter, CounterSpan, HasCounterSpan, HasIdSpan, HasLamportSpan, LoroError, PeerID, ID,
-};
-use rle::RleVec;
+use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, HasLamportSpan, PeerID, ID};
 use smallvec::SmallVec;
 
 #[derive(Debug)]
@@ -17,6 +10,8 @@ pub enum PendingChange {
     // The lamport of the change decoded by `enhanced` is unknown.
     // we need calculate it when the change can be applied
     Unknown(Change),
+    // TODO: Refactor, remove this?
+    #[allow(unused)]
     Known(Change),
 }
 
@@ -35,54 +30,22 @@ pub(crate) struct PendingChanges {
     changes: FxHashMap<PeerID, BTreeMap<Counter, SmallVec<[PendingChange; 1]>>>,
 }
 
-impl OpLog {
-    // calculate all `id_last`(s) whose change can be applied
-    pub(super) fn apply_appliable_changes_and_cache_pending(
-        &mut self,
-        remote_changes: RemoteClientChanges,
-        converter: &mut OpConverter,
-        mut latest_vv: VersionVector,
-    ) -> Vec<ID> {
-        let mut ans = Vec::new();
-        for change in remote_changes
-            .into_values()
-            .filter(|c| !c.is_empty())
-            .flat_map(|c| c.into_iter())
-            .sorted_unstable_by_key(|c| c.lamport)
-        {
-            let local_change = to_local_op(change, converter);
-            let local_change = PendingChange::Known(local_change);
-            match remote_change_apply_state(&latest_vv, &local_change) {
-                ChangeApplyState::CanApplyDirectly => {
-                    latest_vv.set_end(local_change.id_end());
-                    ans.push(local_change.id_last());
-                    self.apply_local_change_from_remote(local_change);
-                }
-                ChangeApplyState::Applied => {}
-                ChangeApplyState::AwaitingDependency(miss_dep) => self
-                    .pending_changes
-                    .changes
-                    .entry(miss_dep.peer)
-                    .or_default()
-                    .entry(miss_dep.counter)
-                    .or_default()
-                    .push(local_change),
-            }
-        }
-        ans
+impl PendingChanges {
+    pub fn is_empty(&self) -> bool {
+        self.changes.is_empty()
     }
+}
 
+impl OpLog {
     pub(super) fn extend_pending_changes_with_unknown_lamport(
         &mut self,
-        remote_changes: Vec<Change<RemoteOp>>,
-        converter: &mut OpConverter,
+        remote_changes: Vec<Change>,
         latest_vv: &VersionVector,
     ) {
         for change in remote_changes {
-            let local_change = to_local_op(change, converter);
-            let local_change = PendingChange::Unknown(local_change);
+            let local_change = PendingChange::Unknown(change);
             match remote_change_apply_state(latest_vv, &local_change) {
-                ChangeApplyState::AwaitingDependency(miss_dep) => self
+                ChangeState::AwaitingMissingDependency(miss_dep) => self
                     .pending_changes
                     .changes
                     .entry(miss_dep.peer)
@@ -96,42 +59,20 @@ impl OpLog {
     }
 }
 
+/// This struct indicates that the dag frontiers should be updated after the change is applied.
+#[must_use]
+pub(crate) struct ShouldUpdateDagFrontiers {
+    pub(crate) should_update: bool,
+}
+
 impl OpLog {
-    pub(super) fn check_changes(&self, changes: &RemoteClientChanges) -> Result<(), LoroError> {
-        for changes in changes.values() {
-            if changes.is_empty() {
-                continue;
-            }
-            // detect invalid id
-            let mut last_end_counter = None;
-            for change in changes.iter() {
-                if change.id.counter < 0 {
-                    return Err(LoroError::DecodeError(
-                        "Invalid data. Negative id counter.".into(),
-                    ));
-                }
-                if let Some(last_end_counter) = &mut last_end_counter {
-                    if change.id.counter != *last_end_counter {
-                        return Err(LoroError::DecodeError(
-                            "Invalid data. Not continuous counter.".into(),
-                        ));
-                    }
-
-                    *last_end_counter = change.id_end().counter;
-                } else {
-                    last_end_counter = Some(change.id_end().counter);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub(crate) fn try_apply_pending(
-        &mut self,
-        mut id_stack: Vec<ID>,
-        latest_vv: &mut VersionVector,
-    ) {
-        while let Some(id) = id_stack.pop() {
+    /// Try to apply pending changes.
+    ///
+    /// `new_ids` are the ID of the op that is just applied.
+    pub(crate) fn try_apply_pending(&mut self, mut new_ids: Vec<ID>) -> ShouldUpdateDagFrontiers {
+        let mut latest_vv = self.dag.vv.clone();
+        let mut updated = false;
+        while let Some(id) = new_ids.pop() {
             let Some(tree) = self.pending_changes.changes.get_mut(&id.peer) else {
                 continue;
             };
@@ -152,14 +93,15 @@ impl OpLog {
 
             for pending_changes in pending_set {
                 for pending_change in pending_changes {
-                    match remote_change_apply_state(latest_vv, &pending_change) {
-                        ChangeApplyState::CanApplyDirectly => {
-                            id_stack.push(pending_change.id_last());
+                    match remote_change_apply_state(&latest_vv, &pending_change) {
+                        ChangeState::CanApplyDirectly => {
+                            new_ids.push(pending_change.id_last());
                             latest_vv.set_end(pending_change.id_end());
                             self.apply_local_change_from_remote(pending_change);
+                            updated = true;
                         }
-                        ChangeApplyState::Applied => {}
-                        ChangeApplyState::AwaitingDependency(miss_dep) => self
+                        ChangeState::Applied => {}
+                        ChangeState::AwaitingMissingDependency(miss_dep) => self
                             .pending_changes
                             .changes
                             .entry(miss_dep.peer)
@@ -170,6 +112,10 @@ impl OpLog {
                     }
                 }
             }
+        }
+
+        ShouldUpdateDagFrontiers {
+            should_update: updated,
         }
     }
 
@@ -192,59 +138,35 @@ impl OpLog {
         // debug_dbg!(&change_causal_arr);
         self.dag.vv.extend_to_include_last_id(change.id_last());
         self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
-        let mark = self.insert_dag_node_on_new_change(&change);
-        self.insert_new_change(change, mark);
+        let mark = self.update_dag_on_new_change(&change);
+        self.insert_new_change(change, mark, false);
     }
 }
 
-pub(super) fn to_local_op(change: Change<RemoteOp>, converter: &mut OpConverter) -> Change {
-    let mut ops = RleVec::new();
-    for op in change.ops {
-        let lamport = change.lamport;
-        let content = op.content;
-        let op = converter.convert_single_op(
-            &op.container,
-            change.id.peer,
-            op.counter,
-            lamport,
-            content,
-        );
-        ops.push(op);
-    }
-    Change {
-        ops,
-        id: change.id,
-        deps: change.deps,
-        lamport: change.lamport,
-        timestamp: change.timestamp,
-        has_dependents: false,
-    }
-}
-
-enum ChangeApplyState {
+enum ChangeState {
     Applied,
     CanApplyDirectly,
     // The id of first missing dep
-    AwaitingDependency(ID),
+    AwaitingMissingDependency(ID),
 }
 
-fn remote_change_apply_state(vv: &VersionVector, change: &Change) -> ChangeApplyState {
+fn remote_change_apply_state(vv: &VersionVector, change: &Change) -> ChangeState {
     let peer = change.id.peer;
     let CounterSpan { start, end } = change.ctr_span();
     let vv_latest_ctr = vv.get(&peer).copied().unwrap_or(0);
     if vv_latest_ctr < start {
-        return ChangeApplyState::AwaitingDependency(change.id.inc(-1));
+        return ChangeState::AwaitingMissingDependency(change.id.inc(-1));
     }
     if vv_latest_ctr >= end {
-        return ChangeApplyState::Applied;
+        return ChangeState::Applied;
     }
     for dep in change.deps.as_ref().iter() {
         let dep_vv_latest_ctr = vv.get(&dep.peer).copied().unwrap_or(0);
         if dep_vv_latest_ctr - 1 < dep.counter {
-            return ChangeApplyState::AwaitingDependency(*dep);
+            return ChangeState::AwaitingMissingDependency(*dep);
         }
     }
-    ChangeApplyState::CanApplyDirectly
+    ChangeState::CanApplyDirectly
 }
 
 #[cfg(test)]
