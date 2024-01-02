@@ -614,7 +614,6 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         if let Some(vv) = vv {
             self.tracker.checkout(vv);
         }
-        println!("apply change {:?}", op);
         match &op.op().content {
             crate::op::InnerContent::List(l) => match l {
                 crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
@@ -690,7 +689,6 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         _: impl FnMut(&ContainerID),
     ) -> InternalDiff {
         let mut delta = Delta::new();
-        println!("from {:?} to {:?}", from, to);
         for item in self.tracker.diff(from, to) {
             match item {
                 CrdtRopeDelta::Retain(len) => {
