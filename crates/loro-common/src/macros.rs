@@ -1,3 +1,24 @@
+/// A macro for creating `LoroValue`. It works just like the `json!` macro in
+/// `serde_json`.
+///
+/// # Example
+///
+/// ```
+/// use loro_common::loro_value;
+/// loro_value({
+///     "name": "John",
+///     "age": 12,
+///     "collections": [
+///         {
+///             "binary-data": b"1,2,3"
+///         }
+///     ],
+///     "float": 1.2,
+///     "null": null,
+///     "bool": true,
+/// });
+/// ```
+///
 #[macro_export(local_inner_macros)]
 macro_rules! loro_value {
     // Hide distracting implementation details from the generated rustdoc.
@@ -262,11 +283,12 @@ mod test {
             "float": 123.123,
             "map": {
                 "a": "1"
-            }
+            },
+            "binary": b"123",
         });
 
         let map = map.into_map().unwrap();
-        assert_eq!(map.len(), 7);
+        assert_eq!(map.len(), 8);
         assert!(*map.get("hi").unwrap().as_bool().unwrap());
         assert!(!(*map.get("false").unwrap().as_bool().unwrap()));
         assert!(map.get("null").unwrap().is_null());
@@ -285,6 +307,10 @@ mod test {
                 .as_string()
                 .unwrap(),
             "1"
+        );
+        assert_eq!(
+            &**map.get("binary").unwrap().as_binary().unwrap(),
+            &b"123".to_vec()
         );
     }
 }
