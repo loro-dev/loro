@@ -50,7 +50,7 @@ impl<T: ActorTrait> ActorGroup<T> {
                     let data = self.docs[*from].doc().export_snapshot();
                     self.docs[*to].doc().import(&data).unwrap();
                 }
-                bench_utils::SyncKind::Pending => {
+                bench_utils::SyncKind::OnlyLastOpFromEachPeer => {
                     let mut vv = self.docs[*from].doc().oplog_vv();
                     for cnt in vv.values_mut() {
                         *cnt -= 1;
@@ -67,12 +67,16 @@ impl<T: ActorTrait> ActorGroup<T> {
         debug_log::group!("SyncAll");
         let (first, rest) = self.docs.split_at_mut(1);
         for doc in rest.iter_mut() {
+            debug_log::group!("Importing to doc0");
             let vv = first[0].doc().oplog_vv();
             first[0].doc().import(&doc.doc().export_from(&vv)).unwrap();
+            debug_log::group_end!();
         }
-        for doc in rest.iter_mut() {
+        for (i, doc) in rest.iter_mut().enumerate() {
+            debug_log::group!("Importing to doc{}", i + 1);
             let vv = doc.doc().oplog_vv();
             doc.doc().import(&first[0].doc().export_from(&vv)).unwrap();
+            debug_log::group_end!();
         }
         debug_log::group_end!();
     }

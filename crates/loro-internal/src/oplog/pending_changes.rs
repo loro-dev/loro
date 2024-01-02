@@ -59,12 +59,19 @@ impl OpLog {
     }
 }
 
+/// This struct indicates that the dag frontiers should be updated after the change is applied.
+#[must_use]
+pub(crate) struct ShouldUpdateDagFrontiers {
+    pub(crate) should_update: bool,
+}
+
 impl OpLog {
     /// Try to apply pending changes.
     ///
     /// `new_ids` are the ID of the op that is just applied.
-    pub(crate) fn try_apply_pending(&mut self, mut new_ids: Vec<ID>) {
+    pub(crate) fn try_apply_pending(&mut self, mut new_ids: Vec<ID>) -> ShouldUpdateDagFrontiers {
         let mut latest_vv = self.dag.vv.clone();
+        let mut updated = false;
         while let Some(id) = new_ids.pop() {
             let Some(tree) = self.pending_changes.changes.get_mut(&id.peer) else {
                 continue;
@@ -91,6 +98,7 @@ impl OpLog {
                             new_ids.push(pending_change.id_last());
                             latest_vv.set_end(pending_change.id_end());
                             self.apply_local_change_from_remote(pending_change);
+                            updated = true;
                         }
                         ChangeState::Applied => {}
                         ChangeState::AwaitingMissingDependency(miss_dep) => self
@@ -104,6 +112,10 @@ impl OpLog {
                     }
                 }
             }
+        }
+
+        ShouldUpdateDagFrontiers {
+            should_update: updated,
         }
     }
 

@@ -70,6 +70,8 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, mut op_id: ID, mut pos: usize, mut content: RichtextChunk) {
+        // debug_log::debug_dbg!(&op_id, pos, content);
+        // debug_log::debug_dbg!(&self);
         let last_id = op_id.inc(content.len() as Counter - 1);
         let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
         if applied_counter_end > op_id.counter {
@@ -296,6 +298,7 @@ impl Tracker {
         self._checkout(from, false);
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();
+        // debug_log::debug_dbg!(&self);
         self.rope.get_diff()
     }
 }

@@ -1,4 +1,4 @@
-use examples::json::{fuzz, minify};
+use examples::json::fuzz;
 use loro::loro_value;
 
 #[ctor::ctor]
@@ -123,7 +123,7 @@ fn fuzz_json() {
             Sync {
                 from: 8174439530702664049,
                 to: 5280876770117120369,
-                kind: Pending,
+                kind: OnlyLastOpFromEachPeer,
             },
             SyncAll,
             Action {
@@ -263,7 +263,7 @@ fn fuzz_json() {
             Sync {
                 from: 16090538600105537827,
                 to: 936747706152398848,
-                kind: Pending,
+                kind: OnlyLastOpFromEachPeer,
             },
             Action {
                 peer: 8174439530702653769,
@@ -309,7 +309,7 @@ fn fuzz_json() {
             Sync {
                 from: 18446744073709515121,
                 to: 18446744073709551615,
-                kind: Pending,
+                kind: OnlyLastOpFromEachPeer,
             },
             SyncAll,
             SyncAll,
@@ -366,7 +366,7 @@ fn fuzz_json_1() {
 }
 
 #[test]
-fn fuzz_json_2() {
+fn fuzz_json_2_decode_snapshot_that_activate_pending_changes() {
     use examples::test_preload::*;
     fuzz(
         5,
@@ -389,7 +389,7 @@ fn fuzz_json_2() {
             Sync {
                 from: 10778685752873424277,
                 to: 52870070483605,
-                kind: Pending,
+                kind: OnlyLastOpFromEachPeer,
             },
             Action {
                 peer: 6128427715264512,
@@ -405,12 +405,12 @@ fn fuzz_json_2() {
             Sync {
                 from: 10778685752873440661,
                 to: 10778685752873424277,
-                kind: Pending,
+                kind: OnlyLastOpFromEachPeer,
             },
             Sync {
                 from: 10778685752873424277,
                 to: 18395315059780064661,
-                kind: Pending,
+                kind: OnlyLastOpFromEachPeer,
             },
             SyncAll,
             SyncAll,
@@ -439,7 +439,7 @@ fn fuzz_json_2() {
 }
 
 #[test]
-fn fuzz_json_3() {
+fn fuzz_json_3_frontiers_were_wrong_after_importing_pending_changes() {
     use examples::test_preload::*;
     fuzz(
         5,
@@ -461,7 +461,7 @@ fn fuzz_json_3() {
             Sync {
                 from: 0,
                 to: 4,
-                kind: Pending,
+                kind: Fit,
             },
             Action {
                 peer: 4,
@@ -473,7 +473,7 @@ fn fuzz_json_3() {
             Sync {
                 from: 4,
                 to: 1,
-                kind: Pending,
+                kind: OnlyLastOpFromEachPeer,
             },
             Sync {
                 from: 0,

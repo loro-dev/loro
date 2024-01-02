@@ -59,7 +59,7 @@ pub fn get_automerge_actions() -> Vec<TextAction> {
 pub enum SyncKind {
     Fit,
     Snapshot,
-    Pending,
+    OnlyLastOpFromEachPeer,
 }
 
 #[derive(Debug, EnumAsInner, Arbitrary, PartialEq, Eq, Clone)]

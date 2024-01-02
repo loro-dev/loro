@@ -130,7 +130,6 @@ impl DiffCalculator {
                     .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
                     .unwrap_or_else(|e| e);
                 let mut visited = FxHashSet::default();
-                debug_log::debug_dbg!(&change, iter_start);
                 for mut op in &change.ops.vec()[iter_start..] {
                     // slice the op if needed
                     let stack_sliced_op;
@@ -272,7 +271,6 @@ impl DiffCalculator {
                 }
             }
 
-            debug_log::debug_dbg!(&new_containers);
             if len == all.len() {
                 debug_log::debug_log!("Container might be deleted");
                 debug_log::debug_dbg!(&all);

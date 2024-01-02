@@ -385,7 +385,7 @@ impl LoroDoc {
         match parsed.mode.is_snapshot() {
             false => {
                 // TODO: need to throw error if state is in transaction
-                debug_log::group!("import to {}", self.peer_id());
+                debug_log::group!("Import updates to {}", self.peer_id());
                 self.update_oplog_and_apply_delta_to_state_if_needed(
                     |oplog| oplog.decode(parsed),
                     origin,

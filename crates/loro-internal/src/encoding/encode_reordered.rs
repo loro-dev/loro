@@ -135,8 +135,12 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
     .ops_map;
 
     let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
+    // debug_log::debug_dbg!(&changes);
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
-    oplog.try_apply_pending(latest_ids);
+    if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
+        oplog.dag.refresh_frontiers();
+    }
+
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
     Ok(())
 }
@@ -176,7 +180,6 @@ fn import_changes_to_oplog(
         });
         oplog.insert_new_change(change, mark, false);
     }
-    debug_log::debug_log!("right after appending changes oplog={:#?}", &oplog);
     if !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
     }
@@ -334,7 +337,6 @@ fn extract_ops(
 pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVector) -> Vec<u8> {
     assert!(!state.is_in_txn());
     assert_eq!(oplog.frontiers(), &state.frontiers);
-    debug_log::debug_dbg!(oplog.changes());
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
@@ -446,7 +448,6 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         })
     });
 
-    debug_log::debug_dbg!(&ops);
     let encoded_ops = encode_ops(
         ops,
         &oplog.arena,
@@ -483,11 +484,6 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         frontiers,
     };
 
-    debug_log::debug_log!(
-        "OpLog.frontiers={:?} changes={:#?}",
-        oplog.frontiers(),
-        oplog.changes()
-    );
     serde_columnar::to_vec(&doc).unwrap()
 }
 
@@ -550,8 +546,6 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         true,
     )?;
 
-    debug_log::debug_dbg!(&ops, &ops_map);
-
     decode_snapshot_states(
         &mut state,
         frontiers,
@@ -563,8 +557,6 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     )
     .unwrap();
     let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
-
-    debug_log::debug_dbg!(&changes);
     let (new_ids, pending_changes) = import_changes_to_oplog(changes, &mut oplog)?;
     assert!(pending_changes.is_empty());
     assert_eq!(&state.frontiers, oplog.frontiers());
@@ -574,7 +566,10 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         // TODO: Fix this origin value
         doc.update_oplog_and_apply_delta_to_state_if_needed(
             |oplog| {
-                oplog.try_apply_pending(new_ids);
+                if oplog.try_apply_pending(new_ids).should_update && !oplog.batch_importing {
+                    oplog.dag.refresh_frontiers();
+                }
+
                 Ok(())
             },
             "".into(),
@@ -1746,7 +1741,6 @@ mod value {
             }
             let mut stack = vec![Task::Init];
             while let Some(mut task) = stack.pop() {
-                debug_log::debug_dbg!(&task);
                 if task.should_read() {
                     let key_idx = if matches!(task, Task::ReadMap { .. }) {
                         self.read_usize()?
@@ -1806,7 +1800,6 @@ mod value {
 
                     task = match task {
                         Task::Init => {
-                            debug_log::debug_log!("DONE");
                             return Ok(value);
                         }
                         Task::ReadList {
@@ -1874,7 +1867,6 @@ mod value {
                         }
                     }
                 } else {
-                    debug_log::debug_log!("DONE");
                     return Ok(value);
                 }
             }
