@@ -141,6 +141,9 @@ impl Tracker {
 
     /// If `reverse` is true, the deletion happens from the end of the range to the start.
     pub(crate) fn delete(&mut self, mut op_id: ID, mut pos: usize, mut len: usize, reverse: bool) {
+        // debug_log::debug_log!("Delete");
+        // debug_log::debug_dbg!(&op_id, pos, len);
+        // debug_log::debug_dbg!(&self);
         let last_id = op_id.inc(len as Counter - 1);
         let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
         if applied_counter_end > op_id.counter {
@@ -166,10 +169,12 @@ impl Tracker {
             if reverse {
                 pos -= start;
             } else {
-                pos += start;
+                // don't need to change the pos
             }
         }
 
+        // debug_log::debug_log!("after forwarding pos={} len={}", pos, len);
+        // debug_log::debug_dbg!(&self);
         let mut ans = Vec::new();
         let split = self.rope.delete(pos, len, |span| {
             let mut id_span = span.id_span();
@@ -197,6 +202,7 @@ impl Tracker {
         let end_id = op_id.inc(len as Counter);
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
+        debug_log::debug_dbg!(&self);
     }
 
     #[inline]
@@ -299,7 +305,7 @@ impl Tracker {
         self._checkout(from, false);
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();
-        // debug_log::debug_dbg!(&self);
+        debug_log::debug_dbg!(&self);
         self.rope.get_diff()
     }
 }

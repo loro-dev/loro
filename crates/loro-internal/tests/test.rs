@@ -9,6 +9,7 @@ use loro_internal::{
 };
 use serde_json::json;
 
+
 #[test]
 fn issue_225() -> LoroResult<()> {
     let doc = LoroDoc::new_auto_commit();

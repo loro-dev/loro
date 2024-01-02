@@ -370,6 +370,7 @@ impl Actionable for Vec<Actor> {
                 let actor = &mut self[*site as usize];
                 let f = actor.history.keys().nth(*to as usize).unwrap();
                 let f = Frontiers::from(f);
+                debug_log::debug_log!("Checkout to {:?}", &f);
                 actor.loro.checkout(&f).unwrap();
             }
             Action::RichText {
@@ -744,6 +745,36 @@ mod failed_tests {
                     site: 106,
                     to: 1785358954,
                 },
+            ],
+        )
+    }
+
+    #[test]
+    fn checkout_delete() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 0,
+                    pos: 0,
+                    value: 0,
+                    action: RichTextAction::Mark(3098706341580712916),
+                },
+                RichText {
+                    site: 0,
+                    pos: 196608,
+                    value: 16558833364434944,
+                    action: RichTextAction::Delete,
+                },
+                SyncAll,
+                Checkout { site: 3, to: 0 },
+                RichText {
+                    site: 0,
+                    pos: 12080808861146021892,
+                    value: 12080808863958804391,
+                    action: RichTextAction::Delete,
+                },
+                SyncAll,
             ],
         )
     }
