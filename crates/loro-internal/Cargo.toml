@@ -8,7 +8,6 @@ description = "Loro internal library. Do not use it directly as it's not stable.
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-string_cache = "0.8.7"
 rle = { path = "../rle", version = "0.1.0", package = "loro-rle" }
 loro-preload = { path = "../loro-preload", version = "0.1.0" }
 loro-common = { path = "../loro-common", version = "0.1.0" }

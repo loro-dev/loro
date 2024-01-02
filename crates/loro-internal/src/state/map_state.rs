@@ -233,13 +233,7 @@ impl MapState {
         }
     }
 
-    pub fn iter(
-        &self,
-    ) -> std::collections::hash_map::Iter<
-        '_,
-        string_cache::Atom<string_cache::EmptyStaticAtomSet>,
-        MapValue,
-    > {
+    pub fn iter(&self) -> std::collections::hash_map::Iter<'_, InternalString, MapValue> {
         self.map.iter()
     }
 

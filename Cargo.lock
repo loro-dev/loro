@@ -816,7 +816,6 @@ dependencies = [
  "serde_json",
  "smallvec",
  "static_assertions",
- "string_cache",
  "tabled 0.10.0",
  "thiserror",
  "wasm-bindgen",

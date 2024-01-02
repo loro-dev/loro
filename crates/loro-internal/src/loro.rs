@@ -376,11 +376,7 @@ impl LoroDoc {
         ans
     }
 
-    fn _import_with(
-        &self,
-        bytes: &[u8],
-        origin: string_cache::Atom<string_cache::EmptyStaticAtomSet>,
-    ) -> Result<(), LoroError> {
+    fn _import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
         let parsed = parse_header_and_body(bytes)?;
         match parsed.mode.is_snapshot() {
             false => {
