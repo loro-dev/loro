@@ -48,11 +48,9 @@ pub(crate) use change::Timestamp;
 pub(crate) use id::{PeerID, ID};
 
 // TODO: rename as Key?
-pub(crate) type InternalString = DefaultAtom;
+pub(crate) use loro_common::InternalString;
 
 pub use container::ContainerType;
 pub use loro_common::{loro_value, to_value};
 pub use value::{ApplyDiff, LoroValue, ToJson};
 pub use version::VersionVector;
-
-use string_cache::DefaultAtom;

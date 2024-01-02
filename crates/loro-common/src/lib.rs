@@ -6,6 +6,7 @@ use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Serialize};
 mod error;
 mod id;
+mod internal_string;
 mod macros;
 mod span;
 mod value;
@@ -13,6 +14,7 @@ mod value;
 pub use error::{LoroError, LoroResult, LoroTreeError};
 #[doc(hidden)]
 pub use fxhash::FxHashMap;
+pub use internal_string::InternalString;
 pub use span::*;
 pub use value::{to_value, LoroValue};
 
@@ -52,7 +54,6 @@ pub enum ContainerID {
     },
 }
 
-pub type InternalString = string_cache::DefaultAtom;
 // TODO: add non_exausted
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(

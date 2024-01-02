@@ -732,7 +732,7 @@ mod encode {
         ops: Vec<TempOp<'_>>,
         arena: &crate::arena::SharedArena,
         value_writer: &mut ValueWriter,
-        key_register: &mut ValueRegister<string_cache::Atom<string_cache::EmptyStaticAtomSet>>,
+        key_register: &mut ValueRegister<InternalString>,
         cid_register: &mut ValueRegister<ContainerID>,
         peer_register: &mut ValueRegister<u64>,
     ) -> Vec<EncodedOp> {
@@ -770,7 +770,7 @@ mod encode {
         dep_arena: &mut super::arena::DepsArena,
         peer_register: &mut ValueRegister<u64>,
         push_op: &mut impl FnMut(TempOp<'a>),
-        key_register: &mut ValueRegister<string_cache::Atom<string_cache::EmptyStaticAtomSet>>,
+        key_register: &mut ValueRegister<InternalString>,
         container_idx2index: &FxHashMap<ContainerIdx, usize>,
     ) -> Vec<EncodedChange> {
         let mut changes: Vec<EncodedChange> = Vec::with_capacity(diff_changes.len());
