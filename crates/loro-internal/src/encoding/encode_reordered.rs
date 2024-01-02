@@ -126,7 +126,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
     let ops_map = extract_ops(
         &iter.raw_values,
         iter.ops,
-        oplog,
+        &oplog.arena,
         &containers,
         &keys,
         &peer_ids,
@@ -135,14 +135,19 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
     .ops_map;
 
     let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
-    import_changes_to_oplog(changes, oplog)?;
+    let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
+    oplog.try_apply_pending(latest_ids);
+    oplog.import_unknown_lamport_pending_changes(pending_changes)?;
     Ok(())
 }
 
-fn import_changes_to_oplog(changes: Vec<Change>, oplog: &mut OpLog) -> Result<(), LoroError> {
+fn import_changes_to_oplog(
+    changes: Vec<Change>,
+    oplog: &mut OpLog,
+) -> Result<(Vec<ID>, Vec<Change>), LoroError> {
     let mut pending_changes = Vec::new();
     let mut latest_ids = Vec::new();
-    'outer: for mut change in changes {
+    for mut change in changes {
         if change.ctr_end() <= oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
             // skip included changes
             continue;
@@ -154,7 +159,7 @@ fn import_changes_to_oplog(changes: Vec<Change>, oplog: &mut OpLog) -> Result<()
             Some(lamport) => change.lamport = lamport,
             None => {
                 pending_changes.push(change);
-                continue 'outer;
+                continue;
             }
         }
 
@@ -162,7 +167,7 @@ fn import_changes_to_oplog(changes: Vec<Change>, oplog: &mut OpLog) -> Result<()
             continue;
         };
         // update dag and push the change
-        let mark = oplog.insert_dag_node_on_new_change(&change);
+        let mark = oplog.update_dag_on_new_change(&change);
         oplog.next_lamport = oplog.next_lamport.max(change.lamport_end());
         oplog.latest_timestamp = oplog.latest_timestamp.max(change.timestamp);
         oplog.dag.vv.extend_to_include_end_id(ID {
@@ -171,13 +176,12 @@ fn import_changes_to_oplog(changes: Vec<Change>, oplog: &mut OpLog) -> Result<()
         });
         oplog.insert_new_change(change, mark, false);
     }
-    let mut vv = oplog.dag.vv.clone();
-    oplog.try_apply_pending(latest_ids, &mut vv);
+    debug_log::debug_log!("right after appending changes oplog={:#?}", &oplog);
     if !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
     }
-    oplog.import_unknown_lamport_pending_changes(pending_changes)?;
-    Ok(())
+
+    Ok((latest_ids, pending_changes))
 }
 
 fn decode_changes<'a>(
@@ -247,7 +251,7 @@ fn decode_changes<'a>(
     Ok(changes)
 }
 
-struct ExtracedOps {
+struct ExtractedOps {
     ops_map: FxHashMap<PeerID, Vec<Op>>,
     ops: Vec<OpWithId>,
     containers: Vec<ContainerID>,
@@ -256,15 +260,14 @@ struct ExtracedOps {
 fn extract_ops(
     raw_values: &[u8],
     iter: impl Iterator<Item = EncodedOp>,
-    oplog: &mut OpLog,
+    arena: &SharedArena,
     containers: &ContainerArena,
     keys: &arena::KeyArena,
     peer_ids: &arena::PeerIdArena,
     should_extract_ops_with_ids: bool,
-) -> LoroResult<ExtracedOps> {
+) -> LoroResult<ExtractedOps> {
     let mut value_reader = ValueReader::new(raw_values);
     let mut ops_map: FxHashMap<PeerID, Vec<Op>> = FxHashMap::default();
-    let arena = &oplog.arena;
     let containers: Vec<_> = containers
         .containers
         .iter()
@@ -321,7 +324,7 @@ fn extract_ops(
         ops.sort_by_key(|x| -x.counter);
     }
 
-    Ok(ExtracedOps {
+    Ok(ExtractedOps {
         ops_map,
         ops,
         containers,
@@ -329,6 +332,7 @@ fn extract_ops(
 }
 
 pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVector) -> Vec<u8> {
+    assert!(!state.is_in_txn());
     assert_eq!(oplog.frontiers(), &state.frontiers);
     debug_log::debug_dbg!(oplog.changes());
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
@@ -390,9 +394,6 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
                     peer_idx: peer_register.register(&op.peer) as u32,
                     peer_id: op.peer,
                     container_index,
-                    // Prop is fake and will be encoded in the snapshot.
-                    // But it will not be used when decoding, because this op is not included in the vv so it's not in the encoded changes.
-                    // TODO: we need to make sure this property ↑
                     prop_that_used_for_sort: -1,
                     // lamport value is fake, but it's only used for sorting and will not be encoded
                     lamport: 0,
@@ -482,6 +483,11 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         frontiers,
     };
 
+    debug_log::debug_log!(
+        "OpLog.frontiers={:?} changes={:#?}",
+        oplog.frontiers(),
+        oplog.changes()
+    );
     serde_columnar::to_vec(&doc).unwrap()
 }
 
@@ -529,19 +535,22 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
             ans
         })
         .try_collect()?;
-    let ExtracedOps {
+
+    let ExtractedOps {
         ops_map,
         ops,
         containers,
     } = extract_ops(
         &iter.raw_values,
         iter.ops,
-        &mut oplog,
+        &oplog.arena,
         &containers,
         &keys,
         &peer_ids,
         true,
     )?;
+
+    debug_log::debug_dbg!(&ops, &ops_map);
 
     decode_snapshot_states(
         &mut state,
@@ -554,8 +563,24 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     )
     .unwrap();
     let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
-    import_changes_to_oplog(changes, &mut oplog)?;
+
+    debug_log::debug_dbg!(&changes);
+    let (new_ids, pending_changes) = import_changes_to_oplog(changes, &mut oplog)?;
+    assert!(pending_changes.is_empty());
     assert_eq!(&state.frontiers, oplog.frontiers());
+    if !oplog.pending_changes.is_empty() {
+        drop(oplog);
+        drop(state);
+        // TODO: Fix this origin value
+        doc.update_oplog_and_apply_delta_to_state_if_needed(
+            |oplog| {
+                oplog.try_apply_pending(new_ids);
+                Ok(())
+            },
+            "".into(),
+        );
+    }
+
     Ok(())
 }
 

@@ -30,6 +30,12 @@ pub(crate) struct PendingChanges {
     changes: FxHashMap<PeerID, BTreeMap<Counter, SmallVec<[PendingChange; 1]>>>,
 }
 
+impl PendingChanges {
+    pub fn is_empty(&self) -> bool {
+        self.changes.is_empty()
+    }
+}
+
 impl OpLog {
     pub(super) fn extend_pending_changes_with_unknown_lamport(
         &mut self,
@@ -39,7 +45,7 @@ impl OpLog {
         for change in remote_changes {
             let local_change = PendingChange::Unknown(change);
             match remote_change_apply_state(latest_vv, &local_change) {
-                ChangeApplyState::AwaitingDependency(miss_dep) => self
+                ChangeState::AwaitingMissingDependency(miss_dep) => self
                     .pending_changes
                     .changes
                     .entry(miss_dep.peer)
@@ -54,12 +60,12 @@ impl OpLog {
 }
 
 impl OpLog {
-    pub(crate) fn try_apply_pending(
-        &mut self,
-        mut id_stack: Vec<ID>,
-        latest_vv: &mut VersionVector,
-    ) {
-        while let Some(id) = id_stack.pop() {
+    /// Try to apply pending changes.
+    ///
+    /// `new_ids` are the ID of the op that is just applied.
+    pub(crate) fn try_apply_pending(&mut self, mut new_ids: Vec<ID>) {
+        let mut latest_vv = self.dag.vv.clone();
+        while let Some(id) = new_ids.pop() {
             let Some(tree) = self.pending_changes.changes.get_mut(&id.peer) else {
                 continue;
             };
@@ -80,14 +86,14 @@ impl OpLog {
 
             for pending_changes in pending_set {
                 for pending_change in pending_changes {
-                    match remote_change_apply_state(latest_vv, &pending_change) {
-                        ChangeApplyState::CanApplyDirectly => {
-                            id_stack.push(pending_change.id_last());
+                    match remote_change_apply_state(&latest_vv, &pending_change) {
+                        ChangeState::CanApplyDirectly => {
+                            new_ids.push(pending_change.id_last());
                             latest_vv.set_end(pending_change.id_end());
                             self.apply_local_change_from_remote(pending_change);
                         }
-                        ChangeApplyState::Applied => {}
-                        ChangeApplyState::AwaitingDependency(miss_dep) => self
+                        ChangeState::Applied => {}
+                        ChangeState::AwaitingMissingDependency(miss_dep) => self
                             .pending_changes
                             .changes
                             .entry(miss_dep.peer)
@@ -120,35 +126,35 @@ impl OpLog {
         // debug_dbg!(&change_causal_arr);
         self.dag.vv.extend_to_include_last_id(change.id_last());
         self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
-        let mark = self.insert_dag_node_on_new_change(&change);
+        let mark = self.update_dag_on_new_change(&change);
         self.insert_new_change(change, mark, false);
     }
 }
 
-enum ChangeApplyState {
+enum ChangeState {
     Applied,
     CanApplyDirectly,
     // The id of first missing dep
-    AwaitingDependency(ID),
+    AwaitingMissingDependency(ID),
 }
 
-fn remote_change_apply_state(vv: &VersionVector, change: &Change) -> ChangeApplyState {
+fn remote_change_apply_state(vv: &VersionVector, change: &Change) -> ChangeState {
     let peer = change.id.peer;
     let CounterSpan { start, end } = change.ctr_span();
     let vv_latest_ctr = vv.get(&peer).copied().unwrap_or(0);
     if vv_latest_ctr < start {
-        return ChangeApplyState::AwaitingDependency(change.id.inc(-1));
+        return ChangeState::AwaitingMissingDependency(change.id.inc(-1));
     }
     if vv_latest_ctr >= end {
-        return ChangeApplyState::Applied;
+        return ChangeState::Applied;
     }
     for dep in change.deps.as_ref().iter() {
         let dep_vv_latest_ctr = vv.get(&dep.peer).copied().unwrap_or(0);
         if dep_vv_latest_ctr - 1 < dep.counter {
-            return ChangeApplyState::AwaitingDependency(*dep);
+            return ChangeState::AwaitingMissingDependency(*dep);
         }
     }
-    ChangeApplyState::CanApplyDirectly
+    ChangeState::CanApplyDirectly
 }
 
 #[cfg(test)]

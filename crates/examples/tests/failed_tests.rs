@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use examples::json::fuzz;
 use loro::loro_value;
 
@@ -369,425 +367,66 @@ fn fuzz_json_2() {
         5,
         &[
             Action {
-                peer: 13835902481151819776,
+                peer: 44971974514245632,
                 action: InsertText {
-                    index: 1023,
-                    s: ";\0".into(),
+                    index: 228,
+                    s: "0\0\0".into(),
                 },
             },
+            SyncAll,
             Action {
-                peer: 6701356245527298097,
-                action: InsertList {
-                    index: 0,
-                    value: Null,
+                peer: 23939170762752,
+                action: InsertText {
+                    index: 404,
+                    s: "C\u{b}0\0\u{15555}".into(),
                 },
             },
             Sync {
-                from: 97661,
-                to: 8725724278038272,
-                kind: Fit,
+                from: 10778685752873424277,
+                to: 52870070483605,
+                kind: Pending,
             },
             Action {
-                peer: 16600305609883097344,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
+                peer: 6128427715264512,
+                action: InsertMap {
+                    key: "".into(),
+                    value: "".into(),
                 },
             },
             Action {
-                peer: 4683750489798492481,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 825,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: DeleteList { index: 305 },
-            },
-            Action {
-                peer: 5278571986778407233,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111105625964865,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 309,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111235867492673,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983878,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: DeleteText {
-                    index: 960,
-                    len: 126,
-                },
-            },
-            Action {
-                peer: 4702141920927629633,
-                action: InsertList {
-                    index: 333,
-                    value: loro_value!("}}}&}}}}}}}"),
-                },
+                peer: 10778685752873447424,
+                action: DeleteList { index: 368 },
             },
             Sync {
-                from: 9042521604759584125,
-                to: 4702111234478931325,
-                kind: Fit,
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 388,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111268834722113,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 18446744070509379905,
-                action: DeleteText {
-                    index: 960,
-                    len: 126,
-                },
-            },
-            SyncAll,
-            SyncAll,
-            SyncAll,
-            SyncAll,
-            Action {
-                peer: 4702142020800561473,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4611686019352054603,
-                action: InsertList {
-                    index: 580,
-                    value: I32(1094795619),
-                },
-            },
-            Action {
-                peer: 4702111195820802369,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 10682891539623002433,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 5278571986778407233,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 18393054101681291585,
-                action: DeleteList { index: 350 },
-            },
-            SyncAll,
-            SyncAll,
-            SyncAll,
-            SyncAll,
-            SyncAll,
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: loro_value!("\0*8AAAAAA"),
-                },
+                from: 10778685752873440661,
+                to: 10778685752873424277,
+                kind: Pending,
             },
             Sync {
-                from: 9042521604759584125,
-                to: 9042521604759978877,
+                from: 10778685752873424277,
+                to: 18395315059780064661,
+                kind: Pending,
+            },
+            SyncAll,
+            SyncAll,
+            Sync {
+                from: 445944668984725,
+                to: 256,
                 kind: Snapshot,
             },
-            Sync {
-                from: 4702111234474983745,
-                to: 4702111234474983745,
-                kind: Fit,
-            },
             Action {
-                peer: 4702111234480423233,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234475508033,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 18446744073709502785,
-                action: DeleteText {
-                    index: 960,
-                    len: 126,
-                },
-            },
-            SyncAll,
-            SyncAll,
-            SyncAll,
-            SyncAll,
-            Action {
-                peer: 4702111234944745793,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 3242380625474238493,
-                action: InsertList {
-                    index: 843,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234473083201,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4704363034288668993,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 18446534347256316225,
-                action: DeleteText {
-                    index: 960,
-                    len: 126,
-                },
-            },
-            SyncAll,
-            SyncAll,
-            SyncAll,
-            SyncAll,
-            SyncAll,
-            Action {
-                peer: 4702111234476818753,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 7146367359073124408,
-                action: InsertList {
-                    index: 809,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702104637405217089,
-                action: InsertList {
-                    index: 388,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111234474983745,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            Action {
-                peer: 4702111268834722113,
-                action: InsertList {
-                    index: 305,
-                    value: Bool(true),
-                },
-            },
-            SyncAll,
-            SyncAll,
-            Action {
-                peer: 4702111354343939393,
+                peer: 562699868423424,
                 action: InsertText {
-                    index: 350,
-                    s: "}}}&}}}}}}}".into(),
+                    index: 228,
+                    s: "\0\0".into(),
                 },
             },
-            Sync {
-                from: 9042521604759584125,
-                to: 4702111234478931325,
-                kind: Fit,
-            },
+            SyncAll,
             Action {
-                peer: 4702111234474983745,
+                peer: 0,
                 action: InsertMap {
-                    key: "AAAAAAAAAAAAAAAAAAA".into(),
-                    value: Binary(Arc::new(vec![
-                        65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65,
-                        65, 65, 65, 65, 65, 65, 65, 73, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65,
-                        65, 65, 93, 65, 65, 65, 65, 65, 65, 65, 75, 29, 65, 65, 65, 85, 85, 85, 85,
-                        85, 133, 133, 1, 122, 0, 0, 93, 197, 1,
-                    ])),
+                    key: "".into(),
+                    value: Null,
                 },
             },
         ],

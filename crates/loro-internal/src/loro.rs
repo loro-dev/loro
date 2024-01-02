@@ -386,7 +386,10 @@ impl LoroDoc {
             false => {
                 // TODO: need to throw error if state is in transaction
                 debug_log::group!("import to {}", self.peer_id());
-                self._import_by_delta_updates(parsed, origin)?;
+                self.update_oplog_and_apply_delta_to_state_if_needed(
+                    |oplog| oplog.decode(parsed),
+                    origin,
+                )?;
                 debug_log::group_end!();
             }
             true => {
@@ -396,7 +399,10 @@ impl LoroDoc {
                     decode_snapshot(self, parsed.mode, parsed.body)?;
                 } else if parsed.mode == EncodeMode::Snapshot {
                     debug_log::debug_log!("Import by updates");
-                    self._import_by_delta_updates(parsed, origin)?;
+                    self.update_oplog_and_apply_delta_to_state_if_needed(
+                        |oplog| oplog.decode(parsed),
+                        origin,
+                    )?;
                 } else {
                     debug_log::debug_log!("Import from new doc");
                     let app = LoroDoc::new();
@@ -417,15 +423,15 @@ impl LoroDoc {
         Ok(())
     }
 
-    fn _import_by_delta_updates(
+    pub(crate) fn update_oplog_and_apply_delta_to_state_if_needed(
         &self,
-        parsed: ParsedHeaderAndBody<'_>,
-        origin: string_cache::Atom<string_cache::EmptyStaticAtomSet>,
+        f: impl FnOnce(&mut OpLog) -> Result<(), LoroError>,
+        origin: InternalString,
     ) -> Result<(), LoroError> {
         let mut oplog = self.oplog.lock().unwrap();
         let old_vv = oplog.vv().clone();
         let old_frontiers = oplog.frontiers().clone();
-        oplog.decode(parsed)?;
+        f(&mut oplog)?;
         if !self.detached.load(Acquire) {
             let mut diff = DiffCalculator::default();
             let diff = diff.calc_diff_internal(

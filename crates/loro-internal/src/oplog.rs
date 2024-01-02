@@ -73,6 +73,8 @@ pub struct AppDagNode {
     pub(crate) lamport: Lamport,
     pub(crate) deps: Frontiers,
     pub(crate) vv: ImVersionVector,
+    /// A flag indicating whether any other nodes depend on this node.
+    /// The calculation of frontiers is based on this value.
     pub(crate) has_succ: bool,
     pub(crate) len: usize,
 }
@@ -224,6 +226,7 @@ impl OpLog {
                     "change id is not continuous"
                 );
                 let timestamp_change = change.timestamp - last.timestamp;
+                // TODO: make this a config
                 if !last.has_dependents && change.deps_on_self() && timestamp_change < 1000 {
                     for op in take(change.ops.vec_mut()) {
                         last.ops.push(op);
@@ -275,7 +278,7 @@ impl OpLog {
         self.dag.frontiers.retain_non_included(&change.deps);
         self.dag.frontiers.filter_peer(change.id.peer);
         self.dag.frontiers.push(change.id_last());
-        let mark = self.insert_dag_node_on_new_change(&change);
+        let mark = self.update_dag_on_new_change(&change);
         self.insert_new_change(change, mark, local);
         Ok(())
     }
@@ -307,7 +310,7 @@ impl OpLog {
     }
 
     /// Every time we import a new change, it should run this function to update the dag
-    pub(crate) fn insert_dag_node_on_new_change(
+    pub(crate) fn update_dag_on_new_change(
         &mut self,
         change: &Change,
     ) -> EnsureChangeDepsAreAtTheEnd {
