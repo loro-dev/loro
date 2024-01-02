@@ -629,7 +629,6 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         if let Some(vv) = vv {
             self.tracker.checkout(vv);
         }
-
         match &op.op().content {
             crate::op::InnerContent::List(l) => match l {
                 crate::container::list::list_op::InnerListOp::Insert { .. } => {

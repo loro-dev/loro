@@ -91,6 +91,7 @@ impl Tracker {
 
             if applied_counter_end > last_id.counter {
                 // the op is included in the applied vv
+                self.current_vv.extend_to_include_last_id(last_id);
                 return;
             }
 
@@ -154,6 +155,7 @@ impl Tracker {
             }
 
             if applied_counter_end > last_id.counter {
+                self.current_vv.extend_to_include_last_id(last_id);
                 return;
             }
 
@@ -211,7 +213,6 @@ impl Tracker {
         let current_vv = std::mem::take(&mut self.current_vv);
         let (retreat, forward) = current_vv.diff_iter(vv);
         let mut updates = Vec::new();
-
         for span in retreat {
             for c in self.id_to_cursor.iter(span) {
                 match c {
