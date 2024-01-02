@@ -1690,6 +1690,10 @@ mod value {
             })
         }
 
+        /// Read a value that may be very deep efficiently.
+        ///
+        /// This method avoids using recursive calls to read deeply nested values.
+        /// Otherwise, it may cause stack overflow.
         fn recursive_read_value_type_and_content(
             &mut self,
             keys: &[InternalString],
