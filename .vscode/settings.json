@@ -3,6 +3,7 @@
     "arbtest",
     "cids",
     "clippy",
+    "collab",
     "dhat",
     "flate",
     "gmax",
@@ -28,7 +29,7 @@
   ],
   "rust-analyzer.runnableEnv": {
     "RUST_BACKTRACE": "full",
-    "DEBUG": "*"
+    // "DEBUG": "*"
   },
   "rust-analyzer.cargo.features": [
     "test_utils"

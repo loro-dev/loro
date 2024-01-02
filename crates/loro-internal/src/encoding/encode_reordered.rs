@@ -578,7 +578,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
                 Ok(())
             },
             "".into(),
-        );
+        )?;
     }
 
     Ok(())

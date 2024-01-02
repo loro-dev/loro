@@ -1,7 +1,7 @@
 use bench_utils::{json::JsonAction, Action};
 use loro::LoroDoc;
 
-use crate::{run_actions_fuzz_in_async_mode, ActorTrait};
+use crate::{minify_failed_tests_in_async_mode, run_actions_fuzz_in_async_mode, ActorTrait};
 
 pub struct JsonActor {
     doc: LoroDoc,
@@ -67,4 +67,8 @@ impl ActorTrait for JsonActor {
 
 pub fn fuzz(peer_num: usize, inputs: &[Action<JsonAction>]) {
     run_actions_fuzz_in_async_mode::<JsonActor>(peer_num, 20, inputs);
+}
+
+pub fn minify(peer_num: usize, inputs: &[Action<JsonAction>]) {
+    minify_failed_tests_in_async_mode::<JsonActor>(peer_num, 20, inputs);
 }

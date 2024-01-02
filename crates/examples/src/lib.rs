@@ -1,4 +1,8 @@
-use std::time::Instant;
+use std::{
+    collections::VecDeque,
+    sync::{atomic::AtomicUsize, Arc, Mutex},
+    time::Instant,
+};
 
 use bench_utils::{
     create_seed, gen_async_actions, gen_realtime_actions, make_actions_async, Action, ActionTrait,
@@ -145,4 +149,83 @@ pub fn run_actions_fuzz_in_async_mode<T: ActorTrait>(
     }
     actors.sync_all();
     actors.check_sync();
+}
+
+pub fn minify_failed_tests_in_async_mode<T: ActorTrait>(
+    peer_num: usize,
+    sync_all_interval: usize,
+    actions: &[Action<T::ActionKind>],
+) {
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_info| {
+        // ignore panic output
+        // println!("{:?}", _info);
+    }));
+
+    let actions = make_actions_async::<T::ActionKind>(peer_num, actions, sync_all_interval);
+    let mut stack: VecDeque<Vec<Action<T::ActionKind>>> = VecDeque::new();
+    stack.push_back(actions);
+    let mut last_log = Instant::now();
+    let mut min_actions: Option<Vec<Action<T::ActionKind>>> = None;
+    while let Some(actions) = stack.pop_back() {
+        let actions = Arc::new(Mutex::new(actions));
+        let actions_clone = Arc::clone(&actions);
+        let num = Arc::new(AtomicUsize::new(0));
+        let num_clone = Arc::clone(&num);
+        let result = std::panic::catch_unwind(move || {
+            let mut actors = ActorGroup::<T>::new(peer_num);
+            for action in actions_clone.lock().unwrap().iter_mut() {
+                actors.apply_action(action);
+                num_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            actors.sync_all();
+            actors.check_sync();
+        });
+
+        if result.is_ok() {
+            continue;
+        }
+
+        let num = num.load(std::sync::atomic::Ordering::SeqCst);
+        let mut actions = match actions.lock() {
+            Ok(a) => a,
+            Err(a) => a.into_inner(),
+        };
+        actions.drain(num..);
+        if let Some(min_actions) = min_actions.as_mut() {
+            if actions.len() < min_actions.len() {
+                *min_actions = actions.clone();
+            }
+        } else {
+            min_actions = Some(actions.clone());
+        }
+
+        for i in 0..actions.len() {
+            let mut new_actions = actions.clone();
+            new_actions.remove(i);
+            stack.push_back(new_actions);
+        }
+
+        while stack.len() > 100 {
+            stack.pop_front();
+        }
+
+        if last_log.elapsed().as_secs() > 1 {
+            println!(
+                "stack size: {}. Min action size {:?}",
+                stack.len(),
+                min_actions.as_ref().map(|x| x.len())
+            );
+            last_log = Instant::now();
+        }
+    }
+
+    if let Some(minimal_failed_actions) = min_actions {
+        println!("Min action size {:?}", minimal_failed_actions.len());
+        println!("{:#?}", minimal_failed_actions);
+        std::panic::set_hook(hook);
+        run_actions_fuzz_in_async_mode::<T>(peer_num, sync_all_interval, &minimal_failed_actions);
+    } else {
+        println!("No failed tests found");
+    }
 }

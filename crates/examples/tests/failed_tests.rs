@@ -1,5 +1,10 @@
-use examples::json::fuzz;
+use examples::json::{fuzz, minify};
 use loro::loro_value;
+
+#[ctor::ctor]
+fn init_color_backtrace() {
+    color_backtrace::install();
+}
 
 #[test]
 fn fuzz_json() {
@@ -427,6 +432,59 @@ fn fuzz_json_2() {
                 action: InsertMap {
                     key: "".into(),
                     value: Null,
+                },
+            },
+        ],
+    )
+}
+
+#[test]
+fn fuzz_json_3() {
+    use examples::test_preload::*;
+    fuzz(
+        5,
+        &[
+            Action {
+                peer: 4,
+                action: InsertList {
+                    index: 0,
+                    value: Bool(true),
+                },
+            },
+            Action {
+                peer: 0,
+                action: InsertText {
+                    index: 0,
+                    s: "aś\0\u{6}\u{13}\0\0\0*0".into(),
+                },
+            },
+            Sync {
+                from: 0,
+                to: 4,
+                kind: Pending,
+            },
+            Action {
+                peer: 4,
+                action: InsertList {
+                    index: 1,
+                    value: Bool(true),
+                },
+            },
+            Sync {
+                from: 4,
+                to: 1,
+                kind: Pending,
+            },
+            Sync {
+                from: 0,
+                to: 1,
+                kind: Fit,
+            },
+            Action {
+                peer: 1,
+                action: InsertList {
+                    index: 2,
+                    value: Bool(true),
                 },
             },
         ],

@@ -253,6 +253,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "color-backtrace"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "150fd80a270c0671379f388c8204deb6a746bb4eac8a6c03fe2460b2c0127ea0"
+dependencies = [
+ "backtrace",
+ "termcolor",
+]
+
+[[package]]
 name = "console_error_panic_hook"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -364,6 +374,16 @@ checksum = "6d2301688392eb071b0bf1a37be05c469d3cc4dbbd95df672fe28ab021e6a096"
 dependencies = [
  "quote 1.0.29",
  "syn 1.0.107",
+]
+
+[[package]]
+name = "ctor"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30d2b3721e861707777e3195b0158f950ae6dc4a27e4d02ff9f67e3eb3de199e"
+dependencies = [
+ "quote 1.0.29",
+ "syn 2.0.41",
 ]
 
 [[package]]
@@ -486,6 +506,8 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "bench-utils",
+ "color-backtrace 0.6.1",
+ "ctor 0.2.6",
  "debug-log",
  "loro",
  "tabled 0.15.0",
@@ -761,9 +783,9 @@ dependencies = [
  "arref",
  "base64",
  "bench-utils",
- "color-backtrace",
+ "color-backtrace 0.5.1",
  "criterion",
- "ctor",
+ "ctor 0.1.26",
  "debug-log",
  "dhat",
  "enum-as-inner 0.5.1",
@@ -816,8 +838,8 @@ version = "0.1.0"
 dependencies = [
  "append-only-bytes",
  "arref",
- "color-backtrace",
- "ctor",
+ "color-backtrace 0.5.1",
+ "ctor 0.1.26",
  "debug-log",
  "enum-as-inner 0.6.0",
  "fxhash",

@@ -11,3 +11,7 @@ loro = { path = "../loro" }
 tabled = "0.15.0"
 arbitrary = { version = "1.3.0", features = ["derive"] }
 debug-log = { version = "0.2", features = [] }
+
+[dev-dependencies]
+color-backtrace = { version = "0.6" }
+ctor = "0.2"
