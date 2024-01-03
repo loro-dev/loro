@@ -309,6 +309,7 @@ impl Actionable for Vec<Actor> {
                 action,
             } => {
                 *site %= max_users;
+                self[*site as usize].loro.attach();
                 let text = &self[*site as usize].text_container;
                 let length = text.len_unicode();
                 if matches!(action, RichTextAction::Delete | RichTextAction::Mark(_)) && length == 0
@@ -381,7 +382,6 @@ impl Actionable for Vec<Actor> {
             } => {
                 let (mut txn, text) = {
                     let actor = &mut self[*site as usize];
-                    actor.loro.attach();
                     let txn = actor.loro.txn().unwrap();
                     let text = &mut self[*site as usize].text_container;
                     (txn, text)
