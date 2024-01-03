@@ -381,6 +381,7 @@ impl Actionable for Vec<Actor> {
             } => {
                 let (mut txn, text) = {
                     let actor = &mut self[*site as usize];
+                    actor.loro.attach();
                     let txn = actor.loro.txn().unwrap();
                     let text = &mut self[*site as usize].text_container;
                     (txn, text)
@@ -773,6 +774,54 @@ mod failed_tests {
                     pos: 12080808861146021892,
                     value: 12080808863958804391,
                     action: RichTextAction::Delete,
+                },
+                SyncAll,
+            ],
+        )
+    }
+
+    #[test]
+    fn checkout2() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 37,
+                    pos: 144115188075855653,
+                    value: 53876068646825,
+                    action: RichTextAction::Mark(18385101053809917951),
+                },
+                SyncAll,
+                RichText {
+                    site: 37,
+                    pos: 18385141895277128741,
+                    value: 18422257949758979904,
+                    action: RichTextAction::Mark(18446528569430507519),
+                },
+                RichText {
+                    site: 37,
+                    pos: 2676586395015587109,
+                    value: 6076574518398440449,
+                    action: RichTextAction::Insert,
+                },
+                Checkout {
+                    site: 84,
+                    to: 1414812756,
+                },
+                SyncAll,
+                RichText {
+                    site: 0,
+                    pos: 18446462598732840960,
+                    value: 2676586395023179775,
+                    action: RichTextAction::Insert,
+                },
+                Checkout {
+                    site: 126,
+                    to: 2567001172,
+                },
+                Checkout {
+                    site: 84,
+                    to: 1414812756,
                 },
                 SyncAll,
             ],
