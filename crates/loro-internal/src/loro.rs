@@ -733,17 +733,20 @@ impl LoroDoc {
     ///
     /// Panic when it's not consistent
     pub fn check_state_diff_calc_consistency_slow(&self) {
-        if !cfg!(debug_assertions) {
-            return;
-        }
-
-        assert!(!self.is_detached());
+        assert!(
+            !self.is_detached(),
+            "Cannot check consistency in detached mode"
+        );
         let bytes = self.export_from(&Default::default());
         let doc = Self::new();
         doc.import(&bytes).unwrap();
-        let calculated_state = doc.app_state().try_lock().unwrap();
-        let current_state = self.app_state().try_lock().unwrap();
-        current_state.check_is_the_same(&calculated_state);
+        let mut calculated_state = doc.app_state().try_lock().unwrap();
+        let mut current_state = self.app_state().try_lock().unwrap();
+        assert!(
+            !current_state.is_in_txn(),
+            "Cannot check consistency in txn"
+        );
+        current_state.check_is_the_same(&mut calculated_state);
     }
 }
 

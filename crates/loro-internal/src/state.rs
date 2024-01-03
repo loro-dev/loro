@@ -868,8 +868,40 @@ impl DocState {
     /// Check whether two [DocState]s are the same. Panic if not.
     ///
     /// This is only used for test.
-    pub(crate) fn check_is_the_same(&self, _other: &Self) {
-        todo!()
+    pub(crate) fn check_is_the_same(&mut self, other: &mut Self) {
+        let self_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> = self
+            .states
+            .values_mut()
+            .map(|state| {
+                let id = state.container_id().clone();
+                (id, (state.container_idx(), state.get_value()))
+            })
+            .collect();
+        let mut other_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> = other
+            .states
+            .values_mut()
+            .map(|state| {
+                let id = state.container_id().clone();
+                (id, (state.container_idx(), state.get_value()))
+            })
+            .collect();
+
+        for (id, (idx, value)) in self_id_to_states {
+            let other_state = other_id_to_states.remove(&id).unwrap_or_else(|| {
+                panic!("id: {:?}, path: {:?} is missing", id, self.get_path(idx));
+            });
+            assert_eq!(
+                value,
+                other_state.1,
+                "id: {:?}, path: {:?}",
+                id,
+                self.get_path(idx)
+            );
+        }
+
+        if !other_id_to_states.is_empty() {
+            panic!("other has more states {:#?}", &other_id_to_states);
+        }
     }
 }
 
