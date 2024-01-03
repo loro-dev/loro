@@ -164,8 +164,6 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
-        debug_log::group!("apply_diff_and_convert");
-        debug_log::debug_dbg!(&richtext);
         // PERF: compose delta
         let mut ans: Delta<StringSlice, StyleMeta> = Delta::new();
         let mut style_delta: Delta<StringSlice, StyleMeta> = Delta::new();
@@ -250,7 +248,6 @@ impl ContainerState for RichtextState {
                                 let delta: Delta<StringSlice, _> = Delta::new()
                                     .retain(start_event_index)
                                     .retain_with_meta(new_event_index - start_event_index, meta);
-                                debug_log::debug_dbg!(&delta);
                                 style_delta = style_delta.compose(delta);
                             }
                         }
@@ -276,10 +273,7 @@ impl ContainerState for RichtextState {
         }
 
         debug_assert!(style_starts.is_empty(), "Styles should always be paired");
-        debug_log::debug_dbg!(&ans, &style_delta);
         let ans = ans.compose(style_delta);
-        debug_log::debug_dbg!(&ans);
-        debug_log::group_end!();
         Diff::Text(ans)
     }
 

@@ -554,7 +554,9 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         sites.preprocess(action);
         applied.push(action.clone());
         debug_log::debug_log!("\n{}", (&applied).table());
+        debug_log::group!("ApplyingAction={:?}", &action);
         sites.apply_action(action);
+        debug_log::group_end!();
     }
 
     debug_log::group!("check synced");
@@ -788,8 +790,8 @@ mod failed_tests {
                 RichText {
                     site: 37,
                     pos: 144115188075855653,
-                    value: 53876068646825,
-                    action: RichTextAction::Mark(18385101053809917951),
+                    value: 88888888888888,
+                    action: RichTextAction::Insert,
                 },
                 SyncAll,
                 RichText {
@@ -801,7 +803,7 @@ mod failed_tests {
                 RichText {
                     site: 37,
                     pos: 2676586395015587109,
-                    value: 6076574518398440449,
+                    value: 7777777777777777777,
                     action: RichTextAction::Insert,
                 },
                 Checkout {
@@ -812,7 +814,7 @@ mod failed_tests {
                 RichText {
                     site: 0,
                     pos: 18446462598732840960,
-                    value: 2676586395023179775,
+                    value: 6666666666666666666,
                     action: RichTextAction::Insert,
                 },
                 Checkout {

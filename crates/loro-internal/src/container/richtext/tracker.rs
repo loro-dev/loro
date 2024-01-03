@@ -78,10 +78,11 @@ impl Tracker {
             if !self.current_vv.includes_id(last_id) {
                 // PERF: may be slow
                 let mut updates = Default::default();
+                let cnt_start = self.current_vv.get(&op_id.peer).copied().unwrap_or(0);
                 self.forward(
                     IdSpan::new(
                         op_id.peer,
-                        op_id.counter,
+                        cnt_start,
                         op_id.counter + content.len() as Counter,
                     ),
                     &mut updates,
@@ -92,6 +93,7 @@ impl Tracker {
             if applied_counter_end > last_id.counter {
                 // the op is included in the applied vv
                 self.current_vv.extend_to_include_last_id(last_id);
+                // debug_log::debug_log!("Ops are already included {:#?}", &self);
                 return;
             }
 
@@ -150,8 +152,9 @@ impl Tracker {
             if !self.current_vv.includes_id(last_id) {
                 // PERF: may be slow
                 let mut updates = Default::default();
+                let cnt_start = self.current_vv.get(&op_id.peer).copied().unwrap_or(0);
                 self.forward(
-                    IdSpan::new(op_id.peer, op_id.counter, op_id.counter + len as Counter),
+                    IdSpan::new(op_id.peer, cnt_start, op_id.counter + len as Counter),
                     &mut updates,
                 );
                 self.batch_update(updates, false);

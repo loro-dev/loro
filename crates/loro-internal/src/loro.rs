@@ -389,12 +389,11 @@ impl LoroDoc {
                 debug_log::group_end!();
             }
             true => {
-                debug_log::group!("Import snapshot to {}", self.peer_id());
                 if self.can_reset_with_snapshot() {
-                    debug_log::debug_log!("Init by snapshot");
+                    debug_log::debug_log!("Init by snapshot {}", self.peer_id());
                     decode_snapshot(self, parsed.mode, parsed.body)?;
                 } else if parsed.mode == EncodeMode::Snapshot {
-                    debug_log::debug_log!("Import by updates");
+                    debug_log::debug_log!("Import updates to {}", self.peer_id());
                     self.update_oplog_and_apply_delta_to_state_if_needed(
                         |oplog| oplog.decode(parsed),
                         origin,
@@ -410,7 +409,6 @@ impl LoroDoc {
                     debug_log::group_end!();
                     return self.import_with(&updates, origin);
                 }
-                debug_log::group_end!();
             }
         };
 
@@ -429,6 +427,7 @@ impl LoroDoc {
         let old_frontiers = oplog.frontiers().clone();
         f(&mut oplog)?;
         if !self.detached.load(Acquire) {
+            debug_log::debug_log!("Attached. CalcDiff.");
             let mut diff = DiffCalculator::default();
             let diff = diff.calc_diff_internal(
                 &oplog,
@@ -445,6 +444,8 @@ impl LoroDoc {
                 from_checkout: false,
                 new_version: Cow::Owned(oplog.frontiers().clone()),
             });
+        } else {
+            debug_log::debug_log!("Detached");
         }
         Ok(())
     }
@@ -651,6 +652,7 @@ impl LoroDoc {
     }
 
     pub fn checkout_to_latest(&self) {
+        debug_log::debug_log!("Attached {}", self.peer_id());
         let f = self.oplog_frontiers();
         self.checkout(&f).unwrap();
         self.detached.store(false, Release);
