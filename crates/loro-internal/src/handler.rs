@@ -773,7 +773,7 @@ impl ListHandler {
 
     pub fn get_child_handler(&self, index: usize) -> Handler {
         let mutex = &self.state.upgrade().unwrap();
-        let state = mutex.lock().unwrap();
+        let mut state = mutex.lock().unwrap();
         let container_id = state.with_state(self.container_idx, |state| {
             state
                 .as_list_state()
@@ -857,13 +857,14 @@ impl ListHandler {
     /// Get value at given index, if it's a container, return a handler to the container
     pub fn get_(&self, index: usize) -> Option<ValueOrContainer> {
         let mutex = &self.state.upgrade().unwrap();
-        let doc_state = &mutex.lock().unwrap();
+        let doc_state = &mut mutex.lock().unwrap();
+        let arena = doc_state.arena.clone();
         doc_state.with_state(self.container_idx, |state| {
             let a = state.as_list_state().unwrap();
             match a.get(index) {
                 Some(v) => {
                     if let LoroValue::Container(id) = v {
-                        let idx = doc_state.arena.register_container(id);
+                        let idx = arena.register_container(id);
                         Some(ValueOrContainer::Container(Handler::new(
                             self.txn.clone(),
                             idx,
@@ -883,7 +884,7 @@ impl ListHandler {
         I: FnMut(ValueOrContainer),
     {
         let mutex = &self.state.upgrade().unwrap();
-        let doc_state = &mutex.lock().unwrap();
+        let doc_state = &mut mutex.lock().unwrap();
         let arena = doc_state.arena.clone();
         doc_state.with_state(self.container_idx, |state| {
             let a = state.as_list_state().unwrap();
@@ -1016,7 +1017,7 @@ impl MapHandler {
         I: FnMut(&str, ValueOrContainer),
     {
         let mutex = &self.state.upgrade().unwrap();
-        let doc_state = mutex.lock().unwrap();
+        let mut doc_state = mutex.lock().unwrap();
         let arena = doc_state.arena.clone();
         doc_state.with_state(self.container_idx, |state| {
             let a = state.as_map_state().unwrap();
@@ -1053,7 +1054,7 @@ impl MapHandler {
 
     pub fn get_child_handler(&self, key: &str) -> Handler {
         let mutex = &self.state.upgrade().unwrap();
-        let state = mutex.lock().unwrap();
+        let mut state = mutex.lock().unwrap();
         let container_id = state.with_state(self.container_idx, |state| {
             state
                 .as_map_state()
@@ -1102,13 +1103,14 @@ impl MapHandler {
     /// Get the value at given key, if value is a container, return a handler to the container
     pub fn get_(&self, key: &str) -> Option<ValueOrContainer> {
         let mutex = &self.state.upgrade().unwrap();
-        let doc_state = mutex.lock().unwrap();
+        let mut doc_state = mutex.lock().unwrap();
+        let arena = doc_state.arena.clone();
         doc_state.with_state(self.container_idx, |state| {
             let a = state.as_map_state().unwrap();
             let value = a.get(key);
             match value {
                 Some(LoroValue::Container(container_id)) => {
-                    let idx = doc_state.arena.register_container(container_id);
+                    let idx = arena.register_container(container_id);
                     Some(ValueOrContainer::Container(Handler::new(
                         self.txn.clone(),
                         idx,
