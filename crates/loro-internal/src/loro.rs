@@ -727,6 +727,24 @@ impl LoroDoc {
         let oplog = self.oplog.lock().unwrap();
         oplog.len_changes()
     }
+
+    /// This method compare the consistency between the current doc state
+    /// and the state calculated by diff calculator from beginning.
+    ///
+    /// Panic when it's not consistent
+    pub fn check_state_diff_calc_consistency_slow(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        assert!(!self.is_detached());
+        let bytes = self.export_from(&Default::default());
+        let doc = Self::new();
+        doc.import(&bytes).unwrap();
+        let calculated_state = doc.app_state().try_lock().unwrap();
+        let current_state = self.app_state().try_lock().unwrap();
+        current_state.check_is_the_same(&calculated_state);
+    }
 }
 
 #[cfg(test)]
