@@ -279,7 +279,6 @@ impl ContainerState for RichtextState {
         debug_log::debug_dbg!(&ans, &style_delta);
         let ans = ans.compose(style_delta);
         debug_log::debug_dbg!(&ans);
-        debug_log::group_end!();
         Diff::Text(ans)
     }
 

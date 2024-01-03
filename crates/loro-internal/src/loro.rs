@@ -409,7 +409,6 @@ impl LoroDoc {
 
                     return self.import_with(&updates, origin);
                 }
-                debug_log::group_end!();
             }
         };
 

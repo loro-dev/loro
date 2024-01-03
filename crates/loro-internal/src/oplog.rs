@@ -753,7 +753,6 @@ impl OpLog {
                     // debug_log::debug_dbg!(&change, &inner_vv);
                     Some((change, cnt, vv.clone()))
                 } else {
-                    debug_log::group_end!();
                     None
                 }
             }),
