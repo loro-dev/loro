@@ -21,6 +21,7 @@ fn auto_commit() {
     doc_b.import(&bytes).unwrap();
     doc_a.import(&doc_b.export_snapshot()).unwrap();
     assert_eq!(text_a.get_value(), text_b.get_value());
+    doc_a.check_state_diff_calc_consistency_slow();
 }
 
 #[test]
