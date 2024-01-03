@@ -70,15 +70,12 @@ impl<T: ActorTrait> ActorGroup<T> {
             debug_log::group!("Importing to doc0");
             let vv = first[0].doc().oplog_vv();
             first[0].doc().import(&doc.doc().export_from(&vv)).unwrap();
-            debug_log::group_end!();
         }
         for (i, doc) in rest.iter_mut().enumerate() {
             debug_log::group!("Importing to doc{}", i + 1);
             let vv = doc.doc().oplog_vv();
             doc.doc().import(&first[0].doc().export_from(&vv)).unwrap();
-            debug_log::group_end!();
         }
-        debug_log::group_end!();
     }
 
     pub fn check_sync(&self) {
@@ -88,7 +85,6 @@ impl<T: ActorTrait> ActorGroup<T> {
         for doc in self.docs.iter().skip(1) {
             assert_eq!(content, doc.doc().get_deep_value());
         }
-        debug_log::group_end!();
     }
 }
 
@@ -149,7 +145,6 @@ pub fn run_actions_fuzz_in_async_mode<T: ActorTrait>(
     for action in actions.iter_mut() {
         debug_log::group!("[ApplyAction] {:?}", &action);
         actors.apply_action(action);
-        debug_log::group_end!();
     }
     actors.sync_all();
     actors.check_sync();

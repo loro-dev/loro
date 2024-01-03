@@ -481,20 +481,18 @@ fn check_synced(sites: &mut [Actor]) {
             if (i + j) % 2 == 0 {
                 debug_log::group!("Updates {} to {}", j, i);
                 a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
-                debug_log::group_end!();
+
                 debug_log::group!("Updates {} to {}", i, j);
                 b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
-                debug_log::group_end!();
             } else {
                 debug_log::group!("Snapshot {} to {}", j, i);
                 a_doc.import(&b_doc.export_snapshot()).unwrap();
-                debug_log::group_end!();
+
                 debug_log::group!("Snapshot {} to {}", i, j);
                 b_doc.import(&a_doc.export_snapshot()).unwrap();
-                debug_log::group_end!();
             }
             check_eq(a, b);
-            debug_log::group_end!();
+
             if i == 1 {
                 a.record_history();
             }
@@ -558,7 +556,7 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
 
     debug_log::group!("check synced");
     check_synced(&mut sites);
-    debug_log::group_end!();
+
     check_history(&mut sites[1]);
 }
 #[cfg(test)]

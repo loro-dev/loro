@@ -386,7 +386,6 @@ impl LoroDoc {
                     |oplog| oplog.decode(parsed),
                     origin,
                 )?;
-                debug_log::group_end!();
             }
             true => {
                 debug_log::group!("Import snapshot to {}", self.peer_id());
@@ -407,7 +406,7 @@ impl LoroDoc {
                     // TODO: PERF: the ser and de can be optimized out
                     let updates = app.export_from(oplog.vv());
                     drop(oplog);
-                    debug_log::group_end!();
+
                     return self.import_with(&updates, origin);
                 }
                 debug_log::group_end!();

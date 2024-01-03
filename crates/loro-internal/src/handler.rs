@@ -453,7 +453,6 @@ impl TextHandler {
             event_end = event_start;
         }
 
-        debug_log::group_end!();
         Ok(())
     }
 

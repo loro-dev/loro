@@ -127,7 +127,7 @@ impl Tracker {
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
         // debug_log::debug_dbg!(&self);
-        // debug_log::group_end!();
+        //
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {

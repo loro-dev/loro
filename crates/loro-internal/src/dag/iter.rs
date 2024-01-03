@@ -314,7 +314,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         // debug_log::group!("Dag Causal");
         // debug_log::debug_dbg!(&deps);
         // debug_log::debug_dbg!(&path);
-        // debug_log::group_end!();
+        //
 
         // NOTE: we expect user to update the tracker, to apply node, after visiting the node
         self.frontier = Frontiers::from_id(node.id_start().inc(slice_end - 1));

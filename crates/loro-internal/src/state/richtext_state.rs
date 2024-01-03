@@ -497,7 +497,6 @@ impl ContainerState for RichtextState {
             encoder.encode_op(id_span, || unimplemented!());
         }
 
-        debug_log::group_end!();
         lamports.encode()
     }
 
