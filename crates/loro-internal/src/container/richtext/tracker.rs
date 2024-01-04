@@ -1,5 +1,5 @@
 use generic_btree::{rle::Sliceable, LeafIndex};
-use loro_common::{Counter, IdSpan, PeerID, ID};
+use loro_common::{Counter, HasId, HasIdSpan, IdSpan, PeerID, ID};
 use rle::HasLength;
 
 use crate::VersionVector;
@@ -202,7 +202,6 @@ impl Tracker {
         let end_id = op_id.inc(len as Counter);
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
-        debug_log::debug_dbg!(&self);
     }
 
     #[inline]
@@ -297,6 +296,58 @@ impl Tracker {
         }
     }
 
+    #[allow(unused)]
+    pub(crate) fn check(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        debug_log::debug_dbg!(&self);
+        self.check_vv_correctness();
+        self.check_id_to_cursor_insertions_correctness();
+    }
+
+    fn check_vv_correctness(&self) {
+        for span in self.rope.tree().iter() {
+            if span.id.peer == UNKNOWN_PEER_ID {
+                continue;
+            }
+
+            let id_span = span.id_span();
+            assert!(self.all_vv().includes_id(id_span.id_last()));
+            if span.status.future {
+                assert!(!self.current_vv.includes_id(id_span.id_start()));
+            } else {
+                assert!(self.current_vv.includes_id(id_span.id_last()));
+            }
+        }
+    }
+
+    // It can only check the correctness of insertions in id_to_cursor.
+    // The deletions are not checked.
+    fn check_id_to_cursor_insertions_correctness(&self) {
+        for rope_elem in self.rope.tree().iter() {
+            let id_span = rope_elem.id_span();
+            let leaf_from_start = self.id_to_cursor.get_insert(id_span.id_start()).unwrap();
+            let leaf_from_last = self.id_to_cursor.get_insert(id_span.id_last()).unwrap();
+            assert_eq!(leaf_from_start, leaf_from_last);
+            let elem_from_id_to_cursor_map = self.rope.tree().get_elem(leaf_from_last).unwrap();
+            assert_eq!(rope_elem, elem_from_id_to_cursor_map);
+        }
+
+        for content in self.id_to_cursor.iter_all() {
+            match content {
+                id_to_cursor::IterCursor::Insert { leaf, id_span } => {
+                    let leaf = self.rope.tree().get_elem(leaf).unwrap();
+                    let span = leaf.id_span();
+                    span.contains(id_span.id_start());
+                    span.contains(id_span.id_last());
+                }
+                id_to_cursor::IterCursor::Delete(_) => {}
+            }
+        }
+    }
+
     pub(crate) fn diff(
         &mut self,
         from: &VersionVector,
@@ -305,7 +356,8 @@ impl Tracker {
         self._checkout(from, false);
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();
-        debug_log::debug_dbg!(&self);
+        // debug_log::debug_dbg!(&self);
+        // self.check();
         self.rope.get_diff()
     }
 }

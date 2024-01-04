@@ -71,6 +71,37 @@ impl IdToCursor {
         assert_eq!(start_counter, id_span.counter.end);
     }
 
+    pub fn iter_all(&self) -> impl Iterator<Item = IterCursor> + '_ {
+        self.map.iter().flat_map(|(client_id, list)| {
+            list.iter()
+                .flat_map(move |f| -> Box<dyn Iterator<Item = IterCursor>> {
+                    match &f.cursor {
+                        Cursor::Insert { set, len: _ } => {
+                            let mut offset = 0;
+                            Box::new(set.iter().map(move |elem| {
+                                let ans = IterCursor::Insert {
+                                    leaf: elem.leaf,
+                                    id_span: IdSpan::new(
+                                        *client_id,
+                                        f.counter + offset as Counter,
+                                        f.counter + offset as Counter + elem.len as Counter,
+                                    ),
+                                };
+                                offset += elem.len;
+                                ans
+                            }))
+                        }
+                        Cursor::Delete(span) => {
+                            let start_counter = f.counter;
+                            let end_counter = f.counter + span.atom_len() as Counter;
+                            let id_span = IdSpan::new(*client_id, start_counter, end_counter);
+                            Box::new(std::iter::once(IterCursor::Delete(id_span)))
+                        }
+                    }
+                })
+        })
+    }
+
     pub fn iter(&self, mut iter_id_span: IdSpan) -> impl Iterator<Item = IterCursor> + '_ {
         iter_id_span.normalize_();
         let list = self.map.get(&iter_id_span.client_id).unwrap_or(&EMPTY_VEC);
