@@ -1,5 +1,5 @@
 use append_only_bytes::BytesSlice;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor,
@@ -1681,6 +1681,8 @@ impl RichtextState {
     #[allow(unused)]
     pub(crate) fn check(&self) {
         self.tree.check();
+        self.check_consistency_between_content_and_style_ranges();
+        self.check_style_anchors_appear_in_pairs();
     }
 
     pub(crate) fn mark_with_entity_index(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
@@ -1878,6 +1880,33 @@ impl RichtextState {
             entity_index_to_style_anchor.is_empty(),
             "Inconsistency found. Some anchors are not reflected in style ranges {:#?}",
             &entity_index_to_style_anchor
+        );
+    }
+
+    /// Allow StyleAnchors to appear in pairs, so that there won't be unmatched single StyleAnchors.
+    pub(crate) fn check_style_anchors_appear_in_pairs(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        let mut start_ops: FxHashSet<&Arc<StyleOp>> = Default::default();
+        for item in self.iter_chunk() {
+            match item {
+                RichtextStateChunk::Text(_) => {}
+                RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
+                    AnchorType::Start => {
+                        start_ops.insert(style);
+                    }
+                    AnchorType::End => {
+                        assert!(start_ops.remove(style), "End anchor without start anchor");
+                    }
+                },
+            }
+        }
+        assert!(
+            start_ops.is_empty(),
+            "Only has start anchors {:#?}",
+            &start_ops
         );
     }
 }
@@ -2324,6 +2353,36 @@ mod test {
             wrapper.state.get_richtext_value().to_json_value(),
             json!([{
                 "insert": " World!"
+            }])
+        );
+    }
+
+    #[test]
+    fn remove_start_anchor_should_remove_style() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello World!");
+        wrapper.mark(0..5, bold(0));
+        wrapper.state.drain_by_entity_index(6, 1, |_| {});
+        wrapper.state.drain_by_entity_index(0, 1, |_| {});
+        assert_eq!(
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([{
+                "insert": "Hello World!"
+            }])
+        );
+    }
+
+    #[test]
+    fn remove_start_anchor_in_the_middle_should_remove_style() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello World!");
+        wrapper.mark(2..5, bold(0));
+        wrapper.state.drain_by_entity_index(6, 1, |_| {});
+        wrapper.state.drain_by_entity_index(1, 2, |_| {});
+        assert_eq!(
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([{
+                "insert": "Hllo World!"
             }])
         );
     }
