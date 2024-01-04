@@ -18,7 +18,7 @@ use once_cell::sync::Lazy;
 
 use crate::delta::StyleMeta;
 
-use super::{StyleKey, StyleOp};
+use super::{AnchorType, StyleKey, StyleOp};
 
 /// This struct keep the mapping of ranges to numbers
 ///
@@ -46,6 +46,31 @@ impl Styles {
             },
             _ => false,
         }
+    }
+
+    /// Infer the anchors between the neighbor styles.
+    /// Returns the last anchor of the left style and the first anchor of the right style.
+    fn infer_anchors(&self, next: &Self) -> (Option<Arc<StyleOp>>, Option<Arc<StyleOp>>) {
+        let mut left_anchor = None;
+        let mut right_anchor = None;
+        let empty_set: BTreeSet<_> = Default::default();
+        for (key, set) in self.styles.iter() {
+            let right_set = next.styles.get(key).map(|x| &x.set).unwrap_or(&empty_set);
+            for diff in set.set.difference(right_set) {
+                assert!(left_anchor.is_none(), "left anchor should be unique");
+                left_anchor = Some(diff.clone());
+            }
+        }
+
+        for (key, set) in next.styles.iter() {
+            let left_set = self.styles.get(key).map(|x| &x.set).unwrap_or(&empty_set);
+            for diff in set.set.difference(left_set) {
+                assert!(right_anchor.is_none(), "right anchor should be unique");
+                right_anchor = Some(diff.clone());
+            }
+        }
+
+        (left_anchor, right_anchor)
     }
 }
 
@@ -262,6 +287,54 @@ impl StyleRangeMap {
         })
     }
 
+    /// Return the expected style anchors with their indexes.
+    pub(super) fn iter_anchors(&self) -> impl Iterator<Item = IterAnchorItem> + '_ {
+        let mut index = 0;
+        let empty_styles = &EMPTY_STYLES;
+        let mut last: Option<&Elem> = None;
+        let mut vec = Vec::new();
+        for cur in self.tree.iter() {
+            let last_styles = last.map(|x| &x.styles).unwrap_or(empty_styles);
+            let (left_anchor, right_anchor) = last_styles.infer_anchors(&cur.styles);
+            if let Some(left) = left_anchor {
+                vec.push(IterAnchorItem {
+                    index: index - 1,
+                    op: left.clone(),
+                    anchor_type: AnchorType::End,
+                });
+            }
+            if let Some(right) = right_anchor {
+                vec.push(IterAnchorItem {
+                    index,
+                    op: right.clone(),
+                    anchor_type: AnchorType::Start,
+                });
+            }
+
+            last = Some(cur);
+            index += cur.len;
+        }
+
+        let last_styles = last.map(|x| &x.styles).unwrap_or(empty_styles);
+        let (left_anchor, right_anchor) = last_styles.infer_anchors(empty_styles);
+        if let Some(left) = left_anchor {
+            vec.push(IterAnchorItem {
+                index: index - 1,
+                op: left.clone(),
+                anchor_type: AnchorType::End,
+            });
+        }
+        if let Some(right) = right_anchor {
+            vec.push(IterAnchorItem {
+                index,
+                op: right.clone(),
+                anchor_type: AnchorType::Start,
+            });
+        }
+
+        vec.into_iter()
+    }
+
     pub fn delete(&mut self, range: Range<usize>) {
         if !self.has_style {
             return;
@@ -284,6 +357,12 @@ impl StyleRangeMap {
     pub(crate) fn has_style(&self) -> bool {
         self.has_style
     }
+}
+
+pub(super) struct IterAnchorItem {
+    pub(super) index: usize,
+    pub(super) op: Arc<StyleOp>,
+    pub(super) anchor_type: AnchorType,
 }
 
 impl UseLengthFinder<RangeNumMapTrait> for RangeNumMapTrait {

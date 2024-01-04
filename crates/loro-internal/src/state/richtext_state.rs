@@ -604,6 +604,16 @@ impl RichtextState {
         }
     }
 
+    /// Check if the content and style ranges are consistent.
+    ///
+    /// Panic if inconsistent.
+    #[allow(unused)]
+    pub(crate) fn check_consistency_between_content_and_style_ranges(&mut self) {
+        self.state
+            .get_mut()
+            .check_consistency_between_content_and_style_ranges();
+    }
+
     #[inline]
     pub fn len_unicode(&mut self) -> usize {
         self.state.get_mut().len_unicode()

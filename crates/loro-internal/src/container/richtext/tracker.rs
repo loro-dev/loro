@@ -205,7 +205,7 @@ impl Tracker {
         let end_id = op_id.inc(len as Counter);
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
-        debug_log::debug_dbg!(&self);
+        // debug_log::debug_dbg!(&self);
     }
 
     #[inline]
@@ -308,7 +308,7 @@ impl Tracker {
         self._checkout(from, false);
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();
-        debug_log::debug_dbg!(&self);
+        // debug_log::debug_dbg!(&self);
         self.rope.get_diff()
     }
 }

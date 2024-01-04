@@ -31,7 +31,7 @@ use self::{
 
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
-    style_range_map::{StyleRangeMap, Styles},
+    style_range_map::{IterAnchorItem, StyleRangeMap, Styles},
     AnchorType, RichtextSpan, StyleOp,
 };
 
@@ -1704,6 +1704,7 @@ impl RichtextState {
     }
 
     pub fn get_richtext_value(&self) -> LoroValue {
+        self.check_consistency_between_content_and_style_ranges();
         let mut ans: Vec<LoroValue> = Vec::new();
         let mut last_attributes: Option<LoroValue> = None;
         for span in self.iter() {
@@ -1782,6 +1783,59 @@ impl RichtextState {
             self.tree.node_len(),
             self.style_ranges.tree.node_len(),
             self.tree.root_cache().bytes
+        );
+    }
+
+    /// Check if the content and style ranges are consistent.
+    ///
+    /// Panic if inconsistent.
+    pub(crate) fn check_consistency_between_content_and_style_ranges(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        debug_log::debug_dbg!(&self);
+        let mut entity_index_to_style_anchor: FxHashMap<usize, &RichtextStateChunk> =
+            FxHashMap::default();
+        let mut index = 0;
+        for c in self.iter_chunk() {
+            if matches!(c, RichtextStateChunk::Style { .. }) {
+                entity_index_to_style_anchor.insert(index, c);
+            }
+
+            index += c.length()
+        }
+
+        for IterAnchorItem {
+            index,
+            op,
+            anchor_type: iter_anchor_type,
+        } in self.style_ranges.iter_anchors()
+        {
+            let c = entity_index_to_style_anchor
+                .remove(&index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Inconsistency found {} {:?} {:?}",
+                        index, iter_anchor_type, &op
+                    );
+                });
+
+            match c {
+                RichtextStateChunk::Text(_) => {
+                    unreachable!()
+                }
+                RichtextStateChunk::Style { style, anchor_type } => {
+                    assert_eq!(style, &op);
+                    assert_eq!(&iter_anchor_type, anchor_type);
+                }
+            }
+        }
+
+        assert!(
+            entity_index_to_style_anchor.is_empty(),
+            "Inconsistency found. Some anchors are not reflected in style ranges {:#?}",
+            &entity_index_to_style_anchor
         );
     }
 }

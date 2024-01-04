@@ -461,6 +461,8 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
 }
 
 fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
+    a_actor.loro.check_state_diff_calc_consistency_slow();
+    b_actor.loro.check_state_diff_calc_consistency_slow();
     let a_result = a_actor.text_container.get_richtext_value();
     let b_result = b_actor.text_container.get_richtext_value();
     let a_value = a_actor.text_tracker.get_text("text").get_richtext_value();
