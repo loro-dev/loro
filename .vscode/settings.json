@@ -15,6 +15,7 @@
     "napi",
     "nextest",
     "oplog",
+    "opset",
     "peekable",
     "Peritext",
     "RUSTFLAGS",

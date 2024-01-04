@@ -23,6 +23,7 @@ use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{ListSlice, RawOpContent, RemoteOp};
+use crate::opset::OpSet;
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
@@ -43,6 +44,7 @@ pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
     changes: ClientChanges,
+    opset: OpSet,
     /// **lamport starts from 0**
     pub(crate) next_lamport: Lamport,
     pub(crate) latest_timestamp: Timestamp,
@@ -85,6 +87,7 @@ impl Clone for OpLog {
             dag: self.dag.clone(),
             arena: Default::default(),
             changes: self.changes.clone(),
+            opset: self.opset.clone(),
             next_lamport: self.next_lamport,
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
@@ -160,6 +163,7 @@ impl OpLog {
             dag: AppDag::default(),
             arena: Default::default(),
             changes: ClientChanges::default(),
+            opset: OpSet::default(),
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
@@ -217,6 +221,7 @@ impl OpLog {
         local: bool,
     ) {
         self.update_tree_cache(&change, local);
+        self.opset.insert_by_change(&change);
         let entry = self.changes.entry(change.id.peer).or_default();
         match entry.last_mut() {
             Some(last) => {

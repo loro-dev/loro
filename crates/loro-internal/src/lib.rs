@@ -42,6 +42,7 @@ pub mod event;
 
 pub use error::{LoroError, LoroResult};
 pub(crate) mod macros;
+pub(crate) mod opset;
 pub(crate) mod state;
 pub(crate) mod value;
 pub(crate) use change::Timestamp;
