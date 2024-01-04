@@ -3,7 +3,7 @@
 
 use std::{
     collections::BTreeSet,
-    ops::{Deref, DerefMut, Range},
+    ops::{ControlFlow, Deref, DerefMut, Range},
     sync::Arc,
     usize,
 };
@@ -287,6 +287,24 @@ impl StyleRangeMap {
         })
     }
 
+    pub fn update_styles_from(
+        &mut self,
+        pos: usize,
+        mut f: impl FnMut(&mut Styles) -> ControlFlow<()>,
+    ) {
+        let mut cursor = self.tree.query::<LengthFinder>(&pos).map(|x| x.cursor);
+        while let Some(inner_cursor) = cursor {
+            cursor = self.tree.next_elem(inner_cursor);
+            let node = self.tree.get_elem_mut(inner_cursor.leaf).unwrap();
+            match f(&mut node.styles) {
+                ControlFlow::Continue(_) => {}
+                ControlFlow::Break(_) => {
+                    break;
+                }
+            }
+        }
+    }
+
     /// Return the expected style anchors with their indexes.
     pub(super) fn iter_anchors(&self) -> impl Iterator<Item = IterAnchorItem> + '_ {
         let mut index = 0;
@@ -333,6 +351,25 @@ impl StyleRangeMap {
         }
 
         vec.into_iter()
+    }
+
+    pub fn remove_style(&mut self, to_remove: &Arc<StyleOp>, start_index: usize) {
+        self.update_styles_from(start_index, |styles| {
+            let key = to_remove.get_style_key();
+            let mut has_removed = false;
+            if let Some(value) = styles.get_mut(&key) {
+                has_removed = value.set.remove(to_remove);
+                if value.set.is_empty() {
+                    styles.remove(&key);
+                }
+            }
+
+            if has_removed {
+                ControlFlow::Continue(())
+            } else {
+                ControlFlow::Break(())
+            }
+        });
     }
 
     pub fn delete(&mut self, range: Range<usize>) {

@@ -1601,39 +1601,81 @@ impl RichtextState {
             len,
             &self.len_entity(),
         );
+
         // PERF: may use cache to speed up
         self.cursor_cache.invalidate();
-        // FIXME: need to check whether style is removed when its anchors are removed
-        self.style_ranges.delete(pos..pos + len);
         let range = pos..pos + len;
         let (start, start_f) = self
             .tree
             .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&range.start);
         let start_cursor = start.unwrap().cursor();
         let elem = self.tree.get_elem(start_cursor.leaf).unwrap();
+
+        /// This struct remove the corresponding style ranges if the start style anchor is removed
+        struct StyleRangeUpdater<'a> {
+            style_ranges: &'a mut StyleRangeMap,
+            current_index: usize,
+        }
+
+        impl<'a> StyleRangeUpdater<'a> {
+            fn update(&mut self, elem: &RichtextStateChunk) {
+                match &elem {
+                    RichtextStateChunk::Text(t) => {
+                        self.current_index += t.unicode_len() as usize;
+                    }
+                    RichtextStateChunk::Style { style, anchor_type } => {
+                        if matches!(anchor_type, AnchorType::Start) {
+                            self.style_ranges.remove_style(style, self.current_index);
+                        }
+
+                        self.current_index += 1;
+                    }
+                }
+            }
+
+            fn new(style_ranges: &'a mut StyleRangeMap, start_index: usize) -> Self {
+                Self {
+                    style_ranges,
+                    current_index: start_index,
+                }
+            }
+        }
+
         if elem.rle_len() >= start_cursor.offset + len {
             // drop in place
             let mut event_len = 0;
-            self.tree.update_leaf(start_cursor.leaf, |elem| match elem {
-                RichtextStateChunk::Text(text) => {
-                    let (next, event_len_) = text.delete_by_entity_index(start_cursor.offset, len);
-                    event_len = event_len_;
-                    (true, next.map(RichtextStateChunk::Text), None)
-                }
-                RichtextStateChunk::Style { .. } => {
-                    *elem = RichtextStateChunk::Text(TextChunk::new_empty());
-                    (true, None, None)
+            let mut updater = StyleRangeUpdater::new(&mut self.style_ranges, pos);
+            self.tree.update_leaf(start_cursor.leaf, |elem| {
+                updater.update(&*elem);
+                match elem {
+                    RichtextStateChunk::Text(text) => {
+                        let (next, event_len_) =
+                            text.delete_by_entity_index(start_cursor.offset, len);
+                        event_len = event_len_;
+                        (true, next.map(RichtextStateChunk::Text), None)
+                    }
+                    RichtextStateChunk::Style { .. } => {
+                        *elem = RichtextStateChunk::Text(TextChunk::new_empty());
+                        (true, None, None)
+                    }
                 }
             });
-            return (start_f.event_index, start_f.event_index + event_len);
+
+            self.style_ranges.delete(pos..pos + len);
+            (start_f.event_index, start_f.event_index + event_len)
+        } else {
+            let (end, end_f) = self
+                .tree
+                .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&range.end);
+            let mut updater = StyleRangeUpdater::new(&mut self.style_ranges, pos);
+            for iter in generic_btree::iter::Drain::new(&mut self.tree, start, end) {
+                updater.update(&iter);
+                f(iter)
+            }
+
+            self.style_ranges.delete(pos..pos + len);
+            (start_f.event_index, end_f.event_index)
         }
-        let (end, end_f) = self
-            .tree
-            .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&range.end);
-        for iter in generic_btree::iter::Drain::new(&mut self.tree, start, end) {
-            f(iter)
-        }
-        (start_f.event_index, end_f.event_index)
     }
 
     #[allow(unused)]

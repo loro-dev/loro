@@ -734,8 +734,6 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             }
         }
 
-        // FIXME: handle new containers when inserting richtext style like comments
-
         // debug_log::debug_dbg!(&self.tracker);
         InternalDiff::RichtextRaw(delta)
     }

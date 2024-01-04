@@ -279,6 +279,7 @@ impl ContainerState for RichtextState {
             }
         }
 
+        // self.check_consistency_between_content_and_style_ranges();
         debug_assert!(style_starts.is_empty(), "Styles should always be paired");
         let ans = ans.compose(style_delta);
         Diff::Text(ans)
@@ -350,6 +351,8 @@ impl ContainerState for RichtextState {
                 }
             }
         }
+
+        // self.check_consistency_between_content_and_style_ranges()
     }
 
     fn apply_op(&mut self, r_op: &RawOp, op: &Op, _arena: &SharedArena) -> LoroResult<()> {
@@ -426,6 +429,8 @@ impl ContainerState for RichtextState {
             },
             _ => unreachable!(),
         }
+
+        // self.check_consistency_between_content_and_style_ranges();
         Ok(())
     }
 
@@ -541,6 +546,7 @@ impl ContainerState for RichtextState {
         }
 
         *self.state = LazyLoad::Src(loader);
+        // self.check_consistency_between_content_and_style_ranges();
     }
 }
 
