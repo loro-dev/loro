@@ -383,7 +383,7 @@ impl ContainerState for TreeState {
     }
 
     fn get_value(&mut self) -> LoroValue {
-        let mut ans = vec![];
+        let mut ans: Vec<LoroValue> = vec![];
         #[cfg(feature = "test_utils")]
         // The order keep consistent
         let iter = self.trees.iter().sorted();
