@@ -9,7 +9,7 @@ use loro_internal::{
     },
     event::{Diff, Index},
     handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrContainer},
-    id::{Counter, PeerID, TreeID, ID},
+    id::{Counter, TreeID, ID},
     obs::SubID,
     version::Frontiers,
     ContainerType, DiffEvent, LoroDoc, LoroError, LoroValue, VersionVector,
@@ -143,9 +143,13 @@ fn ids_to_frontiers(ids: Vec<JsID>) -> JsResult<Frontiers> {
 }
 
 fn js_id_to_id(id: JsID) -> Result<ID, JsValue> {
-    let peer: u64 = Reflect::get(&id, &"peer".into())?.try_into()?;
+    let peer = Reflect::get(&id, &"peer".into())?.as_string().unwrap();
     let counter = Reflect::get(&id, &"counter".into())?.as_f64().unwrap() as Counter;
-    let id = ID::new(peer, counter);
+    let id = ID::new(
+        peer.parse()
+            .map_err(|_e| JsValue::from_str(&format!("cannot parse {} to PeerID", peer)))?,
+        counter,
+    );
     Ok(id)
 }
 
@@ -153,7 +157,7 @@ fn frontiers_to_ids(frontiers: &Frontiers) -> Vec<JsID> {
     let mut ans = Vec::with_capacity(frontiers.len());
     for id in frontiers.iter() {
         let obj = Object::new();
-        Reflect::set(&obj, &"peer".into(), &id.peer.into()).unwrap();
+        Reflect::set(&obj, &"peer".into(), &id.peer.to_string().into()).unwrap();
         Reflect::set(&obj, &"counter".into(), &id.counter.into()).unwrap();
         let value: JsValue = obj.into_js_result().unwrap();
         ans.push(value.into());
@@ -196,18 +200,24 @@ fn js_value_to_version(version: &JsValue) -> Result<VersionVector, JsValue> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct StringID {
+    peer: String,
+    counter: Counter,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct ChangeMeta {
     lamport: Lamport,
     length: u32,
-    peer: PeerID,
+    peer: String,
     counter: Counter,
-    deps: Vec<ID>,
+    deps: Vec<StringID>,
     timestamp: f64,
 }
 
 impl ChangeMeta {
     fn to_js(&self) -> JsValue {
-        let s = serde_wasm_bindgen::Serializer::new().serialize_large_number_types_as_bigints(true);
+        let s = serde_wasm_bindgen::Serializer::new();
         self.serialize(&s).unwrap()
     }
 }
@@ -768,14 +778,21 @@ impl Loro {
                 let change = ChangeMeta {
                     lamport: change.lamport,
                     length: change.atom_len() as u32,
-                    peer: change.peer(),
+                    peer: change.peer().to_string(),
                     counter: change.id.counter,
-                    deps: change.deps.iter().cloned().collect(),
+                    deps: change
+                        .deps
+                        .iter()
+                        .map(|dep| StringID {
+                            peer: dep.peer.to_string(),
+                            counter: dep.counter,
+                        })
+                        .collect(),
                     timestamp: change.timestamp as f64,
                 };
                 row.set(i as u32, change.to_js());
             }
-            ans.set(&js_sys::BigInt::from(*peer_id).into(), &row);
+            ans.set(&peer_id.to_string().into(), &row);
         }
 
         let value: JsValue = ans.into();
@@ -794,9 +811,16 @@ impl Loro {
         let change = ChangeMeta {
             lamport: change.lamport,
             length: change.atom_len() as u32,
-            peer: change.peer(),
+            peer: change.peer().to_string(),
             counter: change.id.counter,
-            deps: change.deps.iter().cloned().collect(),
+            deps: change
+                .deps
+                .iter()
+                .map(|dep| StringID {
+                    peer: dep.peer.to_string(),
+                    counter: dep.counter,
+                })
+                .collect(),
             timestamp: change.timestamp as f64,
         };
         Ok(change.to_js().into())
@@ -881,10 +905,15 @@ fn js_map_to_vv(map: js_sys::Map) -> JsResult<VersionVector> {
     for pair in map.entries() {
         let pair = pair.unwrap_throw();
         let key = Reflect::get(&pair, &0.into()).unwrap_throw();
-        let peer_id = u64::try_from(key.clone()).expect_throw("PeerID must be u64");
+        let peer_id = key.as_string().expect_throw("PeerID must be string");
         let value = Reflect::get(&pair, &1.into()).unwrap_throw();
         let counter = value.as_f64().expect_throw("Invalid counter") as Counter;
-        vv.insert(peer_id, counter);
+        vv.insert(
+            peer_id
+                .parse()
+                .expect_throw(&format!("{} cannot be parsed as u64", peer_id)),
+            counter,
+        );
     }
 
     Ok(vv)
@@ -2090,9 +2119,9 @@ pub fn to_encoded_version(version: JsVersionVectorMap) -> Result<Vec<u8>, JsValu
 fn vv_to_js_value(vv: VersionVector) -> JsValue {
     let map = js_sys::Map::new();
     for (k, v) in vv.iter() {
-        let k = js_sys::BigInt::from(*k);
+        let k = k.to_string().into();
         let v = JsValue::from(*v);
-        map.set(&k.to_owned(), &v);
+        map.set(&k, &v);
     }
 
     map.into()
@@ -2129,7 +2158,7 @@ const TYPES: &'static str = r#"
 * ```
 */
 export type ContainerType = "Text" | "Map" | "List"| "Tree";
-export type PeerID = bigint;
+export type PeerID = string;
 /**
 * The unique id of each container.
 *
