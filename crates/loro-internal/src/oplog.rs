@@ -23,7 +23,7 @@ use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{ListSlice, RawOpContent, RemoteOp};
-use crate::opset::OpSet;
+use crate::opset::OpGroup;
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
@@ -44,7 +44,7 @@ pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
     changes: ClientChanges,
-    opset: OpSet,
+    pub(crate) opset: OpGroup,
     /// **lamport starts from 0**
     pub(crate) next_lamport: Lamport,
     pub(crate) latest_timestamp: Timestamp,
@@ -163,7 +163,7 @@ impl OpLog {
             dag: AppDag::default(),
             arena: Default::default(),
             changes: ClientChanges::default(),
-            opset: OpSet::default(),
+            opset: OpGroup::default(),
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),

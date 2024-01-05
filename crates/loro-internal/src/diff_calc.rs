@@ -154,7 +154,9 @@ impl DiffCalculator {
                                 ),
                                 crate::ContainerType::Map => (
                                     depth,
-                                    ContainerDiffCalculator::Map(MapDiffCalculator::new()),
+                                    ContainerDiffCalculator::Map(MapDiffCalculator::new(
+                                        op.container,
+                                    )),
                                 ),
                                 crate::ContainerType::List => (
                                     depth,
@@ -347,14 +349,16 @@ enum ContainerDiffCalculator {
     Tree(TreeDiffCalculator),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct MapDiffCalculator {
-    grouped: FxHashMap<InternalString, CompactRegister>,
+    container_idx: ContainerIdx,
+    grouped: FxHashSet<InternalString>,
 }
 
 impl MapDiffCalculator {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(container_idx: ContainerIdx) -> Self {
         Self {
+            container_idx,
             grouped: Default::default(),
         }
     }
@@ -370,29 +374,36 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         _vv: Option<&crate::VersionVector>,
     ) {
         let map = op.op().content.as_map().unwrap();
-        self.grouped
-            .entry(map.key.clone())
-            .or_default()
-            .push(CompactMapValue {
-                lamport: op.lamport(),
-                peer: op.client_id(),
-                counter: op.id_start().counter,
-                value: op.op().content.as_map().unwrap().value.clone(),
-            });
+        self.grouped.insert(map.key.clone());
+        //     .entry(map.key.clone())
+        //     .or_default()
+        //     .push(CompactMapValue {
+        //         lamport: op.lamport(),
+        //         peer: op.client_id(),
+        //         counter: op.id_start().counter,
+        //         value: op.op().content.as_map().unwrap().value.clone(),
+        //     });
     }
 
     fn stop_tracking(&mut self, _oplog: &super::oplog::OpLog, _vv: &crate::VersionVector) {}
 
     fn calculate_diff(
         &mut self,
-        _oplog: &super::oplog::OpLog,
+        oplog: &super::oplog::OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
         let mut changed = Vec::new();
-        for (k, g) in self.grouped.iter_mut() {
-            let (peek_from, peek_to) = g.peek_at_ab(from, to);
+        let group = oplog
+            .opset
+            .get(&self.container_idx)
+            .unwrap()
+            .as_map()
+            .unwrap();
+        for k in self.grouped.iter() {
+            let peek_from = group.last_op(k, from);
+            let peek_to = group.last_op(k, to);
             match (peek_from, peek_to) {
                 (None, None) => {}
                 (None, Some(_)) => changed.push((k.clone(), peek_to)),
@@ -409,13 +420,13 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         for (key, value) in changed {
             let value = value
                 .map(|v| {
-                    let value = v.value.clone();
+                    let value = v.op.content.as_map().unwrap().clone().value;
                     if let Some(LoroValue::Container(c)) = &value {
                         on_new_container(c);
                     }
 
                     MapValue {
-                        counter: v.counter,
+                        counter: v.op.counter,
                         value,
                         lamport: (v.lamport, v.peer),
                     }
