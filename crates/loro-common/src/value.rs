@@ -88,7 +88,7 @@ impl LoroValue {
         max_depth
     }
 
-    // TODO: add checks for too deep value, and return err if users 
+    // TODO: add checks for too deep value, and return err if users
     // try to insert such value into a container
     pub fn is_too_deep(&self) -> bool {
         self.get_depth() > MAX_DEPTH
@@ -255,21 +255,27 @@ impl<S: Into<String>, M> From<HashMap<S, LoroValue, M>> for LoroValue {
     }
 }
 
-impl From<Vec<LoroValue>> for LoroValue {
-    fn from(vec: Vec<LoroValue>) -> Self {
-        LoroValue::List(Arc::new(vec))
+impl From<Vec<u8>> for LoroValue {
+    fn from(vec: Vec<u8>) -> Self {
+        LoroValue::Binary(Arc::new(vec))
+    }
+}
+
+impl From<&'_ [u8]> for LoroValue {
+    fn from(vec: &[u8]) -> Self {
+        LoroValue::Binary(Arc::new(vec.to_vec()))
+    }
+}
+
+impl<const N: usize> From<&'_ [u8; N]> for LoroValue {
+    fn from(vec: &[u8; N]) -> Self {
+        LoroValue::Binary(Arc::new(vec.to_vec()))
     }
 }
 
 impl From<i32> for LoroValue {
     fn from(v: i32) -> Self {
         LoroValue::I32(v)
-    }
-}
-
-impl From<u8> for LoroValue {
-    fn from(v: u8) -> Self {
-        LoroValue::I32(v as i32)
     }
 }
 
@@ -294,6 +300,13 @@ impl From<f64> for LoroValue {
 impl From<bool> for LoroValue {
     fn from(v: bool) -> Self {
         LoroValue::Bool(v)
+    }
+}
+
+impl<T: Into<LoroValue>> From<Vec<T>> for LoroValue {
+    fn from(value: Vec<T>) -> Self {
+        let vec: Vec<LoroValue> = value.into_iter().map(|x| x.into()).collect();
+        Self::List(Arc::new(vec))
     }
 }
 

@@ -26,6 +26,7 @@ use loro_common::{IdSpan, LoroResult, ID};
 
 #[derive(Debug)]
 pub struct ListState {
+    id: ContainerID,
     idx: ContainerIdx,
     list: BTree<ListImpl>,
     in_txn: bool,
@@ -36,6 +37,7 @@ pub struct ListState {
 impl Clone for ListState {
     fn clone(&self) -> Self {
         Self {
+            id: self.id.clone(),
             idx: self.idx,
             list: self.list.clone(),
             in_txn: false,
@@ -151,9 +153,10 @@ impl UseLengthFinder<ListImpl> for ListImpl {
 
 // FIXME: update child_container_to_leaf
 impl ListState {
-    pub fn new(idx: ContainerIdx) -> Self {
+    pub fn new(id: ContainerID, idx: ContainerIdx) -> Self {
         let tree = BTree::new();
         Self {
+            id,
             idx,
             list: tree,
             in_txn: false,
@@ -328,6 +331,10 @@ impl ListState {
 impl ContainerState for ListState {
     fn container_idx(&self) -> ContainerIdx {
         self.idx
+    }
+
+    fn container_id(&self) -> &ContainerID {
+        &self.id
     }
 
     fn is_state_empty(&self) -> bool {
@@ -562,10 +569,10 @@ mod test {
 
     #[test]
     fn test() {
-        let mut list = ListState::new(ContainerIdx::from_index_and_type(
-            0,
-            loro_common::ContainerType::List,
-        ));
+        let mut list = ListState::new(
+            id("abc"),
+            ContainerIdx::from_index_and_type(0, loro_common::ContainerType::List),
+        );
         fn id(name: &str) -> ContainerID {
             ContainerID::new_root(name, crate::ContainerType::List)
         }

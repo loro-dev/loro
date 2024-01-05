@@ -384,7 +384,6 @@ dependencies = [
  "serde_columnar",
  "serde_json",
  "smallvec",
- "string_cache",
  "tabled",
  "thiserror",
 ]

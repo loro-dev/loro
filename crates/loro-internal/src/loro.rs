@@ -388,12 +388,11 @@ impl LoroDoc {
                 )?;
             }
             true => {
-                debug_log::group!("Import snapshot to {}", self.peer_id());
                 if self.can_reset_with_snapshot() {
-                    debug_log::debug_log!("Init by snapshot");
+                    debug_log::debug_log!("Init by snapshot {}", self.peer_id());
                     decode_snapshot(self, parsed.mode, parsed.body)?;
                 } else if parsed.mode == EncodeMode::Snapshot {
-                    debug_log::debug_log!("Import by updates");
+                    debug_log::debug_log!("Import updates to {}", self.peer_id());
                     self.update_oplog_and_apply_delta_to_state_if_needed(
                         |oplog| oplog.decode(parsed),
                         origin,
@@ -427,6 +426,7 @@ impl LoroDoc {
         let old_frontiers = oplog.frontiers().clone();
         f(&mut oplog)?;
         if !self.detached.load(Acquire) {
+            debug_log::debug_log!("Attached. CalcDiff.");
             let mut diff = DiffCalculator::default();
             let diff = diff.calc_diff_internal(
                 &oplog,
@@ -443,6 +443,8 @@ impl LoroDoc {
                 from_checkout: false,
                 new_version: Cow::Owned(oplog.frontiers().clone()),
             });
+        } else {
+            debug_log::debug_log!("Detached");
         }
         Ok(())
     }
@@ -649,10 +651,12 @@ impl LoroDoc {
     }
 
     pub fn checkout_to_latest(&self) {
+        debug_log::debug_log!("Attached {}", self.peer_id());
         let f = self.oplog_frontiers();
         self.checkout(&f).unwrap();
         self.detached.store(false, Release);
         self.renew_txn_if_auto_commit();
+        self.check_state_diff_calc_consistency_slow();
     }
 
     /// Checkout [DocState] to a specific version.
@@ -724,6 +728,25 @@ impl LoroDoc {
     pub fn len_changes(&self) -> usize {
         let oplog = self.oplog.lock().unwrap();
         oplog.len_changes()
+    }
+
+    /// This method compare the consistency between the current doc state
+    /// and the state calculated by diff calculator from beginning.
+    ///
+    /// Panic when it's not consistent
+    pub fn check_state_diff_calc_consistency_slow(&self) {
+        self.commit_then_stop();
+        assert!(
+            !self.is_detached(),
+            "Cannot check consistency in detached mode"
+        );
+        let bytes = self.export_from(&Default::default());
+        let doc = Self::new();
+        doc.import(&bytes).unwrap();
+        let mut calculated_state = doc.app_state().try_lock().unwrap();
+        let mut current_state = self.app_state().try_lock().unwrap();
+        current_state.check_is_the_same(&mut calculated_state);
+        self.renew_txn_if_auto_commit();
     }
 }
 

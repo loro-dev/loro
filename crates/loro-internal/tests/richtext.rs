@@ -121,6 +121,8 @@ fn case0() {
         &doc_a,
         json!([{"insert":"Hello New World","attributes":{"bold":true}}]),
     );
+    doc_a.check_state_diff_calc_consistency_slow();
+    doc_b.check_state_diff_calc_consistency_slow();
 }
 
 #[test]
@@ -134,6 +136,8 @@ fn case1() {
         &doc_a,
         json!([{"insert":"Hello World","attributes":{"bold":true}}]),
     );
+    doc_a.check_state_diff_calc_consistency_slow();
+    doc_b.check_state_diff_calc_consistency_slow();
 }
 
 #[test]
@@ -148,6 +152,8 @@ fn case2() {
         &doc_a,
         json!([{"insert":"Hello a ","attributes":{"bold":false}},{"insert":"World","attributes":{"bold":true}}]),
     );
+    doc_a.check_state_diff_calc_consistency_slow();
+    doc_b.check_state_diff_calc_consistency_slow();
 }
 
 /// | Name            | Text                   |
@@ -168,6 +174,8 @@ fn case3() {
         &doc_a,
         json!([{"insert":"Hello a "},{"insert":"World","attributes":{"bold":true}}]),
     );
+    doc_a.check_state_diff_calc_consistency_slow();
+    doc_b.check_state_diff_calc_consistency_slow();
 }
 
 /// | Name            | Text                       |
@@ -194,6 +202,8 @@ fn case5() {
         &doc_a,
         json!([{"insert":"Hey","attributes":{"link":true}},{"insert":" World"}]),
     );
+    doc_a.check_state_diff_calc_consistency_slow();
+    doc_b.check_state_diff_calc_consistency_slow();
 }
 
 /// When insert a new character after "Hello", the new char should be bold but not link
@@ -230,6 +240,7 @@ fn case6() {
             {"insert": " World"}
         ]),
     );
+    doc.check_state_diff_calc_consistency_slow();
 }
 
 ///
@@ -256,6 +267,8 @@ fn case7() {
             {"insert":" jumped over the dog."}
         ]),
     );
+    doc_a.check_state_diff_calc_consistency_slow();
+    doc_b.check_state_diff_calc_consistency_slow();
 }
 
 /// | Name            | Text                                         |
@@ -283,6 +296,8 @@ fn case8() {
             {"insert": "."}
         ]),
     );
+    doc_a.check_state_diff_calc_consistency_slow();
+    doc_b.check_state_diff_calc_consistency_slow();
 }
 
 /// | Name            | Text                         |
@@ -307,6 +322,8 @@ fn case9() {
             {"insert": "."}
         ]),
     );
+    doc_a.check_state_diff_calc_consistency_slow();
+    doc_b.check_state_diff_calc_consistency_slow();
 }
 
 #[test]
@@ -331,4 +348,6 @@ fn insert_after_link() {
             {"insert": "a fox jumped."},
         ]),
     );
+    doc_a.check_state_diff_calc_consistency_slow();
+    doc_b.check_state_diff_calc_consistency_slow();
 }

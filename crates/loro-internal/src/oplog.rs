@@ -691,7 +691,6 @@ impl OpLog {
         VersionVector,
         impl Iterator<Item = (&Change, Counter, Rc<RefCell<VersionVector>>)>,
     ) {
-        debug_log::group!("iter_from_lca_causally");
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         let from_frontiers_inner;

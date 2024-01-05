@@ -309,6 +309,7 @@ impl Actionable for Vec<Actor> {
                 action,
             } => {
                 *site %= max_users;
+                self[*site as usize].loro.attach();
                 let text = &self[*site as usize].text_container;
                 let length = text.len_unicode();
                 if matches!(action, RichTextAction::Delete | RichTextAction::Mark(_)) && length == 0
@@ -399,7 +400,7 @@ impl Actionable for Vec<Actor> {
                             &mut txn,
                             *pos,
                             *pos + *len,
-                            &i.to_string(),
+                            STYLES_NAME[*i],
                             if style.is_delete() {
                                 LoroValue::Null
                             } else {
@@ -460,6 +461,8 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
 }
 
 fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
+    a_actor.loro.check_state_diff_calc_consistency_slow();
+    b_actor.loro.check_state_diff_calc_consistency_slow();
     let a_result = a_actor.text_container.get_richtext_value();
     let b_result = b_actor.text_container.get_richtext_value();
     let a_value = a_actor.text_tracker.get_text("text").get_richtext_value();
@@ -551,6 +554,7 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         sites.preprocess(action);
         applied.push(action.clone());
         debug_log::debug_log!("\n{}", (&applied).table());
+        debug_log::group!("ApplyingAction={:?}", &action);
         sites.apply_action(action);
     }
 
@@ -773,6 +777,165 @@ mod failed_tests {
                     action: RichTextAction::Delete,
                 },
                 SyncAll,
+            ],
+        )
+    }
+
+    #[test]
+    fn checkout2() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 37,
+                    pos: 144115188075855653,
+                    value: 88888888888888,
+                    action: RichTextAction::Insert,
+                },
+                SyncAll,
+                RichText {
+                    site: 37,
+                    pos: 18385141895277128741,
+                    value: 18422257949758979904,
+                    action: RichTextAction::Mark(18446528569430507519),
+                },
+                RichText {
+                    site: 37,
+                    pos: 2676586395015587109,
+                    value: 7777777777777777777,
+                    action: RichTextAction::Insert,
+                },
+                Checkout {
+                    site: 84,
+                    to: 1414812756,
+                },
+                SyncAll,
+                RichText {
+                    site: 0,
+                    pos: 18446462598732840960,
+                    value: 6666666666666666666,
+                    action: RichTextAction::Insert,
+                },
+                Checkout {
+                    site: 126,
+                    to: 2567001172,
+                },
+                Checkout {
+                    site: 84,
+                    to: 1414812756,
+                },
+                SyncAll,
+            ],
+        )
+    }
+
+    #[test]
+    fn checkout_3() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 0,
+                    pos: 5908722711110090752,
+                    value: 5931894172722287186,
+                    action: RichTextAction::Insert,
+                },
+                Checkout {
+                    site: 82,
+                    to: 1381126738,
+                },
+                RichText {
+                    site: 212,
+                    pos: 15336116641665330132,
+                    value: 15335883693215765716,
+                    action: RichTextAction::Mark(2966521040065582292),
+                },
+                SyncAll,
+                RichText {
+                    site: 253,
+                    pos: 15276210850130558976,
+                    value: 4174656672104448,
+                    action: RichTextAction::Mark(3170534137649176832),
+                },
+                RichText {
+                    site: 0,
+                    pos: 15283557786841306112,
+                    value: 8366027960336307412,
+                    action: RichTextAction::Delete,
+                },
+                RichText {
+                    site: 26,
+                    pos: 7696582235254,
+                    value: 0,
+                    action: RichTextAction::Insert,
+                },
+                Checkout {
+                    site: 212,
+                    to: 54387,
+                },
+                RichText {
+                    site: 0,
+                    pos: 15335884830126637056,
+                    value: 14395694394764215508,
+                    action: RichTextAction::Mark(1880844493352075264),
+                },
+                Checkout {
+                    site: 43,
+                    to: 23357908,
+                },
+                RichText {
+                    site: 0,
+                    pos: 8391361093162777600,
+                    value: 1874573671255012468,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 26,
+                    pos: 1933217919218752026,
+                    value: 2314885532965937270,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 33,
+                    pos: 4407665038823784148,
+                    value: 15336116638101536777,
+                    action: RichTextAction::Mark(8391360705119704276),
+                },
+                RichText {
+                    site: 26,
+                    pos: 14106654022170,
+                    value: 7,
+                    action: RichTextAction::Insert,
+                },
+                SyncAll,
+                RichText {
+                    site: 0,
+                    pos: 0,
+                    value: 14339677631930434048,
+                    action: RichTextAction::Mark(3556784640),
+                },
+                RichText {
+                    site: 26,
+                    pos: 100321451692029044,
+                    value: 16888498602639360,
+                    action: RichTextAction::Delete,
+                },
+                Checkout {
+                    site: 116,
+                    to: 436458194,
+                },
+                RichText {
+                    site: 0,
+                    pos: 8391360705107466752,
+                    value: 11538257936951552884,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 32,
+                    pos: 100663310,
+                    value: 302447620784142,
+                    action: RichTextAction::Insert,
+                },
             ],
         )
     }
