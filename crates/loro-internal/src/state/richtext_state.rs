@@ -171,8 +171,6 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
-        debug_log::group!("apply_diff_and_convert");
-        debug_log::debug_dbg!(&richtext);
         // PERF: compose delta
         let mut ans: Delta<StringSlice, StyleMeta> = Delta::new();
         let mut style_delta: Delta<StringSlice, StyleMeta> = Delta::new();
@@ -257,7 +255,6 @@ impl ContainerState for RichtextState {
                                 let delta: Delta<StringSlice, _> = Delta::new()
                                     .retain(start_event_index)
                                     .retain_with_meta(new_event_index - start_event_index, meta);
-                                debug_log::debug_dbg!(&delta);
                                 style_delta = style_delta.compose(delta);
                             }
                         }
@@ -282,11 +279,9 @@ impl ContainerState for RichtextState {
             }
         }
 
+        // self.check_consistency_between_content_and_style_ranges();
         debug_assert!(style_starts.is_empty(), "Styles should always be paired");
-        debug_log::debug_dbg!(&ans, &style_delta);
         let ans = ans.compose(style_delta);
-        debug_log::debug_dbg!(&ans);
-        debug_log::group_end!();
         Diff::Text(ans)
     }
 
@@ -356,6 +351,8 @@ impl ContainerState for RichtextState {
                 }
             }
         }
+
+        // self.check_consistency_between_content_and_style_ranges()
     }
 
     fn apply_op(&mut self, r_op: &RawOp, op: &Op, _arena: &SharedArena) -> LoroResult<()> {
@@ -432,6 +429,8 @@ impl ContainerState for RichtextState {
             },
             _ => unreachable!(),
         }
+
+        // self.check_consistency_between_content_and_style_ranges();
         Ok(())
     }
 
@@ -547,6 +546,7 @@ impl ContainerState for RichtextState {
         }
 
         *self.state = LazyLoad::Src(loader);
+        // self.check_consistency_between_content_and_style_ranges();
     }
 }
 
@@ -608,6 +608,16 @@ impl RichtextState {
             LazyLoad::Src(s) => s.entity_index,
             LazyLoad::Dst(d) => d.len_entity(),
         }
+    }
+
+    /// Check if the content and style ranges are consistent.
+    ///
+    /// Panic if inconsistent.
+    #[allow(unused)]
+    pub(crate) fn check_consistency_between_content_and_style_ranges(&mut self) {
+        self.state
+            .get_mut()
+            .check_consistency_between_content_and_style_ranges();
     }
 
     #[inline]

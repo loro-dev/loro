@@ -1,5 +1,5 @@
 use append_only_bytes::BytesSlice;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor,
@@ -31,7 +31,7 @@ use self::{
 
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
-    style_range_map::{StyleRangeMap, Styles},
+    style_range_map::{IterAnchorItem, StyleRangeMap, Styles},
     AnchorType, RichtextSpan, StyleOp,
 };
 
@@ -1601,44 +1601,88 @@ impl RichtextState {
             len,
             &self.len_entity(),
         );
+
         // PERF: may use cache to speed up
         self.cursor_cache.invalidate();
-        // FIXME: need to check whether style is removed when its anchors are removed
-        self.style_ranges.delete(pos..pos + len);
         let range = pos..pos + len;
         let (start, start_f) = self
             .tree
             .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&range.start);
         let start_cursor = start.unwrap().cursor();
         let elem = self.tree.get_elem(start_cursor.leaf).unwrap();
+
+        /// This struct remove the corresponding style ranges if the start style anchor is removed
+        struct StyleRangeUpdater<'a> {
+            style_ranges: &'a mut StyleRangeMap,
+            current_index: usize,
+        }
+
+        impl<'a> StyleRangeUpdater<'a> {
+            fn update(&mut self, elem: &RichtextStateChunk) {
+                match &elem {
+                    RichtextStateChunk::Text(t) => {
+                        self.current_index += t.unicode_len() as usize;
+                    }
+                    RichtextStateChunk::Style { style, anchor_type } => {
+                        if matches!(anchor_type, AnchorType::Start) {
+                            self.style_ranges.remove_style(style, self.current_index);
+                        }
+
+                        self.current_index += 1;
+                    }
+                }
+            }
+
+            fn new(style_ranges: &'a mut StyleRangeMap, start_index: usize) -> Self {
+                Self {
+                    style_ranges,
+                    current_index: start_index,
+                }
+            }
+        }
+
         if elem.rle_len() >= start_cursor.offset + len {
             // drop in place
             let mut event_len = 0;
-            self.tree.update_leaf(start_cursor.leaf, |elem| match elem {
-                RichtextStateChunk::Text(text) => {
-                    let (next, event_len_) = text.delete_by_entity_index(start_cursor.offset, len);
-                    event_len = event_len_;
-                    (true, next.map(RichtextStateChunk::Text), None)
-                }
-                RichtextStateChunk::Style { .. } => {
-                    *elem = RichtextStateChunk::Text(TextChunk::new_empty());
-                    (true, None, None)
+            let mut updater = StyleRangeUpdater::new(&mut self.style_ranges, pos);
+            self.tree.update_leaf(start_cursor.leaf, |elem| {
+                updater.update(&*elem);
+                match elem {
+                    RichtextStateChunk::Text(text) => {
+                        let (next, event_len_) =
+                            text.delete_by_entity_index(start_cursor.offset, len);
+                        event_len = event_len_;
+                        (true, next.map(RichtextStateChunk::Text), None)
+                    }
+                    RichtextStateChunk::Style { .. } => {
+                        *elem = RichtextStateChunk::Text(TextChunk::new_empty());
+                        (true, None, None)
+                    }
                 }
             });
-            return (start_f.event_index, start_f.event_index + event_len);
+
+            self.style_ranges.delete(pos..pos + len);
+            (start_f.event_index, start_f.event_index + event_len)
+        } else {
+            let (end, end_f) = self
+                .tree
+                .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&range.end);
+            let mut updater = StyleRangeUpdater::new(&mut self.style_ranges, pos);
+            for iter in generic_btree::iter::Drain::new(&mut self.tree, start, end) {
+                updater.update(&iter);
+                f(iter)
+            }
+
+            self.style_ranges.delete(pos..pos + len);
+            (start_f.event_index, end_f.event_index)
         }
-        let (end, end_f) = self
-            .tree
-            .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&range.end);
-        for iter in generic_btree::iter::Drain::new(&mut self.tree, start, end) {
-            f(iter)
-        }
-        (start_f.event_index, end_f.event_index)
     }
 
     #[allow(unused)]
     pub(crate) fn check(&self) {
         self.tree.check();
+        self.check_consistency_between_content_and_style_ranges();
+        self.check_style_anchors_appear_in_pairs();
     }
 
     pub(crate) fn mark_with_entity_index(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
@@ -1704,6 +1748,7 @@ impl RichtextState {
     }
 
     pub fn get_richtext_value(&self) -> LoroValue {
+        self.check_consistency_between_content_and_style_ranges();
         let mut ans: Vec<LoroValue> = Vec::new();
         let mut last_attributes: Option<LoroValue> = None;
         for span in self.iter() {
@@ -1782,6 +1827,86 @@ impl RichtextState {
             self.tree.node_len(),
             self.style_ranges.tree.node_len(),
             self.tree.root_cache().bytes
+        );
+    }
+
+    /// Check if the content and style ranges are consistent.
+    ///
+    /// Panic if inconsistent.
+    pub(crate) fn check_consistency_between_content_and_style_ranges(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        debug_log::debug_dbg!(&self);
+        let mut entity_index_to_style_anchor: FxHashMap<usize, &RichtextStateChunk> =
+            FxHashMap::default();
+        let mut index = 0;
+        for c in self.iter_chunk() {
+            if matches!(c, RichtextStateChunk::Style { .. }) {
+                entity_index_to_style_anchor.insert(index, c);
+            }
+
+            index += c.length()
+        }
+
+        for IterAnchorItem {
+            index,
+            op,
+            anchor_type: iter_anchor_type,
+        } in self.style_ranges.iter_anchors()
+        {
+            let c = entity_index_to_style_anchor
+                .remove(&index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Inconsistency found {} {:?} {:?}",
+                        index, iter_anchor_type, &op
+                    );
+                });
+
+            match c {
+                RichtextStateChunk::Text(_) => {
+                    unreachable!()
+                }
+                RichtextStateChunk::Style { style, anchor_type } => {
+                    assert_eq!(style, &op);
+                    assert_eq!(&iter_anchor_type, anchor_type);
+                }
+            }
+        }
+
+        assert!(
+            entity_index_to_style_anchor.is_empty(),
+            "Inconsistency found. Some anchors are not reflected in style ranges {:#?}",
+            &entity_index_to_style_anchor
+        );
+    }
+
+    /// Allow StyleAnchors to appear in pairs, so that there won't be unmatched single StyleAnchors.
+    pub(crate) fn check_style_anchors_appear_in_pairs(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        let mut start_ops: FxHashSet<&Arc<StyleOp>> = Default::default();
+        for item in self.iter_chunk() {
+            match item {
+                RichtextStateChunk::Text(_) => {}
+                RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
+                    AnchorType::Start => {
+                        start_ops.insert(style);
+                    }
+                    AnchorType::End => {
+                        assert!(start_ops.remove(style), "End anchor without start anchor");
+                    }
+                },
+            }
+        }
+        assert!(
+            start_ops.is_empty(),
+            "Only has start anchors {:#?}",
+            &start_ops
         );
     }
 }
@@ -2228,6 +2353,36 @@ mod test {
             wrapper.state.get_richtext_value().to_json_value(),
             json!([{
                 "insert": " World!"
+            }])
+        );
+    }
+
+    #[test]
+    fn remove_start_anchor_should_remove_style() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello World!");
+        wrapper.mark(0..5, bold(0));
+        wrapper.state.drain_by_entity_index(6, 1, |_| {});
+        wrapper.state.drain_by_entity_index(0, 1, |_| {});
+        assert_eq!(
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([{
+                "insert": "Hello World!"
+            }])
+        );
+    }
+
+    #[test]
+    fn remove_start_anchor_in_the_middle_should_remove_style() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello World!");
+        wrapper.mark(2..5, bold(0));
+        wrapper.state.drain_by_entity_index(6, 1, |_| {});
+        wrapper.state.drain_by_entity_index(1, 2, |_| {});
+        assert_eq!(
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([{
+                "insert": "Hllo World!"
             }])
         );
     }
