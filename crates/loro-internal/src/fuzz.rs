@@ -345,20 +345,16 @@ fn check_synced(sites: &mut [LoroDoc], _: &[Arc<Mutex<Delta<StringSlice, StyleMe
                 if (i + j) % 2 == 1 {
                     debug_log::group!("Import {}'s Snapshot to {}", j, i);
                     a.import(&b.export_snapshot()).unwrap();
-                    debug_log::group_end!();
                 } else {
                     debug_log::group!("Import {} to {}", j, i);
                     a.import(&b.export_from(&a.oplog_vv())).unwrap();
-                    debug_log::group_end!();
                 }
             }
             {
                 debug_log::group!("Import {} to {}", i, j);
                 b.import(&a.export_from(&b.oplog_vv())).unwrap();
-                debug_log::group_end!();
             }
             check_eq(a, b);
-            debug_log::group_end!();
 
             // for (x, (site, text)) in sites.iter().zip(texts.iter()).enumerate() {
             //     if x != i && x != j {
@@ -376,7 +372,7 @@ fn check_synced(sites: &mut [LoroDoc], _: &[Arc<Mutex<Delta<StringSlice, StyleMe
             //         "site:{}\nEXPECTED {:#?}\nACTUAL {:#?}",
             //         x, diff, text
             //     );
-            //     debug_log::group_end!();
+            //
             // }
         }
     }
@@ -546,7 +542,6 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         debug_log!("\n{}", (&applied).table());
         debug_log::group!("ApplyAction {:?}", &action);
         sites.apply_action(action);
-        debug_log::group_end!();
 
         // for (i, (site, text)) in sites.iter().zip(texts.iter()).enumerate() {
         //     debug_log::group!("Check {}", i);
@@ -560,14 +555,14 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         //         "site:{}\nEXPECTED{:#?}\nACTUAL{:#?}",
         //         i, diff, text
         //     );
-        //     debug_log::group_end!();
+        //
         // }
     }
 
     debug_log::group!("CheckSynced");
     // println!("{}", actions.table());
     check_synced(&mut sites, &texts);
-    debug_log::group_end!();
+
     debug_log::group!("CheckTextEvent");
     for (i, (site, text)) in sites.iter().zip(texts.iter()).enumerate() {
         debug_log::group!("Check {}", i);
@@ -583,10 +578,7 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
             "site:{}\nEXPECTED{:#?}\nACTUAL{:#?}",
             i, diff, text
         );
-        debug_log::group_end!();
     }
-
-    debug_log::group_end!();
 }
 
 pub fn compact(delta: &mut Delta<StringSlice, StyleMeta>) {

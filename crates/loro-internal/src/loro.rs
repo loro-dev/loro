@@ -386,7 +386,6 @@ impl LoroDoc {
                     |oplog| oplog.decode(parsed),
                     origin,
                 )?;
-                debug_log::group_end!();
             }
             true => {
                 if self.can_reset_with_snapshot() {
@@ -406,7 +405,7 @@ impl LoroDoc {
                     // TODO: PERF: the ser and de can be optimized out
                     let updates = app.export_from(oplog.vv());
                     drop(oplog);
-                    debug_log::group_end!();
+
                     return self.import_with(&updates, origin);
                 }
             }

@@ -9,7 +9,6 @@ use loro_internal::{
 };
 use serde_json::json;
 
-
 #[test]
 fn issue_225() -> LoroResult<()> {
     let doc = LoroDoc::new_auto_commit();
@@ -681,7 +680,7 @@ fn a_list_of_map_checkout() {
     assert_eq!(doc.get_deep_value().to_json(), d2);
     debug_log::group!("checking out v1");
     doc.checkout(&v1).unwrap();
-    debug_log::group_end!();
+
     println!("{}", doc.get_deep_value_with_id().to_json_pretty());
     assert_eq!(doc.get_deep_value().to_json(), d1);
     doc.checkout(&v0).unwrap();

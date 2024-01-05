@@ -215,7 +215,7 @@ impl CrdtRope {
         }
 
         // debug_log::debug_log!("Inserting at {:?}", insert_pos);
-        // debug_log::group_end!();
+        //
         let (cursor, splitted) = self.tree.insert_by_path(insert_pos, content);
         InsertResult {
             content,

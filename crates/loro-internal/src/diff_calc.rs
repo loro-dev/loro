@@ -306,8 +306,6 @@ impl DiffCalculator {
             }
         }
 
-        debug_log::group_end!();
-        // debug_log::debug_dbg!(&ans);
         ans.into_values()
             .sorted_by_key(|x| x.0)
             .map(|x| x.1)

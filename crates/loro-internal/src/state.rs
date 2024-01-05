@@ -829,7 +829,6 @@ impl DocState {
             if let Some(parent_idx) = self.arena.get_parent(idx) {
                 let parent_state = self.states.get(&parent_idx).unwrap();
                 let Some(prop) = parent_state.get_child_index(&id) else {
-                    debug_log::group_end!();
                     return None;
                 };
                 ans.push((id, prop));
@@ -843,7 +842,7 @@ impl DocState {
         }
 
         ans.reverse();
-        debug_log::group_end!();
+
         Some(ans)
     }
 
