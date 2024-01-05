@@ -43,7 +43,7 @@ impl RichtextState {
         Self {
             id,
             idx,
-            state: Box::new(LazyLoad::new_dst(Default::default())),
+            state: Box::new(LazyLoad::Src(Default::default())),
         }
     }
 

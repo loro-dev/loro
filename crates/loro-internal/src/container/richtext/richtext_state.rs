@@ -41,7 +41,7 @@ pub(crate) use query::PosType;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RichtextState {
     tree: BTree<RichtextTreeTrait>,
-    style_ranges: Option<StyleRangeMap>,
+    style_ranges: Option<Box<StyleRangeMap>>,
     cursor_cache: CursorCache,
 }
 
@@ -836,7 +836,7 @@ mod query {
                     }
 
                     // Allow left to not at the correct utf16 boundary. If so fallback to the last position.
-                    // TODO: if we remove the use of query(pos-1), we won't need this fallback behaviro
+                    // TODO: if we remove the use of query(pos-1), we won't need this fallback behavior
                     let offset = utf16_to_unicode_index(s.as_str(), left).unwrap_or_else(|e| e);
                     (offset, true)
                 }
@@ -1374,7 +1374,7 @@ impl RichtextState {
     /// init style ranges if not initialized
     fn ensure_style_ranges_mut(&mut self) -> &mut StyleRangeMap {
         if self.style_ranges.is_none() {
-            self.style_ranges = Some(StyleRangeMap::default());
+            self.style_ranges = Some(Box::default());
         }
 
         self.style_ranges.as_mut().unwrap()
@@ -1429,7 +1429,7 @@ impl RichtextState {
                 (left, right, entity_index)
             }
         } else {
-            // The query perfers right when there are empty elements (style anchors)
+            // The query prefers right when there are empty elements (style anchors)
             // So the nodes between (pos-1) and pos are all style anchors.
             let (q, f) = self.tree.query_with_finder_return::<Query<Q>>(&(pos - 1));
             let q = q.unwrap();
@@ -1656,9 +1656,9 @@ impl RichtextState {
                     }
                     RichtextStateChunk::Style { style, anchor_type } => {
                         if matches!(anchor_type, AnchorType::Start) {
-                            self.style_ranges
-                                .as_mut()
-                                .map(|x| x.remove_style(style, self.current_index));
+                            if let Some(s) = self.style_ranges.as_mut() {
+                                s.remove_style(style, self.current_index);
+                            }
                         }
 
                         self.current_index += 1;
@@ -1666,9 +1666,9 @@ impl RichtextState {
                 }
             }
 
-            fn new(style_ranges: Option<&'a mut StyleRangeMap>, start_index: usize) -> Self {
+            fn new(style_ranges: Option<&'a mut Box<StyleRangeMap>>, start_index: usize) -> Self {
                 Self {
-                    style_ranges,
+                    style_ranges: style_ranges.map(|x| &mut **x),
                     current_index: start_index,
                 }
             }
@@ -1694,7 +1694,9 @@ impl RichtextState {
                 }
             });
 
-            self.style_ranges.as_mut().map(|x| x.delete(pos..pos + len));
+            if let Some(s) = self.style_ranges.as_mut() {
+                s.delete(pos..pos + len);
+            }
             (start_f.event_index, start_f.event_index + event_len)
         } else {
             let (end, end_f) = self
@@ -1706,7 +1708,9 @@ impl RichtextState {
                 f(iter)
             }
 
-            self.style_ranges.as_mut().map(|x| x.delete(pos..pos + len));
+            if let Some(s) = self.style_ranges.as_mut() {
+                s.delete(pos..pos + len);
+            }
             (start_f.event_index, end_f.event_index)
         }
     }
