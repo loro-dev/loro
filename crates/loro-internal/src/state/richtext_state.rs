@@ -4,7 +4,7 @@ use std::{
 };
 
 use fxhash::FxHashMap;
-use generic_btree::rle::{HasLength, Mergeable};
+use generic_btree::rle::HasLength;
 use loro_common::{ContainerID, LoroResult, LoroValue, ID};
 
 use crate::{
@@ -19,7 +19,7 @@ use crate::{
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
     delta::{Delta, DeltaItem, StyleMeta},
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
-    event::{Diff, InternalDiff},
+    event::{Diff, Index, InternalDiff},
     op::{Op, RawOp},
     txn::Transaction,
     utils::{
@@ -35,8 +35,6 @@ pub struct RichtextState {
     id: ContainerID,
     idx: ContainerIdx,
     pub(crate) state: Box<LazyLoad<RichtextStateLoader, InnerState>>,
-    in_txn: bool,
-    undo_stack: Vec<UndoItem>,
 }
 
 impl RichtextState {
@@ -46,8 +44,6 @@ impl RichtextState {
             id,
             idx,
             state: Box::new(LazyLoad::new_dst(Default::default())),
-            in_txn: false,
-            undo_stack: Default::default(),
         }
     }
 
@@ -82,64 +78,7 @@ impl Clone for RichtextState {
             id: self.id.clone(),
             idx: self.idx,
             state: self.state.clone(),
-            in_txn: false,
-            undo_stack: Vec::new(),
         }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-enum UndoItem {
-    Insert {
-        index: u32,
-        len: u32,
-    },
-    Delete {
-        index: u32,
-        content: RichtextStateChunk,
-    },
-}
-
-impl Mergeable for UndoItem {
-    fn can_merge(&self, rhs: &Self) -> bool {
-        match (self, rhs) {
-            (UndoItem::Insert { index, len }, UndoItem::Insert { index: r_index, .. }) => {
-                *index + *len == *r_index
-            }
-            (
-                UndoItem::Delete { index, content },
-                UndoItem::Delete {
-                    index: r_i,
-                    content: r_c,
-                },
-            ) => *r_i + r_c.rle_len() as u32 == *index && r_c.can_merge(content),
-            _ => false,
-        }
-    }
-
-    fn merge_right(&mut self, rhs: &Self) {
-        match (self, rhs) {
-            (UndoItem::Insert { len, .. }, UndoItem::Insert { len: r_len, .. }) => {
-                *len += *r_len;
-            }
-            (
-                UndoItem::Delete { content, index },
-                UndoItem::Delete {
-                    content: r_c,
-                    index: r_i,
-                },
-            ) => {
-                // when self is delete, the rhs is the one that has the bigger index
-                if *index + content.rle_len() as u32 == *r_i {
-                    content.merge_right(r_c);
-                }
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    fn merge_left(&mut self, _: &Self) {
-        unreachable!()
     }
 }
 
@@ -150,6 +89,13 @@ impl ContainerState for RichtextState {
 
     fn container_id(&self) -> &ContainerID {
         &self.id
+    }
+
+    fn estimate_size(&self) -> usize {
+        match &*self.state {
+            LazyLoad::Src(s) => s.elements.len() * std::mem::size_of::<RichtextStateChunk>(),
+            LazyLoad::Dst(s) => s.estimate_size(),
+        }
     }
 
     fn is_state_empty(&self) -> bool {
@@ -363,7 +309,7 @@ impl ContainerState for RichtextState {
                 }
                 list_op::InnerListOp::InsertText {
                     slice,
-                    unicode_len: len,
+                    unicode_len: _,
                     unicode_start: _,
                     pos,
                 } => {
@@ -372,38 +318,12 @@ impl ContainerState for RichtextState {
                         slice.clone(),
                         r_op.id,
                     );
-
-                    if self.in_txn {
-                        self.push_undo(UndoItem::Insert {
-                            index: *pos,
-                            len: *len,
-                        })
-                    }
                 }
                 list_op::InnerListOp::Delete(del) => {
                     self.state.get_mut().drain_by_entity_index(
                         del.start() as usize,
                         rle::HasLength::atom_len(&del),
-                        |span| {
-                            if self.in_txn {
-                                let mut item = UndoItem::Delete {
-                                    index: del.start() as u32,
-                                    content: span,
-                                };
-                                match self.undo_stack.last_mut() {
-                                    Some(last) if last.can_merge(&item) => {
-                                        if matches!(last, UndoItem::Delete { .. }) {
-                                            // item has smaller index
-                                            std::mem::swap(last, &mut item);
-                                        }
-                                        last.merge_right(&item);
-                                    }
-                                    _ => {
-                                        self.undo_stack.push(item);
-                                    }
-                                }
-                            }
-                        },
+                        |_| {},
                     );
                 }
                 list_op::InnerListOp::StyleStart {
@@ -451,23 +371,20 @@ impl ContainerState for RichtextState {
         Diff::Text(delta)
     }
 
-    fn start_txn(&mut self) {
-        self.in_txn = true;
-    }
-
-    fn abort_txn(&mut self) {
-        self.in_txn = false;
-        self.undo_all();
-    }
-
-    fn commit_txn(&mut self) {
-        self.in_txn = false;
-        self.undo_stack.clear();
-    }
-
     // value is a list
     fn get_value(&mut self) -> LoroValue {
         LoroValue::String(Arc::new(self.state.get_mut().to_string()))
+    }
+
+    #[doc = r" Get the index of the child container"]
+    #[allow(unused)]
+    fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
+        None
+    }
+
+    #[allow(unused)]
+    fn get_child_containers(&self) -> Vec<ContainerID> {
+        Vec::new()
     }
 
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
@@ -550,47 +467,6 @@ impl ContainerState for RichtextState {
 }
 
 impl RichtextState {
-    fn undo_all(&mut self) {
-        while let Some(item) = self.undo_stack.pop() {
-            match item {
-                UndoItem::Insert { index, len } => {
-                    self.state.get_mut().drain_by_entity_index(
-                        index as usize,
-                        len as usize,
-                        |_| {},
-                    );
-                }
-                UndoItem::Delete { index, content } => {
-                    match content {
-                        RichtextStateChunk::Text { .. } => {}
-                        RichtextStateChunk::Style { .. } => {
-                            unimplemented!("should handle style annotation")
-                        }
-                    }
-
-                    self.state
-                        .get_mut()
-                        .insert_elem_at_entity_index(index as usize, content);
-                }
-            }
-        }
-    }
-
-    fn push_undo(&mut self, mut item: UndoItem) {
-        match self.undo_stack.last_mut() {
-            Some(last) if last.can_merge(&item) => {
-                if matches!(last, UndoItem::Delete { .. }) {
-                    // item has smaller index
-                    std::mem::swap(last, &mut item);
-                }
-                last.merge_right(&item);
-            }
-            _ => {
-                self.undo_stack.push(item);
-            }
-        }
-    }
-
     #[inline(always)]
     pub fn len_utf8(&mut self) -> usize {
         self.state.get_mut().len_utf8()
@@ -718,41 +594,5 @@ impl RichtextStateLoader {
 
     fn is_empty(&self) -> bool {
         self.elements.is_empty()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use append_only_bytes::AppendOnlyBytes;
-    use generic_btree::rle::Mergeable;
-    use loro_common::ID;
-
-    use crate::container::richtext::richtext_state::{RichtextStateChunk, TextChunk};
-
-    use super::UndoItem;
-
-    #[test]
-    fn merge_delete_undo() {
-        let mut bytes = AppendOnlyBytes::new();
-        bytes.push_slice(&[1u8, 2, 3, 4]);
-        let last_bytes = bytes.slice(2..4);
-        let new_bytes = bytes.slice(0..2);
-
-        let mut last = UndoItem::Delete {
-            index: 20,
-            content: RichtextStateChunk::Text(TextChunk::new(last_bytes, ID::new(0, 2))),
-        };
-        let mut new = UndoItem::Delete {
-            index: 18,
-            content: RichtextStateChunk::Text(TextChunk::new(new_bytes, ID::new(0, 0))),
-        };
-        let merged = UndoItem::Delete {
-            index: 18,
-            content: RichtextStateChunk::Text(TextChunk::new(bytes.to_slice(), ID::new(0, 0))),
-        };
-        assert!(last.can_merge(&new));
-        std::mem::swap(&mut last, &mut new);
-        last.merge_right(&new);
-        assert_eq!(last, merged);
     }
 }

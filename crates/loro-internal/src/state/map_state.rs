@@ -27,8 +27,6 @@ pub struct MapState {
     id: ContainerID,
     idx: ContainerIdx,
     map: FxHashMap<InternalString, MapValue>,
-    in_txn: bool,
-    map_when_txn_start: FxHashMap<InternalString, Option<MapValue>>,
 }
 
 impl ContainerState for MapState {
@@ -38,6 +36,10 @@ impl ContainerState for MapState {
 
     fn container_id(&self) -> &ContainerID {
         &self.id
+    }
+
+    fn estimate_size(&self) -> usize {
+        self.map.capacity() * (mem::size_of::<MapValue>() + mem::size_of::<InternalString>())
     }
 
     fn is_state_empty(&self) -> bool {
@@ -61,8 +63,7 @@ impl ContainerState for MapState {
                 arena.set_parent(idx, Some(self.idx));
             }
 
-            let old = self.map.insert(key.clone(), value.clone());
-            self.store_txn_snapshot(key.clone(), old);
+            self.map.insert(key.clone(), value.clone());
             resolved_delta = resolved_delta.with_entry(
                 key,
                 ResolvedMapValue {
@@ -76,6 +77,16 @@ impl ContainerState for MapState {
         }
 
         Diff::Map(resolved_delta)
+    }
+
+    fn apply_diff(
+        &mut self,
+        diff: InternalDiff,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) {
+        self.apply_diff_and_convert(diff, arena, txn, state);
     }
 
     fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) -> LoroResult<()> {
@@ -131,38 +142,22 @@ impl ContainerState for MapState {
         })
     }
 
-    fn start_txn(&mut self) {
-        self.in_txn = true;
-    }
-
-    fn abort_txn(&mut self) {
-        for (key, value) in mem::take(&mut self.map_when_txn_start) {
-            if let Some(value) = value {
-                self.map.insert(key, value);
-            } else {
-                self.map.remove(&key);
-            }
-        }
-
-        self.in_txn = false;
-    }
-
-    fn commit_txn(&mut self) {
-        self.map_when_txn_start.clear();
-        self.in_txn = false;
-    }
-
     fn get_value(&mut self) -> LoroValue {
         let ans = self.to_map();
         LoroValue::Map(Arc::new(ans))
     }
 
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
+        debug_log::group!("Get child index {:?}", id);
         for (key, value) in self.map.iter() {
+            debug_log::group!("Key {} value {:?}", key, value);
             if let Some(LoroValue::Container(x)) = &value.value {
+                debug_log::debug_log!("Cmp {:?} with {:?}", &x, &id);
                 if x == id {
+                    debug_log::debug_log!("Same");
                     return Some(Index::Key(key.clone()));
                 }
+                debug_log::debug_log!("Diff");
             }
         }
 
@@ -221,22 +216,11 @@ impl MapState {
             id,
             idx,
             map: FxHashMap::default(),
-            in_txn: false,
-            map_when_txn_start: FxHashMap::default(),
-        }
-    }
-
-    fn store_txn_snapshot(&mut self, key: InternalString, old: Option<MapValue>) {
-        if self.in_txn && !self.map_when_txn_start.contains_key(&key) {
-            self.map_when_txn_start.insert(key, old);
         }
     }
 
     pub fn insert(&mut self, key: InternalString, value: MapValue) {
-        let old = self.map.insert(key.clone(), value);
-        if self.in_txn {
-            self.store_txn_snapshot(key, old);
-        }
+        self.map.insert(key.clone(), value);
     }
 
     pub fn iter(&self) -> std::collections::hash_map::Iter<'_, InternalString, MapValue> {

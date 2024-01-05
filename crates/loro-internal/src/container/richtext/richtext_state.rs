@@ -1909,6 +1909,12 @@ impl RichtextState {
             &start_ops
         );
     }
+
+    pub(crate) fn estimate_size(&self) -> usize {
+        // TODO: this is inaccurate
+        self.tree.node_len() * std::mem::size_of::<RichtextStateChunk>()
+            + self.style_ranges.estimate_size()
+    }
 }
 
 #[cfg(test)]

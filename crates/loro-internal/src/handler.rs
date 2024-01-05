@@ -1363,23 +1363,6 @@ mod test {
     use super::TextDelta;
 
     #[test]
-    fn test() {
-        let loro = LoroDoc::new();
-        let mut txn = loro.txn().unwrap();
-        let text = txn.get_text("hello");
-        text.insert_with_txn(&mut txn, 0, "hello").unwrap();
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
-        text.insert_with_txn(&mut txn, 2, " kk ").unwrap();
-        assert_eq!(&**text.get_value().as_string().unwrap(), "he kk llo");
-        txn.abort();
-        let mut txn = loro.txn().unwrap();
-        assert_eq!(&**text.get_value().as_string().unwrap(), "");
-        text.insert_with_txn(&mut txn, 0, "hi").unwrap();
-        txn.commit().unwrap();
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hi");
-    }
-
-    #[test]
     fn import() {
         let loro = LoroDoc::new();
         loro.set_peer_id(1).unwrap();

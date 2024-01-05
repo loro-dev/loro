@@ -58,6 +58,7 @@ pub struct DocState {
 pub(crate) trait ContainerState: Clone {
     fn container_idx(&self) -> ContainerIdx;
     fn container_id(&self) -> &ContainerID;
+    fn estimate_size(&self) -> usize;
 
     fn is_state_empty(&self) -> bool;
 
@@ -75,9 +76,7 @@ pub(crate) trait ContainerState: Clone {
         arena: &SharedArena,
         txn: &Weak<Mutex<Option<Transaction>>>,
         state: &Weak<Mutex<DocState>>,
-    ) {
-        self.apply_diff_and_convert(diff, arena, txn, state);
-    }
+    );
 
     fn apply_op(&mut self, raw_op: &RawOp, op: &Op, arena: &SharedArena) -> LoroResult<()>;
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
@@ -88,27 +87,14 @@ pub(crate) trait ContainerState: Clone {
         state: &Weak<Mutex<DocState>>,
     ) -> Diff;
 
-    /// Start a transaction
-    ///
-    /// The transaction may be aborted later, then all the ops during this transaction need to be undone.
-    fn start_txn(&mut self);
-    fn abort_txn(&mut self);
-    /// Commit the transaction and return the diff of the transaction.
-    /// If `record_diff` in [Self::start_txn] is false, return None.
-    fn commit_txn(&mut self);
-
     fn get_value(&mut self) -> LoroValue;
 
     /// Get the index of the child container
     #[allow(unused)]
-    fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
-        None
-    }
+    fn get_child_index(&self, id: &ContainerID) -> Option<Index>;
 
     #[allow(unused)]
-    fn get_child_containers(&self) -> Vec<ContainerID> {
-        Vec::new()
-    }
+    fn get_child_containers(&self) -> Vec<ContainerID>;
 
     /// Encode the ops and the blob that can be used to restore the state to the current state.
     ///
@@ -121,27 +107,113 @@ pub(crate) trait ContainerState: Clone {
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext);
 }
 
+impl<T: ContainerState> ContainerState for Box<T> {
+    fn container_idx(&self) -> ContainerIdx {
+        self.as_ref().container_idx()
+    }
+
+    fn container_id(&self) -> &ContainerID {
+        self.as_ref().container_id()
+    }
+
+    fn estimate_size(&self) -> usize {
+        self.as_ref().estimate_size()
+    }
+
+    fn is_state_empty(&self) -> bool {
+        self.as_ref().is_state_empty()
+    }
+
+    fn apply_diff_and_convert(
+        &mut self,
+        diff: InternalDiff,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Diff {
+        self.as_mut()
+            .apply_diff_and_convert(diff, arena, txn, state)
+    }
+
+    fn apply_diff(
+        &mut self,
+        diff: InternalDiff,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) {
+        self.as_mut().apply_diff(diff, arena, txn, state)
+    }
+
+    fn apply_op(&mut self, raw_op: &RawOp, op: &Op, arena: &SharedArena) -> LoroResult<()> {
+        self.as_mut().apply_op(raw_op, op, arena)
+    }
+
+    #[doc = r" Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied."]
+    fn to_diff(
+        &mut self,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) -> Diff {
+        self.as_mut().to_diff(arena, txn, state)
+    }
+
+    fn get_value(&mut self) -> LoroValue {
+        self.as_mut().get_value()
+    }
+
+    #[doc = r" Get the index of the child container"]
+    #[allow(unused)]
+    fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
+        self.as_ref().get_child_index(id)
+    }
+
+    #[allow(unused)]
+    fn get_child_containers(&self) -> Vec<ContainerID> {
+        self.as_ref().get_child_containers()
+    }
+
+    #[doc = r" Encode the ops and the blob that can be used to restore the state to the current state."]
+    #[doc = r""]
+    #[doc = r" State will use the provided encoder to encode the ops and export a blob."]
+    #[doc = r" The ops should be encoded into the snapshot as well as the blob."]
+    #[doc = r" The users then can use the ops and the blob to restore the state to the current state."]
+    fn encode_snapshot(&self, encoder: StateSnapshotEncoder) -> Vec<u8> {
+        self.as_ref().encode_snapshot(encoder)
+    }
+
+    #[doc = r" Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+        self.as_mut().import_from_snapshot_ops(ctx)
+    }
+}
+
 #[allow(clippy::enum_variant_names)]
 #[enum_dispatch(ContainerState)]
 #[derive(EnumAsInner, Clone, Debug)]
 pub enum State {
-    ListState,
-    MapState,
-    RichtextState,
-    TreeState,
+    ListState(Box<ListState>),
+    MapState(Box<MapState>),
+    RichtextState(Box<RichtextState>),
+    TreeState(Box<TreeState>),
 }
 
 impl State {
     pub fn new_list(id: ContainerID, idx: ContainerIdx) -> Self {
-        Self::ListState(ListState::new(id, idx))
+        Self::ListState(Box::new(ListState::new(id, idx)))
     }
 
     pub fn new_map(id: ContainerID, idx: ContainerIdx) -> Self {
-        Self::MapState(MapState::new(id, idx))
+        Self::MapState(Box::new(MapState::new(id, idx)))
     }
 
     pub fn new_richtext(id: ContainerID, idx: ContainerIdx) -> Self {
-        Self::RichtextState(RichtextState::new(id, idx))
+        Self::RichtextState(Box::new(RichtextState::new(id, idx)))
+    }
+
+    pub fn new_tree(id: ContainerID, idx: ContainerIdx) -> Self {
+        Self::TreeState(Box::new(TreeState::new(id, idx)))
     }
 }
 
@@ -350,7 +422,6 @@ impl DocState {
             });
 
             if self.in_txn {
-                state.start_txn();
                 self.changed_idx_in_txn.insert(idx);
             }
             if is_recording {
@@ -402,7 +473,6 @@ impl DocState {
         });
 
         if self.in_txn {
-            state.start_txn();
             self.changed_idx_in_txn.insert(op.container);
         }
 
@@ -413,6 +483,10 @@ impl DocState {
     pub(crate) fn start_txn(&mut self, origin: InternalString, local: bool) {
         self.pre_txn(origin, local);
         self.in_txn = true;
+    }
+
+    pub(crate) fn abort_txn(&mut self) {
+        self.in_txn = false;
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &State> {
@@ -436,20 +510,7 @@ impl DocState {
         state.import_from_snapshot_ops(decode_ctx);
     }
 
-    #[inline]
-    pub(crate) fn abort_txn(&mut self) {
-        for container_idx in std::mem::take(&mut self.changed_idx_in_txn) {
-            self.states.get_mut(&container_idx).unwrap().abort_txn();
-        }
-
-        self.in_txn = false;
-    }
-
     pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<InternalDocDiff>) {
-        for container_idx in std::mem::take(&mut self.changed_idx_in_txn) {
-            self.states.get_mut(&container_idx).unwrap().commit_txn();
-        }
-
         self.in_txn = false;
         self.frontiers = new_frontiers;
         if self.is_recording() {
@@ -551,6 +612,7 @@ impl DocState {
             .entry(idx)
             .or_insert_with(|| State::new_richtext(cid, idx))
             .as_richtext_state_mut()
+            .map(|x| &mut **x)
     }
 
     #[inline(always)]
@@ -828,13 +890,16 @@ impl DocState {
             debug_log::debug_dbg!(&id);
             if let Some(parent_idx) = self.arena.get_parent(idx) {
                 let parent_state = self.states.get(&parent_idx).unwrap();
+                debug_log::debug_dbg!(&parent_state);
                 let Some(prop) = parent_state.get_child_index(&id) else {
+                    debug_log::debug_log!("Missing in parent children");
                     return None;
                 };
                 ans.push((id, prop));
                 idx = parent_idx;
             } else {
                 // this container may be deleted
+                debug_log::debug_log!("Deleted or root");
                 let prop = id.as_root()?.0.clone();
                 ans.push((id, Index::Key(prop)));
                 break;
@@ -913,6 +978,20 @@ impl DocState {
         if !other_id_to_states.is_empty() {
             panic!("other has more states {:#?}", &other_id_to_states);
         }
+    }
+
+    pub fn log_estimated_size(&self) {
+        let state_entries_size = self.states.len()
+            * (std::mem::size_of::<State>() + std::mem::size_of::<ContainerIdx>());
+        let mut state_size_sum = 0;
+        for state in self.states.values() {
+            state_size_sum += state.estimate_size();
+        }
+
+        eprintln!(
+            "Estimated state size: \nEntries: {} \nSum: {}",
+            state_entries_size, state_size_sum
+        );
     }
 }
 
@@ -1009,10 +1088,10 @@ impl SubContainerDiffPatch {
 
 pub fn create_state(id: ContainerID, idx: ContainerIdx) -> State {
     match idx.get_type() {
-        ContainerType::Map => State::MapState(MapState::new(id, idx)),
-        ContainerType::List => State::ListState(ListState::new(id, idx)),
-        ContainerType::Text => State::RichtextState(RichtextState::new(id, idx)),
-        ContainerType::Tree => State::TreeState(TreeState::new(id, idx)),
+        ContainerType::Map => State::MapState(Box::new(MapState::new(id, idx))),
+        ContainerType::List => State::ListState(Box::new(ListState::new(id, idx))),
+        ContainerType::Text => State::RichtextState(Box::new(RichtextState::new(id, idx))),
+        ContainerType::Tree => State::TreeState(Box::new(TreeState::new(id, idx))),
     }
 }
 
@@ -1031,4 +1110,16 @@ impl EventRecorder {
     pub fn new() -> Self {
         Self::default()
     }
+}
+
+#[test]
+fn test_size() {
+    println!("Size of State = {}", std::mem::size_of::<State>());
+    println!("Size of MapState = {}", std::mem::size_of::<MapState>());
+    println!("Size of ListState = {}", std::mem::size_of::<ListState>());
+    println!(
+        "Size of TextState = {}",
+        std::mem::size_of::<RichtextState>()
+    );
+    println!("Size of TreeState = {}", std::mem::size_of::<TreeState>());
 }

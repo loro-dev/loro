@@ -444,6 +444,7 @@ fn test_checkout() {
     let value: Arc<Mutex<LoroValue>> = Arc::new(Mutex::new(LoroValue::Map(Default::default())));
     let root_value = value.clone();
     doc_0.subscribe_root(Arc::new(move |event| {
+        dbg!(&event);
         let mut root_value = root_value.lock().unwrap();
         root_value.apply(
             &event.container.path.iter().map(|x| x.1.clone()).collect(),

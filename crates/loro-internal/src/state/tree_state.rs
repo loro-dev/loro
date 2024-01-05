@@ -32,8 +32,6 @@ pub struct TreeState {
     idx: ContainerIdx,
     pub(crate) trees: FxHashMap<TreeID, TreeStateNode>,
     pub(crate) deleted: FxHashSet<TreeID>,
-    in_txn: bool,
-    undo_items: Vec<TreeUndoItem>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,13 +59,6 @@ impl PartialOrd for TreeStateNode {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct TreeUndoItem {
-    target: TreeID,
-    old_parent: Option<TreeID>,
-    old_last_move_op: ID,
-}
-
 impl TreeState {
     pub fn new(id: ContainerID, idx: ContainerIdx) -> Self {
         let mut trees = FxHashMap::default();
@@ -92,8 +83,6 @@ impl TreeState {
             idx,
             trees,
             deleted,
-            in_txn: false,
-            undo_items: Vec::new(),
         }
     }
 
@@ -111,13 +100,6 @@ impl TreeState {
                 )
                 .unwrap_or(TreeStateNode::UNEXIST_ROOT);
             self.update_deleted_cache(target, None, old_parent.parent);
-            if self.in_txn {
-                self.undo_items.push(TreeUndoItem {
-                    target,
-                    old_parent: TreeID::unexist_root(),
-                    old_last_move_op: old_parent.last_move_op,
-                })
-            }
             return Ok(());
         };
         if !self.contains(parent) {
@@ -147,15 +129,6 @@ impl TreeState {
             )
             .unwrap_or(TreeStateNode::UNEXIST_ROOT);
         self.update_deleted_cache(target, Some(parent), old_parent.parent);
-
-        if self.in_txn {
-            self.undo_items.push(TreeUndoItem {
-                target,
-                old_parent: old_parent.parent,
-                old_last_move_op: old_parent.last_move_op,
-            })
-        }
-
         Ok(())
     }
 
@@ -244,6 +217,10 @@ impl ContainerState for TreeState {
         &self.id
     }
 
+    fn estimate_size(&self) -> usize {
+        self.trees.len() * (std::mem::size_of::<(TreeID, TreeStateNode)>())
+    }
+
     fn is_state_empty(&self) -> bool {
         self.trees.is_empty()
     }
@@ -298,6 +275,16 @@ impl ContainerState for TreeState {
         Diff::Tree(TreeDiff { diff: ans })
     }
 
+    fn apply_diff(
+        &mut self,
+        diff: InternalDiff,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
+    ) {
+        self.apply_diff_and_convert(diff, arena, txn, state);
+    }
+
     fn apply_op(
         &mut self,
         raw_op: &RawOp,
@@ -342,44 +329,6 @@ impl ContainerState for TreeState {
         }
 
         Diff::Tree(TreeDiff { diff: diffs })
-    }
-
-    fn start_txn(&mut self) {
-        self.in_txn = true;
-    }
-
-    fn abort_txn(&mut self) {
-        self.in_txn = false;
-        while let Some(op) = self.undo_items.pop() {
-            let TreeUndoItem {
-                target,
-                old_parent,
-                old_last_move_op,
-            } = op;
-            if TreeID::is_unexist_root(old_parent) {
-                self.trees.remove(&target);
-            } else {
-                let parent = self
-                    .trees
-                    .insert(
-                        target,
-                        TreeStateNode {
-                            parent: old_parent,
-                            last_move_op: old_last_move_op,
-                        },
-                    )
-                    .unwrap_or(TreeStateNode {
-                        parent: TreeID::unexist_root(),
-                        last_move_op: ID::NONE_ID,
-                    });
-                self.update_deleted_cache(target, old_parent, parent.parent);
-            }
-        }
-    }
-
-    fn commit_txn(&mut self) {
-        self.undo_items.clear();
-        self.in_txn = false;
     }
 
     fn get_value(&mut self) -> LoroValue {
