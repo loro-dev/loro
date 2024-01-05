@@ -75,6 +75,7 @@ impl DiffCalculator {
         after: &crate::VersionVector,
         after_frontiers: Option<&Frontiers>,
     ) -> Vec<InternalContainerDiff> {
+        debug_log::group!("DiffCalc");
         if self.has_all {
             let include_before = self.last_vv.includes_vv(before);
             let include_after = self.last_vv.includes_vv(after);
@@ -304,6 +305,8 @@ impl DiffCalculator {
                 );
             }
         }
+
+        debug_log::group_end!();
         // debug_log::debug_dbg!(&ans);
         ans.into_values()
             .sorted_by_key(|x| x.0)
@@ -730,8 +733,6 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 }
             }
         }
-
-        // FIXME: handle new containers when inserting richtext style like comments
 
         // debug_log::debug_dbg!(&self.tracker);
         InternalDiff::RichtextRaw(delta)

@@ -16,7 +16,7 @@ describe("Checkout", () => {
       text: "Hi"
     });
 
-    doc.checkout([{ peer: 0n, counter: 0 }]);
+    doc.checkout([{ peer: "0", counter: 0 }]);
     expect(doc.toJson()).toStrictEqual({
       text: "H"
     });
