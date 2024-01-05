@@ -14,8 +14,9 @@ use std::{
 };
 
 use crate::{
-    container::richtext::query_by_len::{
-        EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex,
+    container::richtext::{
+        query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex},
+        style_range_map::EMPTY_STYLES,
     },
     delta::{DeltaValue, StyleMeta},
 };
@@ -40,7 +41,7 @@ pub(crate) use query::PosType;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RichtextState {
     tree: BTree<RichtextTreeTrait>,
-    style_ranges: StyleRangeMap,
+    style_ranges: Option<StyleRangeMap>,
     cursor_cache: CursorCache,
 }
 
@@ -1129,12 +1130,10 @@ impl RichtextState {
             return 0;
         }
 
-        if let Some(pos) = self.cursor_cache.get_entity_index(
-            pos,
-            pos_type,
-            &self.tree,
-            self.style_ranges.has_style(),
-        ) {
+        if let Some(pos) =
+            self.cursor_cache
+                .get_entity_index(pos, pos_type, &self.tree, self.has_styles())
+        {
             debug_assert!(
                 pos <= self.len_entity(),
                 "tree:{:#?}\ncache:{:#?}",
@@ -1156,13 +1155,20 @@ impl RichtextState {
             // cache to reduce the cost of the next query
             self.cursor_cache
                 .record_cursor(entity_index, PosType::Entity, c, &self.tree);
-            if !self.style_ranges.has_style() {
+            if !self.has_styles() {
                 self.cursor_cache
                     .record_entity_index(pos, pos_type, entity_index, c, &self.tree);
             }
         }
 
         entity_index
+    }
+
+    fn has_styles(&self) -> bool {
+        self.style_ranges
+            .as_ref()
+            .map(|x| x.has_style())
+            .unwrap_or(false)
     }
 
     pub(crate) fn get_entity_range_and_text_styles_at_range(
@@ -1176,10 +1182,13 @@ impl RichtextState {
 
         let start = self.get_entity_index_for_text_insert(range.start, pos_type);
         let end = self.get_entity_index_for_text_insert(range.end, pos_type);
-        if self.style_ranges.has_style() {
+        if self.has_styles() {
             (
                 start..end,
-                self.style_ranges.get_styles_of_range(start..end),
+                self.style_ranges
+                    .as_ref()
+                    .unwrap()
+                    .get_styles_of_range(start..end),
             )
         } else {
             (start..end, None)
@@ -1194,17 +1203,22 @@ impl RichtextState {
         &mut self,
         entity_index: usize,
     ) -> StyleMeta {
-        if !self.style_ranges.has_style() {
+        if !self.has_styles() {
             return Default::default();
         }
 
-        self.style_ranges.get_styles_for_insert(entity_index)
+        self.style_ranges
+            .as_mut()
+            .unwrap()
+            .get_styles_for_insert(entity_index)
     }
 
     /// This is used to accept changes from DiffCalculator
     pub(crate) fn insert_at_entity_index(&mut self, entity_index: usize, text: BytesSlice, id: ID) {
         let elem = RichtextStateChunk::try_new(text, id).unwrap();
-        self.style_ranges.insert(entity_index, elem.rle_len());
+        self.style_ranges
+            .as_mut()
+            .map(|x| x.insert(entity_index, elem.rle_len()));
         let leaf;
         if let Some(cursor) =
             self.cursor_cache
@@ -1270,14 +1284,22 @@ impl RichtextState {
         self.cursor_cache.invalidate();
         match cursor {
             Some(cursor) => {
-                let styles = self.style_ranges.insert(entity_index, elem.rle_len());
+                let styles = self
+                    .style_ranges
+                    .as_mut()
+                    .map(|x| x.insert(entity_index, elem.rle_len()))
+                    .unwrap_or(&EMPTY_STYLES);
                 let cursor = self.tree.insert_by_path(cursor, elem).0;
                 self.cursor_cache
                     .record_cursor(entity_index, PosType::Entity, cursor, &self.tree);
                 (event_index, styles)
             }
             None => {
-                let styles = self.style_ranges.insert(entity_index, elem.rle_len());
+                let styles = self
+                    .style_ranges
+                    .as_mut()
+                    .map(|x| x.insert(entity_index, elem.rle_len()))
+                    .unwrap_or(&EMPTY_STYLES);
                 let cursor = self.tree.push(elem);
                 self.cursor_cache
                     .record_cursor(entity_index, PosType::Entity, cursor, &self.tree);
@@ -1346,7 +1368,16 @@ impl RichtextState {
     /// This method only updates `style_ranges`.
     /// When this method is called, the style start anchor and the style end anchor should already have been inserted.
     pub(crate) fn annotate_style_range(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
-        self.style_ranges.annotate(range, style)
+        self.ensure_style_ranges_mut().annotate(range, style)
+    }
+
+    /// init style ranges if not initialized
+    fn ensure_style_ranges_mut(&mut self) -> &mut StyleRangeMap {
+        if self.style_ranges.is_none() {
+            self.style_ranges = Some(StyleRangeMap::default());
+        }
+
+        self.style_ranges.as_mut().unwrap()
     }
 
     /// Find the best insert position based on algorithm similar to Peritext.
@@ -1613,7 +1644,7 @@ impl RichtextState {
 
         /// This struct remove the corresponding style ranges if the start style anchor is removed
         struct StyleRangeUpdater<'a> {
-            style_ranges: &'a mut StyleRangeMap,
+            style_ranges: Option<&'a mut StyleRangeMap>,
             current_index: usize,
         }
 
@@ -1625,7 +1656,9 @@ impl RichtextState {
                     }
                     RichtextStateChunk::Style { style, anchor_type } => {
                         if matches!(anchor_type, AnchorType::Start) {
-                            self.style_ranges.remove_style(style, self.current_index);
+                            self.style_ranges
+                                .as_mut()
+                                .map(|x| x.remove_style(style, self.current_index));
                         }
 
                         self.current_index += 1;
@@ -1633,7 +1666,7 @@ impl RichtextState {
                 }
             }
 
-            fn new(style_ranges: &'a mut StyleRangeMap, start_index: usize) -> Self {
+            fn new(style_ranges: Option<&'a mut StyleRangeMap>, start_index: usize) -> Self {
                 Self {
                     style_ranges,
                     current_index: start_index,
@@ -1644,7 +1677,7 @@ impl RichtextState {
         if elem.rle_len() >= start_cursor.offset + len {
             // drop in place
             let mut event_len = 0;
-            let mut updater = StyleRangeUpdater::new(&mut self.style_ranges, pos);
+            let mut updater = StyleRangeUpdater::new(self.style_ranges.as_mut(), pos);
             self.tree.update_leaf(start_cursor.leaf, |elem| {
                 updater.update(&*elem);
                 match elem {
@@ -1661,19 +1694,19 @@ impl RichtextState {
                 }
             });
 
-            self.style_ranges.delete(pos..pos + len);
+            self.style_ranges.as_mut().map(|x| x.delete(pos..pos + len));
             (start_f.event_index, start_f.event_index + event_len)
         } else {
             let (end, end_f) = self
                 .tree
                 .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&range.end);
-            let mut updater = StyleRangeUpdater::new(&mut self.style_ranges, pos);
+            let mut updater = StyleRangeUpdater::new(self.style_ranges.as_mut(), pos);
             for iter in generic_btree::iter::Drain::new(&mut self.tree, start, end) {
                 updater.update(&iter);
                 f(iter)
             }
 
-            self.style_ranges.delete(pos..pos + len);
+            self.style_ranges.as_mut().map(|x| x.delete(pos..pos + len));
             (start_f.event_index, end_f.event_index)
         }
     }
@@ -1701,13 +1734,17 @@ impl RichtextState {
         // end_entity_index + 2, because
         // 1. We inserted a start anchor before end_entity_index, so we need to +1
         // 2. We need to include the end anchor in the range, so we need to +1
-        self.style_ranges
+        self.ensure_style_ranges_mut()
             .annotate(range.start..range.end + 2, style);
     }
 
     pub fn iter(&self) -> impl Iterator<Item = RichtextSpan> + '_ {
         let mut entity_index = 0;
-        let mut style_range_iter = self.style_ranges.iter();
+        let mut style_range_iter: Box<dyn Iterator<Item = (Range<usize>, &Styles)>> =
+            match &self.style_ranges {
+                Some(s) => Box::new(s.iter()),
+                None => Box::new(Some((0..usize::MAX / 2, &*EMPTY_STYLES)).into_iter()),
+            };
         let mut cur_style_range = style_range_iter.next();
         let mut cur_styles: Option<StyleMeta> =
             cur_style_range.as_ref().map(|x| x.1.clone().into());
@@ -1825,7 +1862,10 @@ impl RichtextState {
         println!(
             "rope_nodes: {}, style_nodes: {}, text_len: {}",
             self.tree.node_len(),
-            self.style_ranges.tree.node_len(),
+            self.style_ranges
+                .as_ref()
+                .map(|x| x.tree.node_len())
+                .unwrap_or(0),
             self.tree.root_cache().bytes
         );
     }
@@ -1850,28 +1890,30 @@ impl RichtextState {
             index += c.length()
         }
 
-        for IterAnchorItem {
-            index,
-            op,
-            anchor_type: iter_anchor_type,
-        } in self.style_ranges.iter_anchors()
-        {
-            let c = entity_index_to_style_anchor
-                .remove(&index)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Inconsistency found {} {:?} {:?}",
-                        index, iter_anchor_type, &op
-                    );
-                });
+        if let Some(s) = &self.style_ranges {
+            for IterAnchorItem {
+                index,
+                op,
+                anchor_type: iter_anchor_type,
+            } in s.iter_anchors()
+            {
+                let c = entity_index_to_style_anchor
+                    .remove(&index)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Inconsistency found {} {:?} {:?}",
+                            index, iter_anchor_type, &op
+                        );
+                    });
 
-            match c {
-                RichtextStateChunk::Text(_) => {
-                    unreachable!()
-                }
-                RichtextStateChunk::Style { style, anchor_type } => {
-                    assert_eq!(style, &op);
-                    assert_eq!(&iter_anchor_type, anchor_type);
+                match c {
+                    RichtextStateChunk::Text(_) => {
+                        unreachable!()
+                    }
+                    RichtextStateChunk::Style { style, anchor_type } => {
+                        assert_eq!(style, &op);
+                        assert_eq!(&iter_anchor_type, anchor_type);
+                    }
                 }
             }
         }
@@ -1913,7 +1955,11 @@ impl RichtextState {
     pub(crate) fn estimate_size(&self) -> usize {
         // TODO: this is inaccurate
         self.tree.node_len() * std::mem::size_of::<RichtextStateChunk>()
-            + self.style_ranges.estimate_size()
+            + self
+                .style_ranges
+                .as_ref()
+                .map(|x| x.estimate_size())
+                .unwrap_or(0)
     }
 }
 
