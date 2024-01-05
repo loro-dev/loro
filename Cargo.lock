@@ -423,9 +423,9 @@ dependencies = [
 
 [[package]]
 name = "debug-log"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ee1f7e4702f35f9add609068329609a6349e7ace9804a2386a1cadb0c609d63"
+checksum = "caf861b629ec23fc562cccc8b47cc98a54d192ecf4e7b575ce30659d8c814c3a"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
