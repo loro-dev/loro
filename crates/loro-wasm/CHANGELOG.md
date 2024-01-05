@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0
+
+### Minor Changes
+
+- Stabilize encoding and fix several issues related to time travel
+
 ## 0.7.2-alpha.4
 
 ### Patch Changes
