@@ -144,8 +144,8 @@ impl Tracker {
     /// Delete the element from pos..pos+len
     ///
     /// If `reverse` is true, the deletion happens from the end of the range to the start.
-    /// Then the first op_id is the one that deletes char at `pos+len-1`, the last op
-    /// is the one that deletes char at `pos`.
+    /// So the first op is the one that deletes element at `pos+len-1`, the last op
+    /// is the one that deletes element at `pos`.
     pub(crate) fn delete(&mut self, mut op_id: ID, pos: usize, mut len: usize, reverse: bool) {
         // debug_log::group!("Tracker Delete");
         // debug_log::debug_dbg!(&op_id, pos, len, reverse);
