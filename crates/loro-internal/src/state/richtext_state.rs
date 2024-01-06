@@ -703,7 +703,6 @@ impl RichtextStateLoader {
     }
 
     pub fn into_state(self) -> InnerState {
-        debug_log::debug_dbg!(&self);
         let mut state = InnerState::from_chunks(self.elements.into_iter());
         for (style, range) in self.style_ranges {
             state.annotate_style_range(range, style);

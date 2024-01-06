@@ -1838,7 +1838,6 @@ impl RichtextState {
             return;
         }
 
-        debug_log::debug_dbg!(&self);
         let mut entity_index_to_style_anchor: FxHashMap<usize, &RichtextStateChunk> =
             FxHashMap::default();
         let mut index = 0;

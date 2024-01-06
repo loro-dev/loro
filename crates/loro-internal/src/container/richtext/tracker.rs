@@ -141,10 +141,14 @@ impl Tracker {
         }
     }
 
+    /// Delete the element from pos..pos+len
+    ///
     /// If `reverse` is true, the deletion happens from the end of the range to the start.
-    pub(crate) fn delete(&mut self, mut op_id: ID, mut pos: usize, mut len: usize, reverse: bool) {
-        // debug_log::debug_log!("Delete");
-        // debug_log::debug_dbg!(&op_id, pos, len);
+    /// Then the first op_id is the one that deletes char at `pos+len-1`, the last op
+    /// is the one that deletes char at `pos`.
+    pub(crate) fn delete(&mut self, mut op_id: ID, pos: usize, mut len: usize, reverse: bool) {
+        // debug_log::group!("Tracker Delete");
+        // debug_log::debug_dbg!(&op_id, pos, len, reverse);
         // debug_log::debug_dbg!(&self);
         let last_id = op_id.inc(len as Counter - 1);
         let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
@@ -162,6 +166,7 @@ impl Tracker {
 
             if applied_counter_end > last_id.counter {
                 self.current_vv.extend_to_include_last_id(last_id);
+                debug_log::debug_dbg!(&self);
                 return;
             }
 
@@ -169,12 +174,10 @@ impl Tracker {
             let start = (applied_counter_end - op_id.counter) as usize;
             op_id.counter = applied_counter_end;
             len -= start;
-            if reverse {
-                pos -= start;
-            } else {
-                // don't need to change the pos
-            }
+            // If reverse, don't need to change the pos, because it's deleting backwards.
+            // If not reverse, we don't need to change the pos either, because the `start` chars after it are already deleted
         }
+        // debug_log::debug_dbg!(&op_id, pos, len, reverse);
 
         // debug_log::debug_log!("after forwarding pos={} len={}", pos, len);
         // debug_log::debug_dbg!(&self);
@@ -205,6 +208,7 @@ impl Tracker {
         let end_id = op_id.inc(len as Counter);
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
+        // debug_log::debug_dbg!(&self);
     }
 
     #[inline]
@@ -305,7 +309,6 @@ impl Tracker {
             return;
         }
 
-        debug_log::debug_dbg!(&self);
         self.check_vv_correctness();
         self.check_id_to_cursor_insertions_correctness();
     }
@@ -356,6 +359,8 @@ impl Tracker {
         from: &VersionVector,
         to: &VersionVector,
     ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
+        // debug_log::group!("From {:?} To {:?}", from, to);
+        // debug_log::debug_log!("Init: {:#?}, ", &self);
         self._checkout(from, false);
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();
