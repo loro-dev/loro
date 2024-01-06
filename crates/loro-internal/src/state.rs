@@ -989,8 +989,10 @@ impl DocState {
         }
 
         eprintln!(
-            "Estimated state size: \nEntries: {} \nSum: {}",
-            state_entries_size, state_size_sum
+            "ContainerNum: {}\nEstimated state size: \nEntries: {} \nSum: {}",
+            self.states.len(),
+            state_entries_size,
+            state_size_sum
         );
     }
 }
