@@ -986,4 +986,52 @@ mod failed_tests {
             ],
         );
     }
+
+    #[test]
+    fn checkout_5() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 0,
+                    pos: 9910603113857775223,
+                    value: 8536291640920163781,
+                    action: RichTextAction::Mark(516939283022490631),
+                },
+                Checkout {
+                    site: 66,
+                    to: 1111638594,
+                },
+                Checkout {
+                    site: 95,
+                    to: 65417,
+                },
+                SyncAll,
+                RichText {
+                    site: 0,
+                    pos: 280965477201664,
+                    value: 622770227593,
+                    action: RichTextAction::Insert,
+                },
+                Sync { from: 137, to: 139 },
+                RichText {
+                    site: 255,
+                    pos: 36659862010,
+                    value: 14497138624149061632,
+                    action: RichTextAction::Insert,
+                },
+                Checkout {
+                    site: 31,
+                    to: 773922591,
+                },
+                RichText {
+                    site: 0,
+                    pos: 8759942810400289,
+                    value: 2377900603251727259,
+                    action: RichTextAction::Insert,
+                },
+                Sync { from: 155, to: 1 },
+            ],
+        )
+    }
 }

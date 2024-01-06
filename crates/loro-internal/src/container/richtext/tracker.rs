@@ -70,6 +70,7 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, mut op_id: ID, mut pos: usize, mut content: RichtextChunk) {
+        // debug_log::group!("TrackerInsert");
         // debug_log::debug_dbg!(&op_id, pos, content);
         // debug_log::debug_dbg!(&self);
         let last_id = op_id.inc(content.len() as Counter - 1);
@@ -104,8 +105,10 @@ impl Tracker {
             content = content.slice(start..);
         }
 
-        // debug_log::group!("before insert {} pos={}", op_id, pos);
-        // debug_log::debug_dbg!(&self);
+        // {
+        //     debug_log::group!("before insert {} pos={}", op_id, pos);
+        //     debug_log::debug_dbg!(&self);
+        // }
         let result = self.rope.insert(
             pos,
             FugueSpan {
@@ -129,7 +132,6 @@ impl Tracker {
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
         // debug_log::debug_dbg!(&self);
-        //
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {

@@ -76,6 +76,7 @@ impl DiffCalculator {
         after_frontiers: Option<&Frontiers>,
     ) -> Vec<InternalContainerDiff> {
         debug_log::group!("DiffCalc");
+        debug_log::debug_log!("Before: {:?} After: {:?}", &before, &after);
         if self.has_all {
             let include_before = self.last_vv.includes_vv(before);
             let include_after = self.last_vv.includes_vv(after);
@@ -143,6 +144,8 @@ impl DiffCalculator {
                             Some(op.slice((start_counter - op.counter) as usize, op.atom_len()));
                         op = stack_sliced_op.as_ref().unwrap();
                     }
+                    let vv = &mut vv.borrow_mut();
+                    vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
                     let depth = oplog.arena.get_depth(op.container).unwrap_or(u16::MAX);
                     let (_, calculator) =
                         self.calculators.entry(op.container).or_insert_with(|| {
@@ -176,11 +179,7 @@ impl DiffCalculator {
                         // don't checkout if we have already checked out this container in this round
                         calculator.apply_change(oplog, RichOp::new_by_change(change, op), None);
                     } else {
-                        calculator.apply_change(
-                            oplog,
-                            RichOp::new_by_change(change, op),
-                            Some(&vv.borrow()),
-                        );
+                        calculator.apply_change(oplog, RichOp::new_by_change(change, op), Some(vv));
                         visited.insert(op.container);
                     }
                 }
