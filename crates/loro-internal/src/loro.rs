@@ -152,11 +152,7 @@ impl LoroDoc {
 
             let txn = self.txn.lock().unwrap().take();
             if let Some(txn) = txn {
-                if !txn.is_empty() {
-                    txn.commit().unwrap();
-                } else {
-                    txn.abort();
-                }
+                txn.commit().unwrap();
             }
 
             let new_txn = self.txn().unwrap();
@@ -280,17 +276,6 @@ impl LoroDoc {
 
         if let Some(on_commit) = on_commit {
             on_commit(&self.state);
-        }
-    }
-
-    /// Abort the current auto commit transaction.
-    ///
-    /// Afterwards, the users need to call `self.renew_txn_after_commit()` to resume the continuous transaction.
-    #[inline]
-    pub fn abort_txn(&self) {
-        if let Some(mut txn) = self.txn.lock().unwrap().take() {
-            txn.take_on_commit();
-            txn.abort();
         }
     }
 
@@ -747,6 +732,11 @@ impl LoroDoc {
         let mut current_state = self.app_state().try_lock().unwrap();
         current_state.check_is_the_same(&mut calculated_state);
         self.renew_txn_if_auto_commit();
+    }
+
+    pub fn log_estimated_size(&self) {
+        let state = self.state.try_lock().unwrap();
+        state.log_estimated_size();
     }
 }
 

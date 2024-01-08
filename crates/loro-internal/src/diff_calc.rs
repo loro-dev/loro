@@ -417,13 +417,15 @@ impl DiffCalculatorTrait for MapDiffCalculator {
                     MapValue {
                         counter: v.counter,
                         value,
-                        lamport: (v.lamport, v.peer),
+                        lamp: v.lamport,
+                        peer: v.peer,
                     }
                 })
                 .unwrap_or_else(|| MapValue {
                     counter: 0,
                     value: None,
-                    lamport: (0, 0),
+                    lamp: 0,
+                    peer: 0,
                 });
 
             updated.insert(key, value);

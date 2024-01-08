@@ -1,3 +1,4 @@
+use core::panic;
 use std::{
     borrow::Cow,
     mem::take,
@@ -250,21 +251,6 @@ impl Transaction {
         self.on_commit.take()
     }
 
-    pub fn abort(mut self) {
-        self._abort();
-    }
-
-    fn _abort(&mut self) {
-        if self.finished {
-            return;
-        }
-
-        self.finished = true;
-        self.state.lock().unwrap().abort_txn();
-        self.local_ops.clear();
-        self.event_hints.clear();
-    }
-
     fn _commit(&mut self) -> Result<(), LoroError> {
         if self.finished {
             return Ok(());
@@ -307,8 +293,7 @@ impl Transaction {
         if let Err(err) = oplog.import_local_change(change, true) {
             drop(state);
             drop(oplog);
-            self._abort();
-            return Err(err);
+            panic!("{}", err);
         }
 
         state.commit_txn(

@@ -271,6 +271,10 @@ impl LoroDoc {
     pub fn unsubscribe(&self, id: SubID) {
         self.doc.unsubscribe(id)
     }
+
+    pub fn log_estimate_size(&self) {
+        self.doc.log_estimated_size();
+    }
 }
 
 /// LoroList container. It's used to model array.

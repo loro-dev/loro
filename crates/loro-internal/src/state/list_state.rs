@@ -26,38 +26,19 @@ use loro_common::{IdSpan, LoroResult, ID};
 
 #[derive(Debug)]
 pub struct ListState {
-    id: ContainerID,
     idx: ContainerIdx,
     list: BTree<ListImpl>,
-    in_txn: bool,
-    undo_stack: Vec<UndoItem>,
     child_container_to_leaf: FxHashMap<ContainerID, LeafIndex>,
 }
 
 impl Clone for ListState {
     fn clone(&self) -> Self {
         Self {
-            id: self.id.clone(),
             idx: self.idx,
             list: self.list.clone(),
-            in_txn: false,
-            undo_stack: Vec::new(),
             child_container_to_leaf: Default::default(),
         }
     }
-}
-
-#[derive(Debug)]
-enum UndoItem {
-    Insert {
-        index: usize,
-        len: usize,
-    },
-    Delete {
-        index: usize,
-        value: LoroValue,
-        id: ID,
-    },
 }
 
 #[derive(Debug, Clone)]
@@ -153,14 +134,11 @@ impl UseLengthFinder<ListImpl> for ListImpl {
 
 // FIXME: update child_container_to_leaf
 impl ListState {
-    pub fn new(id: ContainerID, idx: ContainerIdx) -> Self {
+    pub fn new(idx: ContainerIdx) -> Self {
         let tree = BTree::new();
         Self {
-            id,
             idx,
             list: tree,
-            in_txn: false,
-            undo_stack: Vec::new(),
             child_container_to_leaf: Default::default(),
         }
     }
@@ -221,24 +199,11 @@ impl ListState {
                     .insert(v.as_container().unwrap().clone(), leaf);
             }
         }
-
-        if self.in_txn {
-            self.undo_stack.push(UndoItem::Insert { index, len: 1 });
-        }
     }
 
     pub fn delete(&mut self, index: usize) {
         let leaf = self.list.query::<LengthFinder>(&index);
-
-        let elem = self.list.remove_leaf(leaf.unwrap().cursor).unwrap();
-        let value = elem.v;
-        if self.in_txn {
-            self.undo_stack.push(UndoItem::Delete {
-                index,
-                value,
-                id: elem.id,
-            });
-        }
+        self.list.remove_leaf(leaf.unwrap().cursor).unwrap();
     }
 
     pub fn delete_range(&mut self, range: impl RangeBounds<usize>) {
@@ -257,25 +222,11 @@ impl ListState {
             return;
         }
 
-        if self.in_txn {
-            let self1 = &mut self.list;
-            let q = start..end;
-            let start1 = self1.query::<LengthFinder>(&q.start);
-            let end1 = self1.query::<LengthFinder>(&q.end);
-            for elem in iter::Drain::new(self1, start1, end1) {
-                self.undo_stack.push(UndoItem::Delete {
-                    index: start,
-                    value: elem.v,
-                    id: elem.id,
-                })
-            }
-        } else {
-            let self1 = &mut self.list;
-            let q = start..end;
-            let start1 = self1.query::<LengthFinder>(&q.start);
-            let end1 = self1.query::<LengthFinder>(&q.end);
-            iter::Drain::new(self1, start1, end1);
-        }
+        let self1 = &mut self.list;
+        let q = start..end;
+        let start1 = self1.query::<LengthFinder>(&q.start);
+        let end1 = self1.query::<LengthFinder>(&q.end);
+        iter::Drain::new(self1, start1, end1);
     }
 
     // PERF: use &[LoroValue]
@@ -333,8 +284,11 @@ impl ContainerState for ListState {
         self.idx
     }
 
-    fn container_id(&self) -> &ContainerID {
-        &self.id
+    fn estimate_size(&self) -> usize {
+        // TODO: this is inaccurate
+        self.list.node_len() * std::mem::size_of::<isize>()
+            + self.len() * std::mem::size_of::<Elem>()
+            + self.child_container_to_leaf.len() * std::mem::size_of::<(ContainerID, LeafIndex)>()
     }
 
     fn is_state_empty(&self) -> bool {
@@ -493,30 +447,6 @@ impl ContainerState for ListState {
         )
     }
 
-    #[doc = " Start a transaction"]
-    #[doc = ""]
-    #[doc = " The transaction may be aborted later, then all the ops during this transaction need to be undone."]
-    fn start_txn(&mut self) {
-        self.in_txn = true;
-    }
-
-    fn abort_txn(&mut self) {
-        self.in_txn = false;
-        while let Some(op) = self.undo_stack.pop() {
-            match op {
-                UndoItem::Insert { index, len } => {
-                    self.delete_range(index..index + len);
-                }
-                UndoItem::Delete { index, value, id } => self.insert(index, value, id),
-            }
-        }
-    }
-
-    fn commit_txn(&mut self) {
-        self.undo_stack.clear();
-        self.in_txn = false;
-    }
-
     fn get_value(&mut self) -> LoroValue {
         let ans = self.to_vec();
         LoroValue::List(Arc::new(ans))
@@ -569,10 +499,10 @@ mod test {
 
     #[test]
     fn test() {
-        let mut list = ListState::new(
-            id("abc"),
-            ContainerIdx::from_index_and_type(0, loro_common::ContainerType::List),
-        );
+        let mut list = ListState::new(ContainerIdx::from_index_and_type(
+            0,
+            loro_common::ContainerType::List,
+        ));
         fn id(name: &str) -> ContainerID {
             ContainerID::new_root(name, crate::ContainerType::List)
         }

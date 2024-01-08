@@ -93,6 +93,7 @@ pub fn run_async_workflow<T: ActorTrait>(
     action_num: usize,
     actions_before_sync: usize,
     seed: u64,
+    preprocess: impl FnMut(&mut Action<T::ActionKind>),
 ) -> (ActorGroup<T>, Instant)
 where
     for<'a> T::ActionKind: arbitrary::Arbitrary<'a>,
@@ -103,7 +104,7 @@ where
         peer_num,
         &seed,
         actions_before_sync,
-        |_| {},
+        preprocess,
     )
     .unwrap();
     let mut actors = ActorGroup::<T>::new(peer_num);
@@ -119,13 +120,14 @@ pub fn run_realtime_collab_workflow<T: ActorTrait>(
     peer_num: usize,
     action_num: usize,
     seed: u64,
+    preprocess: impl FnMut(&mut Action<T::ActionKind>),
 ) -> (ActorGroup<T>, Instant)
 where
     for<'a> T::ActionKind: arbitrary::Arbitrary<'a>,
 {
     let seed = create_seed(seed, action_num * 32);
     let mut actions =
-        gen_realtime_actions::<T::ActionKind>(action_num, peer_num, &seed, |_| {}).unwrap();
+        gen_realtime_actions::<T::ActionKind>(action_num, peer_num, &seed, preprocess).unwrap();
     let mut actors = ActorGroup::<T>::new(peer_num);
     let start = Instant::now();
     for action in actions.iter_mut() {

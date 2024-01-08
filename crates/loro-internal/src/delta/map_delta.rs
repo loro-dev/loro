@@ -25,12 +25,35 @@ pub struct MapDelta {
 pub struct MapValue {
     pub counter: Counter,
     pub value: Option<LoroValue>,
-    pub lamport: (Lamport, PeerID),
+    pub lamp: Lamport,
+    pub peer: PeerID,
 }
+
+impl Ord for MapValue {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.lamp
+            .cmp(&other.lamp)
+            .then_with(|| self.peer.cmp(&other.peer))
+    }
+}
+
+impl PartialOrd for MapValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for MapValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.lamp == other.lamp && self.peer == other.peer
+    }
+}
+
+impl Eq for MapValue {}
 
 impl MapValue {
     pub fn id(&self) -> ID {
-        ID::new(self.lamport.1, self.counter)
+        ID::new(self.peer, self.counter)
     }
 }
 
@@ -55,7 +78,7 @@ impl ResolvedMapValue {
     ) -> Self {
         ResolvedMapValue {
             counter: v.counter,
-            lamport: v.lamport,
+            lamport: (v.lamp, v.peer),
             value: v
                 .value
                 .map(|v| ValueOrContainer::from_value(v, arena, txn, state)),
@@ -68,7 +91,7 @@ impl MapDelta {
         let mut updated = self.updated.clone();
         for (k, v) in x.updated.into_iter() {
             if let Some(old) = updated.get_mut(&k) {
-                if v.lamport > old.lamport {
+                if &v > old {
                     *old = v;
                 }
             } else {
@@ -125,39 +148,19 @@ impl Hash for MapValue {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // value is not being hashed
         self.counter.hash(state);
-        self.lamport.hash(state);
+        self.lamp.hash(state);
     }
 }
 
 impl HasId for MapValue {
     fn id_start(&self) -> crate::id::ID {
-        ID::new(self.lamport.1, self.counter)
+        ID::new(self.peer, self.counter)
     }
 }
 
 impl HasLamport for MapValue {
     fn lamport(&self) -> Lamport {
-        self.lamport.0
-    }
-}
-
-impl PartialEq for MapValue {
-    fn eq(&self, other: &Self) -> bool {
-        self.lamport == other.lamport
-    }
-}
-
-impl Eq for MapValue {}
-
-impl PartialOrd for MapValue {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for MapValue {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.lamport.cmp(&other.lamport)
+        self.lamp
     }
 }
 
@@ -168,7 +171,8 @@ impl Serialize for MapValue {
     {
         let mut s = serializer.serialize_struct("MapValue", 2)?;
         s.serialize_field("value", &self.value)?;
-        s.serialize_field("lamport", &self.lamport)?;
+        s.serialize_field("lamport", &self.lamp)?;
+        s.serialize_field("id", &self.id())?;
         s.end()
     }
 }
