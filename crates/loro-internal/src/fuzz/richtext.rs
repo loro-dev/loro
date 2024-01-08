@@ -939,4 +939,99 @@ mod failed_tests {
             ],
         )
     }
+
+    #[test]
+    fn checkout_4() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 5,
+                    pos: 1010580480,
+                    value: 0,
+                    action: RichTextAction::Insert,
+                },
+                SyncAll,
+                RichText {
+                    site: 0,
+                    pos: 2377900603268071424,
+                    value: 2387225703656530209,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 33,
+                    pos: 6701392671700754720,
+                    value: 2387189277486809121,
+                    action: RichTextAction::Delete,
+                },
+                Sync { from: 137, to: 137 },
+                RichText {
+                    site: 33,
+                    pos: 2377900746545832225,
+                    value: 9928747371269792033,
+                    action: RichTextAction::Delete,
+                },
+                Checkout {
+                    site: 137,
+                    to: 16777215,
+                },
+                RichText {
+                    site: 0,
+                    pos: 1993875390464,
+                    value: 38712713492299776,
+                    action: RichTextAction::Mark(12731870418897514672),
+                },
+                Sync { from: 176, to: 91 },
+                Sync { from: 137, to: 137 },
+            ],
+        );
+    }
+
+    #[test]
+    fn checkout_5() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 0,
+                    pos: 9910603113857775223,
+                    value: 8536291640920163781,
+                    action: RichTextAction::Mark(516939283022490631),
+                },
+                Checkout {
+                    site: 66,
+                    to: 1111638594,
+                },
+                Checkout {
+                    site: 95,
+                    to: 65417,
+                },
+                SyncAll,
+                RichText {
+                    site: 0,
+                    pos: 280965477201664,
+                    value: 622770227593,
+                    action: RichTextAction::Insert,
+                },
+                Sync { from: 137, to: 139 },
+                RichText {
+                    site: 255,
+                    pos: 36659862010,
+                    value: 14497138624149061632,
+                    action: RichTextAction::Insert,
+                },
+                Checkout {
+                    site: 31,
+                    to: 773922591,
+                },
+                RichText {
+                    site: 0,
+                    pos: 8759942810400289,
+                    value: 2377900603251727259,
+                    action: RichTextAction::Insert,
+                },
+                Sync { from: 155, to: 1 },
+            ],
+        )
+    }
 }

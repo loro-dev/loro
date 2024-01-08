@@ -276,6 +276,7 @@ impl DocState {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
+        // debug_log::debug_log!("Diff = {:#?}", &diff);
         let is_recording = self.is_recording();
         self.pre_txn(diff.origin.clone(), diff.local);
         let Cow::Owned(inner) = std::mem::take(&mut diff.diff) else {

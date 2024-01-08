@@ -171,6 +171,7 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
+        // debug_log::debug_log!("Self state = {:#?}", &self);
         // PERF: compose delta
         let mut ans: Delta<StringSlice, StyleMeta> = Delta::new();
         let mut style_delta: Delta<StringSlice, StyleMeta> = Delta::new();
@@ -486,10 +487,8 @@ impl ContainerState for RichtextState {
             }
         }
 
-        debug_log::group!("encode_snapshot");
         let mut lamports = DeltaRleEncodedNums::new();
         for chunk in iter {
-            debug_log::debug_dbg!(&chunk);
             match chunk {
                 RichtextStateChunk::Style { style, anchor_type }
                     if *anchor_type == AnchorType::Start =>
@@ -703,7 +702,6 @@ impl RichtextStateLoader {
     }
 
     pub fn into_state(self) -> InnerState {
-        debug_log::debug_dbg!(&self);
         let mut state = InnerState::from_chunks(self.elements.into_iter());
         for (style, range) in self.style_ranges {
             state.annotate_style_range(range, style);

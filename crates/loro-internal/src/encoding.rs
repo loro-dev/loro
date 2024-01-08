@@ -63,7 +63,6 @@ pub(crate) struct StateSnapshotEncoder<'a> {
 
 impl StateSnapshotEncoder<'_> {
     pub fn encode_op(&mut self, id_span: IdSpan, get_op: impl FnOnce() -> OpWithId) {
-        debug_log::debug_dbg!(id_span);
         if let Err(span) = (self.check_idspan)(id_span) {
             let mut op = get_op();
             if span == id_span {
