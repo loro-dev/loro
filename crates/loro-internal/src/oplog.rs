@@ -21,9 +21,9 @@ use crate::diff_calc::tree::MoveLamportAndID;
 use crate::diff_calc::TreeDiffCache;
 use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
+use crate::group::OpGroup;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{ListSlice, RawOpContent, RemoteOp};
-use crate::opset::OpGroup;
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
@@ -220,7 +220,7 @@ impl OpLog {
         _: EnsureChangeDepsAreAtTheEnd,
         local: bool,
     ) {
-        self.update_tree_cache(&change, local);
+        // self.update_tree_cache(&change, local);
         self.opset.insert_by_change(&change);
         let entry = self.changes.entry(change.id.peer).or_default();
         match entry.last_mut() {
