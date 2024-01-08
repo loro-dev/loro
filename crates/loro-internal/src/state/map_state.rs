@@ -63,7 +63,7 @@ impl ContainerState for MapState {
                 key,
                 ResolvedMapValue {
                     counter: value.counter,
-                    lamport: value.lamport,
+                    lamport: (value.lamp, value.peer),
                     value: value
                         .value
                         .map(|v| ValueOrContainer::from_value(v, arena, txn, state)),
@@ -91,7 +91,8 @@ impl ContainerState for MapState {
                     self.insert(
                         key.clone(),
                         MapValue {
-                            lamport: (op.lamport, op.id.peer),
+                            lamp: op.lamport,
+                            peer: op.id.peer,
                             counter: op.id.counter,
                             value: None,
                         },
@@ -107,7 +108,8 @@ impl ContainerState for MapState {
                 self.insert(
                     key.clone(),
                     MapValue {
-                        lamport: (op.lamport, op.id.peer),
+                        lamp: op.lamport,
+                        peer: op.id.peer,
                         counter: op.id.counter,
                         value: Some(value),
                     },
@@ -173,7 +175,7 @@ impl ContainerState for MapState {
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
         let mut lamports = DeltaRleEncodedNums::new();
         for v in self.map.values() {
-            lamports.push(v.lamport.0);
+            lamports.push(v.lamp);
             encoder.encode_op(v.id().into(), || unimplemented!());
         }
 
@@ -198,7 +200,8 @@ impl ContainerState for MapState {
                 MapValue {
                     counter: op.op.counter,
                     value: content.value.clone(),
-                    lamport: (iter.next().unwrap(), op.peer),
+                    lamp: iter.next().unwrap(),
+                    peer: op.peer,
                 },
             );
         }
