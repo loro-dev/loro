@@ -24,7 +24,6 @@ use super::ContainerState;
 
 #[derive(Debug, Clone)]
 pub struct MapState {
-    id: ContainerID,
     idx: ContainerIdx,
     map: FxHashMap<InternalString, MapValue>,
 }
@@ -32,10 +31,6 @@ pub struct MapState {
 impl ContainerState for MapState {
     fn container_idx(&self) -> ContainerIdx {
         self.idx
-    }
-
-    fn container_id(&self) -> &ContainerID {
-        &self.id
     }
 
     fn estimate_size(&self) -> usize {
@@ -211,9 +206,8 @@ impl ContainerState for MapState {
 }
 
 impl MapState {
-    pub fn new(id: ContainerID, idx: ContainerIdx) -> Self {
+    pub fn new(idx: ContainerIdx) -> Self {
         Self {
-            id,
             idx,
             map: FxHashMap::default(),
         }

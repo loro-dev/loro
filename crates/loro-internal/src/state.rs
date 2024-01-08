@@ -57,7 +57,6 @@ pub struct DocState {
 #[enum_dispatch]
 pub(crate) trait ContainerState: Clone {
     fn container_idx(&self) -> ContainerIdx;
-    fn container_id(&self) -> &ContainerID;
     fn estimate_size(&self) -> usize;
 
     fn is_state_empty(&self) -> bool;
@@ -110,10 +109,6 @@ pub(crate) trait ContainerState: Clone {
 impl<T: ContainerState> ContainerState for Box<T> {
     fn container_idx(&self) -> ContainerIdx {
         self.as_ref().container_idx()
-    }
-
-    fn container_id(&self) -> &ContainerID {
-        self.as_ref().container_id()
     }
 
     fn estimate_size(&self) -> usize {
@@ -200,20 +195,20 @@ pub enum State {
 }
 
 impl State {
-    pub fn new_list(id: ContainerID, idx: ContainerIdx) -> Self {
-        Self::ListState(Box::new(ListState::new(id, idx)))
+    pub fn new_list(idx: ContainerIdx) -> Self {
+        Self::ListState(Box::new(ListState::new(idx)))
     }
 
-    pub fn new_map(id: ContainerID, idx: ContainerIdx) -> Self {
-        Self::MapState(Box::new(MapState::new(id, idx)))
+    pub fn new_map(idx: ContainerIdx) -> Self {
+        Self::MapState(Box::new(MapState::new(idx)))
     }
 
-    pub fn new_richtext(id: ContainerID, idx: ContainerIdx) -> Self {
-        Self::RichtextState(Box::new(RichtextState::new(id, idx)))
+    pub fn new_richtext(idx: ContainerIdx) -> Self {
+        Self::RichtextState(Box::new(RichtextState::new(idx)))
     }
 
-    pub fn new_tree(id: ContainerID, idx: ContainerIdx) -> Self {
-        Self::TreeState(Box::new(TreeState::new(id, idx)))
+    pub fn new_tree(idx: ContainerIdx) -> Self {
+        Self::TreeState(Box::new(TreeState::new(idx)))
     }
 }
 
@@ -377,10 +372,10 @@ impl DocState {
                     diff.bring_back = true;
                 }
                 if diff.bring_back {
-                    let state = self.states.entry(diff.idx).or_insert_with(|| {
-                        let id = self.arena.idx_to_id(idx).unwrap();
-                        create_state(id, idx)
-                    });
+                    let state = self
+                        .states
+                        .entry(diff.idx)
+                        .or_insert_with(|| create_state(idx));
                     let state_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
                     if diff.diff.is_none() && state_diff.is_empty() {
                         // empty diff, skip it
@@ -416,10 +411,7 @@ impl DocState {
                 continue;
             };
             let idx = diff.idx;
-            let state = self.states.entry(idx).or_insert_with(|| {
-                let id = self.arena.idx_to_id(idx).unwrap();
-                create_state(id, idx)
-            });
+            let state = self.states.entry(idx).or_insert_with(|| create_state(idx));
 
             if self.in_txn {
                 self.changed_idx_in_txn.insert(idx);
@@ -467,10 +459,10 @@ impl DocState {
     }
 
     pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
-        let state = self.states.entry(op.container).or_insert_with(|| {
-            let id = self.arena.idx_to_id(op.container).unwrap();
-            create_state(id, op.container)
-        });
+        let state = self
+            .states
+            .entry(op.container)
+            .or_insert_with(|| create_state(op.container));
 
         if self.in_txn {
             self.changed_idx_in_txn.insert(op.container);
@@ -503,10 +495,7 @@ impl DocState {
         decode_ctx: StateSnapshotDecodeContext,
     ) {
         let idx = self.arena.register_container(&cid);
-        let state = self.states.entry(idx).or_insert_with(|| {
-            let id = self.arena.idx_to_id(idx).unwrap();
-            create_state(id, idx)
-        });
+        let state = self.states.entry(idx).or_insert_with(|| create_state(idx));
         state.import_from_snapshot_ops(decode_ctx);
     }
 
@@ -610,7 +599,7 @@ impl DocState {
         let idx = idx.unwrap();
         self.states
             .entry(idx)
-            .or_insert_with(|| State::new_richtext(cid, idx))
+            .or_insert_with(|| State::new_richtext(idx))
             .as_richtext_state_mut()
             .map(|x| &mut **x)
     }
@@ -624,8 +613,7 @@ impl DocState {
         if let Some(state) = state {
             f(state)
         } else {
-            let id = self.arena.idx_to_id(idx).unwrap();
-            let state = create_state(id, idx);
+            let state = create_state(idx);
             let ans = f(&state);
             self.states.insert(idx, state);
             ans
@@ -641,8 +629,7 @@ impl DocState {
         if let Some(state) = state {
             f(state)
         } else {
-            let id = self.arena.idx_to_id(idx).unwrap();
-            let mut state = create_state(id, idx);
+            let mut state = create_state(idx);
             let ans = f(&mut state);
             self.states.insert(idx, state);
             ans
@@ -933,8 +920,9 @@ impl DocState {
     ///
     /// This is only used for test.
     pub(crate) fn check_is_the_same(&mut self, other: &mut Self) {
+        let arena = self.arena.clone();
         let f = |state: &mut State| {
-            let id = state.container_id().clone();
+            let id = arena.idx_to_id(state.container_idx()).unwrap();
             let value = match state {
                 State::RichtextState(s) => s.get_richtext_value(),
                 _ => state.get_value(),
@@ -1088,12 +1076,12 @@ impl SubContainerDiffPatch {
     }
 }
 
-pub fn create_state(id: ContainerID, idx: ContainerIdx) -> State {
+pub fn create_state(idx: ContainerIdx) -> State {
     match idx.get_type() {
-        ContainerType::Map => State::MapState(Box::new(MapState::new(id, idx))),
-        ContainerType::List => State::ListState(Box::new(ListState::new(id, idx))),
-        ContainerType::Text => State::RichtextState(Box::new(RichtextState::new(id, idx))),
-        ContainerType::Tree => State::TreeState(Box::new(TreeState::new(id, idx))),
+        ContainerType::Map => State::MapState(Box::new(MapState::new(idx))),
+        ContainerType::List => State::ListState(Box::new(ListState::new(idx))),
+        ContainerType::Text => State::RichtextState(Box::new(RichtextState::new(idx))),
+        ContainerType::Tree => State::TreeState(Box::new(TreeState::new(idx))),
     }
 }
 

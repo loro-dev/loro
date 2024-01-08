@@ -28,7 +28,6 @@ use super::ContainerState;
 /// using flat representation
 #[derive(Debug, Clone)]
 pub struct TreeState {
-    id: ContainerID,
     idx: ContainerIdx,
     pub(crate) trees: FxHashMap<TreeID, TreeStateNode>,
     pub(crate) deleted: FxHashSet<TreeID>,
@@ -60,7 +59,7 @@ impl PartialOrd for TreeStateNode {
 }
 
 impl TreeState {
-    pub fn new(id: ContainerID, idx: ContainerIdx) -> Self {
+    pub fn new(idx: ContainerIdx) -> Self {
         let mut trees = FxHashMap::default();
         trees.insert(
             TreeID::delete_root().unwrap(),
@@ -79,7 +78,6 @@ impl TreeState {
         let mut deleted = FxHashSet::default();
         deleted.insert(TreeID::delete_root().unwrap());
         Self {
-            id,
             idx,
             trees,
             deleted,
@@ -211,10 +209,6 @@ impl TreeState {
 impl ContainerState for TreeState {
     fn container_idx(&self) -> crate::container::idx::ContainerIdx {
         self.idx
-    }
-
-    fn container_id(&self) -> &ContainerID {
-        &self.id
     }
 
     fn estimate_size(&self) -> usize {
@@ -560,20 +554,20 @@ mod tests {
 
     #[test]
     fn test_tree_state() {
-        let mut state = TreeState::new(
-            ContainerID::new_normal(ID::new(0, 0), loro_common::ContainerType::Tree),
-            ContainerIdx::from_index_and_type(0, loro_common::ContainerType::Tree),
-        );
+        let mut state = TreeState::new(ContainerIdx::from_index_and_type(
+            0,
+            loro_common::ContainerType::Tree,
+        ));
         state.mov(ID1, None, ID::NONE_ID).unwrap();
         state.mov(ID2, Some(ID1), ID::NONE_ID).unwrap();
     }
 
     #[test]
     fn tree_convert() {
-        let mut state = TreeState::new(
-            ContainerID::new_normal(ID::new(0, 0), loro_common::ContainerType::Tree),
-            ContainerIdx::from_index_and_type(0, loro_common::ContainerType::Tree),
-        );
+        let mut state = TreeState::new(ContainerIdx::from_index_and_type(
+            0,
+            loro_common::ContainerType::Tree,
+        ));
         state.mov(ID1, None, ID::NONE_ID).unwrap();
         state.mov(ID2, Some(ID1), ID::NONE_ID).unwrap();
         let roots = Forest::from_tree_state(&state.trees);
@@ -586,10 +580,10 @@ mod tests {
 
     #[test]
     fn delete_node() {
-        let mut state = TreeState::new(
-            ContainerID::new_normal(ID::new(0, 0), loro_common::ContainerType::Tree),
-            ContainerIdx::from_index_and_type(0, loro_common::ContainerType::Tree),
-        );
+        let mut state = TreeState::new(ContainerIdx::from_index_and_type(
+            0,
+            loro_common::ContainerType::Tree,
+        ));
         state.mov(ID1, None, ID::NONE_ID).unwrap();
         state.mov(ID2, Some(ID1), ID::NONE_ID).unwrap();
         state.mov(ID3, Some(ID2), ID::NONE_ID).unwrap();

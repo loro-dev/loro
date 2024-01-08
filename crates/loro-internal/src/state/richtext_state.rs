@@ -32,16 +32,14 @@ use super::ContainerState;
 
 #[derive(Debug)]
 pub struct RichtextState {
-    id: ContainerID,
     idx: ContainerIdx,
     pub(crate) state: Box<LazyLoad<RichtextStateLoader, InnerState>>,
 }
 
 impl RichtextState {
     #[inline]
-    pub fn new(id: ContainerID, idx: ContainerIdx) -> Self {
+    pub fn new(idx: ContainerIdx) -> Self {
         Self {
-            id,
             idx,
             state: Box::new(LazyLoad::Src(Default::default())),
         }
@@ -75,7 +73,6 @@ impl RichtextState {
 impl Clone for RichtextState {
     fn clone(&self) -> Self {
         Self {
-            id: self.id.clone(),
             idx: self.idx,
             state: self.state.clone(),
         }
@@ -85,10 +82,6 @@ impl Clone for RichtextState {
 impl ContainerState for RichtextState {
     fn container_idx(&self) -> ContainerIdx {
         self.idx
-    }
-
-    fn container_id(&self) -> &ContainerID {
-        &self.id
     }
 
     fn estimate_size(&self) -> usize {
