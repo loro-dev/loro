@@ -33,7 +33,7 @@ use super::ContainerState;
 #[derive(Debug)]
 pub struct RichtextState {
     idx: ContainerIdx,
-    pub(crate) state: Box<LazyLoad<RichtextStateLoader, InnerState>>,
+    pub(crate) state: LazyLoad<RichtextStateLoader, InnerState>,
 }
 
 impl RichtextState {
@@ -41,7 +41,7 @@ impl RichtextState {
     pub fn new(idx: ContainerIdx) -> Self {
         Self {
             idx,
-            state: Box::new(LazyLoad::Src(Default::default())),
+            state: LazyLoad::Src(Default::default()),
         }
     }
 
@@ -56,14 +56,14 @@ impl RichtextState {
     #[allow(unused)]
     #[inline(always)]
     pub(crate) fn is_empty(&self) -> bool {
-        match &*self.state {
+        match &self.state {
             LazyLoad::Src(s) => s.elements.is_empty(),
             LazyLoad::Dst(d) => d.is_empty(),
         }
     }
 
     pub(crate) fn diagnose(&self) {
-        match &*self.state {
+        match &self.state {
             LazyLoad::Src(_) => {}
             LazyLoad::Dst(d) => d.diagnose(),
         }
@@ -85,14 +85,14 @@ impl ContainerState for RichtextState {
     }
 
     fn estimate_size(&self) -> usize {
-        match &*self.state {
+        match &self.state {
             LazyLoad::Src(s) => s.elements.len() * std::mem::size_of::<RichtextStateChunk>(),
             LazyLoad::Dst(s) => s.estimate_size(),
         }
     }
 
     fn is_state_empty(&self) -> bool {
-        match &*self.state {
+        match &self.state {
             LazyLoad::Src(s) => s.is_empty(),
             LazyLoad::Dst(s) => s.is_empty(),
         }
@@ -385,7 +385,7 @@ impl ContainerState for RichtextState {
         let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;
         let mut a;
         let mut b;
-        match &*self.state {
+        match &self.state {
             LazyLoad::Src(s) => {
                 a = Some(s.elements.iter());
                 iter = &mut *a.as_mut().unwrap();
@@ -454,7 +454,7 @@ impl ContainerState for RichtextState {
             loader.push(chunk);
         }
 
-        *self.state = LazyLoad::Src(loader);
+        self.state = LazyLoad::Src(loader);
         // self.check_consistency_between_content_and_style_ranges();
     }
 }
@@ -472,7 +472,7 @@ impl RichtextState {
 
     #[inline(always)]
     pub fn len_entity(&self) -> usize {
-        match &*self.state {
+        match &self.state {
             LazyLoad::Src(s) => s.entity_index,
             LazyLoad::Dst(d) => d.len_entity(),
         }
