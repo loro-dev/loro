@@ -4,17 +4,52 @@ use crate::op::OpWithId;
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
 use loro_common::{HasCounter, IdSpan, LoroResult};
-use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 const MAGIC_BYTES: [u8; 4] = *b"loro";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, ToPrimitive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EncodeMode {
     // This is a config option, it won't be used in encoding.
     Auto = 255,
     Rle = 1,
     Snapshot = 2,
+}
+
+impl num_traits::FromPrimitive for EncodeMode {
+    #[allow(trivial_numeric_casts)]
+    #[inline]
+    fn from_i64(n: i64) -> Option<Self> {
+        if n == EncodeMode::Auto as i64 {
+            Some(EncodeMode::Auto)
+        } else if n == EncodeMode::Rle as i64 {
+            Some(EncodeMode::Rle)
+        } else if n == EncodeMode::Snapshot as i64 {
+            Some(EncodeMode::Snapshot)
+        } else {
+            None
+        }
+    }
+    #[inline]
+    fn from_u64(n: u64) -> Option<Self> {
+        Self::from_i64(n as i64)
+    }
+}
+
+impl num_traits::ToPrimitive for EncodeMode {
+    #[inline]
+    #[allow(trivial_numeric_casts)]
+    fn to_i64(&self) -> Option<i64> {
+        Some(match *self {
+            EncodeMode::Auto => EncodeMode::Auto as i64,
+            EncodeMode::Rle => EncodeMode::Rle as i64,
+            EncodeMode::Snapshot => EncodeMode::Snapshot as i64,
+        })
+    }
+    #[inline]
+    fn to_u64(&self) -> Option<u64> {
+        self.to_i64().map(|x| x as u64)
+    }
 }
 
 impl EncodeMode {
