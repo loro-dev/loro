@@ -13,11 +13,11 @@ use crate::{
 };
 
 #[derive(Debug, Default, Clone)]
-pub(crate) struct OpGroup {
-    groups: FxHashMap<ContainerIdx, ContainerOps>,
+pub(crate) struct OpGroups {
+    groups: FxHashMap<ContainerIdx, OpGroup>,
 }
 
-impl OpGroup {
+impl OpGroups {
     pub(crate) fn insert_by_change(&mut self, change: &Change) {
         for op in change.ops.iter() {
             let container_idx = op.container;
@@ -26,30 +26,30 @@ impl OpGroup {
                 .groups
                 .entry(container_idx)
                 .or_insert_with(|| match op.content {
-                    InnerContent::Map(_) => ContainerOps::Map(MapOpGroup::default()),
-                    InnerContent::List(_) => ContainerOps::List(ListOpSet),
-                    InnerContent::Tree(_) => ContainerOps::Tree(TreeOpGroup::default()),
+                    InnerContent::Map(_) => OpGroup::Map(MapOpGroup::default()),
+                    InnerContent::List(_) => OpGroup::List(ListOpGroup),
+                    InnerContent::Tree(_) => OpGroup::Tree(TreeOpGroup::default()),
                 });
             manager.insert(&rich_op)
         }
     }
 
-    pub(crate) fn get(&self, container_idx: &ContainerIdx) -> Option<&ContainerOps> {
+    pub(crate) fn get(&self, container_idx: &ContainerIdx) -> Option<&OpGroup> {
         self.groups.get(container_idx)
     }
 }
 
-#[enum_dispatch(OpSetTrait)]
+#[enum_dispatch(OpGroupTrait)]
 #[derive(Debug, Clone, EnumAsInner)]
 
-pub(crate) enum ContainerOps {
-    List(ListOpSet),
+pub(crate) enum OpGroup {
+    List(ListOpGroup),
     Map(MapOpGroup),
     Tree(TreeOpGroup),
 }
 
 #[enum_dispatch]
-trait OpSetTrait {
+trait OpGroupTrait {
     fn insert(&mut self, op: &RichOp);
 }
 
@@ -102,7 +102,7 @@ impl MapOpGroup {
     }
 }
 
-impl OpSetTrait for MapOpGroup {
+impl OpGroupTrait for MapOpGroup {
     fn insert(&mut self, op: &RichOp) {
         let key = match &op.op.content {
             InnerContent::Map(map) => map.key.clone(),
@@ -153,11 +153,10 @@ impl Ord for GroupedTreeOpInfo {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TreeOpGroup {
-    // TODO: use a better data structure
     pub(crate) ops: BTreeMap<Lamport, BTreeSet<GroupedTreeOpInfo>>,
 }
 
-impl OpSetTrait for TreeOpGroup {
+impl OpGroupTrait for TreeOpGroup {
     fn insert(&mut self, op: &RichOp) {
         let tree_op = op.op.content.as_tree().unwrap();
         let target = tree_op.target;
@@ -172,8 +171,8 @@ impl OpSetTrait for TreeOpGroup {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ListOpSet;
+pub(crate) struct ListOpGroup;
 
-impl OpSetTrait for ListOpSet {
+impl OpGroupTrait for ListOpGroup {
     fn insert(&mut self, _op: &RichOp) {}
 }

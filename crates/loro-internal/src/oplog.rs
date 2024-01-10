@@ -18,7 +18,7 @@ use crate::container::list::list_op;
 use crate::dag::{Dag, DagUtils};
 use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
-use crate::group::OpGroup;
+use crate::group::OpGroups;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{ListSlice, RawOpContent, RemoteOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
@@ -41,7 +41,7 @@ pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
     changes: ClientChanges,
-    pub(crate) group_ops: OpGroup,
+    pub(crate) group_ops: OpGroups,
     /// **lamport starts from 0**
     pub(crate) next_lamport: Lamport,
     pub(crate) latest_timestamp: Timestamp,
@@ -157,7 +157,7 @@ impl OpLog {
             dag: AppDag::default(),
             arena: Default::default(),
             changes: ClientChanges::default(),
-            group_ops: OpGroup::default(),
+            group_ops: OpGroups::default(),
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
