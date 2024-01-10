@@ -16,13 +16,13 @@ use crate::{
 use super::DiffCalculatorTrait;
 
 #[derive(Debug)]
-pub(crate) struct NewTreeDiffCalculator {
+pub(crate) struct TreeDiffCalculator {
     container: ContainerIdx,
     current_vv: VersionVector,
     tree: FxHashMap<TreeID, BTreeSet<MoveLamportAndID>>,
 }
 
-impl DiffCalculatorTrait for NewTreeDiffCalculator {
+impl DiffCalculatorTrait for TreeDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
 
     fn apply_change(
@@ -63,7 +63,7 @@ impl DiffCalculatorTrait for NewTreeDiffCalculator {
     }
 }
 
-impl NewTreeDiffCalculator {
+impl TreeDiffCalculator {
     pub(crate) fn new(container: ContainerIdx) -> Self {
         Self {
             container,

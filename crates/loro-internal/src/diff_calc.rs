@@ -25,7 +25,7 @@ use crate::{
     InternalString, VersionVector,
 };
 
-use self::tree::NewTreeDiffCalculator;
+use self::tree::TreeDiffCalculator;
 
 use super::{event::InternalContainerDiff, oplog::OpLog};
 
@@ -164,7 +164,7 @@ impl DiffCalculator {
                                 ),
                                 crate::ContainerType::Tree => (
                                     depth,
-                                    ContainerDiffCalculator::Tree(NewTreeDiffCalculator::new(
+                                    ContainerDiffCalculator::Tree(TreeDiffCalculator::new(
                                         op.container,
                                     )),
                                 ),
@@ -345,7 +345,7 @@ enum ContainerDiffCalculator {
     Map(MapDiffCalculator),
     List(ListDiffCalculator),
     Richtext(RichtextDiffCalculator),
-    Tree(NewTreeDiffCalculator),
+    Tree(TreeDiffCalculator),
 }
 
 #[derive(Debug)]
