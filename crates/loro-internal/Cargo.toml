@@ -87,3 +87,7 @@ harness = false
 [[bench]]
 name = "event"
 harness = false
+
+[[bench]]
+name = "tree"
+harness = false
