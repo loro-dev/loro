@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-pub(super) mod tree2;
+pub(super) mod tree;
 use itertools::Itertools;
 
 use enum_dispatch::enum_dispatch;
@@ -25,7 +25,7 @@ use crate::{
     InternalString, VersionVector,
 };
 
-use self::tree2::NewTreeDiffCalculator;
+use self::tree::NewTreeDiffCalculator;
 
 use super::{event::InternalContainerDiff, oplog::OpLog};
 
