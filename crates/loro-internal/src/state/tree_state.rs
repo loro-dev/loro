@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use crate::container::idx::ContainerIdx;
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
-use crate::diff_calc::TreeDeletedSetTrait;
+use crate::diff_calc::tree2::TreeDeletedSetTrait;
 use crate::encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder};
 use crate::event::InternalDiff;
 use crate::txn::Transaction;

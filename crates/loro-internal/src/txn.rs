@@ -290,7 +290,7 @@ impl Transaction {
         };
 
         let last_id = change.id_last();
-        if let Err(err) = oplog.import_local_change(change, true) {
+        if let Err(err) = oplog.import_local_change(change) {
             drop(state);
             drop(oplog);
             panic!("{}", err);
