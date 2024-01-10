@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
-use loro_common::{Counter, HasId, InternalString, LoroValue, PeerID, TreeID, ID};
+use loro_common::{Counter, HasId, InternalString, LoroValue, PeerID, ID};
 
 use crate::{
     change::{Change, Lamport},

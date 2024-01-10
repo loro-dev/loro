@@ -3,7 +3,6 @@ use std::collections::BTreeSet;
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, HasId, IdSpan, Lamport, TreeID, ID};
-use serde::de;
 
 use crate::{
     container::idx::ContainerIdx,
@@ -114,7 +113,12 @@ impl NewTreeDiffCalculator {
             .min(min_lamport);
         let max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
         let mut forward_ops = vec![];
-        let group = oplog.opset.get(&self.container).unwrap().as_tree().unwrap();
+        let group = oplog
+            .group_ops
+            .get(&self.container)
+            .unwrap()
+            .as_tree()
+            .unwrap();
         for (lamport, ops) in group.ops.range(forward_min_lamport..=max_lamport) {
             for op in ops {
                 if !self.current_vv.includes_id(op.id_start()) && to.includes_id(op.id_start()) {
@@ -220,7 +224,12 @@ impl NewTreeDiffCalculator {
 
         // forward
         debug_log::debug_log!("forward");
-        let group = oplog.opset.get(&self.container).unwrap().as_tree().unwrap();
+        let group = oplog
+            .group_ops
+            .get(&self.container)
+            .unwrap()
+            .as_tree()
+            .unwrap();
         for (lamport, ops) in group.ops.range(lca_min_lamport..=to_max_lamport) {
             for op in ops {
                 if !self.current_vv.includes_id(op.id_start()) && to.includes_id(op.id_start()) {
