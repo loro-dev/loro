@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{Arc, Mutex},
+};
 
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
@@ -8,6 +11,7 @@ use loro_common::{Counter, HasId, InternalString, LoroValue, PeerID, ID};
 use crate::{
     change::{Change, Lamport},
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},
+    diff_calc::tree::TreeCacheForDiff,
     op::{InnerContent, RichOp},
     VersionVector,
 };
@@ -36,6 +40,24 @@ impl OpGroups {
 
     pub(crate) fn get(&self, container_idx: &ContainerIdx) -> Option<&OpGroup> {
         self.groups.get(container_idx)
+    }
+
+    pub(crate) fn get_tree(&self, container_idx: &ContainerIdx) -> Option<&TreeOpGroup> {
+        self.groups
+            .get(container_idx)
+            .and_then(|group| match group {
+                OpGroup::Tree(tree) => Some(tree),
+                _ => None,
+            })
+    }
+
+    pub(crate) fn get_map(&self, container_idx: &ContainerIdx) -> Option<&MapOpGroup> {
+        self.groups
+            .get(container_idx)
+            .and_then(|group| match group {
+                OpGroup::Map(map) => Some(map),
+                _ => None,
+            })
     }
 }
 
@@ -154,6 +176,7 @@ impl Ord for GroupedTreeOpInfo {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TreeOpGroup {
     pub(crate) ops: BTreeMap<Lamport, BTreeSet<GroupedTreeOpInfo>>,
+    pub(crate) tree_for_diff: Arc<Mutex<TreeCacheForDiff>>,
 }
 
 impl OpGroupTrait for TreeOpGroup {
