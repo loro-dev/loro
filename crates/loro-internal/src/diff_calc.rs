@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 pub(super) mod tree;
+pub(super) mod tree2;
 use itertools::Itertools;
 pub(crate) use tree::TreeDeletedSetTrait;
 pub(super) use tree::TreeDiffCache;
@@ -29,7 +30,7 @@ use crate::{
     InternalString, VersionVector,
 };
 
-use self::tree::MoveLamportAndID;
+use self::{tree::MoveLamportAndID, tree2::NewTreeDiffCalculator};
 
 use super::{event::InternalContainerDiff, oplog::OpLog};
 
@@ -166,9 +167,12 @@ impl DiffCalculator {
                                     depth,
                                     ContainerDiffCalculator::List(ListDiffCalculator::default()),
                                 ),
-                                crate::ContainerType::Tree => {
-                                    (depth, ContainerDiffCalculator::Tree(TreeDiffCalculator))
-                                }
+                                crate::ContainerType::Tree => (
+                                    depth,
+                                    ContainerDiffCalculator::Tree(NewTreeDiffCalculator::new(
+                                        op.container,
+                                    )),
+                                ),
                             }
                         });
 
@@ -346,7 +350,7 @@ enum ContainerDiffCalculator {
     Map(MapDiffCalculator),
     List(ListDiffCalculator),
     Richtext(RichtextDiffCalculator),
-    Tree(TreeDiffCalculator),
+    Tree(NewTreeDiffCalculator),
 }
 
 #[derive(Debug)]
@@ -420,13 +424,13 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         for (key, value) in changed {
             let value = value
                 .map(|v| {
-                    let value = v.op.content.as_map().unwrap().clone().value;
+                    let value = v.value.clone();
                     if let Some(LoroValue::Container(c)) = &value {
                         on_new_container(c);
                     }
 
                     MapValue {
-                        counter: v.op.counter,
+                        counter: v.counter,
                         value,
                         lamp: v.lamport,
                         peer: v.peer,
