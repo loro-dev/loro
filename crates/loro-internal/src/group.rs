@@ -24,6 +24,9 @@ pub(crate) struct OpGroups {
 impl OpGroups {
     pub(crate) fn insert_by_change(&mut self, change: &Change) {
         for op in change.ops.iter() {
+            if matches!(op.content, InnerContent::List(_)) {
+                continue;
+            }
             let container_idx = op.container;
             let rich_op = RichOp::new_by_change(change, op);
             let manager = self
@@ -31,7 +34,7 @@ impl OpGroups {
                 .entry(container_idx)
                 .or_insert_with(|| match op.content {
                     InnerContent::Map(_) => OpGroup::Map(MapOpGroup::default()),
-                    InnerContent::List(_) => OpGroup::List(ListOpGroup),
+                    InnerContent::List(_) => unreachable!(),
                     InnerContent::Tree(_) => OpGroup::Tree(TreeOpGroup::default()),
                 });
             manager.insert(&rich_op)
@@ -65,7 +68,6 @@ impl OpGroups {
 #[enum_dispatch(OpGroupTrait)]
 #[derive(Debug, Clone, EnumAsInner)]
 pub(crate) enum OpGroup {
-    List(ListOpGroup),
     Map(MapOpGroup),
     Tree(TreeOpGroup),
 }
@@ -191,11 +193,4 @@ impl OpGroupTrait for TreeOpGroup {
             peer: op.peer,
         });
     }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ListOpGroup;
-
-impl OpGroupTrait for ListOpGroup {
-    fn insert(&mut self, _op: &RichOp) {}
 }
