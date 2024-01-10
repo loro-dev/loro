@@ -1220,7 +1220,7 @@ struct EncodedOp {
     container_index: u32,
     #[columnar(strategy = "DeltaRle")]
     prop: i32,
-    #[columnar(strategy = "Rle")]
+    #[columnar(strategy = "DeltaRle")]
     peer_idx: u32,
     #[columnar(strategy = "DeltaRle")]
     value_type: u8,
@@ -1231,7 +1231,7 @@ struct EncodedOp {
 #[columnar(vec, ser, de, iterable)]
 #[derive(Debug, Clone)]
 struct EncodedChange {
-    #[columnar(strategy = "Rle")]
+    #[columnar(strategy = "DeltaRle")]
     peer_idx: usize,
     #[columnar(strategy = "DeltaRle")]
     len: usize,
@@ -1263,12 +1263,10 @@ mod value {
     use loro_common::{
         ContainerID, Counter, InternalString, LoroError, LoroResult, LoroValue, PeerID, TreeID,
     };
-    use num_derive::{FromPrimitive, ToPrimitive};
-    use num_traits::{FromPrimitive, ToPrimitive};
-
-    use crate::container::tree::tree_op::TreeOp;
 
     use super::{encode::ValueRegister, MAX_COLLECTION_SIZE};
+    use crate::container::tree::tree_op::TreeOp;
+    use num_traits::{FromPrimitive, ToPrimitive};
 
     #[allow(unused)]
     #[non_exhaustive]
@@ -1339,8 +1337,7 @@ mod value {
         }
     }
 
-    #[non_exhaustive]
-    #[derive(Debug, FromPrimitive, ToPrimitive)]
+    #[derive(Debug)]
     pub enum ValueKind {
         Null = 0,
         True = 1,
@@ -1358,6 +1355,108 @@ mod value {
         TreeMove = 13,
         Binary = 14,
         Unknown = 65536,
+    }
+
+    impl num_traits::FromPrimitive for ValueKind {
+        #[allow(trivial_numeric_casts)]
+        #[inline]
+        fn from_u8(n: u8) -> Option<Self> {
+            if n == ValueKind::Null as u8 {
+                Some(ValueKind::Null)
+            } else if n == ValueKind::True as u8 {
+                Some(ValueKind::True)
+            } else if n == ValueKind::False as u8 {
+                Some(ValueKind::False)
+            } else if n == ValueKind::DeleteOnce as u8 {
+                Some(ValueKind::DeleteOnce)
+            } else if n == ValueKind::I32 as u8 {
+                Some(ValueKind::I32)
+            } else if n == ValueKind::ContainerIdx as u8 {
+                Some(ValueKind::ContainerIdx)
+            } else if n == ValueKind::F64 as u8 {
+                Some(ValueKind::F64)
+            } else if n == ValueKind::Str as u8 {
+                Some(ValueKind::Str)
+            } else if n == ValueKind::DeleteSeq as u8 {
+                Some(ValueKind::DeleteSeq)
+            } else if n == ValueKind::DeltaInt as u8 {
+                Some(ValueKind::DeltaInt)
+            } else if n == ValueKind::Array as u8 {
+                Some(ValueKind::Array)
+            } else if n == ValueKind::Map as u8 {
+                Some(ValueKind::Map)
+            } else if n == ValueKind::MarkStart as u8 {
+                Some(ValueKind::MarkStart)
+            } else if n == ValueKind::TreeMove as u8 {
+                Some(ValueKind::TreeMove)
+            } else if n == ValueKind::Binary as u8 {
+                Some(ValueKind::Binary)
+            } else {
+                None
+            }
+        }
+
+        #[inline]
+        fn from_u64(n: u64) -> Option<Self> {
+            Self::from_u8(n as u8)
+        }
+
+        #[inline]
+        fn from_i64(n: i64) -> Option<Self> {
+            Self::from_u8(n as u8)
+        }
+    }
+
+    impl num_traits::ToPrimitive for ValueKind {
+        #[inline]
+        #[allow(trivial_numeric_casts)]
+        fn to_i64(&self) -> Option<i64> {
+            Some(match *self {
+                ValueKind::Null => ValueKind::Null as i64,
+                ValueKind::True => ValueKind::True as i64,
+                ValueKind::False => ValueKind::False as i64,
+                ValueKind::DeleteOnce => ValueKind::DeleteOnce as i64,
+                ValueKind::I32 => ValueKind::I32 as i64,
+                ValueKind::ContainerIdx => ValueKind::ContainerIdx as i64,
+                ValueKind::F64 => ValueKind::F64 as i64,
+                ValueKind::Str => ValueKind::Str as i64,
+                ValueKind::DeleteSeq => ValueKind::DeleteSeq as i64,
+                ValueKind::DeltaInt => ValueKind::DeltaInt as i64,
+                ValueKind::Array => ValueKind::Array as i64,
+                ValueKind::Map => ValueKind::Map as i64,
+                ValueKind::MarkStart => ValueKind::MarkStart as i64,
+                ValueKind::TreeMove => ValueKind::TreeMove as i64,
+                ValueKind::Binary => ValueKind::Binary as i64,
+                ValueKind::Unknown => ValueKind::Unknown as i64,
+            })
+        }
+        #[inline]
+        fn to_u64(&self) -> Option<u64> {
+            self.to_i64().map(|x| x as u64)
+        }
+
+        #[inline]
+        #[allow(trivial_numeric_casts)]
+        fn to_u8(&self) -> Option<u8> {
+            Some(match *self {
+                ValueKind::Null => ValueKind::Null as u8,
+                ValueKind::True => ValueKind::True as u8,
+                ValueKind::False => ValueKind::False as u8,
+                ValueKind::DeleteOnce => ValueKind::DeleteOnce as u8,
+                ValueKind::I32 => ValueKind::I32 as u8,
+                ValueKind::ContainerIdx => ValueKind::ContainerIdx as u8,
+                ValueKind::F64 => ValueKind::F64 as u8,
+                ValueKind::Str => ValueKind::Str as u8,
+                ValueKind::DeleteSeq => ValueKind::DeleteSeq as u8,
+                ValueKind::DeltaInt => ValueKind::DeltaInt as u8,
+                ValueKind::Array => ValueKind::Array as u8,
+                ValueKind::Map => ValueKind::Map as u8,
+                ValueKind::MarkStart => ValueKind::MarkStart as u8,
+                ValueKind::TreeMove => ValueKind::TreeMove as u8,
+                ValueKind::Binary => ValueKind::Binary as u8,
+                ValueKind::Unknown => panic!("Unknown value kind"),
+            })
+        }
     }
 
     impl<'a> Value<'a> {
