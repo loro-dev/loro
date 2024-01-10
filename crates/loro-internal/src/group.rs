@@ -51,6 +51,7 @@ impl OpGroups {
             })
     }
 
+    #[allow(unused)]
     pub(crate) fn get_map(&self, container_idx: &ContainerIdx) -> Option<&MapOpGroup> {
         self.groups
             .get(container_idx)
@@ -63,7 +64,6 @@ impl OpGroups {
 
 #[enum_dispatch(OpGroupTrait)]
 #[derive(Debug, Clone, EnumAsInner)]
-
 pub(crate) enum OpGroup {
     List(ListOpGroup),
     Map(MapOpGroup),
