@@ -41,7 +41,7 @@ pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
     changes: ClientChanges,
-    pub(crate) group_ops: OpGroups,
+    pub(crate) op_groups: OpGroups,
     /// **lamport starts from 0**
     pub(crate) next_lamport: Lamport,
     pub(crate) latest_timestamp: Timestamp,
@@ -82,7 +82,7 @@ impl Clone for OpLog {
             dag: self.dag.clone(),
             arena: Default::default(),
             changes: self.changes.clone(),
-            group_ops: self.group_ops.clone(),
+            op_groups: self.op_groups.clone(),
             next_lamport: self.next_lamport,
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
@@ -157,7 +157,7 @@ impl OpLog {
             dag: AppDag::default(),
             arena: Default::default(),
             changes: ClientChanges::default(),
-            group_ops: OpGroups::default(),
+            op_groups: OpGroups::default(),
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
@@ -208,7 +208,7 @@ impl OpLog {
 
     /// This is the only place to update the `OpLog.changes`
     pub(crate) fn insert_new_change(&mut self, mut change: Change, _: EnsureChangeDepsAreAtTheEnd) {
-        self.group_ops.insert_by_change(&change);
+        self.op_groups.insert_by_change(&change);
         let entry = self.changes.entry(change.id.peer).or_default();
         match entry.last_mut() {
             Some(last) => {

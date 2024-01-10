@@ -387,7 +387,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
     ) -> InternalDiff {
         let mut changed = Vec::new();
         let group = oplog
-            .group_ops
+            .op_groups
             .get(&self.container_idx)
             .unwrap()
             .as_map()

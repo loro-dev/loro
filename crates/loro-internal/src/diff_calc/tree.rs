@@ -114,7 +114,7 @@ impl TreeDiffCalculator {
         let max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
         let mut forward_ops = vec![];
         let group = oplog
-            .group_ops
+            .op_groups
             .get(&self.container)
             .unwrap()
             .as_tree()
@@ -225,7 +225,7 @@ impl TreeDiffCalculator {
         // forward
         debug_log::debug_log!("forward");
         let group = oplog
-            .group_ops
+            .op_groups
             .get(&self.container)
             .unwrap()
             .as_tree()
