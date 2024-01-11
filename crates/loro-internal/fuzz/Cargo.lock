@@ -135,9 +135,9 @@ dependencies = [
 
 [[package]]
 name = "debug-log"
-version = "0.2.2"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b90f9d9c0c144c4aa35a874e362392ec6aef3b9291c882484235069540b26c73"
+checksum = "caf861b629ec23fc562cccc8b47cc98a54d192ecf4e7b575ce30659d8c814c3a"
 dependencies = [
  "once_cell",
 ]

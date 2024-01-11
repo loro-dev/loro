@@ -222,7 +222,7 @@ impl ContainerState for TreeState {
     fn apply_diff_and_convert(
         &mut self,
         diff: crate::event::InternalDiff,
-        _arena: &SharedArena,
+        arena: &SharedArena,
         _txn: &Weak<Mutex<Option<Transaction>>>,
         _state: &Weak<Mutex<DocState>>,
     ) -> Diff {
@@ -230,6 +230,12 @@ impl ContainerState for TreeState {
             // assert never cause cycle move
             for diff in tree.diff.iter() {
                 let target = diff.target;
+                // create associated metadata container
+                if !self.trees.contains_key(&target) {
+                    let container_id = target.associated_meta_container();
+                    let child_idx = arena.register_container(&container_id);
+                    arena.set_parent(child_idx, Some(self.idx));
+                }
                 let parent = match diff.action {
                     TreeInternalDiff::Create
                     | TreeInternalDiff::Restore
@@ -283,11 +289,17 @@ impl ContainerState for TreeState {
         &mut self,
         raw_op: &RawOp,
         _op: &crate::op::Op,
-        _arena: &SharedArena,
+        arena: &SharedArena,
     ) -> LoroResult<()> {
         match raw_op.content {
             crate::op::RawOpContent::Tree(tree) => {
                 let TreeOp { target, parent, .. } = tree;
+                // create associated metadata container
+                if !self.trees.contains_key(&target) {
+                    let container_id = target.associated_meta_container();
+                    let child_idx = arena.register_container(&container_id);
+                    arena.set_parent(child_idx, Some(self.idx));
+                }
                 self.mov(target, parent, raw_op.id)
             }
             _ => unreachable!(),

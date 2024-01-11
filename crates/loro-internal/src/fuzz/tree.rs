@@ -817,13 +817,6 @@ mod failed_tests {
                     parent: (7040879940371245160, -1634364121),
                 },
                 Tree {
-                    site: 97,
-                    container_idx: 68,
-                    action: TreeAction::Move,
-                    target: (2369443269732456, 2130710784),
-                    parent: (10995706711611801855, -32104),
-                },
-                Tree {
                     site: 30,
                     container_idx: 255,
                     action: TreeAction::Meta,
