@@ -10,6 +10,7 @@
     "heapless",
     "idspan",
     "insta",
+    "Itertools",
     "Leeeon",
     "LOGSTORE",
     "napi",
