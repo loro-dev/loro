@@ -139,7 +139,7 @@ impl OpLog {
         self.dag.vv.extend_to_include_last_id(change.id_last());
         self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
         let mark = self.update_dag_on_new_change(&change);
-        self.insert_new_change(change, mark, false);
+        self.insert_new_change(change, mark);
     }
 }
 

@@ -41,6 +41,7 @@ pub mod delta;
 pub mod event;
 
 pub use error::{LoroError, LoroResult};
+pub(crate) mod group;
 pub(crate) mod macros;
 pub(crate) mod state;
 pub(crate) mod value;

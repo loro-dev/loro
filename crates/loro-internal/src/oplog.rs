@@ -6,7 +6,6 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::mem::take;
 use std::rc::Rc;
-use std::sync::Mutex;
 
 use fxhash::FxHashMap;
 use loro_common::{HasCounter, HasId};
@@ -17,10 +16,9 @@ use smallvec::SmallVec;
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op;
 use crate::dag::{Dag, DagUtils};
-use crate::diff_calc::tree::MoveLamportAndID;
-use crate::diff_calc::TreeDiffCache;
 use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
+use crate::group::OpGroups;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{ListSlice, RawOpContent, RemoteOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
@@ -43,6 +41,7 @@ pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
     changes: ClientChanges,
+    pub(crate) op_groups: OpGroups,
     /// **lamport starts from 0**
     pub(crate) next_lamport: Lamport,
     pub(crate) latest_timestamp: Timestamp,
@@ -53,8 +52,6 @@ pub struct OpLog {
     /// Whether we are importing a batch of changes.
     /// If so the Dag's frontiers won't be updated until the batch is finished.
     pub(crate) batch_importing: bool,
-
-    pub(crate) tree_parent_cache: Mutex<TreeDiffCache>,
 }
 
 /// [AppDag] maintains the causal graph of the app.
@@ -85,11 +82,11 @@ impl Clone for OpLog {
             dag: self.dag.clone(),
             arena: Default::default(),
             changes: self.changes.clone(),
+            op_groups: self.op_groups.clone(),
             next_lamport: self.next_lamport,
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
             batch_importing: false,
-            tree_parent_cache: Default::default(),
         }
     }
 }
@@ -160,11 +157,11 @@ impl OpLog {
             dag: AppDag::default(),
             arena: Default::default(),
             changes: ClientChanges::default(),
+            op_groups: OpGroups::default(),
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
             batch_importing: false,
-            tree_parent_cache: Default::default(),
         }
     }
 
@@ -210,13 +207,8 @@ impl OpLog {
     }
 
     /// This is the only place to update the `OpLog.changes`
-    pub(crate) fn insert_new_change(
-        &mut self,
-        mut change: Change,
-        _: EnsureChangeDepsAreAtTheEnd,
-        local: bool,
-    ) {
-        self.update_tree_cache(&change, local);
+    pub(crate) fn insert_new_change(&mut self, mut change: Change, _: EnsureChangeDepsAreAtTheEnd) {
+        self.op_groups.insert_by_change(&change);
         let entry = self.changes.entry(change.id.peer).or_default();
         match entry.last_mut() {
             Some(last) => {
@@ -252,7 +244,7 @@ impl OpLog {
     ///
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
-    pub fn import_local_change(&mut self, change: Change, local: bool) -> Result<(), LoroError> {
+    pub fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
         let Some(change) = self.trim_the_known_part_of_change(change) else {
             return Ok(());
         };
@@ -279,34 +271,8 @@ impl OpLog {
         self.dag.frontiers.filter_peer(change.id.peer);
         self.dag.frontiers.push(change.id_last());
         let mark = self.update_dag_on_new_change(&change);
-        self.insert_new_change(change, mark, local);
+        self.insert_new_change(change, mark);
         Ok(())
-    }
-
-    fn update_tree_cache(&mut self, change: &Change, local: bool) {
-        // Update tree cache
-        let mut tree_cache = self.tree_parent_cache.lock().unwrap();
-        for op in change.ops().iter() {
-            if let crate::op::InnerContent::Tree(tree) = op.content {
-                let diff = op.counter - change.id.counter;
-                let node = MoveLamportAndID {
-                    lamport: change.lamport + diff as Lamport,
-                    id: ID {
-                        peer: change.id.peer,
-                        counter: op.counter,
-                    },
-                    target: tree.target,
-                    parent: tree.parent,
-                    effected: true,
-                };
-                if local {
-                    tree_cache.add_node_from_local(node);
-                } else {
-                    tree_cache.add_node(node);
-                }
-            }
-        }
-        drop(tree_cache);
     }
 
     /// Every time we import a new change, it should run this function to update the dag

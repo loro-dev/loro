@@ -2,8 +2,6 @@ use std::sync::Arc;
 
 pub(super) mod tree;
 use itertools::Itertools;
-pub(crate) use tree::TreeDeletedSetTrait;
-pub(super) use tree::TreeDiffCache;
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
@@ -17,10 +15,8 @@ use crate::{
             richtext_state::{RichtextStateChunk, TextChunk},
             AnchorType, CrdtRopeDelta, RichtextChunk, RichtextChunkValue, RichtextTracker, StyleOp,
         },
-        tree::tree_op::TreeOp,
     },
-    dag::DagUtils,
-    delta::{Delta, MapDelta, MapValue, TreeInternalDiff},
+    delta::{Delta, MapDelta, MapValue},
     event::InternalDiff,
     id::Counter,
     op::{RichOp, SliceRange, SliceRanges},
@@ -29,7 +25,7 @@ use crate::{
     InternalString, VersionVector,
 };
 
-use self::tree::MoveLamportAndID;
+use self::tree::TreeDiffCalculator;
 
 use super::{event::InternalContainerDiff, oplog::OpLog};
 
@@ -158,15 +154,20 @@ impl DiffCalculator {
                                 ),
                                 crate::ContainerType::Map => (
                                     depth,
-                                    ContainerDiffCalculator::Map(MapDiffCalculator::new()),
+                                    ContainerDiffCalculator::Map(MapDiffCalculator::new(
+                                        op.container,
+                                    )),
                                 ),
                                 crate::ContainerType::List => (
                                     depth,
                                     ContainerDiffCalculator::List(ListDiffCalculator::default()),
                                 ),
-                                crate::ContainerType::Tree => {
-                                    (depth, ContainerDiffCalculator::Tree(TreeDiffCalculator))
-                                }
+                                crate::ContainerType::Tree => (
+                                    depth,
+                                    ContainerDiffCalculator::Tree(TreeDiffCalculator::new(
+                                        op.container,
+                                    )),
+                                ),
                             }
                         });
 
@@ -346,15 +347,17 @@ enum ContainerDiffCalculator {
     Tree(TreeDiffCalculator),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct MapDiffCalculator {
-    grouped: FxHashMap<InternalString, CompactRegister>,
+    container_idx: ContainerIdx,
+    changed_key: FxHashSet<InternalString>,
 }
 
 impl MapDiffCalculator {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(container_idx: ContainerIdx) -> Self {
         Self {
-            grouped: Default::default(),
+            container_idx,
+            changed_key: Default::default(),
         }
     }
 }
@@ -369,29 +372,28 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         _vv: Option<&crate::VersionVector>,
     ) {
         let map = op.op().content.as_map().unwrap();
-        self.grouped
-            .entry(map.key.clone())
-            .or_default()
-            .push(CompactMapValue {
-                lamport: op.lamport(),
-                peer: op.client_id(),
-                counter: op.id_start().counter,
-                value: op.op().content.as_map().unwrap().value.clone(),
-            });
+        self.changed_key.insert(map.key.clone());
     }
 
     fn stop_tracking(&mut self, _oplog: &super::oplog::OpLog, _vv: &crate::VersionVector) {}
 
     fn calculate_diff(
         &mut self,
-        _oplog: &super::oplog::OpLog,
+        oplog: &super::oplog::OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
         let mut changed = Vec::new();
-        for (k, g) in self.grouped.iter_mut() {
-            let (peek_from, peek_to) = g.peek_at_ab(from, to);
+        let group = oplog
+            .op_groups
+            .get(&self.container_idx)
+            .unwrap()
+            .as_map()
+            .unwrap();
+        for k in self.changed_key.iter() {
+            let peek_from = group.last_op(k, from);
+            let peek_to = group.last_op(k, to);
             match (peek_from, peek_to) {
                 (None, None) => {}
                 (None, Some(_)) => changed.push((k.clone(), peek_to)),
@@ -461,48 +463,7 @@ impl HasId for CompactMapValue {
     }
 }
 
-use compact_register::CompactRegister;
 use rle::{HasLength, Sliceable};
-
-mod compact_register {
-    use std::collections::BTreeSet;
-
-    use super::*;
-    #[derive(Debug, Default)]
-    pub(super) struct CompactRegister {
-        tree: BTreeSet<CompactMapValue>,
-    }
-
-    impl CompactRegister {
-        pub fn push(&mut self, value: CompactMapValue) {
-            self.tree.insert(value);
-        }
-
-        pub fn peek_at_ab(
-            &self,
-            a: &VersionVector,
-            b: &VersionVector,
-        ) -> (Option<&CompactMapValue>, Option<&CompactMapValue>) {
-            let mut max_a: Option<&CompactMapValue> = None;
-            let mut max_b: Option<&CompactMapValue> = None;
-            for v in self.tree.iter().rev() {
-                if b.get(&v.peer).copied().unwrap_or(0) > v.counter {
-                    max_b = Some(v);
-                    break;
-                }
-            }
-
-            for v in self.tree.iter().rev() {
-                if a.get(&v.peer).copied().unwrap_or(0) > v.counter {
-                    max_a = Some(v);
-                    break;
-                }
-            }
-
-            (max_a, max_b)
-        }
-    }
-}
 
 #[derive(Default)]
 struct ListDiffCalculator {
@@ -734,103 +695,5 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 
         // debug_log::debug_dbg!(&self.tracker);
         InternalDiff::RichtextRaw(delta)
-    }
-}
-
-#[derive(Debug, Default)]
-struct TreeDiffCalculator;
-
-impl TreeDiffCalculator {
-    fn get_min_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {
-        frontiers
-            .iter()
-            .map(|id| oplog.get_min_lamport_at(*id))
-            .min()
-            .unwrap_or(0)
-    }
-
-    fn get_max_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {
-        frontiers
-            .iter()
-            .map(|id| oplog.get_max_lamport_at(*id))
-            .max()
-            .unwrap_or(Lamport::MAX)
-    }
-}
-
-impl DiffCalculatorTrait for TreeDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
-
-    fn apply_change(
-        &mut self,
-        oplog: &OpLog,
-        op: crate::op::RichOp,
-        _vv: Option<&crate::VersionVector>,
-    ) {
-        let TreeOp { target, parent } = op.op().content.as_tree().unwrap();
-        let node = MoveLamportAndID {
-            lamport: op.lamport(),
-            id: ID {
-                peer: op.client_id(),
-                counter: op.id_start().counter,
-            },
-            target: *target,
-            parent: *parent,
-            effected: true,
-        };
-        let mut tree_cache = oplog.tree_parent_cache.lock().unwrap();
-        tree_cache.add_node(node);
-    }
-
-    fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
-
-    fn calculate_diff(
-        &mut self,
-        oplog: &OpLog,
-        from: &crate::VersionVector,
-        to: &crate::VersionVector,
-        mut on_new_container: impl FnMut(&ContainerID),
-    ) -> InternalDiff {
-        debug_log::debug_log!("from {:?} to {:?}", from, to);
-        let from_frontiers = from.to_frontiers(&oplog.dag);
-        let to_frontiers = to.to_frontiers(&oplog.dag);
-        let common_ancestors = oplog
-            .dag
-            .find_common_ancestor(&from_frontiers, &to_frontiers);
-        let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
-        let lca_frontiers = lca_vv.to_frontiers(&oplog.dag);
-        debug_log::debug_log!("lca vv {:?}", lca_vv);
-
-        let mut tree_cache = oplog.tree_parent_cache.lock().unwrap();
-        let to_max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
-        let lca_min_lamport = self.get_min_lamport_by_frontiers(&lca_frontiers, oplog);
-        let from_min_lamport = self.get_min_lamport_by_frontiers(&from_frontiers, oplog);
-        let from_max_lamport = self.get_max_lamport_by_frontiers(&from_frontiers, oplog);
-        let diff = tree_cache.diff(
-            from,
-            to,
-            &lca_vv,
-            to_max_lamport,
-            lca_min_lamport,
-            (from_min_lamport, from_max_lamport),
-        );
-
-        diff.diff.iter().for_each(|d| {
-            // the metadata could be modified before, so (re)create a node need emit the map container diffs
-            // `Create` here is because maybe in a diff calc uncreate and then create back
-            if matches!(
-                d.action,
-                TreeInternalDiff::Restore
-                    | TreeInternalDiff::RestoreMove(_)
-                    | TreeInternalDiff::Create
-                    | TreeInternalDiff::CreateMove(_)
-            ) {
-                on_new_container(&d.target.associated_meta_container())
-            }
-        });
-
-        debug_log::debug_log!("\ndiff {:?}", diff);
-
-        InternalDiff::Tree(diff)
     }
 }

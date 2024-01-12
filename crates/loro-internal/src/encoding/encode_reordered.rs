@@ -178,7 +178,7 @@ fn import_changes_to_oplog(
             peer: change.id.peer,
             counter: change.id.counter + change.atom_len() as Counter,
         });
-        oplog.insert_new_change(change, mark, false);
+        oplog.insert_new_change(change, mark);
     }
     if !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
