@@ -53,11 +53,6 @@ impl ContainerState for MapState {
         };
         let mut resolved_delta = ResolvedMapDelta::new();
         for (key, value) in delta.updated.into_iter() {
-            if let Some(LoroValue::Container(c)) = &value.value {
-                let idx = arena.register_container(c);
-                arena.set_parent(idx, Some(self.idx));
-            }
-
             self.map.insert(key.clone(), value.clone());
             resolved_delta = resolved_delta.with_entry(
                 key,
@@ -84,7 +79,7 @@ impl ContainerState for MapState {
         self.apply_diff_and_convert(diff, arena, txn, state);
     }
 
-    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) -> LoroResult<()> {
+    fn apply_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<()> {
         match &op.content {
             RawOpContent::Map(MapSet { key, value }) => {
                 if value.is_none() {
@@ -99,11 +94,6 @@ impl ContainerState for MapState {
                     );
                     return Ok(());
                 }
-                let value = value.clone().unwrap();
-                if value.is_container() {
-                    let idx = arena.register_container(value.as_container().unwrap());
-                    arena.set_parent(idx, Some(self.idx));
-                }
 
                 self.insert(
                     key.clone(),
@@ -111,7 +101,7 @@ impl ContainerState for MapState {
                         lamp: op.lamport,
                         peer: op.id.peer,
                         counter: op.id.counter,
-                        value: Some(value),
+                        value: Some(value.clone().unwrap()),
                     },
                 );
                 Ok(())

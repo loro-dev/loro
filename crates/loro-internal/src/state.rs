@@ -10,14 +10,17 @@ use loro_common::{ContainerID, LoroError, LoroResult};
 
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
-    container::{idx::ContainerIdx, ContainerIdRaw},
+    container::{
+        idx::ContainerIdx, list::list_op::ListOp, map::MapSet, tree::tree_op::TreeOp,
+        ContainerIdRaw,
+    },
+    delta::{DeltaItem, MapValue},
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
-    event::Index,
-    event::{Diff, InternalContainerDiff, InternalDiff},
+    event::{Diff, Index, InternalContainerDiff, InternalDiff},
     fx_map,
     handler::ValueOrContainer,
     id::PeerID,
-    op::{Op, RawOp},
+    op::{ListSlice, Op, RawOp, RawOpContent},
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
@@ -77,7 +80,7 @@ pub(crate) trait ContainerState: Clone {
         state: &Weak<Mutex<DocState>>,
     );
 
-    fn apply_op(&mut self, raw_op: &RawOp, op: &Op, arena: &SharedArena) -> LoroResult<()>;
+    fn apply_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()>;
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
     fn to_diff(
         &mut self,
@@ -140,8 +143,8 @@ impl<T: ContainerState> ContainerState for Box<T> {
         self.as_mut().apply_diff(diff, arena, txn, state)
     }
 
-    fn apply_op(&mut self, raw_op: &RawOp, op: &Op, arena: &SharedArena) -> LoroResult<()> {
-        self.as_mut().apply_op(raw_op, op, arena)
+    fn apply_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
+        self.as_mut().apply_op(raw_op, op)
     }
 
     #[doc = r" Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied."]
@@ -399,7 +402,6 @@ impl DocState {
         } else {
             inner
         };
-
         // apply diff
         for diff in &mut diffs {
             let Some(internal_diff) = std::mem::take(&mut diff.diff) else {
@@ -412,11 +414,12 @@ impl DocState {
                 continue;
             };
             let idx = diff.idx;
-            let state = self.states.entry(idx).or_insert_with(|| create_state(idx));
 
             if self.in_txn {
                 self.changed_idx_in_txn.insert(idx);
             }
+            self.set_parent_by_diff(internal_diff.as_internal().unwrap(), idx);
+            let state = self.states.entry(idx).or_insert_with(|| create_state(idx));
             if is_recording {
                 // process bring_back before apply
                 let external_diff = if diff.bring_back {
@@ -460,6 +463,8 @@ impl DocState {
     }
 
     pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
+        // set parent first, `MapContainer` will only be created for TreeID that does not contain
+        self.set_container_parent_by_op(raw_op);
         let state = self
             .states
             .entry(op.container)
@@ -468,9 +473,7 @@ impl DocState {
         if self.in_txn {
             self.changed_idx_in_txn.insert(op.container);
         }
-
-        state.apply_op(raw_op, op, &self.arena)?;
-        Ok(())
+        state.apply_op(raw_op, op)
     }
 
     pub(crate) fn start_txn(&mut self, origin: InternalString, local: bool) {
@@ -488,6 +491,102 @@ impl DocState {
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut State> {
         self.states.values_mut()
+    }
+
+    fn set_container_parent_by_op(&mut self, raw_op: &RawOp) {
+        let container = raw_op.container;
+        match &raw_op.content {
+            RawOpContent::List(op) => {
+                if let ListOp::Insert {
+                    slice: ListSlice::RawData(list),
+                    ..
+                } = op
+                {
+                    let list = match list {
+                        std::borrow::Cow::Borrowed(list) => list.iter(),
+                        std::borrow::Cow::Owned(list) => list.iter(),
+                    };
+                    for value in list {
+                        if value.is_container() {
+                            let c = value.as_container().unwrap();
+                            let idx = self.arena.register_container(c);
+                            self.arena.set_parent(idx, Some(container));
+                        }
+                    }
+                }
+            }
+            RawOpContent::Map(MapSet { key: _, value }) => {
+                if value.is_none() {
+                    return;
+                }
+                let value = value.as_ref().unwrap();
+                if value.is_container() {
+                    let idx = self.arena.register_container(value.as_container().unwrap());
+                    self.arena.set_parent(idx, Some(container));
+                }
+            }
+            RawOpContent::Tree(TreeOp { target, .. }) => {
+                let state = self
+                    .states
+                    .entry(container)
+                    .or_insert_with(|| create_state(container))
+                    .as_tree_state()
+                    .unwrap();
+                // create associated metadata container
+                // TODO: maybe we could create map container only when setting metadata
+                if !&state.trees.contains_key(target) {
+                    let container_id = target.associated_meta_container();
+                    let child_idx = self.arena.register_container(&container_id);
+                    self.arena.set_parent(child_idx, Some(container));
+                }
+            }
+        }
+    }
+
+    fn set_parent_by_diff(&mut self, diff: &InternalDiff, container: ContainerIdx) {
+        match diff {
+            InternalDiff::ListRaw(list) => {
+                for span in list.iter() {
+                    if let DeltaItem::Insert { insert: value, .. } = span {
+                        for slices in value.ranges.iter() {
+                            for i in slices.0.start..slices.0.end {
+                                let value = self.arena.get_value(i as usize).unwrap();
+                                if value.is_container() {
+                                    let c = value.as_container().unwrap();
+                                    let idx = self.arena.register_container(c);
+                                    self.arena.set_parent(idx, Some(container));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            InternalDiff::Map(delta) => {
+                for (_, value) in delta.updated.iter() {
+                    if let Some(LoroValue::Container(c)) = &value.value {
+                        let idx = self.arena.register_container(c);
+                        self.arena.set_parent(idx, Some(container));
+                    }
+                }
+            }
+            InternalDiff::Tree(tree) => {
+                let state = self
+                    .states
+                    .entry(container)
+                    .or_insert_with(|| create_state(container))
+                    .as_tree_state()
+                    .unwrap();
+                for diff in tree.diff.iter() {
+                    let target = &diff.target;
+                    if !state.trees.contains_key(target) {
+                        let container_id = target.associated_meta_container();
+                        let child_idx = self.arena.register_container(&container_id);
+                        self.arena.set_parent(child_idx, Some(container));
+                    }
+                }
+            }
+            InternalDiff::RichtextRaw(_) => {}
+        }
     }
 
     pub(crate) fn init_container(

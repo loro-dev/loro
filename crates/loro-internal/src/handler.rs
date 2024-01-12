@@ -725,7 +725,6 @@ impl ListHandler {
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, c_type);
         let child_idx = txn.arena.register_container(&container_id);
-        txn.arena.set_parent(child_idx, Some(self.container_idx));
         let v = LoroValue::Container(container_id);
         txn.apply_local_op(
             self.container_idx,
@@ -971,7 +970,6 @@ impl MapHandler {
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, c_type);
         let child_idx = txn.arena.register_container(&container_id);
-        txn.arena.set_parent(child_idx, Some(self.container_idx));
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
@@ -1193,9 +1191,6 @@ impl TreeHandler {
     ) -> LoroResult<TreeID> {
         let parent = parent.into();
         let tree_id = TreeID::from_id(txn.next_id());
-        let container_id = tree_id.associated_meta_container();
-        let child_idx = txn.arena.register_container(&container_id);
-        txn.arena.set_parent(child_idx, Some(self.container_idx));
         let mut event_hint = smallvec![TreeDiffItem {
             target: tree_id,
             action: TreeExternalDiff::Create,
