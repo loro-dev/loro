@@ -252,7 +252,6 @@ impl DiffCalculator {
                         new_containers.insert(c.clone());
                         container_id_to_depth.insert(c.clone(), depth.saturating_add(1));
                         oplog.arena.register_container(c);
-                        // oplog.arena.set_parent(child_idx, Some(idx));
                     }
                 });
                 if !diff.is_empty() || bring_back {

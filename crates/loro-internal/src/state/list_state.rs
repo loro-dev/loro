@@ -318,11 +318,6 @@ impl ContainerState for ListState {
                     for slices in value.ranges.iter() {
                         for i in slices.0.start..slices.0.end {
                             let value = arena.get_value(i as usize).unwrap();
-                            if value.is_container() {
-                                let c = value.as_container().unwrap();
-                                let idx = arena.register_container(c);
-                                arena.set_parent(idx, Some(self.idx));
-                            }
                             arr.push(value);
                         }
                     }
@@ -366,11 +361,6 @@ impl ContainerState for ListState {
                             for slices in value.ranges.iter() {
                                 for i in slices.0.start..slices.0.end {
                                     let value = arena.get_value(i as usize).unwrap();
-                                    if value.is_container() {
-                                        let c = value.as_container().unwrap();
-                                        let idx = arena.register_container(c);
-                                        arena.set_parent(idx, Some(self.idx));
-                                    }
                                     arr.push(value);
                                 }
                             }
@@ -389,7 +379,7 @@ impl ContainerState for ListState {
         }
     }
 
-    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) -> LoroResult<()> {
+    fn apply_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<()> {
         match &op.content {
             RawOpContent::Map(_) => unreachable!(),
             RawOpContent::Tree(_) => unreachable!(),
@@ -397,23 +387,9 @@ impl ContainerState for ListState {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(list) => match list {
                         std::borrow::Cow::Borrowed(list) => {
-                            for value in list.iter() {
-                                if value.is_container() {
-                                    let c = value.as_container().unwrap();
-                                    let idx = arena.register_container(c);
-                                    arena.set_parent(idx, Some(self.idx));
-                                }
-                            }
                             self.insert_batch(*pos, list.to_vec(), op.id);
                         }
                         std::borrow::Cow::Owned(list) => {
-                            for value in list.iter() {
-                                if value.is_container() {
-                                    let c = value.as_container().unwrap();
-                                    let idx = arena.register_container(c);
-                                    arena.set_parent(idx, Some(self.idx));
-                                }
-                            }
                             self.insert_batch(*pos, list.clone(), op.id);
                         }
                     },
