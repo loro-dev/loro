@@ -16,6 +16,10 @@ impl StyleConfigMap {
     }
 
     pub fn insert(&mut self, key: InternalString, value: StyleConfig) {
+        if key.contains(':') {
+            panic!("style key should not contain ':'");
+        }
+
         self.map.insert(key, value);
     }
 
