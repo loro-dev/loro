@@ -4,7 +4,6 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor,
 };
-use itertools::Itertools;
 use loro_common::{IdSpan, LoroValue, ID};
 use serde::{ser::SerializeStruct, Serialize};
 use std::fmt::{Display, Formatter};
@@ -2130,7 +2129,7 @@ mod test {
     fn comment(n: isize) -> Arc<StyleOp> {
         Arc::new(StyleOp::new_for_test(
             n,
-            "comment",
+            &format!("comment:{}", n),
             "comment".into(),
             TextStyleInfoFlag::COMMENT,
         ))
@@ -2456,33 +2455,21 @@ mod test {
                 {
                     "insert": "H",
                     "attributes": {
-                        "id:0@0": {
-                            "key": "comment",
-                            "data": "comment"
-                        },
+                        "comment:0": "comment",
                     },
                 },
                 {
                     "insert": "ello",
                     "attributes": {
-                        "id:0@0": {
-                            "key": "comment",
-                            "data": "comment"
-                        },
-                        "id:1@1": {
-                            "key": "comment",
-                            "data": "comment"
-                        }
+                        "comment:0": "comment",
+                        "comment:1": "comment",
                     },
                 },
 
                 {
                     "insert": " ",
                     "attributes": {
-                        "id:1@1": {
-                            "key": "comment",
-                            "data": "comment"
-                        }
+                        "comment:1": "comment",
                     },
                 },
                 {

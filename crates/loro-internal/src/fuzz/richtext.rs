@@ -98,15 +98,6 @@ impl Actor {
                                     .filter(|(_, v)| !v.data.is_null())
                                     .map(|(k, v)| match k {
                                         StyleKey::Key(k) => (k.to_string(), v.data),
-                                        StyleKey::KeyWithId { key, id } => {
-                                            let mut data = FxHashMap::default();
-                                            data.insert(
-                                                "key".to_string(),
-                                                LoroValue::String(Arc::new(key.to_string())),
-                                            );
-                                            data.insert("data".to_string(), v.data);
-                                            (format!("id:{}", id), LoroValue::Map(Arc::new(data)))
-                                        }
                                     })
                                     .collect();
                                 let attributes = if attributes.is_empty() {
@@ -129,15 +120,6 @@ impl Actor {
                                     .filter(|(_, v)| !v.data.is_null())
                                     .map(|(k, v)| match k {
                                         StyleKey::Key(k) => (k.to_string(), v.data),
-                                        StyleKey::KeyWithId { key, id } => {
-                                            let mut data = FxHashMap::default();
-                                            data.insert(
-                                                "key".to_string(),
-                                                LoroValue::String(Arc::new(key.to_string())),
-                                            );
-                                            data.insert("data".to_string(), v.data);
-                                            (format!("id:{}", id), LoroValue::Map(Arc::new(data)))
-                                        }
                                     })
                                     .collect();
                                 let attributes = if attributes.is_empty() {
@@ -157,7 +139,7 @@ impl Actor {
                     //     text_doc.peer_id(),
                     //     text_h.get_richtext_value()
                     // );
-                    // println!("delta {:?}", text_deltas);
+                    debug_log::debug_log!("delta {:?}", text_deltas);
                     text_h.apply_delta_with_txn(&mut txn, &text_deltas).unwrap();
 
                     // println!("after {:?}\n", text_h.get_richtext_value());
@@ -439,7 +421,7 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
 
     debug_log::debug_log!("{}", a_result.to_json_pretty());
     assert_eq!(&a_result, &b_result);
-    a_actor.text_container.check();
+    debug_log::debug_log!("{}", a_value.to_json_pretty());
     assert_value_eq(&a_result, &a_value);
 }
 
@@ -1004,5 +986,26 @@ mod failed_tests {
                 Sync { from: 155, to: 1 },
             ],
         )
+    }
+
+    #[test]
+    fn allow_overlap() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 255,
+                    pos: 562949940576255,
+                    value: 10,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 0,
+                    pos: 52793738066393,
+                    value: 15637060856183783423,
+                    action: RichTextAction::Mark(15697817505862638041),
+                },
+            ],
+        );
     }
 }

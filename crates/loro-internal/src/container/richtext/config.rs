@@ -24,15 +24,23 @@ impl StyleConfigMap {
     }
 
     pub fn get_style_flag(&self, key: &InternalString) -> Option<TextStyleInfoFlag> {
-        self.map
-            .get(key)
-            .map(|x| TextStyleInfoFlag::new(!x.allow_overlap, x.expand))
+        self._get_style_flag(key, false)
     }
 
     pub fn get_style_flag_for_unmark(&self, key: &InternalString) -> Option<TextStyleInfoFlag> {
-        self.map
-            .get(key)
-            .map(|x| TextStyleInfoFlag::new(!x.allow_overlap, x.expand.reverse()))
+        self._get_style_flag(key, true)
+    }
+
+    fn _get_style_flag(&self, key: &InternalString, is_del: bool) -> Option<TextStyleInfoFlag> {
+        let f = |x: &StyleConfig| {
+            TextStyleInfoFlag::new(if is_del { x.expand.reverse() } else { x.expand })
+        };
+        if let Some(index) = key.find(':') {
+            let key = key[..index].into();
+            self.map.get(&key).map(f)
+        } else {
+            self.map.get(key).map(f)
+        }
     }
 
     pub fn default_rich_text_config() -> Self {
@@ -43,7 +51,6 @@ impl StyleConfigMap {
         map.map.insert(
             "bold".into(),
             StyleConfig {
-                allow_overlap: false,
                 expand: ExpandType::After,
             },
         );
@@ -51,7 +58,6 @@ impl StyleConfigMap {
         map.map.insert(
             "italic".into(),
             StyleConfig {
-                allow_overlap: false,
                 expand: ExpandType::After,
             },
         );
@@ -59,7 +65,6 @@ impl StyleConfigMap {
         map.map.insert(
             "underline".into(),
             StyleConfig {
-                allow_overlap: false,
                 expand: ExpandType::After,
             },
         );
@@ -67,7 +72,6 @@ impl StyleConfigMap {
         map.map.insert(
             "link".into(),
             StyleConfig {
-                allow_overlap: false,
                 expand: ExpandType::None,
             },
         );
@@ -75,7 +79,6 @@ impl StyleConfigMap {
         map.map.insert(
             "highlight".into(),
             StyleConfig {
-                allow_overlap: false,
                 expand: ExpandType::None,
             },
         );
@@ -83,7 +86,6 @@ impl StyleConfigMap {
         map.map.insert(
             "comment".into(),
             StyleConfig {
-                allow_overlap: true,
                 expand: ExpandType::None,
             },
         );
@@ -94,21 +96,14 @@ impl StyleConfigMap {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StyleConfig {
-    pub allow_overlap: bool,
     pub expand: ExpandType,
 }
 
 impl StyleConfig {
     pub fn new() -> Self {
         Self {
-            allow_overlap: false,
             expand: ExpandType::None,
         }
-    }
-
-    pub fn allow_overlap(mut self, allow_overlap: bool) -> Self {
-        self.allow_overlap = allow_overlap;
-        self
     }
 
     pub fn expand(mut self, expand: ExpandType) -> Self {

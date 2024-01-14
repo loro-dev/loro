@@ -88,9 +88,7 @@ extern "C" {
     pub type JsValueOrContainerOrUndefined;
     #[wasm_bindgen(typescript_type = "[string, Value | Container]")]
     pub type MapEntry;
-    #[wasm_bindgen(
-        typescript_type = "{[key: string]: { expand: 'before'|'after'|'none'|'both', allowOverlap?: boolean }}"
-    )]
+    #[wasm_bindgen(typescript_type = "{[key: string]: { expand: 'before'|'after'|'none'|'both' }}")]
     pub type JsTextStyles;
 }
 
@@ -247,11 +245,9 @@ impl Loro {
             let expand = Reflect::get(&value, &"expand".into()).expect("`expand` not specified");
             let expand_str = expand.as_string().unwrap();
             // read allowOverlap value from value
-            let allow_overlap = Reflect::get(&value, &"allowOverlap".into()).unwrap();
             style_config.insert(
                 key.into(),
                 StyleConfig {
-                    allow_overlap: allow_overlap.as_bool().unwrap_or(false),
                     expand: ExpandType::try_from_str(&expand_str)
                         .expect("`expand` must be one of `none`, `start`, `end`, `both`"),
                 },

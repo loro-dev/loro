@@ -43,6 +43,7 @@ pub enum TextDelta {
     },
 }
 
+/// Flatten attributes that allow overlap
 #[derive(Clone)]
 pub struct TextHandler {
     txn: Weak<Mutex<Option<Transaction>>>,
@@ -317,7 +318,7 @@ impl TextHandler {
         pos: usize,
         s: &str,
         attr: Option<&FxHashMap<String, LoroValue>>,
-    ) -> Result<Vec<(String, LoroValue)>, LoroError> {
+    ) -> Result<Vec<(InternalString, LoroValue)>, LoroError> {
         if s.is_empty() {
             return Ok(Vec::new());
         }
@@ -347,10 +348,11 @@ impl TextHandler {
             // current styles
             let map: FxHashMap<_, _> = styles
                 .iter()
-                .map(|x| (x.0.to_attr_key(), x.1.data))
+                .map(|x| (x.0.key().clone(), x.1.data))
                 .collect();
+            debug_log::debug_dbg!(&map);
             for (key, style) in map.iter() {
-                match attr.get(key) {
+                match attr.get(key.deref()) {
                     Some(v) if v == style => {}
                     new_style_value => {
                         // need to override
@@ -361,8 +363,9 @@ impl TextHandler {
             }
 
             for (key, style) in attr.iter() {
-                if !map.contains_key(key) {
-                    override_styles.push((key.clone(), style.clone()));
+                let key = key.as_str().into();
+                if !map.contains_key(&key) {
+                    override_styles.push((key, style.clone()));
                 }
             }
         }
@@ -567,7 +570,6 @@ impl TextHandler {
             EventHint::Mark {
                 start: start as u32,
                 end: end as u32,
-                info: flag,
                 style: crate::container::richtext::Style { key, data: value },
             },
             &self.state,
@@ -619,8 +621,9 @@ impl TextHandler {
                         Some(attributes.as_ref().unwrap_or(&Default::default())),
                     )?;
 
+                    debug_log::debug_dbg!(&override_styles);
                     for (key, value) in override_styles {
-                        marks.push((index, end, Cow::Owned(key), value));
+                        marks.push((index, end, key, value));
                     }
 
                     index = end;
@@ -633,12 +636,7 @@ impl TextHandler {
                     match attributes {
                         Some(attr) if !attr.is_empty() => {
                             for (key, value) in attr {
-                                marks.push((
-                                    index,
-                                    end,
-                                    Cow::Borrowed(key.as_str()),
-                                    value.clone(),
-                                ));
+                                marks.push((index, end, key.deref().into(), value.clone()));
                             }
                         }
                         _ => {}

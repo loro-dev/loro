@@ -126,7 +126,7 @@ describe("richtext", () => {
     const doc = new Loro();
     doc.configTextStyle({
       myStyle: {
-        expand: "none"
+        expand: "none",
       }
     })
     const text = doc.getText("text");
@@ -142,5 +142,27 @@ describe("richtext", () => {
       // default style config should be overwritten
       text.mark({ start: 0, end: 3 }, "bold", 2);
     }).toThrowError()
+  })
+
+  it("allow overlapped styles", () => {
+    const doc = new Loro();
+    const text = doc.getText("text");
+    text.insert(0, "Hello world!");
+    text.mark({ start: 0, end: 5 }, "comment:0", "Hi");
+    text.mark({ start: 4, end: 11 }, "comment:1", "I'm a comment!");
+    expect(text.toDelta()).toStrictEqual([
+      {
+        insert: "Hell", attributes: { "comment:0": "Hi" },
+      },
+      {
+        insert: "o", attributes: { "comment:0": "Hi", "comment:1": "I'm a comment!" },
+      },
+      {
+        insert: " world", attributes: { "comment:1": "I'm a comment!" },
+      },
+      {
+        insert: "!",
+      }
+    ])
   })
 });

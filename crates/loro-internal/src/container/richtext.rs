@@ -57,26 +57,19 @@ pub struct StyleOp {
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub(crate) enum StyleKey {
     Key(InternalString),
-    KeyWithId { key: InternalString, id: ID },
 }
 
 impl StyleKey {
     pub fn to_attr_key(&self) -> String {
         match self {
             Self::Key(key) => key.to_string(),
-            Self::KeyWithId { key: _, id } => format!("id:{}", id),
         }
     }
 
     pub fn key(&self) -> &InternalString {
         match self {
             Self::Key(key) => key,
-            Self::KeyWithId { key, .. } => key,
         }
-    }
-
-    pub fn contains_id(&self) -> bool {
-        matches!(self, Self::KeyWithId { .. })
     }
 }
 
@@ -93,14 +86,7 @@ impl StyleOp {
     }
 
     pub(crate) fn get_style_key(&self) -> StyleKey {
-        if !self.info.mergeable() {
-            StyleKey::KeyWithId {
-                key: self.key.clone(),
-                id: self.id(),
-            }
-        } else {
-            StyleKey::Key(self.key.clone())
-        }
+        StyleKey::Key(self.key.clone())
     }
 
     #[cfg(test)]
@@ -139,7 +125,7 @@ impl Ord for StyleOp {
 ///
 /// Note: we assume style with the same key has the same `Mergeable` and `isContainer` value.
 ///
-/// - Should merge   (1st bit): (!allow_overlap) whether two styles with the same key can be merged into one.
+/// - 0              (1st bit)
 /// - Expand Before  (2nd bit): when inserting new text before this style, whether the new text should inherit this style.
 /// - Expand After   (3rd bit): when inserting new text after  this style, whether the new text should inherit this style.
 /// - Delete         (4th bit): whether this is used to remove a style from a range.
@@ -157,14 +143,12 @@ impl Debug for TextStyleInfoFlag {
         f.debug_struct("TextStyleInfo")
             // write data in binary format
             .field("data", &format!("{:#010b}", self.data))
-            .field("mergeable", &self.mergeable())
             .field("expand_before", &self.expand_before())
             .field("expand_after", &self.expand_after())
             .finish()
     }
 }
 
-const MERGEABLE_MASK: u8 = 0b0000_0001;
 const EXPAND_BEFORE_MASK: u8 = 0b0000_0010;
 const EXPAND_AFTER_MASK: u8 = 0b0000_0100;
 const DELETE_MASK: u8 = 0b0000_1000;
@@ -216,7 +200,7 @@ impl ExpandType {
 
     /// Create reversed expand type.
     ///
-    /// Beofre  -> After
+    /// Before  -> After
     /// After   -> Before
     /// Both    -> None
     /// None    -> Both
@@ -234,13 +218,6 @@ impl ExpandType {
 }
 
 impl TextStyleInfoFlag {
-    /// Whether two styles with the same key can be merged into one.
-    /// If false, the styles will coexist in the same range.
-    #[inline(always)]
-    pub fn mergeable(self) -> bool {
-        self.data & MERGEABLE_MASK != 0
-    }
-
     /// When inserting new text around this style, prefer inserting after it.
     #[inline(always)]
     pub fn expand_before(self) -> bool {
@@ -268,11 +245,8 @@ impl TextStyleInfoFlag {
         }
     }
 
-    pub const fn new(mergeable: bool, expand_type: ExpandType) -> Self {
+    pub const fn new(expand_type: ExpandType) -> Self {
         let mut data = ALIVE_MASK;
-        if mergeable {
-            data |= MERGEABLE_MASK;
-        }
         if expand_type.expand_before() {
             data |= EXPAND_BEFORE_MASK;
         }
@@ -302,9 +276,9 @@ impl TextStyleInfoFlag {
         Self { data }
     }
 
-    pub const BOLD: TextStyleInfoFlag = TextStyleInfoFlag::new(true, ExpandType::After);
-    pub const LINK: TextStyleInfoFlag = TextStyleInfoFlag::new(true, ExpandType::None);
-    pub const COMMENT: TextStyleInfoFlag = TextStyleInfoFlag::new(false, ExpandType::None);
+    pub const BOLD: TextStyleInfoFlag = TextStyleInfoFlag::new(ExpandType::After);
+    pub const LINK: TextStyleInfoFlag = TextStyleInfoFlag::new(ExpandType::None);
+    pub const COMMENT: TextStyleInfoFlag = TextStyleInfoFlag::new(ExpandType::None);
 
     pub const fn to_byte(&self) -> u8 {
         self.data

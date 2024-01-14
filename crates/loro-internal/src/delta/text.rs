@@ -110,17 +110,7 @@ impl StyleMeta {
                         return None;
                     }
 
-                    Some((
-                        key.to_attr_key(),
-                        if key.contains_id() {
-                            let mut map: FxHashMap<String, LoroValue> = Default::default();
-                            map.insert("key".into(), key.key().to_string().into());
-                            map.insert("data".into(), value.value.clone());
-                            LoroValue::Map(Arc::new(map))
-                        } else {
-                            value.value.clone()
-                        },
-                    ))
+                    Some((key.to_attr_key(), value.value.clone()))
                 })
                 .collect(),
         ))
@@ -131,15 +121,7 @@ impl ToJson for StyleMeta {
     fn to_json_value(&self) -> serde_json::Value {
         let mut map = serde_json::Map::new();
         for (key, style) in self.iter() {
-            let value = if !key.contains_id() {
-                serde_json::to_value(&style.data).unwrap()
-            } else {
-                let mut value = serde_json::Map::new();
-                value.insert("key".to_string(), style.key.to_string().into());
-                let data = serde_json::to_value(&style.data).unwrap();
-                value.insert("data".to_string(), data);
-                value.into()
-            };
+            let value = serde_json::to_value(&style.data).unwrap();
             map.insert(key.to_attr_key(), value);
         }
 

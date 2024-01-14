@@ -36,18 +36,7 @@
 | Concurrent B    | `Hello a World`        |
 | Expected Result | `Hello a <b>World</b>` |
 
-#### 4. Concurrently insert text and style that expands
-
-This doesn't work well in our implementation
-
-| Name            | Text                  |
-|:----------------|:----------------------|
-| Origin          | `Hello World`         |
-| Concurrent A    | `<b>Hello</b> World`  |
-| Concurrent B    | `Hello* World`        |
-| Expected Result | `<b>Hello*</b> World` |
-
-#### 5. Concurrent text edit & style that shrink
+#### 4. Concurrent text edit & style that shrink
 
 | Name            | Text                       |
 |:----------------|:---------------------------|
@@ -56,7 +45,7 @@ This doesn't work well in our implementation
 | Concurrent B    | `Hey World`                |
 | Expected Result | `<link>Hey</link> World`   |
 
-#### 6. Local insertion expand rules
+#### 5. Local insertion expand rules
 
 > [**Hello**](https://www.google.com) World
 
@@ -71,7 +60,7 @@ When insert a new character after "Hello", the new char should be bold but not l
 | Expected Result | `<b><link>Hello</link>t<b> World` |
 
 
-#### 7. Concurrent unbold
+#### 6. Concurrent unbold
 
 In Peritext paper 2.3.2
 
@@ -82,7 +71,7 @@ In Peritext paper 2.3.2
 | Concurrent B    | `<b>The </b>fox<b> jumped</b> over the dog.` |
 | Expected Result | `The fox jumped over the dog.`               |
 
-#### 8. Bold & Unbold
+#### 7. Bold & Unbold
 
 In Peritext paper 2.3.3
 
@@ -93,7 +82,7 @@ In Peritext paper 2.3.3
 | Concurrent B    | `<b>The</b> fox jumped over the <b>dog</b>.` |
 | Expected Result | `<b>The</b> fox jumped over the <b>dog</b>.` |
 
-#### 9. Overlapped formatting
+#### 8. Overlapped formatting
 
 In Peritext paper 3.2, example 3
 
@@ -104,6 +93,6 @@ In Peritext paper 3.2, example 3
 | Concurrent B    | The *fox jumped*.            |
 | Expected Result | **The _fox_**<i> jumped</i>. |
 
-#### 10. Multiple instances of the same mark
+#### 9. Multiple instances of the same mark
 
 ![](https://i.postimg.cc/MTNGq8cH/Clean-Shot-2023-10-09-at-12-16-29-2x.png)

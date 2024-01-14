@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use bench_utils::{json, SyncKind};
+use bench_utils::SyncKind;
 use examples::{draw::DrawActor, run_async_workflow, run_realtime_collab_workflow};
 use loro::{LoroDoc, ToJson};
 use tabled::{settings::Style, Table, Tabled};
@@ -25,24 +25,24 @@ struct BenchResult {
 pub fn main() {
     let seed = 123123;
     let ans = vec![
-        // run_async(1, 100, seed),
-        // run_async(1, 1000, seed),
-        // run_async(1, 5000, seed),
-        // run_async(1, 10000, seed),
-        // run_async(5, 100, seed),
-        // run_async(5, 1000, seed),
-        // run_async(5, 10000, seed),
-        // run_async(10, 1000, seed),
-        // run_async(10, 10000, seed),
-        // run_async(10, 100000, seed),
-        // run_async(10, 100000, 1000),
-        // run_realtime_collab(5, 100, seed),
-        // run_realtime_collab(5, 1000, seed),
-        // run_realtime_collab(5, 10000, seed),
-        // run_realtime_collab(10, 1000, seed),
+        run_async(1, 100, seed),
+        run_async(1, 1000, seed),
+        run_async(1, 5000, seed),
+        run_async(1, 10000, seed),
+        run_async(5, 100, seed),
+        run_async(5, 1000, seed),
+        run_async(5, 10000, seed),
+        run_async(10, 1000, seed),
+        run_async(10, 10000, seed),
+        run_async(10, 100000, seed),
+        run_async(10, 100000, 1000),
+        run_realtime_collab(5, 100, seed),
+        run_realtime_collab(5, 1000, seed),
+        run_realtime_collab(5, 10000, seed),
+        run_realtime_collab(10, 1000, seed),
         run_realtime_collab(10, 10000, seed),
-        // run_realtime_collab(10, 100000, seed),
-        // run_realtime_collab(10, 100000, 1000),
+        run_realtime_collab(10, 100000, seed),
+        run_realtime_collab(10, 100000, 1000),
     ];
     let mut table = Table::new(ans);
     let style = Style::markdown();
