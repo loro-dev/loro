@@ -148,17 +148,17 @@ describe("richtext", () => {
     const doc = new Loro();
     const text = doc.getText("text");
     text.insert(0, "Hello world!");
-    text.mark({ start: 0, end: 5 }, "comment:0", "Hi");
-    text.mark({ start: 4, end: 11 }, "comment:1", "I'm a comment!");
+    text.mark({ start: 0, end: 5 }, "comment:alice", "Hi");
+    text.mark({ start: 4, end: 11 }, "comment:bob", "I'm a comment!");
     expect(text.toDelta()).toStrictEqual([
       {
-        insert: "Hell", attributes: { "comment:0": "Hi" },
+        insert: "Hell", attributes: { "comment:alice": "Hi" },
       },
       {
-        insert: "o", attributes: { "comment:0": "Hi", "comment:1": "I'm a comment!" },
+        insert: "o", attributes: { "comment:alice": "Hi", "comment:bob": "I'm a comment!" },
       },
       {
-        insert: " world", attributes: { "comment:1": "I'm a comment!" },
+        insert: " world", attributes: { "comment:bob": "I'm a comment!" },
       },
       {
         insert: "!",
