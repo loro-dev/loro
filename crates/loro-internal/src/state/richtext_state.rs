@@ -1,6 +1,6 @@
 use std::{
     ops::Range,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex, RwLock, Weak},
 };
 
 use fxhash::FxHashMap;
@@ -12,6 +12,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         richtext::{
+            config::StyleConfigMap,
             richtext_state::{EntityRangeInfo, PosType},
             AnchorType, RichtextState as InnerState, StyleOp, Styles,
         },
@@ -33,14 +34,16 @@ use super::ContainerState;
 #[derive(Debug)]
 pub struct RichtextState {
     idx: ContainerIdx,
+    config: Arc<RwLock<StyleConfigMap>>,
     pub(crate) state: LazyLoad<RichtextStateLoader, InnerState>,
 }
 
 impl RichtextState {
     #[inline]
-    pub fn new(idx: ContainerIdx) -> Self {
+    pub fn new(idx: ContainerIdx, config: Arc<RwLock<StyleConfigMap>>) -> Self {
         Self {
             idx,
+            config,
             state: LazyLoad::Src(Default::default()),
         }
     }
@@ -74,6 +77,7 @@ impl Clone for RichtextState {
     fn clone(&self) -> Self {
         Self {
             idx: self.idx,
+            config: self.config.clone(),
             state: self.state.clone(),
         }
     }
@@ -176,25 +180,18 @@ impl ContainerState for RichtextState {
                                     event_index: start_event_index,
                                 } = style_starts.remove(style).unwrap();
 
+                                let mut delta: Delta<StringSlice, _> =
+                                    Delta::new().retain(start_event_index);
                                 // we need to + 1 because we also need to annotate the end anchor
-                                self.state.get_mut().annotate_style_range(
+                                let event = self.state.get_mut().annotate_style_range_with_event(
                                     start_entity_index..entity_index + 1,
                                     style.clone(),
                                 );
+                                for (s, l) in event {
+                                    delta = delta.retain_with_meta(l, s);
+                                }
 
-                                let mut meta = StyleMeta::default();
-
-                                meta.insert(
-                                    style.get_style_key(),
-                                    crate::delta::StyleMetaItem {
-                                        lamport: style.lamport,
-                                        peer: style.peer,
-                                        value: style.to_value(),
-                                    },
-                                );
-                                let delta: Delta<StringSlice, _> = Delta::new()
-                                    .retain(start_event_index)
-                                    .retain_with_meta(new_event_index - start_event_index, meta);
+                                delta = delta.chop();
                                 style_delta = style_delta.compose(delta);
                             }
                         }

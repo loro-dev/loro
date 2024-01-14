@@ -4,7 +4,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, ListOp},
-        richtext::{richtext_state::PosType, TextStyleInfoFlag},
+        richtext::richtext_state::PosType,
         tree::tree_op::TreeOp,
     },
     delta::{TreeDiffItem, TreeExternalDiff},
@@ -16,12 +16,14 @@ use crate::{
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, ContainerType, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
+    ContainerID, ContainerType, InternalString, LoroError, LoroResult, LoroTreeError, LoroValue,
+    TreeID,
 };
 use serde::{Deserialize, Serialize};
 use smallvec::smallvec;
 use std::{
     borrow::Cow,
+    ops::Deref,
     sync::{Mutex, Weak},
 };
 
@@ -466,12 +468,28 @@ impl TextHandler {
         &self,
         start: usize,
         end: usize,
-        key: &str,
+        key: impl Into<InternalString>,
         value: LoroValue,
-        flag: TextStyleInfoFlag,
     ) -> LoroResult<()> {
         with_txn(&self.txn, |txn| {
-            self.mark_with_txn(txn, start, end, key, value, flag)
+            self.mark_with_txn(txn, start, end, key, value, false)
+        })
+    }
+
+    /// `start` and `end` are [Event Index]s:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
+    ///
+    /// This method requires auto_commit to be enabled.
+    pub fn unmark(
+        &self,
+        start: usize,
+        end: usize,
+        key: impl Into<InternalString>,
+    ) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| {
+            self.mark_with_txn(txn, start, end, key, LoroValue::Null, true)
         })
     }
 
@@ -484,9 +502,9 @@ impl TextHandler {
         txn: &mut Transaction,
         start: usize,
         end: usize,
-        key: &str,
+        key: impl Into<InternalString>,
         value: LoroValue,
-        flag: TextStyleInfoFlag,
+        is_delete: bool,
     ) -> LoroResult<()> {
         if start >= end {
             return Err(loro_common::LoroError::ArgErr(
@@ -499,27 +517,24 @@ impl TextHandler {
             return Err(LoroError::OutOfBound { pos: end, len });
         }
 
-        let (entity_range, skip) = self
-            .state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state_mut(self.container_idx, |state| {
-                let (entity_range, styles) = state
-                    .as_richtext_state_mut()
-                    .unwrap()
-                    .get_entity_range_and_styles_at_range(start..end, PosType::Event);
+        let key: InternalString = key.into();
+        let mutex = &self.state.upgrade().unwrap();
+        let mut doc_state = mutex.lock().unwrap();
+        let (entity_range, skip) = doc_state.with_state_mut(self.container_idx, |state| {
+            let (entity_range, styles) = state
+                .as_richtext_state_mut()
+                .unwrap()
+                .get_entity_range_and_styles_at_range(start..end, PosType::Event);
 
-                let skip = match styles {
-                    Some(styles) if styles.has_key_value(key, &value) => {
-                        // already has the same style, skip
-                        true
-                    }
-                    _ => false,
-                };
-                (entity_range, skip)
-            });
+            let skip = match styles {
+                Some(styles) if styles.has_key_value(&key, &value) => {
+                    // already has the same style, skip
+                    true
+                }
+                _ => false,
+            };
+            (entity_range, skip)
+        });
 
         if skip {
             return Ok(());
@@ -527,13 +542,25 @@ impl TextHandler {
 
         let entity_start = entity_range.start;
         let entity_end = entity_range.end;
+        let style_config = doc_state.config.text_style_config.try_read().unwrap();
+        let flag = if is_delete {
+            style_config
+                .get_style_flag_for_unmark(&key)
+                .ok_or_else(|| LoroError::StyleConfigMissing(key.clone()))?
+        } else {
+            style_config
+                .get_style_flag(&key)
+                .ok_or_else(|| LoroError::StyleConfigMissing(key.clone()))?
+        };
 
+        drop(style_config);
+        drop(doc_state);
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(ListOp::StyleStart {
                 start: entity_start as u32,
                 end: entity_end as u32,
-                key: key.into(),
+                key: key.clone(),
                 value: value.clone(),
                 info: flag,
             }),
@@ -541,10 +568,7 @@ impl TextHandler {
                 start: start as u32,
                 end: end as u32,
                 info: flag,
-                style: crate::container::richtext::Style {
-                    key: key.into(),
-                    data: value,
-                },
+                style: crate::container::richtext::Style { key, data: value },
             },
             &self.state,
         )?;
@@ -557,6 +581,20 @@ impl TextHandler {
         )?;
 
         Ok(())
+    }
+
+    pub fn check(&self) {
+        self.state
+            .upgrade()
+            .unwrap()
+            .try_lock()
+            .unwrap()
+            .with_state_mut(self.container_idx, |state| {
+                state
+                    .as_richtext_state_mut()
+                    .unwrap()
+                    .check_consistency_between_content_and_style_ranges()
+            })
     }
 
     pub fn apply_delta(&self, delta: &[TextDelta]) -> LoroResult<()> {
@@ -611,8 +649,7 @@ impl TextHandler {
         }
 
         for (start, end, key, value) in marks {
-            // FIXME: allow users to set a config table to store the flag, so that we can use it directly
-            self.mark_with_txn(txn, start, end, &key, value, TextStyleInfoFlag::BOLD)?;
+            self.mark_with_txn(txn, start, end, key.deref(), value, false)?;
         }
 
         Ok(())
@@ -1348,7 +1385,6 @@ fn with_txn<R>(
 mod test {
     use std::ops::Deref;
 
-    use crate::container::richtext::TextStyleInfoFlag;
     use crate::loro::LoroDoc;
     use crate::version::Frontiers;
     use crate::{fx_map, ToJson};
@@ -1446,7 +1482,7 @@ mod test {
         let handler = loro.get_text("richtext");
         handler.insert_with_txn(&mut txn, 0, "hello world").unwrap();
         handler
-            .mark_with_txn(&mut txn, 0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
+            .mark_with_txn(&mut txn, 0, 5, "bold", true.into(), false)
             .unwrap();
         txn.commit().unwrap();
 
@@ -1498,7 +1534,7 @@ mod test {
         let handler = loro.get_text("richtext");
         handler.insert_with_txn(&mut txn, 0, "hello world").unwrap();
         handler
-            .mark_with_txn(&mut txn, 0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
+            .mark_with_txn(&mut txn, 0, 5, "bold", true.into(), false)
             .unwrap();
         txn.commit().unwrap();
 

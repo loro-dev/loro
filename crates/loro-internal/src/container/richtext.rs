@@ -10,6 +10,7 @@
 //!
 //! The users of this type can only operate on unicode index or utf16 index, but calculated entity index will be provided.
 
+pub(crate) mod config;
 mod fugue_span;
 mod query_by_len;
 pub(crate) mod richtext_state;
@@ -39,10 +40,6 @@ pub struct RichtextSpan {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Style {
     pub key: InternalString,
-    /// The value of the style.
-    ///
-    /// - If the style is a container, this is the Container
-    /// - Otherwise, this is true
     pub data: LoroValue,
 }
 
@@ -85,27 +82,9 @@ impl StyleKey {
 
 impl StyleOp {
     pub fn to_style(&self) -> Style {
-        if self.info.is_delete() {
-            return Style {
-                key: self.key.clone(),
-                data: LoroValue::Bool(false),
-            };
-        }
-
-        if self.info.is_container() {
-            Style {
-                key: self.key.clone(),
-                data: LoroValue::Container(loro_common::ContainerID::Normal {
-                    peer: self.peer,
-                    counter: self.cnt,
-                    container_type: loro_common::ContainerType::Map,
-                }),
-            }
-        } else {
-            Style {
-                key: self.key.clone(),
-                data: LoroValue::Bool(true),
-            }
+        Style {
+            key: self.key.clone(),
+            data: self.value.clone(),
         }
     }
 
@@ -160,11 +139,11 @@ impl Ord for StyleOp {
 ///
 /// Note: we assume style with the same key has the same `Mergeable` and `isContainer` value.
 ///
-/// - Mergeable      (1st bit): whether two styles with the same key can be merged into one.
+/// - Should merge   (1st bit): (!allow_overlap) whether two styles with the same key can be merged into one.
 /// - Expand Before  (2nd bit): when inserting new text before this style, whether the new text should inherit this style.
 /// - Expand After   (3rd bit): when inserting new text after  this style, whether the new text should inherit this style.
 /// - Delete         (4th bit): whether this is used to remove a style from a range.
-/// - isContainer    (5th bit): whether the style also store other data in a associated map container with the same OpID.
+/// - 0              (5th bit): whether the style also store other data in a associated map container with the same OpID.
 /// - 0              (6th bit)
 /// - 0              (7th bit)
 /// - isAlive        (8th bit): always 1 unless the style is garbage collected. If this is 0, all other bits should be 0 as well.
@@ -181,8 +160,6 @@ impl Debug for TextStyleInfoFlag {
             .field("mergeable", &self.mergeable())
             .field("expand_before", &self.expand_before())
             .field("expand_after", &self.expand_after())
-            .field("is_delete", &self.is_delete())
-            .field("is_container", &self.is_container())
             .finish()
     }
 }
@@ -191,7 +168,6 @@ const MERGEABLE_MASK: u8 = 0b0000_0001;
 const EXPAND_BEFORE_MASK: u8 = 0b0000_0010;
 const EXPAND_AFTER_MASK: u8 = 0b0000_0100;
 const DELETE_MASK: u8 = 0b0000_1000;
-const CONTAINER_MASK: u8 = 0b0001_0000;
 const ALIVE_MASK: u8 = 0b1000_0000;
 
 /// Whether to expand the style when inserting new text around it.
@@ -292,22 +268,7 @@ impl TextStyleInfoFlag {
         }
     }
 
-    #[inline(always)]
-    pub fn is_delete(&self) -> bool {
-        self.data & DELETE_MASK != 0
-    }
-
-    #[inline(always)]
-    pub fn is_container(&self) -> bool {
-        self.data & CONTAINER_MASK != 0
-    }
-
-    pub const fn new(
-        mergeable: bool,
-        expand_type: ExpandType,
-        is_delete: bool,
-        is_container: bool,
-    ) -> Self {
+    pub const fn new(mergeable: bool, expand_type: ExpandType) -> Self {
         let mut data = ALIVE_MASK;
         if mergeable {
             data |= MERGEABLE_MASK;
@@ -317,12 +278,6 @@ impl TextStyleInfoFlag {
         }
         if expand_type.expand_after() {
             data |= EXPAND_AFTER_MASK;
-        }
-        if is_delete {
-            data |= DELETE_MASK;
-        }
-        if is_container {
-            data |= CONTAINER_MASK;
         }
 
         TextStyleInfoFlag { data }
@@ -347,12 +302,9 @@ impl TextStyleInfoFlag {
         Self { data }
     }
 
-    pub const BOLD: TextStyleInfoFlag =
-        TextStyleInfoFlag::new(true, ExpandType::After, false, false);
-    pub const LINK: TextStyleInfoFlag =
-        TextStyleInfoFlag::new(true, ExpandType::None, false, false);
-    pub const COMMENT: TextStyleInfoFlag =
-        TextStyleInfoFlag::new(false, ExpandType::None, false, true);
+    pub const BOLD: TextStyleInfoFlag = TextStyleInfoFlag::new(true, ExpandType::After);
+    pub const LINK: TextStyleInfoFlag = TextStyleInfoFlag::new(true, ExpandType::None);
+    pub const COMMENT: TextStyleInfoFlag = TextStyleInfoFlag::new(false, ExpandType::None);
 
     pub const fn to_byte(&self) -> u8 {
         self.data

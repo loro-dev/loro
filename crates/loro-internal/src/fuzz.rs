@@ -4,7 +4,6 @@ pub mod tree;
 
 use crate::{
     array_mut_ref,
-    container::richtext::TextStyleInfoFlag,
     delta::{Delta, DeltaItem, StyleMeta},
     event::Diff,
     loro::LoroDoc,
@@ -13,7 +12,7 @@ use crate::{
 };
 use debug_log::debug_log;
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerID, LoroValue};
+use loro_common::ContainerID;
 use std::{
     fmt::Debug,
     sync::{Arc, Mutex},
@@ -21,17 +20,7 @@ use std::{
 };
 use tabled::{TableIteratorExt, Tabled};
 
-const STYLES: [TextStyleInfoFlag; 8] = [
-    TextStyleInfoFlag::BOLD,
-    TextStyleInfoFlag::COMMENT,
-    TextStyleInfoFlag::LINK,
-    TextStyleInfoFlag::LINK.to_delete(),
-    TextStyleInfoFlag::BOLD.to_delete(),
-    TextStyleInfoFlag::COMMENT.to_delete(),
-    TextStyleInfoFlag::from_byte(0),
-    TextStyleInfoFlag::from_byte(0).to_delete(),
-];
-
+const STYLES_NAME: [&str; 4] = ["bold", "comment", "link", "highlight"];
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
     Ins {
@@ -256,18 +245,13 @@ impl Actionable for Vec<LoroDoc> {
                 let site = &mut self[*site as usize];
                 let mut txn = site.txn().unwrap();
                 let text = txn.get_text("text");
-                let style = STYLES[*style_key as usize];
                 text.mark_with_txn(
                     &mut txn,
                     *pos,
                     *pos + *len,
-                    &style_key.to_string(),
-                    if style.is_delete() {
-                        LoroValue::Null
-                    } else {
-                        true.into()
-                    },
-                    style,
+                    STYLES_NAME[*style_key as usize % STYLES_NAME.len()],
+                    (*pos as i32).into(),
+                    false,
                 )
                 .unwrap();
             }

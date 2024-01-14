@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex, RwLock, Weak},
 };
 
 use enum_as_inner::EnumAsInner;
@@ -9,12 +9,12 @@ use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
 
 use crate::{
-    configure::{DefaultRandom, SecureRandomGenerator},
+    configure::{Configure, DefaultRandom, SecureRandomGenerator},
     container::{
-        idx::ContainerIdx, list::list_op::ListOp, map::MapSet, tree::tree_op::TreeOp,
-        ContainerIdRaw,
+        idx::ContainerIdx, list::list_op::ListOp, map::MapSet, richtext::config::StyleConfigMap,
+        tree::tree_op::TreeOp, ContainerIdRaw,
     },
-    delta::{DeltaItem, MapValue},
+    delta::DeltaItem,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalContainerDiff, InternalDiff},
     fx_map,
@@ -38,6 +38,17 @@ pub(crate) use tree_state::{get_meta_value, TreeState};
 
 use super::{arena::SharedArena, event::InternalDocDiff};
 
+macro_rules! get_or_create {
+    ($doc_state: ident, $idx: expr) => {{
+        if !$doc_state.states.contains_key(&$idx) {
+            let state = $doc_state.create_state($idx);
+            $doc_state.states.insert($idx, state);
+        }
+
+        $doc_state.states.get_mut(&$idx).unwrap()
+    }};
+}
+
 #[derive(Clone)]
 pub struct DocState {
     pub(super) peer: PeerID,
@@ -45,7 +56,7 @@ pub struct DocState {
     pub(super) frontiers: Frontiers,
     pub(super) states: FxHashMap<ContainerIdx, State>,
     pub(super) arena: SharedArena,
-
+    pub(crate) config: Configure,
     // resolve event stuff
     weak_state: Weak<Mutex<DocState>>,
     global_txn: Weak<Mutex<Option<Transaction>>>,
@@ -206,8 +217,8 @@ impl State {
         Self::MapState(Box::new(MapState::new(idx)))
     }
 
-    pub fn new_richtext(idx: ContainerIdx) -> Self {
-        Self::RichtextState(Box::new(RichtextState::new(idx)))
+    pub fn new_richtext(idx: ContainerIdx, config: Arc<RwLock<StyleConfigMap>>) -> Self {
+        Self::RichtextState(Box::new(RichtextState::new(idx, config)))
     }
 
     pub fn new_tree(idx: ContainerIdx) -> Self {
@@ -220,6 +231,7 @@ impl DocState {
     pub fn new_arc(
         arena: SharedArena,
         global_txn: Weak<Mutex<Option<Transaction>>>,
+        config: Configure,
     ) -> Arc<Mutex<Self>> {
         let peer = DefaultRandom.next_u64();
         // TODO: maybe we should switch to certain version in oplog?
@@ -230,6 +242,7 @@ impl DocState {
                 frontiers: Frontiers::default(),
                 states: FxHashMap::default(),
                 weak_state: weak.clone(),
+                config,
                 global_txn,
                 in_txn: false,
                 changed_idx_in_txn: FxHashSet::default(),
@@ -376,10 +389,7 @@ impl DocState {
                     diff.bring_back = true;
                 }
                 if diff.bring_back {
-                    let state = self
-                        .states
-                        .entry(diff.idx)
-                        .or_insert_with(|| create_state(idx));
+                    let state = get_or_create!(self, diff.idx);
                     let state_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
                     if diff.diff.is_none() && state_diff.is_empty() {
                         // empty diff, skip it
@@ -419,7 +429,7 @@ impl DocState {
                 self.changed_idx_in_txn.insert(idx);
             }
             self.set_parent_by_diff(internal_diff.as_internal().unwrap(), idx);
-            let state = self.states.entry(idx).or_insert_with(|| create_state(idx));
+            let state = get_or_create!(self, idx);
             if is_recording {
                 // process bring_back before apply
                 let external_diff = if diff.bring_back {
@@ -465,11 +475,7 @@ impl DocState {
     pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
         // set parent first, `MapContainer` will only be created for TreeID that does not contain
         self.set_container_parent_by_op(raw_op);
-        let state = self
-            .states
-            .entry(op.container)
-            .or_insert_with(|| create_state(op.container));
-
+        let state = get_or_create!(self, op.container);
         if self.in_txn {
             self.changed_idx_in_txn.insert(op.container);
         }
@@ -526,12 +532,7 @@ impl DocState {
                 }
             }
             RawOpContent::Tree(TreeOp { target, .. }) => {
-                let state = self
-                    .states
-                    .entry(container)
-                    .or_insert_with(|| create_state(container))
-                    .as_tree_state()
-                    .unwrap();
+                let state = get_or_create!(self, container).as_tree_state().unwrap();
                 // create associated metadata container
                 // TODO: maybe we could create map container only when setting metadata
                 if !&state.trees.contains_key(target) {
@@ -570,12 +571,7 @@ impl DocState {
                 }
             }
             InternalDiff::Tree(tree) => {
-                let state = self
-                    .states
-                    .entry(container)
-                    .or_insert_with(|| create_state(container))
-                    .as_tree_state()
-                    .unwrap();
+                let state = get_or_create!(self, container).as_tree_state().unwrap();
                 for diff in tree.diff.iter() {
                     let target = &diff.target;
                     if !state.trees.contains_key(target) {
@@ -595,7 +591,7 @@ impl DocState {
         decode_ctx: StateSnapshotDecodeContext,
     ) {
         let idx = self.arena.register_container(&cid);
-        let state = self.states.entry(idx).or_insert_with(|| create_state(idx));
+        let state = get_or_create!(self, idx);
         state.import_from_snapshot_ops(decode_ctx);
     }
 
@@ -699,7 +695,7 @@ impl DocState {
         let idx = idx.unwrap();
         self.states
             .entry(idx)
-            .or_insert_with(|| State::new_richtext(idx))
+            .or_insert_with(|| State::new_richtext(idx, self.config.text_style_config.clone()))
             .as_richtext_state_mut()
             .map(|x| &mut **x)
     }
@@ -713,7 +709,7 @@ impl DocState {
         if let Some(state) = state {
             f(state)
         } else {
-            let state = create_state(idx);
+            let state = self.create_state(idx);
             let ans = f(&state);
             self.states.insert(idx, state);
             ans
@@ -729,7 +725,7 @@ impl DocState {
         if let Some(state) = state {
             f(state)
         } else {
-            let mut state = create_state(idx);
+            let mut state = self.create_state(idx);
             let ans = f(&mut state);
             self.states.insert(idx, state);
             ans
@@ -1083,6 +1079,18 @@ impl DocState {
             state_size_sum
         );
     }
+
+    pub fn create_state(&self, idx: ContainerIdx) -> State {
+        match idx.get_type() {
+            ContainerType::Map => State::MapState(Box::new(MapState::new(idx))),
+            ContainerType::List => State::ListState(Box::new(ListState::new(idx))),
+            ContainerType::Text => State::RichtextState(Box::new(RichtextState::new(
+                idx,
+                self.config.text_style_config.clone(),
+            ))),
+            ContainerType::Tree => State::TreeState(Box::new(TreeState::new(idx))),
+        }
+    }
 }
 
 struct SubContainerDiffPatch {
@@ -1173,15 +1181,6 @@ impl SubContainerDiffPatch {
             }
             _ => {}
         };
-    }
-}
-
-pub fn create_state(idx: ContainerIdx) -> State {
-    match idx.get_type() {
-        ContainerType::Map => State::MapState(Box::new(MapState::new(idx))),
-        ContainerType::List => State::ListState(Box::new(ListState::new(idx))),
-        ContainerType::Text => State::RichtextState(Box::new(RichtextState::new(idx))),
-        ContainerType::Tree => State::TreeState(Box::new(TreeState::new(idx))),
     }
 }
 

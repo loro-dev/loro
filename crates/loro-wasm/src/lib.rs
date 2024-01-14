@@ -3,10 +3,7 @@ use convert::resolved_diff_to_js;
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
     change::Lamport,
-    container::{
-        richtext::{ExpandType, TextStyleInfoFlag},
-        ContainerID,
-    },
+    container::ContainerID,
     event::{Diff, Index},
     handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrContainer},
     id::{Counter, TreeID, ID},
@@ -1104,20 +1101,7 @@ impl LoroText {
     pub fn mark(&self, range: JsRange, key: &str, value: JsValue) -> Result<(), JsError> {
         let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
         let value: LoroValue = LoroValue::from(value);
-        let expand = range
-            .expand
-            .map(|x| {
-                ExpandType::try_from_str(&x)
-                    .expect_throw("`expand` must be one of `none`, `start`, `end`, `both`")
-            })
-            .unwrap_or(ExpandType::After);
-        self.handler.mark(
-            range.start,
-            range.end,
-            key,
-            value,
-            TextStyleInfoFlag::new(true, expand, false, false),
-        )?;
+        self.handler.mark(range.start, range.end, key, value)?;
         Ok(())
     }
 
@@ -1151,21 +1135,7 @@ impl LoroText {
     pub fn unmark(&self, range: JsRange, key: &str) -> Result<(), JsValue> {
         // Internally, this may be marking with null or deleting all the marks with key in the range entirely.
         let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
-        let expand = range
-            .expand
-            .map(|x| {
-                ExpandType::try_from_str(&x)
-                    .expect_throw("`expand` must be one of `none`, `start`, `end`, `both`")
-            })
-            .unwrap_or(ExpandType::After);
-        let expand = expand.reverse();
-        self.handler.mark(
-            range.start,
-            range.end,
-            key,
-            LoroValue::Null,
-            TextStyleInfoFlag::new(true, expand, true, false),
-        )?;
+        self.handler.unmark(range.start, range.end, key)?;
         Ok(())
     }
 

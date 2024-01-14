@@ -12,36 +12,11 @@ use crate::{
     array_mut_ref, container::ContainerID, delta::DeltaItem, id::PeerID, ContainerType, LoroValue,
 };
 use crate::{
-    container::richtext::{StyleKey, TextStyleInfoFlag},
-    event::Diff,
-    handler::TextDelta,
-    loro::LoroDoc,
-    value::ToJson,
-    version::Frontiers,
-    TextHandler,
+    container::richtext::StyleKey, event::Diff, handler::TextDelta, loro::LoroDoc, value::ToJson,
+    version::Frontiers, TextHandler,
 };
 
-const STYLES: [TextStyleInfoFlag; 8] = [
-    TextStyleInfoFlag::BOLD,
-    TextStyleInfoFlag::COMMENT,
-    TextStyleInfoFlag::LINK,
-    TextStyleInfoFlag::from_byte(0),
-    TextStyleInfoFlag::LINK.to_delete(),
-    TextStyleInfoFlag::BOLD.to_delete(),
-    TextStyleInfoFlag::COMMENT.to_delete(),
-    TextStyleInfoFlag::from_byte(0).to_delete(),
-];
-
-const STYLES_NAME: [&str; 8] = [
-    "BOLD",
-    "COMMENT",
-    "LINK",
-    "0",
-    "DEL_LINK",
-    "DEL_BOLD",
-    "DEL_COMMENT",
-    "DEL_0",
-];
+const STYLES_NAME: [&str; 4] = ["bold", "comment", "link", "highlight"];
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -329,7 +304,7 @@ impl Actionable for Vec<Actor> {
                         *pos %= length;
                         *len %= length - *pos;
                         *len = 1.max(*len);
-                        *i %= STYLES.len();
+                        *i %= STYLES_NAME.len();
                     }
                 }
             }
@@ -395,18 +370,13 @@ impl Actionable for Vec<Actor> {
                         text.delete_with_txn(&mut txn, *pos, *len).unwrap();
                     }
                     RichTextAction::Mark(i) => {
-                        let style = STYLES[*i];
                         text.mark_with_txn(
                             &mut txn,
                             *pos,
                             *pos + *len,
                             STYLES_NAME[*i],
-                            if style.is_delete() {
-                                LoroValue::Null
-                            } else {
-                                true.into()
-                            },
-                            style,
+                            (*pos as i32).into(),
+                            false,
                         )
                         .unwrap();
                     }
@@ -469,6 +439,8 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
 
     debug_log::debug_log!("{}", a_result.to_json_pretty());
     assert_eq!(&a_result, &b_result);
+    a_actor.text_container.check();
+    dbg!(&a_result, &a_value);
     assert_value_eq(&a_result, &a_value);
 }
 

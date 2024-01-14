@@ -33,8 +33,8 @@ impl StyleMetaItem {
     }
 }
 
-impl From<Styles> for StyleMeta {
-    fn from(styles: Styles) -> Self {
+impl From<&Styles> for StyleMeta {
+    fn from(styles: &Styles) -> Self {
         let mut map = FxHashMap::with_capacity_and_hasher(styles.len(), Default::default());
         for (key, value) in styles.iter() {
             if let Some(value) = value.get() {
@@ -49,6 +49,13 @@ impl From<Styles> for StyleMeta {
             }
         }
         Self { map }
+    }
+}
+
+impl From<Styles> for StyleMeta {
+    fn from(styles: Styles) -> Self {
+        let temp = &styles;
+        temp.into()
     }
 }
 

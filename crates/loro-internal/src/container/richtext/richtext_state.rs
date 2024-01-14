@@ -4,6 +4,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor,
 };
+use itertools::Itertools;
 use loro_common::{IdSpan, LoroValue, ID};
 use serde::{ser::SerializeStruct, Serialize};
 use std::fmt::{Display, Formatter};
@@ -1368,7 +1369,44 @@ impl RichtextState {
     /// This method only updates `style_ranges`.
     /// When this method is called, the style start anchor and the style end anchor should already have been inserted.
     pub(crate) fn annotate_style_range(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
-        self.ensure_style_ranges_mut().annotate(range, style)
+        self.ensure_style_ranges_mut().annotate(range, style, None)
+    }
+
+    /// This method only updates `style_ranges`.
+    /// When this method is called, the style start anchor and the style end anchor should already have been inserted.
+    ///
+    /// This method will return the event of this annotation in event length
+    pub(crate) fn annotate_style_range_with_event(
+        &mut self,
+        range: Range<usize>,
+        style: Arc<StyleOp>,
+    ) -> impl Iterator<Item = (StyleMeta, usize)> + '_ {
+        let mut ranges_in_entity_index: Vec<(StyleMeta, Range<usize>)> = Vec::new();
+        let mut start = range.start;
+        let end = range.end;
+        self.ensure_style_ranges_mut().annotate(
+            range,
+            style,
+            Some(&mut |s, len| {
+                let range = start..start + len;
+                start += len;
+                ranges_in_entity_index.push((s.into(), range));
+            }),
+        );
+
+        assert_eq!(ranges_in_entity_index.last().unwrap().1.end, end);
+        let mut converter = ContinuousIndexConverter::new(self);
+        ranges_in_entity_index
+            .into_iter()
+            .filter_map(move |(meta, range)| {
+                let start = converter.convert_entity_index_to_event_index(range.start);
+                let end = converter.convert_entity_index_to_event_index(range.end);
+                if end == start {
+                    return None;
+                }
+
+                Some((meta, end - start))
+            })
     }
 
     /// init style ranges if not initialized
@@ -1384,11 +1422,11 @@ impl RichtextState {
     /// The result is only different from `query` when there are style anchors around the insert pos.
     /// Returns the right neighbor of the insert pos and the entity index.
     ///
-    /// 1. Insertions occur before tombstones that contain the beginning of new marks.
-    /// 2. Insertions occur before tombstones that contain the end of bold-like marks
-    /// 3. Insertions occur after tombstones that contain the end of link-like marks
+    /// 1. Insertions occur before style anchors that contain the beginning of new marks.
+    /// 2. Insertions occur before style anchors that contain the end of bold-like marks
+    /// 3. Insertions occur after style anchors that contain the end of link-like marks
     ///
-    /// Rule 1 should be satisfied before rules 2 and 3 to avoid this problem.
+    /// Rule 1 should be satisfied before rules 2 and 3 to avoid creating a new style out of nowhere
     ///
     /// The current method will scan forward to find the last position that satisfies 1 and 2.
     /// Then it scans backward to find the first position that satisfies 3.
@@ -1739,7 +1777,7 @@ impl RichtextState {
         // 1. We inserted a start anchor before end_entity_index, so we need to +1
         // 2. We need to include the end anchor in the range, so we need to +1
         self.ensure_style_ranges_mut()
-            .annotate(range.start..range.end + 2, style);
+            .annotate(range.start..range.end + 2, style, None);
     }
 
     pub fn iter(&self) -> impl Iterator<Item = RichtextSpan> + '_ {
@@ -1963,6 +2001,69 @@ impl RichtextState {
                 .as_ref()
                 .map(|x| x.estimate_size())
                 .unwrap_or(0)
+    }
+}
+
+use converter::ContinuousIndexConverter;
+mod converter {
+    use generic_btree::{rle::HasLength, Cursor};
+
+    use super::{query::EntityQuery, RichtextState};
+
+    /// Convert entity index into event index.
+    /// It assumes the entity_index are in ascending order
+    pub(super) struct ContinuousIndexConverter<'a> {
+        state: &'a RichtextState,
+        last_entity_index_cache: Option<ConverterCache>,
+    }
+
+    struct ConverterCache {
+        entity_index: usize,
+        cursor: Cursor,
+        event_index: usize,
+        cursor_elem_len: usize,
+    }
+
+    impl<'a> ContinuousIndexConverter<'a> {
+        pub fn new(state: &'a RichtextState) -> Self {
+            Self {
+                state,
+                last_entity_index_cache: None,
+            }
+        }
+
+        pub fn convert_entity_index_to_event_index(&mut self, entity_index: usize) -> usize {
+            if let Some(last) = self.last_entity_index_cache.as_ref() {
+                if last.entity_index == entity_index {
+                    return last.event_index;
+                }
+
+                assert!(entity_index > last.entity_index);
+                if last.cursor.offset + entity_index - last.entity_index < last.cursor_elem_len {
+                    // in the same cursor
+                    return self.state.cursor_to_event_index(Cursor {
+                        leaf: last.cursor.leaf,
+                        offset: last.cursor.offset + entity_index - last.entity_index,
+                    });
+                }
+            }
+
+            let cursor = self
+                .state
+                .tree
+                .query::<EntityQuery>(&entity_index)
+                .unwrap()
+                .cursor;
+            let ans = self.state.cursor_to_event_index(cursor);
+            let len = self.state.tree.get_elem(cursor.leaf).unwrap().rle_len();
+            self.last_entity_index_cache = Some(ConverterCache {
+                entity_index,
+                cursor,
+                event_index: ans,
+                cursor_elem_len: len,
+            });
+            ans
+        }
     }
 }
 

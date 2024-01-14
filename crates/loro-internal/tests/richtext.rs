@@ -2,7 +2,6 @@
 
 use std::ops::Range;
 
-use loro_common::LoroValue;
 use loro_internal::{container::richtext::TextStyleInfoFlag, LoroDoc, ToJson};
 use serde_json::json;
 
@@ -37,14 +36,6 @@ impl Kind {
             Kind::Italic => "italic",
         }
     }
-
-    fn flag(&self) -> TextStyleInfoFlag {
-        match self {
-            Kind::Bold => TextStyleInfoFlag::BOLD,
-            Kind::Link => TextStyleInfoFlag::LINK,
-            Kind::Italic => TextStyleInfoFlag::BOLD,
-        }
-    }
 }
 
 fn insert(doc: &LoroDoc, pos: usize, s: &str) {
@@ -62,18 +53,7 @@ fn delete(doc: &LoroDoc, pos: usize, len: usize) {
 fn mark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
     let richtext = doc.get_text("r");
     doc.with_txn(|txn| {
-        richtext.mark_with_txn(
-            txn,
-            range.start,
-            range.end,
-            kind.key(),
-            if kind.flag().is_delete() {
-                LoroValue::Null
-            } else {
-                true.into()
-            },
-            kind.flag(),
-        )
+        richtext.mark_with_txn(txn, range.start, range.end, kind.key(), true.into(), false)
     })
     .unwrap();
 }
@@ -81,14 +61,7 @@ fn mark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
 fn unmark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
     let richtext = doc.get_text("r");
     doc.with_txn(|txn| {
-        richtext.mark_with_txn(
-            txn,
-            range.start,
-            range.end,
-            kind.key(),
-            false.into(),
-            kind.flag().to_delete(),
-        )
+        richtext.mark_with_txn(txn, range.start, range.end, kind.key(), false.into(), false)
     })
     .unwrap();
 }

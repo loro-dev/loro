@@ -45,7 +45,6 @@ pub(crate) mod group;
 pub(crate) mod macros;
 pub(crate) mod state;
 pub(crate) mod value;
-pub(crate) use change::Timestamp;
 pub(crate) use id::{PeerID, ID};
 
 // TODO: rename as Key?

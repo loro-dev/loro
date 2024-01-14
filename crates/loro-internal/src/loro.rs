@@ -15,7 +15,8 @@ use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
 use crate::{
     arena::SharedArena,
     change::Timestamp,
-    container::{idx::ContainerIdx, IntoContainerId},
+    configure::Configure,
+    container::{idx::ContainerIdx, richtext::config::StyleConfigMap, IntoContainerId},
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
@@ -57,6 +58,7 @@ pub struct LoroDoc {
     oplog: Arc<Mutex<OpLog>>,
     state: Arc<Mutex<DocState>>,
     arena: SharedArena,
+    config: Configure,
     observer: Arc<Observer>,
     diff_calculator: Arc<Mutex<DiffCalculator>>,
     // when dropping the doc, the txn will be committed
@@ -76,11 +78,13 @@ impl LoroDoc {
         let oplog = OpLog::new();
         let arena = oplog.arena.clone();
         let global_txn = Arc::new(Mutex::new(None));
+        let config: Configure = Default::default();
         // share arena
-        let state = DocState::new_arc(arena.clone(), Arc::downgrade(&global_txn));
+        let state = DocState::new_arc(arena.clone(), Arc::downgrade(&global_txn), config.clone());
         Self {
             oplog: Arc::new(Mutex::new(oplog)),
             state,
+            config,
             detached: AtomicBool::new(false),
             auto_commit: AtomicBool::new(false),
             observer: Arc::new(Observer::new(arena.clone())),
@@ -88,6 +92,11 @@ impl LoroDoc {
             txn: global_txn,
             arena,
         }
+    }
+
+    #[inline]
+    pub fn config_text_style(&self, text_style: StyleConfigMap) {
+        *self.config.text_style_config.try_write().unwrap() = text_style;
     }
 
     /// Create a doc with auto commit enabled.
@@ -129,6 +138,7 @@ impl LoroDoc {
         Self {
             arena: oplog.arena.clone(),
             observer: Arc::new(obs),
+            config: Default::default(),
             auto_commit: AtomicBool::new(false),
             oplog: Arc::new(Mutex::new(oplog)),
             state: Arc::new(Mutex::new(state)),

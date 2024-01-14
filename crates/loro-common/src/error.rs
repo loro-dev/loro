@@ -1,7 +1,7 @@
 use serde_columnar::ColumnarError;
 use thiserror::Error;
 
-use crate::{PeerID, TreeID, ID};
+use crate::{InternalString, PeerID, TreeID, ID};
 
 pub type LoroResult<T> = Result<T, LoroError>;
 
@@ -23,7 +23,7 @@ pub enum LoroError {
     LockError,
     #[error("Each AppState can only have one transaction at a time")]
     DuplicatedTransactionError,
-    #[error("Cannot find ({0}) ")]
+    #[error("Cannot find ({0})")]
     NotFoundError(Box<str>),
     // TODO: more details transaction error
     #[error("Transaction error ({0})")]
@@ -38,6 +38,8 @@ pub enum LoroError {
     ArgErr(Box<str>),
     #[error("Auto commit has not started. The doc is readonly when detached. You should ensure autocommit is on and the doc and the state is attached.")]
     AutoCommitNotStarted,
+    #[error("You need to specify the style flag for \"({0:?})\" before mark with this key")]
+    StyleConfigMissing(InternalString),
     #[error("Unknown Error ({0})")]
     Unknown(Box<str>),
 }
