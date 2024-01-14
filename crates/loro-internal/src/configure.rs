@@ -1,4 +1,4 @@
-use crate::container::richtext::config::StyleConfigMap;
+pub use crate::container::richtext::config::{StyleConfig, StyleConfigMap};
 
 #[derive(Clone)]
 pub struct Configure {

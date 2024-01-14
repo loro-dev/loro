@@ -3,7 +3,8 @@ use convert::resolved_diff_to_js;
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
     change::Lamport,
-    container::ContainerID,
+    configure::{StyleConfig, StyleConfigMap},
+    container::{richtext::ExpandType, ContainerID},
     event::{Diff, Index},
     handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrContainer},
     id::{Counter, TreeID, ID},
@@ -65,9 +66,7 @@ extern "C" {
     pub type JsOrigin;
     #[wasm_bindgen(typescript_type = "{ peer: PeerID, counter: number }")]
     pub type JsID;
-    #[wasm_bindgen(
-        typescript_type = "{ start: number, end: number, expand?: 'before'|'after'|'both'|'none' }"
-    )]
+    #[wasm_bindgen(typescript_type = "{ start: number, end: number }")]
     pub type JsRange;
     #[wasm_bindgen(typescript_type = "number|bool|string|null")]
     pub type JsMarkValue;
@@ -89,6 +88,10 @@ extern "C" {
     pub type JsValueOrContainerOrUndefined;
     #[wasm_bindgen(typescript_type = "[string, Value | Container]")]
     pub type MapEntry;
+    #[wasm_bindgen(
+        typescript_type = "{[key: string]: { expand: 'before'|'after'|'none'|'both', allowOverlap?: boolean }}"
+    )]
+    pub type JsTextStyles;
 }
 
 mod observer {
@@ -227,6 +230,36 @@ impl Loro {
         let mut doc = LoroDoc::new();
         doc.start_auto_commit();
         Self(Arc::new(doc))
+    }
+
+    #[wasm_bindgen(js_name = "configTextStyle")]
+    pub fn config_text_style(&self, styles: JsTextStyles) -> JsResult<()> {
+        let mut style_config = StyleConfigMap::new();
+        // read key value pair in styles
+        for key in Reflect::own_keys(&styles)?.iter() {
+            let value = Reflect::get(&styles, &key).unwrap();
+            let key = key.as_string().unwrap();
+            // Assert value is an object, otherwise throw an error with desc
+            if !value.is_object() {
+                return Err("Text style config format error".into());
+            }
+            // read expand value from value
+            let expand = Reflect::get(&value, &"expand".into()).expect("`expand` not specified");
+            let expand_str = expand.as_string().unwrap();
+            // read allowOverlap value from value
+            let allow_overlap = Reflect::get(&value, &"allowOverlap".into()).unwrap();
+            style_config.insert(
+                key.into(),
+                StyleConfig {
+                    allow_overlap: allow_overlap.as_bool().unwrap_or(false),
+                    expand: ExpandType::try_from_str(&expand_str)
+                        .expect("`expand` must be one of `none`, `start`, `end`, `both`"),
+                },
+            );
+        }
+
+        self.0.config_text_style(style_config);
+        Ok(())
     }
 
     /// Get a loro document from the snapshot.
@@ -1030,7 +1063,6 @@ pub struct LoroText {
 struct MarkRange {
     start: usize,
     end: usize,
-    expand: Option<String>,
 }
 
 #[wasm_bindgen]
