@@ -146,22 +146,25 @@ describe("richtext", () => {
 
   it("allow overlapped styles", () => {
     const doc = new Loro();
+    doc.configTextStyle({
+      comment: { expand: "none", }
+    })
     const text = doc.getText("text");
-    text.insert(0, "Hello world!");
-    text.mark({ start: 0, end: 5 }, "comment:alice", "Hi");
-    text.mark({ start: 4, end: 11 }, "comment:bob", "I'm a comment!");
+    text.insert(0, "The fox jumped.");
+    text.mark({ start: 0, end: 7 }, "comment:alice", "Hi");
+    text.mark({ start: 4, end: 14 }, "comment:bob", "Jump");
     expect(text.toDelta()).toStrictEqual([
       {
-        insert: "Hell", attributes: { "comment:alice": "Hi" },
+        insert: "The ", attributes: { "comment:alice": "Hi" },
       },
       {
-        insert: "o", attributes: { "comment:alice": "Hi", "comment:bob": "I'm a comment!" },
+        insert: "fox", attributes: { "comment:alice": "Hi", "comment:bob": "Jump" },
       },
       {
-        insert: " world", attributes: { "comment:bob": "I'm a comment!" },
+        insert: " jumped", attributes: { "comment:bob": "Jump" },
       },
       {
-        insert: "!",
+        insert: ".",
       }
     ])
   })
