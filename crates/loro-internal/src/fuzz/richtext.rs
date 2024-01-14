@@ -440,7 +440,6 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     debug_log::debug_log!("{}", a_result.to_json_pretty());
     assert_eq!(&a_result, &b_result);
     a_actor.text_container.check();
-    dbg!(&a_result, &a_value);
     assert_value_eq(&a_result, &a_value);
 }
 
