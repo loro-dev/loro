@@ -1208,6 +1208,52 @@ mod failed_tests {
     }
 
     #[test]
+    fn encoding_sub_container() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: Container(C::Tree),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 90,
+                    container_idx: 96,
+                    key: 96,
+                    value: I32(1516265568),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 7,
+                    value: Container(C::Map),
+                },
+                SyncAll,
+                Map {
+                    site: 4,
+                    container_idx: 21,
+                    key: 64,
+                    value: I32(-13828256),
+                },
+                List {
+                    site: 45,
+                    container_idx: 89,
+                    key: 235,
+                    value: I32(2122219134),
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn notify_causal_order_check() {
         test_multi_sites(
             5,

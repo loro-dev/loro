@@ -1769,10 +1769,13 @@ mod value {
                     if len > MAX_COLLECTION_SIZE {
                         return Err(LoroError::DecodeDataCorruptionError);
                     }
-
                     let mut ans = Vec::with_capacity(len);
-                    for _ in 0..len {
-                        ans.push(self.recursive_read_value_type_and_content(keys, cids, id)?);
+                    for i in 0..len {
+                        ans.push(self.recursive_read_value_type_and_content(
+                            keys,
+                            cids,
+                            id.inc(i as i32),
+                        )?);
                     }
                     ans.into()
                 }
@@ -1781,7 +1784,6 @@ mod value {
                     if len > MAX_COLLECTION_SIZE {
                         return Err(LoroError::DecodeDataCorruptionError);
                     }
-
                     let mut ans = FxHashMap::with_capacity_and_hasher(len, Default::default());
                     for _ in 0..len {
                         let key_idx = self.read_usize()?;
