@@ -14,7 +14,7 @@ use crate::{
         idx::ContainerIdx, list::list_op::ListOp, map::MapSet, tree::tree_op::TreeOp,
         ContainerIdRaw,
     },
-    delta::{DeltaItem, MapValue},
+    delta::DeltaItem,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalContainerDiff, InternalDiff},
     fx_map,

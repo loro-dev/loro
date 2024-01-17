@@ -302,7 +302,6 @@ fn extract_ops(
             prop,
             keys,
             &peer_ids.peer_ids,
-            &containers,
             ID::new(peer, counter),
         )?;
 
@@ -834,10 +833,6 @@ mod encode {
                 }
             }
 
-            pub fn len(&self) -> usize {
-                self.vec.len()
-            }
-
             pub fn from_existing(vec: Vec<T>) -> Self {
                 let mut map = FxHashMap::with_capacity_and_hasher(vec.len(), Default::default());
                 for (i, value) in vec.iter().enumerate() {
@@ -1018,7 +1013,6 @@ fn decode_op(
     prop: i32,
     keys: &arena::KeyArena,
     peers: &[u64],
-    cids: &[ContainerID],
     id: ID,
 ) -> LoroResult<crate::op::InnerContent> {
     let content = match cid.container_type() {
@@ -1349,7 +1343,7 @@ mod value {
         False = 2,
         DeleteOnce = 3,
         I32 = 4,
-        ContainerIdx = 5,
+        ContainerType = 5,
         F64 = 6,
         Str = 7,
         DeleteSeq = 8,
@@ -1376,8 +1370,8 @@ mod value {
                 Some(ValueKind::DeleteOnce)
             } else if n == ValueKind::I32 as u8 {
                 Some(ValueKind::I32)
-            } else if n == ValueKind::ContainerIdx as u8 {
-                Some(ValueKind::ContainerIdx)
+            } else if n == ValueKind::ContainerType as u8 {
+                Some(ValueKind::ContainerType)
             } else if n == ValueKind::F64 as u8 {
                 Some(ValueKind::F64)
             } else if n == ValueKind::Str as u8 {
@@ -1422,7 +1416,7 @@ mod value {
                 ValueKind::False => ValueKind::False as i64,
                 ValueKind::DeleteOnce => ValueKind::DeleteOnce as i64,
                 ValueKind::I32 => ValueKind::I32 as i64,
-                ValueKind::ContainerIdx => ValueKind::ContainerIdx as i64,
+                ValueKind::ContainerType => ValueKind::ContainerType as i64,
                 ValueKind::F64 => ValueKind::F64 as i64,
                 ValueKind::Str => ValueKind::Str as i64,
                 ValueKind::DeleteSeq => ValueKind::DeleteSeq as i64,
@@ -1449,7 +1443,7 @@ mod value {
                 ValueKind::False => ValueKind::False as u8,
                 ValueKind::DeleteOnce => ValueKind::DeleteOnce as u8,
                 ValueKind::I32 => ValueKind::I32 as u8,
-                ValueKind::ContainerIdx => ValueKind::ContainerIdx as u8,
+                ValueKind::ContainerType => ValueKind::ContainerType as u8,
                 ValueKind::F64 => ValueKind::F64 as u8,
                 ValueKind::Str => ValueKind::Str as u8,
                 ValueKind::DeleteSeq => ValueKind::DeleteSeq as u8,
@@ -1472,7 +1466,7 @@ mod value {
                 Value::False => ValueKind::False,
                 Value::DeleteOnce => ValueKind::DeleteOnce,
                 Value::I32(_) => ValueKind::I32,
-                Value::ContainerIdx(_) => ValueKind::ContainerIdx,
+                Value::ContainerIdx(_) => ValueKind::ContainerType,
                 Value::F64(_) => ValueKind::F64,
                 Value::Str(_) => ValueKind::Str,
                 Value::DeleteSeq(_) => ValueKind::DeleteSeq,
@@ -1498,7 +1492,7 @@ mod value {
             LoroValue::List(_) => ValueKind::Array,
             LoroValue::Map(_) => ValueKind::Map,
             LoroValue::Binary(_) => ValueKind::Binary,
-            LoroValue::Container(_) => ValueKind::ContainerIdx,
+            LoroValue::Container(_) => ValueKind::ContainerType,
         }
     }
 
@@ -1565,7 +1559,7 @@ mod value {
                 }
                 LoroValue::Container(c) => {
                     self.write_u8(c.container_type().to_u8());
-                    ValueKind::ContainerIdx
+                    ValueKind::ContainerType
                 }
             }
         }
@@ -1692,35 +1686,6 @@ mod value {
             ValueReader { raw }
         }
 
-        #[allow(unused)]
-        pub fn read(&mut self, kind: u8, keys: &[InternalString], id: ID) -> LoroResult<Value<'a>> {
-            let Some(kind) = ValueKind::from_u8(kind) else {
-                return Ok(Value::Unknown {
-                    kind,
-                    data: self.read_binary()?,
-                });
-            };
-
-            Ok(match kind {
-                ValueKind::Null => Value::Null,
-                ValueKind::True => Value::True,
-                ValueKind::False => Value::False,
-                ValueKind::DeleteOnce => Value::DeleteOnce,
-                ValueKind::I32 => Value::I32(self.read_i32()?),
-                ValueKind::F64 => Value::F64(self.read_f64()?),
-                ValueKind::Str => Value::Str(self.read_str()?),
-                ValueKind::DeleteSeq => Value::DeleteSeq(self.read_i32()?),
-                ValueKind::DeltaInt => Value::DeltaInt(self.read_i32()?),
-                ValueKind::Array => Value::Array(self.read_array(keys, id)?),
-                ValueKind::Map => Value::Map(self.read_map(keys, id)?),
-                ValueKind::Binary => Value::Binary(self.read_binary()?),
-                ValueKind::MarkStart => Value::MarkStart(self.read_mark(keys, id)?),
-                ValueKind::TreeMove => Value::TreeMove(self.read_tree_move()?),
-                ValueKind::ContainerIdx => Value::ContainerIdx(self.read_usize()?),
-                ValueKind::Unknown => unreachable!(),
-            })
-        }
-
         pub fn read_value_type_and_content(
             &mut self,
             keys: &[InternalString],
@@ -1779,7 +1744,7 @@ mod value {
                     ans.into()
                 }
                 ValueKind::Binary => LoroValue::Binary(Arc::new(self.read_binary()?.to_owned())),
-                ValueKind::ContainerIdx => {
+                ValueKind::ContainerType => {
                     let container_id =
                         ContainerID::new_normal(id, ContainerType::from_u8(self.read_u8()?));
 
@@ -1893,7 +1858,7 @@ mod value {
                         ValueKind::Binary => {
                             LoroValue::Binary(Arc::new(self.read_binary()?.to_owned()))
                         }
-                        ValueKind::ContainerIdx => {
+                        ValueKind::ContainerType => {
                             let container_id = ContainerID::new_normal(
                                 id,
                                 ContainerType::from_u8(self.read_u8()?),
@@ -2019,44 +1984,6 @@ mod value {
 
             let ans = self.raw[0];
             self.raw = &self.raw[1..];
-            Ok(ans)
-        }
-
-        fn read_array(&mut self, keys: &[InternalString], id: ID) -> LoroResult<Vec<Value<'a>>> {
-            let len = self.read_usize()?;
-            if len > MAX_COLLECTION_SIZE {
-                return Err(LoroError::DecodeDataCorruptionError);
-            }
-
-            let mut ans = Vec::with_capacity(len);
-            for _ in 0..len {
-                let kind = self.read_u8()?;
-                ans.push(self.read(kind, keys, id)?);
-            }
-            Ok(ans)
-        }
-
-        fn read_map(
-            &mut self,
-            keys: &[InternalString],
-            id: ID,
-        ) -> LoroResult<FxHashMap<InternalString, Value<'a>>> {
-            let len = self.read_usize()?;
-            if len > MAX_COLLECTION_SIZE {
-                return Err(LoroError::DecodeDataCorruptionError);
-            }
-
-            let mut ans = FxHashMap::with_capacity_and_hasher(len, Default::default());
-            for _ in 0..len {
-                let key_idx = self.read_usize()?;
-                let key = keys
-                    .get(key_idx)
-                    .ok_or(LoroError::DecodeDataCorruptionError)?
-                    .clone();
-                let kind = self.read_u8()?;
-                let value = self.read(kind, keys, id)?;
-                ans.insert(key, value);
-            }
             Ok(ans)
         }
 
