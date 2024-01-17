@@ -5,10 +5,6 @@ pub enum LazyLoad<Src, Dst: From<Src>> {
 }
 
 impl<Src: Default, Dst: From<Src>> LazyLoad<Src, Dst> {
-    pub fn new_dst(dst: Dst) -> Self {
-        LazyLoad::Dst(dst)
-    }
-
     pub fn get_mut(&mut self) -> &mut Dst {
         match self {
             LazyLoad::Src(src) => {

@@ -114,11 +114,58 @@ describe("richtext", () => {
       text2.applyDelta(e.diff);
     });
     text.insert(0, "foo");
-    text.mark({ start: 0, end: 3, expand: "none" }, "link", true);
+    text.mark({ start: 0, end: 3 }, "link", true);
     doc.commit();
     text.insert(3, "baz");
     doc.commit();
     await new Promise((r) => setTimeout(r, 1));
     expect(text2.toDelta()).toStrictEqual([{ insert: 'foo', attributes: { link: true } }, { insert: 'baz' }]);
+  })
+
+  it("custom richtext type", async () => {
+    const doc = new Loro();
+    doc.configTextStyle({
+      myStyle: {
+        expand: "none",
+      }
+    })
+    const text = doc.getText("text");
+    text.insert(0, "foo");
+    text.mark({ start: 0, end: 3 }, "myStyle", 123);
+    expect(text.toDelta()).toStrictEqual([{ insert: 'foo', attributes: { myStyle: 123 } }]);
+
+    expect(() => {
+      text.mark({ start: 0, end: 3 }, "unknownStyle", 2);
+    }).toThrowError()
+
+    expect(() => {
+      // default style config should be overwritten
+      text.mark({ start: 0, end: 3 }, "bold", 2);
+    }).toThrowError()
+  })
+
+  it("allow overlapped styles", () => {
+    const doc = new Loro();
+    doc.configTextStyle({
+      comment: { expand: "none", }
+    })
+    const text = doc.getText("text");
+    text.insert(0, "The fox jumped.");
+    text.mark({ start: 0, end: 7 }, "comment:alice", "Hi");
+    text.mark({ start: 4, end: 14 }, "comment:bob", "Jump");
+    expect(text.toDelta()).toStrictEqual([
+      {
+        insert: "The ", attributes: { "comment:alice": "Hi" },
+      },
+      {
+        insert: "fox", attributes: { "comment:alice": "Hi", "comment:bob": "Jump" },
+      },
+      {
+        insert: " jumped", attributes: { "comment:bob": "Jump" },
+      },
+      {
+        insert: ".",
+      }
+    ])
   })
 });

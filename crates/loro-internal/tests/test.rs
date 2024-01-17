@@ -2,7 +2,6 @@ use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, ID};
 use loro_internal::{
-    container::richtext::TextStyleInfoFlag,
     handler::{Handler, TextDelta, ValueOrContainer},
     version::Frontiers,
     ApplyDiff, LoroDoc, ToJson,
@@ -14,7 +13,7 @@ fn issue_225() -> LoroResult<()> {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
     text.insert(0, "123")?;
-    text.mark(0, 3, "bold", true.into(), TextStyleInfoFlag::BOLD)?;
+    text.mark(0, 3, "bold", true.into())?;
     // when apply_delta, the attributes of insert should override the current styles
     text.apply_delta(&[
         TextDelta::Retain {
@@ -66,12 +65,10 @@ fn mark_with_the_same_key_value_should_be_skipped() {
     let a = LoroDoc::new_auto_commit();
     let text = a.get_text("text");
     text.insert(0, "Hello world!").unwrap();
-    text.mark(0, 11, "key", "value".into(), TextStyleInfoFlag::BOLD)
-        .unwrap();
+    text.mark(0, 11, "bold", "value".into()).unwrap();
     a.commit_then_renew();
     let v = a.oplog_vv();
-    text.mark(0, 5, "key", "value".into(), TextStyleInfoFlag::BOLD)
-        .unwrap();
+    text.mark(0, 5, "bold", "value".into()).unwrap();
     a.commit_then_renew();
     let new_v = a.oplog_vv();
     // new mark should be ignored, so vv should be the same
@@ -139,15 +136,9 @@ fn out_of_bound_test() {
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
     let err = a.get_text("text").delete(3, 5).unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
-    let err = a
-        .get_text("text")
-        .mark(0, 8, "h", 5.into(), TextStyleInfoFlag::BOLD)
-        .unwrap_err();
+    let err = a.get_text("text").mark(0, 8, "h", 5.into()).unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
-    let _err = a
-        .get_text("text")
-        .mark(3, 0, "h", 5.into(), TextStyleInfoFlag::BOLD)
-        .unwrap_err();
+    let _err = a.get_text("text").mark(3, 0, "h", 5.into()).unwrap_err();
     let err = a.get_list("list").insert(6, "Hello").unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
     let err = a.get_list("list").delete(3, 2).unwrap_err();
@@ -211,17 +202,9 @@ fn richtext_mark_event() {
         }),
     );
     a.get_text("text").insert(0, "Hello").unwrap();
+    a.get_text("text").mark(0, 5, "bold", true.into()).unwrap();
     a.get_text("text")
-        .mark(0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
-        .unwrap();
-    a.get_text("text")
-        .mark(
-            2,
-            4,
-            "bold",
-            LoroValue::Null,
-            TextStyleInfoFlag::BOLD.to_delete(),
-        )
+        .mark(2, 4, "bold", LoroValue::Null)
         .unwrap();
     a.commit_then_stop();
     let b = LoroDoc::new_auto_commit();
@@ -250,12 +233,8 @@ fn concurrent_richtext_mark_event() {
     a.get_text("text").insert(0, "Hello").unwrap();
     b.merge(&a).unwrap();
     c.merge(&a).unwrap();
-    b.get_text("text")
-        .mark(0, 3, "bold", true.into(), TextStyleInfoFlag::BOLD)
-        .unwrap();
-    c.get_text("text")
-        .mark(1, 4, "link", true.into(), TextStyleInfoFlag::LINK)
-        .unwrap();
+    b.get_text("text").mark(0, 3, "bold", true.into()).unwrap();
+    c.get_text("text").mark(1, 4, "link", true.into()).unwrap();
     b.merge(&c).unwrap();
     let sub_id = a.subscribe(
         &a.get_text("text").id(),
@@ -287,7 +266,7 @@ fn concurrent_richtext_mark_event() {
                     },
                     {
                         "retain": 1,
-                        "attributes": {"bold": null}
+                        "attributes": {"bold": null, "link": true}
                     }
                 ])
             )
@@ -295,13 +274,7 @@ fn concurrent_richtext_mark_event() {
     );
 
     b.get_text("text")
-        .mark(
-            2,
-            3,
-            "bold",
-            LoroValue::Null,
-            TextStyleInfoFlag::BOLD.to_delete(),
-        )
+        .mark(2, 3, "bold", LoroValue::Null)
         .unwrap();
     a.merge(&b).unwrap();
     a.unsubscribe(sub_id);
@@ -331,9 +304,7 @@ fn concurrent_richtext_mark_event() {
 fn insert_richtext_event() {
     let a = LoroDoc::new_auto_commit();
     a.get_text("text").insert(0, "Hello").unwrap();
-    a.get_text("text")
-        .mark(0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
-        .unwrap();
+    a.get_text("text").mark(0, 5, "bold", true.into()).unwrap();
     a.commit_then_renew();
     let text = a.get_text("text");
     a.subscribe(

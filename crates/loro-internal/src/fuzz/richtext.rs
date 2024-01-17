@@ -12,36 +12,11 @@ use crate::{
     array_mut_ref, container::ContainerID, delta::DeltaItem, id::PeerID, ContainerType, LoroValue,
 };
 use crate::{
-    container::richtext::{StyleKey, TextStyleInfoFlag},
-    event::Diff,
-    handler::TextDelta,
-    loro::LoroDoc,
-    value::ToJson,
-    version::Frontiers,
-    TextHandler,
+    container::richtext::StyleKey, event::Diff, handler::TextDelta, loro::LoroDoc, value::ToJson,
+    version::Frontiers, TextHandler,
 };
 
-const STYLES: [TextStyleInfoFlag; 8] = [
-    TextStyleInfoFlag::BOLD,
-    TextStyleInfoFlag::COMMENT,
-    TextStyleInfoFlag::LINK,
-    TextStyleInfoFlag::from_byte(0),
-    TextStyleInfoFlag::LINK.to_delete(),
-    TextStyleInfoFlag::BOLD.to_delete(),
-    TextStyleInfoFlag::COMMENT.to_delete(),
-    TextStyleInfoFlag::from_byte(0).to_delete(),
-];
-
-const STYLES_NAME: [&str; 8] = [
-    "BOLD",
-    "COMMENT",
-    "LINK",
-    "0",
-    "DEL_LINK",
-    "DEL_BOLD",
-    "DEL_COMMENT",
-    "DEL_0",
-];
+const STYLES_NAME: [&str; 4] = ["bold", "comment", "link", "highlight"];
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -123,15 +98,6 @@ impl Actor {
                                     .filter(|(_, v)| !v.data.is_null())
                                     .map(|(k, v)| match k {
                                         StyleKey::Key(k) => (k.to_string(), v.data),
-                                        StyleKey::KeyWithId { key, id } => {
-                                            let mut data = FxHashMap::default();
-                                            data.insert(
-                                                "key".to_string(),
-                                                LoroValue::String(Arc::new(key.to_string())),
-                                            );
-                                            data.insert("data".to_string(), v.data);
-                                            (format!("id:{}", id), LoroValue::Map(Arc::new(data)))
-                                        }
                                     })
                                     .collect();
                                 let attributes = if attributes.is_empty() {
@@ -154,15 +120,6 @@ impl Actor {
                                     .filter(|(_, v)| !v.data.is_null())
                                     .map(|(k, v)| match k {
                                         StyleKey::Key(k) => (k.to_string(), v.data),
-                                        StyleKey::KeyWithId { key, id } => {
-                                            let mut data = FxHashMap::default();
-                                            data.insert(
-                                                "key".to_string(),
-                                                LoroValue::String(Arc::new(key.to_string())),
-                                            );
-                                            data.insert("data".to_string(), v.data);
-                                            (format!("id:{}", id), LoroValue::Map(Arc::new(data)))
-                                        }
                                     })
                                     .collect();
                                 let attributes = if attributes.is_empty() {
@@ -182,7 +139,7 @@ impl Actor {
                     //     text_doc.peer_id(),
                     //     text_h.get_richtext_value()
                     // );
-                    // println!("delta {:?}", text_deltas);
+                    debug_log::debug_log!("delta {:?}", text_deltas);
                     text_h.apply_delta_with_txn(&mut txn, &text_deltas).unwrap();
 
                     // println!("after {:?}\n", text_h.get_richtext_value());
@@ -329,7 +286,7 @@ impl Actionable for Vec<Actor> {
                         *pos %= length;
                         *len %= length - *pos;
                         *len = 1.max(*len);
-                        *i %= STYLES.len();
+                        *i %= STYLES_NAME.len();
                     }
                 }
             }
@@ -395,18 +352,13 @@ impl Actionable for Vec<Actor> {
                         text.delete_with_txn(&mut txn, *pos, *len).unwrap();
                     }
                     RichTextAction::Mark(i) => {
-                        let style = STYLES[*i];
                         text.mark_with_txn(
                             &mut txn,
                             *pos,
                             *pos + *len,
                             STYLES_NAME[*i],
-                            if style.is_delete() {
-                                LoroValue::Null
-                            } else {
-                                true.into()
-                            },
-                            style,
+                            (*pos as i32).into(),
+                            false,
                         )
                         .unwrap();
                     }
@@ -469,6 +421,7 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
 
     debug_log::debug_log!("{}", a_result.to_json_pretty());
     assert_eq!(&a_result, &b_result);
+    debug_log::debug_log!("{}", a_value.to_json_pretty());
     assert_value_eq(&a_result, &a_value);
 }
 
@@ -1033,5 +986,26 @@ mod failed_tests {
                 Sync { from: 155, to: 1 },
             ],
         )
+    }
+
+    #[test]
+    fn allow_overlap() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 255,
+                    pos: 562949940576255,
+                    value: 10,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 0,
+                    pos: 52793738066393,
+                    value: 15637060856183783423,
+                    action: RichTextAction::Mark(15697817505862638041),
+                },
+            ],
+        );
     }
 }

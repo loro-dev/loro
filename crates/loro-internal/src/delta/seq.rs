@@ -615,12 +615,15 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
     }
 
     pub fn chop(mut self) -> Self {
-        let last_op = self.vec.last();
-        if let Some(last_op) = last_op {
-            if last_op.is_retain() && last_op.meta().is_empty() {
-                self.vec.pop();
+        loop {
+            match self.vec.last() {
+                Some(last_op) if last_op.is_retain() && last_op.meta().is_empty() => {
+                    self.vec.pop();
+                }
+                _ => break,
             }
         }
+
         self
     }
 }

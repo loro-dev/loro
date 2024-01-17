@@ -90,13 +90,13 @@ fn check_sync_send(_doc: impl Sync + Send) {}
 
 #[test]
 fn richtext_test() {
-    use loro::{ExpandType, LoroDoc, ToJson};
+    use loro::{LoroDoc, ToJson};
     use serde_json::json;
 
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
     text.insert(0, "Hello world!").unwrap();
-    text.mark(0..5, ExpandType::After, "bold", true).unwrap();
+    text.mark(0..5, "bold", true).unwrap();
     assert_eq!(
         text.to_delta().to_json_value(),
         json!([
@@ -104,7 +104,7 @@ fn richtext_test() {
             { "insert": " world!" },
         ])
     );
-    text.unmark(3..5, ExpandType::After, "bold").unwrap();
+    text.unmark(3..5, "bold").unwrap();
     assert_eq!(
         text.to_delta().to_json_value(),
         json!([
@@ -127,9 +127,7 @@ fn sync() {
     doc_b.import(&bytes).unwrap();
     assert_eq!(doc.get_deep_value(), doc_b.get_deep_value());
     let text_b = doc_b.get_text("text");
-    text_b
-        .mark(0..5, loro::ExpandType::After, "bold", true)
-        .unwrap();
+    text_b.mark(0..5, "bold", true).unwrap();
     doc.import(&doc_b.export_from(&doc.oplog_vv())).unwrap();
     assert_eq!(
         text.to_delta().to_json_value(),

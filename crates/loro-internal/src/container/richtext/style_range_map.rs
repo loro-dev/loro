@@ -133,7 +133,12 @@ impl StyleRangeMap {
         }
     }
 
-    pub fn annotate(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
+    pub fn annotate(
+        &mut self,
+        range: Range<usize>,
+        style: Arc<StyleOp>,
+        mut yield_style: Option<&mut dyn FnMut(&Styles, usize)>,
+    ) {
         let range = self.tree.range::<LengthFinder>(range);
         if range.is_none() {
             unreachable!();
@@ -152,6 +157,9 @@ impl StyleRangeMap {
                     x.styles.insert(key, value);
                 }
 
+                if let Some(y) = yield_style.as_mut() {
+                    y(&x.styles, x.len);
+                }
                 None
             });
     }
@@ -255,7 +263,7 @@ impl StyleRangeMap {
         let right = self.tree.shift_path_by_one_offset(left).unwrap();
         if left.leaf == right.leaf {
             let styles = &self.tree.get_elem(left.leaf).unwrap().styles;
-            styles.clone().into()
+            styles.into()
         } else {
             let mut styles = self.tree.get_elem(left.leaf).unwrap().styles.clone();
             let right_styles = &self.tree.get_elem(right.leaf).unwrap().styles;
@@ -502,7 +510,7 @@ mod test {
     #[test]
     fn test_basic_insert() {
         let mut map = StyleRangeMap::default();
-        map.annotate(1..10, new_style(1));
+        map.annotate(1..10, new_style(1), None);
         {
             map.insert(0, 1);
             assert_eq!(map.iter().count(), 1);
@@ -532,7 +540,7 @@ mod test {
     #[test]
     fn delete_style() {
         let mut map = StyleRangeMap::default();
-        map.annotate(1..10, new_style(1));
+        map.annotate(1..10, new_style(1), None);
         {
             map.delete(0..2);
             assert_eq!(map.iter().count(), 1);

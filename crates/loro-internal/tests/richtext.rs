@@ -3,7 +3,7 @@
 use std::ops::Range;
 
 use loro_common::LoroValue;
-use loro_internal::{container::richtext::TextStyleInfoFlag, LoroDoc, ToJson};
+use loro_internal::{LoroDoc, ToJson};
 use serde_json::json;
 
 fn init(s: &str) -> LoroDoc {
@@ -37,14 +37,6 @@ impl Kind {
             Kind::Italic => "italic",
         }
     }
-
-    fn flag(&self) -> TextStyleInfoFlag {
-        match self {
-            Kind::Bold => TextStyleInfoFlag::BOLD,
-            Kind::Link => TextStyleInfoFlag::LINK,
-            Kind::Italic => TextStyleInfoFlag::BOLD,
-        }
-    }
 }
 
 fn insert(doc: &LoroDoc, pos: usize, s: &str) {
@@ -62,18 +54,7 @@ fn delete(doc: &LoroDoc, pos: usize, len: usize) {
 fn mark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
     let richtext = doc.get_text("r");
     doc.with_txn(|txn| {
-        richtext.mark_with_txn(
-            txn,
-            range.start,
-            range.end,
-            kind.key(),
-            if kind.flag().is_delete() {
-                LoroValue::Null
-            } else {
-                true.into()
-            },
-            kind.flag(),
-        )
+        richtext.mark_with_txn(txn, range.start, range.end, kind.key(), true.into(), false)
     })
     .unwrap();
 }
@@ -81,14 +62,15 @@ fn mark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
 fn unmark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
     let richtext = doc.get_text("r");
     doc.with_txn(|txn| {
-        richtext.mark_with_txn(
-            txn,
-            range.start,
-            range.end,
-            kind.key(),
-            false.into(),
-            kind.flag().to_delete(),
-        )
+        richtext.mark_with_txn(txn, range.start, range.end, kind.key(), false.into(), false)
+    })
+    .unwrap();
+}
+
+fn mark_kv(doc: &LoroDoc, range: Range<usize>, key: &str, value: impl Into<LoroValue>) {
+    let richtext = doc.get_text("r");
+    doc.with_txn(|txn| {
+        richtext.mark_with_txn(txn, range.start, range.end, key, value.into(), false)
     })
     .unwrap();
 }
@@ -185,7 +167,7 @@ fn case3() {
 /// | Concurrent B    | `Hey World`                |
 /// | Expected Result | `<link>Hey</link> World`   |
 #[test]
-fn case5() {
+fn case4() {
     let doc_a = init("Hello World");
     let doc_b = clone(&doc_a, 2);
     mark(&doc_a, 0..5, Kind::Link);
@@ -213,7 +195,7 @@ fn case5() {
 /// | Origin          | `<b><link>Hello</link><b> World`  |
 /// | Expected Result | `<b><link>Hello</link>t<b> World` |
 #[test]
-fn case6() {
+fn case5() {
     let doc = init("Hello World");
     mark(&doc, 0..5, Kind::Bold);
     expect_result(
@@ -251,7 +233,7 @@ fn case6() {
 /// | Concurrent B    | `<b>The </b>fox<b> jumped</b> over the dog.` |
 /// | Expected Result | `The fox jumped over the dog.`               |
 #[test]
-fn case7() {
+fn case6() {
     let doc_a = init("The fox jumped over the dog.");
     mark(&doc_a, 0..3, Kind::Bold);
     let doc_b = clone(&doc_a, 2);
@@ -278,7 +260,7 @@ fn case7() {
 /// | Concurrent B    | `<b>The</b> fox jumped over the <b>dog</b>.` |
 /// | Expected Result | `<b>The</b> fox jumped over the <b>dog</b>.` |
 #[test]
-fn case8() {
+fn case7() {
     let doc_a = init("The fox jumped over the dog.");
     mark(&doc_a, 0..14, Kind::Bold);
     let doc_b = clone(&doc_a, 2);
@@ -307,7 +289,7 @@ fn case8() {
 /// | Concurrent B    | The *fox jumped*.            |
 /// | Expected Result | **The _fox_**<i> jumped</i>. |
 #[test]
-fn case9() {
+fn case8() {
     let doc_a = init("The fox jumped.");
     let doc_b = clone(&doc_a, 2);
     mark(&doc_a, 0..7, Kind::Bold);
@@ -324,6 +306,25 @@ fn case9() {
     );
     doc_a.check_state_diff_calc_consistency_slow();
     doc_b.check_state_diff_calc_consistency_slow();
+}
+
+/// ![](https://i.postimg.cc/MTNGq8cH/Clean-Shot-2023-10-09-at-12-16-29-2x.png)
+#[test]
+fn case9() {
+    let doc_a = init("The fox jumped.");
+    let doc_b = clone(&doc_a, 2);
+    mark_kv(&doc_a, 0..7, "comment:alice", "alice comment");
+    mark_kv(&doc_a, 4..14, "comment:bob", "bob comment");
+    merge(&doc_a, &doc_b);
+    expect_result(
+        &doc_a,
+        serde_json::json!([
+            {"insert": "The ", "attributes": {"comment:alice": "alice comment"}},
+            {"insert": "fox", "attributes": {"comment:alice": "alice comment", "comment:bob": "bob comment"}},
+            {"insert": " jumped", "attributes": {"comment:bob": "bob comment"}},
+            {"insert": "."}
+        ]),
+    );
 }
 
 #[test]

@@ -456,16 +456,7 @@ pub mod wasm {
             // TODO: refactor: should we extract the common code of ToJson and ToJsValue
             let obj = Object::new();
             for (key, style) in value.iter() {
-                let value = if !key.contains_id() {
-                    JsValue::from(style.data)
-                } else {
-                    let value = Object::new();
-                    js_sys::Reflect::set(&value, &"key".into(), &JsValue::from_str(&style.key))
-                        .unwrap();
-                    let data = JsValue::from(style.data);
-                    js_sys::Reflect::set(&value, &"data".into(), &data).unwrap();
-                    value.into()
-                };
+                let value = JsValue::from(style.data);
                 js_sys::Reflect::set(&obj, &JsValue::from_str(&key.to_attr_key()), &value).unwrap();
             }
 

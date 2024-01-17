@@ -1,18 +1,15 @@
-use std::{fmt::Debug, sync::Arc};
-
-use crate::Timestamp;
+pub use crate::container::richtext::config::{StyleConfig, StyleConfigMap};
 
 #[derive(Clone)]
 pub struct Configure {
-    pub get_time: fn() -> Timestamp,
-    pub rand: Arc<dyn SecureRandomGenerator>,
+    pub text_style_config: Arc<RwLock<StyleConfigMap>>,
 }
 
-impl Debug for Configure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Configure")
-            .field("get_time", &self.get_time)
-            .finish()
+impl Default for Configure {
+    fn default() -> Self {
+        Self {
+            text_style_config: Arc::new(RwLock::new(StyleConfigMap::default_rich_text_config())),
+        }
     }
 }
 
@@ -20,6 +17,7 @@ pub struct DefaultRandom;
 
 #[cfg(test)]
 use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, RwLock};
 #[cfg(test)]
 static mut TEST_RANDOM: AtomicU64 = AtomicU64::new(0);
 
@@ -61,14 +59,5 @@ pub trait SecureRandomGenerator: Send + Sync {
         let mut buf = [0u8; 4];
         self.fill_byte(&mut buf);
         i32::from_le_bytes(buf)
-    }
-}
-
-impl Default for Configure {
-    fn default() -> Self {
-        Self {
-            get_time: || 0,
-            rand: Arc::new(DefaultRandom),
-        }
     }
 }

@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 use either::Either;
 use loro_internal::change::Timestamp;
-use loro_internal::container::richtext::TextStyleInfoFlag;
 use loro_internal::container::IntoContainerId;
 use loro_internal::handler::TextDelta;
 use loro_internal::handler::ValueOrContainer;
@@ -534,17 +533,10 @@ impl LoroText {
     pub fn mark(
         &self,
         range: Range<usize>,
-        expand: ExpandType,
         key: &str,
         value: impl Into<LoroValue>,
     ) -> LoroResult<()> {
-        self.handler.mark(
-            range.start,
-            range.end,
-            key,
-            value.into(),
-            TextStyleInfoFlag::new(true, expand, false, false),
-        )
+        self.handler.mark(range.start, range.end, key, value.into())
     }
 
     /// Unmark a range of text with a key and a value.
@@ -563,15 +555,8 @@ impl LoroText {
     /// *You should make sure that a key is always associated with the same expand type.*
     ///
     /// Note: you cannot delete unmergeable annotations like comments by this method.
-    pub fn unmark(&self, range: Range<usize>, expand: ExpandType, key: &str) -> LoroResult<()> {
-        let expand = expand.reverse();
-        self.handler.mark(
-            range.start,
-            range.end,
-            key,
-            LoroValue::Null,
-            TextStyleInfoFlag::new(true, expand, true, false),
-        )
+    pub fn unmark(&self, range: Range<usize>, key: &str) -> LoroResult<()> {
+        self.handler.unmark(range.start, range.end, key)
     }
 
     /// Get the text in [Delta](https://quilljs.com/docs/delta/) format.
@@ -584,7 +569,7 @@ impl LoroText {
     /// let doc = LoroDoc::new();
     /// let text = doc.get_text("text");
     /// text.insert(0, "Hello world!").unwrap();
-    /// text.mark(0..5, ExpandType::After, "bold", true).unwrap();
+    /// text.mark(0..5, "bold", true).unwrap();
     /// assert_eq!(
     ///     text.to_delta().to_json_value(),
     ///     json!([
@@ -592,7 +577,7 @@ impl LoroText {
     ///         { "insert": " world!" },
     ///     ])
     /// );
-    /// text.unmark(3..5, ExpandType::After, "bold").unwrap();
+    /// text.unmark(3..5, "bold").unwrap();
     /// assert_eq!(
     ///     text.to_delta().to_json_value(),
     ///     json!([

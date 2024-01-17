@@ -16,7 +16,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, InnerListOp},
-        richtext::{Style, StyleKey, TextStyleInfoFlag},
+        richtext::{Style, StyleKey},
         IntoContainerId,
     },
     delta::{
@@ -73,7 +73,6 @@ pub(super) enum EventHint {
         start: u32,
         end: u32,
         style: Style,
-        info: TextStyleInfoFlag,
     },
     InsertText {
         /// pos is a Unicode index. If wasm, it's a UTF-16 index.
@@ -501,38 +500,16 @@ fn change_to_diff(
         }
         'outer: {
             match hint {
-                EventHint::Mark {
-                    start,
-                    end,
-                    style,
-                    info,
-                } => {
+                EventHint::Mark { start, end, style } => {
                     let mut meta = StyleMeta::default();
-                    if info.mergeable() {
-                        meta.insert(
-                            StyleKey::Key(style.key.clone()),
-                            StyleMetaItem {
-                                lamport,
-                                peer: change.id.peer,
-                                value: style.data,
-                            },
-                        )
-                    } else {
-                        meta.insert(
-                            StyleKey::KeyWithId {
-                                key: style.key.clone(),
-                                id: ID {
-                                    peer: change.id.peer,
-                                    counter: op.counter,
-                                },
-                            },
-                            StyleMetaItem {
-                                lamport,
-                                peer: change.id.peer,
-                                value: style.data,
-                            },
-                        )
-                    }
+                    meta.insert(
+                        StyleKey::Key(style.key.clone()),
+                        StyleMetaItem {
+                            lamport,
+                            peer: change.id.peer,
+                            value: style.data,
+                        },
+                    );
                     let diff = Delta::new()
                         .retain(start as usize)
                         .retain_with_meta((end - start) as usize, meta);
