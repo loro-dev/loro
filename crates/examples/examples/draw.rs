@@ -1,8 +1,11 @@
 use std::time::Instant;
 
-use bench_utils::{json, SyncKind};
+use bench_utils::SyncKind;
 use examples::{draw::DrawActor, run_async_workflow, run_realtime_collab_workflow};
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use loro::{LoroDoc, ToJson};
+use std::io::prelude::*;
 use tabled::{settings::Style, Table, Tabled};
 
 #[derive(Tabled)]
@@ -13,7 +16,9 @@ struct BenchResult {
     ops_num: usize,
     changes_num: usize,
     snapshot_size: usize,
+    compressed_snapshot_size: usize,
     updates_size: usize,
+    compressed_updates_size: usize,
     apply_duration: f64,
     encode_snapshot_duration: f64,
     encode_udpate_duration: f64,
@@ -22,27 +27,33 @@ struct BenchResult {
     doc_json_size: usize,
 }
 
+fn compress(data: &[u8]) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(data).expect("Failed to write data");
+    encoder.finish().expect("Failed to compress data")
+}
+
 pub fn main() {
     let seed = 123123;
     let ans = vec![
-        // run_async(1, 100, seed),
-        // run_async(1, 1000, seed),
-        // run_async(1, 5000, seed),
-        // run_async(1, 10000, seed),
-        // run_async(5, 100, seed),
-        // run_async(5, 1000, seed),
-        // run_async(5, 10000, seed),
-        // run_async(10, 1000, seed),
-        // run_async(10, 10000, seed),
-        // run_async(10, 100000, seed),
-        // run_async(10, 100000, 1000),
-        // run_realtime_collab(5, 100, seed),
-        // run_realtime_collab(5, 1000, seed),
-        // run_realtime_collab(5, 10000, seed),
-        // run_realtime_collab(10, 1000, seed),
+        run_async(1, 100, seed),
+        run_async(1, 1000, seed),
+        run_async(1, 5000, seed),
+        run_async(1, 10000, seed),
+        run_async(5, 100, seed),
+        run_async(5, 1000, seed),
+        run_async(5, 10000, seed),
+        run_async(10, 1000, seed),
+        run_async(10, 10000, seed),
+        run_async(10, 100000, seed),
+        run_async(10, 100000, 1000),
+        run_realtime_collab(5, 100, seed),
+        run_realtime_collab(5, 1000, seed),
+        run_realtime_collab(5, 10000, seed),
+        run_realtime_collab(10, 1000, seed),
         run_realtime_collab(10, 10000, seed),
-        // run_realtime_collab(10, 100000, seed),
-        // run_realtime_collab(10, 100000, 1000),
+        run_realtime_collab(10, 100000, seed),
+        run_realtime_collab(10, 100000, 1000),
     ];
     let mut table = Table::new(ans);
     let style = Style::markdown();
@@ -68,11 +79,13 @@ fn run_async(peer_num: usize, action_num: usize, seed: u64) -> BenchResult {
     let snapshot = actors.docs[0].doc.export_snapshot();
     let encode_snapshot_duration = start.elapsed().as_secs_f64() * 1000.;
     let snapshot_size = snapshot.len();
+    let compressed_snapshot_size = compress(&snapshot).len();
 
     let start = Instant::now();
     let updates = actors.docs[0].doc.export_from(&Default::default());
     let encode_udpate_duration = start.elapsed().as_secs_f64() * 1000.;
     let updates_size = updates.len();
+    let compressed_updates_size = compress(&updates).len();
 
     let start = Instant::now();
     let doc = LoroDoc::new();
@@ -90,9 +103,11 @@ fn run_async(peer_num: usize, action_num: usize, seed: u64) -> BenchResult {
         action_size: action_num,
         peer_num,
         snapshot_size,
+        compressed_snapshot_size,
         ops_num: actors.docs[0].doc.len_ops(),
         changes_num: actors.docs[0].doc.len_changes(),
         updates_size,
+        compressed_updates_size,
         apply_duration,
         encode_snapshot_duration,
         encode_udpate_duration,
@@ -120,11 +135,13 @@ fn run_realtime_collab(peer_num: usize, action_num: usize, seed: u64) -> BenchRe
     let snapshot = actors.docs[0].doc.export_snapshot();
     let encode_snapshot_duration = start.elapsed().as_secs_f64() * 1000.;
     let snapshot_size = snapshot.len();
+    let compressed_snapshot_size = compress(&snapshot).len();
 
     let start = Instant::now();
     let updates = actors.docs[0].doc.export_from(&Default::default());
     let encode_udpate_duration = start.elapsed().as_secs_f64() * 1000.;
     let updates_size = updates.len();
+    let compressed_updates_size = compress(&updates).len();
 
     let start = Instant::now();
     let doc = LoroDoc::new();
@@ -145,7 +162,9 @@ fn run_realtime_collab(peer_num: usize, action_num: usize, seed: u64) -> BenchRe
         ops_num: actors.docs[0].doc.len_ops(),
         changes_num: actors.docs[0].doc.len_changes(),
         snapshot_size,
+        compressed_snapshot_size,
         updates_size,
+        compressed_updates_size,
         apply_duration,
         encode_snapshot_duration,
         encode_udpate_duration,
