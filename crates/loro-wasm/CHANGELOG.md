@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0
+
+### Minor Changes
+
+- Refine the rich text CRDT in Loro
+
 ## 0.8.0
 
 ### Minor Changes

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.0
+
+### Minor Changes
+
+- Refine the rich text CRDT in Loro
+
+### Patch Changes
+
+- Updated dependencies
+  - loro-wasm@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes
