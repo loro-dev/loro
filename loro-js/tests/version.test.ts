@@ -26,6 +26,25 @@ describe("Frontiers", () => {
   });
 });
 
+it('peer id repr should be consistent', () => {
+  const doc = new Loro();
+  const id = doc.peerIdStr;
+  doc.getText("text").insert(0, "hello");
+  doc.commit();
+  const f = doc.frontiers();
+  expect(f[0].peer).toBe(id);
+  const map = doc.getList("list").insertContainer(0, "Map");
+  const mapId = map.id;
+  const peerIdInContainerId = mapId.split(":")[1].split("@")[1]
+  expect(peerIdInContainerId).toBe(id);
+  doc.commit();
+  expect(doc.version().get(id)).toBe(6);
+  expect(doc.version().toJSON().get(id)).toBe(6);
+  const m = doc.getMap(mapId);
+  m.set("0", 1);
+  expect(map.get("0")).toBe(1)
+})
+
 describe("Version", () => {
   const a = new Loro();
   a.setPeerId(0n);
