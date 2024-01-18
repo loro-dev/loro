@@ -101,7 +101,9 @@ export class QuillBinding {
         const a = this.richtext.toDelta();
         const b = this.quill.getContents().ops;
         console.log(this.doc.peerId, "COMPARE AFTER QUILL_EVENT");
-        assertEqual(a, b as any);
+        if (!assertEqual(a, b as any)) {
+          this.quill.setContents(new Delta(a), "this" as any);
+        }
         console.log("SIZE", this.doc.exportFrom().length);
         this.doc.debugHistory();
       }
