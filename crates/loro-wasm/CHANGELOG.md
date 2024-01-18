@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1
+
+### Patch Changes
+
+- Fix use consistnt peer id repr and expose VersionVector type
+
 ## 0.9.0
 
 ### Minor Changes
