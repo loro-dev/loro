@@ -10,7 +10,8 @@ use loro_internal::{
     id::{Counter, TreeID, ID},
     obs::SubID,
     version::Frontiers,
-    ContainerType, DiffEvent, LoroDoc, LoroError, LoroValue, VersionVector,
+    ContainerType, DiffEvent, LoroDoc, LoroError, LoroValue,
+    VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,8 @@ pub struct Loro(Arc<LoroDoc>);
 
 #[wasm_bindgen]
 extern "C" {
+    #[wasm_bindgen(typescript_type = "number | bigint | string")]
+    pub type JsIntoPeerID;
     #[wasm_bindgen(typescript_type = "ContainerID")]
     pub type JsContainerID;
     #[wasm_bindgen(typescript_type = "ContainerID | string")]
@@ -80,8 +83,10 @@ extern "C" {
     pub type JsChanges;
     #[wasm_bindgen(typescript_type = "Change")]
     pub type JsChange;
-    #[wasm_bindgen(typescript_type = "Map<PeerID, number> | Uint8Array")]
-    pub type JsVersionVector;
+    #[wasm_bindgen(
+        typescript_type = "Map<PeerID, number> | Uint8Array | VersionVector | undefined | null"
+    )]
+    pub type JsIntoVersionVector;
     #[wasm_bindgen(typescript_type = "Value | Container")]
     pub type JsValueOrContainer;
     #[wasm_bindgen(typescript_type = "Value | Container | undefined")]
@@ -124,9 +129,7 @@ mod observer {
         }
     }
 
-    // TODO: need to double check whether this is safe
     unsafe impl Send for Observer {}
-    // TODO: need to double check whether this is safe
     unsafe impl Sync for Observer {}
 }
 
@@ -179,22 +182,6 @@ fn js_value_to_container_id(
     let cid = ContainerID::try_from(s.as_str())
         .unwrap_or_else(|_| ContainerID::new_root(s.as_str(), kind));
     Ok(cid)
-}
-
-fn js_value_to_version(version: &JsValue) -> Result<VersionVector, JsValue> {
-    let version: Option<Vec<u8>> = if version.is_null() || version.is_undefined() {
-        None
-    } else {
-        let arr: Uint8Array = Uint8Array::new(version);
-        Some(arr.to_vec())
-    };
-
-    let vv = match version {
-        Some(x) => VersionVector::decode(&x)?,
-        None => Default::default(),
-    };
-
-    Ok(vv)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -330,7 +317,7 @@ impl Loro {
         self.0.is_detached()
     }
 
-    /// Checkout the `DocState` to the lastest version of `OpLog`.
+    /// Checkout the `DocState` to the latest version of `OpLog`.
     ///
     /// > The document becomes detached during a `checkout` operation.
     /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
@@ -365,7 +352,7 @@ impl Loro {
     /// > In a detached state, the document is not editable, and any `import` operations will be
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
-    /// You should call `attach` to attach the `DocState` to the lastest version of `OpLog`.
+    /// You should call `attach` to attach the `DocState` to the latest version of `OpLog`.
     ///
     /// @param frontiers - the specific frontiers
     ///
@@ -391,10 +378,10 @@ impl Loro {
         self.0.peer_id()
     }
 
-    /// Get peer id in hex string.
+    /// Get peer id in decimal string.
     #[wasm_bindgen(js_name = "peerIdStr", method, getter)]
     pub fn peer_id_str(&self) -> String {
-        format!("{:X}", self.0.peer_id())
+        format!("{}", self.0.peer_id())
     }
 
     /// Set the peer ID of the current writer.
@@ -402,12 +389,13 @@ impl Loro {
     /// Note: use it with caution. You need to make sure there is not chance that two peers
     /// have the same peer ID.
     #[wasm_bindgen(js_name = "setPeerId", method)]
-    pub fn set_peer_id(&self, id: u64) -> JsResult<()> {
+    pub fn set_peer_id(&self, peer_id: JsIntoPeerID) -> JsResult<()> {
+        let id = id_value_to_u64(peer_id.into())?;
         self.0.set_peer_id(id)?;
         Ok(())
     }
 
-    /// Commit the cumulative auto commit transaction.
+    /// Commit the cumulative auto committed transaction.
     pub fn commit(&self, origin: Option<String>) {
         self.0.commit_with(origin.map(|x| x.into()), None, true);
     }
@@ -548,17 +536,16 @@ impl Loro {
     ///
     /// If you checkout to a specific version, the version vector will change.
     #[inline(always)]
-    pub fn version(&self) -> Vec<u8> {
-        self.0.state_vv().encode()
+    pub fn version(&self) -> VersionVector {
+        VersionVector(self.0.state_vv())
     }
 
-    /// Get the encoded version vector of the lastest version in OpLog.
+    /// Get the encoded version vector of the latest version in OpLog.
     ///
     /// If you checkout to a specific version, the version vector will not change.
-    #[inline(always)]
     #[wasm_bindgen(js_name = "oplogVersion")]
-    pub fn oplog_version(&self) -> Vec<u8> {
-        self.0.oplog_vv().encode()
+    pub fn oplog_version(&self) -> VersionVector {
+        VersionVector(self.0.oplog_vv())
     }
 
     /// Get the frontiers of the current document.
@@ -569,7 +556,7 @@ impl Loro {
         frontiers_to_ids(&self.0.state_frontiers())
     }
 
-    /// Get the frontiers of the lastest version in OpLog.
+    /// Get the frontiers of the latest version in OpLog.
     ///
     /// If you checkout to a specific version, this value will not change.
     #[inline(always)]
@@ -628,10 +615,13 @@ impl Loro {
     /// const updates2 = doc.exportFrom(version);
     /// ```
     #[wasm_bindgen(skip_typescript, js_name = "exportFrom")]
-    pub fn export_from(&self, version: &JsValue) -> JsResult<Vec<u8>> {
-        // `version` may be null or undefined
-        let vv = js_value_to_version(version)?;
-        Ok(self.0.export_from(&vv))
+    pub fn export_from(&self, vv: Option<VersionVector>) -> JsResult<Vec<u8>> {
+        if let Some(vv) = vv {
+            // `version` may be null or undefined
+            Ok(self.0.export_from(&vv.0))
+        } else {
+            Ok(self.0.export_from(&Default::default()))
+        }
     }
 
     /// Import a snapshot or a update to current doc.
@@ -882,17 +872,14 @@ impl Loro {
     /// const version = doc.frontiersToVV(frontiers);
     /// ```
     #[wasm_bindgen(js_name = "frontiersToVV")]
-    pub fn frontiers_to_vv(&self, frontiers: Vec<JsID>) -> JsResult<JsVersionVectorMap> {
+    pub fn frontiers_to_vv(&self, frontiers: Vec<JsID>) -> JsResult<VersionVector> {
         let frontiers = ids_to_frontiers(frontiers)?;
         let borrow_mut = &self.0;
         let oplog = borrow_mut.oplog().try_lock().unwrap();
         oplog
             .dag()
             .frontiers_to_vv(&frontiers)
-            .map(|vv| {
-                let ans: JsVersionVectorMap = vv_to_js_value(vv).into();
-                ans
-            })
+            .map(VersionVector)
             .ok_or_else(|| JsError::new("Frontiers not found").into())
     }
 
@@ -909,40 +896,10 @@ impl Loro {
     /// const frontiers = doc.vvToFrontiers(version);
     /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
-    pub fn vv_to_frontiers(&self, vv: &JsVersionVector) -> JsResult<Vec<JsID>> {
-        let value: JsValue = vv.into();
-        let is_bytes = value.is_instance_of::<js_sys::Uint8Array>();
-        let vv = if is_bytes {
-            let bytes = js_sys::Uint8Array::from(value.clone());
-            let bytes = bytes.to_vec();
-            VersionVector::decode(&bytes)?
-        } else {
-            let map = js_sys::Map::from(value);
-            js_map_to_vv(map)?
-        };
-
-        let f = self.0.oplog().lock().unwrap().dag().vv_to_frontiers(&vv);
+    pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<Vec<JsID>> {
+        let f = self.0.oplog().lock().unwrap().dag().vv_to_frontiers(&vv.0);
         Ok(frontiers_to_ids(&f))
     }
-}
-
-fn js_map_to_vv(map: js_sys::Map) -> JsResult<VersionVector> {
-    let mut vv = VersionVector::new();
-    for pair in map.entries() {
-        let pair = pair.unwrap_throw();
-        let key = Reflect::get(&pair, &0.into()).unwrap_throw();
-        let peer_id = key.as_string().expect_throw("PeerID must be string");
-        let value = Reflect::get(&pair, &1.into()).unwrap_throw();
-        let counter = value.as_f64().expect_throw("Invalid counter") as Counter;
-        vv.insert(
-            peer_id
-                .parse()
-                .expect_throw(&format!("{} cannot be parsed as u64", peer_id)),
-            counter,
-        );
-    }
-
-    Ok(vv)
 }
 
 #[allow(unused)]
@@ -1147,8 +1104,6 @@ impl LoroText {
     /// - `both`: when inserting text either right before or right after the given range, the mark will be expanded to include the inserted text
     ///
     /// *You should make sure that a key is always associated with the same expand type.*
-    ///
-    /// Note: you cannot delete unmergeable annotations like comments by this method.
     ///
     /// @example
     /// ```ts
@@ -1849,7 +1804,7 @@ impl LoroTree {
     /// const node = tree.create(root);
     /// const node2 = tree.create(node);
     /// tree.mov(node2, root);
-    /// // Error wiil be thrown if move operation creates a cycle
+    /// // Error will be thrown if move operation creates a cycle
     /// tree.mov(root, node);
     /// ```
     pub fn mov(&mut self, target: JsTreeID, parent: Option<JsTreeID>) -> JsResult<()> {
@@ -2069,62 +2024,6 @@ impl LoroTree {
     }
 }
 
-/// Convert a encoded version vector to a readable js Map.
-///
-/// @example
-/// ```ts
-/// import { Loro } from "loro-crdt";
-///
-/// const doc = new Loro();
-/// doc.setPeerId('100');
-/// doc.getText("t").insert(0, 'a');
-/// doc.commit();
-/// const version = doc.getVersion();
-/// const readableVersion = convertVersionToReadableObj(version);
-/// console.log(readableVersion); // Map(1) { 100n => 1 }
-/// ```
-#[wasm_bindgen(js_name = "toReadableVersion")]
-pub fn to_readable_version(version: &[u8]) -> Result<JsVersionVectorMap, JsValue> {
-    let version_vector = VersionVector::decode(version)?;
-    let map = vv_to_js_value(version_vector);
-    Ok(JsVersionVectorMap::from(map))
-}
-
-/// Convert a readable js Map to a encoded version vector.
-///
-/// @example
-/// ```ts
-/// import { Loro } from "loro-crdt";
-///
-/// const doc = new Loro();
-/// doc.setPeerId('100');
-/// doc.getText("t").insert(0, 'a');
-/// doc.commit();
-/// const version = doc.getVersion();
-/// const readableVersion = convertVersionToReadableObj(version);
-/// console.log(readableVersion); // Map(1) { 100n => 1 }
-/// const encodedVersion = toEncodedVersion(readableVersion);
-/// ```
-#[wasm_bindgen(js_name = "toEncodedVersion")]
-pub fn to_encoded_version(version: JsVersionVectorMap) -> Result<Vec<u8>, JsValue> {
-    let map: JsValue = version.into();
-    let map: js_sys::Map = map.into();
-    let vv = js_map_to_vv(map)?;
-    let encoded = vv.encode();
-    Ok(encoded)
-}
-
-fn vv_to_js_value(vv: VersionVector) -> JsValue {
-    let map = js_sys::Map::new();
-    for (k, v) in vv.iter() {
-        let k = k.to_string().into();
-        let v = JsValue::from(*v);
-        map.set(&k, &v);
-    }
-
-    map.into()
-}
-
 fn loro_value_to_js_value_or_container(value: ValueOrContainer, doc: &Arc<LoroDoc>) -> JsValue {
     match value {
         ValueOrContainer::Value(v) => {
@@ -2138,12 +2037,111 @@ fn loro_value_to_js_value_or_container(value: ValueOrContainer, doc: &Arc<LoroDo
     }
 }
 
+#[wasm_bindgen]
+#[derive(Debug, Default)]
+pub struct VersionVector(pub(crate) InternalVersionVector);
+
+#[wasm_bindgen]
+impl VersionVector {
+    #[wasm_bindgen(constructor)]
+    pub fn new(value: JsIntoVersionVector) -> JsResult<VersionVector> {
+        let value: JsValue = value.into();
+        if value.is_null() || value.is_undefined() {
+            return Ok(Self::default());
+        }
+
+        let is_bytes = value.is_instance_of::<js_sys::Uint8Array>();
+        if is_bytes {
+            let bytes = js_sys::Uint8Array::from(value.clone());
+            let bytes = bytes.to_vec();
+            return VersionVector::decode(&bytes);
+        }
+
+        VersionVector::from_json(JsVersionVectorMap::from(value))
+    }
+
+    #[wasm_bindgen(js_name = "parseJSON", method)]
+    pub fn from_json(version: JsVersionVectorMap) -> JsResult<VersionVector> {
+        let map: JsValue = version.into();
+        let map: js_sys::Map = map.into();
+        let mut vv = InternalVersionVector::new();
+        for pair in map.entries() {
+            let pair = pair.unwrap_throw();
+            let key = Reflect::get(&pair, &0.into()).unwrap_throw();
+            let peer_id = key.as_string().expect_throw("PeerID must be string");
+            let value = Reflect::get(&pair, &1.into()).unwrap_throw();
+            let counter = value.as_f64().expect_throw("Invalid counter") as Counter;
+            vv.insert(
+                peer_id
+                    .parse()
+                    .expect_throw(&format!("{} cannot be parsed as u64", peer_id)),
+                counter,
+            );
+        }
+
+        Ok(Self(vv))
+    }
+
+    #[wasm_bindgen(js_name = "toJSON", method)]
+    pub fn to_json(&self) -> JsVersionVectorMap {
+        let vv = &self.0;
+        let map = js_sys::Map::new();
+        for (k, v) in vv.iter() {
+            let k = k.to_string().into();
+            let v = JsValue::from(*v);
+            map.set(&k, &v);
+        }
+
+        let value: JsValue = map.into();
+        JsVersionVectorMap::from(value)
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        self.0.encode()
+    }
+
+    pub fn decode(bytes: &[u8]) -> JsResult<VersionVector> {
+        let vv = InternalVersionVector::decode(bytes)?;
+        Ok(Self(vv))
+    }
+
+    pub fn get(&self, peer_id: JsIntoPeerID) -> JsResult<Option<Counter>> {
+        let id = id_value_to_u64(peer_id.into())?;
+        Ok(self.0.get(&id).copied())
+    }
+
+    pub fn compare(&self, other: &VersionVector) -> Option<i32> {
+        self.0.partial_cmp(&other.0).map(|o| match o {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
+        })
+    }
+}
+
+fn id_value_to_u64(value: JsValue) -> JsResult<u64> {
+    if value.is_bigint() {
+        let bigint = js_sys::BigInt::from(value);
+        let v: u64 = bigint.try_into().unwrap_throw();
+        Ok(v)
+    } else if value.is_string() {
+        let v: u64 = value.as_string().unwrap().parse().unwrap_throw();
+        Ok(v)
+    } else if let Some(v) = value.as_f64() {
+        Ok(v as u64)
+    } else {
+        Err(JsValue::from_str(
+            "id value must be a string, number or bigint",
+        ))
+    }
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
 /**
 * Container types supported by loro.
 *
-* It is most commonly used to specify the type of subcontainer to be created.
+* It is most commonly used to specify the type of sub-container to be created.
 * @example
 * ```ts
 * import { Loro } from "loro-crdt";
@@ -2156,6 +2154,7 @@ const TYPES: &'static str = r#"
 * ```
 */
 export type ContainerType = "Text" | "Map" | "List"| "Tree";
+
 export type PeerID = string;
 /**
 * The unique id of each container.
@@ -2179,11 +2178,10 @@ export type ContainerID =
 export type TreeID = `${number}@${string}`;
 
 interface Loro {
-    exportFrom(version?: Uint8Array): Uint8Array;
-    exportFromV0(version?: Uint8Array): Uint8Array;
-    exportFromCompressed(version?: Uint8Array): Uint8Array;
+    exportFrom(version?: VersionVector): Uint8Array;
     getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
 }
+
 /**
  * Represents a `Delta` type which is a union of different operations that can be performed.
  *
@@ -2221,10 +2219,12 @@ export type Delta<T> =
     delete?: undefined;
     insert?: undefined;
   };
+
 /**
  * The unique id of each operation.
  */
 export type OpId = { peer: PeerID, counter: number };
+
 /**
  * Change is a group of continuous operations
  */

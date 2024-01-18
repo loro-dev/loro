@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Loro, toReadableVersion, setPanicHook, OpId } from "../src";
+import { Loro, OpId, VersionVector } from "../src";
 
 describe("Frontiers", () => {
   it("two clients", () => {
@@ -42,10 +42,12 @@ describe("Version", () => {
       const vv = new Map();
       vv.set("0", 3);
       vv.set("1", 2);
-      expect(toReadableVersion(a.version())).toStrictEqual(vv);
-      expect(toReadableVersion(a.version())).toStrictEqual(vv);
-      expect(a.vvToFrontiers(vv)).toStrictEqual(a.frontiers());
-      expect(a.vvToFrontiers(a.version())).toStrictEqual(a.frontiers());
+      expect((a.version().toJSON())).toStrictEqual(vv);
+      expect((a.version().toJSON())).toStrictEqual(vv);
+      expect(a.vvToFrontiers(new VersionVector(vv))).toStrictEqual(a.frontiers());
+      const v = a.version();
+      const temp = a.vvToFrontiers(v);
+      expect(temp).toStrictEqual(a.frontiers());
       expect(a.frontiers()).toStrictEqual([{ peer: "0", counter: 2 }] as OpId[]);
     }
   });
