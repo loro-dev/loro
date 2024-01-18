@@ -187,7 +187,7 @@ mod test {
     fn container_id_convert() {
         let container_id = ContainerID::new_normal(ID::new(12, 12), ContainerType::List);
         let s = container_id.to_string();
-        assert_eq!(s, "cid:12@C:List");
+        assert_eq!(s, "cid:12@12:List");
         let actual = ContainerID::try_from(s.as_str()).unwrap();
         assert_eq!(actual, container_id);
 

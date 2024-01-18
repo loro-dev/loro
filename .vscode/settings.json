@@ -1,6 +1,7 @@
 {
   "cSpell.words": [
     "arbtest",
+    "bolds",
     "cids",
     "clippy",
     "collab",
@@ -25,9 +26,11 @@
     "thiserror",
     "tinyvec",
     "txns",
+    "typeparam",
     "unbold",
     "unexist",
     "unmark",
+    "unmergeable",
     "yspan"
   ],
   "rust-analyzer.runnableEnv": {

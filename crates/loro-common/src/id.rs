@@ -15,7 +15,7 @@ impl Debug for ID {
 
 impl Display for ID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("{}@{:X}", self.counter, self.peer).as_str())
+        f.write_str(format!("{}@{}", self.counter, self.peer).as_str())
     }
 }
 
@@ -33,7 +33,10 @@ impl TryFrom<&str> for ID {
             .unwrap()
             .parse::<Counter>()
             .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
-        let client_id = u64::from_str_radix(iter.next().unwrap(), 16)
+        let client_id = iter
+            .next()
+            .unwrap()
+            .parse::<u64>()
             .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
         Ok(ID {
             peer: client_id,

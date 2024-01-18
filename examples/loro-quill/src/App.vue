@@ -5,7 +5,7 @@
   import "quill/dist/quill.bubble.css";
   import "quill/dist/quill.snow.css";
   import { QuillBinding } from "./binding";
-  import { Loro, toReadableVersion } from "loro-crdt";
+  import { Loro } from "loro-crdt";
 
   const editor1 = ref<null | HTMLDivElement>(null);
   const editor2 = ref<null | HTMLDivElement>(null);
@@ -62,7 +62,7 @@
         }
         Promise.resolve().then(() => {
           const version = text.version();
-          const map = toReadableVersion(version);
+          const map = version.toJSON();
           const versionObj = {};
           for (const [key, value] of map) {
             versionObj[key.toString()] = value;

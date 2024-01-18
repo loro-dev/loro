@@ -25,6 +25,13 @@ export class QuillBinding {
     public doc: Loro,
     public quill: Quill,
   ) {
+    doc.configTextStyle({
+      bold: { expand: "after" },
+      italic: { expand: "after" },
+      underline: { expand: "after" },
+      link: { expand: "none" },
+      header: { expand: "none" },
+    })
     this.quill = quill;
     this.richtext = doc.getText("text");
     this.richtext.subscribe(doc, (event) => {
@@ -94,7 +101,9 @@ export class QuillBinding {
         const a = this.richtext.toDelta();
         const b = this.quill.getContents().ops;
         console.log(this.doc.peerId, "COMPARE AFTER QUILL_EVENT");
-        assertEqual(a, b as any);
+        if (!assertEqual(a, b as any)) {
+          this.quill.setContents(new Delta(a), "this" as any);
+        }
         console.log("SIZE", this.doc.exportFrom().length);
         this.doc.debugHistory();
       }
@@ -113,9 +122,9 @@ export class QuillBinding {
           for (const key of Object.keys(op.attributes)) {
             let value = op.attributes[key];
             if (value == null) {
-              this.richtext.unmark({ start: index, end, expand: EXPAND_CONFIG[key] }, key)
+              this.richtext.unmark({ start: index, end, }, key)
             } else {
-              this.richtext.mark({ start: index, end, expand: EXPAND_CONFIG[key] }, key, value,)
+              this.richtext.mark({ start: index, end }, key, value,)
             }
           }
         }
@@ -128,9 +137,9 @@ export class QuillBinding {
             for (const key of Object.keys(op.attributes)) {
               let value = op.attributes[key];
               if (value == null) {
-                this.richtext.unmark({ start: index, end, expand: EXPAND_CONFIG[key] }, key)
+                this.richtext.unmark({ start: index, end, }, key)
               } else {
-                this.richtext.mark({ start: index, end, expand: EXPAND_CONFIG[key] }, key, value)
+                this.richtext.mark({ start: index, end }, key, value)
               }
             }
           }

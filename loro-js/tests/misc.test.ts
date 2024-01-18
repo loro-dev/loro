@@ -3,6 +3,7 @@ import {
   Loro,
   LoroList,
   LoroMap,
+  VersionVector,
 } from "../src";
 import { expectTypeOf } from "vitest";
 
@@ -131,8 +132,8 @@ describe("sync", () => {
   it("two insert at beginning", async () => {
     const a = new Loro();
     const b = new Loro();
-    let a_version: undefined | Uint8Array = undefined;
-    let b_version: undefined | Uint8Array = undefined;
+    let a_version: undefined | VersionVector = undefined;
+    let b_version: undefined | VersionVector = undefined;
     a.subscribe((e: { local: boolean }) => {
       if (e.local) {
         const exported = a.exportFrom(a_version);

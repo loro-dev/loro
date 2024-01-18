@@ -4,10 +4,11 @@ import {
   LoroList,
   LoroMap,
   isContainer,
-  toEncodedVersion,
   getType,
+  VersionVector,
 } from "../src";
 import { Container } from "../dist/loro";
+
 
 it("basic example", () => {
   const doc = new Loro();
@@ -155,7 +156,7 @@ describe("import", () => {
     b.getText("text").insert(1, "b");
     b.getList("list").insert(0, [1, 2]);
     const updates = b.exportFrom(
-      toEncodedVersion(b.frontiersToVV(a.frontiers())),
+      b.frontiersToVV(a.frontiers()),
     );
     a.import(updates);
     expect(a.toJson()).toStrictEqual(b.toJson());
