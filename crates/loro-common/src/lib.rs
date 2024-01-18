@@ -376,7 +376,7 @@ mod test {
             container_type: crate::ContainerType::Map,
         };
         let id_str = id.to_string();
-        assert_eq!(id_str.as_str(), "cid:10@FF:Map");
+        assert_eq!(id_str.as_str(), "cid:10@255:Map");
         assert_eq!(ContainerID::try_from(id_str.as_str()).unwrap(), id);
 
         let id = ContainerID::try_from("cid:root-a:b:c:Tree").unwrap();
