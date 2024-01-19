@@ -457,7 +457,7 @@ pub mod wasm {
             let obj = Object::new();
             for (key, style) in value.iter() {
                 let value = JsValue::from(style.data);
-                js_sys::Reflect::set(&obj, &JsValue::from_str(&key.to_attr_key()), &value).unwrap();
+                js_sys::Reflect::set(&obj, &JsValue::from_str(&key), &value).unwrap();
             }
 
             obj.into_js_result().unwrap()

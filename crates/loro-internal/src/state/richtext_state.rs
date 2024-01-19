@@ -18,7 +18,7 @@ use crate::{
         },
     },
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
-    delta::{Delta, DeltaItem, StyleMeta},
+    delta::{Delta, DeltaItem, StyleMeta, StyleMetaItem},
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     op::{Op, RawOp},
@@ -180,7 +180,7 @@ impl ContainerState for RichtextState {
                                     event_index: start_event_index,
                                 } = style_starts.remove(style).unwrap();
 
-                                let mut delta: Delta<StringSlice, _> =
+                                let mut delta: Delta<StringSlice, StyleMeta> =
                                     Delta::new().retain(start_event_index);
                                 // we need to + 1 because we also need to annotate the end anchor
                                 let event = self.state.get_mut().annotate_style_range_with_event(
@@ -202,13 +202,76 @@ impl ContainerState for RichtextState {
                     delete: len,
                     attributes: _,
                 } => {
-                    let (start, end) =
-                        self.state
-                            .get_mut()
-                            .drain_by_entity_index(entity_index, *len, |_| {});
+                    let mut deleted_style_chunks = Vec::new();
+                    let (start, end) = self.state.get_mut().drain_by_entity_index(
+                        entity_index,
+                        *len,
+                        Some(&mut |c| {
+                            if matches!(c, RichtextStateChunk::Style { .. }) {
+                                deleted_style_chunks.push(c);
+                            }
+                        }),
+                    );
+
                     if start > event_index {
                         ans = ans.retain(start - event_index);
                         event_index = start;
+                    }
+
+                    for chunk in deleted_style_chunks {
+                        if let RichtextStateChunk::Style { style, anchor_type } = chunk {
+                            match anchor_type {
+                                AnchorType::Start => {
+                                    style_starts.insert(
+                                        style,
+                                        Pos {
+                                            entity_index,
+                                            event_index,
+                                        },
+                                    );
+                                }
+                                AnchorType::End => {
+                                    let Pos {
+                                        entity_index: start_entity_index,
+                                        event_index: start_event_index,
+                                    } = style_starts.remove(&style).unwrap();
+                                    if event_index == start_event_index {
+                                        debug_assert_eq!(start_entity_index, entity_index);
+                                        // deleted by this batch, can be ignored
+                                        continue;
+                                    }
+
+                                    // Otherwise, we need to calculate the new styles with the key between the ranges
+                                    let mut delta: Delta<StringSlice, StyleMeta> =
+                                        Delta::new().retain(start_event_index);
+                                    if let Some(iter) = self
+                                        .state
+                                        .get_mut()
+                                        .iter_style_range(start_entity_index..entity_index)
+                                    {
+                                        for style_range in iter {
+                                            let mut style_meta: StyleMeta =
+                                                (&style_range.styles).into();
+                                            if !style_meta.contains_key(&style.key) {
+                                                style_meta.insert(
+                                                    style.key.clone(),
+                                                    StyleMetaItem {
+                                                        lamport: 0,
+                                                        peer: 0,
+                                                        value: LoroValue::Null,
+                                                    },
+                                                )
+                                            }
+                                            delta =
+                                                delta.retain_with_meta(style_range.len, style_meta);
+                                        }
+                                    }
+
+                                    delta = delta.chop();
+                                    style_delta = style_delta.compose(delta);
+                                }
+                            }
+                        }
                     }
 
                     ans = ans.delete(end - start);
@@ -284,7 +347,7 @@ impl ContainerState for RichtextState {
                 } => {
                     self.state
                         .get_mut()
-                        .drain_by_entity_index(entity_index, *len, |_| {});
+                        .drain_by_entity_index(entity_index, *len, None);
                 }
             }
         }
@@ -314,7 +377,7 @@ impl ContainerState for RichtextState {
                     self.state.get_mut().drain_by_entity_index(
                         del.start() as usize,
                         rle::HasLength::atom_len(&del),
-                        |_| {},
+                        None,
                     );
                 }
                 list_op::InnerListOp::StyleStart {

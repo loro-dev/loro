@@ -6,7 +6,10 @@ use generic_btree::{
 };
 use loro_common::{IdSpan, LoroValue, ID};
 use serde::{ser::SerializeStruct, Serialize};
-use std::fmt::{Display, Formatter};
+use std::{
+    fmt::{Display, Formatter},
+    ops::RangeBounds,
+};
 use std::{
     ops::{Add, AddAssign, Range, Sub},
     str::Utf8Error,
@@ -32,7 +35,7 @@ use self::{
 
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
-    style_range_map::{IterAnchorItem, StyleRangeMap, Styles},
+    style_range_map::{self, IterAnchorItem, StyleRangeMap, Styles},
     AnchorType, RichtextSpan, StyleOp,
 };
 
@@ -276,11 +279,13 @@ mod text_chunk {
             let mut start = 0;
             let mut end = 0;
             let mut started = false;
+            let mut last_unicode_index = 0;
             for (unicode_index, (i, c)) in self.as_str().char_indices().enumerate() {
                 if unicode_index == range.start {
                     start = i;
                     started = true;
                 }
+
                 if unicode_index == range.end {
                     end = i;
                     break;
@@ -288,6 +293,14 @@ mod text_chunk {
                 if started {
                     utf16_len += c.len_utf16();
                 }
+
+                last_unicode_index = unicode_index;
+            }
+
+            assert!(started);
+            if end == 0 {
+                assert_eq!(last_unicode_index + 1, range.end);
+                end = self.bytes.len();
             }
 
             let ans = Self {
@@ -1662,7 +1675,7 @@ impl RichtextState {
         &mut self,
         pos: usize,
         len: usize,
-        mut f: impl FnMut(RichtextStateChunk),
+        mut f: Option<&mut dyn FnMut(RichtextStateChunk)>,
     ) -> (usize, usize) {
         assert!(
             pos + len <= self.len_entity(),
@@ -1721,13 +1734,25 @@ impl RichtextState {
                 updater.update(&*elem);
                 match elem {
                     RichtextStateChunk::Text(text) => {
+                        if let Some(f) = f {
+                            let span = text.slice(start_cursor.offset..start_cursor.offset + len);
+                            f(RichtextStateChunk::Text(span));
+                        }
                         let (next, event_len_) =
                             text.delete_by_entity_index(start_cursor.offset, len);
                         event_len = event_len_;
                         (true, next.map(RichtextStateChunk::Text), None)
                     }
                     RichtextStateChunk::Style { .. } => {
-                        *elem = RichtextStateChunk::Text(TextChunk::new_empty());
+                        if let Some(f) = f {
+                            let v = std::mem::replace(
+                                elem,
+                                RichtextStateChunk::Text(TextChunk::new_empty()),
+                            );
+                            f(v);
+                        } else {
+                            *elem = RichtextStateChunk::Text(TextChunk::new_empty());
+                        }
                         (true, None, None)
                     }
                 }
@@ -1744,7 +1769,9 @@ impl RichtextState {
             let mut updater = StyleRangeUpdater::new(self.style_ranges.as_mut(), pos);
             for iter in generic_btree::iter::Drain::new(&mut self.tree, start, end) {
                 updater.update(&iter);
-                f(iter)
+                if let Some(f) = f.as_mut() {
+                    f(iter)
+                }
             }
 
             if let Some(s) = self.style_ranges.as_mut() {
@@ -1828,7 +1855,6 @@ impl RichtextState {
     }
 
     pub fn get_richtext_value(&self) -> LoroValue {
-        self.check_consistency_between_content_and_style_ranges();
         let mut ans: Vec<LoroValue> = Vec::new();
         let mut last_attributes: Option<LoroValue> = None;
         for span in self.iter() {
@@ -2003,6 +2029,14 @@ impl RichtextState {
                 .map(|x| x.estimate_size())
                 .unwrap_or(0)
     }
+
+    /// Iter style ranges in the given range in entity index
+    pub(crate) fn iter_style_range(
+        &self,
+        range: impl RangeBounds<usize>,
+    ) -> Option<impl Iterator<Item = &style_range_map::Elem>> {
+        self.style_ranges.as_ref().map(|x| x.iter_range(range))
+    }
 }
 
 use converter::ContinuousIndexConverter;
@@ -2103,7 +2137,7 @@ mod test {
                 self.state.drain_by_entity_index(
                     range.entity_start,
                     range.entity_end - range.entity_start,
-                    |_| {},
+                    None,
                 );
             }
         }
@@ -2487,11 +2521,15 @@ mod test {
         wrapper.insert(0, "Hello World!");
         wrapper.mark(0..5, bold(0));
         let mut count = 0;
-        wrapper.state.drain_by_entity_index(0, 7, |span| {
-            if matches!(span, RichtextStateChunk::Style { .. }) {
-                count += 1;
-            }
-        });
+        wrapper.state.drain_by_entity_index(
+            0,
+            7,
+            Some(&mut |span| {
+                if matches!(span, RichtextStateChunk::Style { .. }) {
+                    count += 1;
+                }
+            }),
+        );
 
         assert_eq!(count, 2);
         assert_eq!(
@@ -2507,8 +2545,8 @@ mod test {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello World!");
         wrapper.mark(0..5, bold(0));
-        wrapper.state.drain_by_entity_index(6, 1, |_| {});
-        wrapper.state.drain_by_entity_index(0, 1, |_| {});
+        wrapper.state.drain_by_entity_index(6, 1, None);
+        wrapper.state.drain_by_entity_index(0, 1, None);
         assert_eq!(
             wrapper.state.get_richtext_value().to_json_value(),
             json!([{
@@ -2522,8 +2560,8 @@ mod test {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello World!");
         wrapper.mark(2..5, bold(0));
-        wrapper.state.drain_by_entity_index(6, 1, |_| {});
-        wrapper.state.drain_by_entity_index(1, 2, |_| {});
+        wrapper.state.drain_by_entity_index(6, 1, None);
+        wrapper.state.drain_by_entity_index(1, 2, None);
         assert_eq!(
             wrapper.state.get_richtext_value().to_json_value(),
             json!([{

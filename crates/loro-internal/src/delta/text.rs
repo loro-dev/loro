@@ -1,18 +1,18 @@
 use std::sync::Arc;
 
 use fxhash::FxHashMap;
-use loro_common::{LoroValue, PeerID};
+use loro_common::{InternalString, LoroValue, PeerID};
 use serde::{Deserialize, Serialize};
 
 use crate::change::Lamport;
-use crate::container::richtext::{Style, StyleKey, Styles};
+use crate::container::richtext::{Style, Styles};
 use crate::ToJson;
 
 use super::Meta;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StyleMeta {
-    map: FxHashMap<StyleKey, StyleMetaItem>,
+    map: FxHashMap<InternalString, StyleMetaItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,7 +39,7 @@ impl From<&Styles> for StyleMeta {
         for (key, value) in styles.iter() {
             if let Some(value) = value.get() {
                 map.insert(
-                    key.clone(),
+                    key.key().clone(),
                     StyleMetaItem {
                         value: value.to_value(),
                         lamport: value.lamport,
@@ -85,35 +85,56 @@ impl Meta for StyleMeta {
 }
 
 impl StyleMeta {
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (StyleKey, Style)> + '_ {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (InternalString, Style)> + '_ {
         self.map.iter().map(|(key, style)| {
             (
                 key.clone(),
                 Style {
-                    key: key.key().clone(),
+                    key: key.clone(),
                     data: style.value.clone(),
                 },
             )
         })
     }
 
-    pub(crate) fn insert(&mut self, key: StyleKey, value: StyleMetaItem) {
+    pub(crate) fn insert(&mut self, key: InternalString, value: StyleMetaItem) {
         self.map.insert(key, value);
     }
 
-    pub(crate) fn to_value(&self) -> LoroValue {
-        LoroValue::Map(Arc::new(
-            self.map
-                .iter()
-                .filter_map(|(key, value)| {
-                    if value.value.is_null() {
-                        return None;
-                    }
+    pub(crate) fn contains_key(&self, key: &InternalString) -> bool {
+        self.map.contains_key(key)
+    }
 
-                    Some((key.to_attr_key(), value.value.clone()))
-                })
-                .collect(),
-        ))
+    pub(crate) fn to_value(&self) -> LoroValue {
+        LoroValue::Map(Arc::new(self.to_map_without_null_value()))
+    }
+
+    fn to_map_without_null_value(&self) -> FxHashMap<String, LoroValue> {
+        self.map
+            .iter()
+            .filter_map(|(key, value)| {
+                if value.value.is_null() {
+                    None
+                } else {
+                    Some((key.to_string(), value.value.clone()))
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn to_map(&self) -> FxHashMap<String, LoroValue> {
+        self.map
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.value.clone()))
+            .collect()
+    }
+
+    pub(crate) fn to_option_map(&self) -> Option<FxHashMap<String, LoroValue>> {
+        if self.is_empty() {
+            return None;
+        }
+
+        Some(self.to_map())
     }
 }
 
@@ -122,7 +143,7 @@ impl ToJson for StyleMeta {
         let mut map = serde_json::Map::new();
         for (key, style) in self.iter() {
             let value = serde_json::to_value(&style.data).unwrap();
-            map.insert(key.to_attr_key(), value);
+            map.insert(key.to_string(), value);
         }
 
         serde_json::Value::Object(map)

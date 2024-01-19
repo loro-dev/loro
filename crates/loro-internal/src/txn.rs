@@ -16,7 +16,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, InnerListOp},
-        richtext::{Style, StyleKey},
+        richtext::Style,
         IntoContainerId,
     },
     delta::{
@@ -503,7 +503,7 @@ fn change_to_diff(
                 EventHint::Mark { start, end, style } => {
                     let mut meta = StyleMeta::default();
                     meta.insert(
-                        StyleKey::Key(style.key.clone()),
+                        style.key.clone(),
                         StyleMetaItem {
                             lamport,
                             peer: change.id.peer,
