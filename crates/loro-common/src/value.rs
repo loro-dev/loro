@@ -63,6 +63,13 @@ impl LoroValue {
         }
     }
 
+    pub fn is_false(&self) -> bool {
+        match self {
+            LoroValue::Bool(b) => !*b,
+            _ => false,
+        }
+    }
+
     pub fn get_depth(&self) -> usize {
         let mut max_depth = 0;
         let mut value_depth_pairs = vec![(self, 0)];

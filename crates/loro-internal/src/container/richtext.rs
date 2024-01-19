@@ -121,6 +121,8 @@ impl Ord for StyleOp {
     }
 }
 
+/// TODO: We can remove this type already
+///
 /// A compact representation of a rich text style config.
 ///
 /// Note: we assume style with the same key has the same `Mergeable` and `isContainer` value.
@@ -128,11 +130,11 @@ impl Ord for StyleOp {
 /// - 0              (1st bit)
 /// - Expand Before  (2nd bit): when inserting new text before this style, whether the new text should inherit this style.
 /// - Expand After   (3rd bit): when inserting new text after  this style, whether the new text should inherit this style.
-/// - Delete         (4th bit): whether this is used to remove a style from a range.
-/// - 0              (5th bit): whether the style also store other data in a associated map container with the same OpID.
+/// - 0              (4th bit):
+/// - 0              (5th bit):
 /// - 0              (6th bit)
 /// - 0              (7th bit)
-/// - isAlive        (8th bit): always 1 unless the style is garbage collected. If this is 0, all other bits should be 0 as well.
+/// - 0              (8th bit):
 #[derive(Default, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TextStyleInfoFlag {
     data: u8,
@@ -151,7 +153,6 @@ impl Debug for TextStyleInfoFlag {
 
 const EXPAND_BEFORE_MASK: u8 = 0b0000_0010;
 const EXPAND_AFTER_MASK: u8 = 0b0000_0100;
-const DELETE_MASK: u8 = 0b0000_1000;
 const ALIVE_MASK: u8 = 0b1000_0000;
 
 /// Whether to expand the style when inserting new text around it.
@@ -198,19 +199,22 @@ impl ExpandType {
         }
     }
 
-    /// Create reversed expand type.
+    /// Toggle expand type between for deletion and for creation
     ///
-    /// Before  -> After
-    /// After   -> Before
+    /// For a style that expand after, when we delete the style, we need to have another style that expands after to nullify it,
+    /// so that the expand behavior is not changed.
+    ///
+    /// Before  -> Before
+    /// After   -> After
     /// Both    -> None
     /// None    -> Both
     ///
     /// Because the creation of text styles and the deletion of the text styles have reversed expand type.
     /// This method is useful to convert between the two
-    pub fn reverse(self) -> Self {
+    pub const fn reverse(self) -> Self {
         match self {
-            ExpandType::Before => ExpandType::After,
-            ExpandType::After => ExpandType::Before,
+            ExpandType::Before => ExpandType::Before,
+            ExpandType::After => ExpandType::After,
             ExpandType::Both => ExpandType::None,
             ExpandType::None => ExpandType::Both,
         }
@@ -220,14 +224,23 @@ impl ExpandType {
 impl TextStyleInfoFlag {
     /// When inserting new text around this style, prefer inserting after it.
     #[inline(always)]
-    pub fn expand_before(self) -> bool {
+    pub const fn expand_before(self) -> bool {
         self.data & EXPAND_BEFORE_MASK != 0
     }
 
     /// When inserting new text around this style, prefer inserting before it.
     #[inline(always)]
-    pub fn expand_after(self) -> bool {
+    pub const fn expand_after(self) -> bool {
         self.data & EXPAND_AFTER_MASK != 0
+    }
+
+    pub const fn expand_type(self) -> ExpandType {
+        match (self.expand_before(), self.expand_after()) {
+            (true, true) => ExpandType::Both,
+            (true, false) => ExpandType::Before,
+            (false, true) => ExpandType::After,
+            (false, false) => ExpandType::None,
+        }
     }
 
     /// This method tells that when we can insert text before/after this style anchor, whether we insert the new text before the anchor.
@@ -257,23 +270,9 @@ impl TextStyleInfoFlag {
         TextStyleInfoFlag { data }
     }
 
-    pub const fn is_dead(self) -> bool {
-        debug_assert!((self.data & ALIVE_MASK != 0) || self.data == 0);
-        (self.data & ALIVE_MASK) == 0
-    }
-
     #[inline(always)]
     pub const fn to_delete(self) -> Self {
-        let mut data = self.data;
-        if data & DELETE_MASK > 0 {
-            return Self { data };
-        }
-
-        // set is_delete
-        data |= DELETE_MASK;
-        // invert expand type
-        data ^= EXPAND_AFTER_MASK | EXPAND_BEFORE_MASK;
-        Self { data }
+        TextStyleInfoFlag::new(self.expand_type().reverse())
     }
 
     pub const BOLD: TextStyleInfoFlag = TextStyleInfoFlag::new(ExpandType::After);
