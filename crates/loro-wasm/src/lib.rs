@@ -315,6 +315,8 @@ impl Loro {
     /// loro.attach();
     /// console.log(doc.is_detached());  // false
     /// ```
+    ///
+    #[wasm_bindgen(js_name = "isDetached")]
     pub fn is_detached(&self) -> bool {
         self.0.is_detached()
     }

@@ -16,7 +16,9 @@ describe("Checkout", () => {
       text: "Hi"
     });
 
+    expect(doc.isDetached()).toBeFalsy();
     doc.checkout([{ peer: "0", counter: 0 }]);
+    expect(doc.isDetached()).toBeTruthy();
     expect(doc.toJson()).toStrictEqual({
       text: "H"
     });
