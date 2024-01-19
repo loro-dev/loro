@@ -7,6 +7,7 @@ use loro_internal::handler::ValueOrContainer;
 use loro_internal::id::PeerID;
 use loro_internal::id::TreeID;
 use loro_internal::LoroDoc as InnerLoroDoc;
+use loro_internal::OpLog;
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, TextHandler as InnerTextHandler,
@@ -174,6 +175,11 @@ impl LoroDoc {
     /// Convert `VersionVector` into `Frontiers`
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
         self.doc.vv_to_frontiers(vv)
+    }
+
+    pub fn with_oplog<R>(&self, f: impl FnOnce(&OpLog) -> R) -> R {
+        let oplog = self.doc.oplog().lock().unwrap();
+        f(&oplog)
     }
 
     /// Get the `VersionVector` version of `OpLog`
