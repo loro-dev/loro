@@ -4,6 +4,33 @@ use loro::LoroDoc;
 use loro_internal::{delta::DeltaItem, handler::TextDelta, DiffEvent, LoroResult};
 
 #[test]
+fn get_change_at_lamport() {
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1).unwrap();
+    doc1.get_text("text").insert(0, "012345").unwrap();
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2).unwrap();
+    doc2.import(&doc1.export_snapshot()).unwrap();
+    doc2.get_text("text").insert(0, "6789").unwrap();
+    doc1.import(&doc2.export_snapshot()).unwrap();
+    doc1.get_text("text").insert(0, "0123").unwrap();
+    doc1.commit();
+    doc1.with_oplog(|oplog| {
+        let change = oplog.get_change_with_lamport(1, 2).unwrap();
+        assert_eq!(change.lamport(), 0);
+        assert_eq!(change.peer(), 1);
+        let change = oplog.get_change_with_lamport(1, 7).unwrap();
+        assert_eq!(change.lamport(), 0);
+        assert_eq!(change.peer(), 1);
+        let change = oplog.get_change_with_lamport(1, 13).unwrap();
+        assert_eq!(change.lamport(), 10);
+        assert_eq!(change.peer(), 1);
+        let change = oplog.get_change_with_lamport(1, 14).unwrap();
+        assert_eq!(change.lamport(), 10);
+    })
+}
+
+#[test]
 fn travel_back_should_remove_styles() {
     let mut doc = LoroDoc::new();
     let doc2 = LoroDoc::new();

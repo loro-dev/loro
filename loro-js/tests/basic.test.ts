@@ -239,6 +239,53 @@ it("handlers should still be usable after doc is dropped", () => {
   expect(map.toJson()).toStrictEqual({ k: 8 });
 });
 
+it("get change with given lamport", () => {
+  const doc1 = new Loro();
+  doc1.setPeerId(1);
+  const doc2 = new Loro();
+  doc2.setPeerId(2);
+  doc1.getText("text").insert(0, "01234");
+  doc2.import(doc1.exportFrom());
+  doc2.getText("text").insert(0, "56789");
+  doc1.import(doc2.exportFrom());
+  doc1.getText("text").insert(0, "01234");
+  doc1.commit();
+  {
+    const change = doc1.getChangeAtLamport("1", 1);
+    expect(change.lamport).toBe(0);
+    expect(change.peer).toBe("1");
+    expect(change.length).toBe(5);
+  }
+  {
+    const change = doc1.getChangeAtLamport("1", 7);
+    expect(change.lamport).toBe(0);
+    expect(change.peer).toBe("1");
+    expect(change.length).toBe(5);
+  }
+  {
+    const change = doc1.getChangeAtLamport("1", 10);
+    expect(change.lamport).toBe(10);
+    expect(change.peer).toBe("1");
+    expect(change.length).toBe(5);
+  }
+  {
+    const change = doc1.getChangeAtLamport("1", 13);
+    expect(change.lamport).toBe(10);
+    expect(change.peer).toBe("1");
+    expect(change.length).toBe(5);
+  }
+  {
+    const change = doc1.getChangeAtLamport("1", 20);
+    expect(change.lamport).toBe(10);
+    expect(change.peer).toBe("1");
+    expect(change.length).toBe(5);
+  }
+  {
+    const change = doc1.getChangeAtLamport("111", 13);
+    expect(change).toBeUndefined();
+  }
+});
+
 
 it("isContainer", () => {
   expect(isContainer("123")).toBeFalsy();

@@ -177,24 +177,26 @@ impl OpLog {
 
     /// Get the change with the given peer and lamport.
     ///
-    /// If not found, return the change with the smallest lamport that is larger than the given lamport.
+    /// If not found, return the change with the greatest lamport that is smaller than the given lamport.
     pub fn get_change_with_lamport(&self, peer: PeerID, lamport: Lamport) -> Option<&Change> {
-        let changes = self.changes.get(&peer).unwrap();
-        let index = changes
-            .binary_search_by(|c| match c.lamport.cmp(&lamport) {
-                Ordering::Greater => Ordering::Greater,
-                Ordering::Equal => Ordering::Equal,
-                Ordering::Less => {
-                    if c.lamport_end() > lamport {
-                        Ordering::Equal
-                    } else {
-                        Ordering::Less
-                    }
+        let changes = self.changes.get(&peer)?;
+        let index = changes.binary_search_by(|c| match c.lamport.cmp(&lamport) {
+            Ordering::Greater => Ordering::Greater,
+            Ordering::Equal => Ordering::Equal,
+            Ordering::Less => {
+                if c.lamport_end() > lamport {
+                    Ordering::Equal
+                } else {
+                    Ordering::Less
                 }
-            })
-            .unwrap_or_else(|x| x);
+            }
+        });
 
-        changes.get(index)
+        match index {
+            Err(0) => None,
+            Err(i) => changes.get(i - 1),
+            Ok(i) => changes.get(i),
+        }
     }
 
     pub fn get_timestamp_of_version(&self, f: &Frontiers) -> Timestamp {

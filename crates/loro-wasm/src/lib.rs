@@ -83,6 +83,8 @@ extern "C" {
     pub type JsChanges;
     #[wasm_bindgen(typescript_type = "Change")]
     pub type JsChange;
+    #[wasm_bindgen(typescript_type = "Change | undefined")]
+    pub type JsChangeOrUndefined;
     #[wasm_bindgen(
         typescript_type = "Map<PeerID, number> | Uint8Array | VersionVector | undefined | null"
     )]
@@ -828,6 +830,38 @@ impl Loro {
         let change = oplog
             .get_change_at(id)
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
+        let change = ChangeMeta {
+            lamport: change.lamport(),
+            length: change.atom_len() as u32,
+            peer: change.peer().to_string(),
+            counter: change.id().counter,
+            deps: change
+                .deps()
+                .iter()
+                .map(|dep| StringID {
+                    peer: dep.peer.to_string(),
+                    counter: dep.counter,
+                })
+                .collect(),
+            timestamp: change.timestamp() as f64,
+        };
+        Ok(change.to_js().into())
+    }
+
+    /// Get the change of with specific peer_id and lamport <= given lamport
+    #[wasm_bindgen(js_name = "getChangeAtLamport")]
+    pub fn get_change_at_lamport(
+        &self,
+        peer_id: &str,
+        lamport: u32,
+    ) -> JsResult<JsChangeOrUndefined> {
+        let borrow_mut = &self.0;
+        let oplog = borrow_mut.oplog().lock().unwrap();
+        let Some(change) = oplog.get_change_with_lamport(peer_id.parse().unwrap_throw(), lamport)
+        else {
+            return Ok(JsValue::UNDEFINED.into());
+        };
+
         let change = ChangeMeta {
             lamport: change.lamport(),
             length: change.atom_len() as u32,
