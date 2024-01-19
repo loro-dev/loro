@@ -152,7 +152,7 @@ pub(crate) struct EnsureChangeDepsAreAtTheEnd;
 
 impl OpLog {
     #[inline]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             dag: AppDag::default(),
             arena: Default::default(),
@@ -166,16 +166,6 @@ impl OpLog {
     }
 
     #[inline]
-    pub fn new_with_arena(arena: SharedArena) -> Self {
-        Self {
-            dag: AppDag::default(),
-            arena,
-            next_lamport: 0,
-            ..Default::default()
-        }
-    }
-
-    #[inline]
     pub fn latest_timestamp(&self) -> Timestamp {
         self.latest_timestamp
     }
@@ -183,6 +173,28 @@ impl OpLog {
     #[inline]
     pub fn dag(&self) -> &AppDag {
         &self.dag
+    }
+
+    /// Get the change with the given peer and lamport.
+    ///
+    /// If not found, return the change with the smallest lamport that is larger than the given lamport.
+    pub fn get_change_with_lamport(&self, peer: PeerID, lamport: Lamport) -> Option<&Change> {
+        let changes = self.changes.get(&peer).unwrap();
+        let index = changes
+            .binary_search_by(|c| match c.lamport.cmp(&lamport) {
+                Ordering::Greater => Ordering::Greater,
+                Ordering::Equal => Ordering::Equal,
+                Ordering::Less => {
+                    if c.lamport_end() > lamport {
+                        Ordering::Equal
+                    } else {
+                        Ordering::Less
+                    }
+                }
+            })
+            .unwrap_or_else(|x| x);
+
+        changes.get(index)
     }
 
     pub fn get_timestamp_of_version(&self, f: &Frontiers) -> Timestamp {
@@ -244,7 +256,7 @@ impl OpLog {
     ///
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
-    pub fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
+    pub(crate) fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
         let Some(change) = self.trim_the_known_part_of_change(change) else {
             return Ok(());
         };
@@ -398,11 +410,7 @@ impl OpLog {
         Ok(())
     }
 
-    pub fn next_lamport(&self) -> Lamport {
-        self.next_lamport
-    }
-
-    pub fn next_id(&self, peer: PeerID) -> ID {
+    pub(crate) fn next_id(&self, peer: PeerID) -> ID {
         let cnt = self.dag.vv.get(&peer).copied().unwrap_or(0);
         ID::new(peer, cnt)
     }
@@ -787,10 +795,4 @@ pub struct SizeInfo {
     pub total_ops: usize,
     pub total_atom_ops: usize,
     pub total_dag_node: usize,
-}
-
-impl Default for OpLog {
-    fn default() -> Self {
-        Self::new()
-    }
 }

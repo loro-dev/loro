@@ -796,19 +796,19 @@ impl Loro {
             let row = js_sys::Array::new_with_length(changes.len() as u32);
             for (i, change) in changes.iter().enumerate() {
                 let change = ChangeMeta {
-                    lamport: change.lamport,
+                    lamport: change.lamport(),
                     length: change.atom_len() as u32,
                     peer: change.peer().to_string(),
-                    counter: change.id.counter,
+                    counter: change.id().counter,
                     deps: change
-                        .deps
+                        .deps()
                         .iter()
                         .map(|dep| StringID {
                             peer: dep.peer.to_string(),
                             counter: dep.counter,
                         })
                         .collect(),
-                    timestamp: change.timestamp as f64,
+                    timestamp: change.timestamp() as f64,
                 };
                 row.set(i as u32, change.to_js());
             }
@@ -829,19 +829,19 @@ impl Loro {
             .get_change_at(id)
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
         let change = ChangeMeta {
-            lamport: change.lamport,
+            lamport: change.lamport(),
             length: change.atom_len() as u32,
             peer: change.peer().to_string(),
-            counter: change.id.counter,
+            counter: change.id().counter,
             deps: change
-                .deps
+                .deps()
                 .iter()
                 .map(|dep| StringID {
                     peer: dep.peer.to_string(),
                     counter: dep.counter,
                 })
                 .collect(),
-            timestamp: change.timestamp as f64,
+            timestamp: change.timestamp() as f64,
         };
         Ok(change.to_js().into())
     }

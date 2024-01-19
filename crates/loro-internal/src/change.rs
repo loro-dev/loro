@@ -25,17 +25,17 @@ pub type Lamport = u32;
 // PERF change slice and getting length is kinda slow I guess
 #[derive(Debug, Clone)]
 pub struct Change<O = Op> {
-    pub ops: RleVec<[O; 1]>,
-    pub deps: Frontiers,
+    pub(crate) ops: RleVec<[O; 1]>,
+    pub(crate) deps: Frontiers,
     /// id of the first op in the change
-    pub id: ID,
+    pub(crate) id: ID,
     /// Lamport timestamp of the change. It can be calculated from deps
-    pub lamport: Lamport,
+    pub(crate) lamport: Lamport,
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
     /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
-    pub timestamp: Timestamp,
+    pub(crate) timestamp: Timestamp,
     /// if it has dependents, it cannot merge with new changes
-    pub has_dependents: bool,
+    pub(crate) has_dependents: bool,
 }
 
 impl<O> Change<O> {
@@ -56,26 +56,37 @@ impl<O> Change<O> {
         }
     }
 
+    #[inline]
     pub fn ops(&self) -> &RleVec<[O; 1]> {
         &self.ops
     }
 
+    #[inline]
+    pub fn deps(&self) -> &Frontiers {
+        &self.deps
+    }
+
+    #[inline]
     pub fn peer(&self) -> PeerID {
         self.id.peer
     }
 
+    #[inline]
     pub fn lamport(&self) -> Lamport {
         self.lamport
     }
 
+    #[inline]
     pub fn timestamp(&self) -> Timestamp {
         self.timestamp
     }
 
+    #[inline]
     pub fn id(&self) -> ID {
         self.id
     }
 
+    #[inline]
     pub fn deps_on_self(&self) -> bool {
         self.deps.len() == 1 && self.deps[0].peer == self.id.peer
     }
