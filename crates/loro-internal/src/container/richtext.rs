@@ -60,12 +60,6 @@ pub(crate) enum StyleKey {
 }
 
 impl StyleKey {
-    pub fn to_attr_key(&self) -> String {
-        match self {
-            Self::Key(key) => key.to_string(),
-        }
-    }
-
     pub fn key(&self) -> &InternalString {
         match self {
             Self::Key(key) => key,

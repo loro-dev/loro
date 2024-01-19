@@ -12,8 +12,7 @@ use crate::{
     array_mut_ref, container::ContainerID, delta::DeltaItem, id::PeerID, ContainerType, LoroValue,
 };
 use crate::{
-    container::richtext::StyleKey, event::Diff, handler::TextDelta, loro::LoroDoc, value::ToJson,
-    version::Frontiers, TextHandler,
+    event::Diff, handler::TextDelta, loro::LoroDoc, value::ToJson, version::Frontiers, TextHandler,
 };
 
 const STYLES_NAME: [&str; 4] = ["bold", "comment", "link", "highlight"];
@@ -96,9 +95,7 @@ impl Actor {
                                 let attributes: FxHashMap<_, _> = attributes
                                     .iter()
                                     .filter(|(_, v)| !v.data.is_null())
-                                    .map(|(k, v)| match k {
-                                        StyleKey::Key(k) => (k.to_string(), v.data),
-                                    })
+                                    .map(|(k, v)| (k.to_string(), v.data))
                                     .collect();
                                 let attributes = if attributes.is_empty() {
                                     None
@@ -118,9 +115,7 @@ impl Actor {
                                 let attributes: FxHashMap<_, _> = attributes
                                     .iter()
                                     .filter(|(_, v)| !v.data.is_null())
-                                    .map(|(k, v)| match k {
-                                        StyleKey::Key(k) => (k.to_string(), v.data),
-                                    })
+                                    .map(|(k, v)| (k.to_string(), v.data))
                                     .collect();
                                 let attributes = if attributes.is_empty() {
                                     None

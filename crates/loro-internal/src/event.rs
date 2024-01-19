@@ -161,6 +161,8 @@ impl From<InternalDiff> for DiffVariant {
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum Diff {
     List(Delta<Vec<ValueOrContainer>>),
+    // TODO: refactor, doesn't make much sense to use `StyleMeta` here, because sometime style
+    // don't have peer and lamport info
     /// - When feature `wasm` is enabled, it should use utf16 indexes.
     /// - When feature `wasm` is disabled, it should use unicode indexes.
     Text(Delta<StringSlice, StyleMeta>),

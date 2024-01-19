@@ -7,11 +7,11 @@ use crate::{
         richtext::richtext_state::PosType,
         tree::tree_op::TreeOp,
     },
-    delta::{TreeDiffItem, TreeExternalDiff},
+    delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
     state::RichtextState,
     txn::EventHint,
-    utils::utf16::count_utf16_len,
+    utils::{string_slice::StringSlice, utf16::count_utf16_len},
 };
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
@@ -41,6 +41,25 @@ pub enum TextDelta {
     Delete {
         delete: usize,
     },
+}
+
+impl From<&DeltaItem<StringSlice, StyleMeta>> for TextDelta {
+    fn from(value: &DeltaItem<StringSlice, StyleMeta>) -> Self {
+        match value {
+            crate::delta::DeltaItem::Retain { retain, attributes } => TextDelta::Retain {
+                retain: *retain,
+                attributes: attributes.to_option_map(),
+            },
+            crate::delta::DeltaItem::Insert { insert, attributes } => TextDelta::Insert {
+                insert: insert.to_string(),
+                attributes: attributes.to_option_map(),
+            },
+            crate::delta::DeltaItem::Delete {
+                delete,
+                attributes: _,
+            } => TextDelta::Delete { delete: *delete },
+        }
+    }
 }
 
 /// Flatten attributes that allow overlap
@@ -346,10 +365,7 @@ impl TextHandler {
         let mut override_styles = Vec::new();
         if let Some(attr) = attr {
             // current styles
-            let map: FxHashMap<_, _> = styles
-                .iter()
-                .map(|x| (x.0.key().clone(), x.1.data))
-                .collect();
+            let map: FxHashMap<_, _> = styles.iter().map(|x| (x.0.clone(), x.1.data)).collect();
             debug_log::debug_dbg!(&map);
             for (key, style) in map.iter() {
                 match attr.get(key.deref()) {

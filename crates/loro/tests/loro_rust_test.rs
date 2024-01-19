@@ -1,4 +1,36 @@
-use loro_internal::{delta::DeltaItem, DiffEvent, LoroResult};
+use std::sync::Arc;
+
+use loro::LoroDoc;
+use loro_internal::{delta::DeltaItem, handler::TextDelta, DiffEvent, LoroResult};
+
+#[test]
+fn travel_back_should_remove_styles() {
+    let mut doc = LoroDoc::new();
+    let doc2 = LoroDoc::new();
+    let text = doc.get_text("text");
+    let text2 = doc2.get_text("text");
+    doc.subscribe(
+        &text.id(),
+        Arc::new(move |x| {
+            let Some(text) = x.container.diff.as_text() else {
+                return;
+            };
+
+            let delta: Vec<TextDelta> = text.iter().map(|x| x.into()).collect();
+            text2.apply_delta(&delta).unwrap();
+        }),
+    );
+
+    let text2 = doc2.get_text("text");
+    text.insert(0, "Hello world!").unwrap();
+    doc.commit();
+    let f = doc.state_frontiers();
+    text.mark(0..5, "bold", true).unwrap();
+    doc.commit();
+    assert_eq!(text.to_delta(), text2.to_delta());
+    doc.checkout(&f).unwrap();
+    assert_eq!(text.to_delta(), text2.to_delta());
+}
 
 #[test]
 fn list() -> LoroResult<()> {

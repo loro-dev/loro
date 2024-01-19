@@ -3,7 +3,7 @@
 
 use std::{
     collections::BTreeSet,
-    ops::{ControlFlow, Deref, DerefMut, Range},
+    ops::{ControlFlow, Deref, DerefMut, Range, RangeBounds},
     sync::Arc,
     usize,
 };
@@ -91,9 +91,9 @@ impl DerefMut for Styles {
 pub(super) static EMPTY_STYLES: Lazy<Styles> = Lazy::new(Default::default);
 
 #[derive(Debug, Clone)]
-pub(super) struct Elem {
-    styles: Styles,
-    len: usize,
+pub(crate) struct Elem {
+    pub(crate) styles: Styles,
+    pub(crate) len: usize,
 }
 
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
@@ -311,6 +311,29 @@ impl StyleRangeMap {
                 }
             }
         }
+    }
+
+    pub(crate) fn iter_range(
+        &self,
+        range: impl RangeBounds<usize>,
+    ) -> impl Iterator<Item = &Elem> + '_ {
+        let start = match range.start_bound() {
+            std::ops::Bound::Included(x) => *x,
+            std::ops::Bound::Excluded(x) => *x + 1,
+            std::ops::Bound::Unbounded => 0,
+        };
+
+        let end = match range.end_bound() {
+            std::ops::Bound::Included(x) => *x + 1,
+            std::ops::Bound::Excluded(x) => *x,
+            std::ops::Bound::Unbounded => usize::MAX,
+        };
+
+        let start = self.tree.query::<LengthFinder>(&start).unwrap();
+        let end = self.tree.query::<LengthFinder>(&end).unwrap();
+        self.tree
+            .iter_range(start.cursor..end.cursor)
+            .map(|x| x.elem)
     }
 
     /// Return the expected style anchors with their indexes.
