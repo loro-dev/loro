@@ -646,7 +646,13 @@ impl TextHandler {
             }
         }
 
+        let mut len = self.len_event();
         for (start, end, key, value) in marks {
+            if start >= len {
+                self.insert_with_txn(txn, len, &"\n".repeat(start - len + 1))?;
+                len = start;
+            }
+
             self.mark_with_txn(txn, start, end, key.deref(), value, false)?;
         }
 
