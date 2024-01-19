@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.2
+
+### Patch Changes
+
+- Fix a few rich text issue
+  - fix: time travel back should be able to nullify rich text span (#254)
+  - fix: formalize apply delta method (#252)
+  - fix: how to find best insert pos for richtext & expand type reverse behavior (#250)
+
 ## 0.9.1
 
 ### Patch Changes
