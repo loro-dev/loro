@@ -95,6 +95,8 @@ extern "C" {
     pub type MapEntry;
     #[wasm_bindgen(typescript_type = "{[key: string]: { expand: 'before'|'after'|'none'|'both' }}")]
     pub type JsTextStyles;
+    #[wasm_bindgen(typescript_type = "Delta<string>[]")]
+    pub type JsDelta;
 }
 
 mod observer {
@@ -1187,6 +1189,16 @@ impl LoroText {
 
     /// Change the state of this text by delta.
     ///
+    /// If a delta item is insert, it should include all the attributes of the inserted text.
+    /// Loro's rich text CRDT may make the inserted text inherit some styles when you use
+    /// `insert` method directly. However, when you use `applyDelta`, if there are some attributes
+    /// inherit from CRDT but not included in the delta, they will be removed.
+    ///
+    /// Another special property of `applyDelta` is if you format an attribute for ranges out of
+    /// the text length, Loro will insert new lines to fill the gap first. It's useful when you
+    /// build the binding between Loro and rich text editors like Quill, which might assume there
+    /// are always a newline at the end of the text implicitly.
+    ///
     /// @example
     /// ```ts
     /// import { Loro } from "loro-crdt";
@@ -1198,11 +1210,11 @@ impl LoroText {
     /// const delta = text.toDelta();
     /// const text2 = doc.getText("text2");
     /// text2.applyDelta(delta);
+    /// expect(text2.toDelta()).toStrictEqual(delta);
     /// ```
     #[wasm_bindgen(js_name = "applyDelta")]
-    pub fn apply_delta(&self, delta: JsValue) -> JsResult<()> {
-        let delta: Vec<TextDelta> = serde_wasm_bindgen::from_value(delta)?;
-        console_log!("apply_delta {:?}", delta);
+    pub fn apply_delta(&self, delta: JsDelta) -> JsResult<()> {
+        let delta: Vec<TextDelta> = serde_wasm_bindgen::from_value(delta.into())?;
         self.handler.apply_delta(&delta)?;
         Ok(())
     }
