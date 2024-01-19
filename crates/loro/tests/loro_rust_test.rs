@@ -52,9 +52,12 @@ fn travel_back_should_remove_styles() {
     text.insert(0, "Hello world!").unwrap();
     doc.commit();
     let f = doc.state_frontiers();
+    let mut f1 = f.clone();
+    f1[0].counter += 1;
     text.mark(0..5, "bold", true).unwrap();
     doc.commit();
     assert_eq!(text.to_delta(), text2.to_delta());
+    doc.checkout(&f1).unwrap(); // checkout to the middle of the start anchor op and the end anchor op
     doc.checkout(&f).unwrap();
     assert_eq!(text.to_delta(), text2.to_delta());
 }

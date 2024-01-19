@@ -8,7 +8,7 @@ use loro_common::{IdSpan, LoroValue, ID};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{
     fmt::{Display, Formatter},
-    ops::RangeBounds,
+    ops::{Bound, RangeBounds},
 };
 use std::{
     ops::{Add, AddAssign, Range, Sub},
@@ -2031,12 +2031,68 @@ impl RichtextState {
     }
 
     /// Iter style ranges in the given range in entity index
-    pub(crate) fn iter_style_range(
+    pub(crate) fn iter_range(
         &self,
         range: impl RangeBounds<usize>,
-    ) -> Option<impl Iterator<Item = &style_range_map::Elem>> {
-        self.style_ranges.as_ref().map(|x| x.iter_range(range))
+    ) -> impl Iterator<Item = IterRangeItem<'_>> + '_ {
+        let start = match range.start_bound() {
+            Bound::Included(x) => *x,
+            Bound::Excluded(x) => x + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match range.end_bound() {
+            Bound::Included(x) => x + 1,
+            Bound::Excluded(x) => *x,
+            Bound::Unbounded => self.len_entity(),
+        };
+        let mut style_iter = self
+            .style_ranges
+            .as_ref()
+            .map(|x| x.iter_range(range))
+            .into_iter()
+            .flatten();
+
+        let start = self.tree.query::<EntityQuery>(&start).unwrap();
+        let end = self.tree.query::<EntityQuery>(&end).unwrap();
+        let content_iter = self.tree.iter_range(start.cursor..end.cursor);
+        let mut left_len = usize::MAX;
+        let mut cur_style = style_iter
+            .next()
+            .map(|x| {
+                left_len = x.elem.len - x.start.unwrap_or(0);
+                &x.elem.styles
+            })
+            .unwrap_or(&*EMPTY_STYLES);
+        content_iter.map(move |c| {
+            let len = c.elem.rle_len() - c.start.unwrap_or(0);
+            left_len -= len;
+            if left_len == 0 {
+                cur_style = style_iter
+                    .next()
+                    .map(|x| {
+                        left_len = x.elem.len - x.start.unwrap_or(0);
+                        &x.elem.styles
+                    })
+                    .unwrap_or(&*EMPTY_STYLES)
+            }
+
+            IterRangeItem {
+                start: c.start,
+                end: c.end,
+                chunk: &c.elem,
+                styles: cur_style,
+                len,
+            }
+        })
     }
+}
+
+pub(crate) struct IterRangeItem<'a> {
+    pub(crate) start: Option<usize>,
+    pub(crate) end: Option<usize>,
+    pub(crate) chunk: &'a RichtextStateChunk,
+    pub(crate) styles: &'a Styles,
+    pub(crate) len: usize,
 }
 
 use converter::ContinuousIndexConverter;

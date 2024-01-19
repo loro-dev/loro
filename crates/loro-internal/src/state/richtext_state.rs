@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex, RwLock, Weak},
 };
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::HasLength;
 use loro_common::{ContainerID, LoroResult, LoroValue, ID};
 
@@ -13,7 +13,7 @@ use crate::{
         idx::ContainerIdx,
         richtext::{
             config::StyleConfigMap,
-            richtext_state::{EntityRangeInfo, PosType},
+            richtext_state::{EntityRangeInfo, IterRangeItem, PosType},
             AnchorType, RichtextState as InnerState, StyleOp, Styles,
         },
     },
@@ -202,14 +202,24 @@ impl ContainerState for RichtextState {
                     delete: len,
                     attributes: _,
                 } => {
-                    let mut deleted_style_chunks = Vec::new();
+                    let mut deleted_style_chunks: FxHashSet<Arc<StyleOp>> = FxHashSet::default();
                     let (start, end) = self.state.get_mut().drain_by_entity_index(
                         entity_index,
                         *len,
-                        Some(&mut |c| {
-                            if matches!(c, RichtextStateChunk::Style { .. }) {
-                                deleted_style_chunks.push(c);
+                        Some(&mut |c| match c {
+                            RichtextStateChunk::Style {
+                                style,
+                                anchor_type: AnchorType::Start,
+                            } => {
+                                deleted_style_chunks.insert(style);
                             }
+                            RichtextStateChunk::Style {
+                                style,
+                                anchor_type: AnchorType::End,
+                            } => {
+                                deleted_style_chunks.remove(&style);
+                            }
+                            _ => {}
                         }),
                     );
 
@@ -218,60 +228,57 @@ impl ContainerState for RichtextState {
                         event_index = start;
                     }
 
-                    for chunk in deleted_style_chunks {
-                        if let RichtextStateChunk::Style { style, anchor_type } = chunk {
-                            match anchor_type {
-                                AnchorType::Start => {
-                                    style_starts.insert(
-                                        style,
-                                        Pos {
-                                            entity_index,
-                                            event_index,
-                                        },
-                                    );
+                    for style in deleted_style_chunks {
+                        let start_event_index = event_index;
+                        let mut delta: Delta<StringSlice, StyleMeta> =
+                            Delta::new().retain(start_event_index);
+
+                        for IterRangeItem {
+                            start,
+                            chunk,
+                            styles,
+                            len,
+                            ..
+                        } in self.state.get_mut().iter_range(start_event_index..)
+                        {
+                            match chunk {
+                                RichtextStateChunk::Text(t) => {
+                                    let event_len = if let Some(start) = start {
+                                        t.event_len() as usize
+                                            - t.convert_unicode_offset_to_event_offset(start)
+                                    } else {
+                                        t.event_len() as usize
+                                    };
+                                    event_index += event_len;
+                                    entity_index += len;
+                                    let mut style_meta: StyleMeta = styles.into();
+                                    if !style_meta.contains_key(&style.key) {
+                                        style_meta.insert(
+                                            style.key.clone(),
+                                            StyleMetaItem {
+                                                lamport: 0,
+                                                peer: 0,
+                                                value: LoroValue::Null,
+                                            },
+                                        )
+                                    }
+                                    delta = delta.retain_with_meta(event_len, style_meta);
                                 }
-                                AnchorType::End => {
-                                    let Pos {
-                                        entity_index: start_entity_index,
-                                        event_index: start_event_index,
-                                    } = style_starts.remove(&style).unwrap();
-                                    if event_index == start_event_index {
-                                        debug_assert_eq!(start_entity_index, entity_index);
-                                        // deleted by this batch, can be ignored
-                                        continue;
+                                RichtextStateChunk::Style {
+                                    style: s,
+                                    anchor_type,
+                                } => {
+                                    entity_index += 1;
+                                    if &style == s {
+                                        debug_assert!(matches!(anchor_type, AnchorType::End));
+                                        break;
                                     }
-
-                                    // Otherwise, we need to calculate the new styles with the key between the ranges
-                                    let mut delta: Delta<StringSlice, StyleMeta> =
-                                        Delta::new().retain(start_event_index);
-                                    if let Some(iter) = self
-                                        .state
-                                        .get_mut()
-                                        .iter_style_range(start_entity_index..entity_index)
-                                    {
-                                        for style_range in iter {
-                                            let mut style_meta: StyleMeta =
-                                                (&style_range.styles).into();
-                                            if !style_meta.contains_key(&style.key) {
-                                                style_meta.insert(
-                                                    style.key.clone(),
-                                                    StyleMetaItem {
-                                                        lamport: 0,
-                                                        peer: 0,
-                                                        value: LoroValue::Null,
-                                                    },
-                                                )
-                                            }
-                                            delta =
-                                                delta.retain_with_meta(style_range.len, style_meta);
-                                        }
-                                    }
-
-                                    delta = delta.chop();
-                                    style_delta = style_delta.compose(delta);
                                 }
                             }
                         }
+
+                        delta = delta.chop();
+                        style_delta = style_delta.compose(delta);
                     }
 
                     ans = ans.delete(end - start);
