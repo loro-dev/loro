@@ -44,6 +44,7 @@ fn travel_back_should_remove_styles() {
             };
 
             let delta: Vec<TextDelta> = text.iter().map(|x| x.into()).collect();
+            // dbg!(&delta);
             text2.apply_delta(&delta).unwrap();
         }),
     );
@@ -56,9 +57,12 @@ fn travel_back_should_remove_styles() {
     f1[0].counter += 1;
     text.mark(0..5, "bold", true).unwrap();
     doc.commit();
+    let f2 = doc.state_frontiers();
     assert_eq!(text.to_delta(), text2.to_delta());
     doc.checkout(&f1).unwrap(); // checkout to the middle of the start anchor op and the end anchor op
     doc.checkout(&f).unwrap();
+    assert_eq!(text.to_delta(), text2.to_delta());
+    doc.checkout(&f2).unwrap();
     assert_eq!(text.to_delta(), text2.to_delta());
 }
 

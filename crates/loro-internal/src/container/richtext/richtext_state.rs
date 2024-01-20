@@ -35,7 +35,7 @@ use self::{
 
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
-    style_range_map::{self, IterAnchorItem, StyleRangeMap, Styles},
+    style_range_map::{IterAnchorItem, StyleRangeMap, Styles},
     AnchorType, RichtextSpan, StyleOp,
 };
 
@@ -1676,7 +1676,7 @@ impl RichtextState {
         pos: usize,
         len: usize,
         mut f: Option<&mut dyn FnMut(RichtextStateChunk)>,
-    ) -> (usize, usize) {
+    ) -> DrainInfo {
         assert!(
             pos + len <= self.len_entity(),
             "pos: {}, len: {}, self.len(): {}",
@@ -1698,6 +1698,8 @@ impl RichtextState {
         struct StyleRangeUpdater<'a> {
             style_ranges: Option<&'a mut StyleRangeMap>,
             current_index: usize,
+            start: usize,
+            end: usize,
         }
 
         impl<'a> StyleRangeUpdater<'a> {
@@ -1707,9 +1709,12 @@ impl RichtextState {
                         self.current_index += t.unicode_len() as usize;
                     }
                     RichtextStateChunk::Style { style, anchor_type } => {
-                        if matches!(anchor_type, AnchorType::Start) {
+                        if matches!(anchor_type, AnchorType::End) {
+                            self.end = self.end.max(self.current_index);
                             if let Some(s) = self.style_ranges.as_mut() {
-                                s.remove_style(style, self.current_index);
+                                let start =
+                                    s.remove_style_scanning_backward(style, self.current_index);
+                                self.start = self.start.min(start);
                             }
                         }
 
@@ -1722,6 +1727,22 @@ impl RichtextState {
                 Self {
                     style_ranges: style_ranges.map(|x| &mut **x),
                     current_index: start_index,
+                    end: 0,
+                    start: usize::MAX,
+                }
+            }
+
+            fn get_affected_range(&self, pos: usize, deleted_len: usize) -> Option<Range<usize>> {
+                if self.start == usize::MAX {
+                    None
+                } else {
+                    let start = self.start.min(pos);
+                    let end = self.end.min(pos);
+                    if start == end {
+                        None
+                    } else {
+                        Some(self.start..self.end)
+                    }
                 }
             }
         }
@@ -1758,10 +1779,22 @@ impl RichtextState {
                 }
             });
 
+            let affected_range = updater.get_affected_range(pos, len);
             if let Some(s) = self.style_ranges.as_mut() {
                 s.delete(pos..pos + len);
             }
-            (start_f.event_index, start_f.event_index + event_len)
+
+            DrainInfo {
+                start_event_index: start_f.event_index,
+                end_event_index: (start_f.event_index + event_len),
+                affected_style_range: affected_range.map(|entity_range| {
+                    (
+                        entity_range.clone(),
+                        self.entity_index_to_event_index(entity_range.start)
+                            ..self.entity_index_to_event_index(entity_range.end),
+                    )
+                }),
+            }
         } else {
             let (end, end_f) = self
                 .tree
@@ -1774,11 +1807,28 @@ impl RichtextState {
                 }
             }
 
+            let affected_range = updater.get_affected_range(pos, len);
             if let Some(s) = self.style_ranges.as_mut() {
                 s.delete(pos..pos + len);
             }
-            (start_f.event_index, end_f.event_index)
+
+            DrainInfo {
+                start_event_index: start_f.event_index,
+                end_event_index: end_f.event_index,
+                affected_style_range: affected_range.map(|entity_range| {
+                    (
+                        entity_range.clone(),
+                        self.entity_index_to_event_index(entity_range.start)
+                            ..self.entity_index_to_event_index(entity_range.end),
+                    )
+                }),
+            }
         }
+    }
+
+    fn entity_index_to_event_index(&self, index: usize) -> usize {
+        let cursor = self.tree.query::<EntityQuery>(&index).unwrap();
+        self.cursor_to_event_index(cursor.cursor)
     }
 
     #[allow(unused)]
@@ -2079,12 +2129,19 @@ impl RichtextState {
             IterRangeItem {
                 start: c.start,
                 end: c.end,
-                chunk: &c.elem,
+                chunk: c.elem,
                 styles: cur_style,
                 len,
             }
         })
     }
+}
+
+pub(crate) struct DrainInfo {
+    pub start_event_index: usize,
+    pub end_event_index: usize,
+    // entity range, event range
+    pub affected_style_range: Option<(Range<usize>, Range<usize>)>,
 }
 
 pub(crate) struct IterRangeItem<'a> {

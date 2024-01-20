@@ -79,7 +79,7 @@ impl ContainerState for MapState {
         self.apply_diff_and_convert(diff, arena, txn, state);
     }
 
-    fn apply_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<()> {
         match &op.content {
             RawOpContent::Map(MapSet { key, value }) => {
                 if value.is_none() {
