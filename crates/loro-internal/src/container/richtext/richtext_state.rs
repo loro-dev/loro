@@ -1649,12 +1649,10 @@ impl RichtextState {
                 break;
             }
 
-            debug_log::debug_dbg!(start, end, &span.elem);
             let len = end - start;
             match span.elem {
                 RichtextStateChunk::Text(s) => {
                     let event_len = s.entity_range_to_event_range(start..end).len();
-                    debug_log::debug_dbg!(event_len);
                     match ans.last_mut() {
                         Some(last) if last.entity_end == entity_index => {
                             last.entity_end += len;
@@ -2126,17 +2124,20 @@ impl RichtextState {
             .unwrap_or(&*EMPTY_STYLES);
         // dbg!(&self.tree, &self.style_ranges);
         let mut chunk = content_iter.next();
+        let mut offset = 0;
         let mut chunk_left_len = chunk
             .as_ref()
-            .map(|x| x.elem.rle_len() - x.start.unwrap_or(0))
+            .map(|x| {
+                offset = x.start.unwrap_or(0);
+                x.elem.rle_len() - offset
+            })
             .unwrap_or(0);
-        let mut offset = 0;
         std::iter::from_fn(move || {
             if chunk_left_len == 0 {
                 chunk = content_iter.next();
                 chunk_left_len = chunk
                     .as_ref()
-                    .map(|x| x.elem.rle_len() - x.start.unwrap_or(0))
+                    .map(|x| x.end.unwrap_or(x.elem.rle_len()))
                     .unwrap_or(0);
                 offset = 0;
             }
@@ -2152,13 +2153,7 @@ impl RichtextState {
                     .entity_range_to_event_range(offset..offset + iter_len);
                 chunk_left_len -= style_left_len;
                 offset += style_left_len;
-                cur_style = style_iter
-                    .next()
-                    .map(|x| {
-                        style_left_len = x.elem.len - x.start.unwrap_or(0);
-                        &x.elem.styles
-                    })
-                    .unwrap_or(&*EMPTY_STYLES);
+                style_left_len = 0;
             } else {
                 iter_len = chunk_left_len;
                 event_range = iter_chunk
@@ -2166,6 +2161,16 @@ impl RichtextState {
                     .entity_range_to_event_range(offset..offset + iter_len);
                 style_left_len -= chunk_left_len;
                 chunk_left_len = 0;
+            }
+
+            if style_left_len == 0 {
+                cur_style = style_iter
+                    .next()
+                    .map(|x| {
+                        style_left_len = x.elem.len;
+                        &x.elem.styles
+                    })
+                    .unwrap_or(&*EMPTY_STYLES);
             }
 
             Some(IterRangeItem {

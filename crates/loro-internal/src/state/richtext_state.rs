@@ -275,13 +275,18 @@ impl ContainerState for RichtextState {
                     if let Some((entity_range, event_range)) = affected_style_range {
                         let mut delta: Delta<StringSlice, StyleMeta> =
                             Delta::new().retain(event_range.start);
+                        let mut entity_len_sum = 0;
+                        let expected_sum = entity_range.len();
                         for IterRangeItem {
                             event_len,
                             chunk,
                             styles,
+                            entity_len,
                             ..
                         } in self.state.get_mut().iter_range(entity_range)
                         {
+                            // debug_log::debug_dbg!(&chunk, entity_len);
+                            entity_len_sum += entity_len;
                             match chunk {
                                 RichtextStateChunk::Text(_) => {
                                     let mut style_meta: StyleMeta = styles.into();
@@ -302,6 +307,8 @@ impl ContainerState for RichtextState {
                                 RichtextStateChunk::Style { .. } => {}
                             }
                         }
+
+                        debug_assert_eq!(entity_len_sum, expected_sum);
                         delta = delta.chop();
                         style_delta = style_delta.compose(delta);
                     }
