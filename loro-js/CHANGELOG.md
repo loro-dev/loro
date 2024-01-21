@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.4
+
+### Patch Changes
+
+- Fix a few richtext time travel issues
+- Updated dependencies
+  - loro-wasm@0.9.4
+
 ## 0.9.3
 
 ### Patch Changes
