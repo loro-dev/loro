@@ -399,6 +399,17 @@ impl RichtextStateChunk {
             },
         }
     }
+
+    pub fn entity_range_to_event_range(&self, range: Range<usize>) -> Range<usize> {
+        match self {
+            RichtextStateChunk::Text(t) => t.entity_range_to_event_range(range),
+            RichtextStateChunk::Style { .. } => {
+                assert_eq!(range.start, 0);
+                assert_eq!(range.end, 1);
+                0..1
+            }
+        }
+    }
 }
 
 impl DeltaValue for RichtextStateChunk {
@@ -2104,37 +2115,65 @@ impl RichtextState {
 
         let start = self.tree.query::<EntityQuery>(&start).unwrap();
         let end = self.tree.query::<EntityQuery>(&end).unwrap();
-        let content_iter = self.tree.iter_range(start.cursor..end.cursor);
-        let mut left_len = usize::MAX;
+        let mut content_iter = self.tree.iter_range(start.cursor..end.cursor);
+        let mut style_left_len = usize::MAX;
         let mut cur_style = style_iter
             .next()
             .map(|x| {
-                left_len = x.elem.len - x.start.unwrap_or(0);
+                style_left_len = x.elem.len - x.start.unwrap_or(0);
                 &x.elem.styles
             })
             .unwrap_or(&*EMPTY_STYLES);
         // dbg!(&self.tree, &self.style_ranges);
-        content_iter.map(move |c| {
-            // dbg!(&cur_style, left_len, &c);
-            let mut len = c.elem.rle_len() - c.start.unwrap_or(0);
-            while len >= left_len {
-                len -= left_len;
+        let mut chunk = content_iter.next();
+        let mut chunk_left_len = chunk
+            .as_ref()
+            .map(|x| x.elem.rle_len() - x.start.unwrap_or(0))
+            .unwrap_or(0);
+        let mut offset = 0;
+        std::iter::from_fn(move || {
+            if chunk_left_len == 0 {
+                chunk = content_iter.next();
+                chunk_left_len = chunk
+                    .as_ref()
+                    .map(|x| x.elem.rle_len() - x.start.unwrap_or(0))
+                    .unwrap_or(0);
+                offset = 0;
+            }
+
+            let iter_chunk = chunk.as_ref()?;
+            let styles = cur_style;
+            let iter_len;
+            let event_range;
+            if chunk_left_len >= style_left_len {
+                iter_len = style_left_len;
+                event_range = iter_chunk
+                    .elem
+                    .entity_range_to_event_range(offset..offset + iter_len);
+                chunk_left_len -= style_left_len;
+                offset += style_left_len;
                 cur_style = style_iter
                     .next()
                     .map(|x| {
-                        left_len = x.elem.len - x.start.unwrap_or(0);
+                        style_left_len = x.elem.len - x.start.unwrap_or(0);
                         &x.elem.styles
                     })
                     .unwrap_or(&*EMPTY_STYLES);
+            } else {
+                iter_len = chunk_left_len;
+                event_range = iter_chunk
+                    .elem
+                    .entity_range_to_event_range(offset..offset + iter_len);
+                style_left_len -= chunk_left_len;
+                chunk_left_len = 0;
             }
 
-            IterRangeItem {
-                start: c.start,
-                end: c.end,
-                chunk: c.elem,
-                styles: cur_style,
-                len,
-            }
+            Some(IterRangeItem {
+                chunk: iter_chunk.elem,
+                styles,
+                entity_len: iter_len,
+                event_len: event_range.len(),
+            })
         })
     }
 }
@@ -2147,11 +2186,10 @@ pub(crate) struct DrainInfo {
 }
 
 pub(crate) struct IterRangeItem<'a> {
-    pub(crate) start: Option<usize>,
-    pub(crate) end: Option<usize>,
     pub(crate) chunk: &'a RichtextStateChunk,
     pub(crate) styles: &'a Styles,
-    pub(crate) len: usize,
+    pub(crate) entity_len: usize,
+    pub(crate) event_len: usize,
 }
 
 use converter::ContinuousIndexConverter;

@@ -137,7 +137,7 @@ impl Actor {
                     debug_log::debug_log!("delta {:?}", text_deltas);
                     text_h.apply_delta_with_txn(&mut txn, &text_deltas).unwrap();
 
-                    // println!("after {:?}\n", text_h.get_richtext_value());
+                    debug_log::debug_log!("after {:?}\n", text_h.get_richtext_value());
                 } else {
                     debug_dbg!(&event.container);
                     unreachable!()
@@ -1032,6 +1032,37 @@ mod failed_tests {
                     pos: 863599313408753663,
                     value: 458499228937131,
                     action: RichTextAction::Mark(72308159810888675),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn checkout_err_2() {
+        test_multi_sites(
+            3,
+            &mut [
+                RichText {
+                    site: 1,
+                    pos: 0,
+                    value: 14497138626449185274,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 1,
+                    pos: 5,
+                    value: 10,
+                    action: RichTextAction::Mark(8536327904765227054),
+                },
+                RichText {
+                    site: 1,
+                    pos: 14,
+                    value: 6,
+                    action: RichTextAction::Mark(13562224825669899),
+                },
+                Checkout {
+                    site: 1,
+                    to: 522133279,
                 },
             ],
         )

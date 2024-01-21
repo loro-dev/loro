@@ -31,6 +31,40 @@ fn get_change_at_lamport() {
 }
 
 #[test]
+fn time_travel() {
+    let mut doc = LoroDoc::new();
+    let doc2 = LoroDoc::new();
+    let text = doc.get_text("text");
+    let text2 = doc2.get_text("text");
+    doc.subscribe(
+        &text.id(),
+        Arc::new(move |x| {
+            let Some(text) = x.container.diff.as_text() else {
+                return;
+            };
+
+            let delta: Vec<TextDelta> = text.iter().map(|x| x.into()).collect();
+            dbg!(&delta);
+            text2.apply_delta(&delta).unwrap();
+        }),
+    );
+
+    let text2 = doc2.get_text("text");
+    text.insert(0, "[14497138626449185274] ").unwrap();
+    doc.commit();
+    text.mark(5..15, "link", true).unwrap();
+    doc.commit();
+    let f = doc.state_frontiers();
+    text.mark(14..20, "bold", true).unwrap();
+    doc.commit();
+    assert_eq!(text.to_delta(), text2.to_delta());
+    doc.checkout(&f).unwrap();
+    assert_eq!(text.to_delta(), text2.to_delta());
+    doc.attach();
+    assert_eq!(text.to_delta(), text2.to_delta());
+}
+
+#[test]
 fn travel_back_should_remove_styles() {
     let mut doc = LoroDoc::new();
     let doc2 = LoroDoc::new();

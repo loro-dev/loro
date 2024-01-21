@@ -276,20 +276,14 @@ impl ContainerState for RichtextState {
                         let mut delta: Delta<StringSlice, StyleMeta> =
                             Delta::new().retain(event_range.start);
                         for IterRangeItem {
-                            start,
+                            event_len,
                             chunk,
                             styles,
                             ..
                         } in self.state.get_mut().iter_range(entity_range)
                         {
                             match chunk {
-                                RichtextStateChunk::Text(t) => {
-                                    let event_len = if let Some(start) = start {
-                                        t.event_len() as usize
-                                            - t.convert_unicode_offset_to_event_offset(start)
-                                    } else {
-                                        t.event_len() as usize
-                                    };
+                                RichtextStateChunk::Text(_) => {
                                     let mut style_meta: StyleMeta = styles.into();
                                     for key in deleted_style_keys.iter() {
                                         if !style_meta.contains_key(key) {
