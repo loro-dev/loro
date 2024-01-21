@@ -2128,7 +2128,7 @@ impl RichtextState {
             .as_ref()
             .map(|x| {
                 offset = x.start.unwrap_or(0);
-                x.end.unwrap_or(x.elem.rle_len())
+                x.end.unwrap_or(x.elem.rle_len()) - offset
             })
             .unwrap_or(0);
         std::iter::from_fn(move || {
