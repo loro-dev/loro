@@ -280,7 +280,7 @@ impl ContainerState for TreeState {
         self.apply_diff_and_convert(diff, arena, txn, state);
     }
 
-    fn apply_op(&mut self, raw_op: &RawOp, _op: &crate::op::Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &crate::op::Op) -> LoroResult<()> {
         match raw_op.content {
             crate::op::RawOpContent::Tree(tree) => {
                 let TreeOp { target, parent, .. } = tree;

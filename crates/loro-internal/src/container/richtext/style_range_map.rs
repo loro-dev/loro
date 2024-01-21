@@ -11,7 +11,7 @@ use std::{
 use fxhash::FxHashMap;
 use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
-    BTree, BTreeTrait, LengthFinder, UseLengthFinder,
+    BTree, BTreeTrait, ElemSlice, LengthFinder, UseLengthFinder,
 };
 
 use once_cell::sync::Lazy;
@@ -295,16 +295,17 @@ impl StyleRangeMap {
         })
     }
 
-    pub fn update_styles_from(
+    /// Update the styles from `pos` to the start of the document.
+    fn update_styles_scanning_backward(
         &mut self,
         pos: usize,
-        mut f: impl FnMut(&mut Styles) -> ControlFlow<()>,
+        mut f: impl FnMut(&mut Elem) -> ControlFlow<()>,
     ) {
         let mut cursor = self.tree.query::<LengthFinder>(&pos).map(|x| x.cursor);
         while let Some(inner_cursor) = cursor {
-            cursor = self.tree.next_elem(inner_cursor);
+            cursor = self.tree.prev_elem(inner_cursor);
             let node = self.tree.get_elem_mut(inner_cursor.leaf).unwrap();
-            match f(&mut node.styles) {
+            match f(node) {
                 ControlFlow::Continue(_) => {}
                 ControlFlow::Break(_) => {
                     break;
@@ -316,7 +317,7 @@ impl StyleRangeMap {
     pub(crate) fn iter_range(
         &self,
         range: impl RangeBounds<usize>,
-    ) -> impl Iterator<Item = &Elem> + '_ {
+    ) -> impl Iterator<Item = ElemSlice<'_, Elem>> + '_ {
         let start = match range.start_bound() {
             std::ops::Bound::Included(x) => *x,
             std::ops::Bound::Excluded(x) => *x + 1,
@@ -331,9 +332,7 @@ impl StyleRangeMap {
 
         let start = self.tree.query::<LengthFinder>(&start).unwrap();
         let end = self.tree.query::<LengthFinder>(&end).unwrap();
-        self.tree
-            .iter_range(start.cursor..end.cursor)
-            .map(|x| x.elem)
+        self.tree.iter_range(start.cursor..end.cursor)
     }
 
     /// Return the expected style anchors with their indexes.
@@ -384,8 +383,16 @@ impl StyleRangeMap {
         vec.into_iter()
     }
 
-    pub fn remove_style(&mut self, to_remove: &Arc<StyleOp>, start_index: usize) {
-        self.update_styles_from(start_index, |styles| {
+    /// Remove the style scanning backward, return the start_entity_index
+    pub fn remove_style_scanning_backward(
+        &mut self,
+        to_remove: &Arc<StyleOp>,
+        last_index: usize,
+    ) -> usize {
+        let mut removed_len = 0;
+        self.update_styles_scanning_backward(last_index, |elem| {
+            removed_len += elem.len;
+            let styles = &mut elem.styles;
             let key = to_remove.get_style_key();
             let mut has_removed = false;
             if let Some(value) = styles.get_mut(&key) {
@@ -401,6 +408,8 @@ impl StyleRangeMap {
                 ControlFlow::Break(())
             }
         });
+
+        last_index + 1 - removed_len
     }
 
     pub fn delete(&mut self, range: Range<usize>) {

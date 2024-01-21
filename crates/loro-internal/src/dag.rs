@@ -46,7 +46,7 @@ pub(crate) trait DagNode: HasLamport + HasId + HasLength + Debug + Sliceable {
 ///
 /// We have following invariance in DAG
 /// - All deps' lamports are smaller than current node's lamport
-pub(crate) trait Dag {
+pub(crate) trait Dag: Debug {
     type Node: DagNode;
 
     fn get(&self, id: ID) -> Option<&Self::Node>;

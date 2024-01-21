@@ -5,6 +5,7 @@ use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
+use loro_common::HasIdSpan;
 use rle::{HasIndex, HasLength, Mergable, RleCollection, Sliceable};
 
 use super::{AppDag, AppDagNode};
@@ -93,9 +94,15 @@ impl Dag for AppDag {
             peer: client_id,
             counter,
         } = id;
-        self.map
-            .get(&client_id)
-            .and_then(|rle| rle.get_by_atom_index(counter).map(|x| x.element))
+        self.map.get(&client_id).and_then(|rle| {
+            rle.get_by_atom_index(counter).and_then(|x| {
+                if x.element.contains_id(id) {
+                    Some(x.element)
+                } else {
+                    None
+                }
+            })
+        })
     }
 
     fn vv(&self) -> VersionVector {

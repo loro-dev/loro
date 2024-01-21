@@ -8,7 +8,7 @@ use loro_common::{IdSpan, LoroValue, ID};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{
     fmt::{Display, Formatter},
-    ops::RangeBounds,
+    ops::{Bound, RangeBounds},
 };
 use std::{
     ops::{Add, AddAssign, Range, Sub},
@@ -35,7 +35,7 @@ use self::{
 
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
-    style_range_map::{self, IterAnchorItem, StyleRangeMap, Styles},
+    style_range_map::{IterAnchorItem, StyleRangeMap, Styles},
     AnchorType, RichtextSpan, StyleOp,
 };
 
@@ -397,6 +397,17 @@ impl RichtextStateChunk {
                     IdSpan::new(id.peer, id.counter + 1, id.counter + 2)
                 }
             },
+        }
+    }
+
+    pub fn entity_range_to_event_range(&self, range: Range<usize>) -> Range<usize> {
+        match self {
+            RichtextStateChunk::Text(t) => t.entity_range_to_event_range(range),
+            RichtextStateChunk::Style { .. } => {
+                assert_eq!(range.start, 0);
+                assert_eq!(range.end, 1);
+                0..1
+            }
         }
     }
 }
@@ -1638,12 +1649,10 @@ impl RichtextState {
                 break;
             }
 
-            debug_log::debug_dbg!(start, end, &span.elem);
             let len = end - start;
             match span.elem {
                 RichtextStateChunk::Text(s) => {
                     let event_len = s.entity_range_to_event_range(start..end).len();
-                    debug_log::debug_dbg!(event_len);
                     match ans.last_mut() {
                         Some(last) if last.entity_end == entity_index => {
                             last.entity_end += len;
@@ -1676,7 +1685,7 @@ impl RichtextState {
         pos: usize,
         len: usize,
         mut f: Option<&mut dyn FnMut(RichtextStateChunk)>,
-    ) -> (usize, usize) {
+    ) -> DrainInfo {
         assert!(
             pos + len <= self.len_entity(),
             "pos: {}, len: {}, self.len(): {}",
@@ -1698,6 +1707,8 @@ impl RichtextState {
         struct StyleRangeUpdater<'a> {
             style_ranges: Option<&'a mut StyleRangeMap>,
             current_index: usize,
+            start: usize,
+            end: usize,
         }
 
         impl<'a> StyleRangeUpdater<'a> {
@@ -1707,9 +1718,12 @@ impl RichtextState {
                         self.current_index += t.unicode_len() as usize;
                     }
                     RichtextStateChunk::Style { style, anchor_type } => {
-                        if matches!(anchor_type, AnchorType::Start) {
+                        if matches!(anchor_type, AnchorType::End) {
+                            self.end = self.end.max(self.current_index);
                             if let Some(s) = self.style_ranges.as_mut() {
-                                s.remove_style(style, self.current_index);
+                                let start =
+                                    s.remove_style_scanning_backward(style, self.current_index);
+                                self.start = self.start.min(start);
                             }
                         }
 
@@ -1722,6 +1736,22 @@ impl RichtextState {
                 Self {
                     style_ranges: style_ranges.map(|x| &mut **x),
                     current_index: start_index,
+                    end: 0,
+                    start: usize::MAX,
+                }
+            }
+
+            fn get_affected_range(&self, pos: usize) -> Option<Range<usize>> {
+                if self.start == usize::MAX {
+                    None
+                } else {
+                    let start = self.start.min(pos);
+                    let end = self.end.min(pos);
+                    if start == end {
+                        None
+                    } else {
+                        Some(start..end)
+                    }
                 }
             }
         }
@@ -1758,10 +1788,22 @@ impl RichtextState {
                 }
             });
 
+            let affected_range = updater.get_affected_range(pos);
             if let Some(s) = self.style_ranges.as_mut() {
                 s.delete(pos..pos + len);
             }
-            (start_f.event_index, start_f.event_index + event_len)
+
+            DrainInfo {
+                start_event_index: start_f.event_index,
+                end_event_index: (start_f.event_index + event_len),
+                affected_style_range: affected_range.map(|entity_range| {
+                    (
+                        entity_range.clone(),
+                        self.entity_index_to_event_index(entity_range.start)
+                            ..self.entity_index_to_event_index(entity_range.end),
+                    )
+                }),
+            }
         } else {
             let (end, end_f) = self
                 .tree
@@ -1774,11 +1816,28 @@ impl RichtextState {
                 }
             }
 
+            let affected_range = updater.get_affected_range(pos);
             if let Some(s) = self.style_ranges.as_mut() {
                 s.delete(pos..pos + len);
             }
-            (start_f.event_index, end_f.event_index)
+
+            DrainInfo {
+                start_event_index: start_f.event_index,
+                end_event_index: end_f.event_index,
+                affected_style_range: affected_range.map(|entity_range| {
+                    (
+                        entity_range.clone(),
+                        self.entity_index_to_event_index(entity_range.start)
+                            ..self.entity_index_to_event_index(entity_range.end),
+                    )
+                }),
+            }
         }
+    }
+
+    fn entity_index_to_event_index(&self, index: usize) -> usize {
+        let cursor = self.tree.query::<EntityQuery>(&index).unwrap();
+        self.cursor_to_event_index(cursor.cursor)
     }
 
     #[allow(unused)]
@@ -2031,12 +2090,119 @@ impl RichtextState {
     }
 
     /// Iter style ranges in the given range in entity index
-    pub(crate) fn iter_style_range(
+    pub(crate) fn iter_range(
         &self,
         range: impl RangeBounds<usize>,
-    ) -> Option<impl Iterator<Item = &style_range_map::Elem>> {
-        self.style_ranges.as_ref().map(|x| x.iter_range(range))
+    ) -> impl Iterator<Item = IterRangeItem<'_>> + '_ {
+        let start = match range.start_bound() {
+            Bound::Included(x) => *x,
+            Bound::Excluded(x) => x + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match range.end_bound() {
+            Bound::Included(x) => x + 1,
+            Bound::Excluded(x) => *x,
+            Bound::Unbounded => self.len_entity(),
+        };
+        assert!(end > start);
+        assert!(end <= self.len_entity());
+        // debug_log::debug_dbg!(start, end);
+        // debug_log::debug_dbg!(&self.tree);
+        let mut style_iter = self
+            .style_ranges
+            .as_ref()
+            .map(|x| x.iter_range(range))
+            .into_iter()
+            .flatten();
+
+        let start = self.tree.query::<EntityQuery>(&start).unwrap();
+        let end = self.tree.query::<EntityQuery>(&end).unwrap();
+        let mut content_iter = self.tree.iter_range(start.cursor..end.cursor);
+        let mut style_left_len = usize::MAX;
+        let mut cur_style = style_iter
+            .next()
+            .map(|x| {
+                style_left_len = x.elem.len - x.start.unwrap_or(0);
+                &x.elem.styles
+            })
+            .unwrap_or(&*EMPTY_STYLES);
+        let mut chunk = content_iter.next();
+        let mut offset = 0;
+        let mut chunk_left_len = chunk
+            .as_ref()
+            .map(|x| {
+                let len = x.elem.rle_len();
+                offset = x.start.unwrap_or(0);
+                x.end.map(|v| v.min(len)).unwrap_or(len) - offset
+            })
+            .unwrap_or(0);
+        std::iter::from_fn(move || {
+            if chunk_left_len == 0 {
+                chunk = content_iter.next();
+                chunk_left_len = chunk
+                    .as_ref()
+                    .map(|x| {
+                        let len = x.elem.rle_len();
+                        x.end.map(|v| v.min(len)).unwrap_or(len)
+                    })
+                    .unwrap_or(0);
+                offset = 0;
+            }
+
+            let iter_chunk = chunk.as_ref()?;
+            // debug_log::debug_dbg!(&iter_chunk, &chunk, offset, chunk_left_len);
+            let styles = cur_style;
+            let iter_len;
+            let event_range;
+            if chunk_left_len >= style_left_len {
+                iter_len = style_left_len;
+                event_range = iter_chunk
+                    .elem
+                    .entity_range_to_event_range(offset..offset + iter_len);
+                chunk_left_len -= style_left_len;
+                offset += style_left_len;
+                style_left_len = 0;
+            } else {
+                iter_len = chunk_left_len;
+                event_range = iter_chunk
+                    .elem
+                    .entity_range_to_event_range(offset..offset + iter_len);
+                style_left_len -= chunk_left_len;
+                chunk_left_len = 0;
+            }
+
+            if style_left_len == 0 {
+                cur_style = style_iter
+                    .next()
+                    .map(|x| {
+                        style_left_len = x.elem.len;
+                        &x.elem.styles
+                    })
+                    .unwrap_or(&*EMPTY_STYLES);
+            }
+
+            Some(IterRangeItem {
+                chunk: iter_chunk.elem,
+                styles,
+                entity_len: iter_len,
+                event_len: event_range.len(),
+            })
+        })
     }
+}
+
+pub(crate) struct DrainInfo {
+    pub start_event_index: usize,
+    pub end_event_index: usize,
+    // entity range, event range
+    pub affected_style_range: Option<(Range<usize>, Range<usize>)>,
+}
+
+pub(crate) struct IterRangeItem<'a> {
+    pub(crate) chunk: &'a RichtextStateChunk,
+    pub(crate) styles: &'a Styles,
+    pub(crate) entity_len: usize,
+    pub(crate) event_len: usize,
 }
 
 use converter::ContinuousIndexConverter;

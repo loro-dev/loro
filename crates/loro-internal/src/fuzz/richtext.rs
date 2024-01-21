@@ -137,7 +137,7 @@ impl Actor {
                     debug_log::debug_log!("delta {:?}", text_deltas);
                     text_h.apply_delta_with_txn(&mut txn, &text_deltas).unwrap();
 
-                    // println!("after {:?}\n", text_h.get_richtext_value());
+                    // debug_log::debug_log!("after {:?}\n", text_h.get_richtext_value());
                 } else {
                     debug_dbg!(&event.container);
                     unreachable!()
@@ -999,6 +999,143 @@ mod failed_tests {
                     pos: 52793738066393,
                     value: 15637060856183783423,
                     action: RichTextAction::Mark(15697817505862638041),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn checkout_err() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 1,
+                    pos: 72057594977517568,
+                    value: 0,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 1,
+                    pos: 279268526740791,
+                    value: 18446744069419041023,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 1,
+                    pos: 278391190192126,
+                    value: 18446744070572146943,
+                    action: RichTextAction::Mark(6196952189613637631),
+                },
+                RichText {
+                    site: 251,
+                    pos: 863599313408753663,
+                    value: 458499228937131,
+                    action: RichTextAction::Mark(72308159810888675),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn checkout_err_2() {
+        test_multi_sites(
+            3,
+            &mut [
+                RichText {
+                    site: 1,
+                    pos: 0,
+                    value: 14497138626449185274,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 1,
+                    pos: 5,
+                    value: 10,
+                    action: RichTextAction::Mark(8536327904765227054),
+                },
+                RichText {
+                    site: 1,
+                    pos: 14,
+                    value: 6,
+                    action: RichTextAction::Mark(13562224825669899),
+                },
+                Checkout {
+                    site: 1,
+                    to: 522133279,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn checkout_err_3() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 25,
+                    pos: 18446490194317148160,
+                    value: 18446744073709551615,
+                    action: RichTextAction::Mark(18446744073709551615),
+                },
+                SyncAll,
+                RichText {
+                    site: 25,
+                    pos: 48378530044185,
+                    value: 9910452455013810176,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 4,
+                    pos: 359156590005978116,
+                    value: 72057576757069051,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 60,
+                    pos: 289360692308608004,
+                    value: 359156590005978116,
+                    action: RichTextAction::Mark(289360751431254011),
+                },
+                RichText {
+                    site: 4,
+                    pos: 18446744073709551364,
+                    value: 18446744073709551615,
+                    action: RichTextAction::Mark(18446744069482020863),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn iter_range_err() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 1,
+                    pos: 939589632,
+                    value: 256,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 1,
+                    pos: 279268526740791,
+                    value: 18446744069419041023,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 1,
+                    pos: 278383768546103,
+                    value: 18446744069419041023,
+                    action: RichTextAction::Mark(6196952189613637631),
+                },
+                RichText {
+                    site: 251,
+                    pos: 863599313408753663,
+                    value: 458499228937131,
+                    action: RichTextAction::Mark(2378151169024582627),
                 },
             ],
         );

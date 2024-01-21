@@ -91,7 +91,7 @@ pub(crate) trait ContainerState: Clone {
         state: &Weak<Mutex<DocState>>,
     );
 
-    fn apply_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()>;
+    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()>;
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
     fn to_diff(
         &mut self,
@@ -154,8 +154,8 @@ impl<T: ContainerState> ContainerState for Box<T> {
         self.as_mut().apply_diff(diff, arena, txn, state)
     }
 
-    fn apply_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
-        self.as_mut().apply_op(raw_op, op)
+    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
+        self.as_mut().apply_local_op(raw_op, op)
     }
 
     #[doc = r" Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied."]
@@ -479,7 +479,7 @@ impl DocState {
         if self.in_txn {
             self.changed_idx_in_txn.insert(op.container);
         }
-        state.apply_op(raw_op, op)
+        state.apply_local_op(raw_op, op)
     }
 
     pub(crate) fn start_txn(&mut self, origin: InternalString, local: bool) {
