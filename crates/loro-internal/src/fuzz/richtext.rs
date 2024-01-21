@@ -1003,4 +1003,37 @@ mod failed_tests {
             ],
         );
     }
+
+    #[test]
+    fn checkout_err() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 1,
+                    pos: 72057594977517568,
+                    value: 0,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 1,
+                    pos: 279268526740791,
+                    value: 18446744069419041023,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 1,
+                    pos: 278391190192126,
+                    value: 18446744070572146943,
+                    action: RichTextAction::Mark(6196952189613637631),
+                },
+                RichText {
+                    site: 251,
+                    pos: 863599313408753663,
+                    value: 458499228937131,
+                    action: RichTextAction::Mark(72308159810888675),
+                },
+            ],
+        )
+    }
 }

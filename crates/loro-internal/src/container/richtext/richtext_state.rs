@@ -2113,17 +2113,19 @@ impl RichtextState {
                 &x.elem.styles
             })
             .unwrap_or(&*EMPTY_STYLES);
+        // dbg!(&self.tree, &self.style_ranges);
         content_iter.map(move |c| {
-            let len = c.elem.rle_len() - c.start.unwrap_or(0);
-            left_len -= len;
-            if left_len == 0 {
+            // dbg!(&cur_style, left_len, &c);
+            let mut len = c.elem.rle_len() - c.start.unwrap_or(0);
+            while len >= left_len {
+                len -= left_len;
                 cur_style = style_iter
                     .next()
                     .map(|x| {
                         left_len = x.elem.len - x.start.unwrap_or(0);
                         &x.elem.styles
                     })
-                    .unwrap_or(&*EMPTY_STYLES)
+                    .unwrap_or(&*EMPTY_STYLES);
             }
 
             IterRangeItem {
