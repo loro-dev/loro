@@ -42,6 +42,8 @@ pub enum LoroError {
     StyleConfigMissing(InternalString),
     #[error("Unknown Error ({0})")]
     Unknown(Box<str>),
+    #[error("The given ID ({0}) is not contained by the doc")]
+    InvalidFrontierIdNotFound(ID),
 }
 
 #[derive(Error, Debug)]

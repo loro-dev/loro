@@ -199,7 +199,7 @@ pub(crate) struct IterReturn<'a, T> {
     pub slice: Range<i32>,
 }
 
-impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
+impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
     pub fn new(dag: &'a D, from: Frontiers, target: IdSpanVector) -> Self {
         let mut out_degrees: FxHashMap<ID, usize> = FxHashMap::default();
         let mut succ: BTreeMap<ID, Vec<ID>> = BTreeMap::default();
@@ -213,7 +213,7 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
         }
 
         // traverse all nodes, calculate the out_degrees
-        // if out_degree is 0, then it can be iterate directly
+        // if out_degree is 0, then it can be iterated directly
         while let Some(id) = q.pop() {
             let client = id.peer;
             let node = dag.get(id).unwrap();
@@ -223,11 +223,12 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
                 deps.iter()
                     .filter(|&dep| {
                         if let Some(span) = target.get(&dep.peer) {
-                            let ans = dep.counter >= span.min() && dep.counter <= span.max();
-                            if ans {
+                            let included_in_target =
+                                dep.counter >= span.min() && dep.counter <= span.max();
+                            if included_in_target {
                                 succ.entry(*dep).or_default().push(id);
                             }
-                            ans
+                            included_in_target
                         } else {
                             false
                         }

@@ -17,6 +17,7 @@ use crate::{
     change::Timestamp,
     configure::Configure,
     container::{idx::ContainerIdx, richtext::config::StyleConfigMap, IntoContainerId},
+    dag::DagUtils,
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
@@ -664,6 +665,11 @@ impl LoroDoc {
         let mut state = self.state.lock().unwrap();
         self.detached.store(true, Release);
         let mut calc = self.diff_calculator.lock().unwrap();
+        for &f in frontiers.iter() {
+            if !oplog.dag.contains(f) {
+                return Err(LoroError::InvalidFrontierIdNotFound(f));
+            }
+        }
         let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
         let Some(after) = &oplog.dag.frontiers_to_vv(frontiers) else {
             return Err(LoroError::NotFoundError(

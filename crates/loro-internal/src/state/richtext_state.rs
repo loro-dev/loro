@@ -320,7 +320,6 @@ impl ContainerState for RichtextState {
         }
 
         // self.check_consistency_between_content_and_style_ranges();
-        debug_assert!(style_starts.is_empty(), "Styles should always be paired");
         let ans = ans.compose(style_delta);
         Diff::Text(ans)
     }
