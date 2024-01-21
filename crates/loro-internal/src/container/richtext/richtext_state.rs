@@ -1741,7 +1741,7 @@ impl RichtextState {
                 }
             }
 
-            fn get_affected_range(&self, pos: usize, deleted_len: usize) -> Option<Range<usize>> {
+            fn get_affected_range(&self, pos: usize) -> Option<Range<usize>> {
                 if self.start == usize::MAX {
                     None
                 } else {
@@ -1788,7 +1788,7 @@ impl RichtextState {
                 }
             });
 
-            let affected_range = updater.get_affected_range(pos, len);
+            let affected_range = updater.get_affected_range(pos);
             if let Some(s) = self.style_ranges.as_mut() {
                 s.delete(pos..pos + len);
             }
@@ -1816,7 +1816,7 @@ impl RichtextState {
                 }
             }
 
-            let affected_range = updater.get_affected_range(pos, len);
+            let affected_range = updater.get_affected_range(pos);
             if let Some(s) = self.style_ranges.as_mut() {
                 s.delete(pos..pos + len);
             }
@@ -2122,14 +2122,13 @@ impl RichtextState {
                 &x.elem.styles
             })
             .unwrap_or(&*EMPTY_STYLES);
-        // dbg!(&self.tree, &self.style_ranges);
         let mut chunk = content_iter.next();
         let mut offset = 0;
         let mut chunk_left_len = chunk
             .as_ref()
             .map(|x| {
                 offset = x.start.unwrap_or(0);
-                x.elem.rle_len() - offset
+                x.end.unwrap_or(x.elem.rle_len())
             })
             .unwrap_or(0);
         std::iter::from_fn(move || {

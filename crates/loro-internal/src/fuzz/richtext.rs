@@ -1107,4 +1107,31 @@ mod failed_tests {
             ],
         )
     }
+
+    #[test]
+    fn iter_range_err() {
+        test_multi_sites(
+            5,
+            &mut [
+                RichText {
+                    site: 33,
+                    pos: 2387226152084775201,
+                    value: 2387225703656530209,
+                    action: RichTextAction::Insert,
+                },
+                RichText {
+                    site: 33,
+                    pos: 14204671125876711713,
+                    value: 18012703036681091374,
+                    action: RichTextAction::Mark(3171988765681515001),
+                },
+                RichText {
+                    site: 0,
+                    pos: 17260478268545433600,
+                    value: 69242844270856585,
+                    action: RichTextAction::Insert,
+                },
+            ],
+        );
+    }
 }
