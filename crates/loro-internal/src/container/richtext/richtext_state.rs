@@ -1750,7 +1750,7 @@ impl RichtextState {
                     if start == end {
                         None
                     } else {
-                        Some(self.start..self.end)
+                        Some(start..end)
                     }
                 }
             }
@@ -2104,6 +2104,10 @@ impl RichtextState {
             Bound::Excluded(x) => *x,
             Bound::Unbounded => self.len_entity(),
         };
+        assert!(end > start);
+        assert!(end <= self.len_entity());
+        // debug_log::debug_dbg!(start, end);
+        // debug_log::debug_dbg!(&self.tree);
         let mut style_iter = self
             .style_ranges
             .as_ref()
@@ -2127,8 +2131,9 @@ impl RichtextState {
         let mut chunk_left_len = chunk
             .as_ref()
             .map(|x| {
+                let len = x.elem.rle_len();
                 offset = x.start.unwrap_or(0);
-                x.end.unwrap_or(x.elem.rle_len()) - offset
+                x.end.map(|v| v.min(len)).unwrap_or(len) - offset
             })
             .unwrap_or(0);
         std::iter::from_fn(move || {
@@ -2136,12 +2141,16 @@ impl RichtextState {
                 chunk = content_iter.next();
                 chunk_left_len = chunk
                     .as_ref()
-                    .map(|x| x.end.unwrap_or(x.elem.rle_len()))
+                    .map(|x| {
+                        let len = x.elem.rle_len();
+                        x.end.map(|v| v.min(len)).unwrap_or(len)
+                    })
                     .unwrap_or(0);
                 offset = 0;
             }
 
             let iter_chunk = chunk.as_ref()?;
+            // debug_log::debug_dbg!(&iter_chunk, &chunk, offset, chunk_left_len);
             let styles = cur_style;
             let iter_len;
             let event_range;
