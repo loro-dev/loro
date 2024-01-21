@@ -285,7 +285,7 @@ impl ContainerState for RichtextState {
                             ..
                         } in self.state.get_mut().iter_range(entity_range)
                         {
-                            debug_log::debug_dbg!(&chunk, entity_len);
+                            // debug_log::debug_dbg!(&chunk, entity_len);
                             entity_len_sum += entity_len;
                             match chunk {
                                 RichtextStateChunk::Text(_) => {
