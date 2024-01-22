@@ -24,6 +24,7 @@ use crate::{
     handler::TextHandler,
     handler::TreeHandler,
     id::PeerID,
+    oplog::dag::FrontiersNotIncluded,
     version::Frontiers,
     InternalString, LoroError, VersionVector,
 };
@@ -574,8 +575,20 @@ impl LoroDoc {
     /// - Ordering::Equal means versions equal
     /// - Ordering::Greater means self's version is greater than target
     #[inline]
-    pub fn cmp_frontiers(&self, other: &Frontiers) -> Ordering {
-        self.oplog().lock().unwrap().cmp_frontiers(other)
+    pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
+        self.oplog().lock().unwrap().cmp_with_frontiers(other)
+    }
+
+    /// Compare two [Frontiers] causally.
+    ///
+    /// If one of the [Frontiers] are not included, it will return [FrontiersNotIncluded].
+    #[inline]
+    pub fn cmp_frontiers(
+        &self,
+        a: &Frontiers,
+        b: &Frontiers,
+    ) -> Result<Option<Ordering>, FrontiersNotIncluded> {
+        self.oplog().lock().unwrap().cmp_frontiers(a, b)
     }
 
     pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
@@ -721,11 +734,13 @@ impl LoroDoc {
         Arc::downgrade(&self.state)
     }
 
+    #[inline]
     pub fn len_ops(&self) -> usize {
         let oplog = self.oplog.lock().unwrap();
         oplog.vv().iter().map(|(_, ops)| *ops).sum::<i32>() as usize
     }
 
+    #[inline]
     pub fn len_changes(&self) -> usize {
         let oplog = self.oplog.lock().unwrap();
         oplog.len_changes()
@@ -750,6 +765,7 @@ impl LoroDoc {
         self.renew_txn_if_auto_commit();
     }
 
+    #[inline]
     pub fn log_estimated_size(&self) {
         let state = self.state.try_lock().unwrap();
         state.log_estimated_size();

@@ -99,6 +99,8 @@ extern "C" {
     pub type JsTextStyles;
     #[wasm_bindgen(typescript_type = "Delta<string>[]")]
     pub type JsDelta;
+    #[wasm_bindgen(typescript_type = "-1 | 1 | 0 | undefined")]
+    pub type JsPartialOrd;
 }
 
 mod observer {
@@ -586,15 +588,45 @@ impl Loro {
     ///
     /// Frontiers cannot be compared without the history of the OpLog.
     ///
-    #[inline]
-    #[wasm_bindgen(js_name = "cmpFrontiers")]
-    pub fn cmp_frontiers(&self, frontiers: Vec<JsID>) -> JsResult<i32> {
+    #[wasm_bindgen(js_name = "cmpWithFrontiers")]
+    pub fn cmp_with_frontiers(&self, frontiers: Vec<JsID>) -> JsResult<i32> {
         let frontiers = ids_to_frontiers(frontiers)?;
-        Ok(match self.0.cmp_frontiers(&frontiers) {
+        Ok(match self.0.cmp_with_frontiers(&frontiers) {
             Ordering::Less => -1,
             Ordering::Greater => 1,
             Ordering::Equal => 0,
         })
+    }
+
+    /// Compare the ordering of two Frontiers.
+    ///
+    /// It's assumed that both Frontiers are included by the doc. Otherwise, an error will be thrown.
+    ///
+    /// Return value:
+    ///
+    /// - -1: a < b
+    /// - 0: a == b
+    /// - 1: a > b
+    /// - undefined: a ∥ b: a and b are concurrent
+    #[wasm_bindgen(js_name = "cmpFrontiers")]
+    pub fn cmp_frontiers(&self, a: Vec<JsID>, b: Vec<JsID>) -> JsResult<JsPartialOrd> {
+        let a = ids_to_frontiers(a)?;
+        let b = ids_to_frontiers(b)?;
+        let c = self
+            .0
+            .cmp_frontiers(&a, &b)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        if let Some(c) = c {
+            let v: JsValue = match c {
+                Ordering::Less => -1,
+                Ordering::Greater => 1,
+                Ordering::Equal => 0,
+            }
+            .into();
+            Ok(v.into())
+        } else {
+            Ok(JsValue::UNDEFINED.into())
+        }
     }
 
     /// Export the snapshot of current version, it's include all content of

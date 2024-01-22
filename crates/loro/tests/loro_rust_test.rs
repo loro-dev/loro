@@ -1,7 +1,46 @@
-use std::sync::Arc;
+use std::{cmp::Ordering, sync::Arc};
 
-use loro::LoroDoc;
-use loro_internal::{delta::DeltaItem, handler::TextDelta, DiffEvent, LoroResult};
+use loro::{FrontiersNotIncluded, LoroDoc};
+use loro_internal::{delta::DeltaItem, handler::TextDelta, id::ID, DiffEvent, LoroResult};
+
+#[test]
+fn cmp_frontiers() {
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1).unwrap();
+    doc1.get_text("text").insert(0, "012345").unwrap();
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2).unwrap();
+    doc2.import(&doc1.export_snapshot()).unwrap();
+    doc2.get_text("text").insert(0, "6789").unwrap();
+    doc1.import(&doc2.export_snapshot()).unwrap();
+    doc1.get_text("text").insert(0, "0123").unwrap();
+    doc1.commit();
+
+    assert_eq!(
+        doc1.cmp_frontiers(&[].into(), &[ID::new(2, 5)].into()),
+        Err(FrontiersNotIncluded)
+    );
+    assert_eq!(
+        doc1.cmp_frontiers(&[ID::new(1, 2)].into(), &[ID::new(2, 3)].into()),
+        Ok(Some(Ordering::Less))
+    );
+    assert_eq!(
+        doc1.cmp_frontiers(&[ID::new(1, 5)].into(), &[ID::new(2, 3)].into()),
+        Ok(Some(Ordering::Less))
+    );
+    assert_eq!(
+        doc1.cmp_frontiers(&[ID::new(1, 6)].into(), &[ID::new(2, 3)].into()),
+        Ok(Some(Ordering::Greater))
+    );
+    assert_eq!(
+        doc1.cmp_frontiers(&[].into(), &[].into()),
+        Ok(Some(Ordering::Equal))
+    );
+    assert_eq!(
+        doc1.cmp_frontiers(&[ID::new(1, 6)].into(), &[ID::new(1, 6)].into()),
+        Ok(Some(Ordering::Equal))
+    );
+}
 
 #[test]
 fn get_change_at_lamport() {
