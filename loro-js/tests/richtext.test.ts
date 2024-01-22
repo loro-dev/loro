@@ -109,21 +109,36 @@ describe("richtext", () => {
   });
 
   it("apply delta", async () => {
-    const doc = new Loro();
-    const text = doc.getText("text");
+    const doc1 = new Loro();
+    doc1.configTextStyle({
+      link: { expand: "none" },
+      bold: { expand: "after" },
+    })
+    const text1 = doc1.getText("text");
     const doc2 = new Loro();
+    doc2.configTextStyle({
+      link: { expand: "none" },
+      bold: { expand: "after" },
+    })
     const text2 = doc2.getText("text");
-    text.subscribe(doc, (event) => {
+    text1.subscribe(doc1, (event) => {
       const e = event.diff as TextDiff;
       text2.applyDelta(e.diff);
     });
-    text.insert(0, "foo");
-    text.mark({ start: 0, end: 3 }, "link", true);
-    doc.commit();
-    text.insert(3, "baz");
-    doc.commit();
+    text1.insert(0, "foo");
+    text1.mark({ start: 0, end: 3 }, "link", true);
+    doc1.commit();
+    await new Promise((r) => setTimeout(r, 1));
+    expect(text2.toDelta()).toStrictEqual(text1.toDelta());
+    text1.insert(3, "baz");
+    doc1.commit();
     await new Promise((r) => setTimeout(r, 1));
     expect(text2.toDelta()).toStrictEqual([{ insert: 'foo', attributes: { link: true } }, { insert: 'baz' }]);
+    expect(text2.toDelta()).toStrictEqual(text1.toDelta());
+    text1.mark({ start: 2, end: 5 }, "bold", true);
+    doc1.commit();
+    await new Promise((r) => setTimeout(r, 1));
+    expect(text2.toDelta()).toStrictEqual(text1.toDelta());
   })
 
   it("custom richtext type", async () => {

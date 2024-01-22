@@ -1283,15 +1283,15 @@ impl LoroText {
 
     /// Change the state of this text by delta.
     ///
-    /// If a delta item is insert, it should include all the attributes of the inserted text.
+    /// If a delta item is `insert`, it should include all the attributes of the inserted text.
     /// Loro's rich text CRDT may make the inserted text inherit some styles when you use
-    /// `insert` method directly. However, when you use `applyDelta`, if there are some attributes
-    /// inherit from CRDT but not included in the delta, they will be removed.
+    /// `insert` method directly. However, when you use `applyDelta` if some attributes are
+    /// inherited from CRDT but not included in the delta, they will be removed.
     ///
     /// Another special property of `applyDelta` is if you format an attribute for ranges out of
     /// the text length, Loro will insert new lines to fill the gap first. It's useful when you
     /// build the binding between Loro and rich text editors like Quill, which might assume there
-    /// are always a newline at the end of the text implicitly.
+    /// is always a newline at the end of the text implicitly.
     ///
     /// @example
     /// ```ts
