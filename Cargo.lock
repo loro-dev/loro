@@ -509,6 +509,7 @@ dependencies = [
  "color-backtrace 0.6.1",
  "ctor 0.2.6",
  "debug-log",
+ "flate2",
  "loro",
  "serde_json",
  "tabled 0.15.0",
