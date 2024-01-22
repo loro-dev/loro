@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0
+
+### Minor Changes
+
+- New encoding schema
+  - BREAKING CHANGE: refactor: Optimizing Encoding Representation for Child Container Creation to Reduce Document Size (#247)
+  - feat: compare frontiers causal order (#257)
+  - docs: update docs about rich text style (#258)
+
 ## 0.9.4
 
 ### Patch Changes
