@@ -5,6 +5,10 @@ import { setDebug } from "loro-wasm";
 describe("richtext", () => {
   it("mark", () => {
     const doc = new Loro();
+    doc.configTextStyle({
+      bold: { expand: "after" },
+      link: { expand: "before" }
+    });
     const text = doc.getText("text");
     text.insert(0, "Hello World!");
     text.mark({ start: 0, end: 5 }, "bold", true);

@@ -214,6 +214,8 @@ impl ChangeMeta {
 #[wasm_bindgen]
 impl Loro {
     /// Create a new loro document.
+    ///
+    /// New document will have random peer id.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         let mut doc = LoroDoc::new();
@@ -221,6 +223,43 @@ impl Loro {
         Self(Arc::new(doc))
     }
 
+    /// Set the rich text format configuration of the document.
+    ///
+    /// You need to config it if you use rich text `mark` method.
+    /// Specifically, you need to config the `expand` property of each style.
+    ///
+    /// Expand is used to specify the behavior of expanding when new text is inserted at the
+    /// beginning or end of the style.
+    ///
+    /// You can specify the `expand` option to set the behavior when inserting text at the boundary of the range.
+    ///
+    /// - `after`(default): when inserting text right after the given range, the mark will be expanded to include the inserted text
+    /// - `before`: when inserting text right before the given range, the mark will be expanded to include the inserted text
+    /// - `none`: the mark will not be expanded to include the inserted text at the boundaries
+    /// - `both`: when inserting text either right before or right after the given range, the mark will be expanded to include the inserted text
+    ///
+    /// @example
+    /// ```ts
+    /// const doc = new Loro();
+    /// doc.configTextStyle({
+    ///   bold: { expand: "after" },
+    ///   link: { expand: "before" }
+    /// });
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello World!");
+    /// text.mark({ start: 0, end: 5 }, "bold", true);
+    /// expect(text.toDelta()).toStrictEqual([
+    ///   {
+    ///     insert: "Hello",
+    ///     attributes: {
+    ///       bold: true,
+    ///     },
+    ///   },
+    ///   {
+    ///     insert: " World!",
+    ///   },
+    /// ] as Delta<string>[]);
+    /// ```
     #[wasm_bindgen(js_name = "configTextStyle")]
     pub fn config_text_style(&self, styles: JsTextStyles) -> JsResult<()> {
         let mut style_config = StyleConfigMap::new();
@@ -1099,16 +1138,9 @@ impl LoroText {
 
     /// Mark a range of text with a key and a value.
     ///
+    /// > You should call `configTextStyle` before using `mark` and `unmark`.
+    ///
     /// You can use it to create a highlight, make a range of text bold, or add a link to a range of text.
-    ///
-    /// You can specify the `expand` option to set the behavior when inserting text at the boundary of the range.
-    ///
-    /// - `after`(default): when inserting text right after the given range, the mark will be expanded to include the inserted text
-    /// - `before`: when inserting text right before the given range, the mark will be expanded to include the inserted text
-    /// - `none`: the mark will not be expanded to include the inserted text at the boundaries
-    /// - `both`: when inserting text either right before or right after the given range, the mark will be expanded to include the inserted text
-    ///
-    /// *You should make sure that a key is always associated with the same expand type.*
     ///
     /// Note: this is not suitable for unmergeable annotations like comments.
     ///
@@ -1117,6 +1149,7 @@ impl LoroText {
     /// import { Loro } from "loro-crdt";
     ///
     /// const doc = new Loro();
+    /// doc.configTextStyle({bold: {expand: "after"}});
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello World!");
     /// text.mark({ start: 0, end: 5 }, "bold", true);
@@ -1130,24 +1163,16 @@ impl LoroText {
 
     /// Unmark a range of text with a key and a value.
     ///
+    /// > You should call `configTextStyle` before using `mark` and `unmark`.
+    ///
     /// You can use it to remove highlights, bolds or links
-    ///
-    /// You can specify the `expand` option to set the behavior when inserting text at the boundary of the range.
-    ///
-    /// **Note: You should specify the same expand type as when you mark the text.**
-    ///
-    /// - `after`(default): when inserting text right after the given range, the mark will be expanded to include the inserted text
-    /// - `before`: when inserting text right before the given range, the mark will be expanded to include the inserted text
-    /// - `none`: the mark will not be expanded to include the inserted text at the boundaries
-    /// - `both`: when inserting text either right before or right after the given range, the mark will be expanded to include the inserted text
-    ///
-    /// *You should make sure that a key is always associated with the same expand type.*
     ///
     /// @example
     /// ```ts
     /// import { Loro } from "loro-crdt";
     ///
     /// const doc = new Loro();
+    /// doc.configTextStyle({bold: {expand: "after"}});
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello World!");
     /// text.mark({ start: 0, end: 5 }, "bold", true);
@@ -1177,6 +1202,7 @@ impl LoroText {
     ///
     /// const doc = new Loro();
     /// const text = doc.getText("text");
+    /// doc.configTextStyle({bold: {expand: "after"}});
     /// text.insert(0, "Hello World!");
     /// text.mark({ start: 0, end: 5 }, "bold", true);
     /// console.log(text.toDelta());  // [ { insert: 'Hello', attributes: { bold: true } } ]
@@ -1241,6 +1267,7 @@ impl LoroText {
     ///
     /// const doc = new Loro();
     /// const text = doc.getText("text");
+    /// doc.configTextStyle({bold: {expand: "after"}});
     /// text.insert(0, "Hello World!");
     /// text.mark({ start: 0, end: 5 }, "bold", true);
     /// const delta = text.toDelta();

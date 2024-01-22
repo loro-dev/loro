@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 use either::Either;
 use loro_internal::change::Timestamp;
+use loro_internal::configure::StyleConfigMap;
 use loro_internal::container::IntoContainerId;
 use loro_internal::handler::TextDelta;
 use loro_internal::handler::ValueOrContainer;
@@ -42,6 +43,17 @@ impl LoroDoc {
         let mut doc = InnerLoroDoc::default();
         doc.start_auto_commit();
         LoroDoc { doc }
+    }
+
+    /// Set the rich text format configuration of the document.
+    ///
+    /// You need to config it if you use rich text `mark` method.
+    /// Specifically, you need to config the `expand` property of each style.
+    ///
+    /// Expand is used to specify the behavior of expanding when new text is inserted at the
+    /// beginning or end of the style.
+    pub fn config_text_style(&self, text_style: StyleConfigMap) {
+        self.doc.config_text_style(text_style)
     }
 
     /// Attach the document state to the latest known version.
