@@ -4,26 +4,48 @@ import { Loro, OpId, VersionVector } from "../src";
 describe("Frontiers", () => {
   it("two clients", () => {
     const doc = new Loro();
+    doc.setPeerId(0);
     const text = doc.getText("text");
     text.insert(0, "0");
     doc.commit();
 
     const v0 = doc.frontiers();
     const docB = new Loro();
+    docB.setPeerId(1);
     docB.import(doc.exportFrom());
-    expect(docB.cmpFrontiers(v0)).toBe(0);
+    expect(docB.cmpWithFrontiers(v0)).toBe(0);
     text.insert(1, "0");
     doc.commit();
-    expect(docB.cmpFrontiers(doc.frontiers())).toBe(-1);
+    expect(docB.cmpWithFrontiers(doc.frontiers())).toBe(-1);
     const textB = docB.getText("text");
     textB.insert(0, "0");
     docB.commit();
-    expect(docB.cmpFrontiers(doc.frontiers())).toBe(-1);
+    expect(docB.cmpWithFrontiers(doc.frontiers())).toBe(-1);
     docB.import(doc.exportFrom());
-    expect(docB.cmpFrontiers(doc.frontiers())).toBe(1);
+    expect(docB.cmpWithFrontiers(doc.frontiers())).toBe(1);
     doc.import(docB.exportFrom());
-    expect(docB.cmpFrontiers(doc.frontiers())).toBe(0);
+    expect(docB.cmpWithFrontiers(doc.frontiers())).toBe(0);
   });
+
+  it("cmp frontiers", () => {
+    const doc1 = new Loro();
+    doc1.setPeerId(1);
+    const doc2 = new Loro();
+    doc2.setPeerId(2n);
+
+    doc1.getText("text").insert(0, "01234");
+    doc2.import(doc1.exportFrom());
+    doc2.getText("text").insert(0, "56789");
+    doc1.import(doc2.exportFrom());
+    doc1.getText("text").insert(0, "01234");
+    doc1.commit();
+
+    expect(() => { doc1.cmpFrontiers([{ peer: "1", counter: 1 }], [{ peer: "2", counter: 10 }]) }).toThrow();
+    expect(doc1.cmpFrontiers([], [{ peer: "1", counter: 1 }])).toBe(-1)
+    expect(doc1.cmpFrontiers([], [])).toBe(0)
+    expect(doc1.cmpFrontiers([{ peer: "1", counter: 4 }], [{ peer: "2", counter: 3 }])).toBe(-1)
+    expect(doc1.cmpFrontiers([{ peer: "1", counter: 5 }], [{ peer: "2", counter: 3 }])).toBe(1)
+  })
 });
 
 it('peer id repr should be consistent', () => {

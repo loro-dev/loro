@@ -167,6 +167,12 @@ impl From<&[ID]> for Frontiers {
     }
 }
 
+impl<const N: usize> From<[ID; N]> for Frontiers {
+    fn from(value: [ID; N]) -> Self {
+        Self(value.as_slice().into())
+    }
+}
+
 impl From<ID> for Frontiers {
     fn from(value: ID) -> Self {
         Self([value].into())

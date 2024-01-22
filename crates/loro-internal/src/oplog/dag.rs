@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::fmt::{Display, Write};
 
 use crate::change::Lamport;
 use crate::dag::{Dag, DagNode};
@@ -251,7 +252,7 @@ impl AppDag {
     /// - Ordering::Less means self is less than target or parallel
     /// - Ordering::Equal means versions equal
     /// - Ordering::Greater means self's version is greater than target
-    pub fn cmp_frontiers(&self, other: &Frontiers) -> Ordering {
+    pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
         if &self.frontiers == other {
             Ordering::Equal
         } else if other.iter().all(|id| self.vv.includes_id(*id)) {
@@ -259,5 +260,27 @@ impl AppDag {
         } else {
             Ordering::Less
         }
+    }
+
+    // PERF
+    /// Compare two [Frontiers] causally.
+    ///
+    /// If one of the [Frontiers] are not included, it will return [FrontiersNotIncluded].
+    pub fn cmp_frontiers(
+        &self,
+        a: &Frontiers,
+        b: &Frontiers,
+    ) -> Result<Option<Ordering>, FrontiersNotIncluded> {
+        let a = self.frontiers_to_vv(a).ok_or(FrontiersNotIncluded)?;
+        let b = self.frontiers_to_vv(b).ok_or(FrontiersNotIncluded)?;
+        Ok(a.partial_cmp(&b))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct FrontiersNotIncluded;
+impl Display for FrontiersNotIncluded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The given Frontiers are not included by the doc")
     }
 }

@@ -251,31 +251,31 @@ it("get change with given lamport", () => {
   doc1.getText("text").insert(0, "01234");
   doc1.commit();
   {
-    const change = doc1.getChangeAtLamport("1", 1);
+    const change = doc1.getChangeAtLamport("1", 1)!;
     expect(change.lamport).toBe(0);
     expect(change.peer).toBe("1");
     expect(change.length).toBe(5);
   }
   {
-    const change = doc1.getChangeAtLamport("1", 7);
+    const change = doc1.getChangeAtLamport("1", 7)!;
     expect(change.lamport).toBe(0);
     expect(change.peer).toBe("1");
     expect(change.length).toBe(5);
   }
   {
-    const change = doc1.getChangeAtLamport("1", 10);
+    const change = doc1.getChangeAtLamport("1", 10)!;
     expect(change.lamport).toBe(10);
     expect(change.peer).toBe("1");
     expect(change.length).toBe(5);
   }
   {
-    const change = doc1.getChangeAtLamport("1", 13);
+    const change = doc1.getChangeAtLamport("1", 13)!;
     expect(change.lamport).toBe(10);
     expect(change.peer).toBe("1");
     expect(change.length).toBe(5);
   }
   {
-    const change = doc1.getChangeAtLamport("1", 20);
+    const change = doc1.getChangeAtLamport("1", 20)!;
     expect(change.lamport).toBe(10);
     expect(change.peer).toBe("1");
     expect(change.length).toBe(5);

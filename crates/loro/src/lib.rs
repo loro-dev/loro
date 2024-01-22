@@ -21,6 +21,7 @@ pub use loro_internal::container::richtext::ExpandType;
 pub use loro_internal::container::{ContainerID, ContainerType};
 pub use loro_internal::obs::SubID;
 pub use loro_internal::obs::Subscriber;
+pub use loro_internal::oplog::FrontiersNotIncluded;
 pub use loro_internal::version::{Frontiers, VersionVector};
 pub use loro_internal::DiffEvent;
 pub use loro_internal::{loro_value, to_value};
@@ -78,8 +79,16 @@ impl LoroDoc {
         self.doc.checkout(frontiers)
     }
 
-    pub fn cmp_frontiers(&self, other: &Frontiers) -> Ordering {
-        self.doc.cmp_frontiers(other)
+    pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
+        self.doc.cmp_with_frontiers(other)
+    }
+
+    pub fn cmp_frontiers(
+        &self,
+        a: &Frontiers,
+        b: &Frontiers,
+    ) -> Result<Option<Ordering>, FrontiersNotIncluded> {
+        self.doc.cmp_frontiers(a, b)
     }
 
     /// Force the document enter the detached mode.

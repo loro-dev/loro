@@ -26,6 +26,7 @@ use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 
 type ClientChanges = FxHashMap<PeerID, Vec<Change>>;
+pub use self::dag::FrontiersNotIncluded;
 use self::pending_changes::PendingChanges;
 
 use super::arena::SharedArena;
@@ -432,8 +433,20 @@ impl OpLog {
     /// - Ordering::Less means self is less than target or parallel
     /// - Ordering::Equal means versions equal
     /// - Ordering::Greater means self's version is greater than target
-    pub fn cmp_frontiers(&self, other: &Frontiers) -> Ordering {
-        self.dag.cmp_frontiers(other)
+    pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
+        self.dag.cmp_with_frontiers(other)
+    }
+
+    /// Compare two [Frontiers] causally.
+    ///
+    /// If one of the [Frontiers] are not included, it will return [FrontiersNotIncluded].
+    #[inline]
+    pub fn cmp_frontiers(
+        &self,
+        a: &Frontiers,
+        b: &Frontiers,
+    ) -> Result<Option<Ordering>, FrontiersNotIncluded> {
+        self.dag.cmp_frontiers(a, b)
     }
 
     pub(crate) fn get_min_lamport_at(&self, id: ID) -> Lamport {
