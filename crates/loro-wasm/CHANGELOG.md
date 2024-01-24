@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1
+
+### Patch Changes
+
+- fix: remove checking after checkout
+
 ## 0.10.0
 
 ### Minor Changes
