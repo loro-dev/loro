@@ -1,5 +1,4 @@
 use super::{state::DocState, txn::Transaction};
-use crate::diff_calc::tree::TreeDeletedSetTrait;
 use crate::{
     arena::SharedArena,
     container::{
@@ -1228,7 +1227,7 @@ impl TreeHandler {
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
                 target,
-                parent: TreeID::delete_root(),
+                parent: Some(TreeID::delete_root()),
             }),
             EventHint::Tree(smallvec![TreeDiffItem {
                 target,

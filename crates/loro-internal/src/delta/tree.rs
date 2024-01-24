@@ -129,9 +129,9 @@ impl TreeDeltaItem {
             (Some(p), _) => {
                 if is_parent_deleted {
                     TreeInternalDiff::Delete
-                } else if TreeID::is_unexist_root(parent) {
+                } else if TreeID::is_unexist_root(&p) {
                     TreeInternalDiff::UnCreate
-                } else if TreeID::is_unexist_root(old_parent) {
+                } else if old_parent.is_some_and(|x| TreeID::is_unexist_root(&x)) {
                     TreeInternalDiff::CreateMove(p)
                 } else if is_old_parent_deleted {
                     TreeInternalDiff::RestoreMove(p)
@@ -139,8 +139,8 @@ impl TreeDeltaItem {
                     TreeInternalDiff::Move(p)
                 }
             }
-            (None, Some(_)) => {
-                if TreeID::is_unexist_root(old_parent) {
+            (None, Some(old)) => {
+                if TreeID::is_unexist_root(&old) {
                     TreeInternalDiff::Create
                 } else if is_old_parent_deleted {
                     TreeInternalDiff::Restore

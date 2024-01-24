@@ -1,4 +1,4 @@
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID, ID};
 use rle::HasLength;
@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex, Weak};
 
 use crate::container::idx::ContainerIdx;
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
-use crate::diff_calc::tree::TreeDeletedSetTrait;
 use crate::encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder};
 use crate::event::InternalDiff;
 use crate::txn::Transaction;
@@ -30,7 +29,6 @@ use super::ContainerState;
 pub struct TreeState {
     idx: ContainerIdx,
     pub(crate) trees: FxHashMap<TreeID, TreeStateNode>,
-    pub(crate) deleted: FxHashSet<TreeID>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +39,7 @@ pub(crate) struct TreeStateNode {
 
 impl TreeStateNode {
     pub const UNEXIST_ROOT: TreeStateNode = TreeStateNode {
-        parent: TreeID::unexist_root(),
+        parent: Some(TreeID::unexist_root()),
         last_move_op: ID::NONE_ID,
     };
 }
@@ -62,42 +60,25 @@ impl TreeState {
     pub fn new(idx: ContainerIdx) -> Self {
         let mut trees = FxHashMap::default();
         trees.insert(
-            TreeID::delete_root().unwrap(),
+            TreeID::delete_root(),
             TreeStateNode {
                 parent: None,
                 last_move_op: ID::NONE_ID,
             },
         );
-        trees.insert(
-            TreeID::unexist_root().unwrap(),
-            TreeStateNode {
-                parent: None,
-                last_move_op: ID::NONE_ID,
-            },
-        );
-        let mut deleted = FxHashSet::default();
-        deleted.insert(TreeID::delete_root().unwrap());
-        Self {
-            idx,
-            trees,
-            deleted,
-        }
+        Self { idx, trees }
     }
 
     pub fn mov(&mut self, target: TreeID, parent: Option<TreeID>, id: ID) -> Result<(), LoroError> {
         let Some(parent) = parent else {
             // new root node
-            let old_parent = self
-                .trees
-                .insert(
-                    target,
-                    TreeStateNode {
-                        parent: None,
-                        last_move_op: id,
-                    },
-                )
-                .unwrap_or(TreeStateNode::UNEXIST_ROOT);
-            self.update_deleted_cache(target, None, old_parent.parent);
+            self.trees.insert(
+                target,
+                TreeStateNode {
+                    parent: None,
+                    last_move_op: id,
+                },
+            );
             return Ok(());
         };
         if !self.contains(parent) {
@@ -110,23 +91,18 @@ impl TreeState {
             .trees
             .get(&target)
             .map(|x| x.parent)
-            .unwrap_or(TreeID::unexist_root())
-            == Some(parent)
+            .is_some_and(|p| p == Some(parent))
         {
             return Ok(());
         }
         // move or delete or create children node
-        let old_parent = self
-            .trees
-            .insert(
-                target,
-                TreeStateNode {
-                    parent: Some(parent),
-                    last_move_op: id,
-                },
-            )
-            .unwrap_or(TreeStateNode::UNEXIST_ROOT);
-        self.update_deleted_cache(target, Some(parent), old_parent.parent);
+        self.trees.insert(
+            target,
+            TreeStateNode {
+                parent: Some(parent),
+                last_move_op: id,
+            },
+        );
         Ok(())
     }
 
@@ -154,7 +130,7 @@ impl TreeState {
     }
 
     pub fn contains(&self, target: TreeID) -> bool {
-        if TreeID::is_deleted_root(Some(target)) {
+        if TreeID::is_deleted_root(&target) {
             return true;
         }
         !self.is_deleted(&target)
@@ -169,13 +145,27 @@ impl TreeState {
     }
 
     fn is_deleted(&self, target: &TreeID) -> bool {
-        self.deleted.contains(target)
+        if TreeID::is_deleted_root(target) {
+            return true;
+        }
+        match self.trees.get(target) {
+            Some(x) => {
+                if x.parent.is_none() {
+                    false
+                } else if x.parent.unwrap() == TreeID::delete_root() {
+                    true
+                } else {
+                    self.is_deleted(&x.parent.unwrap())
+                }
+            }
+            None => false,
+        }
     }
 
     pub fn nodes(&self) -> Vec<TreeID> {
         self.trees
             .keys()
-            .filter(|&k| !self.is_deleted(k) && !TreeID::is_unexist_root(Some(*k)))
+            .filter(|&k| !self.is_deleted(k) && !TreeID::is_unexist_root(k))
             .copied()
             .collect::<Vec<_>>()
     }
@@ -184,25 +174,22 @@ impl TreeState {
     pub fn max_counter(&self) -> i32 {
         self.trees
             .keys()
-            .filter(|&k| !self.is_deleted(k) && !TreeID::is_unexist_root(Some(*k)))
+            .filter(|&k| !self.is_deleted(k) && !TreeID::is_unexist_root(k))
             .map(|k| k.counter)
             .max()
             .unwrap_or(0)
     }
 
-    fn get_is_deleted_by_query(&self, target: TreeID) -> bool {
-        match self.trees.get(&target) {
-            Some(x) => {
-                if x.parent.is_none() {
-                    false
-                } else if x.parent == TreeID::delete_root() {
-                    true
-                } else {
-                    self.get_is_deleted_by_query(x.parent.unwrap())
+    pub fn get_children(&self, target: TreeID) -> Vec<(TreeID, ID)> {
+        let mut ans = Vec::new();
+        for (t, parent) in self.trees.iter() {
+            if let Some(p) = parent.parent {
+                if p == target {
+                    ans.push((*t, parent.last_move_op));
                 }
             }
-            None => false,
         }
+        ans
     }
 }
 
@@ -238,15 +225,14 @@ impl ContainerState for TreeState {
                     TreeInternalDiff::Move(parent)
                     | TreeInternalDiff::CreateMove(parent)
                     | TreeInternalDiff::RestoreMove(parent) => Some(parent),
-                    TreeInternalDiff::Delete => TreeID::delete_root(),
+                    TreeInternalDiff::Delete => Some(TreeID::delete_root()),
                     TreeInternalDiff::UnCreate => {
                         // delete it from state
                         self.trees.remove(&target);
                         continue;
                     }
                 };
-                let old = self
-                    .trees
+                self.trees
                     .insert(
                         target,
                         TreeStateNode {
@@ -255,9 +241,6 @@ impl ContainerState for TreeState {
                         },
                     )
                     .unwrap_or(TreeStateNode::UNEXIST_ROOT);
-                if parent != old.parent {
-                    self.update_deleted_cache(target, parent, old.parent);
-                }
             }
         }
         let ans = diff
@@ -329,7 +312,7 @@ impl ContainerState for TreeState {
         #[cfg(not(feature = "test_utils"))]
         let iter = self.trees.iter();
         for (target, node) in iter {
-            if !self.deleted.contains(target) && !TreeID::is_unexist_root(Some(*target)) {
+            if !self.is_deleted(target) && !TreeID::is_unexist_root(target) {
                 let mut t = FxHashMap::default();
                 t.insert("id".to_string(), target.id().to_string().into());
                 let p = node
@@ -391,34 +374,6 @@ impl ContainerState for TreeState {
                 },
             );
         }
-
-        for t in self.trees.keys() {
-            if self.get_is_deleted_by_query(*t) {
-                self.deleted.insert(*t);
-            }
-        }
-    }
-}
-
-impl TreeDeletedSetTrait for TreeState {
-    fn deleted(&self) -> &FxHashSet<TreeID> {
-        &self.deleted
-    }
-
-    fn deleted_mut(&mut self) -> &mut FxHashSet<TreeID> {
-        &mut self.deleted
-    }
-
-    fn get_children(&self, target: TreeID) -> Vec<(TreeID, ID)> {
-        let mut ans = Vec::new();
-        for (t, parent) in self.trees.iter() {
-            if let Some(p) = parent.parent {
-                if p == target {
-                    ans.push((*t, parent.last_move_op));
-                }
-            }
-        }
-        ans
     }
 }
 
@@ -465,7 +420,7 @@ impl Forest {
             .map(|(id, _)| *id)
             .sorted()
         {
-            if root == TreeID::unexist_root().unwrap() {
+            if root == TreeID::unexist_root() {
                 continue;
             }
             let mut stack = vec![(
@@ -507,7 +462,7 @@ impl Forest {
                 }
             }
             let root_node = id_to_node.remove(&root).unwrap();
-            if root_node.id == TreeID::delete_root().unwrap() {
+            if root_node.id == TreeID::delete_root() {
                 forest.deleted = root_node.children;
             } else {
                 forest.roots.push(root_node);
@@ -584,7 +539,9 @@ mod tests {
         state.mov(ID2, Some(ID1), ID::NONE_ID).unwrap();
         state.mov(ID3, Some(ID2), ID::NONE_ID).unwrap();
         state.mov(ID4, Some(ID1), ID::NONE_ID).unwrap();
-        state.mov(ID2, TreeID::delete_root(), ID::NONE_ID).unwrap();
+        state
+            .mov(ID2, Some(TreeID::delete_root()), ID::NONE_ID)
+            .unwrap();
         let roots = Forest::from_tree_state(&state.trees);
         let json = serde_json::to_string(&roots).unwrap();
         assert_eq!(

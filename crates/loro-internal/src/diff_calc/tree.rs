@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, HasId, IdSpan, Lamport, TreeID, ID};
 
@@ -302,58 +302,6 @@ impl TreeDiffCalculator {
     }
 }
 
-pub(crate) trait TreeDeletedSetTrait {
-    fn deleted(&self) -> &FxHashSet<TreeID>;
-    fn deleted_mut(&mut self) -> &mut FxHashSet<TreeID>;
-    fn get_children(&self, target: TreeID) -> Vec<(TreeID, ID)>;
-    fn get_children_recursively(&self, target: TreeID) -> Vec<(TreeID, ID)> {
-        let mut ans = vec![];
-        let mut s = vec![target];
-        while let Some(t) = s.pop() {
-            let children = self.get_children(t);
-            ans.extend(children.clone());
-            s.extend(children.iter().map(|x| x.0));
-        }
-        ans
-    }
-    fn is_deleted(&self, target: &TreeID) -> bool {
-        self.deleted().contains(target) || TreeID::is_deleted_root(Some(*target))
-    }
-    fn update_deleted_cache(
-        &mut self,
-        target: TreeID,
-        parent: Option<TreeID>,
-        old_parent: Option<TreeID>,
-    ) {
-        if parent.is_some() && self.is_deleted(&parent.unwrap()) {
-            self.update_deleted_cache_inner(target, true);
-        } else if let Some(old_parent) = old_parent {
-            if self.is_deleted(&old_parent) {
-                self.update_deleted_cache_inner(target, false);
-            }
-        }
-    }
-    fn update_deleted_cache_inner(&mut self, target: TreeID, set_children_deleted: bool) {
-        if set_children_deleted {
-            self.deleted_mut().insert(target);
-        } else {
-            self.deleted_mut().remove(&target);
-        }
-        let mut s = self.get_children(target);
-        while let Some((child, _)) = s.pop() {
-            if child == target {
-                continue;
-            }
-            if set_children_deleted {
-                self.deleted_mut().insert(child);
-            } else {
-                self.deleted_mut().remove(&child);
-            }
-            s.extend(self.get_children(child))
-        }
-    }
-}
-
 /// All information of an operation for diff calculating of movable tree.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 pub struct MoveLamportAndID {
@@ -402,10 +350,10 @@ impl TreeCacheForDiff {
     }
     /// get the parent of the first effected op and its id
     fn get_parent(&self, tree_id: TreeID) -> (Option<TreeID>, ID) {
-        if TreeID::is_deleted_root(Some(tree_id)) {
+        if TreeID::is_deleted_root(&tree_id) {
             return (None, ID::NONE_ID);
         }
-        let mut ans = (TreeID::unexist_root(), ID::NONE_ID);
+        let mut ans = (Some(TreeID::unexist_root()), ID::NONE_ID);
         if let Some(cache) = self.tree.get(&tree_id) {
             for op in cache.iter().rev() {
                 if op.effected {
@@ -429,14 +377,14 @@ impl TreeCacheForDiff {
     }
 
     fn is_deleted(&self, mut target: TreeID) -> bool {
-        if TreeID::is_deleted_root(Some(target)) {
+        if TreeID::is_deleted_root(&target) {
             return true;
         }
-        if TreeID::is_unexist_root(Some(target)) {
+        if TreeID::is_unexist_root(&target) {
             return false;
         }
         while let (Some(parent), _) = self.get_parent(target) {
-            if TreeID::is_deleted_root(Some(parent)) {
+            if TreeID::is_deleted_root(&parent) {
                 return true;
             }
             target = parent;
@@ -444,9 +392,9 @@ impl TreeCacheForDiff {
         false
     }
 
-    /// get the parent of the first effected op
+    /// get the parent of the last effected op
     fn get_last_effective_move(&self, tree_id: TreeID) -> Option<&MoveLamportAndID> {
-        if TreeID::is_deleted_root(Some(tree_id)) {
+        if TreeID::is_deleted_root(&tree_id) {
             return None;
         }
 
