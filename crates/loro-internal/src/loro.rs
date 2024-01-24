@@ -665,7 +665,6 @@ impl LoroDoc {
         self.checkout(&f).unwrap();
         self.detached.store(false, Release);
         self.renew_txn_if_auto_commit();
-        self.check_state_diff_calc_consistency_slow();
     }
 
     /// Checkout [DocState] to a specific version.
