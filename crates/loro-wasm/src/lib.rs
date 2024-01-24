@@ -1889,6 +1889,7 @@ impl LoroTreeNode {
     }
 
     // wasm_bindgen doesn't support Option<&T>, so the move function is split into two functions.
+    // Or we could use https://docs.rs/wasm-bindgen-derive/latest/wasm_bindgen_derive/#optional-arguments
     /// Move the target tree node to be a root node.
     #[wasm_bindgen(js_name = "asRoot")]
     pub fn as_root(&self) -> JsResult<()> {
