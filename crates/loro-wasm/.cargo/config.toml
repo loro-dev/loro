@@ -1,5 +1,7 @@
 [profile.release]
 lto = true
 opt-level = "s"
+# Debug info only takes 4KB after gzipped, which is only 1% of the binary size.
+# But it's valuable for debugging.
 debug = true
 codegen-units = 1
