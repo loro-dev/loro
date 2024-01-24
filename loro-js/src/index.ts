@@ -1,5 +1,6 @@
 export * from "loro-wasm";
-import { Container, Delta, LoroText, LoroTree, OpId, Value, ContainerID, Loro, LoroList, LoroMap, TreeID } from "loro-wasm";
+import { Container, Delta, LoroText, LoroTree,LoroTreeNode, OpId, Value, ContainerID, Loro, LoroList, LoroMap, TreeID } from "loro-wasm";
+
 
 
 Loro.prototype.getTypedMap = function (...args) {
@@ -213,12 +214,21 @@ declare module "loro-wasm" {
   }
 
   interface LoroTree {
-    create(parent: TreeID | undefined): TreeID;
-    mov(target: TreeID, parent: TreeID | undefined): void;
+    createNode(parent: TreeID | undefined): LoroTreeNode;
+    move(target: TreeID, parent: TreeID | undefined): void;
     delete(target: TreeID): void;
-    getMeta(target: TreeID): LoroMap;
-    parent(target: TreeID): TreeID | undefined;
-    contains(target: TreeID): boolean;
+    has(target: TreeID): boolean;
+    getNodeByID(target: TreeID): LoroTreeNode;
     subscribe(txn: Loro, listener: Listener): number;
+  }
+
+  interface LoroTreeNode{
+    id: TreeID;
+    createNode(): LoroTreeNode;
+    asRoot(): void;
+    moveTo(parent: LoroTreeNode): void;
+    data: LoroMap;
+    parent: LoroTreeNode | undefined;
+    children: Array<LoroTreeNode>;
   }
 }

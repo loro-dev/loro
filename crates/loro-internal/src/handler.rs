@@ -1,4 +1,5 @@
 use super::{state::DocState, txn::Transaction};
+use crate::diff_calc::tree::TreeDeletedSetTrait;
 use crate::{
     arena::SharedArena,
     container::{
@@ -1318,6 +1319,22 @@ impl TreeHandler {
             .with_state(self.container_idx, |state| {
                 let a = state.as_tree_state().unwrap();
                 a.parent(target)
+            })
+    }
+
+    pub fn children(&self, target: TreeID) -> Vec<TreeID> {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_tree_state().unwrap();
+                a.as_ref()
+                    .get_children(target)
+                    .into_iter()
+                    .map(|(t, _)| t)
+                    .collect()
             })
     }
 

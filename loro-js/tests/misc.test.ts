@@ -254,17 +254,26 @@ describe("tree", () => {
   const loro = new Loro();
   const tree = loro.getTree("root");
 
-  it("create move", () => {
-    const id = tree.create();
-    const childID = tree.create(id);
-    assertEquals(tree.parent(childID), id);
+  it("create", () => {
+    const root = tree.createNode();
+    const child = root.createNode();
+    assertEquals(child.parent.id, root.id);
   });
 
+  it("move",()=>{
+    const root = tree.createNode();
+    const child = root.createNode();
+    const child2 = root.createNode();
+    assertEquals(child2.parent.id, root.id);
+    child2.moveTo(child);
+    assertEquals(child2.parent.id, child.id);
+    assertEquals(child.children[0].id, child2.id);
+  })
+
   it("meta", () => {
-    const id = tree.create();
-    const meta = tree.getMeta(id);
-    meta.set("a", 123);
-    assertEquals(meta.get("a"), 123);
+    const root = tree.createNode();
+    root.data.set("a", 123);
+    assertEquals(root.data.get("a"), 123);
   });
 });
 

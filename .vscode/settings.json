@@ -22,6 +22,7 @@
     "opset",
     "peekable",
     "Peritext",
+    "reparent",
     "RUSTFLAGS",
     "smstring",
     "thiserror",

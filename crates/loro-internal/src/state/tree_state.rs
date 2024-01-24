@@ -216,7 +216,7 @@ impl ContainerState for TreeState {
     }
 
     fn is_state_empty(&self) -> bool {
-        self.trees.is_empty()
+        self.nodes().is_empty()
     }
 
     fn apply_diff_and_convert(
