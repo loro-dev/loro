@@ -1864,12 +1864,23 @@ impl LoroTreeNode {
         Self { id, tree, doc }
     }
 
+    /// The TreeID of the node.
     #[wasm_bindgen(getter)]
     pub fn id(&self) -> JsTreeID {
         let value: JsValue = self.id.into();
         value.into()
     }
 
+    /// Create a new tree node as the child of this node and return a LoroTreeNode instance.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.createNode();
+    /// const node = root.createNode();
+    /// ```
     #[wasm_bindgen(js_name = "createNode")]
     pub fn create_node(&self) -> JsResult<LoroTreeNode> {
         let id = self.tree.create(Some(self.id))?;
@@ -1877,7 +1888,8 @@ impl LoroTreeNode {
         Ok(node)
     }
 
-    //
+    // wasm_bindgen doesn't support Option<&T>, so the move function is split into two functions.
+    /// Move the target tree node to be a root node.
     #[wasm_bindgen(js_name = "asRoot")]
     pub fn as_root(&self) -> JsResult<()> {
         self.tree.mov(self.id, None)?;
@@ -1889,7 +1901,12 @@ impl LoroTreeNode {
     ///
     /// @example
     /// ```ts
-    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.createNode();
+    /// const node = root.createNode();
+    /// const node2 = node.createNode();
+    /// node2.moveTo(root);
     /// ```
     #[wasm_bindgen(js_name = "moveTo")]
     pub fn move_to(&self, parent: &LoroTreeNode) -> JsResult<()> {
@@ -1908,12 +1925,14 @@ impl LoroTreeNode {
         Ok(map)
     }
 
+    /// Get the parent node of this node.
     #[wasm_bindgen(getter)]
     pub fn parent(&self) -> Option<LoroTreeNode> {
         let parent = self.tree.parent(self.id).flatten();
         parent.map(|p| LoroTreeNode::from_tree(p, self.tree.clone(), self.doc.clone()))
     }
 
+    /// Get the children of this node.
     #[wasm_bindgen(getter)]
     pub fn children(&self) -> Array {
         let children = self.tree.children(self.id);
@@ -1941,8 +1960,9 @@ impl LoroTree {
     ///
     /// const doc = new Loro();
     /// const tree = doc.getTree("tree");
-    /// const root = tree.create();
-    /// const node = tree.create(root);
+    /// const root = tree.createNode();
+    /// const node = root.createNode();
+    /// console.log(tree.value);
     /// /*
     /// [
     ///   {
@@ -1957,7 +1977,6 @@ impl LoroTree {
     ///   }
     /// ]
     ///  *\/
-    /// console.log(tree.value);
     /// ```
     #[wasm_bindgen(js_name = "createNode")]
     pub fn create_node(&mut self, parent: Option<JsTreeID>) -> JsResult<LoroTreeNode> {
@@ -1982,12 +2001,12 @@ impl LoroTree {
     ///
     /// const doc = new Loro();
     /// const tree = doc.getTree("tree");
-    /// const root = tree.create();
-    /// const node = tree.create(root);
-    /// const node2 = tree.create(node);
-    /// tree.mov(node2, root);
+    /// const root = tree.createNode();
+    /// const node = root.createNode();
+    /// const node2 = node.createNode();
+    /// tree.move(node2.id, root.id);
     /// // Error will be thrown if move operation creates a cycle
-    /// tree.mov(root, node);
+    /// tree.move(root.id, node.id);
     /// ```
     #[wasm_bindgen(js_name = "move")]
     pub fn mov(&mut self, target: JsTreeID, parent: Option<JsTreeID>) -> JsResult<()> {
@@ -2012,9 +2031,10 @@ impl LoroTree {
     ///
     /// const doc = new Loro();
     /// const tree = doc.getTree("tree");
-    /// const root = tree.create();
-    /// const node = tree.create(root);
-    /// tree.delete(node);
+    /// const root = tree.createNode();
+    /// const node = root.createNode();
+    /// tree.delete(node.id);
+    /// console.log(tree.value);
     /// /*
     /// [
     ///   {
@@ -2024,7 +2044,6 @@ impl LoroTree {
     ///   }
     /// ]
     ///  *\/
-    /// console.log(tree.value);
     /// ```
     pub fn delete(&mut self, target: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
@@ -2032,6 +2051,7 @@ impl LoroTree {
         Ok(())
     }
 
+    /// Get LoroTreeNode by the TreeID.
     #[wasm_bindgen(js_name = "getNodeByID")]
     pub fn get_node_by_id(&self, target: JsTreeID) -> Option<LoroTreeNode> {
         let target: JsValue = target.into();
@@ -2078,9 +2098,8 @@ impl LoroTree {
     ///
     /// const doc = new Loro();
     /// const tree = doc.getTree("tree");
-    /// const root = tree.create();
-    /// const rootMeta = tree.getMeta(root);
-    /// rootMeta.set("color", "red");
+    /// const root = tree.createNode();
+    /// root.data.set("color", "red");
     /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: 'cid:0@F2462C4159C4C8D1:Map' } ]
     /// console.log(tree.value);
     /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: { color: 'red' } } ]
@@ -2099,9 +2118,9 @@ impl LoroTree {
     ///
     /// const doc = new Loro();
     /// const tree = doc.getTree("tree");
-    /// const root = tree.create();
-    /// const node = tree.create(root);
-    /// const node2 = tree.create(node);
+    /// const root = tree.createNode();
+    /// const node = root.createNode();
+    /// const node2 = node.createNode();
     /// console.log(tree.nodes) // [ '1@A5024AE0E00529D2', '2@A5024AE0E00529D2', '0@A5024AE0E00529D2' ]
     /// ```
     #[wasm_bindgen(js_name = "nodes", method, getter)]
@@ -2129,8 +2148,8 @@ impl LoroTree {
     /// tree.subscribe((event)=>{
     ///     console.log(event);
     /// });
-    /// const root = tree.create();
-    /// const node = tree.create(root);
+    /// const root = tree.createNode();
+    /// const node = root.createNode();
     /// doc.commit();
     /// ```
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
@@ -2156,8 +2175,8 @@ impl LoroTree {
     /// const subscription = tree.subscribe((event)=>{
     ///     console.log(event);
     /// });
-    /// const root = tree.create();
-    /// const node = tree.create(root);
+    /// const root = tree.createNode();
+    /// const node = root.createNode();
     /// doc.commit();
     /// tree.unsubscribe(doc, subscription);
     /// ```
