@@ -1,12 +1,33 @@
-use std::{fmt::Display, ops::Deref};
+use std::{fmt::Display, ops::Deref, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
 #[repr(transparent)]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct InternalString(string_cache::DefaultAtom);
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct InternalString(Arc<str>);
 
-impl<T: Into<string_cache::DefaultAtom>> From<T> for InternalString {
+impl Default for InternalString {
+    #[inline(always)]
+    fn default() -> Self {
+        let s = String::new();
+        Self(s.into())
+    }
+}
+
+impl Serialize for InternalString {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'a> Deserialize<'a> for InternalString {
+    fn deserialize<D: serde::Deserializer<'a>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self(s.into()))
+    }
+}
+
+impl<T: Into<Arc<str>>> From<T> for InternalString {
     #[inline(always)]
     fn from(value: T) -> Self {
         Self(value.into())
