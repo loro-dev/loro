@@ -14,7 +14,7 @@ mod value;
 pub use error::{LoroError, LoroResult, LoroTreeError};
 #[doc(hidden)]
 pub use fxhash::FxHashMap;
-pub use internal_string::InternalString;
+pub use internal_string::{get_total_internal_string_size, InternalString};
 pub use span::*;
 pub use value::{to_value, LoroValue};
 
