@@ -6,7 +6,6 @@ use std::{
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerType, LoroValue, TreeID, ID};
 use serde::Serialize;
-use smallvec::{smallvec, SmallVec};
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct TreeDiff {
@@ -21,51 +20,35 @@ pub struct TreeDiffItem {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum TreeExternalDiff {
-    Create,
+    Create(Option<TreeID>),
     Move(Option<TreeID>),
     Delete,
 }
 
 impl TreeDiffItem {
-    pub(crate) fn from_delta_item(item: TreeDeltaItem) -> SmallVec<[TreeDiffItem; 2]> {
+    pub(crate) fn from_delta_item(item: TreeDeltaItem) -> TreeDiffItem {
         let target = item.target;
         match item.action {
-            TreeInternalDiff::Create | TreeInternalDiff::Restore => {
-                smallvec![TreeDiffItem {
-                    target,
-                    action: TreeExternalDiff::Create
-                }]
-            }
-            TreeInternalDiff::AsRoot => {
-                smallvec![TreeDiffItem {
-                    target,
-                    action: TreeExternalDiff::Move(None)
-                }]
-            }
-            TreeInternalDiff::Move(p) => {
-                smallvec![TreeDiffItem {
-                    target,
-                    action: TreeExternalDiff::Move(Some(p))
-                }]
-            }
-            TreeInternalDiff::CreateMove(p) | TreeInternalDiff::RestoreMove(p) => {
-                smallvec![
-                    TreeDiffItem {
-                        target,
-                        action: TreeExternalDiff::Create
-                    },
-                    TreeDiffItem {
-                        target,
-                        action: TreeExternalDiff::Move(Some(p))
-                    }
-                ]
-            }
-            TreeInternalDiff::Delete | TreeInternalDiff::UnCreate => {
-                smallvec![TreeDiffItem {
-                    target,
-                    action: TreeExternalDiff::Delete
-                }]
-            }
+            TreeInternalDiff::Create | TreeInternalDiff::Restore => TreeDiffItem {
+                target,
+                action: TreeExternalDiff::Create(None),
+            },
+            TreeInternalDiff::AsRoot => TreeDiffItem {
+                target,
+                action: TreeExternalDiff::Move(None),
+            },
+            TreeInternalDiff::Move(p) => TreeDiffItem {
+                target,
+                action: TreeExternalDiff::Move(Some(p)),
+            },
+            TreeInternalDiff::CreateMove(p) | TreeInternalDiff::RestoreMove(p) => TreeDiffItem {
+                target,
+                action: TreeExternalDiff::Create(Some(p)),
+            },
+            TreeInternalDiff::Delete | TreeInternalDiff::UnCreate => TreeDiffItem {
+                target,
+                action: TreeExternalDiff::Delete,
+            },
         }
     }
 }
@@ -182,7 +165,10 @@ impl<'a> TreeValue<'a> {
         for d in diff.diff.iter() {
             let target = d.target;
             match d.action {
-                TreeExternalDiff::Create => self.create_target(target),
+                TreeExternalDiff::Create(parent) => {
+                    self.create_target(target);
+                    self.mov(target, parent);
+                }
                 TreeExternalDiff::Delete => self.delete_target(target),
                 TreeExternalDiff::Move(parent) => self.mov(target, parent),
             }

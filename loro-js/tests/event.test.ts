@@ -162,7 +162,7 @@ describe("event", () => {
     const loro = new Loro();
     let lastEvent: undefined | LoroEvent;
     loro.subscribe((event) => {
-      console.log(event.diff.diff);
+      console.log(event);
       lastEvent = event;
     });
     const tree = loro.getTree("tree");

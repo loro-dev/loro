@@ -2139,6 +2139,19 @@ impl LoroTree {
     ///
     /// returns a subscription id, which can be used to unsubscribe.
     ///
+    /// Trees have three types of events: `create`, `delete`, and `move`.
+    /// - `create`: Creates a new node with its `target` TreeID. If `parent` is undefined,
+    ///             a root node is created; otherwise, a child node of `parent` is created.
+    ///             If the node being created was previously deleted and has archived child nodes,
+    ///             create events for these child nodes will also be received.
+    /// - `delete`: Deletes the target node. The structure and state of the target node and
+    ///             its child nodes are archived, and delete events for the child nodes will not be received.
+    /// - `move`:   Moves the target node. If `parent` is undefined, the target node becomes a root node;
+    ///             otherwise, it becomes a child node of `parent`.
+    ///
+    /// If a tree container is subscribed, the event of metadata changes will also be received as a MapDiff.
+    /// And event's `path` will end with `TreeID`.
+    ///
     /// @example
     /// ```ts
     /// import { Loro } from "loro-crdt";
@@ -2146,23 +2159,7 @@ impl LoroTree {
     /// const doc = new Loro();
     /// const tree = doc.getTree("tree");
     /// tree.subscribe((event)=>{
-    ///     const eventDiff = event.diff;
-    ///     const treeDiffs = eventDiff.diff;
-    ///     for (const diff of treeDiffs) {
-    ///       const target = diff.target;
-    ///       switch (diff.type) {
-    ///         case "create":
-    ///           // create node
-    ///           break;
-    ///         case "delete":
-    ///           // delete node
-    ///           break;
-    ///         case "move":
-    ///           // move node
-    ///           const parent = diff.parent;
-    ///           break;
-    ///       }
-    ///     }
+    ///     // event.type: "create" | "delete" | "move"
     /// });
     /// const root = tree.createNode();
     /// const node = root.createNode();

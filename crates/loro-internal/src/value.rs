@@ -318,7 +318,7 @@ pub mod wasm {
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
     use crate::{
-        delta::{Delta, DeltaItem, Meta, StyleMeta, TreeDiff, TreeDiffItem, TreeExternalDiff},
+        delta::{Delta, DeltaItem, Meta, StyleMeta, TreeDiff, TreeExternalDiff},
         event::Index,
         utils::string_slice::StringSlice,
     };
@@ -328,7 +328,7 @@ pub mod wasm {
             match value {
                 Index::Key(key) => JsValue::from_str(&key),
                 Index::Seq(num) => JsValue::from_f64(num as f64),
-                Index::Node(node) => JsValue::from_str(&node.to_string()),
+                Index::Node(node) => node.into(),
             }
         }
     }
@@ -340,8 +340,9 @@ pub mod wasm {
                 let obj = Object::new();
                 js_sys::Reflect::set(&obj, &"target".into(), &diff.target.into()).unwrap();
                 match diff.action {
-                    TreeExternalDiff::Create => {
+                    TreeExternalDiff::Create(p) => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"create".into()).unwrap();
+                        js_sys::Reflect::set(&obj, &"parent".into(), &p.into()).unwrap();
                     }
                     TreeExternalDiff::Delete => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"delete".into()).unwrap();

@@ -239,7 +239,7 @@ impl ContainerState for TreeState {
             .unwrap()
             .diff
             .into_iter()
-            .flat_map(TreeDiffItem::from_delta_item)
+            .map(TreeDiffItem::from_delta_item)
             .collect_vec();
         Diff::Tree(TreeDiff { diff: ans })
     }
@@ -275,18 +275,9 @@ impl ContainerState for TreeState {
         let forest = Forest::from_tree_state(&self.trees);
         let mut q = VecDeque::from(forest.roots);
         while let Some(node) = q.pop_front() {
-            let action = if let Some(parent) = node.parent {
-                diffs.push(TreeDiffItem {
-                    target: node.id,
-                    action: TreeExternalDiff::Create,
-                });
-                TreeExternalDiff::Move(Some(parent))
-            } else {
-                TreeExternalDiff::Create
-            };
             let diff = TreeDiffItem {
                 target: node.id,
-                action,
+                action: TreeExternalDiff::Create(node.parent),
             };
             diffs.push(diff);
             q.extend(node.children);

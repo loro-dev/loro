@@ -20,7 +20,6 @@ use loro_common::{
     TreeID,
 };
 use serde::{Deserialize, Serialize};
-use smallvec::smallvec;
 use std::{
     borrow::Cow,
     ops::Deref,
@@ -1229,10 +1228,10 @@ impl TreeHandler {
                 target,
                 parent: Some(TreeID::delete_root()),
             }),
-            EventHint::Tree(smallvec![TreeDiffItem {
+            EventHint::Tree(TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Delete,
-            }]),
+            }),
             &self.state,
         )
     }
@@ -1248,16 +1247,10 @@ impl TreeHandler {
     ) -> LoroResult<TreeID> {
         let parent = parent.into();
         let tree_id = TreeID::from_id(txn.next_id());
-        let mut event_hint = smallvec![TreeDiffItem {
+        let event_hint = TreeDiffItem {
             target: tree_id,
-            action: TreeExternalDiff::Create,
-        },];
-        if parent.is_some() {
-            event_hint.push(TreeDiffItem {
-                target: tree_id,
-                action: TreeExternalDiff::Move(parent),
-            });
-        }
+            action: TreeExternalDiff::Create(parent),
+        };
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -1284,10 +1277,10 @@ impl TreeHandler {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp { target, parent }),
-            EventHint::Tree(smallvec![TreeDiffItem {
+            EventHint::Tree(TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Move(parent),
-            }]),
+            }),
             &self.state,
         )
     }

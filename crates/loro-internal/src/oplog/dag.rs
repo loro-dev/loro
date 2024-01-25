@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::fmt::{Display, Write};
+use std::fmt::Display;
 
 use crate::change::Lamport;
 use crate::dag::{Dag, DagNode};
