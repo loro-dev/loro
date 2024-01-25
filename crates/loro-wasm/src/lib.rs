@@ -1890,8 +1890,8 @@ impl LoroTreeNode {
     // wasm_bindgen doesn't support Option<&T>, so the move function is split into two functions.
     // Or we could use https://docs.rs/wasm-bindgen-derive/latest/wasm_bindgen_derive/#optional-arguments
     /// Move the target tree node to be a root node.
-    #[wasm_bindgen(js_name = "asRoot")]
-    pub fn as_root(&self) -> JsResult<()> {
+    #[wasm_bindgen(js_name = "setAsRoot")]
+    pub fn set_as_root(&self) -> JsResult<()> {
         self.tree.mov(self.id, None)?;
         Ok(())
     }
@@ -2146,7 +2146,23 @@ impl LoroTree {
     /// const doc = new Loro();
     /// const tree = doc.getTree("tree");
     /// tree.subscribe((event)=>{
-    ///     console.log(event);
+    ///     const eventDiff = event.diff;
+    ///     const treeDiffs = eventDiff.diff;
+    ///     for (const diff of treeDiffs) {
+    ///       const target = diff.target;
+    ///       switch (diff.type) {
+    ///         case "create":
+    ///           // create node
+    ///           break;
+    ///         case "delete":
+    ///           // delete node
+    ///           break;
+    ///         case "move":
+    ///           // move node
+    ///           const parent = diff.parent;
+    ///           break;
+    ///       }
+    ///     }
     /// });
     /// const root = tree.createNode();
     /// const node = root.createNode();

@@ -65,5 +65,8 @@
   "cortex-debug.variableUseNaturalFormat": true,
   "[markdown]": {
     "editor.defaultFormatter": "darkriszty.markdown-table-prettify"
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "denoland.vscode-deno"
   }
 }

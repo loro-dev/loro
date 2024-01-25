@@ -1,13 +1,13 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   Delta,
+  getType,
   ListDiff,
   Loro,
-  LoroText,
   LoroEvent,
+  LoroText,
   MapDiff,
   TextDiff,
-  getType,
 } from "../src";
 
 describe("event", () => {
@@ -156,6 +156,21 @@ describe("event", () => {
         "1": "1",
       },
     } as MapDiff);
+  });
+
+  it("tree", async () => {
+    const loro = new Loro();
+    let lastEvent: undefined | LoroEvent;
+    loro.subscribe((event) => {
+      console.log(event.diff.diff);
+      lastEvent = event;
+    });
+    const tree = loro.getTree("tree");
+    const id = tree.id;
+    tree.createNode();
+    loro.commit();
+    await oneMs();
+    expect(lastEvent?.target).toEqual(id);
   });
 
   describe("subscribe container events", () => {
@@ -311,7 +326,7 @@ describe("event", () => {
       list.insertContainer(0, "Text");
       loro.commit();
       await oneMs();
-      expect(loro.toJson().list[0]).toBe('abc');
+      expect(loro.toJson().list[0]).toBe("abc");
     });
   });
 
@@ -319,27 +334,27 @@ describe("event", () => {
     const doc = new Loro();
     const list = doc.getList("list");
     let ran = false;
-    doc.subscribe(event => {
+    doc.subscribe((event) => {
       if (event.diff.type === "list") {
         for (const item of event.diff.diff) {
           const t = item.insert![0] as LoroText;
-          expect(t.toString()).toBe("Hello")
+          expect(t.toString()).toBe("Hello");
           expect(item.insert?.length).toBe(2);
-          expect(getType(item.insert![0])).toBe("Text")
-          expect(getType(item.insert![1])).toBe("Map")
+          expect(getType(item.insert![0])).toBe("Text");
+          expect(getType(item.insert![1])).toBe("Map");
         }
         ran = true;
       }
-    })
+    });
 
     list.insertContainer(0, "Map");
     const t = list.insertContainer(0, "Text");
     t.insert(0, "He");
     t.insert(2, "llo");
     doc.commit();
-    await new Promise(resolve => setTimeout(resolve, 1));
-    expect(ran).toBeTruthy()
-  })
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    expect(ran).toBeTruthy();
+  });
 });
 
 function oneMs(): Promise<void> {

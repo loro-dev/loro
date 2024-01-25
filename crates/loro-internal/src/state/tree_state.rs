@@ -37,13 +37,6 @@ pub(crate) struct TreeStateNode {
     pub last_move_op: ID,
 }
 
-impl TreeStateNode {
-    pub const UNEXIST_ROOT: TreeStateNode = TreeStateNode {
-        parent: Some(TreeID::unexist_root()),
-        last_move_op: ID::NONE_ID,
-    };
-}
-
 impl Ord for TreeStateNode {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.parent.cmp(&other.parent)
@@ -165,7 +158,7 @@ impl TreeState {
     pub fn nodes(&self) -> Vec<TreeID> {
         self.trees
             .keys()
-            .filter(|&k| !self.is_deleted(k) && !TreeID::is_unexist_root(k))
+            .filter(|&k| !self.is_deleted(k))
             .copied()
             .collect::<Vec<_>>()
     }
@@ -174,7 +167,7 @@ impl TreeState {
     pub fn max_counter(&self) -> i32 {
         self.trees
             .keys()
-            .filter(|&k| !self.is_deleted(k) && !TreeID::is_unexist_root(k))
+            .filter(|&k| !self.is_deleted(k))
             .map(|k| k.counter)
             .max()
             .unwrap_or(0)
@@ -232,15 +225,13 @@ impl ContainerState for TreeState {
                         continue;
                     }
                 };
-                self.trees
-                    .insert(
-                        target,
-                        TreeStateNode {
-                            parent,
-                            last_move_op: diff.last_effective_move_op_id,
-                        },
-                    )
-                    .unwrap_or(TreeStateNode::UNEXIST_ROOT);
+                self.trees.insert(
+                    target,
+                    TreeStateNode {
+                        parent,
+                        last_move_op: diff.last_effective_move_op_id,
+                    },
+                );
             }
         }
         let ans = diff

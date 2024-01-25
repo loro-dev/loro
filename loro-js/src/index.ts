@@ -87,9 +87,9 @@ export type MapDiff = {
 
 export type TreeDiff = {
   type: "tree";
-  diff:
-  | { target: TreeID; action: "create" | "delete" }
-  | { target: TreeID; action: "move"; parent: TreeID };
+  diff: 
+  ( { target: TreeID; action: "create" | "delete" }
+  | { target: TreeID; action: "move"; parent: TreeID })[];
 };
 
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
@@ -225,7 +225,7 @@ declare module "loro-wasm" {
   interface LoroTreeNode{
     id: TreeID;
     createNode(): LoroTreeNode;
-    asRoot(): void;
+    setAsRoot(): void;
     moveTo(parent: LoroTreeNode): void;
     data: LoroMap;
     parent: LoroTreeNode | undefined;
