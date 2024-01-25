@@ -81,7 +81,7 @@ impl TreeState {
             );
             return Ok(());
         };
-        if !self.contains(parent) {
+        if !self.trees.contains_key(&parent) {
             return Err(LoroTreeError::TreeNodeParentNotFound(parent).into());
         }
         if self.is_ancestor_of(&target, &parent) {
