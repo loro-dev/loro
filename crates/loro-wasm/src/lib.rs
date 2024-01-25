@@ -10,13 +10,12 @@ use loro_internal::{
     id::{Counter, TreeID, ID},
     obs::SubID,
     version::Frontiers,
-    ContainerType, DiffEvent, LoroDoc, LoroError, LoroValue,
-    VersionVector as InternalVersionVector,
+    ContainerType, DiffEvent, LoroDoc, LoroValue, VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, cmp::Ordering, panic, rc::Rc, sync::Arc};
-use wasm_bindgen::{__rt::IntoJsResult, convert::OptionFromWasmAbi, prelude::*};
+use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
 mod log;
 
 use crate::convert::handler_to_js_value;

@@ -2041,7 +2041,7 @@ mod arena {
 
     use super::{encode::ValueRegister, PeerIdx, MAX_DECODED_SIZE};
 
-    pub fn encode_arena(
+    pub(super) fn encode_arena(
         peer_ids_arena: Vec<u64>,
         containers: ContainerArena,
         keys: Vec<InternalString>,
@@ -2065,9 +2065,9 @@ mod arena {
     }
 
     pub struct DecodedArenas<'a> {
-        pub peer_ids: PeerIdArena,
-        pub containers: ContainerArena,
-        pub keys: KeyArena,
+        pub(super) peer_ids: PeerIdArena,
+        pub(super) containers: ContainerArena,
+        pub(super) keys: KeyArena,
         pub deps: Box<dyn Iterator<Item = EncodedDep> + 'a>,
         pub state_blob_arena: &'a [u8],
     }
