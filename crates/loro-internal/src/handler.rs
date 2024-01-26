@@ -9,7 +9,7 @@ use crate::{
     },
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
-    state::RichtextState,
+    state::{RichtextState, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
 };
@@ -1302,6 +1302,7 @@ impl TreeHandler {
         Ok(map)
     }
 
+    /// Get the parent of the node, if the node is deleted or does not exist, return None
     pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
         self.state
             .upgrade()
@@ -1310,7 +1311,11 @@ impl TreeHandler {
             .unwrap()
             .with_state(self.container_idx, |state| {
                 let a = state.as_tree_state().unwrap();
-                a.parent(target)
+                a.parent(target).map(|p| match p {
+                    TreeParentId::None => None,
+                    TreeParentId::Node(parent_id) => Some(parent_id),
+                    _ => unreachable!(),
+                })
             })
     }
 
@@ -1323,7 +1328,7 @@ impl TreeHandler {
             .with_state(self.container_idx, |state| {
                 let a = state.as_tree_state().unwrap();
                 a.as_ref()
-                    .get_children(target)
+                    .get_children_with_id(&TreeParentId::Node(target))
                     .into_iter()
                     .map(|(t, _)| t)
                     .collect()
