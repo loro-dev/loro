@@ -9,6 +9,7 @@ use crate::{
     dag::DagUtils,
     delta::{TreeDelta, TreeDeltaItem, TreeInternalDiff},
     event::InternalDiff,
+    state::TreeParentId,
     version::Frontiers,
     OpLog, VersionVector,
 };
@@ -129,7 +130,7 @@ impl TreeDiffCalculator {
         for (lamport, op) in forward_ops {
             let op = MoveLamportAndID {
                 target: op.value.target,
-                parent: op.value.parent,
+                parent: op.value.parent_id(),
                 id: op.id_start(),
                 lamport,
                 effected: false,
@@ -188,13 +189,11 @@ impl TreeDiffCalculator {
                 op.id.counter,
                 op.id.counter + 1,
             ));
-            let (old_parent, last_effective_move_op_id) = tree_cache.get_parent(op.target);
+            let (old_parent, last_effective_move_op_id) = tree_cache.get_parent_with_id(op.target);
             if op.effected {
                 // we need to know whether old_parent is deleted
-                let is_parent_deleted =
-                    op.parent.is_some() && tree_cache.is_deleted(*op.parent.as_ref().unwrap());
-                let is_old_parent_deleted =
-                    old_parent.is_some() && tree_cache.is_deleted(*old_parent.as_ref().unwrap());
+                let is_parent_deleted = tree_cache.is_parent_deleted(op.parent);
+                let is_old_parent_deleted = tree_cache.is_parent_deleted(old_parent);
                 let this_diff = TreeDeltaItem::new(
                     op.target,
                     old_parent,
@@ -210,7 +209,7 @@ impl TreeDiffCalculator {
                 ) {
                     let mut s = vec![op.target];
                     while let Some(t) = s.pop() {
-                        let children = tree_cache.get_children(t);
+                        let children = tree_cache.get_children_with_id(TreeParentId::Node(t));
                         children.iter().for_each(|c| {
                             diffs.push(TreeDeltaItem {
                                 target: c.0,
@@ -239,16 +238,14 @@ impl TreeDiffCalculator {
                 {
                     let op = MoveLamportAndID {
                         target: op.value.target,
-                        parent: op.value.parent,
+                        parent: op.value.parent_id(),
                         id: op.id_start(),
                         lamport: *lamport,
                         effected: false,
                     };
-                    let (old_parent, _id) = tree_cache.get_parent(op.target);
-                    let is_parent_deleted =
-                        op.parent.is_some() && tree_cache.is_deleted(*op.parent.as_ref().unwrap());
-                    let is_old_parent_deleted = old_parent.is_some()
-                        && tree_cache.is_deleted(*old_parent.as_ref().unwrap());
+                    let (old_parent, _id) = tree_cache.get_parent_with_id(op.target);
+                    let is_parent_deleted = tree_cache.is_parent_deleted(op.parent);
+                    let is_old_parent_deleted = tree_cache.is_parent_deleted(old_parent);
                     let effected = tree_cache.apply(op);
                     if effected {
                         let this_diff = TreeDeltaItem::new(
@@ -267,7 +264,8 @@ impl TreeDiffCalculator {
                             // TODO: per
                             let mut s = vec![op.target];
                             while let Some(t) = s.pop() {
-                                let children = tree_cache.get_children(t);
+                                let children =
+                                    tree_cache.get_children_with_id(TreeParentId::Node(t));
                                 children.iter().for_each(|c| {
                                     diffs.push(TreeDeltaItem {
                                         target: c.0,
@@ -303,15 +301,29 @@ impl TreeDiffCalculator {
 }
 
 /// All information of an operation for diff calculating of movable tree.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MoveLamportAndID {
     pub(crate) lamport: Lamport,
     pub(crate) id: ID,
     pub(crate) target: TreeID,
-    pub(crate) parent: Option<TreeID>,
+    pub(crate) parent: TreeParentId,
     /// Whether this action is applied in the current version.
     /// If this action will cause a circular reference, then this action will not be applied.
     pub(crate) effected: bool,
+}
+
+impl PartialOrd for MoveLamportAndID {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for MoveLamportAndID {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.lamport
+            .cmp(&other.lamport)
+            .then_with(|| self.id.cmp(&other.id))
+    }
 }
 
 impl core::hash::Hash for MoveLamportAndID {
@@ -331,29 +343,51 @@ pub(crate) struct TreeCacheForDiff {
 }
 
 impl TreeCacheForDiff {
-    fn is_ancestor_of(&self, maybe_ancestor: TreeID, mut node_id: TreeID) -> bool {
-        if maybe_ancestor == node_id {
-            return true;
+    fn is_ancestor_of(&self, maybe_ancestor: &TreeID, node_id: &TreeParentId) -> bool {
+        if !self.tree.contains_key(maybe_ancestor) {
+            return false;
         }
-
-        loop {
-            let (parent, _id) = self.get_parent(node_id);
-            match parent {
-                Some(parent_id) if parent_id == maybe_ancestor => return true,
-                Some(parent_id) if parent_id == node_id => panic!("loop detected"),
-                Some(parent_id) => {
-                    node_id = parent_id;
-                }
-                None => return false,
+        if let TreeParentId::Node(id) = node_id {
+            if id == maybe_ancestor {
+                return true;
             }
         }
-    }
-    /// get the parent of the first effected op and its id
-    fn get_parent(&self, tree_id: TreeID) -> (Option<TreeID>, ID) {
-        if TreeID::is_deleted_root(&tree_id) {
-            return (None, ID::NONE_ID);
+        match node_id {
+            TreeParentId::Node(id) => {
+                let (parent, _) = &self.get_parent_with_id(*id);
+                if parent == node_id {
+                    panic!("is_ancestor_of loop")
+                }
+                self.is_ancestor_of(maybe_ancestor, parent)
+            }
+            TreeParentId::Deleted | TreeParentId::None => false,
+            TreeParentId::Unexist => unreachable!(),
         }
-        let mut ans = (Some(TreeID::unexist_root()), ID::NONE_ID);
+    }
+
+    fn apply(&mut self, mut node: MoveLamportAndID) -> bool {
+        let mut effected = true;
+        if self.is_ancestor_of(&node.target, &node.parent) {
+            effected = false;
+        }
+        node.effected = effected;
+        self.tree.entry(node.target).or_default().insert(node);
+        self.current_vv.set_last(node.id);
+        effected
+    }
+
+    fn is_parent_deleted(&self, parent: TreeParentId) -> bool {
+        match parent {
+            TreeParentId::Deleted => true,
+            TreeParentId::Node(id) => self.is_parent_deleted(self.get_parent_with_id(id).0),
+            TreeParentId::None => false,
+            TreeParentId::Unexist => false,
+        }
+    }
+
+    /// get the parent of the first effected op and its id
+    fn get_parent_with_id(&self, tree_id: TreeID) -> (TreeParentId, ID) {
+        let mut ans = (TreeParentId::Unexist, ID::NONE_ID);
         if let Some(cache) = self.tree.get(&tree_id) {
             for op in cache.iter().rev() {
                 if op.effected {
@@ -363,33 +397,6 @@ impl TreeCacheForDiff {
             }
         }
         ans
-    }
-
-    fn apply(&mut self, mut node: MoveLamportAndID) -> bool {
-        let mut effected = true;
-        if node.parent.is_some() && self.is_ancestor_of(node.target, node.parent.unwrap()) {
-            effected = false;
-        }
-        node.effected = effected;
-        self.tree.entry(node.target).or_default().insert(node);
-        self.current_vv.set_last(node.id);
-        effected
-    }
-
-    fn is_deleted(&self, mut target: TreeID) -> bool {
-        if TreeID::is_deleted_root(&target) {
-            return true;
-        }
-        if TreeID::is_unexist_root(&target) {
-            return false;
-        }
-        while let (Some(parent), _) = self.get_parent(target) {
-            if TreeID::is_deleted_root(&parent) {
-                return true;
-            }
-            target = parent;
-        }
-        false
     }
 
     /// get the parent of the last effected op
@@ -411,17 +418,14 @@ impl TreeCacheForDiff {
         ans
     }
 
-    fn get_children(&self, target: TreeID) -> Vec<(TreeID, ID)> {
+    fn get_children_with_id(&self, parent: TreeParentId) -> Vec<(TreeID, ID)> {
         let mut ans = vec![];
         for (tree_id, _) in self.tree.iter() {
-            if tree_id == &target {
-                continue;
-            }
             let Some(op) = self.get_last_effective_move(*tree_id) else {
                 continue;
             };
 
-            if op.parent == Some(target) {
+            if op.parent == parent {
                 ans.push((*tree_id, op.id));
             }
         }

@@ -7,6 +7,8 @@ use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerType, LoroValue, TreeID, ID};
 use serde::Serialize;
 
+use crate::state::TreeParentId;
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct TreeDiff {
     pub(crate) diff: Vec<TreeDiffItem>,
@@ -102,38 +104,35 @@ pub enum TreeInternalDiff {
 impl TreeDeltaItem {
     pub(crate) fn new(
         target: TreeID,
-        parent: Option<TreeID>,
-        old_parent: Option<TreeID>,
+        parent: TreeParentId,
+        old_parent: TreeParentId,
         op_id: ID,
         is_parent_deleted: bool,
         is_old_parent_deleted: bool,
     ) -> Self {
         let action = match (parent, old_parent) {
-            (Some(p), _) => {
+            // don't change the order of the following branches
+            // we check unexist first
+            (TreeParentId::Node(p), TreeParentId::Unexist) => TreeInternalDiff::CreateMove(p),
+            (TreeParentId::Node(p), _) => {
                 if is_parent_deleted {
                     TreeInternalDiff::Delete
-                } else if TreeID::is_unexist_root(&p) {
-                    TreeInternalDiff::UnCreate
-                } else if old_parent.is_some_and(|x| TreeID::is_unexist_root(&x)) {
-                    TreeInternalDiff::CreateMove(p)
                 } else if is_old_parent_deleted {
                     TreeInternalDiff::RestoreMove(p)
                 } else {
                     TreeInternalDiff::Move(p)
                 }
             }
-            (None, Some(old)) => {
-                if TreeID::is_unexist_root(&old) {
-                    TreeInternalDiff::Create
-                } else if is_old_parent_deleted {
+            (TreeParentId::None, TreeParentId::Unexist) => TreeInternalDiff::Create,
+            (TreeParentId::None, _) => {
+                if is_old_parent_deleted {
                     TreeInternalDiff::Restore
                 } else {
                     TreeInternalDiff::AsRoot
                 }
             }
-            (None, None) => {
-                unreachable!()
-            }
+            (TreeParentId::Deleted, _) => TreeInternalDiff::Delete,
+            (TreeParentId::Unexist, _) => TreeInternalDiff::UnCreate,
         };
         TreeDeltaItem {
             target,

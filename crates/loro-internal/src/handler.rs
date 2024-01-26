@@ -1328,9 +1328,8 @@ impl TreeHandler {
             .with_state(self.container_idx, |state| {
                 let a = state.as_tree_state().unwrap();
                 a.as_ref()
-                    .get_children_with_id(&TreeParentId::Node(target))
+                    .get_children(&TreeParentId::Node(target))
                     .into_iter()
-                    .map(|(t, _)| t)
                     .collect()
             })
     }

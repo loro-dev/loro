@@ -241,18 +241,6 @@ mod container {
     }
 }
 
-/// In movable tree, we use a specific [`TreeID`] to represent the root of **ALL** non-existent tree nodes.
-///
-/// When we create some tree node and then we checkout the previous vision, we need to delete it from the state.
-/// If the parent of node is [`UNEXIST_TREE_ROOT`], we could infer this node is first created and delete it from the state directly,
-/// instead of moving it to the [`DELETED_TREE_ROOT`].
-///
-/// This root only can be old parent of node.
-pub const UNEXIST_TREE_ROOT: TreeID = TreeID {
-    peer: PeerID::MAX,
-    counter: Counter::MAX - 1,
-};
-
 /// In movable tree, we use a specific [`TreeID`] to represent the root of **ALL** deleted tree node.
 ///
 /// Deletion operation is equivalent to move target tree node to [`DELETED_TREE_ROOT`].
@@ -290,15 +278,6 @@ impl TreeID {
     /// return `true` if the `TreeID` is deleted root
     pub fn is_deleted_root(target: &TreeID) -> bool {
         target == &DELETED_TREE_ROOT
-    }
-
-    pub const fn unexist_root() -> Self {
-        UNEXIST_TREE_ROOT
-    }
-
-    /// return `true` if the `TreeID` is non-existent root
-    pub fn is_unexist_root(target: &TreeID) -> bool {
-        target == &UNEXIST_TREE_ROOT
     }
 
     pub fn from_id(id: ID) -> Self {

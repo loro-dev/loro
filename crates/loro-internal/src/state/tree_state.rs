@@ -46,18 +46,6 @@ pub(crate) struct TreeStateNode {
     pub last_move_op: ID,
 }
 
-// impl Ord for TreeStateNode {
-//     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-//         self.parent.cmp(&other.parent)
-//     }
-// }
-
-// impl PartialOrd for TreeStateNode {
-//     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-//         Some(self.cmp(other))
-//     }
-// }
-
 impl TreeState {
     pub fn new(idx: ContainerIdx) -> Self {
         Self {
@@ -102,28 +90,18 @@ impl TreeState {
         if !self.trees.contains_key(maybe_ancestor) {
             return false;
         }
+        if let TreeParentId::Node(id) = node_id {
+            if id == maybe_ancestor {
+                return true;
+            }
+        }
         match node_id {
-            TreeParentId::Node(node_id) => {
-                if maybe_ancestor == node_id {
-                    return true;
+            TreeParentId::Node(id) => {
+                let parent = &self.trees.get(id).unwrap().parent;
+                if parent == node_id {
+                    panic!("is_ancestor_of loop")
                 }
-                let mut cur_node_id = node_id;
-                loop {
-                    let parent = &self.trees.get(cur_node_id).unwrap().parent;
-                    match parent {
-                        TreeParentId::Node(parent_id) => {
-                            if parent_id == maybe_ancestor {
-                                return true;
-                            }
-                            if parent_id == cur_node_id {
-                                panic!("loop detected")
-                            }
-                            cur_node_id = parent_id;
-                        }
-                        TreeParentId::Deleted | TreeParentId::None => return false,
-                        TreeParentId::Unexist => unreachable!(),
-                    }
-                }
+                self.is_ancestor_of(maybe_ancestor, parent)
             }
             TreeParentId::Deleted | TreeParentId::None => false,
             TreeParentId::Unexist => unreachable!(),
@@ -131,9 +109,6 @@ impl TreeState {
     }
 
     pub fn contains(&self, target: TreeID) -> bool {
-        if TreeID::is_deleted_root(&target) {
-            return true;
-        }
         !self.is_node_deleted(&target)
     }
 
@@ -183,16 +158,6 @@ impl TreeState {
         for (t, p) in self.trees.iter() {
             if &p.parent == parent {
                 ans.push(*t);
-            }
-        }
-        ans
-    }
-
-    pub fn get_children_with_id(&self, parent: &TreeParentId) -> Vec<(TreeID, ID)> {
-        let mut ans = Vec::new();
-        for (t, p) in self.trees.iter() {
-            if &p.parent == parent {
-                ans.push((*t, p.last_move_op));
             }
         }
         ans
