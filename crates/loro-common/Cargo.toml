@@ -11,7 +11,7 @@ description = "Common types and functions for Loro. This is an internal lib of L
 serde = { version = "1", features = ["derive"] }
 thiserror = "1.0.43"
 rle = { path = "../rle", version = "0.1.0", package = "loro-rle" }
-wasm-bindgen = { version = "=0.2.86", optional = true }
+wasm-bindgen = { version = "=0.2.90", optional = true }
 fxhash = "0.2.1"
 enum-as-inner = "0.6.0"
 string_cache = "0.8"
