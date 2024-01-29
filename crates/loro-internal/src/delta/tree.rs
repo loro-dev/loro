@@ -22,35 +22,28 @@ pub struct TreeDiffItem {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum TreeExternalDiff {
-    Create(Option<TreeID>),
-    Move(Option<TreeID>),
+    Create(TreeParentId),
+    Move(TreeParentId),
     Delete,
 }
 
 impl TreeDiffItem {
-    pub(crate) fn from_delta_item(item: TreeDeltaItem) -> TreeDiffItem {
+    pub(crate) fn from_delta_item(item: TreeDeltaItem) -> Option<TreeDiffItem> {
         let target = item.target;
         match item.action {
-            TreeInternalDiff::Create | TreeInternalDiff::Restore => TreeDiffItem {
+            TreeInternalDiff::Create(p) => Some(TreeDiffItem {
                 target,
-                action: TreeExternalDiff::Create(None),
-            },
-            TreeInternalDiff::AsRoot => TreeDiffItem {
+                action: TreeExternalDiff::Create(p),
+            }),
+            TreeInternalDiff::Move(p) => Some(TreeDiffItem {
                 target,
-                action: TreeExternalDiff::Move(None),
-            },
-            TreeInternalDiff::Move(p) => TreeDiffItem {
-                target,
-                action: TreeExternalDiff::Move(Some(p)),
-            },
-            TreeInternalDiff::CreateMove(p) | TreeInternalDiff::RestoreMove(p) => TreeDiffItem {
-                target,
-                action: TreeExternalDiff::Create(Some(p)),
-            },
-            TreeInternalDiff::Delete | TreeInternalDiff::UnCreate => TreeDiffItem {
+                action: TreeExternalDiff::Move(p),
+            }),
+            TreeInternalDiff::Delete(_) | TreeInternalDiff::UnCreate => Some(TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Delete,
-            },
+            }),
+            TreeInternalDiff::MoveInDelete(_) => None,
         }
     }
 }
@@ -67,13 +60,13 @@ impl TreeDiff {
 }
 
 /// Representation of differences in movable tree. It's an ordered list of [`TreeDiff`].
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default)]
 pub struct TreeDelta {
     pub(crate) diff: Vec<TreeDeltaItem>,
 }
 
 /// The semantic action in movable tree.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy)]
 pub struct TreeDeltaItem {
     pub target: TreeID,
     pub action: TreeInternalDiff,
@@ -81,59 +74,47 @@ pub struct TreeDeltaItem {
 }
 
 /// The action of [`TreeDiff`]. It's the same as  [`crate::container::tree::tree_op::TreeOp`], but semantic.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy)]
 pub enum TreeInternalDiff {
     /// First create the node, have not seen it before
-    Create,
-    /// Recreate the node, the node has been deleted before
-    Restore,
-    /// Same as move to `None` and the node exists
-    AsRoot,
-    /// Move the node to the parent, the node exists
-    Move(TreeID),
-    /// First create the node and move it to the parent
-    CreateMove(TreeID),
-    /// Recreate the node, and move it to the parent
-    RestoreMove(TreeID),
-    /// Delete the node
-    Delete,
+    Create(TreeParentId),
     /// For retreating, if the node is only created, not move it to `DELETED_ROOT` but delete it directly
     UnCreate,
+    /// Move the node to the parent, the node exists
+    Move(TreeParentId),
+    /// move under a parent that is deleted
+    Delete(TreeParentId),
+    /// old parent is deleted, new parent is deleted too
+    MoveInDelete(TreeParentId),
 }
 
 impl TreeDeltaItem {
+    /// * `is_new_parent_deleted` and `is_old_parent_deleted`: we need to infer whether it's a `creation`.
+    ///    It's a creation if the old_parent is deleted but the new parent isn't.
+    ///    If it is a creation, we need to emit the `Create` event so that downstream event handler can
+    ///    handle the new containers easier.
     pub(crate) fn new(
         target: TreeID,
         parent: TreeParentId,
         old_parent: TreeParentId,
         op_id: ID,
-        is_parent_deleted: bool,
+        is_new_parent_deleted: bool,
         is_old_parent_deleted: bool,
     ) -> Self {
-        let action = match (parent, old_parent) {
-            // don't change the order of the following branches
-            // we check unexist first
-            (TreeParentId::Node(p), TreeParentId::Unexist) => TreeInternalDiff::CreateMove(p),
-            (TreeParentId::Node(p), _) => {
-                if is_parent_deleted {
-                    TreeInternalDiff::Delete
-                } else if is_old_parent_deleted {
-                    TreeInternalDiff::RestoreMove(p)
-                } else {
-                    TreeInternalDiff::Move(p)
-                }
+        let action = if matches!(parent, TreeParentId::Unexist) {
+            TreeInternalDiff::UnCreate
+        } else {
+            match (
+                is_new_parent_deleted,
+                is_old_parent_deleted || old_parent == TreeParentId::Unexist,
+            ) {
+                (true, true) => TreeInternalDiff::MoveInDelete(parent),
+                (true, false) => TreeInternalDiff::Delete(parent),
+                (false, true) => TreeInternalDiff::Create(parent),
+                (false, false) => TreeInternalDiff::Move(parent),
             }
-            (TreeParentId::None, TreeParentId::Unexist) => TreeInternalDiff::Create,
-            (TreeParentId::None, _) => {
-                if is_old_parent_deleted {
-                    TreeInternalDiff::Restore
-                } else {
-                    TreeInternalDiff::AsRoot
-                }
-            }
-            (TreeParentId::Deleted, _) => TreeInternalDiff::Delete,
-            (TreeParentId::Unexist, _) => TreeInternalDiff::UnCreate,
         };
+
         TreeDeltaItem {
             target,
             action,
@@ -166,10 +147,10 @@ impl<'a> TreeValue<'a> {
             match d.action {
                 TreeExternalDiff::Create(parent) => {
                     self.create_target(target);
-                    self.mov(target, parent);
+                    self.mov(target, parent.as_node().copied());
                 }
                 TreeExternalDiff::Delete => self.delete_target(target),
-                TreeExternalDiff::Move(parent) => self.mov(target, parent),
+                TreeExternalDiff::Move(parent) => self.mov(target, parent.as_node().copied()),
             }
         }
     }

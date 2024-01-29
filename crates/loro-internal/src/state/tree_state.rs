@@ -23,12 +23,37 @@ use crate::{
 
 use super::ContainerState;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner, Serialize)]
 pub enum TreeParentId {
     Node(TreeID),
     Unexist,
     Deleted,
+    /// parent is root
     None,
+}
+
+impl TreeParentId {
+    pub(crate) fn from_tree_id(id: Option<TreeID>) -> Self {
+        match id {
+            Some(id) => {
+                if TreeID::is_deleted_root(&id) {
+                    TreeParentId::Deleted
+                } else {
+                    TreeParentId::Node(id)
+                }
+            }
+            None => TreeParentId::None,
+        }
+    }
+
+    pub(crate) fn to_tree_id(self) -> Option<TreeID> {
+        match self {
+            TreeParentId::Node(id) => Some(id),
+            TreeParentId::Deleted => Some(TreeID::delete_root()),
+            TreeParentId::None => None,
+            TreeParentId::Unexist => unreachable!(),
+        }
+    }
 }
 
 /// The state of movable tree.
@@ -190,13 +215,10 @@ impl ContainerState for TreeState {
                 let target = diff.target;
                 // create associated metadata container
                 let parent = match diff.action {
-                    TreeInternalDiff::Create
-                    | TreeInternalDiff::Restore
-                    | TreeInternalDiff::AsRoot => TreeParentId::None,
-                    TreeInternalDiff::Move(parent)
-                    | TreeInternalDiff::CreateMove(parent)
-                    | TreeInternalDiff::RestoreMove(parent) => TreeParentId::Node(parent),
-                    TreeInternalDiff::Delete => TreeParentId::Deleted,
+                    TreeInternalDiff::Create(p)
+                    | TreeInternalDiff::Move(p)
+                    | TreeInternalDiff::Delete(p)
+                    | TreeInternalDiff::MoveInDelete(p) => p,
                     TreeInternalDiff::UnCreate => {
                         // delete it from state
                         self.trees.remove(&target);
@@ -217,7 +239,7 @@ impl ContainerState for TreeState {
             .unwrap()
             .diff
             .into_iter()
-            .map(TreeDiffItem::from_delta_item)
+            .filter_map(TreeDiffItem::from_delta_item)
             .collect_vec();
         Diff::Tree(TreeDiff { diff: ans })
     }
@@ -264,9 +286,14 @@ impl ContainerState for TreeState {
         let forest = Forest::from_tree_state(&self.trees);
         let mut q = VecDeque::from(forest.roots);
         while let Some(node) = q.pop_front() {
+            let parent = if let Some(p) = node.parent {
+                TreeParentId::Node(p)
+            } else {
+                TreeParentId::None
+            };
             let diff = TreeDiffItem {
                 target: node.id,
-                action: TreeExternalDiff::Create(node.parent),
+                action: TreeExternalDiff::Create(parent),
             };
             diffs.push(diff);
             q.extend(node.children);

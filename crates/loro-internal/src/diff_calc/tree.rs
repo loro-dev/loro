@@ -45,13 +45,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         diff.diff.iter().for_each(|d| {
             // the metadata could be modified before, so (re)create a node need emit the map container diffs
             // `Create` here is because maybe in a diff calc uncreate and then create back
-            if matches!(
-                d.action,
-                TreeInternalDiff::Restore
-                    | TreeInternalDiff::RestoreMove(_)
-                    | TreeInternalDiff::Create
-                    | TreeInternalDiff::CreateMove(_)
-            ) {
+            if matches!(d.action, TreeInternalDiff::Create(_)) {
                 on_new_container(&d.target.associated_meta_container())
             }
         });
@@ -203,17 +197,14 @@ impl TreeDiffCalculator {
                     is_parent_deleted,
                 );
                 diffs.push(this_diff);
-                if matches!(
-                    this_diff.action,
-                    TreeInternalDiff::Restore | TreeInternalDiff::RestoreMove(_)
-                ) {
+                if matches!(this_diff.action, TreeInternalDiff::Create(_)) {
                     let mut s = vec![op.target];
                     while let Some(t) = s.pop() {
                         let children = tree_cache.get_children_with_id(TreeParentId::Node(t));
                         children.iter().for_each(|c| {
                             diffs.push(TreeDeltaItem {
                                 target: c.0,
-                                action: TreeInternalDiff::CreateMove(t),
+                                action: TreeInternalDiff::Create(TreeParentId::Node(t)),
                                 last_effective_move_op_id: c.1,
                             })
                         });
@@ -257,10 +248,7 @@ impl TreeDiffCalculator {
                             is_old_parent_deleted,
                         );
                         diffs.push(this_diff);
-                        if matches!(
-                            this_diff.action,
-                            TreeInternalDiff::Restore | TreeInternalDiff::RestoreMove(_)
-                        ) {
+                        if matches!(this_diff.action, TreeInternalDiff::Create(_)) {
                             // TODO: per
                             let mut s = vec![op.target];
                             while let Some(t) = s.pop() {
@@ -269,7 +257,7 @@ impl TreeDiffCalculator {
                                 children.iter().for_each(|c| {
                                     diffs.push(TreeDeltaItem {
                                         target: c.0,
-                                        action: TreeInternalDiff::CreateMove(t),
+                                        action: TreeInternalDiff::Create(TreeParentId::Node(t)),
                                         last_effective_move_op_id: c.1,
                                     })
                                 });

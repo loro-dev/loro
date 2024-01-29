@@ -133,7 +133,7 @@ impl DiffVariant {
 }
 
 #[non_exhaustive]
-#[derive(Clone, Debug, EnumAsInner, Serialize)]
+#[derive(Clone, Debug, EnumAsInner)]
 pub(crate) enum InternalDiff {
     ListRaw(Delta<SliceRanges>),
     /// This always uses entity indexes.

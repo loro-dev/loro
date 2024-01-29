@@ -342,14 +342,16 @@ pub mod wasm {
                 match diff.action {
                     TreeExternalDiff::Create(p) => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"create".into()).unwrap();
-                        js_sys::Reflect::set(&obj, &"parent".into(), &p.into()).unwrap();
+                        js_sys::Reflect::set(&obj, &"parent".into(), &p.to_tree_id().into())
+                            .unwrap();
                     }
                     TreeExternalDiff::Delete => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"delete".into()).unwrap();
                     }
                     TreeExternalDiff::Move(p) => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"move".into()).unwrap();
-                        js_sys::Reflect::set(&obj, &"parent".into(), &p.into()).unwrap();
+                        js_sys::Reflect::set(&obj, &"parent".into(), &p.to_tree_id().into())
+                            .unwrap();
                     }
                 }
                 array.push(&obj);

@@ -1245,11 +1245,11 @@ impl TreeHandler {
         txn: &mut Transaction,
         parent: T,
     ) -> LoroResult<TreeID> {
-        let parent = parent.into();
+        let parent: Option<TreeID> = parent.into();
         let tree_id = TreeID::from_id(txn.next_id());
         let event_hint = TreeDiffItem {
             target: tree_id,
-            action: TreeExternalDiff::Create(parent),
+            action: TreeExternalDiff::Create(TreeParentId::from_tree_id(parent)),
         };
         txn.apply_local_op(
             self.container_idx,
@@ -1279,7 +1279,7 @@ impl TreeHandler {
             crate::op::RawOpContent::Tree(TreeOp { target, parent }),
             EventHint::Tree(TreeDiffItem {
                 target,
-                action: TreeExternalDiff::Move(parent),
+                action: TreeExternalDiff::Move(TreeParentId::from_tree_id(parent)),
             }),
             &self.state,
         )
