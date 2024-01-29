@@ -225,12 +225,11 @@ declare module "loro-wasm" {
   }
 
   interface LoroTreeNode{
-    id: TreeID;
+    readonly data: LoroMap;
     createNode(): LoroTreeNode;
     setAsRoot(): void;
     moveTo(parent: LoroTreeNode): void;
-    data: LoroMap;
-    parent: LoroTreeNode | undefined;
-    children: Array<LoroTreeNode>;
+    parent(): LoroTreeNode | undefined;
+    children(): Array<LoroTreeNode>;
   }
 }

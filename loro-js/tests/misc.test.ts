@@ -257,17 +257,17 @@ describe("tree", () => {
   it("create", () => {
     const root = tree.createNode();
     const child = root.createNode();
-    assertEquals(child.parent.id, root.id);
+    assertEquals(child.parent()!.id, root.id);
   });
 
   it("move",()=>{
     const root = tree.createNode();
     const child = root.createNode();
     const child2 = root.createNode();
-    assertEquals(child2.parent.id, root.id);
+    assertEquals(child2.parent()!.id, root.id);
     child2.moveTo(child);
-    assertEquals(child2.parent.id, child.id);
-    assertEquals(child.children[0].id, child2.id);
+    assertEquals(child2.parent()!.id, child.id);
+    assertEquals(child.children()[0].id, child2.id);
   })
 
   it("meta", () => {

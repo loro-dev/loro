@@ -1926,14 +1926,12 @@ impl LoroTreeNode {
     }
 
     /// Get the parent node of this node.
-    #[wasm_bindgen(getter)]
     pub fn parent(&self) -> Option<LoroTreeNode> {
         let parent = self.tree.parent(self.id).flatten();
         parent.map(|p| LoroTreeNode::from_tree(p, self.tree.clone(), self.doc.clone()))
     }
 
     /// Get the children of this node.
-    #[wasm_bindgen(getter)]
     pub fn children(&self) -> Array {
         let children = self.tree.children(self.id);
         let children = children.into_iter().map(|c| {
