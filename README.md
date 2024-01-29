@@ -74,7 +74,7 @@ https://github.com/loro-dev/loro/assets/18425020/ec2d20a3-3d8c-4483-a601-b200243
 3. **Node**: Install from the Node.js website.
 4. **pnpm**: Run `npm i -g pnpm` for global installation.
 5. **Rust Target**: Add with `rustup target add wasm32-unknown-unknown`.
-6. **wasm-bindgen-cli**: Install version 0.2.86 via `cargo install wasm-bindgen-cli --version 0.2.86`.
+6. **wasm-bindgen-cli**: Install version 0.2.90 via `cargo install wasm-bindgen-cli --version 0.2.90`.
 6. **wasm-opt**: Install using `cargo install wasm-opt --locked`.
 7. **wasm-snip**: Install using `cargo install wasm-snip`.
 8. **cargo-nextest**: Install using `cargo install cargo-nextest --locked`.
