@@ -9,7 +9,7 @@ use crate::{
     },
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
-    state::RichtextState,
+    state::{RichtextState, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
 };
@@ -20,7 +20,6 @@ use loro_common::{
     TreeID,
 };
 use serde::{Deserialize, Serialize};
-use smallvec::smallvec;
 use std::{
     borrow::Cow,
     ops::Deref,
@@ -1227,12 +1226,12 @@ impl TreeHandler {
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
                 target,
-                parent: TreeID::delete_root(),
+                parent: Some(TreeID::delete_root()),
             }),
-            EventHint::Tree(smallvec![TreeDiffItem {
+            EventHint::Tree(TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Delete,
-            }]),
+            }),
             &self.state,
         )
     }
@@ -1246,18 +1245,12 @@ impl TreeHandler {
         txn: &mut Transaction,
         parent: T,
     ) -> LoroResult<TreeID> {
-        let parent = parent.into();
+        let parent: Option<TreeID> = parent.into();
         let tree_id = TreeID::from_id(txn.next_id());
-        let mut event_hint = smallvec![TreeDiffItem {
+        let event_hint = TreeDiffItem {
             target: tree_id,
-            action: TreeExternalDiff::Create,
-        },];
-        if parent.is_some() {
-            event_hint.push(TreeDiffItem {
-                target: tree_id,
-                action: TreeExternalDiff::Move(parent),
-            });
-        }
+            action: TreeExternalDiff::Create(TreeParentId::from_tree_id(parent)),
+        };
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -1284,10 +1277,10 @@ impl TreeHandler {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp { target, parent }),
-            EventHint::Tree(smallvec![TreeDiffItem {
+            EventHint::Tree(TreeDiffItem {
                 target,
-                action: TreeExternalDiff::Move(parent),
-            }]),
+                action: TreeExternalDiff::Move(TreeParentId::from_tree_id(parent)),
+            }),
             &self.state,
         )
     }
@@ -1309,6 +1302,7 @@ impl TreeHandler {
         Ok(map)
     }
 
+    /// Get the parent of the node, if the node is deleted or does not exist, return None
     pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
         self.state
             .upgrade()
@@ -1317,7 +1311,26 @@ impl TreeHandler {
             .unwrap()
             .with_state(self.container_idx, |state| {
                 let a = state.as_tree_state().unwrap();
-                a.parent(target)
+                a.parent(target).map(|p| match p {
+                    TreeParentId::None => None,
+                    TreeParentId::Node(parent_id) => Some(parent_id),
+                    _ => unreachable!(),
+                })
+            })
+    }
+
+    pub fn children(&self, target: TreeID) -> Vec<TreeID> {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_tree_state().unwrap();
+                a.as_ref()
+                    .get_children(&TreeParentId::Node(target))
+                    .into_iter()
+                    .collect()
             })
     }
 

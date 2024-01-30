@@ -94,7 +94,7 @@ pub(super) enum EventHint {
         key: InternalString,
         value: Option<LoroValue>,
     },
-    Tree(SmallVec<[TreeDiffItem; 2]>),
+    Tree(TreeDiffItem),
     MarkEnd,
 }
 
@@ -579,9 +579,11 @@ fn change_to_diff(
                     )),
                 }),
                 EventHint::Tree(tree_diff) => {
+                    let mut diff = TreeDiff::default();
+                    diff.push(tree_diff);
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: Diff::Tree(TreeDiff::default().extend(tree_diff)),
+                        diff: Diff::Tree(diff),
                     });
                 }
                 EventHint::MarkEnd => {

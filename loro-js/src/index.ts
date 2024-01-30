@@ -1,5 +1,6 @@
 export * from "loro-wasm";
-import { Container, Delta, LoroText, LoroTree, OpId, Value, ContainerID, Loro, LoroList, LoroMap, TreeID } from "loro-wasm";
+import { Container, Delta, LoroText, LoroTree,LoroTreeNode, OpId, Value, ContainerID, Loro, LoroList, LoroMap, TreeID } from "loro-wasm";
+
 
 
 Loro.prototype.getTypedMap = function (...args) {
@@ -35,11 +36,11 @@ export type Frontiers = OpId[];
 
 /**
  * Represents a path to identify the exact location of an event's target.
- * The path is composed of numbers (e.g., indices of a list container) and strings
- * (e.g., keys of a map container), indicating the absolute position of the event's source
- * within a loro document.
+ * The path is composed of numbers (e.g., indices of a list container) strings
+ * (e.g., keys of a map container) and TreeID (the node of a tree container), 
+ * indicating the absolute position of the event's source within a loro document.
  */
-export type Path = (number | string)[];
+export type Path = (number | string | TreeID )[];
 
 /**
  * The event of Loro.
@@ -84,11 +85,13 @@ export type MapDiff = {
   updated: Record<string, Value | Container | undefined>;
 };
 
+export type TreeDiffItem = { target: TreeID; action: "create"; parent: TreeID | undefined }
+   | { target: TreeID; action: "delete" }
+   | { target: TreeID; action: "move"; parent: TreeID | undefined };
+
 export type TreeDiff = {
   type: "tree";
-  diff:
-  | { target: TreeID; action: "create" | "delete" }
-  | { target: TreeID; action: "move"; parent: TreeID };
+  diff: TreeDiffItem[];
 };
 
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
@@ -213,12 +216,20 @@ declare module "loro-wasm" {
   }
 
   interface LoroTree {
-    create(parent: TreeID | undefined): TreeID;
-    mov(target: TreeID, parent: TreeID | undefined): void;
+    createNode(parent: TreeID | undefined): LoroTreeNode;
+    move(target: TreeID, parent: TreeID | undefined): void;
     delete(target: TreeID): void;
-    getMeta(target: TreeID): LoroMap;
-    parent(target: TreeID): TreeID | undefined;
-    contains(target: TreeID): boolean;
+    has(target: TreeID): boolean;
+    getNodeByID(target: TreeID): LoroTreeNode;
     subscribe(txn: Loro, listener: Listener): number;
+  }
+
+  interface LoroTreeNode{
+    readonly data: LoroMap;
+    createNode(): LoroTreeNode;
+    setAsRoot(): void;
+    moveTo(parent: LoroTreeNode): void;
+    parent(): LoroTreeNode | undefined;
+    children(): Array<LoroTreeNode>;
   }
 }

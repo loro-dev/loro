@@ -328,56 +328,35 @@ pub mod wasm {
             match value {
                 Index::Key(key) => JsValue::from_str(&key),
                 Index::Seq(num) => JsValue::from_f64(num as f64),
-                Index::Node(node) => JsValue::from_str(&node.to_string()),
+                Index::Node(node) => node.into(),
             }
-        }
-    }
-
-    impl From<TreeExternalDiff> for JsValue {
-        fn from(value: TreeExternalDiff) -> Self {
-            let obj = Object::new();
-            match value {
-                TreeExternalDiff::Delete => {
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("delete"),
-                    )
-                    .unwrap();
-                }
-                TreeExternalDiff::Move(parent) => {
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("move"),
-                    )
-                    .unwrap();
-
-                    js_sys::Reflect::set(&obj, &JsValue::from_str("parent"), &parent.into())
-                        .unwrap();
-                }
-
-                TreeExternalDiff::Create => {
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("create"),
-                    )
-                    .unwrap();
-                }
-            }
-            obj.into_js_result().unwrap()
         }
     }
 
     impl From<TreeDiff> for JsValue {
         fn from(value: TreeDiff) -> Self {
-            let obj = Object::new();
+            let array = Array::new();
             for diff in value.diff.into_iter() {
+                let obj = Object::new();
                 js_sys::Reflect::set(&obj, &"target".into(), &diff.target.into()).unwrap();
-                js_sys::Reflect::set(&obj, &"action".into(), &diff.action.into()).unwrap();
+                match diff.action {
+                    TreeExternalDiff::Create(p) => {
+                        js_sys::Reflect::set(&obj, &"action".into(), &"create".into()).unwrap();
+                        js_sys::Reflect::set(&obj, &"parent".into(), &p.to_tree_id().into())
+                            .unwrap();
+                    }
+                    TreeExternalDiff::Delete => {
+                        js_sys::Reflect::set(&obj, &"action".into(), &"delete".into()).unwrap();
+                    }
+                    TreeExternalDiff::Move(p) => {
+                        js_sys::Reflect::set(&obj, &"action".into(), &"move".into()).unwrap();
+                        js_sys::Reflect::set(&obj, &"parent".into(), &p.to_tree_id().into())
+                            .unwrap();
+                    }
+                }
+                array.push(&obj);
             }
-            obj.into_js_result().unwrap()
+            array.into_js_result().unwrap()
         }
     }
 

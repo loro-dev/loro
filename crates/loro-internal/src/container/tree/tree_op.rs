@@ -2,6 +2,8 @@ use loro_common::TreeID;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
+use crate::state::TreeParentId;
+
 /// The operation of movable tree.
 ///
 /// In the movable tree, there are three actions:
@@ -13,6 +15,22 @@ use serde::{Deserialize, Serialize};
 pub struct TreeOp {
     pub(crate) target: TreeID,
     pub(crate) parent: Option<TreeID>,
+}
+
+impl TreeOp {
+    // TODO: use `TreeParentId` instead of `Option<TreeID>`
+    pub(crate) fn parent_id(&self) -> TreeParentId {
+        match self.parent {
+            Some(parent) => {
+                if TreeID::is_deleted_root(&parent) {
+                    TreeParentId::Deleted
+                } else {
+                    TreeParentId::Node(parent)
+                }
+            }
+            None => TreeParentId::None,
+        }
+    }
 }
 
 impl HasLength for TreeOp {
