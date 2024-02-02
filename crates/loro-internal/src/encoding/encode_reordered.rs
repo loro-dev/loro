@@ -1,9 +1,10 @@
 use std::{borrow::Cow, cmp::Ordering, mem::take, sync::Arc};
 
 use fxhash::{FxHashMap, FxHashSet};
+use generic_btree::rle::Sliceable;
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, ContainerType, Counter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan,
+    ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdSpan,
     InternalString, LoroError, LoroResult, PeerID, ID,
 };
 use num_traits::FromPrimitive;
@@ -20,7 +21,6 @@ use crate::{
     },
     op::{Op, OpWithId, SliceRange},
     state::ContainerState,
-    utils::id_int_map::IdIntMap,
     version::Frontiers,
     DocState, LoroDoc, OpLog, VersionVector,
 };
@@ -355,12 +355,14 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     let mut cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
     let mut dep_arena = arena::DepsArena::default();
     let mut value_writer = ValueWriter::new();
-    let mut ops: Vec<TempOp> = Vec::new();
 
     // This stores the required op positions of each container state.
     // The states can be encoded in these positions in the next step.
     // This data structure stores that mapping from op id to the required total order.
-    let mut map_op_to_pos = IdIntMap::new();
+    let mut origin_ops: Vec<TempOp<'_>> = Vec::new();
+    let mut pos_mapping_heap: Vec<PosMappingItem> = Vec::new();
+    let mut pos_target_value = 0;
+
     let mut states = Vec::new();
     let mut state_bytes = Vec::new();
     for (_, c_idx) in c_pairs.iter() {
@@ -390,7 +392,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
                 }
             },
             encoder_by_op: &mut |op| {
-                ops.push(TempOp {
+                origin_ops.push(TempOp {
                     op: Cow::Owned(op.op),
                     peer_idx: peer_register.register(&op.peer) as u32,
                     peer_id: op.peer,
@@ -401,8 +403,14 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
                 });
             },
             record_idspan: &mut |id_span| {
-                op_len += id_span.atom_len();
-                map_op_to_pos.insert(id_span);
+                let len = id_span.atom_len();
+                op_len += len;
+                pos_mapping_heap.push(PosMappingItem {
+                    start_id: id_span.id_start(),
+                    len,
+                    target_value: pos_target_value,
+                });
+                pos_target_value += len as i32;
             },
             mode: super::EncodeMode::Snapshot,
         });
@@ -420,31 +428,13 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         &mut dep_arena,
         &mut peer_register,
         &mut |op| {
-            let mut count = 0;
-            let o_len = op.atom_len();
-            ops.extend(map_op_to_pos.split(op).map(|(mut temp_op, ord)| {
-                if let Some(ord) = ord {
-                    temp_op.prop_that_used_for_sort = i32::MIN + ord;
-                }
-
-                count += temp_op.atom_len();
-                temp_op
-            }));
-
-            debug_assert_eq!(count, o_len);
+            origin_ops.push(op);
         },
         &mut key_register,
         &container_idx2index,
     );
 
-    ops.sort_unstable_by(|a, b| {
-        a.container_index.cmp(&b.container_index).then_with(|| {
-            a.prop_that_used_for_sort
-                .cmp(&b.prop_that_used_for_sort)
-                .then_with(|| a.peer_idx.cmp(&b.peer_idx))
-                .then_with(|| a.lamport.cmp(&b.lamport))
-        })
-    });
+    let ops: Vec<TempOp> = calc_sorted_ops_for_snapshot(origin_ops, pos_mapping_heap);
 
     let encoded_ops = encode_ops(
         ops,
@@ -483,6 +473,123 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     };
 
     serde_columnar::to_vec(&doc).unwrap()
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Eq)]
+struct PosMappingItem {
+    start_id: ID,
+    len: usize,
+    target_value: i32,
+}
+
+impl Ord for PosMappingItem {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // this is reversed so that the BinaryHeap will be a min-heap
+        other.start_id.cmp(&self.start_id)
+    }
+}
+
+impl PartialOrd for PosMappingItem {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PosMappingItem {
+    fn split(&mut self, pos: usize) -> Self {
+        let new_len = self.len - pos;
+        self.len = pos;
+        PosMappingItem {
+            start_id: self.start_id.inc(pos as i32),
+            len: new_len,
+            target_value: self.target_value + pos as i32,
+        }
+    }
+}
+
+fn calc_sorted_ops_for_snapshot<'a>(
+    mut origin_ops: Vec<TempOp<'a>>,
+    mut pos_mapping_heap: Vec<PosMappingItem>,
+) -> Vec<TempOp<'a>> {
+    origin_ops.sort_unstable();
+    pos_mapping_heap.sort_unstable();
+    let mut ops: Vec<TempOp<'a>> = Vec::with_capacity(origin_ops.len());
+    let ops_len: usize = origin_ops.iter().map(|x| x.atom_len()).sum();
+    let mut origin_top = origin_ops.pop();
+    let mut pos_top = pos_mapping_heap.pop();
+
+    while origin_top.is_some() || pos_top.is_some() {
+        let Some(mut inner_origin_top) = origin_top else {
+            unreachable!()
+        };
+
+        let Some(mut inner_pos_top) = pos_top else {
+            ops.push(inner_origin_top);
+            origin_top = origin_ops.pop();
+            continue;
+        };
+
+        match inner_origin_top.id_start().cmp(&inner_pos_top.start_id) {
+            std::cmp::Ordering::Less => {
+                if inner_origin_top.id_end() <= inner_pos_top.start_id {
+                    ops.push(inner_origin_top);
+                    origin_top = origin_ops.pop();
+                } else {
+                    let delta =
+                        inner_pos_top.start_id.counter - inner_origin_top.id_start().counter;
+                    let right = inner_origin_top.split(delta as usize);
+                    ops.push(inner_origin_top);
+                    origin_top = Some(right);
+                }
+            }
+            std::cmp::Ordering::Equal => {
+                match inner_origin_top.atom_len().cmp(&inner_pos_top.len) {
+                    std::cmp::Ordering::Less => {
+                        // origin top is shorter than pos mapping,
+                        // need to split the pos mapping
+                        let len = inner_origin_top.atom_len();
+                        inner_origin_top.prop_that_used_for_sort =
+                            i32::MIN + inner_pos_top.target_value;
+                        ops.push(inner_origin_top);
+                        let next = inner_pos_top.split(len);
+                        origin_top = origin_ops.pop();
+                        pos_top = Some(next);
+                    }
+                    std::cmp::Ordering::Equal => {
+                        // origin op's length equal to pos mapping's length
+                        inner_origin_top.prop_that_used_for_sort =
+                            i32::MIN + inner_pos_top.target_value;
+                        ops.push(inner_origin_top.clone());
+                        origin_top = origin_ops.pop();
+                        pos_top = pos_mapping_heap.pop();
+                    }
+                    std::cmp::Ordering::Greater => {
+                        // origin top is longer than pos mapping,
+                        // need to split the origin top
+                        let right = inner_origin_top.split(inner_pos_top.len);
+                        inner_origin_top.prop_that_used_for_sort =
+                            i32::MIN + inner_pos_top.target_value;
+                        ops.push(inner_origin_top);
+                        origin_top = Some(right);
+                        pos_top = pos_mapping_heap.pop();
+                    }
+                }
+            }
+            std::cmp::Ordering::Greater => unreachable!(),
+        }
+    }
+
+    ops.sort_unstable_by(|a, b| {
+        a.container_index.cmp(&b.container_index).then({
+            a.prop_that_used_for_sort
+                .cmp(&b.prop_that_used_for_sort)
+                .then_with(|| a.peer_idx.cmp(&b.peer_idx))
+                .then_with(|| a.lamport.cmp(&b.lamport))
+        })
+    });
+
+    debug_assert_eq!(ops.iter().map(|x| x.atom_len()).sum::<usize>(), ops_len);
+    ops
 }
 
 pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
@@ -672,12 +779,26 @@ mod encode {
         pub prop_that_used_for_sort: i32,
     }
 
-    impl TempOp<'_> {
-        pub(crate) fn id(&self) -> loro_common::ID {
-            loro_common::ID {
-                peer: self.peer_id,
-                counter: self.op.counter,
-            }
+    impl PartialEq for TempOp<'_> {
+        fn eq(&self, other: &Self) -> bool {
+            self.peer_id == other.peer_id && self.lamport == other.lamport
+        }
+    }
+
+    impl Eq for TempOp<'_> {}
+    impl Ord for TempOp<'_> {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.peer_id
+                .cmp(&other.peer_id)
+                .then(self.lamport.cmp(&other.lamport))
+                // we need reverse because we'll need to use binary heap to get the smallest one
+                .reverse()
+        }
+    }
+
+    impl PartialOrd for TempOp<'_> {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
         }
     }
 
