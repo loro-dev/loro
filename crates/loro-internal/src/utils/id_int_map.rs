@@ -215,42 +215,42 @@ impl IdIntMap {
 
     /// If the given item has overlapped section with the content in the map,
     /// split the item into pieces where each piece maps to a continuous series of values or maps to none.
-    pub(crate) fn split<'a, T: HasIdSpan + generic_btree::rle::Sliceable + 'a>(
+    pub(crate) fn split<'a, T: HasIdSpan + generic_btree::rle::Sliceable + Clone + 'a>(
         &'a self,
         item: T,
-    ) -> impl Iterator<Item = T> + 'a {
+    ) -> impl Iterator<Item = (T, Option<i32>)> + 'a {
         let len = item.rle_len();
         let span = item.id_span();
         // PERF: we may avoid this alloc if get_values_in_span returns an iter
         let mut ans = Vec::new();
         let mut ctr_start = span.ctr_start();
-        let mut index = 0;
-        let ctr_end = span.ctr_end();
-        self.get_values_in_span(span, |id_span: IdSpan, _| {
-            if id_span.counter.start == ctr_start && id_span.counter.end == ctr_end {
-                return;
-            }
-
+        let mut index: i32 = 0;
+        self.get_values_in_span(span, |id_span: IdSpan, v| {
             if id_span.counter.start > ctr_start {
-                ans.push(
+                // There is a gap between the previous value and the current value
+                ans.push((
                     item.slice(
                         index as usize..(index + id_span.counter.start - ctr_start) as usize,
                     ),
-                );
+                    None,
+                ));
                 index += id_span.counter.start - ctr_start;
             }
 
-            ans.push(item.slice(
-                index as usize..(index + id_span.counter.end - id_span.counter.start) as usize,
+            ans.push((
+                item.slice(
+                    index as usize..(index + id_span.counter.end - id_span.counter.start) as usize,
+                ),
+                Some(v),
             ));
             index += id_span.counter.end - id_span.counter.start;
             ctr_start = id_span.ctr_end();
         });
 
         if ans.is_empty() && len > 0 {
-            ans.push(item);
+            ans.push((item, None));
         } else if index as usize != len {
-            ans.push(item.slice(index as usize..len));
+            ans.push((item.slice(index as usize..len), None));
         }
 
         ans.into_iter()

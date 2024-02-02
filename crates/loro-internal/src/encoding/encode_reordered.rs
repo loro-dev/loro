@@ -422,9 +422,13 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         &mut |op| {
             let mut count = 0;
             let o_len = op.atom_len();
-            ops.extend(map_op_to_pos.split(op).map(|x| {
-                count += x.atom_len();
-                x
+            ops.extend(map_op_to_pos.split(op).map(|(mut temp_op, ord)| {
+                if let Some(ord) = ord {
+                    temp_op.prop_that_used_for_sort = i32::MIN + ord;
+                }
+
+                count += temp_op.atom_len();
+                temp_op
             }));
 
             debug_assert_eq!(count, o_len);
@@ -432,18 +436,13 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         &mut key_register,
         &container_idx2index,
     );
-    ops.sort_by(move |a, b| {
+
+    ops.sort_unstable_by(|a, b| {
         a.container_index.cmp(&b.container_index).then_with(|| {
-            match (map_op_to_pos.get(a.id()), map_op_to_pos.get(b.id())) {
-                (None, None) => a
-                    .prop_that_used_for_sort
-                    .cmp(&b.prop_that_used_for_sort)
-                    .then_with(|| a.peer_idx.cmp(&b.peer_idx))
-                    .then_with(|| a.lamport.cmp(&b.lamport)),
-                (None, Some(_)) => Ordering::Greater,
-                (Some(_), None) => Ordering::Less,
-                (Some(a), Some(b)) => a.0.cmp(&b.0),
-            }
+            a.prop_that_used_for_sort
+                .cmp(&b.prop_that_used_for_sort)
+                .then_with(|| a.peer_idx.cmp(&b.peer_idx))
+                .then_with(|| a.lamport.cmp(&b.lamport))
         })
     });
 
@@ -661,7 +660,7 @@ mod encode {
         InternalString,
     };
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub(super) struct TempOp<'a> {
         pub op: Cow<'a, Op>,
         pub lamport: Lamport,
