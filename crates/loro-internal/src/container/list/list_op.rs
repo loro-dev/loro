@@ -412,7 +412,12 @@ impl Sliceable for InnerListOp {
                 pos,
             } => InnerListOp::InsertText {
                 slice: {
-                    let (a, b) = unicode_range_to_byte_range(slice, from, to);
+                    let (a, b) = unicode_range_to_byte_range(
+                        // SAFETY: we know it's a valid utf8 string
+                        unsafe { std::str::from_utf8_unchecked(slice) },
+                        from,
+                        to,
+                    );
                     slice.slice(a, b)
                 },
                 unicode_start: *unicode_start + from as u32,

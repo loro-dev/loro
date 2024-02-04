@@ -192,14 +192,13 @@ impl DeltaValue for StringSlice {
     }
 }
 
-pub fn unicode_range_to_byte_range(bytes: &[u8], start: usize, end: usize) -> (usize, usize) {
+pub fn unicode_range_to_byte_range(s: &str, start: usize, end: usize) -> (usize, usize) {
     debug_assert!(start <= end);
-    let s = std::str::from_utf8(bytes).unwrap();
     let start_unicode_index = start;
     let end_unicode_index = end;
     let mut current_utf8_index = 0;
     let mut start_byte = 0;
-    let mut end_byte = bytes.len();
+    let mut end_byte = s.len();
     for (current_unicode_index, c) in s.chars().enumerate() {
         if current_unicode_index == start_unicode_index {
             start_byte = current_utf8_index;
