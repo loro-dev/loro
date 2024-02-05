@@ -266,15 +266,17 @@ impl LoroDoc {
     /// doc.subscribe(
     ///     &text.id(),
     ///     Arc::new(move |event: DiffEvent| {
-    ///         assert!(event.doc.local);
-    ///         let event = event.container.diff.as_text().unwrap();
-    ///         let delta: Vec<_> = event.iter().cloned().collect();
-    ///         let d = DeltaItem::Insert {
-    ///             insert: "123".into(),
-    ///             attributes: Default::default(),
-    ///         };
-    ///         assert_eq!(delta, vec![d]);
-    ///         ran2.store(true, std::sync::atomic::Ordering::Relaxed);
+    ///         assert!(event.event_meta.local);
+    ///         for event in event.events {
+    ///             let event = event.diff.as_text().unwrap();
+    ///             let delta: Vec<_> = event.iter().cloned().collect();
+    ///             let d = DeltaItem::Insert {
+    ///                 insert: "123".into(),
+    ///                 attributes: Default::default(),
+    ///             };
+    ///             assert_eq!(delta, vec![d]);
+    ///             ran2.store(true, std::sync::atomic::Ordering::Relaxed);
+    ///         }
     ///     }),
     /// );
     /// text.insert(0, "123").unwrap();

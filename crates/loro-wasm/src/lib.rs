@@ -1018,7 +1018,7 @@ fn call_subscriber(ob: observer::Observer, e: DiffEvent, doc: &Arc<LoroDoc>) {
     //
     // [1]: https://caniuse.com/?search=FinalizationRegistry
     // [2]: https://rustwasm.github.io/wasm-bindgen/reference/weak-references.html
-    let event = diff_event_to_js_value(e, &doc);
+    let event = diff_event_to_js_value(e, doc);
     if let Err(e) = ob.call1(&event) {
         console_error!("Error when calling observer: {:#?}", e);
     }
@@ -1030,7 +1030,7 @@ fn call_after_micro_task(ob: observer::Observer, event: DiffEvent, doc: &Arc<Lor
     type C = Closure<dyn FnMut(JsValue)>;
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
     let copy = drop_handler.clone();
-    let event = diff_event_to_js_value(event, &doc);
+    let event = diff_event_to_js_value(event, doc);
     let closure = Closure::once(move |_: JsValue| {
         let ans = ob.call1(&event);
         drop(copy);
