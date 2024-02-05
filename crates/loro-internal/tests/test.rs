@@ -79,7 +79,7 @@ fn mark_with_the_same_key_value_should_be_skipped() {
 fn event_from_checkout() {
     let a = LoroDoc::new_auto_commit();
     let sub_id = a.subscribe_root(Arc::new(|event| {
-        assert!(!event.doc.from_checkout);
+        assert!(!event.event_meta.from_checkout);
     }));
     a.get_text("text").insert(0, "hello").unwrap();
     a.commit_then_renew();
@@ -90,7 +90,7 @@ fn event_from_checkout() {
     let ran = Arc::new(AtomicBool::new(false));
     let ran_cloned = ran.clone();
     a.subscribe_root(Arc::new(move |event| {
-        assert!(event.doc.from_checkout);
+        assert!(event.event_meta.from_checkout);
         ran.store(true, std::sync::atomic::Ordering::Relaxed);
     }));
     a.checkout(&version).unwrap();

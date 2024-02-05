@@ -304,7 +304,7 @@ fn subscribe() {
     doc.subscribe(
         &text.id(),
         Arc::new(move |event: DiffEvent| {
-            assert!(event.doc.local);
+            assert!(event.event_meta.local);
             let event = event.container.diff.as_text().unwrap();
             let delta: Vec<_> = event.iter().cloned().collect();
             let d = DeltaItem::Insert {

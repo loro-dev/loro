@@ -1019,17 +1019,17 @@ fn call_subscriber(ob: observer::Observer, e: DiffEvent, doc: Arc<LoroDoc>) {
     // [1]: https://caniuse.com/?search=FinalizationRegistry
     // [2]: https://rustwasm.github.io/wasm-bindgen/reference/weak-references.html
     let event = Event {
-        id: e.doc.id(),
+        id: e.event_meta.id(),
         path: Event::get_path(
             e.container.path.len() as u32,
             e.container.path.iter().map(|x| &x.1),
         ),
         from_children: e.from_children,
-        local: e.doc.local,
-        origin: e.doc.origin.to_string(),
+        local: e.event_meta.local,
+        origin: e.event_meta.origin.to_string(),
         target: e.container.id.clone(),
         diff: e.container.diff.to_owned(),
-        from_checkout: e.doc.from_checkout,
+        from_checkout: e.event_meta.from_checkout,
     }
     // PERF: converting the events into js values may hurt performance
     .into_js(doc);
@@ -1046,11 +1046,11 @@ fn call_after_micro_task(ob: observer::Observer, e: DiffEvent, doc: Arc<LoroDoc>
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
     let copy = drop_handler.clone();
     let event = Event {
-        id: e.doc.id(),
+        id: e.event_meta.id(),
         from_children: e.from_children,
-        from_checkout: e.doc.from_checkout,
-        local: e.doc.local,
-        origin: e.doc.origin.to_string(),
+        from_checkout: e.event_meta.from_checkout,
+        local: e.event_meta.local,
+        origin: e.event_meta.origin.to_string(),
         target: e.container.id.clone(),
         diff: (e.container.diff.to_owned()),
         path: Event::get_path(
