@@ -4,8 +4,8 @@ import {
   getType,
   ListDiff,
   Loro,
-  LoroText,
   LoroEventBatch,
+  LoroText,
   MapDiff,
   TextDiff,
 } from "../src";
@@ -127,7 +127,7 @@ describe("event", () => {
 
   it("tree", async () => {
     const loro = new Loro();
-    let lastEvent: undefined | LoroEvent;
+    let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       console.log(event);
       lastEvent = event;
@@ -137,7 +137,7 @@ describe("event", () => {
     tree.createNode();
     loro.commit();
     await oneMs();
-    expect(lastEvent?.target).toEqual(id);
+    expect(lastEvent?.events[0].target).toEqual(id);
   });
 
   describe("subscribe container events", () => {
@@ -323,9 +323,6 @@ describe("event", () => {
     t.insert(0, "He");
     t.insert(2, "llo");
     doc.commit();
-    await new Promise((resolve) => setTimeout(resolve, 1));
-    expect(ran).toBeTruthy();
-  });
     await new Promise((resolve) => setTimeout(resolve, 1));
     expect(ran).toBeTruthy();
   });
