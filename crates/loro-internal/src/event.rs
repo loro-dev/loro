@@ -31,10 +31,12 @@ pub struct ContainerDiff {
 
 #[derive(Debug, Clone)]
 pub struct DiffEvent<'a> {
-    /// whether the event comes from the children of the container.
-    pub from_children: bool,
-    pub container: &'a ContainerDiff,
-    pub doc: &'a DocDiff,
+    /// The receiver of the event.
+    /// If the receiver is None, it means the receiver is the meta-root container.
+    pub current_target: Option<ContainerIdx>,
+    /// A list of events that should be received by the current target.
+    pub events: &'a [&'a ContainerDiff],
+    pub event_meta: &'a DocDiff,
 }
 
 /// It's the exposed event type.
@@ -246,6 +248,7 @@ impl Diff {
 mod test {
     use std::sync::Arc;
 
+    use itertools::Itertools;
     use loro_common::LoroValue;
 
     use crate::{ApplyDiff, LoroDoc};
@@ -255,7 +258,7 @@ mod test {
         let loro = LoroDoc::new();
         loro.subscribe_root(Arc::new(|event| {
             let mut value = LoroValue::String(Default::default());
-            value.apply_diff(&[event.container.diff.clone()]);
+            value.apply_diff(&event.events.iter().map(|x| x.diff.clone()).collect_vec());
             assert_eq!(value, "h223ello".into());
         }));
         let mut txn = loro.txn().unwrap();
