@@ -64,7 +64,7 @@ impl TryFrom<JsValue> for LoroMap {
     }
 }
 
-pub(crate) fn resolved_diff_to_js(value: Diff, doc: Arc<LoroDoc>) -> JsValue {
+pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
     // create a obj
     let obj = Object::new();
     match value {
@@ -72,7 +72,8 @@ pub(crate) fn resolved_diff_to_js(value: Diff, doc: Arc<LoroDoc>) -> JsValue {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("tree"))
                 .unwrap();
 
-            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &tree.into()).unwrap();
+            // TODO: PERF Avoid clone
+            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &tree.clone().into()).unwrap();
         }
         Diff::List(list) => {
             // set type as "list"
@@ -81,7 +82,7 @@ pub(crate) fn resolved_diff_to_js(value: Diff, doc: Arc<LoroDoc>) -> JsValue {
             // set diff as array
             let arr = Array::new_with_length(list.len() as u32);
             for (i, v) in list.iter().enumerate() {
-                arr.set(i as u32, delta_item_to_js(v.clone(), doc.clone()));
+                arr.set(i as u32, delta_item_to_js(v.clone(), doc));
             }
             js_sys::Reflect::set(
                 &obj,
@@ -95,7 +96,13 @@ pub(crate) fn resolved_diff_to_js(value: Diff, doc: Arc<LoroDoc>) -> JsValue {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("text"))
                 .unwrap();
             // set diff as array
-            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &JsValue::from(text)).unwrap();
+            // TODO: PERF Avoid clone
+            js_sys::Reflect::set(
+                &obj,
+                &JsValue::from_str("diff"),
+                &JsValue::from(text.clone()),
+            )
+            .unwrap();
         }
         Diff::Map(map) => {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("map"))
@@ -104,7 +111,8 @@ pub(crate) fn resolved_diff_to_js(value: Diff, doc: Arc<LoroDoc>) -> JsValue {
             js_sys::Reflect::set(
                 &obj,
                 &JsValue::from_str("updated"),
-                &map_delta_to_js(map, doc),
+                // TODO: PERF Avoid clone
+                &map_delta_to_js(map.clone(), doc),
             )
             .unwrap();
         }
@@ -115,7 +123,7 @@ pub(crate) fn resolved_diff_to_js(value: Diff, doc: Arc<LoroDoc>) -> JsValue {
     obj.into_js_result().unwrap()
 }
 
-fn delta_item_to_js(item: DeltaItem<Vec<ValueOrContainer>, ()>, doc: Arc<LoroDoc>) -> JsValue {
+fn delta_item_to_js(item: DeltaItem<Vec<ValueOrContainer>, ()>, doc: &Arc<LoroDoc>) -> JsValue {
     let obj = Object::new();
     match item {
         DeltaItem::Retain { retain: len, .. } => {
@@ -193,7 +201,7 @@ pub fn convert(value: LoroValue) -> JsValue {
     }
 }
 
-fn map_delta_to_js(value: ResolvedMapDelta, doc: Arc<LoroDoc>) -> JsValue {
+fn map_delta_to_js(value: ResolvedMapDelta, doc: &Arc<LoroDoc>) -> JsValue {
     let obj = Object::new();
     for (key, value) in value.updated.iter() {
         let value = if let Some(value) = value.value.clone() {

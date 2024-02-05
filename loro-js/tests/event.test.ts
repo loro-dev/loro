@@ -4,8 +4,8 @@ import {
   getType,
   ListDiff,
   Loro,
-  LoroEvent,
   LoroText,
+  LoroEventBatch,
   MapDiff,
   TextDiff,
 } from "../src";
@@ -13,7 +13,7 @@ import {
 describe("event", () => {
   it("target", async () => {
     const loro = new Loro();
-    let lastEvent: undefined | LoroEvent;
+    let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
     });
@@ -22,44 +22,12 @@ describe("event", () => {
     text.insert(0, "123");
     loro.commit();
     await oneMs();
-    expect(lastEvent?.target).toEqual(id);
-  });
-
-  it("event id", async () => {
-    const loro = new Loro();
-    let lastEventId: bigint = 0n;
-    let uniqueEvent = 0;
-    loro.subscribe((event) => {
-      console.log(event.id);
-      if (event.id === lastEventId) {
-        return;
-      }
-
-      lastEventId = event.id;
-      uniqueEvent += 1;
-    });
-
-    const map = loro.getMap("map");
-    map.set("0", 100);
-    loro.commit();
-    await oneMs();
-    expect(uniqueEvent).toBe(1);
-    const bDoc = new Loro();
-    bDoc.getText("text").insert(0, "1");
-    bDoc.getText("text").insert(1, "1");
-    bDoc.commit();
-    await oneMs();
-    bDoc.getMap("map").set("0", "1");
-    bDoc.commit();
-    await oneMs();
-    loro.import(bDoc.exportFrom());
-    await oneMs();
-    expect(uniqueEvent).toBe(2);
+    expect(lastEvent?.events[0].target).toEqual(id);
   });
 
   it("path", async () => {
     const loro = new Loro();
-    let lastEvent: undefined | LoroEvent;
+    let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
     });
@@ -68,8 +36,7 @@ describe("event", () => {
     subMap.set("0", "1");
     loro.commit();
     await oneMs();
-
-    expect(lastEvent?.path).toStrictEqual(["map", "sub"]);
+    expect(lastEvent?.events[1].path).toStrictEqual(["map", "sub"]);
     const list = subMap.setContainer("list", "List");
     list.insert(0, "2");
     const text = list.insertContainer(1, "Text");
@@ -78,12 +45,12 @@ describe("event", () => {
     text.insert(0, "3");
     loro.commit();
     await oneMs();
-    expect(lastEvent?.path).toStrictEqual(["map", "sub", "list", 1]);
+    expect(lastEvent?.events[0].path).toStrictEqual(["map", "sub", "list", 1]);
   });
 
   it("text diff", async () => {
     const loro = new Loro();
-    let lastEvent: undefined | LoroEvent;
+    let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
     });
@@ -91,14 +58,14 @@ describe("event", () => {
     text.insert(0, "3");
     loro.commit();
     await oneMs();
-    expect(lastEvent?.diff).toStrictEqual({
+    expect(lastEvent?.events[0].diff).toStrictEqual({
       type: "text",
       diff: [{ insert: "3" }],
     } as TextDiff);
     text.insert(1, "12");
     loro.commit();
     await oneMs();
-    expect(lastEvent?.diff).toStrictEqual({
+    expect(lastEvent?.events[0].diff).toStrictEqual({
       type: "text",
       diff: [{ retain: 1 }, { insert: "12" }],
     } as TextDiff);
@@ -106,7 +73,7 @@ describe("event", () => {
 
   it("list diff", async () => {
     const loro = new Loro();
-    let lastEvent: undefined | LoroEvent;
+    let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
     });
@@ -114,14 +81,14 @@ describe("event", () => {
     text.insert(0, "3");
     loro.commit();
     await oneMs();
-    expect(lastEvent?.diff).toStrictEqual({
+    expect(lastEvent?.events[0].diff).toStrictEqual({
       type: "list",
       diff: [{ insert: ["3"] }],
     } as ListDiff);
     text.insert(1, "12");
     loro.commit();
     await oneMs();
-    expect(lastEvent?.diff).toStrictEqual({
+    expect(lastEvent?.events[0].diff).toStrictEqual({
       type: "list",
       diff: [{ retain: 1 }, { insert: ["12"] }],
     } as ListDiff);
@@ -129,7 +96,7 @@ describe("event", () => {
 
   it("map diff", async () => {
     const loro = new Loro();
-    let lastEvent: undefined | LoroEvent;
+    let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
     });
@@ -138,7 +105,7 @@ describe("event", () => {
     map.set("1", "2");
     loro.commit();
     await oneMs();
-    expect(lastEvent?.diff).toStrictEqual({
+    expect(lastEvent?.events[0].diff).toStrictEqual({
       type: "map",
       updated: {
         "0": "3",
@@ -149,7 +116,7 @@ describe("event", () => {
     map.set("1", "1");
     loro.commit();
     await oneMs();
-    expect(lastEvent?.diff).toStrictEqual({
+    expect(lastEvent?.events[0].diff).toStrictEqual({
       type: "map",
       updated: {
         "0": "0",
@@ -180,12 +147,14 @@ describe("event", () => {
       let ran = 0;
       const sub = text.subscribe(loro, (event) => {
         if (!ran) {
-          expect((event.diff as any).diff).toStrictEqual([
+          expect((event.events[0].diff as any).diff).toStrictEqual([
             { insert: "123" },
           ] as Delta<string>[]);
         }
         ran += 1;
-        expect(event.target).toBe(text.id);
+        for (const containerDiff of event.events) {
+          expect(containerDiff.target).toBe(text.id);
+        }
       });
 
       text.insert(0, "123");
@@ -269,23 +238,25 @@ describe("event", () => {
       const text = loro.getText("text");
       let string = "";
       text.subscribe(loro, (event) => {
-        const diff = event.diff;
-        expect(diff.type).toBe("text");
-        if (diff.type === "text") {
-          let newString = "";
-          let pos = 0;
-          for (const delta of diff.diff) {
-            if (delta.retain != null) {
-              newString += string.slice(pos, pos + delta.retain);
-              pos += delta.retain;
-            } else if (delta.insert != null) {
-              newString += delta.insert;
-            } else {
-              pos += delta.delete;
+        for (const containerDiff of event.events) {
+          const diff = containerDiff.diff;
+          expect(diff.type).toBe("text");
+          if (diff.type === "text") {
+            let newString = "";
+            let pos = 0;
+            for (const delta of diff.diff) {
+              if (delta.retain != null) {
+                newString += string.slice(pos, pos + delta.retain);
+                pos += delta.retain;
+              } else if (delta.insert != null) {
+                newString += delta.insert;
+              } else {
+                pos += delta.delete;
+              }
             }
-          }
 
-          string = newString + string.slice(pos);
+            string = newString + string.slice(pos);
+          }
         }
       });
       text.insert(0, "你好");
@@ -317,7 +288,7 @@ describe("event", () => {
       let first = true;
       loro.subscribe((e) => {
         if (first) {
-          const diff = (e.diff as ListDiff).diff;
+          const diff = (e.events[0].diff as ListDiff).diff;
           const text = diff[0].insert![0] as LoroText;
           text.insert(0, "abc");
           first = false;
@@ -335,8 +306,8 @@ describe("event", () => {
     const list = doc.getList("list");
     let ran = false;
     doc.subscribe((event) => {
-      if (event.diff.type === "list") {
-        for (const item of event.diff.diff) {
+      if (event.events[0].diff.type === "list") {
+        for (const item of event.events[0].diff.diff) {
           const t = item.insert![0] as LoroText;
           expect(t.toString()).toBe("Hello");
           expect(item.insert?.length).toBe(2);
@@ -352,6 +323,9 @@ describe("event", () => {
     t.insert(0, "He");
     t.insert(2, "llo");
     doc.commit();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    expect(ran).toBeTruthy();
+  });
     await new Promise((resolve) => setTimeout(resolve, 1));
     expect(ran).toBeTruthy();
   });

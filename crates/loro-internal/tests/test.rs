@@ -418,10 +418,12 @@ fn test_checkout() {
     doc_0.subscribe_root(Arc::new(move |event| {
         dbg!(&event);
         let mut root_value = root_value.lock().unwrap();
-        root_value.apply(
-            &event.events[0].path.iter().map(|x| x.1.clone()).collect(),
-            &[event.events[0].diff.clone()],
-        );
+        for container_diff in event.events {
+            root_value.apply(
+                &container_diff.path.iter().map(|x| x.1.clone()).collect(),
+                &[container_diff.diff.clone()],
+            );
+        }
     }));
 
     let map = doc_0.get_map("map");

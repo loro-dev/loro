@@ -32,8 +32,7 @@ pub struct ContainerDiff {
 #[derive(Debug, Clone)]
 pub struct DiffEvent<'a> {
     /// The receiver of the event.
-    /// If the receiver is None, it means the receiver is the meta-root container.
-    pub current_target: Option<ContainerIdx>,
+    pub current_target: Option<ContainerID>,
     /// A list of events that should be received by the current target.
     pub events: &'a [&'a ContainerDiff],
     pub event_meta: &'a DocDiff,

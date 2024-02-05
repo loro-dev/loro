@@ -78,13 +78,15 @@ fn time_travel() {
     doc.subscribe(
         &text.id(),
         Arc::new(move |x| {
-            let Some(text) = x.container.diff.as_text() else {
-                return;
-            };
+            for event in x.events {
+                let Some(text) = event.diff.as_text() else {
+                    continue;
+                };
 
-            let delta: Vec<TextDelta> = text.iter().map(|x| x.into()).collect();
-            dbg!(&delta);
-            text2.apply_delta(&delta).unwrap();
+                let delta: Vec<TextDelta> = text.iter().map(|x| x.into()).collect();
+                dbg!(&delta);
+                text2.apply_delta(&delta).unwrap();
+            }
         }),
     );
 
@@ -112,13 +114,15 @@ fn travel_back_should_remove_styles() {
     doc.subscribe(
         &text.id(),
         Arc::new(move |x| {
-            let Some(text) = x.container.diff.as_text() else {
-                return;
-            };
+            for event in x.events {
+                let Some(text) = event.diff.as_text() else {
+                    continue;
+                };
 
-            let delta: Vec<TextDelta> = text.iter().map(|x| x.into()).collect();
-            // dbg!(&delta);
-            text2.apply_delta(&delta).unwrap();
+                let delta: Vec<TextDelta> = text.iter().map(|x| x.into()).collect();
+                // dbg!(&delta);
+                text2.apply_delta(&delta).unwrap();
+            }
         }),
     );
 
@@ -305,14 +309,16 @@ fn subscribe() {
         &text.id(),
         Arc::new(move |event: DiffEvent| {
             assert!(event.event_meta.local);
-            let event = event.container.diff.as_text().unwrap();
-            let delta: Vec<_> = event.iter().cloned().collect();
-            let d = DeltaItem::Insert {
-                insert: "123".into(),
-                attributes: Default::default(),
-            };
-            assert_eq!(delta, vec![d]);
-            ran2.store(true, std::sync::atomic::Ordering::Relaxed);
+            for event in event.events {
+                let event = event.diff.as_text().unwrap();
+                let delta: Vec<_> = event.iter().cloned().collect();
+                let d = DeltaItem::Insert {
+                    insert: "123".into(),
+                    attributes: Default::default(),
+                };
+                assert_eq!(delta, vec![d]);
+                ran2.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
         }),
     );
     text.insert(0, "123").unwrap();

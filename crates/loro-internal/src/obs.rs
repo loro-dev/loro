@@ -124,7 +124,7 @@ impl Observer {
             for sub in subs.iter() {
                 let f = inner.subscribers.get_mut(sub).unwrap();
                 (f)(DiffEvent {
-                    current_target: Some(container_idx),
+                    current_target: Some(self.arena.get_container_id(container_idx).unwrap()),
                     events: &container_diffs,
                     event_meta: doc_diff,
                 })

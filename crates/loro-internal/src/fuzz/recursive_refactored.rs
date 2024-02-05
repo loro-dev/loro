@@ -168,11 +168,11 @@ impl Actor {
         actor.loro.subscribe(
             &ContainerID::new_root("map", ContainerType::Map),
             Arc::new(move |event| {
-                if event.current_target != Some(map_container_idx) {
-                    return;
-                }
                 let mut map = map.lock().unwrap();
                 for container_diff in event.events {
+                    if container_diff.id != ContainerID::new_root("map", ContainerType::Map) {
+                        continue;
+                    }
                     if let Diff::Map(map_diff) = &container_diff.diff {
                         for (key, value) in map_diff.updated.iter() {
                             match &value.value {
@@ -204,11 +204,12 @@ impl Actor {
         actor.loro.subscribe(
             &ContainerID::new_root("list", ContainerType::List),
             Arc::new(move |event| {
-                if event.current_target != Some(list_container_idx) {
-                    return;
-                }
                 let mut list = list.lock().unwrap();
                 for container_diff in event.events {
+                    if container_diff.id != ContainerID::new_root("list", ContainerType::List) {
+                        continue;
+                    }
+
                     if let Diff::List(delta) = &container_diff.diff {
                         let mut index = 0;
                         for item in delta.iter() {
