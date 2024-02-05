@@ -3,7 +3,7 @@ pub mod richtext;
 pub mod tree;
 
 use crate::{
-    array_mut_ref,
+    array_mut_ref, container,
     delta::{Delta, DeltaItem, StyleMeta},
     event::Diff,
     loro::LoroDoc,
@@ -502,16 +502,18 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         loro.subscribe(
             &ContainerID::new_root("text", loro_common::ContainerType::Text),
             Arc::new(move |event| {
-                if let Diff::Text(t) = &event.container.diff {
-                    let mut text = text_clone.lock().unwrap();
-                    debug_log::debug_log!(
-                        "RECEIVE site:{} event:{:#?}\nCURRENT: {:#?}",
-                        i,
-                        t,
-                        &text
-                    );
-                    *text = text.clone().compose(t.clone());
-                    debug_log::debug_log!("new:{:#?}", &text);
+                for container_diff in event.events {
+                    if let Diff::Text(t) = &container_diff.diff {
+                        let mut text = text_clone.lock().unwrap();
+                        debug_log::debug_log!(
+                            "RECEIVE site:{} event:{:#?}\nCURRENT: {:#?}",
+                            i,
+                            t,
+                            &text
+                        );
+                        *text = text.clone().compose(t.clone());
+                        debug_log::debug_log!("new:{:#?}", &text);
+                    }
                 }
             }),
         );

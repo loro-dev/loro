@@ -84,63 +84,65 @@ impl Actor {
             &ContainerID::new_root("text", ContainerType::Text),
             Arc::new(move |event| {
                 let text_doc = &text_value;
-                if let Diff::Text(text_diff) = &event.container.diff {
-                    let mut txn = text_doc.txn().unwrap();
-                    let text_h = text_doc.get_text("text");
-                    // println!("diff {:?}", text_diff);
-                    let text_deltas = text_diff
-                        .iter()
-                        .map(|x| match x {
-                            DeltaItem::Insert { insert, attributes } => {
-                                let attributes: FxHashMap<_, _> = attributes
-                                    .iter()
-                                    .filter(|(_, v)| !v.data.is_null())
-                                    .map(|(k, v)| (k.to_string(), v.data))
-                                    .collect();
-                                let attributes = if attributes.is_empty() {
-                                    None
-                                } else {
-                                    Some(attributes)
-                                };
-                                TextDelta::Insert {
-                                    insert: insert.to_string(),
-                                    attributes,
+                for container_diff in event.events {
+                    if let Diff::Text(text_diff) = &container_diff.diff {
+                        let mut txn = text_doc.txn().unwrap();
+                        let text_h = text_doc.get_text("text");
+                        // println!("diff {:?}", text_diff);
+                        let text_deltas = text_diff
+                            .iter()
+                            .map(|x| match x {
+                                DeltaItem::Insert { insert, attributes } => {
+                                    let attributes: FxHashMap<_, _> = attributes
+                                        .iter()
+                                        .filter(|(_, v)| !v.data.is_null())
+                                        .map(|(k, v)| (k.to_string(), v.data))
+                                        .collect();
+                                    let attributes = if attributes.is_empty() {
+                                        None
+                                    } else {
+                                        Some(attributes)
+                                    };
+                                    TextDelta::Insert {
+                                        insert: insert.to_string(),
+                                        attributes,
+                                    }
                                 }
-                            }
-                            DeltaItem::Delete {
-                                delete,
-                                attributes: _,
-                            } => TextDelta::Delete { delete: *delete },
-                            DeltaItem::Retain { retain, attributes } => {
-                                let attributes: FxHashMap<_, _> = attributes
-                                    .iter()
-                                    .filter(|(_, v)| !v.data.is_null())
-                                    .map(|(k, v)| (k.to_string(), v.data))
-                                    .collect();
-                                let attributes = if attributes.is_empty() {
-                                    None
-                                } else {
-                                    Some(attributes)
-                                };
-                                TextDelta::Retain {
-                                    retain: *retain,
-                                    attributes,
+                                DeltaItem::Delete {
+                                    delete,
+                                    attributes: _,
+                                } => TextDelta::Delete { delete: *delete },
+                                DeltaItem::Retain { retain, attributes } => {
+                                    let attributes: FxHashMap<_, _> = attributes
+                                        .iter()
+                                        .filter(|(_, v)| !v.data.is_null())
+                                        .map(|(k, v)| (k.to_string(), v.data))
+                                        .collect();
+                                    let attributes = if attributes.is_empty() {
+                                        None
+                                    } else {
+                                        Some(attributes)
+                                    };
+                                    TextDelta::Retain {
+                                        retain: *retain,
+                                        attributes,
+                                    }
                                 }
-                            }
-                        })
-                        .collect::<Vec<_>>();
-                    // println!(
-                    //     "\n{} before {:?}",
-                    //     text_doc.peer_id(),
-                    //     text_h.get_richtext_value()
-                    // );
-                    debug_log::debug_log!("delta {:?}", text_deltas);
-                    text_h.apply_delta_with_txn(&mut txn, &text_deltas).unwrap();
+                            })
+                            .collect::<Vec<_>>();
+                        // println!(
+                        //     "\n{} before {:?}",
+                        //     text_doc.peer_id(),
+                        //     text_h.get_richtext_value()
+                        // );
+                        debug_log::debug_log!("delta {:?}", text_deltas);
+                        text_h.apply_delta_with_txn(&mut txn, &text_deltas).unwrap();
 
-                    // debug_log::debug_log!("after {:?}\n", text_h.get_richtext_value());
-                } else {
-                    debug_dbg!(&event.container);
-                    unreachable!()
+                        // debug_log::debug_log!("after {:?}\n", text_h.get_richtext_value());
+                    } else {
+                        debug_dbg!(&container_diff);
+                        unreachable!()
+                    }
                 }
             }),
         );

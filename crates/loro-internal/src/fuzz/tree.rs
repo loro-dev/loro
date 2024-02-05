@@ -18,7 +18,7 @@ use crate::{
 use crate::{
     delta::TreeValue,
     event::{Diff, Index},
-    handler::TreeHandler,
+    handler::{Handler, TreeHandler},
     loro::LoroDoc,
     value::{unresolved_to_collection, ToJson},
     version::Frontiers,
@@ -88,69 +88,6 @@ impl Actor {
             history: Default::default(),
         };
 
-        let root_value = Arc::clone(&actor.value_tracker);
-        actor.loro.subscribe_root(Arc::new(move |event| {
-            let mut root_value = root_value.lock().unwrap();
-            debug_dbg!(&event);
-            // if id == 0 {
-            //     println!("\nbefore {:?}", root_value);
-            //     println!("\ndiff {:?}", event);
-            // }
-            root_value.apply(
-                &event.container.path.iter().map(|x| x.1.clone()).collect(),
-                &[event.container.diff.clone()],
-            );
-            // if id == 0 {
-            //     println!("\nafter {:?}", root_value);
-            // }
-        }));
-
-        let tree = Arc::clone(&actor.tree_tracker);
-        actor.loro.subscribe(
-            &ContainerID::new_root("tree", ContainerType::Tree),
-            Arc::new(move |event| {
-                if event.from_children {
-                    // meta
-                    let Index::Node(target) = event.container.path.last().unwrap().1 else {
-                        unreachable!()
-                    };
-                    let mut tree = tree.lock().unwrap();
-                    let Some(map) = tree.iter_mut().find(|x| {
-                        let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
-                        id.as_ref() == &target.to_string()
-                    }) else {
-                        //  maybe delete tree node first
-                        return;
-                    };
-                    let map = Arc::make_mut(map.as_map_mut().unwrap());
-                    let meta = map.get_mut("meta").unwrap();
-                    let meta = Arc::make_mut(meta.as_map_mut().unwrap());
-                    if let Diff::Map(update) = &event.container.diff {
-                        for (key, value) in update.updated.iter() {
-                            match &value.value {
-                                Some(value) => {
-                                    meta.insert(key.to_string(), unresolved_to_collection(value));
-                                }
-                                None => {
-                                    meta.remove(&key.to_string());
-                                }
-                            }
-                        }
-                    }
-
-                    return;
-                }
-                let mut tree = tree.lock().unwrap();
-                if let Diff::Tree(tree_diff) = &event.container.diff {
-                    let mut v = TreeValue(&mut tree);
-                    v.apply_diff(tree_diff);
-                } else {
-                    debug_dbg!(&event.container);
-                    unreachable!()
-                }
-            }),
-        );
-
         actor
             .text_containers
             .push(actor.loro.txn().unwrap().get_text("text"));
@@ -163,6 +100,79 @@ impl Actor {
         actor
             .tree_containers
             .push(actor.loro.txn().unwrap().get_tree("tree"));
+
+        let root_value = Arc::clone(&actor.value_tracker);
+        actor.loro.subscribe_root(Arc::new(move |event| {
+            let mut root_value = root_value.lock().unwrap();
+            debug_dbg!(&event);
+            for container_diff in event.events {
+                // if id == 0 {
+                //     println!("\nbefore {:?}", root_value);
+                //     println!("\ndiff {:?}", event);
+                // }
+                root_value.apply(
+                    &container_diff.path.iter().map(|x| x.1.clone()).collect(),
+                    &[container_diff.diff.clone()],
+                );
+                // if id == 0 {
+                //     println!("\nafter {:?}", root_value);
+                // }
+            }
+        }));
+
+        let tree = Arc::clone(&actor.tree_tracker);
+        actor.loro.subscribe(
+            &ContainerID::new_root("tree", ContainerType::Tree),
+            Arc::new(move |event| {
+                for container_diff in event.events {
+                    let from_children =
+                        container_diff.id != ContainerID::new_root("tree", ContainerType::Tree);
+                    if from_children {
+                        // meta
+                        let Index::Node(target) = container_diff.path.last().unwrap().1 else {
+                            unreachable!()
+                        };
+                        let mut tree = tree.lock().unwrap();
+                        let Some(map) = tree.iter_mut().find(|x| {
+                            let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
+                            id.as_ref() == &target.to_string()
+                        }) else {
+                            //  maybe delete tree node first
+                            continue;
+                        };
+                        let map = Arc::make_mut(map.as_map_mut().unwrap());
+                        let meta = map.get_mut("meta").unwrap();
+                        let meta = Arc::make_mut(meta.as_map_mut().unwrap());
+                        if let Diff::Map(update) = &container_diff.diff {
+                            for (key, value) in update.updated.iter() {
+                                match &value.value {
+                                    Some(value) => {
+                                        meta.insert(
+                                            key.to_string(),
+                                            unresolved_to_collection(value),
+                                        );
+                                    }
+                                    None => {
+                                        meta.remove(&key.to_string());
+                                    }
+                                }
+                            }
+                        }
+
+                        continue;
+                    }
+                    let mut tree = tree.lock().unwrap();
+                    if let Diff::Tree(tree_diff) = &container_diff.diff {
+                        let mut v = TreeValue(&mut tree);
+                        v.apply_diff(tree_diff);
+                    } else {
+                        debug_dbg!(&container_diff);
+                        unreachable!()
+                    }
+                }
+            }),
+        );
+
         actor
     }
 

@@ -65,7 +65,7 @@ impl From<&DeltaItem<StringSlice, StyleMeta>> for TextDelta {
 #[derive(Clone)]
 pub struct TextHandler {
     txn: Weak<Mutex<Option<Transaction>>>,
-    container_idx: ContainerIdx,
+    pub(crate) container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
 }
 
@@ -78,7 +78,7 @@ impl std::fmt::Debug for TextHandler {
 #[derive(Clone)]
 pub struct MapHandler {
     txn: Weak<Mutex<Option<Transaction>>>,
-    container_idx: ContainerIdx,
+    pub(crate) container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
 }
 
@@ -91,7 +91,7 @@ impl std::fmt::Debug for MapHandler {
 #[derive(Clone)]
 pub struct ListHandler {
     txn: Weak<Mutex<Option<Transaction>>>,
-    container_idx: ContainerIdx,
+    pub(crate) container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
 }
 
@@ -105,7 +105,7 @@ impl std::fmt::Debug for ListHandler {
 #[derive(Clone)]
 pub struct TreeHandler {
     txn: Weak<Mutex<Option<Transaction>>>,
-    container_idx: ContainerIdx,
+    pub(crate) container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
 }
 
