@@ -119,6 +119,8 @@ impl Default for StyleRangeMap {
     }
 }
 
+type YieldStyle<'a> = Option<&'a mut dyn FnMut(&Styles, usize)>;
+
 impl StyleRangeMap {
     pub fn new() -> Self {
         let mut tree = BTree::new();
@@ -137,7 +139,7 @@ impl StyleRangeMap {
         &mut self,
         range: Range<usize>,
         style: Arc<StyleOp>,
-        mut yield_style: Option<&mut dyn FnMut(&Styles, usize)>,
+        mut yield_style: YieldStyle,
     ) {
         let range = self.tree.range::<LengthFinder>(range);
         if range.is_none() {

@@ -3,7 +3,7 @@ pub mod richtext;
 pub mod tree;
 
 use crate::{
-    array_mut_ref, container,
+    array_mut_ref,
     delta::{Delta, DeltaItem, StyleMeta},
     event::Diff,
     loro::LoroDoc,

@@ -18,7 +18,7 @@ use crate::{
 use crate::{
     delta::TreeValue,
     event::{Diff, Index},
-    handler::{Handler, TreeHandler},
+    handler::TreeHandler,
     loro::LoroDoc,
     value::{unresolved_to_collection, ToJson},
     version::Frontiers,
@@ -2133,10 +2133,5 @@ mod failed_tests {
     #[test]
     fn to_minify() {
         minify_error(5, vec![], test_multi_sites, normalize)
-    }
-
-    #[ctor::ctor]
-    fn init_color_backtrace() {
-        color_backtrace::install();
     }
 }

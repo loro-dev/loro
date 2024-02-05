@@ -21,7 +21,7 @@ use crate::{
         richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
     },
     event::Diff,
-    handler::{Handler, TextHandler, ValueOrContainer},
+    handler::{TextHandler, ValueOrContainer},
     loro::LoroDoc,
     value::ToJson,
     version::Frontiers,
@@ -163,7 +163,6 @@ impl Actor {
             }),
         );
         let arena = actor.loro.oplog().lock().unwrap().arena.clone();
-        let map_container_idx = actor.map_containers[0].container_idx;
         let map = Arc::clone(&actor.map_tracker);
         actor.loro.subscribe(
             &ContainerID::new_root("map", ContainerType::Map),
@@ -200,7 +199,6 @@ impl Actor {
         );
         let arena = actor.loro.oplog().lock().unwrap().arena.clone();
         let list = Arc::clone(&actor.list_tracker);
-        let list_container_idx = actor.list_containers[0].container_idx;
         actor.loro.subscribe(
             &ContainerID::new_root("list", ContainerType::List),
             Arc::new(move |event| {
