@@ -5,7 +5,7 @@ use loro_internal::{
     change::Lamport,
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
-    event::{Diff, Index},
+    event::Index,
     handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrContainer},
     id::{Counter, TreeID, ID},
     obs::SubID,
@@ -806,7 +806,7 @@ impl Loro {
         let doc = self.0.clone();
         self.0
             .subscribe_root(Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, doc.clone())
+                call_after_micro_task(observer.clone(), e, &doc)
                 // call_subscriber(observer.clone(), e);
             }))
             .into_u32()
@@ -1011,55 +1011,26 @@ impl Loro {
 }
 
 #[allow(unused)]
-fn call_subscriber(ob: observer::Observer, e: DiffEvent, doc: Arc<LoroDoc>) {
+fn call_subscriber(ob: observer::Observer, e: DiffEvent, doc: &Arc<LoroDoc>) {
     // We convert the event to js object here, so that we don't need to worry about GC.
     // In the future, when FinalizationRegistry[1] is stable, we can use `--weak-ref`[2] feature
     // in wasm-bindgen to avoid this.
     //
     // [1]: https://caniuse.com/?search=FinalizationRegistry
     // [2]: https://rustwasm.github.io/wasm-bindgen/reference/weak-references.html
-    let event = Event {
-        id: e.doc.id(),
-        path: Event::get_path(
-            e.container.path.len() as u32,
-            e.container.path.iter().map(|x| &x.1),
-        ),
-        from_children: e.from_children,
-        local: e.doc.local,
-        origin: e.doc.origin.to_string(),
-        target: e.container.id.clone(),
-        diff: e.container.diff.to_owned(),
-        from_checkout: e.doc.from_checkout,
-    }
-    // PERF: converting the events into js values may hurt performance
-    .into_js(doc);
-
+    let event = diff_event_to_js_value(e, doc);
     if let Err(e) = ob.call1(&event) {
         console_error!("Error when calling observer: {:#?}", e);
     }
 }
 
 #[allow(unused)]
-fn call_after_micro_task(ob: observer::Observer, e: DiffEvent, doc: Arc<LoroDoc>) {
+fn call_after_micro_task(ob: observer::Observer, event: DiffEvent, doc: &Arc<LoroDoc>) {
     let promise = Promise::resolve(&JsValue::NULL);
     type C = Closure<dyn FnMut(JsValue)>;
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
     let copy = drop_handler.clone();
-    let event = Event {
-        id: e.doc.id(),
-        from_children: e.from_children,
-        from_checkout: e.doc.from_checkout,
-        local: e.doc.local,
-        origin: e.doc.origin.to_string(),
-        target: e.container.id.clone(),
-        diff: (e.container.diff.to_owned()),
-        path: Event::get_path(
-            e.container.path.len() as u32,
-            e.container.path.iter().map(|x| &x.1),
-        ),
-    }
-    .into_js(doc);
-
+    let event = diff_event_to_js_value(event, doc);
     let closure = Closure::once(move |_: JsValue| {
         let ans = ob.call1(&event);
         drop(copy);
@@ -1078,39 +1049,65 @@ impl Default for Loro {
     }
 }
 
-pub struct Event {
-    pub local: bool,
-    pub from_children: bool,
-    id: u64,
-    origin: String,
-    target: ContainerID,
-    from_checkout: bool,
-    diff: Diff,
-    path: JsValue,
+fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDoc>) -> JsValue {
+    let obj = js_sys::Object::new();
+    Reflect::set(&obj, &"local".into(), &event.event_meta.local.into()).unwrap();
+    Reflect::set(
+        &obj,
+        &"fromCheckout".into(),
+        &event.event_meta.from_checkout.into(),
+    )
+    .unwrap();
+    let origin: &str = &event.event_meta.origin;
+    Reflect::set(&obj, &"origin".into(), &JsValue::from_str(origin)).unwrap();
+    if let Some(t) = event.current_target.as_ref() {
+        Reflect::set(&obj, &"currentTarget".into(), &t.to_string().into()).unwrap();
+    }
+
+    let events = js_sys::Array::new_with_length(event.events.len() as u32);
+    for (i, &event) in event.events.iter().enumerate() {
+        events.set(i as u32, container_diff_to_js_value(event, doc));
+    }
+
+    Reflect::set(&obj, &"events".into(), &events.into()).unwrap();
+    obj.into()
 }
 
-impl Event {
-    fn into_js(self, doc: Arc<LoroDoc>) -> JsValue {
-        let obj = js_sys::Object::new();
-        Reflect::set(&obj, &"local".into(), &self.local.into()).unwrap();
-        Reflect::set(&obj, &"fromCheckout".into(), &self.from_checkout.into()).unwrap();
-        Reflect::set(&obj, &"fromChildren".into(), &self.from_children.into()).unwrap();
-        Reflect::set(&obj, &"origin".into(), &self.origin.into()).unwrap();
-        Reflect::set(&obj, &"target".into(), &self.target.to_string().into()).unwrap();
-        Reflect::set(&obj, &"diff".into(), &resolved_diff_to_js(self.diff, doc)).unwrap();
-        Reflect::set(&obj, &"path".into(), &self.path).unwrap();
-        Reflect::set(&obj, &"id".into(), &self.id.into()).unwrap();
-        obj.into()
-    }
+/// /**
+/// * The concrete event of Loro.
+/// */
+/// export interface LoroEvent {
+///   /**
+///    * The container ID of the event's target.
+///    */
+///   target: ContainerID;
+///   diff: Diff;
+///   /**
+///    * The absolute path of the event's emitter, which can be an index of a list container or a key of a map container.
+///    */
+///   path: Path;
+/// }
+///
+fn container_diff_to_js_value(event: &loro_internal::ContainerDiff, doc: &Arc<LoroDoc>) -> JsValue {
+    let obj = js_sys::Object::new();
+    Reflect::set(&obj, &"target".into(), &event.id.to_string().into()).unwrap();
+    Reflect::set(&obj, &"diff".into(), &resolved_diff_to_js(&event.diff, doc)).unwrap();
+    Reflect::set(
+        &obj,
+        &"path".into(),
+        &convert_container_path_to_js_value(&event.path),
+    )
+    .unwrap();
+    obj.into()
+}
 
-    fn get_path<'a>(n: u32, source: impl Iterator<Item = &'a Index>) -> JsValue {
-        let arr = Array::new_with_length(n);
-        for (i, p) in source.enumerate() {
-            arr.set(i as u32, p.clone().into());
-        }
-        let path: JsValue = arr.into_js_result().unwrap();
-        path
+fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsValue {
+    let arr = Array::new_with_length(path.len() as u32);
+    for (i, p) in path.iter().enumerate() {
+        arr.set(i as u32, p.1.clone().into());
     }
+    let path: JsValue = arr.into_js_result().unwrap();
+    path
 }
 
 /// The handler of a text or richtext container.
@@ -1267,7 +1264,7 @@ impl LoroText {
         let ans = loro.0.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, doc.clone());
+                call_after_micro_task(observer.clone(), e, &doc);
             }),
         );
 
@@ -1551,7 +1548,7 @@ impl LoroMap {
         let id = loro.0.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, doc.clone());
+                call_after_micro_task(observer.clone(), e, &doc);
             }),
         );
 
@@ -1798,7 +1795,7 @@ impl LoroList {
         let ans = loro.0.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, doc.clone());
+                call_after_micro_task(observer.clone(), e, &doc);
             }),
         );
         Ok(ans.into_u32())
@@ -2169,7 +2166,7 @@ impl LoroTree {
         let ans = loro.0.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, doc.clone());
+                call_after_micro_task(observer.clone(), e, &doc);
             }),
         );
         Ok(ans.into_u32())

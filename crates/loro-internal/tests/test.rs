@@ -79,7 +79,7 @@ fn mark_with_the_same_key_value_should_be_skipped() {
 fn event_from_checkout() {
     let a = LoroDoc::new_auto_commit();
     let sub_id = a.subscribe_root(Arc::new(|event| {
-        assert!(!event.doc.from_checkout);
+        assert!(!event.event_meta.from_checkout);
     }));
     a.get_text("text").insert(0, "hello").unwrap();
     a.commit_then_renew();
@@ -90,7 +90,7 @@ fn event_from_checkout() {
     let ran = Arc::new(AtomicBool::new(false));
     let ran_cloned = ran.clone();
     a.subscribe_root(Arc::new(move |event| {
-        assert!(event.doc.from_checkout);
+        assert!(event.event_meta.from_checkout);
         ran.store(true, std::sync::atomic::Ordering::Relaxed);
     }));
     a.checkout(&version).unwrap();
@@ -101,8 +101,7 @@ fn event_from_checkout() {
 fn handler_in_event() {
     let doc = LoroDoc::new_auto_commit();
     doc.subscribe_root(Arc::new(|e| {
-        let value = e
-            .container
+        let value = e.events[0]
             .diff
             .as_list()
             .unwrap()
@@ -190,7 +189,7 @@ fn richtext_mark_event() {
     a.subscribe(
         &a.get_text("text").id(),
         Arc::new(|e| {
-            let delta = e.container.diff.as_text().unwrap();
+            let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(
                 delta.to_json_value(),
                 json!([
@@ -211,7 +210,7 @@ fn richtext_mark_event() {
     b.subscribe(
         &a.get_text("text").id(),
         Arc::new(|e| {
-            let delta = e.container.diff.as_text().unwrap();
+            let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(
                 delta.to_json_value(),
                 json!([
@@ -239,7 +238,7 @@ fn concurrent_richtext_mark_event() {
     let sub_id = a.subscribe(
         &a.get_text("text").id(),
         Arc::new(|e| {
-            let delta = e.container.diff.as_text().unwrap();
+            let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(
                 delta.to_json_value(),
                 json!([
@@ -257,7 +256,7 @@ fn concurrent_richtext_mark_event() {
     let sub_id = a.subscribe(
         &a.get_text("text").id(),
         Arc::new(|e| {
-            let delta = e.container.diff.as_text().unwrap();
+            let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(
                 delta.to_json_value(),
                 json!([
@@ -281,19 +280,21 @@ fn concurrent_richtext_mark_event() {
     a.subscribe(
         &a.get_text("text").id(),
         Arc::new(|e| {
-            let delta = e.container.diff.as_text().unwrap();
-            assert_eq!(
-                delta.to_json_value(),
-                json!([
-                    {
-                        "retain": 2,
-                    },
-                    {
-                        "insert": "A",
-                        "attributes": {"bold": true, "link": true}
-                    }
-                ])
-            )
+            for container_diff in e.events {
+                let delta = container_diff.diff.as_text().unwrap();
+                assert_eq!(
+                    delta.to_json_value(),
+                    json!([
+                        {
+                            "retain": 2,
+                        },
+                        {
+                            "insert": "A",
+                            "attributes": {"bold": true, "link": true}
+                        }
+                    ])
+                )
+            }
         }),
     );
     a.get_text("text").insert(2, "A").unwrap();
@@ -310,7 +311,7 @@ fn insert_richtext_event() {
     a.subscribe(
         &text.id(),
         Arc::new(|e| {
-            let delta = e.container.diff.as_text().unwrap();
+            let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(
                 delta.to_json_value(),
                 json!([
@@ -331,7 +332,7 @@ fn import_after_init_handlers() {
         &ContainerID::new_root("text", ContainerType::Text),
         Arc::new(|event| {
             assert!(matches!(
-                event.container.diff,
+                event.events[0].diff,
                 loro_internal::event::Diff::Text(_)
             ))
         }),
@@ -340,7 +341,7 @@ fn import_after_init_handlers() {
         &ContainerID::new_root("map", ContainerType::Map),
         Arc::new(|event| {
             assert!(matches!(
-                event.container.diff,
+                event.events[0].diff,
                 loro_internal::event::Diff::Map(_)
             ))
         }),
@@ -349,7 +350,7 @@ fn import_after_init_handlers() {
         &ContainerID::new_root("list", ContainerType::List),
         Arc::new(|event| {
             assert!(matches!(
-                event.container.diff,
+                event.events[0].diff,
                 loro_internal::event::Diff::List(_)
             ))
         }),
@@ -417,10 +418,12 @@ fn test_checkout() {
     doc_0.subscribe_root(Arc::new(move |event| {
         dbg!(&event);
         let mut root_value = root_value.lock().unwrap();
-        root_value.apply(
-            &event.container.path.iter().map(|x| x.1.clone()).collect(),
-            &[event.container.diff.clone()],
-        );
+        for container_diff in event.events {
+            root_value.apply(
+                &container_diff.path.iter().map(|x| x.1.clone()).collect(),
+                &[container_diff.diff.clone()],
+            );
+        }
     }));
 
     let map = doc_0.get_map("map");

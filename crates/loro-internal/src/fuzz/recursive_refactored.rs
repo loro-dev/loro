@@ -85,14 +85,26 @@ impl Actor {
             text_containers: Default::default(),
             history: Default::default(),
         };
+        actor
+            .text_containers
+            .push(actor.loro.txn().unwrap().get_text("text"));
+        actor
+            .map_containers
+            .push(actor.loro.txn().unwrap().get_map("map"));
+        actor
+            .list_containers
+            .push(actor.loro.txn().unwrap().get_list("list"));
 
         let root_value = Arc::clone(&actor.value_tracker);
         actor.loro.subscribe_root(Arc::new(move |event| {
             let mut root_value = root_value.lock().unwrap();
-            root_value.apply(
-                &event.container.path.iter().map(|x| x.1.clone()).collect(),
-                &[event.container.diff.clone()],
-            );
+            for container_diff in event.events {
+                root_value.apply(
+                    &container_diff.path.iter().map(|x| x.1.clone()).collect(),
+                    &[container_diff.diff.clone()],
+                );
+            }
+
             debug_log::debug_dbg!(&root_value);
         }));
 
@@ -100,13 +112,103 @@ impl Actor {
         actor.loro.subscribe(
             &ContainerID::new_root("text", ContainerType::Text),
             Arc::new(move |event| {
-                if event.from_children {
-                    return;
-                }
-
                 let mut text = text.lock().unwrap();
-                match &event.container.diff {
-                    Diff::Text(delta) => {
+                for container_diff in event.events {
+                    match &container_diff.diff {
+                        Diff::Text(delta) => {
+                            let mut index = 0;
+                            for item in delta.iter() {
+                                match item {
+                                    DeltaItem::Retain {
+                                        retain: len,
+                                        attributes: _,
+                                    } => {
+                                        index += len;
+                                    }
+                                    DeltaItem::Insert {
+                                        insert: value,
+                                        attributes: _,
+                                    } => {
+                                        let utf8_index = if cfg!(feature = "wasm") {
+                                            let ans = utf16_to_utf8_index(&text, index).unwrap();
+                                            index += value.len_utf16();
+                                            ans
+                                        } else {
+                                            let ans = unicode_to_utf8_index(&text, index).unwrap();
+                                            index += value.len_unicode();
+                                            ans
+                                        };
+                                        text.insert_str(utf8_index, value.as_str());
+                                    }
+                                    DeltaItem::Delete { delete: len, .. } => {
+                                        let utf8_index = if cfg!(feature = "wasm") {
+                                            utf16_to_utf8_index(&text, index).unwrap()
+                                        } else {
+                                            unicode_to_utf8_index(&text, index).unwrap()
+                                        };
+
+                                        let utf8_end = if cfg!(feature = "wasm") {
+                                            utf16_to_utf8_index(&text, index + *len).unwrap()
+                                        } else {
+                                            unicode_to_utf8_index(&text, index + *len).unwrap()
+                                        };
+                                        text.drain(utf8_index..utf8_end);
+                                    }
+                                }
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }),
+        );
+        let arena = actor.loro.oplog().lock().unwrap().arena.clone();
+        let map = Arc::clone(&actor.map_tracker);
+        actor.loro.subscribe(
+            &ContainerID::new_root("map", ContainerType::Map),
+            Arc::new(move |event| {
+                let mut map = map.lock().unwrap();
+                for container_diff in event.events {
+                    if container_diff.id != ContainerID::new_root("map", ContainerType::Map) {
+                        continue;
+                    }
+                    if let Diff::Map(map_diff) = &container_diff.diff {
+                        for (key, value) in map_diff.updated.iter() {
+                            match &value.value {
+                                Some(value) => {
+                                    let value = match value {
+                                        ValueOrContainer::Container(c) => {
+                                            let id = arena.idx_to_id(c.container_idx()).unwrap();
+                                            LoroValue::Container(id)
+                                        }
+                                        ValueOrContainer::Value(v) => v.clone(),
+                                    };
+                                    map.insert(key.to_string(), value);
+                                }
+                                None => {
+                                    map.remove(&key.to_string());
+                                }
+                            }
+                        }
+                    } else {
+                        debug_dbg!(&container_diff);
+                        unreachable!()
+                    }
+                }
+            }),
+        );
+        let arena = actor.loro.oplog().lock().unwrap().arena.clone();
+        let list = Arc::clone(&actor.list_tracker);
+        actor.loro.subscribe(
+            &ContainerID::new_root("list", ContainerType::List),
+            Arc::new(move |event| {
+                let mut list = list.lock().unwrap();
+                for container_diff in event.events {
+                    if container_diff.id != ContainerID::new_root("list", ContainerType::List) {
+                        continue;
+                    }
+
+                    if let Diff::List(delta) = &container_diff.diff {
                         let mut index = 0;
                         for item in delta.iter() {
                             match item {
@@ -120,125 +222,31 @@ impl Actor {
                                     insert: value,
                                     attributes: _,
                                 } => {
-                                    let utf8_index = if cfg!(feature = "wasm") {
-                                        let ans = utf16_to_utf8_index(&text, index).unwrap();
-                                        index += value.len_utf16();
-                                        ans
-                                    } else {
-                                        let ans = unicode_to_utf8_index(&text, index).unwrap();
-                                        index += value.len_unicode();
-                                        ans
-                                    };
-                                    text.insert_str(utf8_index, value.as_str());
+                                    for v in value {
+                                        let value = match v {
+                                            ValueOrContainer::Container(c) => {
+                                                let id =
+                                                    arena.idx_to_id(c.container_idx()).unwrap();
+                                                LoroValue::Container(id)
+                                            }
+                                            ValueOrContainer::Value(v) => v.clone(),
+                                        };
+                                        list.insert(index, value);
+                                        index += 1;
+                                    }
                                 }
                                 DeltaItem::Delete { delete: len, .. } => {
-                                    let utf8_index = if cfg!(feature = "wasm") {
-                                        utf16_to_utf8_index(&text, index).unwrap()
-                                    } else {
-                                        unicode_to_utf8_index(&text, index).unwrap()
-                                    };
+                                    list.drain(index..index + *len);
+                                }
+                            }
+                        }
+                    } else {
+                        unreachable!()
+                    }
+                }
+            }),
+        );
 
-                                    let utf8_end = if cfg!(feature = "wasm") {
-                                        utf16_to_utf8_index(&text, index + *len).unwrap()
-                                    } else {
-                                        unicode_to_utf8_index(&text, index + *len).unwrap()
-                                    };
-                                    text.drain(utf8_index..utf8_end);
-                                }
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            }),
-        );
-        let arena = actor.loro.oplog().lock().unwrap().arena.clone();
-        let map = Arc::clone(&actor.map_tracker);
-        actor.loro.subscribe(
-            &ContainerID::new_root("map", ContainerType::Map),
-            Arc::new(move |event| {
-                if event.from_children {
-                    return;
-                }
-                let mut map = map.lock().unwrap();
-                if let Diff::Map(map_diff) = &event.container.diff {
-                    for (key, value) in map_diff.updated.iter() {
-                        match &value.value {
-                            Some(value) => {
-                                let value = match value {
-                                    ValueOrContainer::Container(c) => {
-                                        let id = arena.idx_to_id(c.container_idx()).unwrap();
-                                        LoroValue::Container(id)
-                                    }
-                                    ValueOrContainer::Value(v) => v.clone(),
-                                };
-                                map.insert(key.to_string(), value);
-                            }
-                            None => {
-                                map.remove(&key.to_string());
-                            }
-                        }
-                    }
-                } else {
-                    debug_dbg!(&event.container);
-                    unreachable!()
-                }
-            }),
-        );
-        let arena = actor.loro.oplog().lock().unwrap().arena.clone();
-        let list = Arc::clone(&actor.list_tracker);
-        actor.loro.subscribe(
-            &ContainerID::new_root("list", ContainerType::List),
-            Arc::new(move |event| {
-                if event.from_children {
-                    return;
-                }
-                let mut list = list.lock().unwrap();
-                if let Diff::List(delta) = &event.container.diff {
-                    let mut index = 0;
-                    for item in delta.iter() {
-                        match item {
-                            DeltaItem::Retain {
-                                retain: len,
-                                attributes: _,
-                            } => {
-                                index += len;
-                            }
-                            DeltaItem::Insert {
-                                insert: value,
-                                attributes: _,
-                            } => {
-                                for v in value {
-                                    let value = match v {
-                                        ValueOrContainer::Container(c) => {
-                                            let id = arena.idx_to_id(c.container_idx()).unwrap();
-                                            LoroValue::Container(id)
-                                        }
-                                        ValueOrContainer::Value(v) => v.clone(),
-                                    };
-                                    list.insert(index, value);
-                                    index += 1;
-                                }
-                            }
-                            DeltaItem::Delete { delete: len, .. } => {
-                                list.drain(index..index + *len);
-                            }
-                        }
-                    }
-                } else {
-                    unreachable!()
-                }
-            }),
-        );
-        actor
-            .text_containers
-            .push(actor.loro.txn().unwrap().get_text("text"));
-        actor
-            .map_containers
-            .push(actor.loro.txn().unwrap().get_map("map"));
-        actor
-            .list_containers
-            .push(actor.loro.txn().unwrap().get_list("list"));
         actor
     }
 

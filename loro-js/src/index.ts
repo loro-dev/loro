@@ -2,7 +2,6 @@ export * from "loro-wasm";
 import { Container, Delta, LoroText, LoroTree,LoroTreeNode, OpId, Value, ContainerID, Loro, LoroList, LoroMap, TreeID } from "loro-wasm";
 
 
-
 Loro.prototype.getTypedMap = function (...args) {
   return this.getMap(...args);
 };
@@ -43,30 +42,41 @@ export type Frontiers = OpId[];
 export type Path = (number | string | TreeID )[];
 
 /**
- * The event of Loro.
+ * A batch of events that created by a single `import`/`transaction`/`checkout`.
+ *
  * @prop local - Indicates whether the event is local.
  * @prop origin - (Optional) Provides information about the origin of the event.
  * @prop diff - Contains the differential information related to the event.
  * @prop target - Identifies the container ID of the event's target.
  * @prop path - Specifies the absolute path of the event's emitter, which can be an index of a list container or a key of a map container.
  */
-export interface LoroEvent {
-  /**
-   * The unique ID of the event.
-   */
-  id: bigint;
+export interface LoroEventBatch {
   local: boolean;
-  origin?: string;
-  /**
-   * If true, this event was triggered by a child container.
-   */
-  fromChildren: boolean;
   /**
    * If true, this event was triggered by a checkout.
    */
   fromCheckout: boolean;
-  diff: Diff;
+  origin?: string;
+  /**
+   * The container ID of the current event receiver.
+   * It's undefined if the subscriber is on the root document.
+   */
+  currentTarget?: ContainerID;
+  events: LoroEvent[];
+}
+
+/**
+ * The concrete event of Loro.
+ */
+export interface LoroEvent {
+  /**
+   * The container ID of the event's target.
+   */
   target: ContainerID;
+  diff: Diff;
+  /**
+   * The absolute path of the event's emitter, which can be an index of a list container or a key of a map container.
+   */
   path: Path;
 }
 
@@ -97,7 +107,7 @@ export type TreeDiff = {
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
 
 interface Listener {
-  (event: LoroEvent): void;
+  (event: LoroEventBatch): void;
 }
 
 const CONTAINER_TYPES = ["Map", "Text", "List", "Tree"];
@@ -109,9 +119,9 @@ export function isContainerId(s: string): s is ContainerID {
 export { Loro };
 
 /**  Whether the value is a container.
- * 
+ *
  * # Example
- * 
+ *
  * ```ts
  * const doc = new Loro();
  * const map = doc.getMap("map");
@@ -138,9 +148,9 @@ export function isContainer(value: any): value is Container {
 }
 
 /**  Get the type of a value that may be a container.
- * 
+ *
  * # Example
- * 
+ *
  * ```ts
  * const doc = new Loro();
  * const map = doc.getMap("map");
@@ -154,10 +164,17 @@ export function isContainer(value: any): value is Container {
  * getType({}); // "Json"
  * ```
  */
-export function getType<T>(value: T): T extends LoroText ? "Text" :
-  T extends LoroMap ? "Map" :
-  T extends LoroTree ? "Tree" :
-  T extends LoroList ? "List" : "Json" {
+export function getType<T>(
+  value: T,
+): T extends LoroText
+  ? "Text"
+  : T extends LoroMap
+  ? "Map"
+  : T extends LoroTree
+  ? "Tree"
+  : T extends LoroList
+  ? "List"
+  : "Json" {
   if (isContainer(value)) {
     return value.kind();
   }
@@ -172,10 +189,10 @@ declare module "loro-wasm" {
 
   interface Loro<T extends Record<string, any> = Record<string, any>> {
     getTypedMap<Key extends keyof T & string>(
-      name: Key
+      name: Key,
     ): T[Key] extends LoroMap ? T[Key] : never;
     getTypedList<Key extends keyof T & string>(
-      name: Key
+      name: Key,
     ): T[Key] extends LoroList ? T[Key] : never;
   }
 

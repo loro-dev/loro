@@ -7,7 +7,7 @@ describe("richtext", () => {
     const doc = new Loro();
     doc.configTextStyle({
       bold: { expand: "after" },
-      link: { expand: "before" }
+      link: { expand: "before" },
     });
     const text = doc.getText("text");
     text.insert(0, "Hello World!");
@@ -60,9 +60,9 @@ describe("richtext", () => {
     const text = doc.getText("text");
     let called = false;
     text.subscribe(doc, (event) => {
-      if (event.diff.type == "text") {
+      if (event.events[0].diff.type == "text") {
         called = true;
-        expect(event.diff.diff).toStrictEqual([
+        expect(event.events[0].diff.diff).toStrictEqual([
           {
             insert: "Hello",
             attributes: {
@@ -113,17 +113,19 @@ describe("richtext", () => {
     doc1.configTextStyle({
       link: { expand: "none" },
       bold: { expand: "after" },
-    })
+    });
     const text1 = doc1.getText("text");
     const doc2 = new Loro();
     doc2.configTextStyle({
       link: { expand: "none" },
       bold: { expand: "after" },
-    })
+    });
     const text2 = doc2.getText("text");
     text1.subscribe(doc1, (event) => {
-      const e = event.diff as TextDiff;
-      text2.applyDelta(e.diff);
+      for (const containerDiff of event.events) {
+        const e = containerDiff.diff as TextDiff;
+        text2.applyDelta(e.diff);
+      }
     });
     text1.insert(0, "foo");
     text1.mark({ start: 0, end: 3 }, "link", true);
@@ -133,58 +135,66 @@ describe("richtext", () => {
     text1.insert(3, "baz");
     doc1.commit();
     await new Promise((r) => setTimeout(r, 1));
-    expect(text2.toDelta()).toStrictEqual([{ insert: 'foo', attributes: { link: true } }, { insert: 'baz' }]);
+    expect(text2.toDelta()).toStrictEqual([
+      { insert: "foo", attributes: { link: true } },
+      { insert: "baz" },
+    ]);
     expect(text2.toDelta()).toStrictEqual(text1.toDelta());
     text1.mark({ start: 2, end: 5 }, "bold", true);
     doc1.commit();
     await new Promise((r) => setTimeout(r, 1));
     expect(text2.toDelta()).toStrictEqual(text1.toDelta());
-  })
+  });
 
   it("custom richtext type", async () => {
     const doc = new Loro();
     doc.configTextStyle({
       myStyle: {
         expand: "none",
-      }
-    })
+      },
+    });
     const text = doc.getText("text");
     text.insert(0, "foo");
     text.mark({ start: 0, end: 3 }, "myStyle", 123);
-    expect(text.toDelta()).toStrictEqual([{ insert: 'foo', attributes: { myStyle: 123 } }]);
+    expect(text.toDelta()).toStrictEqual([
+      { insert: "foo", attributes: { myStyle: 123 } },
+    ]);
 
     expect(() => {
       text.mark({ start: 0, end: 3 }, "unknownStyle", 2);
-    }).toThrowError()
+    }).toThrowError();
 
     expect(() => {
       // default style config should be overwritten
       text.mark({ start: 0, end: 3 }, "bold", 2);
-    }).toThrowError()
-  })
+    }).toThrowError();
+  });
 
   it("allow overlapped styles", () => {
     const doc = new Loro();
     doc.configTextStyle({
-      comment: { expand: "none", }
-    })
+      comment: { expand: "none" },
+    });
     const text = doc.getText("text");
     text.insert(0, "The fox jumped.");
     text.mark({ start: 0, end: 7 }, "comment:alice", "Hi");
     text.mark({ start: 4, end: 14 }, "comment:bob", "Jump");
     expect(text.toDelta()).toStrictEqual([
       {
-        insert: "The ", attributes: { "comment:alice": "Hi" },
+        insert: "The ",
+        attributes: { "comment:alice": "Hi" },
       },
       {
-        insert: "fox", attributes: { "comment:alice": "Hi", "comment:bob": "Jump" },
+        insert: "fox",
+        attributes: { "comment:alice": "Hi", "comment:bob": "Jump" },
       },
       {
-        insert: " jumped", attributes: { "comment:bob": "Jump" },
+        insert: " jumped",
+        attributes: { "comment:bob": "Jump" },
       },
       {
         insert: ".",
-      }
-    ])
-  })
+      },
+    ]);
+  });
 });

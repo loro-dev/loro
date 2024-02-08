@@ -4,9 +4,11 @@ use std::sync::{
 };
 
 use fxhash::{FxHashMap, FxHashSet};
+use itertools::Itertools;
 use loro_common::ContainerID;
+use smallvec::SmallVec;
 
-use crate::container::idx::ContainerIdx;
+use crate::{container::idx::ContainerIdx, ContainerDiff};
 
 use super::{
     arena::SharedArena,
@@ -97,37 +99,53 @@ impl Observer {
 
     // When emitting changes, we need to make sure that the observer is not locked.
     fn emit_inner(&self, doc_diff: &DocDiff, inner: &mut ObserverInner) {
+        let mut container_events_map: FxHashMap<ContainerIdx, SmallVec<[&ContainerDiff; 1]>> =
+            Default::default();
         for container_diff in doc_diff.diff.iter() {
             self.arena
-                .with_ancestors(container_diff.idx, |ancestor, is_self| {
+                .with_ancestors(container_diff.idx, |ancestor, _| {
                     if let Some(subs) = inner.containers.get_mut(&ancestor) {
-                        subs.retain(|sub| match inner.subscribers.get_mut(sub) {
-                            Some(f) => {
-                                f(DiffEvent {
-                                    from_children: !is_self,
-                                    container: container_diff,
-                                    doc: doc_diff,
-                                });
+                        subs.retain(|sub| match inner.subscribers.contains_key(sub) {
+                            true => {
+                                container_events_map
+                                    .entry(ancestor)
+                                    .or_default()
+                                    .push(container_diff);
                                 true
                             }
-                            None => false,
+                            false => false,
                         });
                     }
                 });
+        }
 
+        for (container_idx, container_diffs) in container_events_map {
+            let subs = inner.containers.get_mut(&container_idx).unwrap();
+            for sub in subs.iter() {
+                let f = inner.subscribers.get_mut(sub).unwrap();
+                (f)(DiffEvent {
+                    current_target: Some(self.arena.get_container_id(container_idx).unwrap()),
+                    events: &container_diffs,
+                    event_meta: doc_diff,
+                })
+            }
+        }
+
+        if !inner.root.is_empty() {
+            let events = doc_diff.diff.iter().collect_vec();
             inner
                 .root
                 .retain(|sub| match inner.subscribers.get_mut(sub) {
                     Some(f) => {
-                        f(DiffEvent {
-                            from_children: true,
-                            container: container_diff,
-                            doc: doc_diff,
+                        (f)(DiffEvent {
+                            current_target: None,
+                            events: &events,
+                            event_meta: doc_diff,
                         });
                         true
                     }
                     None => false,
-                });
+                })
         }
     }
 
