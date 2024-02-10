@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.0
+
+### Minor Changes
+
+- Fix a few bugs and include BREAKING CHANG refactors
+
+  - fix: should not reset the state when calling checkout to latest (#265)
+  - refactor: only send a event for one `import`/`transaction`/`checkout` (#263)
+  - perf: optimize snapshot encoding speed (#264)
+  - feat: remove deleted set in tree state and optimize api (#259)
+
 ## 0.10.1
 
 ### Patch Changes
