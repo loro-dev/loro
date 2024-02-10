@@ -9,6 +9,18 @@ use loro_internal::{
 use serde_json::json;
 
 #[test]
+fn issue_502() -> LoroResult<()> {
+    let doc = LoroDoc::new_auto_commit();
+    doc.get_map("map").insert("stringA", "Original data")?;
+    doc.commit_then_renew();
+    doc.get_map("map").insert("stringA", "Updated data")?;
+    doc.attach();
+    doc.get_map("map").insert("stringB", "Something else")?;
+    doc.commit_then_renew();
+    Ok(())
+}
+
+#[test]
 fn issue_225() -> LoroResult<()> {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
