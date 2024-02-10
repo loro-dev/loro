@@ -260,6 +260,8 @@ impl LoroDoc {
         immediate_renew: bool,
     ) {
         if !self.auto_commit.load(Acquire) {
+            // if not auto_commit, nothing should happen
+            // because the global txn is not used
             return;
         }
 
@@ -660,6 +662,11 @@ impl LoroDoc {
     }
 
     pub fn checkout_to_latest(&self) {
+        if !self.is_detached() {
+            self.commit_then_renew();
+            return;
+        }
+
         debug_log::debug_log!("Attached {}", self.peer_id());
         let f = self.oplog_frontiers();
         self.checkout(&f).unwrap();
