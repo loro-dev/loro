@@ -239,6 +239,11 @@ impl LoroDoc {
         self.doc.state_frontiers()
     }
 
+    /// Get the PeerID
+    pub fn peer_id(&self) -> PeerID {
+        self.doc.peer_id()
+    }
+
     /// Change the PeerID
     ///
     /// NOTE: You need ot make sure there is no chance two peer have the same PeerID.
