@@ -1,6 +1,6 @@
 [package]
 name = "loro-common"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "Common types and functions for Loro. This is an internal lib of Loro."
@@ -15,7 +15,7 @@ keywords = ["crdt", "local-first"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 thiserror = "1.0.43"
-rle = { path = "../rle", version = "0.1.0", package = "loro-rle" }
+rle = { path = "../rle", version = "0.2.0", package = "loro-rle" }
 wasm-bindgen = { version = "=0.2.90", optional = true }
 fxhash = "0.2.1"
 enum-as-inner = "0.6.0"
