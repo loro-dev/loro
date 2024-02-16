@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "A internal library of loro for storing and manipulating run-length encoded data. Do not use it directly."
+documentation = "https://docs.rs/loro/"
+homepage = "https://loro.dev"
+authors = ["Zixuan Chen", "Liang Zhao"]
+categories = ["data-structures", "crdt", "collaborative-editing", "local-first"]
+keywords = ["crdt", "local-first"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
