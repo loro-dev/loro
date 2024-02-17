@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.1
+
+### Patch Changes
+
+- Fix batch import
+
 ## 0.11.0
 
 ### Minor Changes
