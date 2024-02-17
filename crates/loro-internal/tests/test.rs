@@ -776,3 +776,18 @@ fn tree_checkout() {
         })
         .unwrap();
 }
+
+#[test]
+fn issue_batch_import_snapshot() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(123).unwrap();
+    let doc2 = LoroDoc::new_auto_commit();
+    doc2.set_peer_id(456).unwrap();
+    doc.get_map("map").insert("s", "hello world!").unwrap();
+    doc2.get_map("map").insert("s", "hello?").unwrap();
+
+    let data1 = doc.export_snapshot();
+    let data2 = doc2.export_snapshot();
+    let doc3 = LoroDoc::new();
+    doc3.import_batch(&[data1, data2]).unwrap();
+}

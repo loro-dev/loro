@@ -664,7 +664,8 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
     let (new_ids, pending_changes) = import_changes_to_oplog(changes, &mut oplog)?;
     assert!(pending_changes.is_empty());
-    assert_eq!(&state.frontiers, oplog.frontiers());
+    // we cannot assert this because frontiers of oplog is not updated yet when batch_importing
+    // assert_eq!(&state.frontiers, oplog.frontiers());
     if !oplog.pending_changes.is_empty() {
         drop(oplog);
         drop(state);
