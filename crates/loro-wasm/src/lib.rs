@@ -242,8 +242,8 @@ impl Loro {
     /// If two continuous local changes are within the interval, they will be merged into one change.
     /// The defualt value is 1000 seconds
     #[wasm_bindgen(js_name = "setChangeMergeInterval")]
-    pub fn set_change_merge_interval(&self, interval: i64) {
-        self.0.set_change_merge_interval(interval);
+    pub fn set_change_merge_interval(&self, interval: f64) {
+        self.0.set_change_merge_interval(interval as i64);
     }
 
     /// Set the rich text format configuration of the document.

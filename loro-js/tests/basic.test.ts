@@ -325,7 +325,7 @@ it("getValueType", () => {
   expect(getType(tree)).toBe("Tree");
 });
 
-it("timestamp", () => {
+it("enable timestamp", () => {
   const doc = new Loro();
   doc.setPeerId(1);
   doc.getText("123").insert(0, "123");
@@ -341,5 +341,37 @@ it("timestamp", () => {
   {
     const c = doc.getChangeAt({ peer: "1", counter: 4 });
     expect(c.timestamp).toBeCloseTo(Date.now(), 0);
+  }
+});
+
+it("commit with specified timestamp", () => {
+  const doc = new Loro();
+  doc.setPeerId(1);
+  doc.getText("123").insert(0, "123");
+  doc.commit(undefined, 111);
+  const c = doc.getChangeAt({ peer: "1", counter: 0 });
+  expect(c.timestamp).toBe(111);
+});
+
+it("can control the mergeable interval", () => {
+  {
+    const doc = new Loro();
+    doc.setPeerId(1);
+    doc.getText("123").insert(0, "1");
+    doc.commit(undefined, 110);
+    doc.getText("123").insert(0, "1");
+    doc.commit(undefined, 120);
+    expect(doc.getAllChanges().get("1")?.length).toBe(1);
+  }
+
+  {
+    const doc = new Loro();
+    doc.setPeerId(1);
+    doc.setChangeMergeInterval(10);
+    doc.getText("123").insert(0, "1");
+    doc.commit(undefined, 110);
+    doc.getText("123").insert(0, "1");
+    doc.commit(undefined, 120);
+    expect(doc.getAllChanges().get("1")?.length).toBe(2);
   }
 });
