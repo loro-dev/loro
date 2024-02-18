@@ -487,6 +487,7 @@ fn import() {
 #[test]
 fn test_timestamp() {
     let doc = LoroDoc::new();
+    doc.set_record_timestamp(true);
     let text = doc.get_text("text");
     let mut txn = doc.txn().unwrap();
     text.insert_with_txn(&mut txn, 0, "123").unwrap();

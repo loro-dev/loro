@@ -21,8 +21,7 @@ use crate::{
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    handler::TextHandler,
-    handler::TreeHandler,
+    handler::{TextHandler, TreeHandler},
     id::PeerID,
     oplog::dag::FrontiersNotIncluded,
     version::Frontiers,
@@ -80,7 +79,7 @@ impl LoroDoc {
         let oplog = OpLog::new();
         let arena = oplog.arena.clone();
         let global_txn = Arc::new(Mutex::new(None));
-        let config: Configure = Default::default();
+        let config: Configure = oplog.configure.clone();
         // share arena
         let state = DocState::new_arc(arena.clone(), Arc::downgrade(&global_txn), config.clone());
         Self {
@@ -94,6 +93,30 @@ impl LoroDoc {
             txn: global_txn,
             arena,
         }
+    }
+
+    /// Set whether to record the timestamp of each change. Default is `false`.
+    ///
+    /// If enabled, the Unix timestamp will be recorded for each change automatically.
+    ///
+    /// You can also set each timestamp manually when you commit a change.
+    /// The timstamp manually set will override the automatic one.
+    ///
+    /// NOTE: Timestamps are forced to be in ascending order.
+    /// If you commit a new change with a timestamp that is less than the existing one,
+    /// the largest existing timestamp will be used instead.
+    #[inline]
+    pub fn set_record_timestamp(&self, record: bool) {
+        self.config.set_record_timestamp(record);
+    }
+
+    /// Set the interval of mergeable changes.
+    ///
+    /// If two continuous local changes are within the interval, they will be merged into one change.
+    /// The defualt value is 1000 seconds.
+    #[inline]
+    pub fn set_change_merge_interval(&self, interval: i64) {
+        self.config.set_merge_interval(interval);
     }
 
     #[inline]
@@ -293,6 +316,7 @@ impl LoroDoc {
         }
     }
 
+    #[inline]
     pub fn renew_txn_if_auto_commit(&self) {
         if self.auto_commit.load(Acquire) && !self.detached.load(Acquire) {
             let mut self_txn = self.txn.try_lock().unwrap();
@@ -305,6 +329,7 @@ impl LoroDoc {
         }
     }
 
+    #[inline]
     pub(crate) fn get_global_txn(&self) -> Weak<Mutex<Option<Transaction>>> {
         Arc::downgrade(&self.txn)
     }
@@ -379,7 +404,10 @@ impl LoroDoc {
         let parsed = parse_header_and_body(bytes)?;
         match parsed.mode.is_snapshot() {
             false => {
-                // TODO: need to throw error if state is in transaction
+                if self.state.lock().unwrap().is_in_txn() {
+                    return Err(LoroError::ImportWhenInTxn);
+                }
+
                 debug_log::group!("Import updates {}", self.peer_id());
                 self.update_oplog_and_apply_delta_to_state_if_needed(
                     |oplog| oplog.decode(parsed),
@@ -750,6 +778,10 @@ impl LoroDoc {
     pub fn len_changes(&self) -> usize {
         let oplog = self.oplog.lock().unwrap();
         oplog.len_changes()
+    }
+
+    pub fn config(&self) -> &Configure {
+        &self.config
     }
 
     /// This method compare the consistency between the current doc state

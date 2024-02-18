@@ -17,6 +17,7 @@ use loro_internal::{
 use std::cmp::Ordering;
 use std::ops::Range;
 
+pub use loro_internal::configure::Configure;
 pub use loro_internal::container::richtext::ExpandType;
 pub use loro_internal::container::{ContainerID, ContainerType};
 pub use loro_internal::obs::SubID;
@@ -44,6 +45,34 @@ impl LoroDoc {
         let mut doc = InnerLoroDoc::default();
         doc.start_auto_commit();
         LoroDoc { doc }
+    }
+
+    /// Get the configureations of the document.
+    pub fn config(&self) -> &Configure {
+        self.doc.config()
+    }
+
+    /// Set whether to record the timestamp of each change. Default is `false`.
+    ///
+    /// If enabled, the Unix timestamp will be recorded for each change automatically.
+    ///
+    /// You can set each timestamp manually when commiting a change.
+    ///
+    /// NOTE: Timestamps are forced to be in ascending order.
+    /// If you commit a new change with a timestamp that is less than the existing one,
+    /// the largest existing timestamp will be used instead.
+    #[inline]
+    pub fn set_record_timestamp(&self, record: bool) {
+        self.doc.set_record_timestamp(record);
+    }
+
+    /// Set the interval of mergeable changes.
+    ///
+    /// If two continuous local changes are within the interval, they will be merged into one change.
+    /// The defualt value is 1000 seconds.
+    #[inline]
+    pub fn set_change_merge_interval(&self, interval: i64) {
+        self.doc.set_change_merge_interval(interval);
     }
 
     /// Set the rich text format configuration of the document.
@@ -83,6 +112,9 @@ impl LoroDoc {
         self.doc.cmp_with_frontiers(other)
     }
 
+    /// Compare two frontiers.
+    ///
+    /// If the frontiers are not included in the document, return `FrontiersNotIncluded`.
     pub fn cmp_frontiers(
         &self,
         a: &Frontiers,

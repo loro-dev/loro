@@ -2,14 +2,44 @@ pub use crate::container::richtext::config::{StyleConfig, StyleConfigMap};
 
 #[derive(Clone)]
 pub struct Configure {
-    pub text_style_config: Arc<RwLock<StyleConfigMap>>,
+    pub(crate) text_style_config: Arc<RwLock<StyleConfigMap>>,
+    record_timestamp: Arc<AtomicBool>,
+    merge_interval: Arc<AtomicI64>,
 }
 
 impl Default for Configure {
     fn default() -> Self {
         Self {
             text_style_config: Arc::new(RwLock::new(StyleConfigMap::default_rich_text_config())),
+            record_timestamp: Arc::new(AtomicBool::new(false)),
+            merge_interval: Arc::new(AtomicI64::new(1000 * 1000)),
         }
+    }
+}
+
+impl Configure {
+    pub fn text_style_config(&self) -> &Arc<RwLock<StyleConfigMap>> {
+        &self.text_style_config
+    }
+
+    pub fn record_timestamp(&self) -> bool {
+        self.record_timestamp
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn set_record_timestamp(&self, record: bool) {
+        self.record_timestamp
+            .store(record, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn merge_interval(&self) -> i64 {
+        self.merge_interval
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn set_merge_interval(&self, interval: i64) {
+        self.merge_interval
+            .store(interval, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -17,7 +47,10 @@ pub struct DefaultRandom;
 
 #[cfg(test)]
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, RwLock};
+use std::sync::{
+    atomic::{AtomicBool, AtomicI64},
+    Arc, RwLock,
+};
 #[cfg(test)]
 static mut TEST_RANDOM: AtomicU64 = AtomicU64::new(0);
 

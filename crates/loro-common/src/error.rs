@@ -44,6 +44,8 @@ pub enum LoroError {
     Unknown(Box<str>),
     #[error("The given ID ({0}) is not contained by the doc")]
     InvalidFrontierIdNotFound(ID),
+    #[error("Cannot import when the doc is in a transaction")]
+    ImportWhenInTxn,
 }
 
 #[derive(Error, Debug)]
