@@ -15,7 +15,7 @@ pub enum LoroValue {
     Null,
     Bool(bool),
     Double(f64),
-    I32(i32),
+    I64(i64),
     // i64?
     Binary(Arc<Vec<u8>>),
     String(Arc<String>),
@@ -32,7 +32,7 @@ impl<'a> arbitrary::Arbitrary<'a> for LoroValue {
             0 => LoroValue::Null,
             1 => LoroValue::Bool(u.arbitrary()?),
             2 => LoroValue::Double(u.arbitrary()?),
-            3 => LoroValue::I32(u.arbitrary()?),
+            3 => LoroValue::I64(u.arbitrary()?),
             4 => LoroValue::Binary(Arc::new(u.arbitrary()?)),
             5 => LoroValue::String(Arc::new(u.arbitrary()?)),
             6 => LoroValue::List(Arc::new(u.arbitrary()?)),
@@ -151,7 +151,7 @@ impl TryFrom<LoroValue> for i32 {
 
     fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
         match value {
-            LoroValue::I32(v) => Ok(v),
+            LoroValue::I64(v) => Ok(v as i32),
             _ => Err("not a i32"),
         }
     }
@@ -223,8 +223,8 @@ impl Hash for LoroValue {
             LoroValue::Double(v) => {
                 state.write_u64(v.to_bits());
             }
-            LoroValue::I32(v) => {
-                state.write_i32(*v);
+            LoroValue::I64(v) => {
+                state.write_i64(*v);
             }
             LoroValue::Binary(v) => {
                 v.hash(state);
@@ -282,19 +282,31 @@ impl<const N: usize> From<&'_ [u8; N]> for LoroValue {
 
 impl From<i32> for LoroValue {
     fn from(v: i32) -> Self {
-        LoroValue::I32(v)
+        LoroValue::I64(v as i64)
+    }
+}
+
+impl From<u32> for LoroValue {
+    fn from(v: u32) -> Self {
+        LoroValue::I64(v as i64)
+    }
+}
+
+impl From<i64> for LoroValue {
+    fn from(v: i64) -> Self {
+        LoroValue::I64(v)
     }
 }
 
 impl From<u16> for LoroValue {
     fn from(v: u16) -> Self {
-        LoroValue::I32(v as i32)
+        LoroValue::I64(v as i64)
     }
 }
 
 impl From<i16> for LoroValue {
     fn from(v: i16) -> Self {
-        LoroValue::I32(v as i32)
+        LoroValue::I64(v as i64)
     }
 }
 
@@ -356,7 +368,7 @@ pub mod wasm {
             LoroValue::Null => JsValue::NULL,
             LoroValue::Bool(b) => JsValue::from_bool(b),
             LoroValue::Double(f) => JsValue::from_f64(f),
-            LoroValue::I32(i) => JsValue::from_f64(i as f64),
+            LoroValue::I64(i) => JsValue::from_f64(i as f64),
             LoroValue::String(s) => JsValue::from_str(&s),
             LoroValue::Binary(binary) => {
                 let binary = Arc::try_unwrap(binary).unwrap_or_else(|m| (*m).clone());
@@ -402,8 +414,8 @@ pub mod wasm {
                 LoroValue::Bool(js_value.as_bool().unwrap())
             } else if js_value.as_f64().is_some() {
                 let num = js_value.as_f64().unwrap();
-                if num.fract() == 0.0 && num <= i32::MAX as f64 && num >= i32::MIN as f64 {
-                    LoroValue::I32(num as i32)
+                if num.fract() == 0.0 && num <= i64::MAX as f64 && num >= i64::MIN as f64 {
+                    LoroValue::I64(num as i64)
                 } else {
                     LoroValue::Double(num)
                 }
@@ -472,7 +484,7 @@ impl Serialize for LoroValue {
                 LoroValue::Null => serializer.serialize_unit(),
                 LoroValue::Bool(b) => serializer.serialize_bool(*b),
                 LoroValue::Double(d) => serializer.serialize_f64(*d),
-                LoroValue::I32(i) => serializer.serialize_i32(*i),
+                LoroValue::I64(i) => serializer.serialize_i64(*i),
                 LoroValue::String(s) => serializer.serialize_str(s),
                 LoroValue::Binary(b) => serializer.collect_seq(b.iter()),
                 LoroValue::List(l) => serializer.collect_seq(l.iter()),
@@ -493,7 +505,7 @@ impl Serialize for LoroValue {
                 LoroValue::Double(d) => {
                     serializer.serialize_newtype_variant("LoroValue", 2, "Double", d)
                 }
-                LoroValue::I32(i) => serializer.serialize_newtype_variant("LoroValue", 3, "I32", i),
+                LoroValue::I64(i) => serializer.serialize_newtype_variant("LoroValue", 3, "I32", i),
                 LoroValue::String(s) => {
                     serializer.serialize_newtype_variant("LoroValue", 4, "String", &**s)
                 }
@@ -569,14 +581,14 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
     where
         E: serde::de::Error,
     {
-        Ok(LoroValue::I32(v as i32))
+        Ok(LoroValue::I64(v))
     }
 
     fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        Ok(LoroValue::I32(v as i32))
+        Ok(LoroValue::I64(v as i64))
     }
 
     fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
@@ -673,7 +685,7 @@ impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
             }
             (LoroValueFields::Bool, v) => v.newtype_variant().map(LoroValue::Bool),
             (LoroValueFields::Double, v) => v.newtype_variant().map(LoroValue::Double),
-            (LoroValueFields::I32, v) => v.newtype_variant().map(LoroValue::I32),
+            (LoroValueFields::I32, v) => v.newtype_variant().map(LoroValue::I64),
             (LoroValueFields::String, v) => {
                 v.newtype_variant().map(|x| LoroValue::String(Arc::new(x)))
             }

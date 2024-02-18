@@ -293,7 +293,7 @@ mod test {
         assert!(!(*map.get("false").unwrap().as_bool().unwrap()));
         assert!(map.get("null").unwrap().is_null());
         assert_eq!(map.get("list").unwrap().as_list().unwrap().len(), 0);
-        assert_eq!(*map.get("integer").unwrap().as_i32().unwrap(), 123);
+        assert_eq!(*map.get("integer").unwrap().as_i64().unwrap(), 123);
         assert_eq!(*map.get("float").unwrap().as_double().unwrap(), 123.123);
         assert_eq!(map.get("map").unwrap().as_map().unwrap().len(), 1);
         assert_eq!(

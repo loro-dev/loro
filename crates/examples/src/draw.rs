@@ -127,13 +127,13 @@ impl ActorTrait for DrawActor {
 
                 let map = self.doc.get_map(id);
                 let pos_map = map.get("pos").unwrap().unwrap_right().into_map().unwrap();
-                let x = pos_map.get("x").unwrap().unwrap_left().into_i32().unwrap();
-                let y = pos_map.get("y").unwrap().unwrap_left().into_i32().unwrap();
+                let x = pos_map.get("x").unwrap().unwrap_left().into_i64().unwrap();
+                let y = pos_map.get("y").unwrap().unwrap_left().into_i64().unwrap();
                 pos_map
-                    .insert("x", x.overflowing_add(relative_to.x).0)
+                    .insert("x", x.overflowing_add(relative_to.x as i64).0)
                     .unwrap();
                 pos_map
-                    .insert("y", y.overflowing_add(relative_to.y).0)
+                    .insert("y", y.overflowing_add(relative_to.y as i64).0)
                     .unwrap();
             }
         }

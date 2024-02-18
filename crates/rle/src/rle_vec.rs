@@ -622,7 +622,7 @@ impl<A: Array> Deref for RleVecWithLen<A> {
     }
 }
 
-pub fn slice_vec_by<T, F>(vec: &Vec<T>, index: F, start: usize, end: usize) -> Vec<T>
+pub fn slice_vec_by<T, F>(vec: &[T], index: F, start: usize, end: usize) -> Vec<T>
 where
     F: Fn(&T) -> usize,
     T: Sliceable + HasLength,
