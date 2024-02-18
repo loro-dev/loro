@@ -169,7 +169,7 @@ pub fn convert(value: LoroValue) -> JsValue {
         LoroValue::Null => JsValue::NULL,
         LoroValue::Bool(b) => JsValue::from_bool(b),
         LoroValue::Double(f) => JsValue::from_f64(f),
-        LoroValue::I32(i) => JsValue::from_f64(i as f64),
+        LoroValue::I64(i) => JsValue::from_f64(i as f64),
         LoroValue::String(s) => JsValue::from_str(&s),
         LoroValue::List(list) => {
             let list = Arc::try_unwrap(list).unwrap_or_else(|m| (*m).clone());

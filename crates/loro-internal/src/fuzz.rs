@@ -419,7 +419,7 @@ where
     #[allow(clippy::redundant_clone)]
     let mut actions_clone = actions.clone();
     let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
-    #[allow(clippy::blocks_in_if_conditions)]
+    #[allow(clippy::blocks_in_conditions)]
     if std::panic::catch_unwind(|| {
         // SAFETY: test
         let f = unsafe { &*(f_ref as *const F) };
@@ -448,7 +448,7 @@ where
         let f_ref: usize = f_ref as usize;
         let mut actions_clone = candidate.clone();
         let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
-        #[allow(clippy::blocks_in_if_conditions)]
+        #[allow(clippy::blocks_in_conditions)]
         if std::panic::catch_unwind(|| {
             // SAFETY: test
             let f = unsafe { &*(f_ref as *const F) };

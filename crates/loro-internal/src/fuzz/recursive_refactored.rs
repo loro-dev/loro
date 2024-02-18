@@ -270,7 +270,7 @@ impl From<FuzzValue> for LoroValue {
     fn from(v: FuzzValue) -> Self {
         match v {
             FuzzValue::Null => LoroValue::Null,
-            FuzzValue::I32(i) => LoroValue::I32(i),
+            FuzzValue::I32(i) => LoroValue::I64(i as i64),
             FuzzValue::Container(_) => unreachable!(),
         }
     }
@@ -815,7 +815,7 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
         sites.preprocess(action);
         applied.push(action.clone());
         let sites_ptr: usize = &mut sites as *mut _ as usize;
-        #[allow(clippy::blocks_in_if_conditions)]
+        #[allow(clippy::blocks_in_conditions)]
         if std::panic::catch_unwind(|| {
             // SAFETY: Test
             let sites = unsafe { &mut *(sites_ptr as *mut Vec<_>) };

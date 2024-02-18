@@ -886,7 +886,7 @@ mod encode {
     }
 
     pub(super) fn encode_changes<'a>(
-        diff_changes: &'a Vec<Cow<'a, Change>>,
+        diff_changes: &'a [Cow<'a, Change>],
         dep_arena: &mut super::arena::DepsArena,
         peer_register: &mut ValueRegister<u64>,
         push_op: &mut impl FnMut(TempOp<'a>),
@@ -1396,7 +1396,7 @@ mod value {
         False,
         DeleteOnce,
         ContainerIdx(usize),
-        I32(i32),
+        I64(i64),
         F64(f64),
         Str(&'a str),
         DeleteSeq(i32),
@@ -1463,7 +1463,7 @@ mod value {
         True = 1,
         False = 2,
         DeleteOnce = 3,
-        I32 = 4,
+        I64 = 4,
         ContainerType = 5,
         F64 = 6,
         Str = 7,
@@ -1489,8 +1489,8 @@ mod value {
                 Some(ValueKind::False)
             } else if n == ValueKind::DeleteOnce as u8 {
                 Some(ValueKind::DeleteOnce)
-            } else if n == ValueKind::I32 as u8 {
-                Some(ValueKind::I32)
+            } else if n == ValueKind::I64 as u8 {
+                Some(ValueKind::I64)
             } else if n == ValueKind::ContainerType as u8 {
                 Some(ValueKind::ContainerType)
             } else if n == ValueKind::F64 as u8 {
@@ -1536,7 +1536,7 @@ mod value {
                 ValueKind::True => ValueKind::True as i64,
                 ValueKind::False => ValueKind::False as i64,
                 ValueKind::DeleteOnce => ValueKind::DeleteOnce as i64,
-                ValueKind::I32 => ValueKind::I32 as i64,
+                ValueKind::I64 => ValueKind::I64 as i64,
                 ValueKind::ContainerType => ValueKind::ContainerType as i64,
                 ValueKind::F64 => ValueKind::F64 as i64,
                 ValueKind::Str => ValueKind::Str as i64,
@@ -1563,7 +1563,7 @@ mod value {
                 ValueKind::True => ValueKind::True as u8,
                 ValueKind::False => ValueKind::False as u8,
                 ValueKind::DeleteOnce => ValueKind::DeleteOnce as u8,
-                ValueKind::I32 => ValueKind::I32 as u8,
+                ValueKind::I64 => ValueKind::I64 as u8,
                 ValueKind::ContainerType => ValueKind::ContainerType as u8,
                 ValueKind::F64 => ValueKind::F64 as u8,
                 ValueKind::Str => ValueKind::Str as u8,
@@ -1586,7 +1586,7 @@ mod value {
                 Value::True => ValueKind::True,
                 Value::False => ValueKind::False,
                 Value::DeleteOnce => ValueKind::DeleteOnce,
-                Value::I32(_) => ValueKind::I32,
+                Value::I64(_) => ValueKind::I64,
                 Value::ContainerIdx(_) => ValueKind::ContainerType,
                 Value::F64(_) => ValueKind::F64,
                 Value::Str(_) => ValueKind::Str,
@@ -1607,7 +1607,7 @@ mod value {
             LoroValue::Null => ValueKind::Null,
             LoroValue::Bool(true) => ValueKind::True,
             LoroValue::Bool(false) => ValueKind::False,
-            LoroValue::I32(_) => ValueKind::I32,
+            LoroValue::I64(_) => ValueKind::I64,
             LoroValue::Double(_) => ValueKind::F64,
             LoroValue::String(_) => ValueKind::Str,
             LoroValue::List(_) => ValueKind::Array,
@@ -1646,9 +1646,9 @@ mod value {
                 LoroValue::Null => ValueKind::Null,
                 LoroValue::Bool(true) => ValueKind::True,
                 LoroValue::Bool(false) => ValueKind::False,
-                LoroValue::I32(value) => {
-                    self.write_i32(*value);
-                    ValueKind::I32
+                LoroValue::I64(value) => {
+                    self.write_i64(*value);
+                    ValueKind::I64
                 }
                 LoroValue::Double(value) => {
                     self.write_f64(*value);
@@ -1696,7 +1696,7 @@ mod value {
                 Value::True => {}
                 Value::False => {}
                 Value::DeleteOnce => {}
-                Value::I32(value) => self.write_i32(*value),
+                Value::I64(value) => self.write_i64(*value),
                 Value::F64(value) => self.write_f64(*value),
                 Value::Str(value) => self.write_str(value),
                 Value::DeleteSeq(value) => self.write_i32(*value),
@@ -1709,6 +1709,10 @@ mod value {
                 Value::ContainerIdx(value) => self.write_usize(*value),
                 Value::Unknown { kind: _, data: _ } => unreachable!(),
             }
+        }
+
+        fn write_i64(&mut self, value: i64) {
+            leb128::write::signed(&mut self.buffer, value).unwrap();
         }
 
         fn write_i32(&mut self, value: i32) {
@@ -1830,10 +1834,10 @@ mod value {
                 ValueKind::Null => LoroValue::Null,
                 ValueKind::True => LoroValue::Bool(true),
                 ValueKind::False => LoroValue::Bool(false),
-                ValueKind::I32 => LoroValue::I32(self.read_i32()?),
+                ValueKind::I64 => LoroValue::I64(self.read_i64()?),
                 ValueKind::F64 => LoroValue::Double(self.read_f64()?),
                 ValueKind::Str => LoroValue::String(Arc::new(self.read_str()?.to_owned())),
-                ValueKind::DeltaInt => LoroValue::I32(self.read_i32()?),
+                ValueKind::DeltaInt => LoroValue::I64(self.read_i64()?),
                 ValueKind::Array => {
                     let len = self.read_usize()?;
                     if len > MAX_COLLECTION_SIZE {
@@ -1942,10 +1946,10 @@ mod value {
                         ValueKind::Null => LoroValue::Null,
                         ValueKind::True => LoroValue::Bool(true),
                         ValueKind::False => LoroValue::Bool(false),
-                        ValueKind::I32 => LoroValue::I32(self.read_i32()?),
+                        ValueKind::I64 => LoroValue::I64(self.read_i64()?),
                         ValueKind::F64 => LoroValue::Double(self.read_f64()?),
                         ValueKind::Str => LoroValue::String(Arc::new(self.read_str()?.to_owned())),
-                        ValueKind::DeltaInt => LoroValue::I32(self.read_i32()?),
+                        ValueKind::DeltaInt => LoroValue::I64(self.read_i64()?),
                         ValueKind::Array => {
                             let len = self.read_usize()?;
                             if len > MAX_COLLECTION_SIZE {
@@ -2063,6 +2067,10 @@ mod value {
             }
 
             unreachable!();
+        }
+
+        pub fn read_i64(&mut self) -> LoroResult<i64> {
+            leb128::read::signed(&mut self.raw).map_err(|_| LoroError::DecodeDataCorruptionError)
         }
 
         pub fn read_i32(&mut self) -> LoroResult<i32> {
