@@ -13,7 +13,8 @@ use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
 // use tabled::measurment::Percent;
 
-use crate::change::{Change, Lamport, Timestamp};
+use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
+use crate::configure::Configure;
 use crate::container::list::list_op;
 use crate::dag::{Dag, DagUtils};
 use crate::encoding::ParsedHeaderAndBody;
@@ -53,6 +54,7 @@ pub struct OpLog {
     /// Whether we are importing a batch of changes.
     /// If so the Dag's frontiers won't be updated until the batch is finished.
     pub(crate) batch_importing: bool,
+    pub(crate) configure: Configure,
 }
 
 /// [AppDag] maintains the causal graph of the app.
@@ -88,6 +90,7 @@ impl Clone for OpLog {
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
             batch_importing: false,
+            configure: self.configure.clone(),
         }
     }
 }
@@ -163,6 +166,7 @@ impl OpLog {
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
             batch_importing: false,
+            configure: Configure::default(),
         }
     }
 
@@ -234,7 +238,10 @@ impl OpLog {
                 );
                 let timestamp_change = change.timestamp - last.timestamp;
                 // TODO: make this a config
-                if !last.has_dependents && change.deps_on_self() && timestamp_change < 1000 {
+                if !last.has_dependents
+                    && change.deps_on_self()
+                    && timestamp_change < self.configure.merge_interval()
+                {
                     for op in take(change.ops.vec_mut()) {
                         last.ops.push(op);
                     }
@@ -801,6 +808,14 @@ impl OpLog {
                 .iter()
                 .take_while(move |x| x.ctr_start() < end_cnt)
         })
+    }
+
+    pub fn get_timestamp_for_next_txn(&self) -> Timestamp {
+        if self.configure.record_timestamp() {
+            get_sys_timestamp()
+        } else {
+            0
+        }
     }
 }
 

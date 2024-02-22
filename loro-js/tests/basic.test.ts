@@ -9,7 +9,6 @@ import {
 } from "../src";
 import { Container } from "../dist/loro";
 
-
 it("basic example", () => {
   const doc = new Loro();
   const list: LoroList = doc.getList("list");
@@ -79,7 +78,7 @@ it("basic sync example", () => {
 
 it("basic events", () => {
   const doc = new Loro();
-  doc.subscribe((event) => { });
+  doc.subscribe((event) => {});
   const list = doc.getList("list");
 });
 
@@ -155,9 +154,7 @@ describe("import", () => {
     b.import(a.exportFrom());
     b.getText("text").insert(1, "b");
     b.getList("list").insert(0, [1, 2]);
-    const updates = b.exportFrom(
-      b.frontiersToVV(a.frontiers()),
-    );
+    const updates = b.exportFrom(b.frontiersToVV(a.frontiers()));
     a.import(updates);
     expect(a.toJson()).toStrictEqual(b.toJson());
   });
@@ -222,7 +219,7 @@ describe("map", () => {
     map.set("foo", "bar");
     const entries = map.entries();
     expect((entries[0][1]! as Container).kind() === "Text").toBeTruthy();
-  })
+  });
 });
 
 it("handlers should still be usable after doc is dropped", () => {
@@ -286,7 +283,6 @@ it("get change with given lamport", () => {
   }
 });
 
-
 it("isContainer", () => {
   expect(isContainer("123")).toBeFalsy();
   expect(isContainer(123)).toBeFalsy();
@@ -301,7 +297,7 @@ it("isContainer", () => {
   expect(isContainer(t)).toBeTruthy();
   expect(getType(t)).toBe("Text");
   expect(getType(123)).toBe("Json");
-})
+});
 
 it("getValueType", () => {
   // Type tests
@@ -327,4 +323,55 @@ it("getValueType", () => {
   expect(getType(list)).toBe("List");
   expectTypeOf(getType(tree)).toEqualTypeOf<"Tree">();
   expect(getType(tree)).toBe("Tree");
-})
+});
+
+it("enable timestamp", () => {
+  const doc = new Loro();
+  doc.setPeerId(1);
+  doc.getText("123").insert(0, "123");
+  doc.commit();
+  {
+    const c = doc.getChangeAt({ peer: "1", counter: 0 });
+    expect(c.timestamp).toBe(0);
+  }
+
+  doc.setRecordTimestamp(true);
+  doc.getText("123").insert(0, "123");
+  doc.commit();
+  {
+    const c = doc.getChangeAt({ peer: "1", counter: 4 });
+    expect(c.timestamp).toBeCloseTo(Date.now(), 0);
+  }
+});
+
+it("commit with specified timestamp", () => {
+  const doc = new Loro();
+  doc.setPeerId(1);
+  doc.getText("123").insert(0, "123");
+  doc.commit(undefined, 111);
+  const c = doc.getChangeAt({ peer: "1", counter: 0 });
+  expect(c.timestamp).toBe(111);
+});
+
+it("can control the mergeable interval", () => {
+  {
+    const doc = new Loro();
+    doc.setPeerId(1);
+    doc.getText("123").insert(0, "1");
+    doc.commit(undefined, 110);
+    doc.getText("123").insert(0, "1");
+    doc.commit(undefined, 120);
+    expect(doc.getAllChanges().get("1")?.length).toBe(1);
+  }
+
+  {
+    const doc = new Loro();
+    doc.setPeerId(1);
+    doc.setChangeMergeInterval(10);
+    doc.getText("123").insert(0, "1");
+    doc.commit(undefined, 110);
+    doc.getText("123").insert(0, "1");
+    doc.commit(undefined, 120);
+    expect(doc.getAllChanges().get("1")?.length).toBe(2);
+  }
+});

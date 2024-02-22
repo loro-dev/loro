@@ -224,6 +224,28 @@ impl Loro {
         Self(Arc::new(doc))
     }
 
+    /// Set whether to record the timestamp of each change. Default is `false`.
+    ///
+    /// If enabled, the Unix timestamp will be recorded for each change automatically.
+    ///
+    /// You can also set each timestamp manually when you commit a change.
+    /// The timstamp manually set will override the automatic one.
+    ///
+    /// NOTE: Timestamps are forced to be in ascending order.
+    /// If you commit a new change with a timestamp that is less than the existing one,
+    /// the largest existing timestamp will be used instead.
+    #[wasm_bindgen(js_name = "setRecordTimestamp")]
+    pub fn set_record_timestamp(&self, auto_record: bool) {
+        self.0.set_record_timestamp(auto_record);
+    }
+
+    /// If two continuous local changes are within the interval, they will be merged into one change.
+    /// The defualt value is 1000 seconds
+    #[wasm_bindgen(js_name = "setChangeMergeInterval")]
+    pub fn set_change_merge_interval(&self, interval: f64) {
+        self.0.set_change_merge_interval(interval as i64);
+    }
+
     /// Set the rich text format configuration of the document.
     ///
     /// You need to config it if you use rich text `mark` method.
@@ -442,8 +464,15 @@ impl Loro {
     }
 
     /// Commit the cumulative auto committed transaction.
-    pub fn commit(&self, origin: Option<String>) {
-        self.0.commit_with(origin.map(|x| x.into()), None, true);
+    ///
+    /// You can specify the `origin` and `timestamp` of the commit.
+    ///
+    /// NOTE: Timestamps are forced to be in ascending order.
+    /// If you commit a new change with a timestamp that is less than the existing one,
+    /// the largest existing timestamp will be used instead.
+    pub fn commit(&self, origin: Option<String>, timestamp: Option<f64>) {
+        self.0
+            .commit_with(origin.map(|x| x.into()), timestamp.map(|x| x as i64), true);
     }
 
     /// Get a LoroText by container id
@@ -2403,6 +2432,7 @@ export interface Change {
     counter: number,
     lamport: number,
     length: number,
+    timestamp: number,
     deps: OpId[],
 }
 

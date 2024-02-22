@@ -12,7 +12,7 @@ use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
-    change::{get_sys_timestamp, Change, Lamport, Timestamp},
+    change::{Change, Lamport, Timestamp},
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, InnerListOp},
@@ -182,6 +182,7 @@ impl generic_btree::rle::Mergeable for EventHint {
 }
 
 impl Transaction {
+    #[inline]
     pub fn new(
         state: Arc<Mutex<DocState>>,
         oplog: Arc<Mutex<OpLog>>,
@@ -211,22 +212,22 @@ impl Transaction {
         drop(state_lock);
         drop(oplog_lock);
         Self {
-            global_txn,
-            origin: Default::default(),
             peer,
-            start_counter: next_counter,
-            start_lamport: next_lamport,
-            next_counter,
             state,
             arena,
             oplog,
-            next_lamport,
-            event_hints: Default::default(),
             frontiers,
+            timestamp: None,
+            global_txn,
+            next_counter,
+            next_lamport,
+            origin: Default::default(),
+            start_counter: next_counter,
+            start_lamport: next_lamport,
+            event_hints: Default::default(),
             local_ops: RleVec::new(),
             finished: false,
             on_commit: None,
-            timestamp: None,
         }
     }
 
@@ -270,9 +271,10 @@ impl Transaction {
             ops,
             deps,
             id: ID::new(self.peer, self.start_counter),
-            timestamp: oplog
-                .latest_timestamp
-                .max(self.timestamp.unwrap_or_else(get_sys_timestamp)),
+            timestamp: oplog.latest_timestamp.max(
+                self.timestamp
+                    .unwrap_or_else(|| oplog.get_timestamp_for_next_txn()),
+            ),
             has_dependents: false,
         };
 

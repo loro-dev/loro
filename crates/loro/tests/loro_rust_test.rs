@@ -4,6 +4,35 @@ use loro::{FrontiersNotIncluded, LoroDoc};
 use loro_internal::{delta::DeltaItem, handler::TextDelta, id::ID, DiffEvent, LoroResult};
 
 #[test]
+fn timestamp() {
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1).unwrap();
+    doc1.get_text("text").insert(0, "0").unwrap();
+    doc1.commit();
+    doc1.with_oplog(|oplog| {
+        let c = oplog.get_change_at(ID::new(1, 0)).unwrap();
+        assert!(c.timestamp() == 0);
+    });
+
+    doc1.set_record_timestamp(true);
+    doc1.get_text("text").insert(0, "0").unwrap();
+    doc1.commit();
+    let mut last_timestamp = 0;
+    doc1.with_oplog(|oplog| {
+        let c = oplog.get_change_at(ID::new(1, 1)).unwrap();
+        assert!(c.timestamp() > 100000);
+        last_timestamp = c.timestamp();
+    });
+
+    doc1.get_text("text").insert(0, "0").unwrap();
+    doc1.commit();
+    doc1.with_oplog(|oplog| {
+        let c = oplog.get_change_at(ID::new(1, 2)).unwrap();
+        assert!(c.timestamp() < last_timestamp + 10);
+    });
+}
+
+#[test]
 fn cmp_frontiers() {
     let doc1 = LoroDoc::new();
     doc1.set_peer_id(1).unwrap();
