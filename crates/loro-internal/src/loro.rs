@@ -438,8 +438,7 @@ impl LoroDoc {
             }
         };
 
-        let mut state = self.state.lock().unwrap();
-        self.emit_events(&mut state);
+        self.emit_events();
         Ok(())
     }
 
@@ -520,8 +519,12 @@ impl LoroDoc {
         ans
     }
 
-    fn emit_events(&self, state: &mut DocState) {
-        let events = state.take_events();
+    fn emit_events(&self) {
+        // we should not hold the lock when emitting events
+        let events = {
+            let mut state = self.state.lock().unwrap();
+            state.take_events()
+        };
         for event in events {
             self.observer.emit(event);
         }
@@ -737,7 +740,8 @@ impl LoroDoc {
             from_checkout: true,
             new_version: Cow::Owned(frontiers.clone()),
         });
-        self.emit_events(&mut state);
+        drop(state);
+        self.emit_events();
         Ok(())
     }
 

@@ -792,3 +792,40 @@ fn issue_batch_import_snapshot() {
     let doc3 = LoroDoc::new();
     doc3.import_batch(&[data1, data2]).unwrap();
 }
+
+#[test]
+fn state_may_deadlock_when_import() {
+    // helper function ref: https://github.com/rust-lang/rfcs/issues/2798#issuecomment-552949300
+    use std::time::Duration;
+    use std::{sync::mpsc, thread};
+    fn panic_after<T, F>(d: Duration, f: F) -> T
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T,
+        F: Send + 'static,
+    {
+        let (done_tx, done_rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let val = f();
+            done_tx.send(()).expect("Unable to send completion signal");
+            val
+        });
+
+        match done_rx.recv_timeout(d) {
+            Ok(_) => handle.join().expect("Thread panicked"),
+            Err(_) => panic!("Thread took too long"),
+        }
+    }
+
+    panic_after(Duration::from_millis(100), || {
+        let doc = LoroDoc::new_auto_commit();
+        let map = doc.get_map("map");
+        doc.subscribe_root(Arc::new(move |_e| {
+            map.id();
+        }));
+
+        let doc2 = LoroDoc::new_auto_commit();
+        doc2.get_map("map").insert("foo", 123).unwrap();
+        doc.import(&doc.export_snapshot()).unwrap();
+    })
+}
