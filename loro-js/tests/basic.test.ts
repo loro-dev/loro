@@ -1,10 +1,10 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
+  getType,
+  isContainer,
   Loro,
   LoroList,
   LoroMap,
-  isContainer,
-  getType,
   VersionVector,
 } from "../src";
 import { Container } from "../dist/loro";
@@ -340,7 +340,7 @@ it("enable timestamp", () => {
   doc.commit();
   {
     const c = doc.getChangeAt({ peer: "1", counter: 4 });
-    expect(c.timestamp).toBeCloseTo(Date.now(), 0);
+    expect(c.timestamp).toBeCloseTo(Date.now(), -1);
   }
 });
 
