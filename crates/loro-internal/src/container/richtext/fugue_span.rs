@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use generic_btree::rle::{HasLength, Mergeable, Sliceable};
-use loro_common::{Counter, HasId, IdSpan, ID};
+use loro_common::{Counter, HasId, IdFull, IdSpan, ID};
 use serde::{Deserialize, Serialize};
 
 use super::AnchorType;
@@ -170,7 +170,7 @@ impl Sliceable for RichtextChunk {
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub(super) struct FugueSpan {
-    pub id: ID,
+    pub id: IdFull,
     /// The status at the current version
     pub status: Status,
     /// The status at the `new` version.
@@ -223,7 +223,7 @@ impl Sliceable for FugueSpan {
             origin_left: if range.start == 0 {
                 self.origin_left
             } else {
-                Some(self.id.inc((range.start - 1) as Counter))
+                Some(self.id.inc((range.start - 1) as Counter).id())
             },
             origin_right: self.origin_right,
             content: self.content._slice(range),
@@ -265,7 +265,7 @@ impl Mergeable for FugueSpan {
 
 impl FugueSpan {
     #[allow(unused)]
-    pub fn new(id: ID, content: RichtextChunk) -> Self {
+    pub fn new(id: IdFull, content: RichtextChunk) -> Self {
         Self {
             id,
             status: Status::default(),
@@ -293,7 +293,7 @@ impl FugueSpan {
 
 impl HasId for FugueSpan {
     fn id_start(&self) -> ID {
-        self.id
+        self.id.id()
     }
 }
 

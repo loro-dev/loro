@@ -3,7 +3,7 @@ mod encode_reordered;
 use crate::op::OpWithId;
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{HasCounter, IdSpan, LoroResult};
+use loro_common::{IdLpSpan, LoroResult};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 const MAGIC_BYTES: [u8; 4] = *b"loro";
@@ -86,24 +86,24 @@ pub(crate) struct StateSnapshotEncoder<'a> {
     /// The `check_idspan` function is used to check if the id span is valid.
     /// If the id span is invalid, the function should return an error that
     /// contains the missing id span.
-    check_idspan: &'a dyn Fn(IdSpan) -> Result<(), IdSpan>,
+    check_idspan: &'a dyn Fn(IdLpSpan) -> Result<(), IdLpSpan>,
     /// The `encoder_by_op` function is used to encode an operation.
     encoder_by_op: &'a mut dyn FnMut(OpWithId),
     /// The `record_idspan` function is used to record the id span to track the
     /// encoded order.
-    record_idspan: &'a mut dyn FnMut(IdSpan),
+    record_idspan: &'a mut dyn FnMut(IdLpSpan),
     #[allow(unused)]
     mode: EncodeMode,
 }
 
 impl StateSnapshotEncoder<'_> {
-    pub fn encode_op(&mut self, id_span: IdSpan, get_op: impl FnOnce() -> OpWithId) {
+    pub fn encode_op(&mut self, id_span: IdLpSpan, get_op: impl FnOnce() -> OpWithId) {
         if let Err(span) = (self.check_idspan)(id_span) {
             let mut op = get_op();
             if span == id_span {
                 (self.encoder_by_op)(op);
             } else {
-                debug_assert_eq!(span.ctr_start(), id_span.ctr_start());
+                debug_assert_eq!(span.lamport.start, id_span.lamport.start);
                 op.op = op.op.slice(span.atom_len(), op.op.atom_len());
                 (self.encoder_by_op)(op);
             }

@@ -236,6 +236,37 @@ impl Mergable for CounterSpan {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LamportSpan {
+    pub start: Lamport,
+    pub end: Lamport,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct IdLpSpan {
+    // TODO: rename this to peer_id
+    pub peer: PeerID,
+    pub lamport: LamportSpan,
+}
+
+impl HasLength for IdLpSpan {
+    fn content_len(&self) -> usize {
+        (self.lamport.end - self.lamport.start) as usize
+    }
+}
+
+impl IdLpSpan {
+    pub fn new(peer: PeerID, from: Lamport, to: Lamport) -> Self {
+        Self {
+            peer,
+            lamport: LamportSpan {
+                start: from,
+                end: to,
+            },
+        }
+    }
+}
+
 /// This struct supports reverse repr: [CounterSpan]'s from can be less than to. But we should use it conservatively.
 /// We need this because it'll make merging deletions easier.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

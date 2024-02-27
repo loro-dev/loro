@@ -431,7 +431,7 @@ impl ContainerState for RichtextState {
                     self.state.get_mut().insert_at_entity_index(
                         *pos as usize,
                         slice.clone(),
-                        r_op.id,
+                        r_op.id_full(),
                     );
                 }
                 list_op::InnerListOp::Delete(del) => {
@@ -527,33 +527,21 @@ impl ContainerState for RichtextState {
             }
         }
 
-        let mut lamports = DeltaRleEncodedNums::new();
         for chunk in iter {
-            match chunk {
-                RichtextStateChunk::Style { style, anchor_type }
-                    if *anchor_type == AnchorType::Start =>
-                {
-                    lamports.push(style.lamport);
-                }
-                _ => {}
-            }
-
-            let id_span = chunk.get_id_span();
+            let id_span = chunk.get_id_lp_span();
             encoder.encode_op(id_span, || unimplemented!());
         }
 
-        lamports.encode()
+        Default::default()
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
         assert_eq!(ctx.mode, EncodeMode::Snapshot);
-        let lamports = DeltaRleEncodedNums::decode(ctx.blob);
-        let mut lamport_iter = lamports.iter();
         let mut loader = RichtextStateLoader::default();
         let mut id_to_style = FxHashMap::default();
         for op in ctx.ops {
-            let id = op.id();
+            let id = op.id_full();
             let chunk = match op.op.content.into_list().unwrap() {
                 list_op::InnerListOp::InsertText { slice, .. } => {
                     RichtextStateChunk::new_text(slice.clone(), id)
@@ -562,7 +550,7 @@ impl ContainerState for RichtextState {
                     key, value, info, ..
                 } => {
                     let style_op = Arc::new(StyleOp {
-                        lamport: lamport_iter.next().unwrap(),
+                        lamport: op.lamport.expect("op should already be imported"),
                         peer: op.peer,
                         cnt: op.op.counter,
                         key,

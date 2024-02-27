@@ -4,7 +4,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor,
 };
-use loro_common::{IdSpan, LoroValue, ID};
+use loro_common::{IdFull, IdLpSpan, IdSpan, Lamport, LoroValue, ID};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{
     fmt::{Display, Formatter},
@@ -68,18 +68,18 @@ mod text_chunk {
     use std::ops::Range;
 
     use append_only_bytes::BytesSlice;
-    use loro_common::ID;
+    use loro_common::{Counter, IdFull, IdLp, Lamport, PeerID, ID};
 
     #[derive(Clone, Debug, PartialEq)]
     pub(crate) struct TextChunk {
         bytes: BytesSlice,
         unicode_len: i32,
         utf16_len: i32,
-        start_op_id: ID,
+        id: IdFull,
     }
 
     impl TextChunk {
-        pub fn new(bytes: BytesSlice, id: ID) -> Self {
+        pub fn new(bytes: BytesSlice, id: IdFull) -> Self {
             let mut utf16_len = 0;
             let mut unicode_len = 0;
             for c in std::str::from_utf8(&bytes).unwrap().chars() {
@@ -91,35 +91,52 @@ mod text_chunk {
                 unicode_len,
                 bytes,
                 utf16_len: utf16_len as i32,
-                start_op_id: id,
+                id,
             }
         }
 
+        #[inline]
         pub fn id(&self) -> ID {
-            self.start_op_id
+            ID::new(self.id.peer, self.id.counter)
         }
 
+        #[inline]
+        pub fn id_full(&self) -> IdFull {
+            self.id
+        }
+
+        #[inline]
+        pub fn idlp(&self) -> IdLp {
+            IdLp::new(self.id.peer, self.id.lamport)
+        }
+
+        #[inline]
         pub fn bytes(&self) -> &BytesSlice {
             &self.bytes
         }
 
+        #[inline]
         pub fn as_str(&self) -> &str {
             // SAFETY: We know that the text is valid UTF-8
             unsafe { std::str::from_utf8_unchecked(&self.bytes) }
         }
 
+        #[inline]
         pub fn len(&self) -> i32 {
             self.unicode_len
         }
 
+        #[inline]
         pub fn unicode_len(&self) -> i32 {
             self.unicode_len
         }
 
+        #[inline]
         pub fn utf16_len(&self) -> i32 {
             self.utf16_len
         }
 
+        #[inline]
         pub fn event_len(&self) -> i32 {
             if cfg!(feature = "wasm") {
                 self.utf16_len
@@ -151,7 +168,7 @@ mod text_chunk {
                 utf16_len: 0,
                 // This is a dummy value.
                 // It's fine because the length is 0. We never actually use this value.
-                start_op_id: ID::NONE_ID,
+                id: IdFull::NONE_ID,
             }
         }
 
@@ -199,7 +216,7 @@ mod text_chunk {
                 }
                 (true, false) => {
                     self.bytes.slice_(end_byte..);
-                    self.start_op_id = self.start_op_id.inc(end_unicode_index as i32);
+                    self.id = self.id.inc(end_unicode_index as i32);
                     None
                 }
                 (false, true) => {
@@ -208,7 +225,7 @@ mod text_chunk {
                 }
                 (false, false) => {
                     let next = self.bytes.slice_clone(end_byte..);
-                    let next = Self::new(next, self.start_op_id.inc(end_unicode_index as i32));
+                    let next = Self::new(next, self.id.inc(end_unicode_index as i32));
                     self.unicode_len -= next.unicode_len;
                     self.utf16_len -= next.utf16_len;
                     self.bytes.slice_(..start_byte);
@@ -307,7 +324,7 @@ mod text_chunk {
                 unicode_len: range.len() as i32,
                 bytes: self.bytes.slice_clone(start..end),
                 utf16_len: utf16_len as i32,
-                start_op_id: self.start_op_id.inc(range.start as i32),
+                id: self.id.inc(range.start as i32),
             };
             ans.check();
             ans
@@ -328,7 +345,7 @@ mod text_chunk {
                 unicode_len: self.unicode_len - pos as i32,
                 bytes: self.bytes.slice_clone(byte_offset..),
                 utf16_len: self.utf16_len - utf16_len as i32,
-                start_op_id: self.start_op_id.inc(pos as i32),
+                id: self.id.inc(pos as i32),
             };
 
             self.unicode_len = pos as i32;
@@ -342,8 +359,7 @@ mod text_chunk {
 
     impl generic_btree::rle::Mergeable for TextChunk {
         fn can_merge(&self, rhs: &Self) -> bool {
-            self.bytes.can_merge(&rhs.bytes)
-                && self.start_op_id.inc(self.unicode_len) == rhs.start_op_id
+            self.bytes.can_merge(&rhs.bytes) && self.id.inc(self.unicode_len) == rhs.id
         }
 
         fn merge_right(&mut self, rhs: &Self) {
@@ -359,7 +375,7 @@ mod text_chunk {
             self.bytes = new;
             self.utf16_len += left.utf16_len;
             self.unicode_len += left.unicode_len;
-            self.start_op_id = left.start_op_id;
+            self.id = left.id;
             self.check();
         }
     }
@@ -376,7 +392,7 @@ pub(crate) enum RichtextStateChunk {
 }
 
 impl RichtextStateChunk {
-    pub fn new_text(s: BytesSlice, id: ID) -> Self {
+    pub fn new_text(s: BytesSlice, id: IdFull) -> Self {
         Self::Text(TextChunk::new(s, id))
     }
 
@@ -395,6 +411,22 @@ impl RichtextStateChunk {
                 AnchorType::End => {
                     let id = style.id();
                     IdSpan::new(id.peer, id.counter + 1, id.counter + 2)
+                }
+            },
+        }
+    }
+
+    pub(crate) fn get_id_lp_span(&self) -> IdLpSpan {
+        match self {
+            RichtextStateChunk::Text(t) => {
+                let id = t.idlp();
+                IdLpSpan::new(id.peer, id.lamport, id.lamport + t.unicode_len() as Lamport)
+            }
+            RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
+                AnchorType::Start => style.idlp().into(),
+                AnchorType::End => {
+                    let id = style.idlp();
+                    IdLpSpan::new(id.peer, id.lamport + 1, id.lamport + 2)
                 }
             },
         }
@@ -453,7 +485,7 @@ impl Serialize for RichtextStateChunk {
 }
 
 impl RichtextStateChunk {
-    pub fn try_new(s: BytesSlice, id: ID) -> Result<Self, Utf8Error> {
+    pub fn try_new(s: BytesSlice, id: IdFull) -> Result<Self, Utf8Error> {
         std::str::from_utf8(&s)?;
         Ok(RichtextStateChunk::Text(TextChunk::new(s, id)))
     }
@@ -1238,7 +1270,12 @@ impl RichtextState {
     }
 
     /// This is used to accept changes from DiffCalculator
-    pub(crate) fn insert_at_entity_index(&mut self, entity_index: usize, text: BytesSlice, id: ID) {
+    pub(crate) fn insert_at_entity_index(
+        &mut self,
+        entity_index: usize,
+        text: BytesSlice,
+        id: IdFull,
+    ) {
         let elem = RichtextStateChunk::try_new(text, id).unwrap();
         self.style_ranges
             .as_mut()
@@ -2291,7 +2328,7 @@ mod test {
                 let state = &mut self.state;
                 let text = self.bytes.slice(start..);
                 let entity_index = state.get_entity_index_for_text_insert(pos, PosType::Unicode);
-                state.insert_at_entity_index(entity_index, text, ID::new(0, 0));
+                state.insert_at_entity_index(entity_index, text, IdFull::new(0, 0, 0));
             };
         }
 

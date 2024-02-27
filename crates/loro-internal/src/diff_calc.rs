@@ -18,7 +18,6 @@ use crate::{
     },
     delta::{Delta, MapDelta, MapValue},
     event::InternalDiff,
-    id::Counter,
     op::{RichOp, SliceRange, SliceRanges},
     span::{HasId, HasLamport},
     version::Frontiers,
@@ -416,14 +415,12 @@ impl DiffCalculatorTrait for MapDiffCalculator {
                     }
 
                     MapValue {
-                        counter: v.counter,
                         value,
                         lamp: v.lamport,
                         peer: v.peer,
                     }
                 })
                 .unwrap_or_else(|| MapValue {
-                    counter: 0,
                     value: None,
                     lamp: 0,
                     peer: 0,
@@ -439,7 +436,6 @@ impl DiffCalculatorTrait for MapDiffCalculator {
 struct CompactMapValue {
     lamport: Lamport,
     peer: PeerID,
-    counter: Counter,
     value: Option<LoroValue>,
 }
 
@@ -454,12 +450,6 @@ impl Ord for CompactMapValue {
 impl PartialOrd for CompactMapValue {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl HasId for CompactMapValue {
-    fn id_start(&self) -> ID {
-        ID::new(self.peer, self.counter)
     }
 }
 
@@ -503,7 +493,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             crate::op::InnerContent::List(l) => match l {
                 crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
                     self.tracker.insert(
-                        op.id_start(),
+                        op.id_full(),
                         *pos,
                         RichtextChunk::new_text(slice.0.clone()),
                     );
@@ -603,7 +593,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     pos,
                 } => {
                     self.tracker.insert(
-                        op.id_start(),
+                        op.id_full(),
                         *pos as usize,
                         RichtextChunk::new_text(*unicode_start..*unicode_start + *len),
                     );
@@ -634,12 +624,12 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         info: *info,
                     });
                     self.tracker.insert(
-                        op.id_start(),
+                        op.id_full(),
                         *start as usize,
                         RichtextChunk::new_style_anchor(style_id as u32, AnchorType::Start),
                     );
                     self.tracker.insert(
-                        op.id_start().inc(1),
+                        op.id_full().inc(1),
                         // need to shift 1 because we insert the start style anchor before this pos
                         *end as usize + 1,
                         RichtextChunk::new_style_anchor(style_id as u32, AnchorType::End),

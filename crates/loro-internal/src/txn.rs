@@ -7,7 +7,7 @@ use std::{
 
 use enum_as_inner::EnumAsInner;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
-use loro_common::{ContainerType, LoroResult};
+use loro_common::{ContainerType, IdLp, LoroResult};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
 
@@ -573,10 +573,9 @@ fn change_to_diff(
                     diff: Diff::Map(ResolvedMapDelta::new().with_entry(
                         key,
                         ResolvedMapValue {
-                            counter: op.counter,
                             value:
                                 value.map(|v| ValueOrContainer::from_value(v, arena, txn, state)),
-                            lamport: (lamport, peer),
+                            idlp: IdLp::new(peer, lamport),
                         },
                     )),
                 }),

@@ -4,8 +4,8 @@ use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdSpan,
-    InternalString, LoroError, LoroResult, PeerID, ID,
+    ContainerID, ContainerType, Counter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdFull, IdLp,
+    IdSpan, InternalString, LoroError, LoroResult, PeerID, ID,
 };
 use num_traits::FromPrimitive;
 use rle::HasLength;
@@ -13,7 +13,7 @@ use serde_columnar::columnar;
 
 use crate::{
     arena::SharedArena,
-    change::Change,
+    change::{Change, Lamport},
     container::{idx::ContainerIdx, list::list_op::DeleteSpan, richtext::TextStyleInfoFlag},
     encoding::{
         encode_reordered::value::{ValueKind, ValueWriter},
@@ -315,6 +315,7 @@ fn extract_ops(
             ops.push(OpWithId {
                 peer,
                 op: op.clone(),
+                lamport: None,
             });
         }
 
@@ -382,14 +383,15 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         let mut op_len = 0;
         let bytes = state.encode_snapshot(super::StateSnapshotEncoder {
             check_idspan: &|id_span| {
-                if let Some(counter) = vv.intersect_span(id_span) {
-                    Err(IdSpan {
-                        client_id: id_span.client_id,
-                        counter,
-                    })
-                } else {
-                    Ok(())
-                }
+                // TODO: todo!("check intersection by vv that defined by idlp");
+                // if let Some(counter) = vv.intersect_span(id_span) {
+                //     Err(IdSpan {
+                //         client_id: id_span.peer,
+                //         counter,
+                //     })
+                // } else {
+                Ok(())
+                // }
             },
             encoder_by_op: &mut |op| {
                 origin_ops.push(TempOp {
@@ -398,15 +400,17 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
                     peer_id: op.peer,
                     container_index,
                     prop_that_used_for_sort: -1,
-                    // lamport value is fake, but it's only used for sorting and will not be encoded
-                    lamport: 0,
+                    lamport: op.lamport.unwrap(),
                 });
             },
             record_idspan: &mut |id_span| {
                 let len = id_span.atom_len();
                 op_len += len;
                 pos_mapping_heap.push(PosMappingItem {
-                    start_id: id_span.id_start(),
+                    start_id: IdWithLamport {
+                        peer: id_span.peer,
+                        lamport: id_span.lamport.start,
+                    },
                     len,
                     target_value: pos_target_value,
                 });
@@ -475,9 +479,15 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     serde_columnar::to_vec(&doc).unwrap()
 }
 
+#[derive(Clone, Copy, PartialEq, Debug, Eq, PartialOrd, Ord)]
+struct IdWithLamport {
+    peer: PeerID,
+    lamport: Lamport,
+}
+
 #[derive(Clone, Copy, PartialEq, Debug, Eq)]
 struct PosMappingItem {
-    start_id: ID,
+    start_id: IdWithLamport,
     len: usize,
     target_value: i32,
 }
@@ -500,7 +510,10 @@ impl PosMappingItem {
         let new_len = self.len - pos;
         self.len = pos;
         PosMappingItem {
-            start_id: self.start_id.inc(pos as i32),
+            start_id: IdWithLamport {
+                peer: self.start_id.peer,
+                lamport: self.start_id.lamport + pos as Lamport,
+            },
             len: new_len,
             target_value: self.target_value + pos as i32,
         }
@@ -513,12 +526,14 @@ fn calc_sorted_ops_for_snapshot<'a>(
 ) -> Vec<TempOp<'a>> {
     origin_ops.sort_unstable();
     pos_mapping_heap.sort_unstable();
+    debug_log::debug_dbg!(&origin_ops, &pos_mapping_heap);
     let mut ops: Vec<TempOp<'a>> = Vec::with_capacity(origin_ops.len());
     let ops_len: usize = origin_ops.iter().map(|x| x.atom_len()).sum();
     let mut origin_top = origin_ops.pop();
     let mut pos_top = pos_mapping_heap.pop();
 
     while origin_top.is_some() || pos_top.is_some() {
+        debug_log::debug_dbg!(&origin_top, &pos_top);
         let Some(mut inner_origin_top) = origin_top else {
             unreachable!()
         };
@@ -529,14 +544,13 @@ fn calc_sorted_ops_for_snapshot<'a>(
             continue;
         };
 
-        match inner_origin_top.id_start().cmp(&inner_pos_top.start_id) {
+        match inner_origin_top.idlp().cmp(&inner_pos_top.start_id) {
             std::cmp::Ordering::Less => {
-                if inner_origin_top.id_end() <= inner_pos_top.start_id {
+                if inner_origin_top.idlp_end() <= inner_pos_top.start_id {
                     ops.push(inner_origin_top);
                     origin_top = origin_ops.pop();
                 } else {
-                    let delta =
-                        inner_pos_top.start_id.counter - inner_origin_top.id_start().counter;
+                    let delta = inner_pos_top.start_id.lamport - inner_origin_top.lamport;
                     let right = inner_origin_top.split(delta as usize);
                     ops.push(inner_origin_top);
                     origin_top = Some(right);
@@ -639,7 +653,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
 
     let ExtractedOps {
         ops_map,
-        ops,
+        mut ops,
         containers,
     } = extract_ops(
         &iter.raw_values,
@@ -651,6 +665,14 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         true,
     )?;
 
+    let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
+    let (new_ids, pending_changes) = import_changes_to_oplog(changes, &mut oplog)?;
+
+    for op in ops.iter_mut() {
+        // update op's lamport
+        op.lamport = oplog.get_lamport_at(op.id());
+    }
+
     decode_snapshot_states(
         &mut state,
         frontiers,
@@ -661,8 +683,6 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         &oplog,
     )
     .unwrap();
-    let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
-    let (new_ids, pending_changes) = import_changes_to_oplog(changes, &mut oplog)?;
     assert!(pending_changes.is_empty());
     // we cannot assert this because frontiers of oplog is not updated yet when batch_importing
     // assert_eq!(&state.frontiers, oplog.frontiers());
@@ -755,7 +775,7 @@ fn decode_snapshot_states(
 
 mod encode {
     use fxhash::FxHashMap;
-    use loro_common::{ContainerID, ContainerType, HasId, PeerID, ID};
+    use loro_common::{ContainerID, ContainerType, HasId, IdLp, PeerID, ID};
     use num_traits::ToPrimitive;
     use rle::{HasLength, Sliceable};
     use std::borrow::Cow;
@@ -820,10 +840,27 @@ mod encode {
             self.op.atom_len()
         }
     }
+
     impl<'a> generic_btree::rle::HasLength for TempOp<'a> {
         #[inline(always)]
         fn rle_len(&self) -> usize {
             self.op.atom_len()
+        }
+    }
+
+    impl TempOp<'_> {
+        pub fn idlp(&self) -> IdWithLamport {
+            IdWithLamport {
+                peer: self.peer_id,
+                lamport: self.lamport,
+            }
+        }
+
+        pub fn idlp_end(&self) -> IdWithLamport {
+            IdWithLamport {
+                peer: self.peer_id,
+                lamport: self.lamport + self.op.atom_len() as Lamport,
+            }
         }
     }
 
@@ -916,8 +953,8 @@ mod encode {
                 msg_len: 0,
             });
 
-            for (i, op) in change.ops().iter().enumerate() {
-                let lamport = i as Lamport + change.lamport();
+            for op in change.ops().iter() {
+                let lamport = (op.counter - change.id.counter) as Lamport + change.lamport();
                 push_op(TempOp {
                     op: Cow::Borrowed(op),
                     lamport,
@@ -936,7 +973,7 @@ mod encode {
 
     use super::{
         value::{MarkStart, Value, ValueKind},
-        EncodedChange, EncodedOp,
+        EncodedChange, EncodedOp, IdWithLamport,
     };
     mod value_register {
         use fxhash::FxHashMap;

@@ -460,6 +460,11 @@ impl OpLog {
         self.get_change_at(id).map(|c| c.lamport).unwrap_or(0)
     }
 
+    pub(crate) fn get_lamport_at(&self, id: ID) -> Option<Lamport> {
+        self.get_change_at(id)
+            .map(|c| c.lamport + (id.counter - c.id.counter) as Lamport)
+    }
+
     pub(crate) fn get_max_lamport_at(&self, id: ID) -> Lamport {
         self.get_change_at(id)
             .map(|c| {
