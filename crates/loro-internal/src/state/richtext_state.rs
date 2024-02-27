@@ -526,6 +526,7 @@ impl ContainerState for RichtextState {
         }
 
         for chunk in iter {
+            debug_log::debug_dbg!(&chunk);
             let id_span = chunk.get_id_lp_span();
             encoder.encode_op(id_span, || unimplemented!());
         }

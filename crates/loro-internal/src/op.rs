@@ -475,6 +475,10 @@ impl DeltaValue for SliceRanges {
             return Err(other);
         }
 
+        if self.id.lamport + self.length() as Lamport != other.id.lamport {
+            return Err(other);
+        }
+
         self.ranges.extend(other.ranges);
         Ok(())
     }

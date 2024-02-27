@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use generic_btree::rle::{HasLength, Mergeable, Sliceable};
-use loro_common::{Counter, HasId, IdFull, IdSpan, ID};
+use loro_common::{Counter, HasId, IdFull, IdSpan, Lamport, ID};
 use serde::{Deserialize, Serialize};
 
 use super::AnchorType;
@@ -244,6 +244,7 @@ impl Mergeable for FugueSpan {
             && self.status == rhs.status
             && self.diff_status == rhs.diff_status
             && self.id.counter + self.content.len() as Counter == rhs.id.counter
+            && self.id.lamport + self.content.len() as Lamport == rhs.id.lamport
             && rhs.origin_left.is_some()
             && rhs.origin_left.unwrap().peer == self.id.peer
             && rhs.origin_left.unwrap().counter

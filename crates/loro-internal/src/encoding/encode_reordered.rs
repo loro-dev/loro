@@ -4,8 +4,8 @@ use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, ContainerType, Counter, HasCounterSpan, HasIdSpan, HasLamportSpan, InternalString,
-    LoroError, LoroResult, PeerID, ID,
+    ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp,
+    InternalString, LoroError, LoroResult, PeerID, ID,
 };
 use num_traits::FromPrimitive;
 use rle::HasLength;
@@ -407,10 +407,9 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
                 let len = id_span.atom_len();
                 op_len += len;
                 pos_mapping_heap.push(PosMappingItem {
-                    start_id: IdWithLamport {
-                        peer: id_span.peer,
-                        lamport: id_span.lamport.start,
-                    },
+                    start_id: oplog
+                        .idlp_to_id(IdLp::new(id_span.peer, id_span.lamport.start))
+                        .unwrap(),
                     len,
                     target_value: pos_target_value,
                 });
@@ -487,7 +486,7 @@ struct IdWithLamport {
 
 #[derive(Clone, Copy, PartialEq, Debug, Eq)]
 struct PosMappingItem {
-    start_id: IdWithLamport,
+    start_id: ID,
     len: usize,
     target_value: i32,
 }
@@ -510,9 +509,9 @@ impl PosMappingItem {
         let new_len = self.len - pos;
         self.len = pos;
         PosMappingItem {
-            start_id: IdWithLamport {
+            start_id: ID {
                 peer: self.start_id.peer,
-                lamport: self.start_id.lamport + pos as Lamport,
+                counter: self.start_id.counter + pos as Counter,
             },
             len: new_len,
             target_value: self.target_value + pos as i32,
@@ -544,13 +543,14 @@ fn calc_sorted_ops_for_snapshot<'a>(
             continue;
         };
 
-        match inner_origin_top.idlp().cmp(&inner_pos_top.start_id) {
+        match inner_origin_top.id_start().cmp(&inner_pos_top.start_id) {
             std::cmp::Ordering::Less => {
-                if inner_origin_top.idlp_end() <= inner_pos_top.start_id {
+                if inner_origin_top.id_end() <= inner_pos_top.start_id {
                     ops.push(inner_origin_top);
                     origin_top = origin_ops.pop();
                 } else {
-                    let delta = inner_pos_top.start_id.lamport - inner_origin_top.lamport;
+                    let delta =
+                        inner_pos_top.start_id.counter - inner_origin_top.id_start().counter;
                     let right = inner_origin_top.split(delta as usize);
                     ops.push(inner_origin_top);
                     origin_top = Some(right);
