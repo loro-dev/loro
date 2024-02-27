@@ -5,7 +5,7 @@ use generic_btree::{
     BTree, BTreeTrait, Cursor, FindResult, LeafIndex, Query, SplittedLeaves,
 };
 use itertools::Itertools;
-use loro_common::{Counter, HasCounter, HasCounterSpan, HasIdSpan, IdSpan, ID};
+use loro_common::{Counter, HasCounter, HasCounterSpan, HasIdSpan, IdFull, IdSpan, ID};
 use smallvec::SmallVec;
 
 use crate::container::richtext::{fugue_span::DiffStatus, FugueSpan, RichtextChunk, Status};
@@ -74,7 +74,8 @@ impl CrdtRope {
                         left_node
                             .elem()
                             .id
-                            .inc(left_node.elem().rle_len() as Counter - 1),
+                            .inc(left_node.elem().rle_len() as Counter - 1)
+                            .id(),
                     )
                 } else {
                     None
@@ -82,7 +83,7 @@ impl CrdtRope {
             } else {
                 let left_node = self.tree.get_leaf(start.leaf().into());
                 assert!(left_node.elem().rle_len() >= start.offset());
-                Some(left_node.elem().id.inc(start.offset() as Counter - 1))
+                Some(left_node.elem().id.inc(start.offset() as Counter - 1).id())
             };
 
             let (origin_right, parent_right_leaf, in_between) = {
@@ -97,7 +98,8 @@ impl CrdtRope {
                     }
 
                     if !iter.elem.status.future {
-                        origin_right = Some(iter.elem.id.inc(iter.start.unwrap_or(0) as Counter));
+                        origin_right =
+                            Some(iter.elem.id.inc(iter.start.unwrap_or(0) as Counter).id());
                         let parent_right = match iter.start {
                             Some(offset) if offset > 0 => {
                                 // It's guaranteed that origin_right's origin_left == this.origin_left.
@@ -177,7 +179,7 @@ impl CrdtRope {
                                 let elem_idx = find_elem(other_origin_right);
                                 let elem = self.tree.get_elem(elem_idx).unwrap();
                                 // It must be the start of the elem
-                                assert_eq!(elem.id, other_origin_right);
+                                assert_eq!(elem.id.id(), other_origin_right);
                                 if elem.origin_left == content.origin_left {
                                     Some(elem_idx)
                                 } else {
@@ -408,7 +410,7 @@ impl CrdtRope {
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub(crate) enum CrdtRopeDelta {
     Retain(usize),
-    Insert { chunk: RichtextChunk, id: ID },
+    Insert { chunk: RichtextChunk, id: IdFull },
     Delete(usize),
 }
 
@@ -627,7 +629,7 @@ mod test {
 
     fn span(id: u32, range: Range<u32>) -> FugueSpan {
         FugueSpan::new(
-            ID::new(id as PeerID, 0 as Counter),
+            IdFull::new(id as PeerID, 0 as Counter, 0),
             RichtextChunk::new_text(range),
         )
     }
@@ -635,14 +637,14 @@ mod test {
     #[allow(unused)]
     fn unknown_span(id: u32, len: usize) -> FugueSpan {
         FugueSpan::new(
-            ID::new(id as PeerID, 0 as Counter),
+            IdFull::new(id as PeerID, 0 as Counter, 0),
             RichtextChunk::new_unknown(len as u32),
         )
     }
 
     fn future_span(id: u32, range: Range<u32>) -> FugueSpan {
         let mut fugue = FugueSpan::new(
-            ID::new(id as PeerID, 0 as Counter),
+            IdFull::new(id as PeerID, 0 as Counter, 0),
             RichtextChunk::new_text(range),
         );
 
@@ -652,7 +654,7 @@ mod test {
 
     fn dead_span(id: u32, range: Range<u32>) -> FugueSpan {
         let mut span = FugueSpan::new(
-            ID::new(id as PeerID, 0 as Counter),
+            IdFull::new(id as PeerID, 0 as Counter, 0),
             RichtextChunk::new_text(range),
         );
 
@@ -825,7 +827,7 @@ mod test {
                 CrdtRopeDelta::Retain(2),
                 CrdtRopeDelta::Insert {
                     chunk: RichtextChunk::new_text(10..13),
-                    id: ID::new(1, 0)
+                    id: IdFull::new(1, 0, 0)
                 }
             ],
             vec,
@@ -849,7 +851,7 @@ mod test {
         assert_eq!(
             vec![CrdtRopeDelta::Insert {
                 chunk: RichtextChunk::new_text(2..10),
-                id: ID::new(0, 2)
+                id: IdFull::new(0, 2, 2)
             }],
             vec,
         );

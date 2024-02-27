@@ -22,7 +22,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
-use loro_common::{IdSpan, LoroResult, ID};
+use loro_common::{IdFull, IdLpSpan, LoroResult};
 
 #[derive(Debug)]
 pub struct ListState {
@@ -44,7 +44,7 @@ impl Clone for ListState {
 #[derive(Debug, Clone)]
 pub(crate) struct Elem {
     pub v: LoroValue,
-    pub id: ID,
+    pub id: IdFull,
 }
 
 impl HasLength for Elem {
@@ -161,7 +161,7 @@ impl ListState {
         Some(index as usize)
     }
 
-    pub fn insert(&mut self, index: usize, value: LoroValue, id: ID) {
+    pub fn insert(&mut self, index: usize, value: LoroValue, id: IdFull) {
         if index > self.len() {
             panic!("Index {index} out of range. The length is {}", self.len());
         }
@@ -231,7 +231,7 @@ impl ListState {
 
     // PERF: use &[LoroValue]
     // PERF: batch
-    pub fn insert_batch(&mut self, index: usize, values: Vec<LoroValue>, start_id: ID) {
+    pub fn insert_batch(&mut self, index: usize, values: Vec<LoroValue>, start_id: IdFull) {
         let mut id = start_id;
         for (i, value) in values.into_iter().enumerate() {
             self.insert(index + i, value, id);
@@ -387,10 +387,10 @@ impl ContainerState for ListState {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(list) => match list {
                         std::borrow::Cow::Borrowed(list) => {
-                            self.insert_batch(*pos, list.to_vec(), op.id);
+                            self.insert_batch(*pos, list.to_vec(), op.id_full());
                         }
                         std::borrow::Cow::Owned(list) => {
-                            self.insert_batch(*pos, list.clone(), op.id);
+                            self.insert_batch(*pos, list.clone(), op.id_full());
                         }
                     },
                     _ => unreachable!(),
@@ -445,7 +445,7 @@ impl ContainerState for ListState {
     #[doc = "Get a list of ops that can be used to restore the state to the current state"]
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
         for elem in self.list.iter() {
-            let id_span: IdSpan = elem.id.into();
+            let id_span: IdLpSpan = elem.id.idlp().into();
             encoder.encode_op(id_span, || unimplemented!());
         }
 
@@ -463,7 +463,7 @@ impl ContainerState for ListState {
                 .arena
                 .get_values(value.0.start as usize..value.0.end as usize);
             let len = list.len();
-            self.insert_batch(index, list, op.id());
+            self.insert_batch(index, list, op.id_full());
             index += len;
         }
     }
@@ -482,11 +482,11 @@ mod test {
         fn id(name: &str) -> ContainerID {
             ContainerID::new_root(name, crate::ContainerType::List)
         }
-        list.insert(0, LoroValue::Container(id("abc")), ID::new(0, 0));
-        list.insert(0, LoroValue::Container(id("x")), ID::new(0, 0));
+        list.insert(0, LoroValue::Container(id("abc")), IdFull::new(0, 0, 0));
+        list.insert(0, LoroValue::Container(id("x")), IdFull::new(0, 0, 0));
         assert_eq!(list.get_child_container_index(&id("x")), Some(0));
         assert_eq!(list.get_child_container_index(&id("abc")), Some(1));
-        list.insert(1, LoroValue::Bool(false), ID::new(0, 0));
+        list.insert(1, LoroValue::Bool(false), IdFull::new(0, 0, 0));
         assert_eq!(list.get_child_container_index(&id("x")), Some(0));
         assert_eq!(list.get_child_container_index(&id("abc")), Some(2));
     }

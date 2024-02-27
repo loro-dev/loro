@@ -460,6 +460,11 @@ impl OpLog {
         self.get_change_at(id).map(|c| c.lamport).unwrap_or(0)
     }
 
+    pub(crate) fn get_lamport_at(&self, id: ID) -> Option<Lamport> {
+        self.get_change_at(id)
+            .map(|c| c.lamport + (id.counter - c.id.counter) as Lamport)
+    }
+
     pub(crate) fn get_max_lamport_at(&self, id: ID) -> Lamport {
         self.get_change_at(id)
             .map(|c| {
@@ -815,6 +820,34 @@ impl OpLog {
             get_sys_timestamp()
         } else {
             0
+        }
+    }
+
+    pub(crate) fn idlp_to_id(&self, id: loro_common::IdLp) -> Option<ID> {
+        if let Some(peer_changes) = self.changes.get(&id.peer) {
+            let r = peer_changes.binary_search_by(|c| {
+                if c.lamport > id.lamport {
+                    Ordering::Greater
+                } else if c.lamport + c.atom_len() as Lamport <= id.lamport {
+                    Ordering::Less
+                } else {
+                    Ordering::Equal
+                }
+            });
+
+            match r {
+                Ok(index) => {
+                    let change = &peer_changes[index];
+                    let counter = (id.lamport - change.lamport) as Counter + change.id.counter;
+                    Some(ID::new(id.peer, counter))
+                }
+                Err(_) => {
+                    debug_log::debug_dbg!(id, &peer_changes);
+                    None
+                }
+            }
+        } else {
+            None
         }
     }
 }

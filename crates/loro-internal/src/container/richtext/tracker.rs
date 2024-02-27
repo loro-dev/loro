@@ -1,5 +1,5 @@
 use generic_btree::{rle::Sliceable, LeafIndex};
-use loro_common::{Counter, HasId, HasIdSpan, IdSpan, PeerID, ID};
+use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, PeerID, ID};
 use rle::HasLength;
 
 use crate::VersionVector;
@@ -41,7 +41,7 @@ impl Tracker {
 
         let result = this.rope.tree.push(FugueSpan {
             content: RichtextChunk::new_unknown(u32::MAX / 4),
-            id: ID::new(UNKNOWN_PEER_ID, 0),
+            id: IdFull::new(UNKNOWN_PEER_ID, 0, 0),
             status: Status::default(),
             diff_status: None,
             origin_left: None,
@@ -69,14 +69,14 @@ impl Tracker {
         &self.applied_vv
     }
 
-    pub(crate) fn insert(&mut self, mut op_id: ID, mut pos: usize, mut content: RichtextChunk) {
+    pub(crate) fn insert(&mut self, mut op_id: IdFull, mut pos: usize, mut content: RichtextChunk) {
         // debug_log::group!("TrackerInsert");
         // debug_log::debug_dbg!(&op_id, pos, content);
         // debug_log::debug_dbg!(&self);
         let last_id = op_id.inc(content.len() as Counter - 1);
         let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
         if applied_counter_end > op_id.counter {
-            if !self.current_vv.includes_id(last_id) {
+            if !self.current_vv.includes_id(last_id.id()) {
                 // PERF: may be slow
                 let mut updates = Default::default();
                 let cnt_start = self.current_vv.get(&op_id.peer).copied().unwrap_or(0);
@@ -93,7 +93,7 @@ impl Tracker {
 
             if applied_counter_end > last_id.counter {
                 // the op is included in the applied vv
-                self.current_vv.extend_to_include_last_id(last_id);
+                self.current_vv.extend_to_include_last_id(last_id.id());
                 // debug_log::debug_log!("Ops are already included {:#?}", &self);
                 return;
             }
@@ -122,15 +122,15 @@ impl Tracker {
             |id| self.id_to_cursor.get_insert(id).unwrap(),
         );
         self.id_to_cursor.push(
-            op_id,
+            op_id.id(),
             id_to_cursor::Cursor::new_insert(result.leaf, content.len()),
         );
 
         self.update_insert_by_split(&result.splitted.arr);
 
         let end_id = op_id.inc(content.len() as Counter);
-        self.current_vv.extend_to_include_end_id(end_id);
-        self.applied_vv.extend_to_include_end_id(end_id);
+        self.current_vv.extend_to_include_end_id(end_id.id());
+        self.applied_vv.extend_to_include_end_id(end_id.id());
         // debug_log::debug_dbg!(&self);
     }
 
@@ -381,11 +381,11 @@ mod test {
     #[test]
     fn test_len() {
         let mut t = Tracker::new();
-        t.insert(ID::new(1, 0), 0, RichtextChunk::new_text(0..2));
+        t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..2));
         assert_eq!(t.rope.len(), 2);
         t.checkout(&Default::default());
         assert_eq!(t.rope.len(), 0);
-        t.insert(ID::new(2, 0), 0, RichtextChunk::new_text(2..4));
+        t.insert(IdFull::new(2, 0, 0), 0, RichtextChunk::new_text(2..4));
         let v = vv!(1 => 2, 2 => 2);
         t.checkout(&v);
         assert_eq!(&t.applied_vv, &v);
@@ -395,7 +395,7 @@ mod test {
     #[test]
     fn test_retreat_and_forward_delete() {
         let mut t = Tracker::new();
-        t.insert(ID::new(1, 0), 0, RichtextChunk::new_text(0..10));
+        t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..10));
         t.delete(ID::new(2, 0), 0, 10, true);
         t.checkout(&vv!(1 => 10, 2=>5));
         assert_eq!(t.rope.len(), 5);
@@ -410,7 +410,7 @@ mod test {
     #[test]
     fn test_checkout_in_doc_with_del_span() {
         let mut t = Tracker::new();
-        t.insert(ID::new(1, 0), 0, RichtextChunk::new_text(0..10));
+        t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..10));
         t.delete(ID::new(2, 0), 0, 10, false);
         t.checkout(&vv!(1 => 10, 2=>4));
         let v: Vec<FugueSpan> = t.rope.tree().iter().copied().collect();
@@ -424,7 +424,7 @@ mod test {
     #[test]
     fn test_checkout_in_doc_with_reversed_del_span() {
         let mut t = Tracker::new();
-        t.insert(ID::new(1, 0), 0, RichtextChunk::new_text(0..10));
+        t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..10));
         t.delete(ID::new(2, 0), 0, 10, true);
         t.checkout(&vv!(1 => 10, 2=>4));
         let v: Vec<FugueSpan> = t.rope.tree().iter().copied().collect();

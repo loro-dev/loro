@@ -1,7 +1,7 @@
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{ContainerID, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID, ID};
+use loro_common::{ContainerID, IdFull, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID};
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -68,7 +68,7 @@ pub struct TreeState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TreeStateNode {
     pub parent: TreeParentId,
-    pub last_move_op: ID,
+    pub last_move_op: IdFull,
 }
 
 impl TreeState {
@@ -79,7 +79,12 @@ impl TreeState {
         }
     }
 
-    pub fn mov(&mut self, target: TreeID, parent: TreeParentId, id: ID) -> Result<(), LoroError> {
+    pub fn mov(
+        &mut self,
+        target: TreeID,
+        parent: TreeParentId,
+        id: IdFull,
+    ) -> Result<(), LoroError> {
         if parent.is_none() {
             // new root node
             self.trees.insert(
@@ -269,7 +274,7 @@ impl ContainerState for TreeState {
                     }
                     None => TreeParentId::None,
                 };
-                self.mov(target, parent, raw_op.id)
+                self.mov(target, parent, raw_op.id_full())
             }
             _ => unreachable!(),
         }
@@ -349,10 +354,10 @@ impl ContainerState for TreeState {
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
         for node in self.trees.values() {
-            if node.last_move_op == ID::NONE_ID {
+            if node.last_move_op == IdFull::NONE_ID {
                 continue;
             }
-            encoder.encode_op(node.last_move_op.into(), || unimplemented!());
+            encoder.encode_op(node.last_move_op.idlp().into(), || unimplemented!());
         }
 
         Vec::new()
@@ -381,7 +386,7 @@ impl ContainerState for TreeState {
                 target,
                 TreeStateNode {
                     parent,
-                    last_move_op: op.id(),
+                    last_move_op: op.id_full(),
                 },
             );
         }
@@ -511,9 +516,9 @@ mod tests {
             0,
             loro_common::ContainerType::Tree,
         ));
-        state.mov(ID1, TreeParentId::None, ID::NONE_ID).unwrap();
+        state.mov(ID1, TreeParentId::None, IdFull::NONE_ID).unwrap();
         state
-            .mov(ID2, TreeParentId::Node(ID1), ID::NONE_ID)
+            .mov(ID2, TreeParentId::Node(ID1), IdFull::NONE_ID)
             .unwrap();
     }
 
@@ -523,9 +528,9 @@ mod tests {
             0,
             loro_common::ContainerType::Tree,
         ));
-        state.mov(ID1, TreeParentId::None, ID::NONE_ID).unwrap();
+        state.mov(ID1, TreeParentId::None, IdFull::NONE_ID).unwrap();
         state
-            .mov(ID2, TreeParentId::Node(ID1), ID::NONE_ID)
+            .mov(ID2, TreeParentId::Node(ID1), IdFull::NONE_ID)
             .unwrap();
         let roots = Forest::from_tree_state(&state.trees);
         let json = serde_json::to_string(&roots).unwrap();
@@ -541,17 +546,19 @@ mod tests {
             0,
             loro_common::ContainerType::Tree,
         ));
-        state.mov(ID1, TreeParentId::None, ID::NONE_ID).unwrap();
+        state.mov(ID1, TreeParentId::None, IdFull::NONE_ID).unwrap();
         state
-            .mov(ID2, TreeParentId::Node(ID1), ID::NONE_ID)
+            .mov(ID2, TreeParentId::Node(ID1), IdFull::NONE_ID)
             .unwrap();
         state
-            .mov(ID3, TreeParentId::Node(ID2), ID::NONE_ID)
+            .mov(ID3, TreeParentId::Node(ID2), IdFull::NONE_ID)
             .unwrap();
         state
-            .mov(ID4, TreeParentId::Node(ID1), ID::NONE_ID)
+            .mov(ID4, TreeParentId::Node(ID1), IdFull::NONE_ID)
             .unwrap();
-        state.mov(ID2, TreeParentId::Deleted, ID::NONE_ID).unwrap();
+        state
+            .mov(ID2, TreeParentId::Deleted, IdFull::NONE_ID)
+            .unwrap();
         let roots = Forest::from_tree_state(&state.trees);
         let json = serde_json::to_string(&roots).unwrap();
         assert_eq!(

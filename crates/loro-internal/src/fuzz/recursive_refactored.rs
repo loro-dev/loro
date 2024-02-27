@@ -4346,6 +4346,208 @@ mod failed_tests {
     }
 
     #[test]
+    fn fuzz_15() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 90,
+                    container_idx: 90,
+                    key: 90,
+                    value: I32(1515870810),
+                },
+                List {
+                    site: 90,
+                    container_idx: 175,
+                    key: 165,
+                    value: I32(1515890085),
+                },
+                List {
+                    site: 90,
+                    container_idx: 90,
+                    key: 131,
+                    value: I32(1520805286),
+                },
+                Sync { from: 122, to: 90 },
+                Sync { from: 165, to: 165 },
+                Sync { from: 90, to: 90 },
+                List {
+                    site: 26,
+                    container_idx: 90,
+                    key: 131,
+                    value: I32(1515879083),
+                },
+                Sync { from: 165, to: 165 },
+                List {
+                    site: 90,
+                    container_idx: 90,
+                    key: 90,
+                    value: I32(1509972611),
+                },
+                List {
+                    site: 165,
+                    container_idx: 165,
+                    key: 165,
+                    value: I32(1515870810),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_16() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 8,
+                    container_idx: 0,
+                    key: 92,
+                    value: Null,
+                },
+                Sync { from: 113, to: 7 },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(-1077952577),
+                },
+                Map {
+                    site: 191,
+                    container_idx: 191,
+                    key: 191,
+                    value: Container(C::Text),
+                },
+                Sync { from: 61, to: 58 },
+                List {
+                    site: 58,
+                    container_idx: 58,
+                    key: 58,
+                    value: I32(1617542919),
+                },
+                List {
+                    site: 191,
+                    container_idx: 191,
+                    key: 191,
+                    value: Container(C::Text),
+                },
+                Sync { from: 202, to: 202 },
+                List {
+                    site: 0,
+                    container_idx: 58,
+                    key: 58,
+                    value: Null,
+                },
+                List {
+                    site: 58,
+                    container_idx: 186,
+                    key: 58,
+                    value: Null,
+                },
+                Sync { from: 8, to: 92 },
+                Sync { from: 191, to: 28 },
+                List {
+                    site: 0,
+                    container_idx: 100,
+                    key: 191,
+                    value: I32(1618020287),
+                },
+                List {
+                    site: 191,
+                    container_idx: 191,
+                    key: 191,
+                    value: Container(C::Text),
+                },
+                Sync { from: 202, to: 191 },
+                Sync { from: 191, to: 113 },
+                List {
+                    site: 191,
+                    container_idx: 191,
+                    key: 191,
+                    value: Container(C::Text),
+                },
+                Map {
+                    site: 58,
+                    container_idx: 58,
+                    key: 245,
+                    value: I32(-1077976064),
+                },
+                List {
+                    site: 58,
+                    container_idx: 0,
+                    key: 100,
+                    value: Container(C::Map),
+                },
+                Map {
+                    site: 100,
+                    container_idx: 191,
+                    key: 191,
+                    value: Null,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_17() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 3,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 27756,
+                    is_del: false,
+                },
+                Text {
+                    site: 3,
+                    container_idx: 0,
+                    pos: 2,
+                    value: 47288,
+                    is_del: false,
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                Text {
+                    site: 3,
+                    container_idx: 0,
+                    pos: 10,
+                    value: 4,
+                    is_del: true,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 27756,
+                    is_del: false,
+                },
+                Sync { from: 3, to: 4 },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 6,
+                    value: 27756,
+                    is_del: false,
+                },
+                Sync { from: 4, to: 0 },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 13,
+                    value: 15476,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn to_minify() {
         minify_error(5, vec![], test_multi_sites, normalize)
     }

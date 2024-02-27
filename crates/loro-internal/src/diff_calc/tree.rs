@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{ContainerID, HasId, IdSpan, Lamport, TreeID, ID};
+use loro_common::{ContainerID, HasId, IdFull, IdSpan, Lamport, TreeID, ID};
 
 use crate::{
     container::idx::ContainerIdx,
@@ -243,7 +243,7 @@ impl TreeDiffCalculator {
                             op.target,
                             op.parent,
                             old_parent,
-                            op.id,
+                            op.id_full(),
                             is_parent_deleted,
                             is_old_parent_deleted,
                         );
@@ -298,6 +298,16 @@ pub struct MoveLamportAndID {
     /// Whether this action is applied in the current version.
     /// If this action will cause a circular reference, then this action will not be applied.
     pub(crate) effected: bool,
+}
+
+impl MoveLamportAndID {
+    fn id_full(&self) -> IdFull {
+        IdFull {
+            peer: self.id.peer,
+            lamport: self.lamport,
+            counter: self.id.counter,
+        }
+    }
 }
 
 impl PartialOrd for MoveLamportAndID {
@@ -374,12 +384,12 @@ impl TreeCacheForDiff {
     }
 
     /// get the parent of the first effected op and its id
-    fn get_parent_with_id(&self, tree_id: TreeID) -> (TreeParentId, ID) {
-        let mut ans = (TreeParentId::Unexist, ID::NONE_ID);
+    fn get_parent_with_id(&self, tree_id: TreeID) -> (TreeParentId, IdFull) {
+        let mut ans = (TreeParentId::Unexist, IdFull::NONE_ID);
         if let Some(cache) = self.tree.get(&tree_id) {
             for op in cache.iter().rev() {
                 if op.effected {
-                    ans = (op.parent, op.id);
+                    ans = (op.parent, op.id_full());
                     break;
                 }
             }
@@ -406,7 +416,7 @@ impl TreeCacheForDiff {
         ans
     }
 
-    fn get_children_with_id(&self, parent: TreeParentId) -> Vec<(TreeID, ID)> {
+    fn get_children_with_id(&self, parent: TreeParentId) -> Vec<(TreeID, IdFull)> {
         let mut ans = vec![];
         for (tree_id, _) in self.tree.iter() {
             let Some(op) = self.get_last_effective_move(*tree_id) else {
@@ -414,7 +424,7 @@ impl TreeCacheForDiff {
             };
 
             if op.parent == parent {
-                ans.push((*tree_id, op.id));
+                ans.push((*tree_id, op.id_full()));
             }
         }
 

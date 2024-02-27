@@ -19,7 +19,7 @@ mod tracker;
 
 use crate::{change::Lamport, delta::StyleMeta, utils::string_slice::StringSlice, InternalString};
 use fugue_span::*;
-use loro_common::{Counter, LoroValue, PeerID, ID};
+use loro_common::{Counter, IdLp, LoroValue, PeerID, ID};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -98,6 +98,10 @@ impl StyleOp {
     #[inline(always)]
     pub fn id(&self) -> ID {
         ID::new(self.peer, self.cnt)
+    }
+
+    pub fn idlp(&self) -> IdLp {
+        IdLp::new(self.peer, self.lamport)
     }
 }
 

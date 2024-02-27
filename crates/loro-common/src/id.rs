@@ -1,4 +1,4 @@
-use crate::{span::IdSpan, CounterSpan};
+use crate::{span::IdSpan, CounterSpan, IdFull, IdLp, IdLpSpan, Lamport};
 
 use super::{Counter, LoroError, PeerID, ID};
 const UNKNOWN: PeerID = 404;
@@ -13,9 +13,21 @@ impl Debug for ID {
     }
 }
 
+impl Debug for IdLp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("L{}@{}", self.lamport, self.peer).as_str())
+    }
+}
+
 impl Display for ID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(format!("{}@{}", self.counter, self.peer).as_str())
+    }
+}
+
+impl Display for IdLp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("L{}@{}", self.lamport, self.peer).as_str())
     }
 }
 
@@ -149,5 +161,71 @@ impl RangeBounds<ID> for (ID, ID) {
 
     fn end_bound(&self) -> std::ops::Bound<&ID> {
         std::ops::Bound::Excluded(&self.1)
+    }
+}
+
+impl IdLp {
+    pub const NONE_ID: IdLp = IdLp::new(u64::MAX, 0);
+
+    #[inline]
+    pub const fn new(peer: PeerID, lp: Lamport) -> Self {
+        Self { peer, lamport: lp }
+    }
+
+    pub fn inc(&self, offset: i32) -> IdLp {
+        IdLp {
+            peer: self.peer,
+            lamport: (self.lamport as i32 + offset) as Lamport,
+        }
+    }
+}
+
+impl From<IdLp> for IdLpSpan {
+    fn from(value: IdLp) -> Self {
+        IdLpSpan {
+            peer: value.peer,
+            lamport: crate::LamportSpan {
+                start: value.lamport,
+                end: value.lamport + 1,
+            },
+        }
+    }
+}
+
+impl IdFull {
+    pub const NONE_ID: IdFull = IdFull {
+        peer: PeerID::MAX,
+        lamport: 0,
+        counter: 0,
+    };
+
+    pub fn new(peer: PeerID, counter: Counter, lamport: Lamport) -> Self {
+        Self {
+            peer,
+            lamport,
+            counter,
+        }
+    }
+
+    pub fn inc(&self, offset: i32) -> IdFull {
+        IdFull {
+            peer: self.peer,
+            lamport: (self.lamport as i32 + offset) as Lamport,
+            counter: self.counter + offset as Counter,
+        }
+    }
+
+    pub fn id(&self) -> ID {
+        ID {
+            peer: self.peer,
+            counter: self.counter,
+        }
+    }
+
+    pub fn idlp(&self) -> IdLp {
+        IdLp {
+            peer: self.peer,
+            lamport: self.lamport,
+        }
     }
 }

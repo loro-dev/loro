@@ -4,16 +4,12 @@ use std::{
 };
 
 use fxhash::FxHashMap;
+use loro_common::IdLp;
 use serde::{ser::SerializeStruct, Serialize};
 
 use crate::{
-    arena::SharedArena,
-    change::Lamport,
-    handler::ValueOrContainer,
-    id::{Counter, PeerID, ID},
-    span::{HasId, HasLamport},
-    txn::Transaction,
-    DocState, InternalString, LoroValue,
+    arena::SharedArena, change::Lamport, handler::ValueOrContainer, id::PeerID, span::HasLamport,
+    txn::Transaction, DocState, InternalString, LoroValue,
 };
 
 #[derive(Default, Debug, Clone, Serialize)]
@@ -23,7 +19,6 @@ pub struct MapDelta {
 
 #[derive(Debug, Clone)]
 pub struct MapValue {
-    pub counter: Counter,
     pub value: Option<LoroValue>,
     pub lamp: Lamport,
     pub peer: PeerID,
@@ -52,8 +47,8 @@ impl PartialEq for MapValue {
 impl Eq for MapValue {}
 
 impl MapValue {
-    pub fn id(&self) -> ID {
-        ID::new(self.peer, self.counter)
+    pub fn idlp(&self) -> IdLp {
+        IdLp::new(self.peer, self.lamp)
     }
 }
 
@@ -64,9 +59,8 @@ pub struct ResolvedMapDelta {
 
 #[derive(Debug, Clone)]
 pub struct ResolvedMapValue {
-    pub counter: Counter,
     pub value: Option<ValueOrContainer>,
-    pub lamport: (Lamport, PeerID),
+    pub idlp: IdLp,
 }
 
 impl ResolvedMapValue {
@@ -77,8 +71,7 @@ impl ResolvedMapValue {
         state: &Weak<Mutex<DocState>>,
     ) -> Self {
         ResolvedMapValue {
-            counter: v.counter,
-            lamport: (v.lamp, v.peer),
+            idlp: IdLp::new(v.peer, v.lamp),
             value: v
                 .value
                 .map(|v| ValueOrContainer::from_value(v, arena, txn, state)),
@@ -120,7 +113,7 @@ impl ResolvedMapDelta {
         let mut updated = self.updated.clone();
         for (k, v) in x.updated.into_iter() {
             if let Some(old) = updated.get_mut(&k) {
-                if v.lamport > old.lamport {
+                if v.idlp > old.idlp {
                     *old = v;
                 }
             } else {
@@ -147,14 +140,8 @@ impl ResolvedMapDelta {
 impl Hash for MapValue {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // value is not being hashed
-        self.counter.hash(state);
+        self.peer.hash(state);
         self.lamp.hash(state);
-    }
-}
-
-impl HasId for MapValue {
-    fn id_start(&self) -> crate::id::ID {
-        ID::new(self.peer, self.counter)
     }
 }
 
@@ -172,7 +159,7 @@ impl Serialize for MapValue {
         let mut s = serializer.serialize_struct("MapValue", 2)?;
         s.serialize_field("value", &self.value)?;
         s.serialize_field("lamport", &self.lamp)?;
-        s.serialize_field("id", &self.id())?;
+        s.serialize_field("id", &self.idlp())?;
         s.end()
     }
 }

@@ -18,14 +18,33 @@ pub use internal_string::InternalString;
 pub use span::*;
 pub use value::{to_value, LoroValue};
 
-/// Unique id for each peer. It's usually random
+/// Unique id for each peer. It's a random u64 by default.
 pub type PeerID = u64;
+/// If it's the nth Op of a peer, the counter will be n.
 pub type Counter = i32;
+/// It's the [Lamport clock](https://en.wikipedia.org/wiki/Lamport_timestamp)
 pub type Lamport = u32;
 
+/// It's the unique ID of an Op represented by [PeerID] and [Counter].
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ID {
     pub peer: PeerID,
+    pub counter: Counter,
+}
+
+/// It's the unique ID of an Op represented by [PeerID] and [Lamport] clock.
+/// It's used to define the total order of Ops.
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct IdLp {
+    pub lamport: Lamport,
+    pub peer: PeerID,
+}
+
+/// It's the unique ID of an Op represented by [PeerID], [Lamport] clock and [Counter].
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+pub struct IdFull {
+    pub peer: PeerID,
+    pub lamport: Lamport,
     pub counter: Counter,
 }
 

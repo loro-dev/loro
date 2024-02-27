@@ -6,7 +6,7 @@ use crate::{
 };
 use crate::{delta::DeltaValue, LoroValue};
 use enum_as_inner::EnumAsInner;
-use loro_common::IdSpan;
+use loro_common::{IdFull, IdSpan};
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -29,6 +29,7 @@ pub struct Op {
 pub(crate) struct OpWithId {
     pub peer: PeerID,
     pub op: Op,
+    pub lamport: Option<Lamport>,
 }
 
 impl OpWithId {
@@ -37,6 +38,14 @@ impl OpWithId {
             peer: self.peer,
             counter: self.op.counter,
         }
+    }
+
+    pub fn id_full(&self) -> IdFull {
+        IdFull::new(
+            self.peer,
+            self.op.counter,
+            self.lamport.expect("op should already be imported"),
+        )
     }
 
     #[allow(unused)]
@@ -66,6 +75,12 @@ pub struct RawOp<'a> {
     pub content: RawOpContent<'a>,
 }
 
+impl RawOp<'_> {
+    pub(crate) fn id_full(&self) -> loro_common::IdFull {
+        IdFull::new(self.id.peer, self.id.counter, self.lamport)
+    }
+}
+
 /// RichOp includes lamport and timestamp info, which is used for conflict resolution.
 #[derive(Debug, Clone)]
 pub struct RichOp<'a> {
@@ -75,15 +90,6 @@ pub struct RichOp<'a> {
     pub timestamp: Timestamp,
     pub start: usize,
     pub end: usize,
-}
-
-/// RichOp includes lamport and timestamp info, which is used for conflict resolution.
-#[derive(Debug, Clone)]
-pub struct OwnedRichOp {
-    pub op: Op,
-    pub client_id: PeerID,
-    pub lamport: Lamport,
-    pub timestamp: Timestamp,
 }
 
 impl Op {
@@ -262,15 +268,6 @@ impl<'a> RichOp<'a> {
         self.op.slice(self.start, self.end)
     }
 
-    pub fn as_owned(&self) -> OwnedRichOp {
-        OwnedRichOp {
-            op: self.get_sliced(),
-            client_id: self.peer,
-            lamport: self.lamport,
-            timestamp: self.timestamp,
-        }
-    }
-
     pub fn op(&self) -> &Op {
         self.op
     }
@@ -298,18 +295,9 @@ impl<'a> RichOp<'a> {
             counter: self.op.counter + self.start as Counter,
         }
     }
-}
 
-impl OwnedRichOp {
-    pub fn rich_op(&self) -> RichOp {
-        RichOp {
-            op: &self.op,
-            peer: self.client_id,
-            lamport: self.lamport,
-            timestamp: self.timestamp,
-            start: 0,
-            end: self.op.atom_len(),
-        }
+    pub(crate) fn id_full(&self) -> IdFull {
+        IdFull::new(self.peer, self.op.counter, self.lamport)
     }
 }
 
@@ -461,7 +449,7 @@ impl<'a> Mergable for ListSlice<'a> {
 #[derive(Debug, Clone)]
 pub struct SliceRanges {
     pub ranges: SmallVec<[SliceRange; 2]>,
-    pub id: ID,
+    pub id: IdFull,
 }
 
 impl Serialize for SliceRanges {
@@ -484,6 +472,10 @@ impl DeltaValue for SliceRanges {
         }
 
         if self.id.counter + self.length() as Counter != other.id.counter {
+            return Err(other);
+        }
+
+        if self.id.lamport + self.length() as Lamport != other.id.lamport {
             return Err(other);
         }
 

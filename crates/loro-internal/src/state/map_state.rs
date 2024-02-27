@@ -4,7 +4,7 @@ use std::{
 };
 
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, LoroResult};
+use loro_common::{ContainerID, IdLp, LoroResult};
 use rle::HasLength;
 
 use crate::{
@@ -16,7 +16,6 @@ use crate::{
     handler::ValueOrContainer,
     op::{Op, RawOp, RawOpContent},
     txn::Transaction,
-    utils::delta_rle_encoded_num::DeltaRleEncodedNums,
     DocState, InternalString, LoroValue,
 };
 
@@ -57,8 +56,7 @@ impl ContainerState for MapState {
             resolved_delta = resolved_delta.with_entry(
                 key,
                 ResolvedMapValue {
-                    counter: value.counter,
-                    lamport: (value.lamp, value.peer),
+                    idlp: IdLp::new(value.peer, value.lamp),
                     value: value
                         .value
                         .map(|v| ValueOrContainer::from_value(v, arena, txn, state)),
@@ -88,7 +86,6 @@ impl ContainerState for MapState {
                         MapValue {
                             lamp: op.lamport,
                             peer: op.id.peer,
-                            counter: op.id.counter,
                             value: None,
                         },
                     );
@@ -100,7 +97,6 @@ impl ContainerState for MapState {
                     MapValue {
                         lamp: op.lamport,
                         peer: op.id.peer,
-                        counter: op.id.counter,
                         value: Some(value.clone().unwrap()),
                     },
                 );
@@ -163,20 +159,16 @@ impl ContainerState for MapState {
 
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
-        let mut lamports = DeltaRleEncodedNums::new();
         for v in self.map.values() {
-            lamports.push(v.lamp);
-            encoder.encode_op(v.id().into(), || unimplemented!());
+            encoder.encode_op(v.idlp().into(), || unimplemented!());
         }
 
-        lamports.encode()
+        Default::default()
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
         assert_eq!(ctx.mode, EncodeMode::Snapshot);
-        let lamports = DeltaRleEncodedNums::decode(ctx.blob);
-        let mut iter = lamports.iter();
         for op in ctx.ops {
             debug_assert_eq!(
                 op.op.atom_len(),
@@ -188,9 +180,8 @@ impl ContainerState for MapState {
             self.map.insert(
                 content.key.clone(),
                 MapValue {
-                    counter: op.op.counter,
                     value: content.value.clone(),
-                    lamp: iter.next().unwrap(),
+                    lamp: op.lamport.expect("op should already be imported"),
                     peer: op.peer,
                 },
             );
