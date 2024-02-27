@@ -244,7 +244,6 @@ pub struct LamportSpan {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct IdLpSpan {
-    // TODO: rename this to peer_id
     pub peer: PeerID,
     pub lamport: LamportSpan,
 }

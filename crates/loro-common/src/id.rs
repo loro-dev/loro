@@ -165,7 +165,7 @@ impl RangeBounds<ID> for (ID, ID) {
 }
 
 impl IdLp {
-    pub const NONE_ID: IdLp = IdLp::new(u64::MAX, Lamport::MAX);
+    pub const NONE_ID: IdLp = IdLp::new(u64::MAX, 0);
 
     #[inline]
     pub const fn new(peer: PeerID, lp: Lamport) -> Self {
