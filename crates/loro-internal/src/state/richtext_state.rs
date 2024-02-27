@@ -23,9 +23,7 @@ use crate::{
     event::{Diff, Index, InternalDiff},
     op::{Op, RawOp},
     txn::Transaction,
-    utils::{
-        delta_rle_encoded_num::DeltaRleEncodedNums, lazy::LazyLoad, string_slice::StringSlice,
-    },
+    utils::{lazy::LazyLoad, string_slice::StringSlice},
     DocState,
 };
 

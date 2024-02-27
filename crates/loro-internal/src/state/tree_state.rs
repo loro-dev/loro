@@ -1,9 +1,7 @@
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{
-    ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID, ID,
-};
+use loro_common::{ContainerID, IdFull, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID};
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;

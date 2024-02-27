@@ -4,7 +4,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor,
 };
-use loro_common::{IdFull, IdLpSpan, IdSpan, Lamport, LoroValue, ID};
+use loro_common::{IdFull, IdLpSpan, Lamport, LoroValue};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{
     fmt::{Display, Formatter},
@@ -68,7 +68,7 @@ mod text_chunk {
     use std::ops::Range;
 
     use append_only_bytes::BytesSlice;
-    use loro_common::{Counter, IdFull, IdLp, Lamport, PeerID, ID};
+    use loro_common::{IdFull, IdLp};
 
     #[derive(Clone, Debug, PartialEq)]
     pub(crate) struct TextChunk {
@@ -93,16 +93,6 @@ mod text_chunk {
                 utf16_len: utf16_len as i32,
                 id,
             }
-        }
-
-        #[inline]
-        pub fn id(&self) -> ID {
-            ID::new(self.id.peer, self.id.counter)
-        }
-
-        #[inline]
-        pub fn id_full(&self) -> IdFull {
-            self.id
         }
 
         #[inline]
@@ -398,22 +388,6 @@ impl RichtextStateChunk {
 
     pub fn new_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
         Self::Style { style, anchor_type }
-    }
-
-    pub(crate) fn get_id_span(&self) -> loro_common::IdSpan {
-        match self {
-            RichtextStateChunk::Text(t) => {
-                let id = t.id();
-                IdSpan::new(id.peer, id.counter, id.counter + t.unicode_len())
-            }
-            RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
-                AnchorType::Start => style.id().into(),
-                AnchorType::End => {
-                    let id = style.id();
-                    IdSpan::new(id.peer, id.counter + 1, id.counter + 2)
-                }
-            },
-        }
     }
 
     pub(crate) fn get_id_lp_span(&self) -> IdLpSpan {

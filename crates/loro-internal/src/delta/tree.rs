@@ -4,7 +4,7 @@ use std::{
 };
 
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{ContainerType, IdFull, LoroValue, TreeID, ID};
+use loro_common::{ContainerType, IdFull, LoroValue, TreeID};
 use serde::Serialize;
 
 use crate::state::TreeParentId;

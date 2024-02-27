@@ -16,7 +16,6 @@ use crate::{
     handler::ValueOrContainer,
     op::{Op, RawOp, RawOpContent},
     txn::Transaction,
-    utils::delta_rle_encoded_num::DeltaRleEncodedNums,
     DocState, InternalString, LoroValue,
 };
 

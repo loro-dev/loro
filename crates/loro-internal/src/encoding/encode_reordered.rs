@@ -4,8 +4,8 @@ use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, ContainerType, Counter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdFull, IdLp,
-    IdSpan, InternalString, LoroError, LoroResult, PeerID, ID,
+    ContainerID, ContainerType, Counter, HasCounterSpan, HasIdSpan, HasLamportSpan, InternalString,
+    LoroError, LoroResult, PeerID, ID,
 };
 use num_traits::FromPrimitive;
 use rle::HasLength;
@@ -382,7 +382,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
 
         let mut op_len = 0;
         let bytes = state.encode_snapshot(super::StateSnapshotEncoder {
-            check_idspan: &|id_span| {
+            check_idspan: &|_id_span| {
                 // TODO: todo!("check intersection by vv that defined by idlp");
                 // if let Some(counter) = vv.intersect_span(id_span) {
                 //     Err(IdSpan {
@@ -775,7 +775,7 @@ fn decode_snapshot_states(
 
 mod encode {
     use fxhash::FxHashMap;
-    use loro_common::{ContainerID, ContainerType, HasId, IdLp, PeerID, ID};
+    use loro_common::{ContainerID, ContainerType, HasId, PeerID, ID};
     use num_traits::ToPrimitive;
     use rle::{HasLength, Sliceable};
     use std::borrow::Cow;

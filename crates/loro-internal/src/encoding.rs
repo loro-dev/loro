@@ -121,6 +121,7 @@ impl StateSnapshotEncoder<'_> {
 pub(crate) struct StateSnapshotDecodeContext<'a> {
     pub oplog: &'a OpLog,
     pub ops: &'a mut dyn Iterator<Item = OpWithId>,
+    #[allow(unused)]
     pub blob: &'a [u8],
     pub mode: EncodeMode,
 }

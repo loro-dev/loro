@@ -8,13 +8,8 @@ use loro_common::IdLp;
 use serde::{ser::SerializeStruct, Serialize};
 
 use crate::{
-    arena::SharedArena,
-    change::Lamport,
-    handler::ValueOrContainer,
-    id::{Counter, PeerID, ID},
-    span::{HasId, HasLamport},
-    txn::Transaction,
-    DocState, InternalString, LoroValue,
+    arena::SharedArena, change::Lamport, handler::ValueOrContainer, id::PeerID, span::HasLamport,
+    txn::Transaction, DocState, InternalString, LoroValue,
 };
 
 #[derive(Default, Debug, Clone, Serialize)]

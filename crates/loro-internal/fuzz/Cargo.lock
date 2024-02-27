@@ -342,7 +342,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -398,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "loro-preload"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "loro-common",
@@ -408,7 +408,7 @@ dependencies = [
 
 [[package]]
 name = "loro-rle"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "append-only-bytes",
  "arref",
