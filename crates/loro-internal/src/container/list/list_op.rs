@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
-use loro_common::LoroValue;
+use loro_common::{HasId, HasIdSpan, LoroValue, ID};
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +21,7 @@ pub enum ListOp<'a> {
         slice: ListSlice<'a>,
         pos: usize,
     },
-    Delete(DeleteSpan),
+    Delete(DeleteSpanWithId),
     /// StyleStart and StyleEnd must be paired because the end of a style must take an OpID position.
     StyleStart {
         start: u32,
@@ -47,7 +47,7 @@ pub enum InnerListOp {
         unicode_len: u32,
         pos: u32,
     },
-    Delete(DeleteSpan),
+    Delete(DeleteSpanWithId),
     /// StyleStart and StyleEnd must be paired.
     /// The next op of StyleStart must be StyleEnd.
     StyleStart {
@@ -61,21 +61,21 @@ pub enum InnerListOp {
 }
 
 impl<'a> ListOp<'a> {
-    pub fn new_del(pos: usize, len: usize) -> Self {
+    pub fn new_del(id_start: ID, pos: usize, len: usize) -> Self {
         assert!(len != 0);
-        Self::Delete(DeleteSpan {
-            pos: pos as isize,
-            signed_len: len as isize,
-        })
+        Self::Delete(DeleteSpanWithId::new(id_start, pos as isize, len as isize))
     }
 }
 
 impl InnerListOp {
-    pub fn new_del(pos: usize, len: isize) -> Self {
+    pub fn new_del(id: ID, pos: usize, len: isize) -> Self {
         assert!(len != 0);
-        Self::Delete(DeleteSpan {
-            pos: pos as isize,
-            signed_len: len,
+        Self::Delete(DeleteSpanWithId {
+            id_start: id,
+            span: DeleteSpan {
+                pos: pos as isize,
+                signed_len: len,
+            },
         })
     }
 
@@ -90,6 +90,77 @@ impl InnerListOp {
 impl HasLength for DeleteSpan {
     fn content_len(&self) -> usize {
         self.signed_len.unsigned_abs()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteSpanWithId {
+    pub id_start: ID,
+    pub span: DeleteSpan,
+}
+
+impl DeleteSpanWithId {
+    pub fn new(id_start: ID, pos: isize, len: isize) -> Self {
+        debug_assert!(len != 0);
+        Self {
+            id_start,
+            span: DeleteSpan {
+                pos,
+                signed_len: len,
+            },
+        }
+    }
+
+    #[inline]
+    pub fn start(&self) -> isize {
+        self.span.start()
+    }
+
+    #[inline]
+    pub fn last(&self) -> isize {
+        self.span.last()
+    }
+
+    #[inline]
+    pub fn is_reversed(&self) -> bool {
+        self.span.is_reversed()
+    }
+}
+
+impl HasLength for DeleteSpanWithId {
+    fn content_len(&self) -> usize {
+        self.span.content_len()
+    }
+}
+
+impl HasId for DeleteSpanWithId {
+    fn id_start(&self) -> ID {
+        self.id_start
+    }
+}
+
+impl Mergable for DeleteSpanWithId {
+    fn is_mergable(&self, rhs: &Self, _conf: &()) -> bool
+    where
+        Self: Sized,
+    {
+        self.id_end() == rhs.id_start && self.span.is_mergable(&rhs.span, &())
+    }
+
+    fn merge(&mut self, rhs: &Self, _conf: &())
+    where
+        Self: Sized,
+    {
+        self.span.merge(&rhs.span, &())
+    }
+}
+
+impl Sliceable for DeleteSpanWithId {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        Self {
+            id_start: self.id_start.inc(from as i32),
+            span: self.span.slice(from, to),
+        }
     }
 }
 
@@ -145,6 +216,11 @@ impl DeleteSpan {
     #[inline(always)]
     pub fn to_range(self) -> Range<isize> {
         self.start()..self.end()
+    }
+
+    #[inline(always)]
+    pub fn to_urange(self) -> Range<usize> {
+        self.start() as usize..self.end() as usize
     }
 
     #[inline(always)]
@@ -432,9 +508,10 @@ impl Sliceable for InnerListOp {
 
 #[cfg(all(test, feature = "test_utils"))]
 mod test {
+    use loro_common::ID;
     use rle::{Mergable, Sliceable};
 
-    use crate::op::ListSlice;
+    use crate::{container::list::list_op::DeleteSpanWithId, op::ListSlice};
 
     use super::{DeleteSpan, ListOp};
 
@@ -445,10 +522,10 @@ mod test {
                 pos: 0,
                 slice: ListSlice::from_borrowed_str(""),
             },
-            ListOp::Delete(DeleteSpan::new(0, 3)),
+            ListOp::Delete(DeleteSpanWithId::new(ID::new(0, 0), 0, 3)),
         ];
         let actual = postcard::to_allocvec(&list_op).unwrap();
-        let list_op_buf = vec![2, 0, 1, 0, 0, 0, 1, 0, 6];
+        let list_op_buf = vec![2, 0, 1, 0, 0, 0, 1, 0, 0, 0, 6];
         assert_eq!(&actual, &list_op_buf);
         assert_eq!(
             postcard::from_bytes::<Vec<ListOp>>(&list_op_buf).unwrap(),

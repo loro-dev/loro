@@ -21,8 +21,10 @@ fn main() {
     loro.diagnose_size();
     drop(actions);
     let start = Instant::now();
+    let mut size = 0;
     for _ in 0..1 {
-        loro.export_snapshot();
+        size = loro.export_snapshot().len();
     }
     println!("Snapshot encoding time {}", start.elapsed().as_millis());
+    println!("Snapshot size {}", size);
 }

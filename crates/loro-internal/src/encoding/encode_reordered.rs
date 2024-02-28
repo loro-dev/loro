@@ -14,7 +14,7 @@ use serde_columnar::columnar;
 use crate::{
     arena::SharedArena,
     change::{Change, Lamport},
-    container::{idx::ContainerIdx, list::list_op::DeleteSpan, richtext::TextStyleInfoFlag},
+    container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
     encoding::{
         encode_reordered::value::{ValueKind, ValueWriter},
         StateSnapshotDecodeContext,
@@ -1059,7 +1059,7 @@ mod encode {
             crate::op::InnerContent::List(list) => match list {
                 crate::container::list::list_op::InnerListOp::Insert { pos, .. } => *pos as i32,
                 crate::container::list::list_op::InnerListOp::InsertText { pos, .. } => *pos as i32,
-                crate::container::list::list_op::InnerListOp::Delete(span) => span.pos as i32,
+                crate::container::list::list_op::InnerListOp::Delete(span) => span.span.pos as i32,
                 crate::container::list::list_op::InnerListOp::StyleStart { start, .. } => {
                     *start as i32
                 }
@@ -1117,7 +1117,11 @@ mod encode {
                 }
                 crate::container::list::list_op::InnerListOp::Delete(span) => {
                     value_writer.write(
-                        &Value::DeleteSeq(span.signed_len as i32),
+                        &Value::DeleteSeq {
+                            peer_idx: register_peer.register(&span.id_start.peer) as u32,
+                            counter: span.id_start.counter,
+                            len: span.span.signed_len as i32,
+                        },
                         register_key,
                         register_cid,
                     );
@@ -1188,9 +1192,15 @@ fn decode_op(
                 )
             }
             ValueKind::DeleteSeq => {
+                let peer_idx = value_reader.read_usize()?;
+                let cnt = value_reader.read_usize()?;
                 let len = value_reader.read_i32()?;
                 crate::op::InnerContent::List(crate::container::list::list_op::InnerListOp::Delete(
-                    DeleteSpan::new(prop as isize, len as isize),
+                    DeleteSpanWithId::new(
+                        ID::new(peers[peer_idx], cnt as Counter),
+                        prop as isize,
+                        len as isize,
+                    ),
                 ))
             }
             ValueKind::MarkStart => {
@@ -1255,12 +1265,17 @@ fn decode_op(
                     )
                 }
                 ValueKind::DeleteSeq => {
+                    let peer_idx = value_reader.read_usize()?;
+                    let counter = value_reader.read_usize()?;
                     let len = value_reader.read_i32()?;
                     crate::op::InnerContent::List(
-                        crate::container::list::list_op::InnerListOp::Delete(DeleteSpan::new(
-                            pos as isize,
-                            len as isize,
-                        )),
+                        crate::container::list::list_op::InnerListOp::Delete(
+                            DeleteSpanWithId::new(
+                                ID::new(peers[peer_idx], counter as Counter),
+                                pos as isize,
+                                len as isize,
+                            ),
+                        ),
                     )
                 }
                 _ => unreachable!(),
@@ -1436,14 +1451,21 @@ mod value {
         I64(i64),
         F64(f64),
         Str(&'a str),
-        DeleteSeq(i32),
+        DeleteSeq {
+            peer_idx: u32,
+            counter: Counter,
+            len: i32,
+        },
         DeltaInt(i32),
         Array(Vec<Value<'a>>),
         Map(FxHashMap<InternalString, Value<'a>>),
         Binary(&'a [u8]),
         MarkStart(MarkStart),
         TreeMove(EncodedTreeMove),
-        Unknown { kind: u8, data: &'a [u8] },
+        Unknown {
+            kind: u8,
+            data: &'a [u8],
+        },
     }
 
     pub struct MarkStart {
@@ -1627,7 +1649,7 @@ mod value {
                 Value::ContainerIdx(_) => ValueKind::ContainerType,
                 Value::F64(_) => ValueKind::F64,
                 Value::Str(_) => ValueKind::Str,
-                Value::DeleteSeq(_) => ValueKind::DeleteSeq,
+                Value::DeleteSeq { .. } => ValueKind::DeleteSeq,
                 Value::DeltaInt(_) => ValueKind::DeltaInt,
                 Value::Array(_) => ValueKind::Array,
                 Value::Map(_) => ValueKind::Map,
@@ -1736,7 +1758,15 @@ mod value {
                 Value::I64(value) => self.write_i64(*value),
                 Value::F64(value) => self.write_f64(*value),
                 Value::Str(value) => self.write_str(value),
-                Value::DeleteSeq(value) => self.write_i32(*value),
+                Value::DeleteSeq {
+                    peer_idx,
+                    counter,
+                    len,
+                } => {
+                    self.write_usize(*peer_idx as usize);
+                    self.write_usize(*counter as usize);
+                    self.write_i32(*len);
+                }
                 Value::DeltaInt(value) => self.write_i32(*value),
                 Value::Array(value) => self.write_array(value, register_key, register_cid),
                 Value::Map(value) => self.write_map(value, register_key, register_cid),
