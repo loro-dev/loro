@@ -169,6 +169,8 @@ impl DiffCalculator {
                                 ),
                             }
                         });
+                    // checkout use the same diff_calculator, the depth of calculator is not updated
+                    // That may cause the container to be considered deleted
                     if *old_depth != depth {
                         *old_depth = depth;
                     }
