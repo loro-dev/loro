@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{num::NonZeroU16, sync::Arc};
 
 pub(super) mod tree;
 use itertools::Itertools;
@@ -36,8 +36,8 @@ use super::{event::InternalContainerDiff, oplog::OpLog};
 pub struct DiffCalculator {
     /// ContainerIdx -> (depth, calculator)
     ///
-    /// if depth == u16::MAX, we need to calculate it again
-    calculators: FxHashMap<ContainerIdx, (u16, ContainerDiffCalculator)>,
+    /// if depth is None, we need to calculate it again
+    calculators: FxHashMap<ContainerIdx, (Option<NonZeroU16>, ContainerDiffCalculator)>,
     last_vv: VersionVector,
     has_all: bool,
 }
@@ -141,7 +141,7 @@ impl DiffCalculator {
                     }
                     let vv = &mut vv.borrow_mut();
                     vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
-                    let depth = oplog.arena.get_depth(op.container).unwrap_or(u16::MAX);
+                    let depth = oplog.arena.get_depth(op.container);
                     let (old_depth, calculator) =
                         self.calculators.entry(op.container).or_insert_with(|| {
                             match op.container.get_type() {
@@ -215,7 +215,7 @@ impl DiffCalculator {
         // we need to iterate from parents to children. i.e. from smaller depth to larger depth.
         let mut new_containers = FxHashSet::default();
         let mut container_id_to_depth = FxHashMap::default();
-        let mut all: Vec<(u16, ContainerIdx)> = if let Some(set) = affected_set {
+        let mut all: Vec<(Option<NonZeroU16>, ContainerIdx)> = if let Some(set) = affected_set {
             // only visit the affected containers
             set.into_iter()
                 .map(|x| {
@@ -240,13 +240,12 @@ impl DiffCalculator {
                     continue;
                 }
                 let (depth, calc) = self.calculators.get_mut(&idx).unwrap();
-                if *depth == u16::MAX && !are_rest_containers_deleted {
-                    if let Some(d) = oplog.arena.get_depth(idx) {
-                        if d != *depth {
-                            *depth = d;
-                            all.push((*depth, idx));
-                            continue;
-                        }
+                if depth.is_none() && !are_rest_containers_deleted {
+                    let d = oplog.arena.get_depth(idx);
+                    if d != *depth {
+                        *depth = d;
+                        all.push((*depth, idx));
+                        continue;
                     }
                 }
                 let id = oplog.arena.idx_to_id(idx).unwrap();
@@ -255,7 +254,8 @@ impl DiffCalculator {
                 let diff = calc.calculate_diff(oplog, before, after, |c| {
                     if !are_rest_containers_deleted {
                         new_containers.insert(c.clone());
-                        container_id_to_depth.insert(c.clone(), depth.saturating_add(1));
+                        container_id_to_depth
+                            .insert(c.clone(), depth.and_then(|d| d.checked_add(1)));
                         oplog.arena.register_container(c);
                     }
                 });
@@ -285,6 +285,7 @@ impl DiffCalculator {
                 are_rest_containers_deleted = true;
             }
         }
+
         while !new_containers.is_empty() {
             for id in std::mem::take(&mut new_containers) {
                 let Some(idx) = oplog.arena.id_to_idx(&id) else {

@@ -7,7 +7,7 @@ use loro_internal::{
     event::Diff,
     handler::{Handler, TextDelta, ValueOrContainer},
     version::Frontiers,
-    ApplyDiff, ContainerDiff, LoroDoc, ToJson,
+    ApplyDiff, LoroDoc, ToJson,
 };
 use serde_json::json;
 
