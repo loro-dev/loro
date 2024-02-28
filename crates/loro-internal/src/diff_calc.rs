@@ -142,7 +142,7 @@ impl DiffCalculator {
                     let vv = &mut vv.borrow_mut();
                     vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
                     let depth = oplog.arena.get_depth(op.container).unwrap_or(u16::MAX);
-                    let (_, calculator) =
+                    let (old_depth, calculator) =
                         self.calculators.entry(op.container).or_insert_with(|| {
                             match op.container.get_type() {
                                 crate::ContainerType::Text => (
@@ -169,6 +169,9 @@ impl DiffCalculator {
                                 ),
                             }
                         });
+                    if *old_depth != depth {
+                        *old_depth = depth;
+                    }
 
                     if !started_set.contains(&op.container) {
                         started_set.insert(op.container);
