@@ -229,18 +229,16 @@ impl DiffCalculator {
                 .map(|(x, (depth, _))| (*depth, *x))
                 .collect()
         };
-        let mut are_rest_containers_deleted = false;
         let mut ans = FxHashMap::default();
         while !all.is_empty() {
             // sort by depth and lamport, ensure we iterate from top to bottom
             all.sort_by_key(|x| x.0);
-            let len = all.len();
             for (_, idx) in std::mem::take(&mut all) {
                 if ans.contains_key(&idx) {
                     continue;
                 }
                 let (depth, calc) = self.calculators.get_mut(&idx).unwrap();
-                if depth.is_none() && !are_rest_containers_deleted {
+                if depth.is_none() {
                     let d = oplog.arena.get_depth(idx);
                     if d != *depth {
                         *depth = d;
@@ -252,12 +250,9 @@ impl DiffCalculator {
                 let bring_back = new_containers.remove(&id);
 
                 let diff = calc.calculate_diff(oplog, before, after, |c| {
-                    if !are_rest_containers_deleted {
-                        new_containers.insert(c.clone());
-                        container_id_to_depth
-                            .insert(c.clone(), depth.and_then(|d| d.checked_add(1)));
-                        oplog.arena.register_container(c);
-                    }
+                    new_containers.insert(c.clone());
+                    container_id_to_depth.insert(c.clone(), depth.and_then(|d| d.checked_add(1)));
+                    oplog.arena.register_container(c);
                 });
                 if !diff.is_empty() || bring_back {
                     ans.insert(
@@ -267,22 +262,12 @@ impl DiffCalculator {
                             InternalContainerDiff {
                                 idx,
                                 bring_back,
-                                is_container_deleted: are_rest_containers_deleted,
+                                is_container_deleted: false,
                                 diff: Some(diff.into()),
                             },
                         ),
                     );
                 }
-            }
-
-            if len == all.len() {
-                debug_log::debug_log!("Container might be deleted");
-                debug_log::debug_dbg!(&all);
-                for (_, idx) in all.iter() {
-                    debug_log::debug_dbg!(oplog.arena.get_container_id(*idx));
-                }
-                // we still emit the event of deleted container
-                are_rest_containers_deleted = true;
             }
         }
 
