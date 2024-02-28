@@ -21,10 +21,13 @@ fn main() {
     loro.diagnose_size();
     drop(actions);
     let start = Instant::now();
-    let mut size = 0;
-    for _ in 0..1 {
-        size = loro.export_snapshot().len();
-    }
+    let snapshot = loro.export_snapshot();
     println!("Snapshot encoding time {}", start.elapsed().as_millis());
-    println!("Snapshot size {}", size);
+    let compressed = zstd::encode_all(&mut snapshot.as_slice(), 0).unwrap();
+    println!(
+        "Snapshot encoding time including compression {}",
+        start.elapsed().as_millis()
+    );
+    println!("Snapshot size {}", snapshot.len());
+    println!("Snapshot size after compression {}", compressed.len());
 }
