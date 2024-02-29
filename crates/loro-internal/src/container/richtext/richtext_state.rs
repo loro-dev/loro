@@ -4,7 +4,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor,
 };
-use loro_common::{IdFull, IdLpSpan, Lamport, LoroValue};
+use loro_common::{IdFull, IdLpSpan, Lamport, LoroValue, ID};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{
     fmt::{Display, Formatter},
@@ -68,7 +68,7 @@ mod text_chunk {
     use std::ops::Range;
 
     use append_only_bytes::BytesSlice;
-    use loro_common::{IdFull, IdLp};
+    use loro_common::{IdFull, IdLp, ID};
 
     #[derive(Clone, Debug, PartialEq)]
     pub(crate) struct TextChunk {
@@ -98,6 +98,11 @@ mod text_chunk {
         #[inline]
         pub fn idlp(&self) -> IdLp {
             IdLp::new(self.id.peer, self.id.lamport)
+        }
+
+        #[inline]
+        pub fn id(&self) -> ID {
+            self.id.id()
         }
 
         #[inline]
@@ -702,6 +707,7 @@ impl Sub for PosCache {
 pub(crate) struct RichtextTreeTrait;
 
 pub(crate) struct EntityRangeInfo {
+    pub id_start: ID,
     pub entity_start: usize,
     pub entity_end: usize,
     pub event_len: usize,
@@ -1671,6 +1677,7 @@ impl RichtextState {
                         }
                         _ => {
                             ans.push(EntityRangeInfo {
+                                id_start: s.id(),
                                 entity_start: entity_index,
                                 entity_end: entity_index + len,
                                 event_len,
