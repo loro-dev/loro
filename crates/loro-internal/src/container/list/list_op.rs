@@ -144,14 +144,25 @@ impl Mergable for DeleteSpanWithId {
     where
         Self: Sized,
     {
-        self.id_end() == rhs.id_start && self.span.is_mergable(&rhs.span, &())
+        if self.span.is_mergable(&rhs.span, &()) {
+            if self.span.is_reversed() {
+                rhs.id_end() == self.id_start
+            } else {
+                self.id_end() == rhs.id_start
+            }
+        } else {
+            false
+        }
     }
 
     fn merge(&mut self, rhs: &Self, _conf: &())
     where
         Self: Sized,
     {
-        self.span.merge(&rhs.span, &())
+        self.span.merge(&rhs.span, &());
+        if self.span.is_reversed() {
+            self.id_start = rhs.id_start;
+        }
     }
 }
 

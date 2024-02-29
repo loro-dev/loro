@@ -4,7 +4,7 @@ use generic_btree::rle::{HasLength, Mergeable, Sliceable};
 use loro_common::{Counter, HasId, IdFull, IdSpan, Lamport, ID};
 use serde::{Deserialize, Serialize};
 
-use super::AnchorType;
+use super::{tracker::UNKNOWN_PEER_ID, AnchorType};
 
 #[derive(Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
 pub(crate) struct RichtextChunk {
@@ -171,6 +171,11 @@ impl Sliceable for RichtextChunk {
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub(super) struct FugueSpan {
     pub id: IdFull,
+    /// Sometimes, the id of the span is just a placeholder.
+    /// This field is used to track the real id of the span.
+    /// We know the real id when deletion happens because we
+    /// have the start_id info for each deletion.
+    pub real_id: Option<ID>,
     /// The status at the current version
     pub status: Status,
     /// The status at the `new` version.
@@ -218,6 +223,7 @@ impl Sliceable for FugueSpan {
     fn _slice(&self, range: Range<usize>) -> Self {
         Self {
             id: self.id.inc(range.start as Counter),
+            real_id: self.real_id.map(|x| x.inc(range.start as Counter)),
             status: self.status,
             diff_status: self.diff_status,
             origin_left: if range.start == 0 {
@@ -251,6 +257,11 @@ impl Mergeable for FugueSpan {
                 == self.id.counter + self.content.len() as Counter - 1
             && self.origin_right == rhs.origin_right
             && self.content.can_merge(&rhs.content)
+            && ((self.real_id.is_none() && rhs.real_id.is_none())
+                || (self.real_id.is_some()
+                    && rhs.real_id.is_some()
+                    && self.real_id.unwrap().inc(self.content.len() as i32)
+                        == rhs.real_id.unwrap()))
     }
 
     fn merge_right(&mut self, rhs: &Self) {
@@ -259,6 +270,7 @@ impl Mergeable for FugueSpan {
 
     fn merge_left(&mut self, left: &Self) {
         self.id = left.id;
+        self.real_id = left.real_id;
         self.origin_left = left.origin_left;
         self.content.merge_left(&left.content);
     }
@@ -269,6 +281,11 @@ impl FugueSpan {
     pub fn new(id: IdFull, content: RichtextChunk) -> Self {
         Self {
             id,
+            real_id: if id.peer == UNKNOWN_PEER_ID {
+                None
+            } else {
+                Some(id.id())
+            },
             status: Status::default(),
             diff_status: None,
             origin_left: None,

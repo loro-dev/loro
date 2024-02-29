@@ -6,7 +6,7 @@ use crate::{
 };
 use crate::{delta::DeltaValue, LoroValue};
 use enum_as_inner::EnumAsInner;
-use loro_common::{IdFull, IdSpan};
+use loro_common::{CounterSpan, IdFull, IdSpan};
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -84,9 +84,9 @@ impl RawOp<'_> {
 /// RichOp includes lamport and timestamp info, which is used for conflict resolution.
 #[derive(Debug, Clone)]
 pub struct RichOp<'a> {
-    pub op: &'a Op,
+    op: &'a Op,
     pub peer: PeerID,
-    pub lamport: Lamport,
+    lamport: Lamport,
     pub timestamp: Timestamp,
     pub start: usize,
     pub end: usize,
@@ -264,11 +264,32 @@ impl<'a> RichOp<'a> {
         }
     }
 
-    pub fn get_sliced(&self) -> Op {
-        self.op.slice(self.start, self.end)
+    pub fn new_by_cnt_range(change: &Change<Op>, span: CounterSpan, op: &'a Op) -> Option<Self> {
+        let op_index_in_change = op.counter - change.id.counter;
+        let op_slice_start = (span.start - op.counter).clamp(0, op.atom_len() as i32);
+        let op_slice_end = (span.end - op.counter).clamp(0, op.atom_len() as i32);
+        if op_slice_start == op_slice_end {
+            return None;
+        }
+        Some(RichOp {
+            op,
+            peer: change.id.peer,
+            lamport: change.lamport + op_index_in_change as Lamport,
+            timestamp: change.timestamp,
+            start: op_slice_start as usize,
+            end: op_slice_end as usize,
+        })
     }
 
-    pub fn op(&self) -> &Op {
+    pub fn op(&self) -> Cow<'_, Op> {
+        if self.start == 0 && self.end == self.op.content_len() {
+            Cow::Borrowed(self.op)
+        } else {
+            Cow::Owned(self.op.slice(self.start, self.end))
+        }
+    }
+
+    pub fn raw_op(&self) -> &Op {
         self.op
     }
 

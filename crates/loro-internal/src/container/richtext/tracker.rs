@@ -29,7 +29,7 @@ impl Default for Tracker {
     }
 }
 
-const UNKNOWN_PEER_ID: PeerID = u64::MAX;
+pub(super) const UNKNOWN_PEER_ID: PeerID = u64::MAX;
 impl Tracker {
     pub fn new_with_unknown() -> Self {
         let mut this = Self {
@@ -42,6 +42,7 @@ impl Tracker {
         let result = this.rope.tree.push(FugueSpan {
             content: RichtextChunk::new_unknown(u32::MAX / 4),
             id: IdFull::new(UNKNOWN_PEER_ID, 0, 0),
+            real_id: None,
             status: Status::default(),
             diff_status: None,
             origin_left: None,
@@ -114,6 +115,11 @@ impl Tracker {
             FugueSpan {
                 content,
                 id: op_id,
+                real_id: if op_id.peer == UNKNOWN_PEER_ID {
+                    None
+                } else {
+                    Some(op_id.id())
+                },
                 status: Status::default(),
                 diff_status: None,
                 origin_left: None,
@@ -148,7 +154,14 @@ impl Tracker {
     /// If `reverse` is true, the deletion happens from the end of the range to the start.
     /// So the first op is the one that deletes element at `pos+len-1`, the last op
     /// is the one that deletes element at `pos`.
-    pub(crate) fn delete(&mut self, mut op_id: ID, pos: usize, mut len: usize, reverse: bool) {
+    pub(crate) fn delete(
+        &mut self,
+        mut op_id: ID,
+        target_start_id: ID,
+        pos: usize,
+        mut len: usize,
+        reverse: bool,
+    ) {
         // debug_log::group!("Tracker Delete");
         // debug_log::debug_dbg!(&op_id, pos, len, reverse);
         // debug_log::debug_dbg!(&self);
@@ -184,7 +197,7 @@ impl Tracker {
         // debug_log::debug_log!("after forwarding pos={} len={}", pos, len);
         // debug_log::debug_dbg!(&self);
         let mut ans = Vec::new();
-        let split = self.rope.delete(pos, len, |span| {
+        let split = self.rope.delete(Some(target_start_id), pos, len, |span| {
             let mut id_span = span.id_span();
             if reverse {
                 id_span.reverse();
@@ -396,7 +409,7 @@ mod test {
     fn test_retreat_and_forward_delete() {
         let mut t = Tracker::new();
         t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..10));
-        t.delete(ID::new(2, 0), 0, 10, true);
+        t.delete(ID::new(2, 0), ID::NONE_ID, 0, 10, true);
         t.checkout(&vv!(1 => 10, 2=>5));
         assert_eq!(t.rope.len(), 5);
         t.checkout(&vv!(1 => 10, 2=>0));
@@ -411,7 +424,7 @@ mod test {
     fn test_checkout_in_doc_with_del_span() {
         let mut t = Tracker::new();
         t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..10));
-        t.delete(ID::new(2, 0), 0, 10, false);
+        t.delete(ID::new(2, 0), ID::NONE_ID, 0, 10, false);
         t.checkout(&vv!(1 => 10, 2=>4));
         let v: Vec<FugueSpan> = t.rope.tree().iter().copied().collect();
         assert_eq!(v.len(), 2);
@@ -425,7 +438,7 @@ mod test {
     fn test_checkout_in_doc_with_reversed_del_span() {
         let mut t = Tracker::new();
         t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..10));
-        t.delete(ID::new(2, 0), 0, 10, true);
+        t.delete(ID::new(2, 0), ID::NONE_ID, 0, 10, true);
         t.checkout(&vv!(1 => 10, 2=>4));
         let v: Vec<FugueSpan> = t.rope.tree().iter().copied().collect();
         assert_eq!(v.len(), 2);

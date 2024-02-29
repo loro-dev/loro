@@ -6,7 +6,7 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
-use loro_common::{Counter, HasId, InternalString, LoroValue, PeerID, ID};
+use loro_common::{Counter, HasId, HasLamport, InternalString, LoroValue, PeerID, ID};
 
 use crate::{
     change::{Change, Lamport},
@@ -128,15 +128,15 @@ impl MapOpGroup {
 
 impl OpGroupTrait for MapOpGroup {
     fn insert(&mut self, op: &RichOp) {
-        let key = match &op.op.content {
+        let key = match &op.raw_op().content {
             InnerContent::Map(map) => map.key.clone(),
             _ => unreachable!(),
         };
         let entry = self.ops.entry(key).or_default();
         entry.insert(GroupedMapOpInfo {
-            value: op.op.content.as_map().unwrap().value.clone(),
-            counter: op.op.counter,
-            lamport: op.lamport,
+            value: op.raw_op().content.as_map().unwrap().value.clone(),
+            counter: op.raw_op().counter,
+            lamport: op.lamport(),
             peer: op.peer,
         });
     }
@@ -183,13 +183,13 @@ pub(crate) struct TreeOpGroup {
 
 impl OpGroupTrait for TreeOpGroup {
     fn insert(&mut self, op: &RichOp) {
-        let tree_op = op.op.content.as_tree().unwrap();
+        let tree_op = op.raw_op().content.as_tree().unwrap();
         let target = tree_op.target;
         let parent = tree_op.parent;
-        let entry = self.ops.entry(op.lamport).or_default();
+        let entry = self.ops.entry(op.lamport()).or_default();
         entry.insert(GroupedTreeOpInfo {
             value: TreeOp { target, parent },
-            counter: op.op.counter,
+            counter: op.raw_op().counter,
             peer: op.peer,
         });
     }

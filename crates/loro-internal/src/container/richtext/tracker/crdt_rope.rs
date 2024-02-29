@@ -5,10 +5,12 @@ use generic_btree::{
     BTree, BTreeTrait, Cursor, FindResult, LeafIndex, Query, SplittedLeaves,
 };
 use itertools::Itertools;
-use loro_common::{Counter, HasCounter, HasCounterSpan, HasIdSpan, IdFull, IdSpan, ID};
+use loro_common::{Counter, HasCounter, HasCounterSpan, HasIdSpan, IdFull, IdSpan, Lamport, ID};
 use smallvec::SmallVec;
 
 use crate::container::richtext::{fugue_span::DiffStatus, FugueSpan, RichtextChunk, Status};
+
+use super::UNKNOWN_PEER_ID;
 
 #[derive(Debug, Default, Clone)]
 pub(super) struct CrdtRope {
@@ -228,14 +230,16 @@ impl CrdtRope {
 
     pub(super) fn delete(
         &mut self,
+        mut target_id: Option<ID>,
         pos: usize,
         len: usize,
-        mut notify_deleted_span: impl FnMut(FugueSpan),
+        mut notify_deleted_span: impl FnMut(&FugueSpan),
     ) -> SplittedLeaves {
         if len == 0 {
             return Default::default();
         }
 
+        debug_log::debug_dbg!(&target_id);
         let start = self
             .tree
             .query::<ActiveLenQueryPreferRight>(&(pos as i32))
@@ -249,8 +253,15 @@ impl CrdtRope {
                 let (a, b) = elem.update_with_split(start.offset..start.offset + len, |elem| {
                     assert!(elem.is_activated());
                     debug_assert_eq!(len, elem.rle_len());
-                    notify_deleted_span(*elem);
+                    notify_deleted_span(elem);
                     elem.status.delete_times += 1;
+                    if let Some(id) = target_id.as_mut() {
+                        if elem.real_id.is_none() {
+                            elem.real_id = Some(*id);
+                        }
+
+                        *id = id.inc(elem.rle_len() as i32);
+                    }
                 });
 
                 (true, a, b)
@@ -266,8 +277,15 @@ impl CrdtRope {
             .unwrap();
         self.tree.update(start..end.cursor(), &mut |elem| {
             if elem.is_activated() {
-                notify_deleted_span(*elem);
+                notify_deleted_span(elem);
                 elem.status.delete_times += 1;
+                if let Some(id) = target_id.as_mut() {
+                    if elem.real_id.is_none() {
+                        elem.real_id = Some(*id);
+                    }
+
+                    *id = id.inc(elem.rle_len() as i32);
+                }
                 Some(Cache {
                     len: -(elem.rle_len() as i32),
                     changed_num: 0,
@@ -359,7 +377,12 @@ impl CrdtRope {
                     DiffStatus::Created => {
                         let rt = Some(CrdtRopeDelta::Insert {
                             chunk: elem.content,
-                            id: elem.id,
+                            id: elem.real_id.unwrap(),
+                            lamport: if elem.id.peer == UNKNOWN_PEER_ID {
+                                None
+                            } else {
+                                Some(elem.id.lamport)
+                            },
                         });
                         if index > last_pos {
                             next = rt;
@@ -410,7 +433,17 @@ impl CrdtRope {
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub(crate) enum CrdtRopeDelta {
     Retain(usize),
-    Insert { chunk: RichtextChunk, id: IdFull },
+    Insert {
+        chunk: RichtextChunk,
+        id: ID,
+        /// This is a optional field, because we may not know the correct lamport
+        /// for chunk id with UNKNOWN_PEER_ID.
+        ///
+        /// This case happens when the chunk is created by default placeholder and
+        /// the deletion happens that marks the chunk with its start_id. But it doesn't
+        /// know the correct lamport for the chunk.
+        lamport: Option<Lamport>,
+    },
     Delete(usize),
 }
 
@@ -735,7 +768,7 @@ mod test {
         let mut rope = CrdtRope::new();
         rope.insert(0, span(0, 0..10), |_| panic!());
         assert_eq!(rope.len(), 10);
-        rope.delete(5, 2, |_| {});
+        rope.delete(None, 5, 2, |_| {});
         assert_eq!(rope.len(), 8);
         let fugue = rope.insert(6, span(1, 10..20), |_| panic!()).content;
         assert_eq!(fugue.origin_left, Some(ID::new(0, 7)));
@@ -827,7 +860,8 @@ mod test {
                 CrdtRopeDelta::Retain(2),
                 CrdtRopeDelta::Insert {
                     chunk: RichtextChunk::new_text(10..13),
-                    id: IdFull::new(1, 0, 0)
+                    id: ID::new(1, 0),
+                    lamport: Some(0)
                 }
             ],
             vec,
@@ -851,7 +885,8 @@ mod test {
         assert_eq!(
             vec![CrdtRopeDelta::Insert {
                 chunk: RichtextChunk::new_text(2..10),
-                id: IdFull::new(0, 2, 2)
+                id: ID::new(0, 2),
+                lamport: Some(2)
             }],
             vec,
         );

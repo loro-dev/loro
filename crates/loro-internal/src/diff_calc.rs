@@ -5,7 +5,9 @@ use itertools::Itertools;
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{ContainerID, HasCounterSpan, HasIdSpan, LoroValue, PeerID, ID};
+use loro_common::{
+    ContainerID, Counter, HasCounterSpan, HasIdSpan, IdFull, IdSpan, LoroValue, PeerID, ID,
+};
 
 use crate::{
     change::Lamport,
@@ -82,25 +84,9 @@ impl DiffCalculator {
         }
         let affected_set = if !self.has_all {
             // if we don't have all the ops, we need to calculate the diff by tracing back
-            let mut after = after;
-            let mut before = before;
             let mut merged = before.clone();
-            let mut before_frontiers = before_frontiers;
-            let mut after_frontiers = after_frontiers;
             merged.merge(after);
-            let empty_vv: VersionVector = Default::default();
-            if !after.includes_vv(before) {
-                // If after is not after before, we need to calculate the diff from the beginning
-                //
-                // This is required because of [MapDiffCalculator]. It can be removed with
-                // a better data structure. See #114.
-                before = &empty_vv;
-                after = &merged;
-                before_frontiers = None;
-                after_frontiers = None;
-                self.has_all = true;
-                self.last_vv = Default::default();
-            } else if before.is_empty() {
+            if before.is_empty() {
                 self.has_all = true;
                 self.last_vv = Default::default();
             }
@@ -361,7 +347,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         op: crate::op::RichOp,
         _vv: Option<&crate::VersionVector>,
     ) {
-        let map = op.op().content.as_map().unwrap();
+        let map = op.raw_op().content.as_map().unwrap();
         self.changed_key.insert(map.key.clone());
     }
 
@@ -492,6 +478,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                 crate::container::list::list_op::InnerListOp::Delete(del) => {
                     self.tracker.delete(
                         op.id_start(),
+                        del.id_start,
                         del.start() as usize,
                         del.atom_len(),
                         del.is_reversed(),
@@ -519,7 +506,11 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                 CrdtRopeDelta::Retain(len) => {
                     delta = delta.retain(len);
                 }
-                CrdtRopeDelta::Insert { chunk: value, id } => match value.value() {
+                CrdtRopeDelta::Insert {
+                    chunk: value,
+                    id,
+                    lamport,
+                } => match value.value() {
                     RichtextChunkValue::Text(range) => {
                         for i in range.clone() {
                             let v = oplog.arena.get_value(i as usize);
@@ -529,11 +520,39 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                         }
                         delta = delta.insert(SliceRanges {
                             ranges: smallvec::smallvec![SliceRange(range)],
-                            id,
+                            id: IdFull::new(id.peer, id.counter, lamport.unwrap()),
                         });
                     }
                     RichtextChunkValue::StyleAnchor { .. } => unreachable!(),
-                    RichtextChunkValue::Unknown(_) => unreachable!(),
+                    RichtextChunkValue::Unknown(len) => {
+                        // assert not unknown id
+                        assert_ne!(id.peer, PeerID::MAX);
+                        let mut acc_len = 0;
+                        for rich_op in oplog.iter_ops(IdSpan::new(
+                            id.peer,
+                            id.counter,
+                            id.counter + len as Counter,
+                        )) {
+                            acc_len += rich_op.content_len();
+                            let op = rich_op.op();
+                            let lamport = rich_op.lamport();
+                            let content = op.content.as_list().unwrap().as_insert().unwrap();
+                            let range = content.0.clone();
+                            for i in content.0 .0.clone() {
+                                let v = oplog.arena.get_value(i as usize);
+                                if let Some(LoroValue::Container(c)) = &v {
+                                    on_new_container(c);
+                                }
+                            }
+
+                            delta = delta.insert(SliceRanges {
+                                ranges: smallvec::smallvec![range],
+                                id: IdFull::new(id.peer, op.counter, lamport),
+                            });
+                        }
+
+                        debug_assert_eq!(acc_len, len as usize);
+                    }
                 },
                 CrdtRopeDelta::Delete(len) => {
                     delta = delta.delete(len);
@@ -572,7 +591,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         if let Some(vv) = vv {
             self.tracker.checkout(vv);
         }
-        match &op.op().content {
+        match &op.raw_op().content {
             crate::op::InnerContent::List(l) => match l {
                 crate::container::list::list_op::InnerListOp::Insert { .. } => {
                     unreachable!()
@@ -592,6 +611,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 crate::container::list::list_op::InnerListOp::Delete(del) => {
                     self.tracker.delete(
                         op.id_start(),
+                        del.id_start,
                         del.start() as usize,
                         del.atom_len(),
                         del.is_reversed(),
@@ -648,7 +668,11 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 CrdtRopeDelta::Retain(len) => {
                     delta = delta.retain(len);
                 }
-                CrdtRopeDelta::Insert { chunk: value, id } => match value.value() {
+                CrdtRopeDelta::Insert {
+                    chunk: value,
+                    id,
+                    lamport,
+                } => match value.value() {
                     RichtextChunkValue::Text(text) => {
                         delta = delta.insert(RichtextStateChunk::Text(
                             // PERF: can be speedup by acquiring lock on arena
@@ -656,7 +680,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                 oplog
                                     .arena
                                     .slice_by_unicode(text.start as usize..text.end as usize),
-                                id,
+                                IdFull::new(id.peer, id.counter, lamport.unwrap()),
                             ),
                         ));
                     }
@@ -666,7 +690,36 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                             anchor_type,
                         });
                     }
-                    RichtextChunkValue::Unknown(_) => unreachable!(),
+                    RichtextChunkValue::Unknown(len) => {
+                        // assert not unknown id
+                        assert_ne!(id.peer, PeerID::MAX);
+                        debug_log::debug_dbg!(oplog.changes(), id, len);
+                        let mut acc_len = 0;
+                        for rich_op in oplog.iter_ops(IdSpan::new(
+                            id.peer,
+                            id.counter,
+                            id.counter + len as Counter,
+                        )) {
+                            acc_len += rich_op.content_len();
+                            let op = rich_op.op();
+                            let lamport = rich_op.lamport();
+                            let content = op.content.as_list().unwrap();
+                            match content {
+                                crate::container::list::list_op::InnerListOp::InsertText {
+                                    slice,
+                                    ..
+                                } => {
+                                    delta = delta.insert(RichtextStateChunk::Text(TextChunk::new(
+                                        slice.clone(),
+                                        IdFull::new(id.peer, op.counter, lamport),
+                                    )));
+                                }
+                                _ => unreachable!("{:?}", content),
+                            }
+                        }
+
+                        debug_assert_eq!(acc_len, len as usize);
+                    }
                 },
                 CrdtRopeDelta::Delete(len) => {
                     delta = delta.delete(len);

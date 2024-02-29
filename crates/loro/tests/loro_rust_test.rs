@@ -1,7 +1,29 @@
 use std::{cmp::Ordering, sync::Arc};
 
-use loro::{FrontiersNotIncluded, LoroDoc};
+use loro::{FrontiersNotIncluded, LoroDoc, LoroError, ToJson};
 use loro_internal::{delta::DeltaItem, handler::TextDelta, id::ID, DiffEvent, LoroResult};
+use serde_json::json;
+
+#[test]
+fn list_checkout() -> Result<(), LoroError> {
+    let mut doc = LoroDoc::new();
+    doc.get_list("list").insert(0, 0)?;
+    doc.commit();
+    let f = doc.state_frontiers();
+    doc.get_list("list").insert(1, 1)?;
+    doc.commit();
+    doc.get_list("list").delete(0, 2)?;
+    doc.commit();
+    doc.checkout(&f)?;
+
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [0]
+        })
+    );
+    Ok(())
+}
 
 #[test]
 fn timestamp() {
