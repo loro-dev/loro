@@ -1,6 +1,7 @@
 mod str_arena;
 
 use std::{
+    num::NonZeroU16,
     ops::{Range, RangeBounds},
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -30,7 +31,7 @@ struct InnerSharedArena {
     // It might be better to use RwLock in the future
     container_idx_to_id: Mutex<Vec<ContainerID>>,
     // 0 stands for unknown, 1 stands for root containers
-    depth: Mutex<Vec<u16>>,
+    depth: Mutex<Vec<Option<NonZeroU16>>>,
     container_id_to_idx: Mutex<FxHashMap<ContainerID, ContainerIdx>>,
     /// The parent of each container.
     parents: Mutex<FxHashMap<ContainerIdx, Option<ContainerIdx>>>,
@@ -70,9 +71,9 @@ impl SharedArena {
         if id.is_root() {
             self.inner.root_c_idx.lock().unwrap().push(idx);
             self.inner.parents.lock().unwrap().insert(idx, None);
-            self.inner.depth.lock().unwrap().push(1);
+            self.inner.depth.lock().unwrap().push(NonZeroU16::new(1));
         } else {
-            self.inner.depth.lock().unwrap().push(0);
+            self.inner.depth.lock().unwrap().push(None);
         }
         idx
     }
@@ -146,13 +147,13 @@ impl SharedArena {
         match parent {
             Some(p) => {
                 if let Some(d) = get_depth(p, &mut depth, parents) {
-                    depth[child.to_index() as usize] = d + 1;
+                    depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
                 } else {
-                    depth[child.to_index() as usize] = 0;
+                    depth[child.to_index() as usize] = None;
                 }
             }
             None => {
-                depth[child.to_index() as usize] = 1;
+                depth[child.to_index() as usize] = NonZeroU16::new(1);
             }
         }
     }
@@ -355,7 +356,7 @@ impl SharedArena {
         self.inner.root_c_idx.lock().unwrap().clone()
     }
 
-    pub(crate) fn get_depth(&self, container: ContainerIdx) -> Option<u16> {
+    pub(crate) fn get_depth(&self, container: ContainerIdx) -> Option<NonZeroU16> {
         get_depth(
             container,
             &mut self.inner.depth.lock().unwrap(),
@@ -410,25 +411,25 @@ fn _slice_str(range: Range<usize>, s: &mut StrArena) -> String {
 
 fn get_depth(
     target: ContainerIdx,
-    depth: &mut Vec<u16>,
+    depth: &mut Vec<Option<NonZeroU16>>,
     parents: &FxHashMap<ContainerIdx, Option<ContainerIdx>>,
-) -> Option<u16> {
+) -> Option<NonZeroU16> {
     let mut d = depth[target.to_index() as usize];
-    if d != 0 {
-        return Some(d);
+    if d.is_some() {
+        return d;
     }
 
     let parent = parents.get(&target)?;
     match parent {
         Some(p) => {
-            d = get_depth(*p, depth, parents)? + 1;
+            d = NonZeroU16::new(get_depth(*p, depth, parents)?.get() + 1);
             depth[target.to_index() as usize] = d;
         }
         None => {
-            depth[target.to_index() as usize] = 1;
-            d = 1;
+            depth[target.to_index() as usize] = NonZeroU16::new(1);
+            d = NonZeroU16::new(1);
         }
     }
 
-    Some(d)
+    d
 }

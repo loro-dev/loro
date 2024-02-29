@@ -1,7 +1,10 @@
 use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
+use fxhash::FxHashMap;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, ID};
 use loro_internal::{
+    delta::ResolvedMapValue,
+    event::Diff,
     handler::{Handler, TextDelta, ValueOrContainer},
     version::Frontiers,
     ApplyDiff, LoroDoc, ToJson,
@@ -828,4 +831,54 @@ fn state_may_deadlock_when_import() {
         doc2.get_map("map").insert("foo", 123).unwrap();
         doc.import(&doc.export_snapshot()).unwrap();
     })
+}
+
+#[test]
+fn missing_event_when_checkout() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.checkout(&doc.oplog_frontiers()).unwrap();
+    let value = Arc::new(Mutex::new(FxHashMap::default()));
+    let map = value.clone();
+    doc.subscribe(
+        &ContainerID::new_root("tree", ContainerType::Tree),
+        Arc::new(move |e| {
+            let mut v = map.lock().unwrap();
+            for container_diff in e.events.iter() {
+                let from_children =
+                    container_diff.id != ContainerID::new_root("tree", ContainerType::Tree);
+                if from_children {
+                    if let Diff::Map(map) = &container_diff.diff {
+                        for (k, ResolvedMapValue { value, .. }) in map.updated.iter() {
+                            match value {
+                                Some(value) => {
+                                    v.insert(
+                                        k.to_string(),
+                                        *value.as_value().unwrap().as_i64().unwrap(),
+                                    );
+                                }
+                                None => {
+                                    v.remove(&k.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }),
+    );
+
+    let doc2 = LoroDoc::new_auto_commit();
+    let tree = doc2.get_tree("tree");
+    let node = tree.create(None).unwrap();
+    let _ = tree.create(None).unwrap();
+    let meta = tree.get_meta(node).unwrap();
+    meta.insert("a", 0).unwrap();
+    doc.import(&doc2.export_from(&doc.oplog_vv())).unwrap();
+    doc.attach();
+    meta.insert("b", 1).unwrap();
+    doc.checkout(&doc.oplog_frontiers()).unwrap();
+    doc.import(&doc2.export_from(&doc.oplog_vv())).unwrap();
+    // checkout use the same diff_calculator, the depth of calculator is not updated
+    doc.attach();
+    assert!(value.lock().unwrap().contains_key("b"));
 }
