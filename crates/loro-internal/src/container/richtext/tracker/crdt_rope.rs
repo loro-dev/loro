@@ -109,7 +109,7 @@ impl CrdtRope {
                             }
                             _ => {
                                 // Otherwise, we need to test whether origin_right's origin_left == this.origin_left
-                                if iter.elem.origin_left == origin_left {
+                                if iter.elem.origin_left.map(|x| x.to_id()) == origin_left {
                                     Some(origin_right)
                                 } else {
                                     None
@@ -127,8 +127,8 @@ impl CrdtRope {
                 (origin_right, parent_right_idx, in_between)
             };
 
-            content.origin_left = origin_left;
-            content.origin_right = origin_right;
+            content.origin_left = origin_left.map(|x| x.try_into().unwrap());
+            content.origin_right = origin_right.map(|x| x.try_into().unwrap());
             (parent_right_leaf, in_between)
         };
 
@@ -144,7 +144,7 @@ impl CrdtRope {
                 let other_origin_left = other_elem.origin_left;
                 if other_origin_left != content.origin_left
                     && other_origin_left
-                        .map(|left| visited.iter().all(|x| !x.contains_id(left)))
+                        .map(|left| visited.iter().all(|x| !x.contains_id(left.to_id())))
                         .unwrap_or(true)
                 {
                     // The other_elem's origin_left must be at the left side of content's origin_left.
@@ -176,10 +176,10 @@ impl CrdtRope {
 
                         let other_parent_right_idx =
                             if let Some(other_origin_right) = other_elem.origin_right {
-                                let elem_idx = find_elem(other_origin_right);
+                                let elem_idx = find_elem(other_origin_right.to_id());
                                 let elem = self.tree.get_elem(elem_idx).unwrap();
                                 // It must be the start of the elem
-                                assert_eq!(elem.id.id(), other_origin_right);
+                                assert_eq!(elem.id.id(), other_origin_right.to_id());
                                 if elem.origin_left == content.origin_left {
                                     Some(elem_idx)
                                 } else {
@@ -621,7 +621,7 @@ impl LeafUpdate {
 mod test {
     use std::ops::Range;
 
-    use loro_common::{Counter, PeerID, ID};
+    use loro_common::{CompactId, Counter, PeerID, ID};
 
     use crate::container::richtext::RichtextChunk;
 
@@ -726,8 +726,8 @@ mod test {
         let mut rope = CrdtRope::new();
         rope.insert(0, span(0, 0..10), |_| panic!());
         let fugue = rope.insert(5, span(1, 10..20), |_| panic!()).content;
-        assert_eq!(fugue.origin_left, Some(ID::new(0, 4)));
-        assert_eq!(fugue.origin_right, Some(ID::new(0, 5)));
+        assert_eq!(fugue.origin_left, Some(CompactId::new(0, 4)));
+        assert_eq!(fugue.origin_right, Some(CompactId::new(0, 5)));
     }
 
     #[test]
@@ -738,11 +738,11 @@ mod test {
         rope.delete(5, 2, |_| {});
         assert_eq!(rope.len(), 8);
         let fugue = rope.insert(6, span(1, 10..20), |_| panic!()).content;
-        assert_eq!(fugue.origin_left, Some(ID::new(0, 7)));
-        assert_eq!(fugue.origin_right, Some(ID::new(0, 8)));
+        assert_eq!(fugue.origin_left, Some(CompactId::new(0, 7)));
+        assert_eq!(fugue.origin_right, Some(CompactId::new(0, 8)));
         let fugue = rope.insert(5, span(1, 10..11), |_| panic!()).content;
-        assert_eq!(fugue.origin_left, Some(ID::new(0, 4)));
-        assert_eq!(fugue.origin_right, Some(ID::new(0, 5)));
+        assert_eq!(fugue.origin_left, Some(CompactId::new(0, 4)));
+        assert_eq!(fugue.origin_right, Some(CompactId::new(0, 5)));
     }
 
     #[test]
@@ -753,8 +753,8 @@ mod test {
             rope.insert(0, span(0, 0..10), |_| panic!());
             rope.insert(5, future_span(1, 10..20), |_| panic!());
             let fugue = rope.insert(5, span(1, 10..20), |_| panic!()).content;
-            assert_eq!(fugue.origin_left, Some(ID::new(0, 4)));
-            assert_eq!(fugue.origin_right, Some(ID::new(0, 5)));
+            assert_eq!(fugue.origin_left, Some(CompactId::new(0, 4)));
+            assert_eq!(fugue.origin_right, Some(CompactId::new(0, 5)));
         }
         {
             // insert deleted
@@ -762,8 +762,8 @@ mod test {
             rope.insert(0, span(0, 0..10), |_| panic!());
             rope.insert(5, dead_span(1, 10..20), |_| panic!());
             let fugue = rope.insert(5, span(1, 10..20), |_| panic!()).content;
-            assert_eq!(fugue.origin_left, Some(ID::new(0, 4)));
-            assert_eq!(fugue.origin_right, Some(ID::new(1, 0)));
+            assert_eq!(fugue.origin_left, Some(CompactId::new(0, 4)));
+            assert_eq!(fugue.origin_right, Some(CompactId::new(1, 0)));
         }
     }
 
