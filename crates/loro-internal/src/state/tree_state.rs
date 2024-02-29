@@ -298,7 +298,7 @@ impl ContainerState for TreeState {
             };
             let diff = TreeDiffItem {
                 target: node.id,
-                action: TreeExternalDiff::Create(parent),
+                action: TreeExternalDiff::Create(parent.into_node().ok()),
             };
             diffs.push(diff);
             q.extend(node.children);

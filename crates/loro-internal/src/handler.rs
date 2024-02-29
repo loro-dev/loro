@@ -1268,7 +1268,7 @@ impl TreeHandler {
         let tree_id = TreeID::from_id(txn.next_id());
         let event_hint = TreeDiffItem {
             target: tree_id,
-            action: TreeExternalDiff::Create(TreeParentId::from_tree_id(parent)),
+            action: TreeExternalDiff::Create(parent),
         };
         txn.apply_local_op(
             self.container_idx,
@@ -1298,7 +1298,7 @@ impl TreeHandler {
             crate::op::RawOpContent::Tree(TreeOp { target, parent }),
             EventHint::Tree(TreeDiffItem {
                 target,
-                action: TreeExternalDiff::Move(TreeParentId::from_tree_id(parent)),
+                action: TreeExternalDiff::Move(parent),
             }),
             &self.state,
         )
