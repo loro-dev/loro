@@ -1,5 +1,5 @@
 use generic_btree::{rle::Sliceable, LeafIndex};
-use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, PeerID, ID};
+use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength;
 
 use crate::VersionVector;
@@ -100,6 +100,7 @@ impl Tracker {
 
             // the op is partially included, need to slice the content
             let start = (applied_counter_end - op_id.counter) as usize;
+            op_id.lamport += (applied_counter_end - op_id.counter) as Lamport;
             op_id.counter = applied_counter_end;
             pos += start;
             content = content.slice(start..);
