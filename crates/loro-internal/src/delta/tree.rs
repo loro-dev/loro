@@ -22,8 +22,8 @@ pub struct TreeDiffItem {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum TreeExternalDiff {
-    Create(TreeParentId),
-    Move(TreeParentId),
+    Create(Option<TreeID>),
+    Move(Option<TreeID>),
     Delete,
 }
 
@@ -33,11 +33,11 @@ impl TreeDiffItem {
         match item.action {
             TreeInternalDiff::Create(p) => Some(TreeDiffItem {
                 target,
-                action: TreeExternalDiff::Create(p),
+                action: TreeExternalDiff::Create(p.into_node().ok()),
             }),
             TreeInternalDiff::Move(p) => Some(TreeDiffItem {
                 target,
-                action: TreeExternalDiff::Move(p),
+                action: TreeExternalDiff::Move(p.into_node().ok()),
             }),
             TreeInternalDiff::Delete(_) | TreeInternalDiff::UnCreate => Some(TreeDiffItem {
                 target,
@@ -147,10 +147,10 @@ impl<'a> TreeValue<'a> {
             match d.action {
                 TreeExternalDiff::Create(parent) => {
                     self.create_target(target);
-                    self.mov(target, parent.as_node().copied());
+                    self.mov(target, parent);
                 }
                 TreeExternalDiff::Delete => self.delete_target(target),
-                TreeExternalDiff::Move(parent) => self.mov(target, parent.as_node().copied()),
+                TreeExternalDiff::Move(parent) => self.mov(target, parent),
             }
         }
     }
