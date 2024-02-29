@@ -54,6 +54,13 @@ impl CompactId {
             counter: self.counter.get(),
         }
     }
+
+    pub fn inc(&self, start: i32) -> CompactId {
+        Self {
+            peer: self.peer,
+            counter: NonMaxI32::new(start + self.counter.get()).unwrap(),
+        }
+    }
 }
 
 impl TryFrom<ID> for CompactId {
