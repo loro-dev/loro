@@ -3,6 +3,7 @@ use std::{fmt::Display, sync::Arc};
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
 
+use nonmax::NonMaxI32;
 use serde::{Deserialize, Serialize};
 mod error;
 mod id;
@@ -30,6 +31,41 @@ pub type Lamport = u32;
 pub struct ID {
     pub peer: PeerID,
     pub counter: Counter,
+}
+
+/// It's the unique ID of an Op represented by [PeerID] and [Counter].
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct CompactId {
+    pub peer: PeerID,
+    pub counter: NonMaxI32,
+}
+
+impl CompactId {
+    pub fn new(peer: PeerID, counter: Counter) -> Self {
+        Self {
+            peer,
+            counter: NonMaxI32::new(counter).unwrap(),
+        }
+    }
+
+    pub fn to_id(&self) -> ID {
+        ID {
+            peer: self.peer,
+            counter: self.counter.get(),
+        }
+    }
+}
+
+impl TryFrom<ID> for CompactId {
+    type Error = ID;
+
+    fn try_from(id: ID) -> Result<Self, ID> {
+        if id.counter == i32::MAX {
+            return Err(id);
+        }
+
+        Ok(Self::new(id.peer, id.counter))
+    }
 }
 
 /// It's the unique ID of an Op represented by [PeerID] and [Lamport] clock.

@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use generic_btree::rle::{HasLength, Mergeable, Sliceable};
-use loro_common::{Counter, HasId, IdFull, IdSpan, Lamport, ID};
+use loro_common::{CompactId, Counter, HasId, IdFull, IdSpan, Lamport, ID};
 use serde::{Deserialize, Serialize};
 
 use super::AnchorType;
@@ -176,8 +176,8 @@ pub(super) struct FugueSpan {
     /// The status at the `new` version.
     /// It's used when calculating diff.
     pub diff_status: Option<Status>,
-    pub origin_left: Option<ID>,
-    pub origin_right: Option<ID>,
+    pub origin_left: Option<CompactId>,
+    pub origin_right: Option<CompactId>,
     pub content: RichtextChunk,
 }
 
@@ -223,7 +223,13 @@ impl Sliceable for FugueSpan {
             origin_left: if range.start == 0 {
                 self.origin_left
             } else {
-                Some(self.id.inc((range.start - 1) as Counter).id())
+                Some(
+                    self.id
+                        .inc((range.start - 1) as Counter)
+                        .id()
+                        .try_into()
+                        .unwrap(),
+                )
             },
             origin_right: self.origin_right,
             content: self.content._slice(range),
@@ -247,7 +253,7 @@ impl Mergeable for FugueSpan {
             && self.id.lamport + self.content.len() as Lamport == rhs.id.lamport
             && rhs.origin_left.is_some()
             && rhs.origin_left.unwrap().peer == self.id.peer
-            && rhs.origin_left.unwrap().counter
+            && rhs.origin_left.unwrap().counter.get()
                 == self.id.counter + self.content.len() as Counter - 1
             && self.origin_right == rhs.origin_right
             && self.content.can_merge(&rhs.content)
