@@ -140,6 +140,9 @@ impl HasId for DeleteSpanWithId {
 }
 
 impl Mergable for DeleteSpanWithId {
+    /// If two spans are mergeable, their ids should be continuous.
+    /// LHS's end id should be equal to RHS's start id.
+    /// But their spans may be in a reversed order.
     fn is_mergable(&self, rhs: &Self, _conf: &()) -> bool
     where
         Self: Sized,

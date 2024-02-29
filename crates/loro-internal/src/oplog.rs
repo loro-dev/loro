@@ -7,12 +7,6 @@ use std::cmp::Ordering;
 use std::mem::take;
 use std::rc::Rc;
 
-use fxhash::FxHashMap;
-use loro_common::{HasCounter, HasId};
-use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
-use smallvec::SmallVec;
-// use tabled::measurment::Percent;
-
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;
 use crate::container::list::list_op;
@@ -21,10 +15,14 @@ use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::group::OpGroups;
 use crate::id::{Counter, PeerID, ID};
-use crate::op::{ListSlice, RawOpContent, RemoteOp};
+use crate::op::{ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
+use fxhash::FxHashMap;
+use loro_common::{HasCounter, HasId, IdSpan};
+use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
+use smallvec::SmallVec;
 
 type ClientChanges = FxHashMap<PeerID, Vec<Change>>;
 pub use self::dag::FrontiersNotIncluded;
@@ -463,6 +461,34 @@ impl OpLog {
     pub(crate) fn get_lamport_at(&self, id: ID) -> Option<Lamport> {
         self.get_change_at(id)
             .map(|c| c.lamport + (id.counter - c.id.counter) as Lamport)
+    }
+
+    pub(crate) fn iter_ops(&self, id_span: IdSpan) -> impl Iterator<Item = RichOp> + '_ {
+        self.changes
+            .get(&id_span.client_id)
+            .map(move |changes| {
+                let len = changes.len();
+                let start = changes
+                    .get_by_atom_index(id_span.counter.start)
+                    .map(|x| x.merged_index)
+                    .unwrap_or(len);
+                let mut end = changes
+                    .get_by_atom_index(id_span.counter.end)
+                    .map(|x| x.merged_index)
+                    .unwrap_or(len);
+                if end < changes.len() {
+                    end += 1;
+                }
+
+                changes[start..end].iter().flat_map(move |c| {
+                    // TODO: PERF can be optimized
+                    c.ops()
+                        .iter()
+                        .filter_map(move |op| RichOp::new_by_cnt_range(c, id_span.counter, op))
+                })
+            })
+            .into_iter()
+            .flatten()
     }
 
     pub(crate) fn get_max_lamport_at(&self, id: ID) -> Lamport {

@@ -1670,14 +1670,18 @@ impl RichtextState {
             match span.elem {
                 RichtextStateChunk::Text(s) => {
                     let event_len = s.entity_range_to_event_range(start..end).len();
+                    let id = s.id().inc(start as i32);
                     match ans.last_mut() {
-                        Some(last) if last.entity_end == entity_index => {
+                        Some(last)
+                            if last.entity_end == entity_index
+                                && last.id_start.inc(last.event_len as i32) == id =>
+                        {
                             last.entity_end += len;
                             last.event_len += event_len;
                         }
                         _ => {
                             ans.push(EntityRangeInfo {
-                                id_start: s.id(),
+                                id_start: id,
                                 entity_start: entity_index,
                                 entity_end: entity_index + len,
                                 event_len,
@@ -2317,7 +2321,7 @@ mod test {
             let ranges = self
                 .state
                 .get_text_entity_ranges(pos, len, PosType::Unicode);
-            for range in ranges {
+            for range in ranges.into_iter().rev() {
                 self.state.drain_by_entity_index(
                     range.entity_start,
                     range.entity_end - range.entity_start,
@@ -2427,6 +2431,8 @@ mod test {
     fn delete_text() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello World!");
+        assert_eq!(wrapper.state.len_unicode(), 12);
+        assert_eq!(wrapper.state.len_entity(), 12);
         wrapper.delete(0, 5);
         assert_eq!(
             wrapper.state.get_richtext_value().to_json_value(),
@@ -2437,8 +2443,12 @@ mod test {
             ])
         );
 
+        assert_eq!(wrapper.state.len_unicode(), 7);
+        assert_eq!(wrapper.state.len_entity(), 7);
         wrapper.delete(1, 1);
 
+        assert_eq!(wrapper.state.len_unicode(), 6);
+        assert_eq!(wrapper.state.len_entity(), 6);
         assert_eq!(
             wrapper.state.get_richtext_value().to_json_value(),
             json!([
@@ -2449,6 +2459,8 @@ mod test {
         );
 
         wrapper.delete(5, 1);
+        assert_eq!(wrapper.state.len_unicode(), 5);
+        assert_eq!(wrapper.state.len_entity(), 5);
         assert_eq!(
             wrapper.state.get_richtext_value().to_json_value(),
             json!([
@@ -2459,6 +2471,7 @@ mod test {
         );
 
         wrapper.delete(0, 5);
+        assert_eq!(wrapper.state.len_unicode(), 0);
         assert_eq!(
             wrapper.state.get_richtext_value().to_json_value(),
             json!([])

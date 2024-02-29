@@ -2132,6 +2132,7 @@ mod value {
             leb128::read::signed(&mut self.raw).map_err(|_| LoroError::DecodeDataCorruptionError)
         }
 
+        #[allow(unused)]
         pub fn read_i32(&mut self) -> LoroResult<i32> {
             leb128::read::signed(&mut self.raw)
                 .map(|x| x as i32)
