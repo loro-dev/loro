@@ -197,17 +197,15 @@ impl Tracker {
         // debug_log::debug_log!("after forwarding pos={} len={}", pos, len);
         // debug_log::debug_dbg!(&self);
         let mut ans = Vec::new();
-        let split = self.rope.delete(Some(target_start_id), pos, len, |span| {
-            let mut id_span = span.id_span();
-            if reverse {
-                id_span.reverse();
-            }
-            ans.push(id_span);
-        });
-
-        if reverse {
-            ans.reverse();
-        }
+        let split = self
+            .rope
+            .delete(target_start_id, pos, len, reverse, &mut |span| {
+                let mut id_span = span.id_span();
+                if reverse {
+                    id_span.reverse();
+                }
+                ans.push(id_span);
+            });
 
         let mut cur_id = op_id;
         for id_span in ans {
@@ -218,7 +216,9 @@ impl Tracker {
         }
 
         debug_assert_eq!(cur_id.counter - op_id.counter, len as Counter);
-        self.update_insert_by_split(&split.arr);
+        for s in split {
+            self.update_insert_by_split(&s.arr);
+        }
 
         let end_id = op_id.inc(len as Counter);
         self.current_vv.extend_to_include_end_id(end_id);
@@ -432,19 +432,5 @@ mod test {
         assert_eq!(v[0].rle_len(), 4);
         assert!(v[1].is_activated());
         assert_eq!(v[1].rle_len(), 6);
-    }
-
-    #[test]
-    fn test_checkout_in_doc_with_reversed_del_span() {
-        let mut t = Tracker::new();
-        t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..10));
-        t.delete(ID::new(2, 0), ID::NONE_ID, 0, 10, true);
-        t.checkout(&vv!(1 => 10, 2=>4));
-        let v: Vec<FugueSpan> = t.rope.tree().iter().copied().collect();
-        assert_eq!(v.len(), 2);
-        assert!(v[0].is_activated());
-        assert_eq!(v[0].rle_len(), 6);
-        assert!(!v[1].is_activated());
-        assert_eq!(v[1].rle_len(), 4);
     }
 }

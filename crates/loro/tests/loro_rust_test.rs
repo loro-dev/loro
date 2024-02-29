@@ -7,19 +7,45 @@ use serde_json::json;
 #[test]
 fn list_checkout() -> Result<(), LoroError> {
     let mut doc = LoroDoc::new();
-    doc.get_list("list").insert(0, 0)?;
+    doc.get_list("list")
+        .insert_container(0, loro::ContainerType::Map)?;
     doc.commit();
-    let f = doc.state_frontiers();
-    doc.get_list("list").insert(1, 1)?;
+    let f0 = doc.state_frontiers();
+    doc.get_list("list")
+        .insert_container(0, loro::ContainerType::Text)?;
     doc.commit();
-    doc.get_list("list").delete(0, 2)?;
+    let f1 = doc.state_frontiers();
+    doc.get_list("list").delete(1, 1)?;
     doc.commit();
-    doc.checkout(&f)?;
-
+    let f2 = doc.state_frontiers();
+    doc.get_list("list").delete(0, 1)?;
+    doc.commit();
+    doc.checkout(&f1)?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
-            "list": [0]
+            "list": ["", {}]
+        })
+    );
+    doc.checkout(&f2)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [""]
+        })
+    );
+    doc.checkout(&f0)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [{}]
+        })
+    );
+    doc.checkout(&f1)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": ["", {}]
         })
     );
     Ok(())

@@ -4581,6 +4581,39 @@ mod failed_tests {
     }
 
     #[test]
+    fn fuzz_19() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(2),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 1,
+                    value: Null,
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn to_minify() {
         minify_error(5, vec![], test_multi_sites, normalize)
     }
