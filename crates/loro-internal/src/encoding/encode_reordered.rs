@@ -14,7 +14,7 @@ use serde_columnar::columnar;
 use crate::{
     arena::SharedArena,
     change::{Change, Lamport},
-    container::{idx::ContainerIdx, list::list_op::DeleteSpan, richtext::TextStyleInfoFlag},
+    container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
     encoding::{
         encode_reordered::value::{ValueKind, ValueWriter},
         StateSnapshotDecodeContext,
@@ -75,7 +75,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             .then_with(|| a.lamport.cmp(&b.lamport))
     });
 
-    let encoded_ops = encode_ops(
+    let (encoded_ops, del_starts) = encode_ops(
         ops,
         arena,
         &mut value_writer,
@@ -97,6 +97,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         .collect();
     let doc = EncodedDoc {
         ops: encoded_ops,
+        delete_starts: del_starts,
         changes,
         states: Vec::new(),
         start_counters,
@@ -126,6 +127,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
     let ops_map = extract_ops(
         &iter.raw_values,
         iter.ops,
+        iter.delete_starts,
         &oplog.arena,
         &containers,
         &keys,
@@ -260,9 +262,11 @@ struct ExtractedOps {
     containers: Vec<ContainerID>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn extract_ops(
     raw_values: &[u8],
     iter: impl Iterator<Item = EncodedOp>,
+    mut del_iter: impl Iterator<Item = EncodedDeleteStartId>,
     arena: &SharedArena,
     containers: &ContainerArena,
     keys: &arena::KeyArena,
@@ -297,6 +301,7 @@ fn extract_ops(
         let content = decode_op(
             cid,
             kind,
+            &mut del_iter,
             &mut value_reader,
             arena,
             prop,
@@ -439,7 +444,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
 
     let ops: Vec<TempOp> = calc_sorted_ops_for_snapshot(origin_ops, pos_mapping_heap);
 
-    let encoded_ops = encode_ops(
+    let (encoded_ops, del_starts) = encode_ops(
         ops,
         &oplog.arena,
         &mut value_writer,
@@ -461,6 +466,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         .collect();
     let doc = EncodedDoc {
         ops: encoded_ops,
+        delete_starts: del_starts,
         changes,
         states,
         start_counters,
@@ -658,6 +664,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     } = extract_ops(
         &iter.raw_values,
         iter.ops,
+        iter.delete_starts,
         &oplog.arena,
         &containers,
         &keys,
@@ -848,22 +855,6 @@ mod encode {
         }
     }
 
-    impl TempOp<'_> {
-        pub fn idlp(&self) -> IdWithLamport {
-            IdWithLamport {
-                peer: self.peer_id,
-                lamport: self.lamport,
-            }
-        }
-
-        pub fn idlp_end(&self) -> IdWithLamport {
-            IdWithLamport {
-                peer: self.peer_id,
-                lamport: self.lamport + self.op.atom_len() as Lamport,
-            }
-        }
-    }
-
     impl<'a> generic_btree::rle::Sliceable for TempOp<'a> {
         fn _slice(&self, range: std::ops::Range<usize>) -> TempOp<'a> {
             Self {
@@ -892,8 +883,9 @@ mod encode {
         key_register: &mut ValueRegister<InternalString>,
         cid_register: &mut ValueRegister<ContainerID>,
         peer_register: &mut ValueRegister<u64>,
-    ) -> Vec<EncodedOp> {
+    ) -> (Vec<EncodedOp>, Vec<EncodedDeleteStartId>) {
         let mut encoded_ops = Vec::with_capacity(ops.len());
+        let mut delete_start = Vec::new();
         for TempOp {
             op,
             peer_idx,
@@ -904,6 +896,7 @@ mod encode {
             let value_type = encode_op(
                 &op,
                 arena,
+                &mut delete_start,
                 value_writer,
                 key_register,
                 cid_register,
@@ -919,7 +912,8 @@ mod encode {
                 value_type: value_type.to_u8().unwrap(),
             });
         }
-        encoded_ops
+
+        (encoded_ops, delete_start)
     }
 
     pub(super) fn encode_changes<'a>(
@@ -973,7 +967,7 @@ mod encode {
 
     use super::{
         value::{MarkStart, Value, ValueKind},
-        EncodedChange, EncodedOp, IdWithLamport,
+        EncodedChange, EncodedDeleteStartId, EncodedOp,
     };
     mod value_register {
         use fxhash::FxHashMap;
@@ -1059,7 +1053,7 @@ mod encode {
             crate::op::InnerContent::List(list) => match list {
                 crate::container::list::list_op::InnerListOp::Insert { pos, .. } => *pos as i32,
                 crate::container::list::list_op::InnerListOp::InsertText { pos, .. } => *pos as i32,
-                crate::container::list::list_op::InnerListOp::Delete(span) => span.pos as i32,
+                crate::container::list::list_op::InnerListOp::Delete(span) => span.span.pos as i32,
                 crate::container::list::list_op::InnerListOp::StyleStart { start, .. } => {
                     *start as i32
                 }
@@ -1088,6 +1082,7 @@ mod encode {
     fn encode_op(
         op: &Op,
         arena: &crate::arena::SharedArena,
+        delete_start: &mut Vec<EncodedDeleteStartId>,
         value_writer: &mut ValueWriter,
         register_key: &mut ValueRegister<InternalString>,
         register_cid: &mut ValueRegister<ContainerID>,
@@ -1116,11 +1111,11 @@ mod encode {
                     ValueKind::Str
                 }
                 crate::container::list::list_op::InnerListOp::Delete(span) => {
-                    value_writer.write(
-                        &Value::DeleteSeq(span.signed_len as i32),
-                        register_key,
-                        register_cid,
-                    );
+                    delete_start.push(EncodedDeleteStartId {
+                        peer_idx: register_peer.register(&span.id_start.peer),
+                        counter: span.id_start.counter,
+                        len: span.span.signed_len,
+                    });
                     ValueKind::DeleteSeq
                 }
                 crate::container::list::list_op::InnerListOp::StyleStart {
@@ -1166,6 +1161,7 @@ mod encode {
 fn decode_op(
     cid: &ContainerID,
     kind: ValueKind,
+    del_iter: &mut impl Iterator<Item = EncodedDeleteStartId>,
     value_reader: &mut ValueReader<'_>,
     arena: &crate::arena::SharedArena,
     prop: i32,
@@ -1188,9 +1184,16 @@ fn decode_op(
                 )
             }
             ValueKind::DeleteSeq => {
-                let len = value_reader.read_i32()?;
+                let del_start = del_iter.next().unwrap();
+                let peer_idx = del_start.peer_idx;
+                let cnt = del_start.counter;
+                let len = del_start.len;
                 crate::op::InnerContent::List(crate::container::list::list_op::InnerListOp::Delete(
-                    DeleteSpan::new(prop as isize, len as isize),
+                    DeleteSpanWithId::new(
+                        ID::new(peers[peer_idx], cnt as Counter),
+                        prop as isize,
+                        len,
+                    ),
                 ))
             }
             ValueKind::MarkStart => {
@@ -1255,12 +1258,18 @@ fn decode_op(
                     )
                 }
                 ValueKind::DeleteSeq => {
-                    let len = value_reader.read_i32()?;
+                    let del_start = del_iter.next().unwrap();
+                    let peer_idx = del_start.peer_idx;
+                    let cnt = del_start.counter;
+                    let len = del_start.len;
                     crate::op::InnerContent::List(
-                        crate::container::list::list_op::InnerListOp::Delete(DeleteSpan::new(
-                            pos as isize,
-                            len as isize,
-                        )),
+                        crate::container::list::list_op::InnerListOp::Delete(
+                            DeleteSpanWithId::new(
+                                ID::new(peers[peer_idx], cnt as Counter),
+                                pos as isize,
+                                len,
+                            ),
+                        ),
                     )
                 }
                 _ => unreachable!(),
@@ -1347,6 +1356,8 @@ struct EncodedDoc<'a> {
     ops: Vec<EncodedOp>,
     #[columnar(class = "vec", iter = "EncodedChange")]
     changes: Vec<EncodedChange>,
+    #[columnar(class = "vec", iter = "EncodedDeleteStartId")]
+    delete_starts: Vec<EncodedDeleteStartId>,
     /// Container states snapshot.
     ///
     /// It's empty when the encoding mode is not snapshot.
@@ -1382,6 +1393,17 @@ struct EncodedOp {
     value_type: u8,
     #[columnar(strategy = "DeltaRle")]
     counter: i32,
+}
+
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
+struct EncodedDeleteStartId {
+    #[columnar(strategy = "DeltaRle")]
+    peer_idx: usize,
+    #[columnar(strategy = "DeltaRle")]
+    counter: i32,
+    #[columnar(strategy = "DeltaRle")]
+    len: isize,
 }
 
 #[columnar(vec, ser, de, iterable)]
@@ -1436,7 +1458,7 @@ mod value {
         I64(i64),
         F64(f64),
         Str(&'a str),
-        DeleteSeq(i32),
+        DeleteSeq,
         DeltaInt(i32),
         Array(Vec<Value<'a>>),
         Map(FxHashMap<InternalString, Value<'a>>),
@@ -1627,7 +1649,7 @@ mod value {
                 Value::ContainerIdx(_) => ValueKind::ContainerType,
                 Value::F64(_) => ValueKind::F64,
                 Value::Str(_) => ValueKind::Str,
-                Value::DeleteSeq(_) => ValueKind::DeleteSeq,
+                Value::DeleteSeq { .. } => ValueKind::DeleteSeq,
                 Value::DeltaInt(_) => ValueKind::DeltaInt,
                 Value::Array(_) => ValueKind::Array,
                 Value::Map(_) => ValueKind::Map,
@@ -1736,7 +1758,7 @@ mod value {
                 Value::I64(value) => self.write_i64(*value),
                 Value::F64(value) => self.write_f64(*value),
                 Value::Str(value) => self.write_str(value),
-                Value::DeleteSeq(value) => self.write_i32(*value),
+                Value::DeleteSeq => {}
                 Value::DeltaInt(value) => self.write_i32(*value),
                 Value::Array(value) => self.write_array(value, register_key, register_cid),
                 Value::Map(value) => self.write_map(value, register_key, register_cid),

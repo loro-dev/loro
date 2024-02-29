@@ -3,7 +3,7 @@ use crate::{
     arena::SharedArena,
     container::{
         idx::ContainerIdx,
-        list::list_op::{DeleteSpan, ListOp},
+        list::list_op::{DeleteSpan, DeleteSpanWithId, ListOp},
         richtext::richtext_state::PosType,
         tree::tree_op::TreeOp,
     },
@@ -457,10 +457,11 @@ impl TextHandler {
             let event_start = event_end - range.event_len as isize;
             txn.apply_local_op(
                 self.container_idx,
-                crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
-                    pos: range.entity_start as isize,
-                    signed_len: range.entity_len() as isize,
-                })),
+                crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
+                    range.id_start,
+                    range.entity_start as isize,
+                    range.entity_len() as isize,
+                ))),
                 EventHint::DeleteText {
                     span: DeleteSpan {
                         pos: event_start,
@@ -814,15 +815,33 @@ impl ListHandler {
             });
         }
 
-        txn.apply_local_op(
-            self.container_idx,
-            crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
-                pos: pos as isize,
-                signed_len: len as isize,
-            })),
-            EventHint::DeleteList(DeleteSpan::new(pos as isize, len as isize)),
-            &self.state,
-        )
+        let ids: Vec<_> =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    let list = state.as_list_state().unwrap();
+                    (pos..pos + len)
+                        .map(|i| list.get_id_at(i).unwrap())
+                        .collect()
+                });
+
+        for id in ids.into_iter() {
+            txn.apply_local_op(
+                self.container_idx,
+                crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
+                    id.id(),
+                    pos as isize,
+                    1,
+                ))),
+                EventHint::DeleteList(DeleteSpan::new(pos as isize, 1)),
+                &self.state,
+            )?;
+        }
+
+        Ok(())
     }
 
     pub fn get_child_handler(&self, index: usize) -> Handler {

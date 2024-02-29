@@ -269,6 +269,15 @@ impl ListState {
         }
     }
 
+    pub fn get_id_at(&self, index: usize) -> Option<IdFull> {
+        let result = self.list.query::<LengthFinder>(&index)?;
+        if result.found {
+            Some(result.elem(&self.list).unwrap().id)
+        } else {
+            None
+        }
+    }
+
     #[allow(unused)]
     pub(crate) fn check(&self) {
         for value in self.iter() {
@@ -396,7 +405,7 @@ impl ContainerState for ListState {
                     _ => unreachable!(),
                 },
                 crate::container::list::list_op::ListOp::Delete(del) => {
-                    self.delete_range(del.pos as usize..del.pos as usize + del.signed_len as usize);
+                    self.delete_range(del.span.to_urange());
                 }
                 crate::container::list::list_op::ListOp::StyleStart { .. } => unreachable!(),
                 crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),
