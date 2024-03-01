@@ -312,6 +312,11 @@ impl SharedArena {
                     container,
                     content: InnerContent::List(InnerListOp::StyleEnd),
                 },
+                ListOp::Move { from, to, from_id } => Op {
+                    counter,
+                    container,
+                    content: InnerContent::List(InnerListOp::Move { from, to, from_id }),
+                },
             },
             crate::op::RawOpContent::Tree(tree) => Op {
                 counter,

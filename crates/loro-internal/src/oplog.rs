@@ -603,6 +603,13 @@ impl OpLog {
                 list_op::InnerListOp::StyleEnd => {
                     contents.push(RawOpContent::List(list_op::ListOp::StyleEnd))
                 }
+                list_op::InnerListOp::Move { from, from_id, to } => {
+                    contents.push(RawOpContent::List(list_op::ListOp::Move {
+                        from: *from,
+                        from_id: *from_id,
+                        to: *to,
+                    }))
+                }
             },
             crate::op::InnerContent::Map(map) => {
                 let value = map.value.clone();

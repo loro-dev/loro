@@ -13,6 +13,7 @@ use crate::{
     change::Lamport,
     container::{
         idx::ContainerIdx,
+        list::list_op::InnerListOp,
         richtext::{
             richtext_state::{RichtextStateChunk, TextChunk},
             AnchorType, CrdtRopeDelta, RichtextChunk, RichtextChunkValue, RichtextTracker, StyleOp,
@@ -593,7 +594,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         }
         match &op.raw_op().content {
             crate::op::InnerContent::List(l) => match l {
-                crate::container::list::list_op::InnerListOp::Insert { .. } => {
+                InnerListOp::Insert { .. } | InnerListOp::Move { .. } => {
                     unreachable!()
                 }
                 crate::container::list::list_op::InnerListOp::InsertText {

@@ -407,6 +407,9 @@ impl ContainerState for ListState {
                 crate::container::list::list_op::ListOp::Delete(del) => {
                     self.delete_range(del.span.to_urange());
                 }
+                crate::container::list::list_op::ListOp::Move { .. } => {
+                    todo!("invoke move")
+                }
                 crate::container::list::list_op::ListOp::StyleStart { .. } => unreachable!(),
                 crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),
             },

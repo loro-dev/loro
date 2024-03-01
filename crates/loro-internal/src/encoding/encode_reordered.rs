@@ -1051,6 +1051,7 @@ mod encode {
     fn get_op_prop(op: &Op, register_key: &mut ValueRegister<InternalString>) -> i32 {
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
+                crate::container::list::list_op::InnerListOp::Move { to, .. } => *to as i32,
                 crate::container::list::list_op::InnerListOp::Insert { pos, .. } => *pos as i32,
                 crate::container::list::list_op::InnerListOp::InsertText { pos, .. } => *pos as i32,
                 crate::container::list::list_op::InnerListOp::Delete(span) => span.span.pos as i32,
@@ -1138,6 +1139,22 @@ mod encode {
                     ValueKind::MarkStart
                 }
                 crate::container::list::list_op::InnerListOp::StyleEnd => ValueKind::Null,
+                crate::container::list::list_op::InnerListOp::Move {
+                    from,
+                    from_id,
+                    to: _,
+                } => {
+                    value_writer.write(
+                        &Value::Move {
+                            from: *from as usize,
+                            from_idx: register_peer.register(&from_id.peer),
+                            cnt: from_id.counter as usize,
+                        },
+                        register_key,
+                        register_cid,
+                    );
+                    ValueKind::Move
+                }
             },
             crate::op::InnerContent::Map(map) => {
                 assert_eq!(op.container.get_type(), ContainerType::Map);
@@ -1464,8 +1481,16 @@ mod value {
         Map(FxHashMap<InternalString, Value<'a>>),
         Binary(&'a [u8]),
         MarkStart(MarkStart),
+        Move {
+            from: usize,
+            from_idx: usize,
+            cnt: usize,
+        },
         TreeMove(EncodedTreeMove),
-        Unknown { kind: u8, data: &'a [u8] },
+        Unknown {
+            kind: u8,
+            data: &'a [u8],
+        },
     }
 
     pub struct MarkStart {
@@ -1533,6 +1558,7 @@ mod value {
         MarkStart = 12,
         TreeMove = 13,
         Binary = 14,
+        Move = 15,
         Unknown = 65536,
     }
 
@@ -1606,6 +1632,7 @@ mod value {
                 ValueKind::MarkStart => ValueKind::MarkStart as i64,
                 ValueKind::TreeMove => ValueKind::TreeMove as i64,
                 ValueKind::Binary => ValueKind::Binary as i64,
+                ValueKind::Move => ValueKind::Move as i64,
                 ValueKind::Unknown => ValueKind::Unknown as i64,
             })
         }
@@ -1633,6 +1660,7 @@ mod value {
                 ValueKind::MarkStart => ValueKind::MarkStart as u8,
                 ValueKind::TreeMove => ValueKind::TreeMove as u8,
                 ValueKind::Binary => ValueKind::Binary as u8,
+                ValueKind::Move => ValueKind::Move as u8,
                 ValueKind::Unknown => panic!("Unknown value kind"),
             })
         }
@@ -1656,6 +1684,7 @@ mod value {
                 Value::MarkStart { .. } => ValueKind::MarkStart,
                 Value::TreeMove(_) => ValueKind::TreeMove,
                 Value::Binary(_) => ValueKind::Binary,
+                Value::Move { .. } => ValueKind::Move,
                 Value::Unknown { .. } => ValueKind::Unknown,
             }
         }
@@ -1767,6 +1796,15 @@ mod value {
                 Value::Binary(value) => self.write_binary(value),
                 Value::ContainerIdx(value) => self.write_usize(*value),
                 Value::Unknown { kind: _, data: _ } => unreachable!(),
+                Value::Move {
+                    from,
+                    from_idx,
+                    cnt,
+                } => {
+                    self.write_usize(*from);
+                    self.write_usize(*from_idx);
+                    self.write_usize(*cnt);
+                }
             }
         }
 

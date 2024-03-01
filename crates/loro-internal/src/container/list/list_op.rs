@@ -22,6 +22,11 @@ pub enum ListOp<'a> {
         pos: usize,
     },
     Delete(DeleteSpanWithId),
+    Move {
+        from: u32,
+        to: u32,
+        from_id: ID,
+    },
     /// StyleStart and StyleEnd must be paired because the end of a style must take an OpID position.
     StyleStart {
         start: u32,
@@ -56,6 +61,11 @@ pub enum InnerListOp {
         key: InternalString,
         value: LoroValue,
         info: TextStyleInfoFlag,
+    },
+    Move {
+        from: u32,
+        from_id: ID,
+        to: u32,
     },
     StyleEnd,
 }
@@ -340,7 +350,7 @@ impl<'a> Mergable for ListOp<'a> {
                 ListOp::Delete(other_span) => span.is_mergable(other_span, &()),
                 _ => false,
             },
-            ListOp::StyleStart { .. } | ListOp::StyleEnd { .. } => false,
+            ListOp::StyleStart { .. } | ListOp::StyleEnd { .. } | ListOp::Move { .. } => false,
         }
     }
 
@@ -361,7 +371,9 @@ impl<'a> Mergable for ListOp<'a> {
                 ListOp::Delete(other_span) => span.merge(other_span, &()),
                 _ => unreachable!(),
             },
-            ListOp::StyleStart { .. } | ListOp::StyleEnd { .. } => unreachable!(),
+            ListOp::StyleStart { .. } | ListOp::StyleEnd { .. } | ListOp::Move { .. } => {
+                unreachable!()
+            }
         }
     }
 }
@@ -371,7 +383,7 @@ impl<'a> HasLength for ListOp<'a> {
         match self {
             ListOp::Insert { slice, .. } => slice.content_len(),
             ListOp::Delete(span) => span.atom_len(),
-            ListOp::StyleStart { .. } | ListOp::StyleEnd { .. } => 1,
+            ListOp::StyleStart { .. } | ListOp::StyleEnd { .. } | ListOp::Move { .. } => 1,
         }
     }
 }
@@ -384,7 +396,9 @@ impl<'a> Sliceable for ListOp<'a> {
                 pos: *pos + from,
             },
             ListOp::Delete(span) => ListOp::Delete(span.slice(from, to)),
-            a @ (ListOp::StyleStart { .. } | ListOp::StyleEnd { .. }) => a.clone(),
+            a @ (ListOp::StyleStart { .. } | ListOp::StyleEnd { .. } | ListOp::Move { .. }) => {
+                a.clone()
+            }
         }
     }
 }
@@ -472,7 +486,9 @@ impl HasLength for InnerListOp {
                 unicode_len: len, ..
             } => *len as usize,
             InnerListOp::Delete(span) => span.atom_len(),
-            InnerListOp::StyleStart { .. } | InnerListOp::StyleEnd { .. } => 1,
+            InnerListOp::StyleStart { .. }
+            | InnerListOp::StyleEnd { .. }
+            | InnerListOp::Move { .. } => 1,
         }
     }
 }
@@ -504,7 +520,9 @@ impl Sliceable for InnerListOp {
                 pos: *pos + from as u32,
             },
             InnerListOp::Delete(span) => InnerListOp::Delete(span.slice(from, to)),
-            InnerListOp::StyleStart { .. } | InnerListOp::StyleEnd { .. } => self.clone(),
+            InnerListOp::StyleStart { .. }
+            | InnerListOp::StyleEnd { .. }
+            | InnerListOp::Move { .. } => self.clone(),
         }
     }
 }
