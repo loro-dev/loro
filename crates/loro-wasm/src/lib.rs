@@ -30,7 +30,7 @@ fn run() {
 
 #[wasm_bindgen(js_name = setDebug)]
 pub fn set_debug() {
-    todo!("add tracing sub")
+    tracing_wasm::set_as_global_default();
 }
 
 type JsResult<T> = Result<T, JsValue>;
