@@ -53,6 +53,7 @@
     "FIXME",
     "TODO",
     "FUTURE",
+    "PERF",
     "XXX",
     "[ ]",
     "[x]"

@@ -270,8 +270,7 @@ impl IdLpSpan {
 /// We need this because it'll make merging deletions easier.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct IdSpan {
-    // TODO: rename this to peer_id
-    pub client_id: PeerID,
+    pub peer: PeerID,
     pub counter: CounterSpan,
 }
 
@@ -279,7 +278,7 @@ impl IdSpan {
     #[inline]
     pub fn new(peer: PeerID, from: Counter, to: Counter) -> Self {
         Self {
-            client_id: peer,
+            peer,
             counter: CounterSpan {
                 start: from,
                 end: to,
@@ -289,7 +288,7 @@ impl IdSpan {
 
     #[inline]
     pub fn contains(&self, id: ID) -> bool {
-        self.client_id == id.peer && self.counter.contains(id.counter)
+        self.peer == id.peer && self.counter.contains(id.counter)
     }
 
     #[inline(always)]
@@ -310,29 +309,29 @@ impl IdSpan {
     /// This is different from id_start. id_start may be greater than id_end, but this is the min of id_start and id_end-1
     #[inline]
     pub fn norm_id_start(&self) -> ID {
-        ID::new(self.client_id, self.counter.min())
+        ID::new(self.peer, self.counter.min())
     }
 
     /// This is different from id_end. id_start may be greater than id_end. This is the max of id_start+1 and id_end
     #[inline]
     pub fn norm_id_end(&self) -> ID {
-        ID::new(self.client_id, self.counter.norm_end())
+        ID::new(self.peer, self.counter.norm_end())
     }
 
     pub fn to_id_span_vec(self) -> IdSpanVector {
         let mut out = IdSpanVector::default();
-        out.insert(self.client_id, self.counter);
+        out.insert(self.peer, self.counter);
         out
     }
 
     pub fn get_intersection(&self, other: &Self) -> Option<Self> {
-        if self.client_id != other.client_id {
+        if self.peer != other.peer {
             return None;
         }
 
         let counter = self.counter.get_intersection(&other.counter)?;
         Some(Self {
-            client_id: self.client_id,
+            peer: self.peer,
             counter,
         })
     }
@@ -349,7 +348,7 @@ impl Sliceable for IdSpan {
     #[inline]
     fn slice(&self, from: usize, to: usize) -> Self {
         IdSpan {
-            client_id: self.client_id,
+            peer: self.peer,
             counter: self.counter.slice(from, to),
         }
     }
@@ -357,7 +356,7 @@ impl Sliceable for IdSpan {
 
 impl Mergable for IdSpan {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
-        self.client_id == other.client_id && self.counter.is_mergable(&other.counter, &())
+        self.peer == other.peer && self.counter.is_mergable(&other.counter, &())
     }
 
     fn merge(&mut self, other: &Self, _: &()) {
@@ -511,19 +510,19 @@ mod test_id_span {
     fn test_id_span_rle_vec() {
         let mut id_span_vec = RleVecWithIndex::new();
         id_span_vec.push(IdSpan {
-            client_id: 0,
+            peer: 0,
             counter: CounterSpan::new(0, 2),
         });
         assert_eq!(id_span_vec.merged_len(), 1);
         assert_eq!(id_span_vec.atom_len(), 2);
         id_span_vec.push(IdSpan {
-            client_id: 0,
+            peer: 0,
             counter: CounterSpan::new(2, 4),
         });
         assert_eq!(id_span_vec.merged_len(), 1);
         assert_eq!(id_span_vec.atom_len(), 4);
         id_span_vec.push(IdSpan {
-            client_id: 2,
+            peer: 2,
             counter: CounterSpan::new(2, 4),
         });
         assert_eq!(id_span_vec.merged_len(), 2);

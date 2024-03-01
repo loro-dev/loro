@@ -52,8 +52,6 @@ pub struct StrAllocResult {
     pub start: usize,
     /// unicode end
     pub end: usize,
-    // TODO: remove this field?
-    pub utf16_len: usize,
 }
 
 impl SharedArena {
@@ -394,10 +392,8 @@ fn _alloc_value(values_lock: &mut MutexGuard<'_, Vec<LoroValue>>, value: LoroVal
 
 fn _alloc_str(text_lock: &mut MutexGuard<'_, StrArena>, str: &str) -> StrAllocResult {
     let start = text_lock.len_unicode();
-    let start_wchars = text_lock.len_utf16();
     text_lock.alloc(str);
     StrAllocResult {
-        utf16_len: text_lock.len_utf16() - start_wchars,
         start,
         end: text_lock.len_unicode(),
     }
