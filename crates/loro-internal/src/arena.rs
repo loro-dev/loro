@@ -161,7 +161,7 @@ impl SharedArena {
     pub fn log_hierarchy(&self) {
         if cfg!(debug_assertions) {
             for (c, p) in self.inner.parents.lock().unwrap().iter() {
-                debug_log::debug_log!(
+                tracing::info!(
                     "container {:?} {:?} {:?}",
                     c,
                     self.get_container_id(*c),

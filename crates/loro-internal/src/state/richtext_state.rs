@@ -153,7 +153,7 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
-        // debug_log::debug_log!("Self state = {:#?}", &self);
+        // tracing::info!("Self state = {:#?}", &self);
         // PERF: compose delta
         let mut ans: Delta<StringSlice, StyleMeta> = Delta::new();
         let mut style_delta: Delta<StringSlice, StyleMeta> = Delta::new();
@@ -526,7 +526,6 @@ impl ContainerState for RichtextState {
         }
 
         for chunk in iter {
-            debug_log::debug_dbg!(&chunk);
             let id_span = chunk.get_id_lp_span();
             encoder.encode_op(id_span, || unimplemented!());
         }
@@ -566,7 +565,6 @@ impl ContainerState for RichtextState {
                 a => unreachable!("richtext state should not have {a:?}"),
             };
 
-            debug_log::debug_dbg!(&chunk);
             loader.push(chunk);
         }
 
@@ -671,7 +669,6 @@ impl RichtextStateLoader {
                 self.start_anchor_pos
                     .insert(ID::new(style.peer, style.cnt), self.entity_index);
             } else {
-                debug_log::debug_dbg!(&self.start_anchor_pos);
                 let start_pos = self
                     .start_anchor_pos
                     .remove(&ID::new(style.peer, style.cnt))

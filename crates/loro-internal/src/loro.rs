@@ -408,7 +408,12 @@ impl LoroDoc {
                     return Err(LoroError::ImportWhenInTxn);
                 }
 
-                debug_log::group!("Import updates {}", self.peer_id());
+                let s = tracing::span!(
+                    tracing::Level::INFO,
+                    "Import updates ",
+                    peer = self.peer_id()
+                );
+                let _e = s.enter();
                 self.update_oplog_and_apply_delta_to_state_if_needed(
                     |oplog| oplog.decode(parsed),
                     origin,
@@ -416,16 +421,16 @@ impl LoroDoc {
             }
             true => {
                 if self.can_reset_with_snapshot() {
-                    debug_log::debug_log!("Init by snapshot {}", self.peer_id());
+                    tracing::info!("Init by snapshot {}", self.peer_id());
                     decode_snapshot(self, parsed.mode, parsed.body)?;
                 } else if parsed.mode == EncodeMode::Snapshot {
-                    debug_log::debug_log!("Import updates to {}", self.peer_id());
+                    tracing::info!("Import updates to {}", self.peer_id());
                     self.update_oplog_and_apply_delta_to_state_if_needed(
                         |oplog| oplog.decode(parsed),
                         origin,
                     )?;
                 } else {
-                    debug_log::debug_log!("Import from new doc");
+                    tracing::info!("Import from new doc");
                     let app = LoroDoc::new();
                     decode_snapshot(&app, parsed.mode, parsed.body)?;
                     let oplog = self.oplog.lock().unwrap();
@@ -452,7 +457,8 @@ impl LoroDoc {
         let old_frontiers = oplog.frontiers().clone();
         f(&mut oplog)?;
         if !self.detached.load(Acquire) {
-            debug_log::debug_log!("Attached. CalcDiff.");
+            let s = tracing::span!(tracing::Level::INFO, "Attached. CalcDiff.");
+            let _e = s.enter();
             let mut diff = DiffCalculator::default();
             let diff = diff.calc_diff_internal(
                 &oplog,
@@ -470,7 +476,7 @@ impl LoroDoc {
                 new_version: Cow::Owned(oplog.frontiers().clone()),
             });
         } else {
-            debug_log::debug_log!("Detached");
+            tracing::info!("Detached");
         }
         Ok(())
     }
@@ -698,7 +704,7 @@ impl LoroDoc {
             return;
         }
 
-        debug_log::debug_log!("Attached {}", self.peer_id());
+        tracing::info!("Attached {}", self.peer_id());
         let f = self.oplog_frontiers();
         self.checkout(&f).unwrap();
         self.detached.store(false, Release);

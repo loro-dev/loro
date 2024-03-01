@@ -71,7 +71,7 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, mut op_id: IdFull, mut pos: usize, mut content: RichtextChunk) {
-        // debug_log::group!("TrackerInsert");
+        // tracing::span!(tracing::Level::INFO, "TrackerInsert");
         // debug_log::debug_dbg!(&op_id, pos, content);
         // debug_log::debug_dbg!(&self);
         let last_id = op_id.inc(content.len() as Counter - 1);
@@ -95,7 +95,7 @@ impl Tracker {
             if applied_counter_end > last_id.counter {
                 // the op is included in the applied vv
                 self.current_vv.extend_to_include_last_id(last_id.id());
-                // debug_log::debug_log!("Ops are already included {:#?}", &self);
+                // tracing::info!("Ops are already included {:#?}", &self);
                 return;
             }
 
@@ -108,7 +108,7 @@ impl Tracker {
         }
 
         // {
-        //     debug_log::group!("before insert {} pos={}", op_id, pos);
+        //     tracing::span!(tracing::Level::INFO, "before insert {} pos={}", op_id, pos);
         //     debug_log::debug_dbg!(&self);
         // }
         let result = self.rope.insert(
@@ -163,7 +163,7 @@ impl Tracker {
         mut len: usize,
         reverse: bool,
     ) {
-        // debug_log::group!("Tracker Delete");
+        // tracing::span!(tracing::Level::INFO, "Tracker Delete");
         // debug_log::debug_dbg!(&op_id, pos, len, reverse);
         // debug_log::debug_dbg!(&self);
         let last_id = op_id.inc(len as Counter - 1);
@@ -182,7 +182,6 @@ impl Tracker {
 
             if applied_counter_end > last_id.counter {
                 self.current_vv.extend_to_include_last_id(last_id);
-                debug_log::debug_dbg!(&self);
                 return;
             }
 
@@ -195,7 +194,7 @@ impl Tracker {
         }
         // debug_log::debug_dbg!(&op_id, pos, len, reverse);
 
-        // debug_log::debug_log!("after forwarding pos={} len={}", pos, len);
+        // tracing::info!("after forwarding pos={} len={}", pos, len);
         // debug_log::debug_dbg!(&self);
         let mut ans = Vec::new();
         let split = self
@@ -233,7 +232,7 @@ impl Tracker {
     }
 
     fn _checkout(&mut self, vv: &VersionVector, on_diff_status: bool) {
-        // debug_log::debug_log!("Checkout to {:?} from {:?}", vv, self.current_vv);
+        // tracing::info!("Checkout to {:?} from {:?}", vv, self.current_vv);
         if on_diff_status {
             self.rope.clear_diff_status();
         }
@@ -375,8 +374,8 @@ impl Tracker {
         from: &VersionVector,
         to: &VersionVector,
     ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
-        // debug_log::group!("From {:?} To {:?}", from, to);
-        // debug_log::debug_log!("Init: {:#?}, ", &self);
+        // tracing::span!(tracing::Level::INFO, "From {:?} To {:?}", from, to);
+        // tracing::info!("Init: {:#?}, ", &self);
         self._checkout(from, false);
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();

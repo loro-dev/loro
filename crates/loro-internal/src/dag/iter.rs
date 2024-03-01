@@ -312,7 +312,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
 
         let path = self.dag.find_path(&self.frontier, &deps);
 
-        // debug_log::group!("Dag Causal");
+        // tracing::span!(tracing::Level::INFO, "Dag Causal");
         // debug_log::debug_dbg!(&deps);
         // debug_log::debug_dbg!(&path);
         //

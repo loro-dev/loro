@@ -614,13 +614,13 @@ pub(crate) fn utf16_to_unicode_index(s: &str, utf16_index: usize) -> Result<usiz
             return Ok(i + 1);
         }
         if current_utf16_index > utf16_index {
-            debug_log::debug_log!("WARNING: UTF16 MISMATCHED!");
+            tracing::info!("WARNING: UTF16 MISMATCHED!");
             return Err(i);
         }
         current_unicode_index = i + 1;
     }
 
-    debug_log::debug_log!("WARNING: UTF16 MISMATCHED!");
+    tracing::info!("WARNING: UTF16 MISMATCHED!");
     Err(current_unicode_index)
 }
 

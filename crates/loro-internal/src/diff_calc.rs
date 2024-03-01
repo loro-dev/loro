@@ -72,8 +72,9 @@ impl DiffCalculator {
         after: &crate::VersionVector,
         after_frontiers: Option<&Frontiers>,
     ) -> Vec<InternalContainerDiff> {
-        debug_log::group!("DiffCalc");
-        debug_log::debug_log!("Before: {:?} After: {:?}", &before, &after);
+        let s = tracing::span!(tracing::Level::INFO, "DiffCalc");
+        let _e = s.enter();
+        tracing::info!("Before: {:?} After: {:?}", &before, &after);
         if self.has_all {
             let include_before = self.last_vv.includes_vv(before);
             let include_after = self.last_vv.includes_vv(after);
@@ -693,7 +694,6 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     RichtextChunkValue::Unknown(len) => {
                         // assert not unknown id
                         assert_ne!(id.peer, PeerID::MAX);
-                        debug_log::debug_dbg!(oplog.changes(), id, len);
                         let mut acc_len = 0;
                         for rich_op in oplog.iter_ops(IdSpan::new(
                             id.peer,

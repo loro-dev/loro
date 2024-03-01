@@ -29,8 +29,8 @@ fn run() {
 }
 
 #[wasm_bindgen(js_name = setDebug)]
-pub fn set_debug(filter: &str) {
-    debug_log::set_debug(filter)
+pub fn set_debug() {
+    todo!("add tracing sub")
 }
 
 type JsResult<T> = Result<T, JsValue>;
@@ -1170,7 +1170,6 @@ impl LoroText {
     /// text.insert(0, "Hello");
     /// ```
     pub fn insert(&mut self, index: usize, content: &str) -> JsResult<()> {
-        debug_log::debug_log!("InsertLogWasm");
         self.handler.insert(index, content)?;
         Ok(())
     }
