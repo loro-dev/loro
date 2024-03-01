@@ -495,7 +495,8 @@ fn change_to_diff(
         match &hint {
             EventHint::InsertText { .. }
             | EventHint::InsertList { .. }
-            | EventHint::DeleteText { .. } => {}
+            | EventHint::DeleteText { .. }
+            | EventHint::DeleteList(_) => {}
             _ => {
                 assert_eq!(ops.len(), 1);
             }
