@@ -24,7 +24,6 @@ use crate::{
     delta::{DeltaValue, StyleMeta},
 };
 
-// FIXME: Check splice and other things are using unicode index
 use self::{
     cursor_cache::CursorCache,
     query::{

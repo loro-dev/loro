@@ -40,7 +40,6 @@ impl CrdtRope {
         &self.tree
     }
 
-    // FIXME: be cautious, check that offset may points to the end of a element
     pub(super) fn insert(
         &mut self,
         pos: usize,

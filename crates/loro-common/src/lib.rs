@@ -115,13 +115,10 @@ pub enum ContainerID {
     Arbitrary, Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord, Serialize, Deserialize,
 )]
 pub enum ContainerType {
-    /// See [`crate::text::TextContent`]
     Text,
     Map,
     List,
     Tree,
-    // TODO: Users can define their own container types.
-    // Custom(u16),
 }
 
 impl ContainerType {
