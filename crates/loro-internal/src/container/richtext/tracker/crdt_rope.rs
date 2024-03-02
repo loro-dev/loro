@@ -330,7 +330,7 @@ impl CrdtRope {
         for (leaf, group) in &updates.into_iter().group_by(|x| x.leaf) {
             let elem = self.tree.get_elem(leaf).unwrap();
             for u in group {
-                debug_assert_eq!(u.id_span.client_id, elem.id.peer);
+                debug_assert_eq!(u.id_span.peer, elem.id.peer);
                 let start = (u.id_span.ctr_start() - elem.id.counter).max(0);
                 let end = u.id_span.ctr_end() - elem.id.counter;
                 tree_update_info.push((

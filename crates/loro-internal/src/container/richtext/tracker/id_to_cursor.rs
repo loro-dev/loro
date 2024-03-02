@@ -46,7 +46,7 @@ impl IdToCursor {
     /// id_span should be within the same `Cursor` and should be a `Insert`
     pub fn update_insert(&mut self, id_span: IdSpan, new_leaf: LeafIndex) {
         debug_assert!(!id_span.is_reversed());
-        let list = self.map.get_mut(&id_span.client_id).unwrap();
+        let list = self.map.get_mut(&id_span.peer).unwrap();
         let last = list.last().unwrap();
         debug_assert!(last.counter + last.cursor.rle_len() as Counter > id_span.counter.max());
         let mut index = match list.binary_search_by_key(&id_span.counter.start, |x| x.counter) {
@@ -104,7 +104,7 @@ impl IdToCursor {
 
     pub fn iter(&self, mut iter_id_span: IdSpan) -> impl Iterator<Item = IterCursor> + '_ {
         iter_id_span.normalize_();
-        let list = self.map.get(&iter_id_span.client_id).unwrap_or(&EMPTY_VEC);
+        let list = self.map.get(&iter_id_span.peer).unwrap_or(&EMPTY_VEC);
         let mut index = 0;
         let mut offset_in_insert_set = 0;
         let mut counter = 0;
@@ -146,7 +146,7 @@ impl IdToCursor {
                     return Some(IterCursor::Insert {
                         leaf: elem.leaf,
                         id_span: IdSpan::new(
-                            iter_id_span.client_id,
+                            iter_id_span.peer,
                             start_counter
                                 .max(iter_id_span.counter.start)
                                 .min(iter_id_span.counter.end),
