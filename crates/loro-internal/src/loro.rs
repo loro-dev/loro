@@ -24,6 +24,7 @@ use crate::{
     handler::{TextHandler, TreeHandler},
     id::PeerID,
     oplog::dag::FrontiersNotIncluded,
+    relative_pos::{CannotFindRelativePosition, PosQueryResult, RelativePosition},
     version::Frontiers,
     InternalString, LoroError, VersionVector,
 };
@@ -811,6 +812,27 @@ impl LoroDoc {
     pub fn log_estimated_size(&self) {
         let state = self.state.try_lock().unwrap();
         state.log_estimated_size();
+    }
+
+    pub fn get_relative_position(
+        &self,
+        pos: &RelativePosition,
+    ) -> Result<PosQueryResult, CannotFindRelativePosition> {
+        let state = self.state.lock().unwrap();
+        if let Some(ans) = state.get_relative_position(pos) {
+            Ok(PosQueryResult {
+                updated_pos: pos.clone(),
+                pos: ans,
+            })
+        } else {
+            // We need to trace back to the version where the relative position is valid.
+            // The optimal way to find that version is to have succ info like Automerge.
+            //
+            // But we don't have that info now, so an alternative way is to trace back
+            // to version with frontiers of `[pos.id]`. But this may be very slow even if
+            // the target is just deleted a few versions ago.
+            todo!("Use DiffCalculator to calculate the relative position")
+        }
     }
 }
 

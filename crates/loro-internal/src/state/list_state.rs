@@ -22,7 +22,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
-use loro_common::{IdFull, IdLpSpan, LoroResult};
+use loro_common::{IdFull, IdLp, IdLpSpan, LoroResult};
 
 #[derive(Debug)]
 pub struct ListState {
@@ -285,6 +285,15 @@ impl ListState {
                 self.get_child_index(c).unwrap();
             }
         }
+    }
+
+    pub fn get_index_of_id(&self, id: IdLp) -> Option<usize> {
+        for (i, elem) in self.iter_with_id().enumerate() {
+            if elem.id.idlp() == id {
+                return Some(i);
+            }
+        }
+        None
     }
 }
 

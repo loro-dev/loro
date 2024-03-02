@@ -21,6 +21,7 @@ use crate::{
     handler::ValueOrContainer,
     id::PeerID,
     op::{ListSlice, Op, RawOp, RawOpContent},
+    relative_pos::{CannotFindRelativePosition, PosQueryResult, RelativePosition},
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
@@ -1089,6 +1090,21 @@ impl DocState {
                 self.config.text_style_config.clone(),
             ))),
             ContainerType::Tree => State::TreeState(Box::new(TreeState::new(idx))),
+        }
+    }
+
+    pub fn get_relative_position(&self, pos: &RelativePosition) -> Option<usize> {
+        let idx = self.arena.register_container(&pos.container);
+        let Some(state) = self.states.get(&idx) else {
+            return None;
+        };
+
+        match state {
+            State::ListState(s) => s.get_index_of_id(pos.id),
+            State::RichtextState(s) => s.get_index_of_id(pos.id),
+            State::MapState(_) | State::TreeState(_) => {
+                unreachable!()
+            }
         }
     }
 }
