@@ -25,7 +25,6 @@ pub enum LoroError {
     DuplicatedTransactionError,
     #[error("Cannot find ({0})")]
     NotFoundError(Box<str>),
-    // TODO: more details transaction error
     #[error("Transaction error ({0})")]
     TransactionError(Box<str>),
     #[error("Index out of bound. The given pos is {pos}, but the length is {len}")]
