@@ -5,7 +5,9 @@ use smallvec::SmallVec;
 
 use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
-    delta::{Delta, MapDelta, ResolvedMapDelta, StyleMeta, TreeDelta, TreeDiff},
+    delta::{
+        Delta, MapDelta, MovableListInnerDelta, ResolvedMapDelta, StyleMeta, TreeDelta, TreeDiff,
+    },
     handler::ValueOrContainer,
     op::SliceRanges,
     utils::string_slice::StringSlice,
@@ -141,6 +143,7 @@ pub(crate) enum InternalDiff {
     RichtextRaw(Delta<RichtextStateChunk>),
     Map(MapDelta),
     Tree(TreeDelta),
+    MovableList(MovableListInnerDelta),
 }
 
 impl From<InternalDiff> for DiffVariant {
@@ -184,6 +187,7 @@ impl InternalDiff {
             InternalDiff::RichtextRaw(t) => t.is_empty(),
             InternalDiff::Map(m) => m.updated.is_empty(),
             InternalDiff::Tree(t) => t.is_empty(),
+            InternalDiff::MovableList(t) => t.is_empty(),
         }
     }
 

@@ -3,7 +3,7 @@ use std::{fmt::Display, sync::Arc};
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
 
-use nonmax::NonMaxI32;
+use nonmax::{NonMaxI32, NonMaxU32};
 use serde::{Deserialize, Serialize};
 mod error;
 mod id;
@@ -74,6 +74,41 @@ impl TryFrom<ID> for CompactId {
 pub struct IdLp {
     pub lamport: Lamport,
     pub peer: PeerID,
+}
+
+/// It's the unique ID of an Op represented by [PeerID] and [Counter].
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct CompactIdLp {
+    pub peer: PeerID,
+    pub lamport: NonMaxU32,
+}
+
+impl CompactIdLp {
+    pub fn new(peer: PeerID, lamport: Lamport) -> Self {
+        Self {
+            peer,
+            lamport: NonMaxU32::new(lamport).unwrap(),
+        }
+    }
+
+    pub fn to_id(&self) -> IdLp {
+        IdLp {
+            peer: self.peer,
+            lamport: self.lamport.get(),
+        }
+    }
+}
+
+impl TryFrom<IdLp> for CompactIdLp {
+    type Error = IdLp;
+
+    fn try_from(id: IdLp) -> Result<Self, IdLp> {
+        if id.lamport == u32::MAX {
+            return Err(id);
+        }
+
+        Ok(Self::new(id.peer, id.lamport))
+    }
 }
 
 /// It's the unique ID of an Op represented by [PeerID], [Lamport] clock and [Counter].

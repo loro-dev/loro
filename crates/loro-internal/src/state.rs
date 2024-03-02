@@ -28,6 +28,7 @@ use crate::{
 
 mod list_state;
 mod map_state;
+mod movable_list_state;
 mod richtext_state;
 mod tree_state;
 
@@ -35,6 +36,8 @@ pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
 pub(crate) use tree_state::{get_meta_value, TreeParentId, TreeState};
+
+use self::movable_list_state::MovableListState;
 
 use super::{arena::SharedArena, event::InternalDocDiff};
 
@@ -203,6 +206,7 @@ impl<T: ContainerState> ContainerState for Box<T> {
 #[derive(EnumAsInner, Clone, Debug)]
 pub enum State {
     ListState(Box<ListState>),
+    MovableListState(Box<MovableListState>),
     MapState(Box<MapState>),
     RichtextState(Box<RichtextState>),
     TreeState(Box<TreeState>),
@@ -582,6 +586,17 @@ impl DocState {
                 }
             }
             InternalDiff::RichtextRaw(_) => {}
+            InternalDiff::MovableList(delta) => {
+                for elem in delta.elements.iter() {
+                    if let Some(v) = elem.value() {
+                        if v.is_container() {
+                            let c = v.as_container().unwrap();
+                            let idx = self.arena.register_container(c);
+                            self.arena.set_parent(idx, Some(container));
+                        }
+                    }
+                }
+            }
         }
     }
 
