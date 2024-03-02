@@ -492,12 +492,12 @@ mod test_id_span {
     use super::*;
 
     macro_rules! id_spans {
-        ($([$client_id:expr, $from:expr, $to:expr]),*) => {
+        ($([$peer:expr, $from:expr, $to:expr]),*) => {
             {
                 let mut id_spans = RleVecWithIndex::new();
                 $(
                     id_spans.push(IdSpan {
-                        client_id: $client_id,
+                        peer: $peer,
                         counter: CounterSpan::new($from, $to),
                     });
                 )*
