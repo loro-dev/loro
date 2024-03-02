@@ -71,9 +71,7 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
         Diff::Tree(tree) => {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("tree"))
                 .unwrap();
-
-            // TODO: PERF Avoid clone
-            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &tree.clone().into()).unwrap();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &tree.into()).unwrap();
         }
         Diff::List(list) => {
             // set type as "list"
@@ -96,13 +94,7 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("text"))
                 .unwrap();
             // set diff as array
-            // TODO: PERF Avoid clone
-            js_sys::Reflect::set(
-                &obj,
-                &JsValue::from_str("diff"),
-                &JsValue::from(text.clone()),
-            )
-            .unwrap();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &JsValue::from(text)).unwrap();
         }
         Diff::Map(map) => {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("map"))
@@ -111,8 +103,7 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
             js_sys::Reflect::set(
                 &obj,
                 &JsValue::from_str("updated"),
-                // TODO: PERF Avoid clone
-                &map_delta_to_js(map.clone(), doc),
+                &map_delta_to_js(map, doc),
             )
             .unwrap();
         }
@@ -201,7 +192,7 @@ pub fn convert(value: LoroValue) -> JsValue {
     }
 }
 
-fn map_delta_to_js(value: ResolvedMapDelta, doc: &Arc<LoroDoc>) -> JsValue {
+fn map_delta_to_js(value: &ResolvedMapDelta, doc: &Arc<LoroDoc>) -> JsValue {
     let obj = Object::new();
     for (key, value) in value.updated.iter() {
         let value = if let Some(value) = value.value.clone() {
