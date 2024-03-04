@@ -175,7 +175,7 @@ pub(super) struct FugueSpan {
     /// This field is used to track the real id of the span.
     /// We know the real id when deletion happens because we
     /// have the start_id info for each deletion.
-    pub real_id: Option<ID>,
+    pub real_id: Option<CompactId>,
     /// The status at the current version
     pub status: Status,
     /// The status at the `new` version.
@@ -290,7 +290,7 @@ impl FugueSpan {
             real_id: if id.peer == UNKNOWN_PEER_ID {
                 None
             } else {
-                Some(id.id())
+                Some(id.id().try_into().unwrap())
             },
             status: Status::default(),
             diff_status: None,

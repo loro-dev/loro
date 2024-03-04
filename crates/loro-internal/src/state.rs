@@ -340,9 +340,7 @@ impl DocState {
         let diffs = std::mem::take(&mut recorder.diffs);
         let start = recorder.diff_start_version.take().unwrap();
         recorder.diff_start_version = Some((*diffs.last().unwrap().new_version).to_owned());
-        // debug_dbg!(&diffs);
         let event = self.diffs_to_event(diffs, start);
-        // debug_dbg!(&event);
         self.event_recorder.events.push(event);
     }
 
@@ -362,7 +360,7 @@ impl DocState {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
-        // debug_log::debug_log!("Diff = {:#?}", &diff);
+        // tracing::info!("Diff = {:#?}", &diff);
         let is_recording = self.is_recording();
         self.pre_txn(diff.origin.clone(), diff.local);
         let Cow::Owned(inner) = std::mem::take(&mut diff.diff) else {
@@ -935,7 +933,7 @@ impl DocState {
                     } else {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
-                        debug_log::debug_log!(
+                        tracing::info!(
                             "⚠️ WARNING: ignore because cannot find path {:#?} deep_value {:#?}",
                             &container_diff,
                             self.get_deep_value_with_id()
@@ -979,24 +977,23 @@ impl DocState {
 
     // the container may be override, so it may return None
     fn get_path(&self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
-        debug_log::group!("GET PATH {:?}", idx);
+        let s = tracing::span!(tracing::Level::INFO, "GET PATH ", ?idx);
+        let _e = s.enter();
         let mut ans = Vec::new();
         let mut idx = idx;
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
-            debug_log::debug_dbg!(&id);
             if let Some(parent_idx) = self.arena.get_parent(idx) {
                 let parent_state = self.states.get(&parent_idx).unwrap();
-                debug_log::debug_dbg!(&parent_state);
                 let Some(prop) = parent_state.get_child_index(&id) else {
-                    debug_log::debug_log!("Missing in parent children");
+                    tracing::info!("Missing in parent children");
                     return None;
                 };
                 ans.push((id, prop));
                 idx = parent_idx;
             } else {
                 // this container may be deleted
-                debug_log::debug_log!("Deleted or root");
+                tracing::info!("Deleted or root");
                 let prop = id.as_root()?.0.clone();
                 ans.push((id, Index::Key(prop)));
                 break;

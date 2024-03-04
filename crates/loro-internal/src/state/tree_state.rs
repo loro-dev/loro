@@ -338,10 +338,15 @@ impl ContainerState for TreeState {
     /// Get the index of the child container
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
         let id = id.as_normal().unwrap();
-        Some(Index::Node(TreeID {
+        let tree_id = TreeID {
             peer: *id.0,
             counter: *id.1,
-        }))
+        };
+        if !self.trees.contains_key(&tree_id) || self.is_node_deleted(&tree_id) {
+            None
+        } else {
+            Some(Index::Node(tree_id))
+        }
     }
 
     fn get_child_containers(&self) -> Vec<ContainerID> {

@@ -669,7 +669,6 @@ fn a_list_of_map_checkout() {
     doc.checkout(&v2).unwrap();
     println!("{}", doc.get_deep_value_with_id().to_json_pretty());
     assert_eq!(doc.get_deep_value().to_json(), d2);
-    debug_log::group!("checking out v1");
     doc.checkout(&v1).unwrap();
 
     println!("{}", doc.get_deep_value_with_id().to_json_pretty());

@@ -1,7 +1,6 @@
 use std::{fmt::Debug, sync::Arc};
 
 use arbitrary::Arbitrary;
-use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use loro_common::ID;
@@ -135,12 +134,11 @@ impl Actor {
                         //     text_doc.peer_id(),
                         //     text_h.get_richtext_value()
                         // );
-                        debug_log::debug_log!("delta {:?}", text_deltas);
+                        tracing::info!("delta {:?}", text_deltas);
                         text_h.apply_delta_with_txn(&mut txn, &text_deltas).unwrap();
 
-                        // debug_log::debug_log!("after {:?}\n", text_h.get_richtext_value());
+                        // tracing::info!("after {:?}\n", text_h.get_richtext_value());
                     } else {
-                        debug_dbg!(&container_diff);
                         unreachable!()
                     }
                 }
@@ -325,7 +323,7 @@ impl Actionable for Vec<Actor> {
                 let actor = &mut self[*site as usize];
                 let f = actor.history.keys().nth(*to as usize).unwrap();
                 let f = Frontiers::from(f);
-                debug_log::debug_log!("Checkout to {:?}", &f);
+                tracing::info!("Checkout to {:?}", &f);
                 actor.loro.checkout(&f).unwrap();
             }
             Action::RichText {
@@ -416,32 +414,37 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     let b_result = b_actor.text_container.get_richtext_value();
     let a_value = a_actor.text_tracker.get_text("text").get_richtext_value();
 
-    debug_log::debug_log!("{}", a_result.to_json_pretty());
+    tracing::info!("{}", a_result.to_json_pretty());
     assert_eq!(&a_result, &b_result);
-    debug_log::debug_log!("{}", a_value.to_json_pretty());
+    tracing::info!("{}", a_value.to_json_pretty());
     assert_value_eq(&a_result, &a_value);
 }
 
 fn check_synced(sites: &mut [Actor]) {
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
-            debug_log::group!("checking {} with {}", i, j);
+            let s = tracing::span!(tracing::Level::INFO, "checking {} with {}", i, j);
+            let _e = s.enter();
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
             a_doc.attach();
             b_doc.attach();
             if (i + j) % 2 == 0 {
-                debug_log::group!("Updates {} to {}", j, i);
+                let s = tracing::span!(tracing::Level::INFO, "Updates {} to {}", j, i);
+                let _e = s.enter();
                 a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
 
-                debug_log::group!("Updates {} to {}", i, j);
+                let s = tracing::span!(tracing::Level::INFO, "Updates {} to {}", i, j);
+                let _e = s.enter();
                 b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
             } else {
-                debug_log::group!("Snapshot {} to {}", j, i);
+                let s = tracing::span!(tracing::Level::INFO, "Snapshot {} to {}", j, i);
+                let _e = s.enter();
                 a_doc.import(&b_doc.export_snapshot()).unwrap();
 
-                debug_log::group!("Snapshot {} to {}", i, j);
+                let s = tracing::span!(tracing::Level::INFO, "Snapshot {} to {}", i, j);
+                let _e = s.enter();
                 b_doc.import(&a_doc.export_snapshot()).unwrap();
             }
             check_eq(a, b);
@@ -493,6 +496,7 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
     applied
 }
 
+#[tracing::instrument(skip_all)]
 pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     let mut sites = Vec::new();
     for i in 0..site_num {
@@ -503,18 +507,45 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     for action in actions.iter_mut() {
         sites.preprocess(action);
         applied.push(action.clone());
-        debug_log::debug_log!("\n{}", (&applied).table());
-        debug_log::group!("ApplyingAction={:?}", &action);
+        tracing::info!("\n{}", (&applied).table());
+        let s = tracing::span!(tracing::Level::INFO, "ApplyingAction", action=?action);
+        let _e = s.enter();
         sites.apply_action(action);
     }
 
-    debug_log::group!("check synced");
+    let s = tracing::span!(tracing::Level::INFO, "check synced");
+    let _e = s.enter();
     check_synced(&mut sites);
 
     check_history(&mut sites[1]);
 }
+
 #[cfg(test)]
 mod failed_tests {
+    static mut GUARD: Option<FlushGuard> = None;
+    #[ctor::ctor]
+    fn init_color_backtrace() {
+        color_backtrace::install();
+        use tracing_chrome::ChromeLayerBuilder;
+        use tracing_subscriber::{prelude::*, registry::Registry};
+        if option_env!("DEBUG").is_some() {
+            let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                .include_args(true)
+                .include_locations(true)
+                .build();
+            // SAFETY: Test
+            unsafe { GUARD = Some(_guard) };
+            tracing::subscriber::set_global_default(
+                Registry::default()
+                    .with(tracing_subscriber::fmt::Layer::default())
+                    .with(chrome_layer),
+            )
+            .unwrap();
+        }
+    }
+
+    use tracing_chrome::FlushGuard;
+
     use super::test_multi_sites;
     use super::Action::*;
     use super::RichTextAction;

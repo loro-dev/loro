@@ -1,12 +1,12 @@
+use bench_utils::{
+    create_seed, gen_async_actions, gen_realtime_actions, make_actions_async, Action, ActionTrait,
+};
 use std::{
     collections::VecDeque,
     sync::{atomic::AtomicUsize, Arc, Mutex},
     time::Instant,
 };
-
-use bench_utils::{
-    create_seed, gen_async_actions, gen_realtime_actions, make_actions_async, Action, ActionTrait,
-};
+use tracing::span;
 
 pub mod draw;
 pub mod json;
@@ -64,22 +64,26 @@ impl<T: ActorTrait> ActorGroup<T> {
     }
 
     pub fn sync_all(&mut self) {
-        debug_log::group!("SyncAll");
+        let s = span!(tracing::Level::INFO, "SyncAll");
+        let _enter = s.enter();
         let (first, rest) = self.docs.split_at_mut(1);
         for doc in rest.iter_mut() {
-            debug_log::group!("Importing to doc0");
+            let s = tracing::span!(tracing::Level::INFO, "Importing to doc0");
+            let _e = s.enter();
             let vv = first[0].doc().oplog_vv();
             first[0].doc().import(&doc.doc().export_from(&vv)).unwrap();
         }
         for (i, doc) in rest.iter_mut().enumerate() {
-            debug_log::group!("Importing to doc{}", i + 1);
+            let s = tracing::span!(tracing::Level::INFO, "Importing to doc", doc = i + 1);
+            let _e = s.enter();
             let vv = doc.doc().oplog_vv();
             doc.doc().import(&first[0].doc().export_from(&vv)).unwrap();
         }
     }
 
     pub fn check_sync(&self) {
-        debug_log::group!("Check sync");
+        let s = tracing::span!(tracing::Level::INFO, "Check sync");
+        let _e = s.enter();
         let first = &self.docs[0];
         let content = first.doc().get_deep_value();
         for doc in self.docs.iter().skip(1) {
@@ -145,7 +149,8 @@ pub fn run_actions_fuzz_in_async_mode<T: ActorTrait>(
     let mut actions = make_actions_async::<T::ActionKind>(peer_num, actions, sync_all_interval);
     let mut actors = ActorGroup::<T>::new(peer_num);
     for action in actions.iter_mut() {
-        debug_log::group!("[ApplyAction] {:?}", &action);
+        let s = tracing::span!(tracing::Level::INFO, "ApplyAction", ?action);
+        let _e = s.enter();
         actors.apply_action(action);
     }
     actors.sync_all();

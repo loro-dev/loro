@@ -54,6 +54,13 @@ impl CompactId {
             counter: self.counter.get(),
         }
     }
+
+    pub fn inc(&self, start: i32) -> CompactId {
+        Self {
+            peer: self.peer,
+            counter: NonMaxI32::new(start + self.counter.get()).unwrap(),
+        }
+    }
 }
 
 impl TryFrom<ID> for CompactId {
@@ -150,13 +157,10 @@ pub enum ContainerID {
     Arbitrary, Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord, Serialize, Deserialize,
 )]
 pub enum ContainerType {
-    /// See [`crate::text::TextContent`]
     Text,
     Map,
     List,
     Tree,
-    // TODO: Users can define their own container types.
-    // Custom(u16),
 }
 
 impl ContainerType {

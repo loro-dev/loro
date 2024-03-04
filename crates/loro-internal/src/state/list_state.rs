@@ -132,7 +132,6 @@ impl UseLengthFinder<ListImpl> for ListImpl {
     }
 }
 
-// FIXME: update child_container_to_leaf
 impl ListState {
     pub fn new(idx: ContainerIdx) -> Self {
         let tree = BTree::new();
@@ -203,7 +202,11 @@ impl ListState {
 
     pub fn delete(&mut self, index: usize) {
         let leaf = self.list.query::<LengthFinder>(&index);
-        self.list.remove_leaf(leaf.unwrap().cursor).unwrap();
+        let leaf = self.list.remove_leaf(leaf.unwrap().cursor).unwrap();
+        if leaf.v.is_container() {
+            self.child_container_to_leaf
+                .remove(leaf.v.as_container().unwrap());
+        }
     }
 
     pub fn delete_range(&mut self, range: impl RangeBounds<usize>) {
@@ -222,11 +225,16 @@ impl ListState {
             return;
         }
 
-        let self1 = &mut self.list;
+        let list = &mut self.list;
         let q = start..end;
-        let start1 = self1.query::<LengthFinder>(&q.start);
-        let end1 = self1.query::<LengthFinder>(&q.end);
-        iter::Drain::new(self1, start1, end1);
+        let start1 = list.query::<LengthFinder>(&q.start);
+        let end1 = list.query::<LengthFinder>(&q.end);
+        for v in iter::Drain::new(list, start1, end1) {
+            if v.v.is_container() {
+                self.child_container_to_leaf
+                    .remove(v.v.as_container().unwrap());
+            }
+        }
     }
 
     // PERF: use &[LoroValue]
@@ -356,7 +364,6 @@ impl ContainerState for ListState {
         _txn: &Weak<Mutex<Option<Transaction>>>,
         _state: &Weak<Mutex<DocState>>,
     ) {
-        // debug_log::debug_dbg!(&diff);
         match diff {
             InternalDiff::ListRaw(delta) => {
                 let mut index = 0;

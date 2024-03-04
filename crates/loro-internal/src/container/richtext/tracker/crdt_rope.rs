@@ -40,7 +40,6 @@ impl CrdtRope {
         &self.tree
     }
 
-    // FIXME: be cautious, check that offset may points to the end of a element
     pub(super) fn insert(
         &mut self,
         pos: usize,
@@ -57,8 +56,8 @@ impl CrdtRope {
             };
         }
 
-        // debug_log::group!("Inserting {} len={}", content.id, content.rle_len());
-        // debug_log::debug_dbg!(&self.tree);
+        // tracing::span!(tracing::Level::INFO, "Inserting {} len={}", content.id, content.rle_len());
+
         let pos = pos as i32;
         let start = self.tree.query::<ActiveLenQueryPreferLeft>(&pos).unwrap();
 
@@ -134,7 +133,6 @@ impl CrdtRope {
             (parent_right_leaf, in_between)
         };
 
-        // debug_log::debug_dbg!(&parent_right_leaf, &in_between);
         let mut insert_pos = start.cursor;
 
         if !in_between.is_empty() {
@@ -142,7 +140,7 @@ impl CrdtRope {
             let mut scanning = false;
             let mut visited: SmallVec<[IdSpan; 4]> = Default::default();
             for (other_leaf, other_elem) in in_between.iter() {
-                // debug_log::debug_log!("Visiting {}", &other_elem.id);
+                // tracing::info!("Visiting {}", &other_elem.id);
                 let other_origin_left = other_elem.origin_left;
                 if other_origin_left != content.origin_left
                     && other_origin_left
@@ -152,7 +150,7 @@ impl CrdtRope {
                     // The other_elem's origin_left must be at the left side of content's origin_left.
                     // So the content must be at the left side of other_elem.
 
-                    // debug_log::debug_log!("Break because the node's origin_left is at the left side of new_elem's origin left");
+                    // tracing::info!("Break because the node's origin_left is at the left side of new_elem's origin left");
                     break;
                 }
 
@@ -164,16 +162,16 @@ impl CrdtRope {
 
                 if content.origin_left == other_origin_left {
                     if other_elem.origin_right == content.origin_right {
-                        // debug_log::debug_log!("Same right parent");
+                        // tracing::info!("Same right parent");
                         // Same right parent
                         if other_elem.id.peer > content.id.peer {
-                            // debug_log::debug_log!("Break on larger peer");
+                            // tracing::info!("Break on larger peer");
                             break;
                         } else {
                             scanning = false;
                         }
                     } else {
-                        // debug_log::debug_log!("Different right parent");
+                        // tracing::info!("Different right parent");
                         // Different right parent, we need to compare the right parents' position
 
                         let other_parent_right_idx =
@@ -193,15 +191,15 @@ impl CrdtRope {
 
                         match self.cmp_pos(other_parent_right_idx, parent_right_leaf) {
                             Ordering::Less => {
-                                // debug_log::debug_log!("Less");
+                                // tracing::info!("Less");
                                 scanning = true;
                             }
                             Ordering::Equal if other_elem.id.peer > content.id.peer => {
-                                // debug_log::debug_log!("Break on eq");
+                                // tracing::info!("Break on eq");
                                 break;
                             }
                             _ => {
-                                // debug_log::debug_log!("Scanning");
+                                // tracing::info!("Scanning");
                                 scanning = false;
                             }
                         }
@@ -213,12 +211,12 @@ impl CrdtRope {
                         leaf: *other_leaf,
                         offset: other_elem.rle_len(),
                     };
-                    // debug_log::debug_log!("updating insert pos {:?}", &insert_pos);
+                    // tracing::info!("updating insert pos {:?}", &insert_pos);
                 }
             }
         }
 
-        // debug_log::debug_log!("Inserting at {:?}", insert_pos);
+        // tracing::info!("Inserting at {:?}", insert_pos);
         //
         let (cursor, splitted) = self.tree.insert_by_path(insert_pos, content);
         InsertResult {
@@ -260,7 +258,6 @@ impl CrdtRope {
             return ans;
         }
 
-        debug_log::debug_dbg!(&start_id);
         let start = self
             .tree
             .query::<ActiveLenQueryPreferRight>(&(pos as i32))
@@ -269,7 +266,7 @@ impl CrdtRope {
         let start = start.cursor;
         let elem = self.tree.get_elem_mut(start.leaf).unwrap();
         if elem.rle_len() >= start.offset + len {
-            // debug_log::debug_log!("len={} offset={} l={} ", elem.rle_len(), start.offset, len,);
+            // tracing::info!("len={} offset={} l={} ", elem.rle_len(), start.offset, len,);
             let (_, splitted) = self.tree.update_leaf(start.leaf, |elem| {
                 let (a, b) = elem.update_with_split(start.offset..start.offset + len, |elem| {
                     assert!(elem.is_activated());
@@ -277,7 +274,7 @@ impl CrdtRope {
                     notify_deleted_span(elem);
                     elem.status.delete_times += 1;
                     if elem.real_id.is_none() {
-                        elem.real_id = Some(start_id);
+                        elem.real_id = Some(start_id.try_into().unwrap());
                     }
 
                     start_id = start_id.inc(elem.rle_len() as i32);
@@ -286,7 +283,6 @@ impl CrdtRope {
                 (true, a, b)
             });
 
-            // debug_log::debug_dbg!(&splitted);
             return smallvec![splitted];
         }
 
@@ -299,7 +295,7 @@ impl CrdtRope {
                 notify_deleted_span(elem);
                 elem.status.delete_times += 1;
                 if elem.real_id.is_none() {
-                    elem.real_id = Some(start_id);
+                    elem.real_id = Some(start_id.try_into().unwrap());
                 }
 
                 start_id = start_id.inc(elem.rle_len() as i32);
@@ -331,7 +327,7 @@ impl CrdtRope {
         for (leaf, group) in &updates.into_iter().group_by(|x| x.leaf) {
             let elem = self.tree.get_elem(leaf).unwrap();
             for u in group {
-                debug_assert_eq!(u.id_span.client_id, elem.id.peer);
+                debug_assert_eq!(u.id_span.peer, elem.id.peer);
                 let start = (u.id_span.ctr_start() - elem.id.counter).max(0);
                 let end = u.id_span.ctr_end() - elem.id.counter;
                 tree_update_info.push((
@@ -394,7 +390,7 @@ impl CrdtRope {
                     DiffStatus::Created => {
                         let rt = Some(CrdtRopeDelta::Insert {
                             chunk: elem.content,
-                            id: elem.real_id.unwrap(),
+                            id: elem.real_id.map(|x| x.to_id()).unwrap(),
                             lamport: if elem.id.peer == UNKNOWN_PEER_ID {
                                 None
                             } else {
