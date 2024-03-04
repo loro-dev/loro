@@ -137,7 +137,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
     .ops_map;
 
     let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
-    // debug_log::debug_dbg!(&changes);
+
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
@@ -531,14 +531,12 @@ fn calc_sorted_ops_for_snapshot<'a>(
 ) -> Vec<TempOp<'a>> {
     origin_ops.sort_unstable();
     pos_mapping_heap.sort_unstable();
-    debug_log::debug_dbg!(&origin_ops, &pos_mapping_heap);
     let mut ops: Vec<TempOp<'a>> = Vec::with_capacity(origin_ops.len());
     let ops_len: usize = origin_ops.iter().map(|x| x.atom_len()).sum();
     let mut origin_top = origin_ops.pop();
     let mut pos_top = pos_mapping_heap.pop();
 
     while origin_top.is_some() || pos_top.is_some() {
-        debug_log::debug_dbg!(&origin_top, &pos_top);
         let Some(mut inner_origin_top) = origin_top else {
             unreachable!()
         };

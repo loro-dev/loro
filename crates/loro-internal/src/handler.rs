@@ -365,7 +365,6 @@ impl TextHandler {
         if let Some(attr) = attr {
             // current styles
             let map: FxHashMap<_, _> = styles.iter().map(|x| (x.0.clone(), x.1.data)).collect();
-            debug_log::debug_dbg!(&map);
             for (key, style) in map.iter() {
                 match attr.get(key.deref()) {
                     Some(v) if v == style => {}
@@ -439,7 +438,8 @@ impl TextHandler {
             });
         }
 
-        debug_log::group!("delete pos={} len={}", pos, len);
+        let s = tracing::span!(tracing::Level::INFO, "delete pos={} len={}", pos, len);
+        let _e = s.enter();
         let ranges = self
             .state
             .upgrade()
@@ -637,7 +637,6 @@ impl TextHandler {
                         Some(attributes.as_ref().unwrap_or(&Default::default())),
                     )?;
 
-                    debug_log::debug_dbg!(&override_styles);
                     for (key, value) in override_styles {
                         marks.push((index, end, key, value));
                     }

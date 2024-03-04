@@ -776,7 +776,7 @@ impl OpLog {
                     }
 
                     inner_vv.extend_to_include_end_id(change.id);
-                    // debug_log::debug_dbg!(&change, &inner_vv);
+
                     Some((change, cnt, vv.clone()))
                 } else {
                     None
@@ -867,10 +867,7 @@ impl OpLog {
                     let counter = (id.lamport - change.lamport) as Counter + change.id.counter;
                     Some(ID::new(id.peer, counter))
                 }
-                Err(_) => {
-                    debug_log::debug_dbg!(id, &peer_changes);
-                    None
-                }
+                Err(_) => None,
             }
         } else {
             None

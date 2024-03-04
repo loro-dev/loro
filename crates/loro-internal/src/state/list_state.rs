@@ -364,7 +364,6 @@ impl ContainerState for ListState {
         _txn: &Weak<Mutex<Option<Transaction>>>,
         _state: &Weak<Mutex<DocState>>,
     ) {
-        // debug_log::debug_dbg!(&diff);
         match diff {
             InternalDiff::ListRaw(delta) => {
                 let mut index = 0;
