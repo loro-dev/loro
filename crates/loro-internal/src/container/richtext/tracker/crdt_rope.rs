@@ -276,7 +276,7 @@ impl CrdtRope {
                     notify_deleted_span(elem);
                     elem.status.delete_times += 1;
                     if elem.real_id.is_none() {
-                        elem.real_id = Some(start_id);
+                        elem.real_id = Some(start_id.try_into().unwrap());
                     }
 
                     start_id = start_id.inc(elem.rle_len() as i32);
@@ -298,7 +298,7 @@ impl CrdtRope {
                 notify_deleted_span(elem);
                 elem.status.delete_times += 1;
                 if elem.real_id.is_none() {
-                    elem.real_id = Some(start_id);
+                    elem.real_id = Some(start_id.try_into().unwrap());
                 }
 
                 start_id = start_id.inc(elem.rle_len() as i32);
@@ -393,7 +393,7 @@ impl CrdtRope {
                     DiffStatus::Created => {
                         let rt = Some(CrdtRopeDelta::Insert {
                             chunk: elem.content,
-                            id: elem.real_id.unwrap(),
+                            id: elem.real_id.map(|x| x.to_id()).unwrap(),
                             lamport: if elem.id.peer == UNKNOWN_PEER_ID {
                                 None
                             } else {

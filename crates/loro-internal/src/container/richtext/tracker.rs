@@ -119,7 +119,7 @@ impl Tracker {
                 real_id: if op_id.peer == UNKNOWN_PEER_ID {
                     None
                 } else {
-                    Some(op_id.id())
+                    Some(op_id.id().try_into().unwrap())
                 },
                 status: Status::default(),
                 diff_status: None,
