@@ -1059,6 +1059,9 @@ mod encode {
                     *start as i32
                 }
                 crate::container::list::list_op::InnerListOp::StyleEnd => 0,
+                crate::container::list::list_op::InnerListOp::DeleteMovableListItem {
+                    pos, ..
+                } => *pos as i32,
             },
             crate::op::InnerContent::Map(map) => {
                 let key = register_key.register(&map.key);
@@ -1155,6 +1158,11 @@ mod encode {
                     );
                     ValueKind::Move
                 }
+                crate::container::list::list_op::InnerListOp::DeleteMovableListItem {
+                    list_item_id,
+                    elem_id,
+                    pos,
+                } => unimplemented!(),
             },
             crate::op::InnerContent::Map(map) => {
                 assert_eq!(op.container.get_type(), ContainerType::Map);

@@ -1,16 +1,16 @@
 use enum_as_inner::EnumAsInner;
-use loro_common::{IdLp, LoroValue};
+use loro_common::{IdFull, IdLp, LoroValue};
 use smallvec::SmallVec;
 
 use super::{Delta, DeltaValue};
 
 #[derive(Clone, Debug)]
 pub(crate) struct MovableListInnerDelta {
-    pub list: Delta<SmallVec<[IdLp; 1]>, ()>,
+    pub list: Delta<SmallVec<[IdFull; 1]>, ()>,
     pub elements: Vec<ElementDelta>,
 }
 
-impl DeltaValue for SmallVec<[IdLp; 1]> {
+impl DeltaValue for SmallVec<[IdFull; 1]> {
     fn value_extend(&mut self, other: Self) -> Result<(), Self> {
         for v in other {
             self.push(v)

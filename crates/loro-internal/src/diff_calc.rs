@@ -594,7 +594,9 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         }
         match &op.raw_op().content {
             crate::op::InnerContent::List(l) => match l {
-                InnerListOp::Insert { .. } | InnerListOp::Move { .. } => {
+                InnerListOp::Insert { .. }
+                | InnerListOp::Move { .. }
+                | InnerListOp::DeleteMovableListItem { .. } => {
                     unreachable!()
                 }
                 crate::container::list::list_op::InnerListOp::InsertText {

@@ -317,6 +317,19 @@ impl SharedArena {
                     container,
                     content: InnerContent::List(InnerListOp::Move { from, to, from_id }),
                 },
+                ListOp::DeleteMovableListItem {
+                    list_item_id,
+                    elem_id,
+                    pos,
+                } => Op {
+                    counter,
+                    container,
+                    content: InnerContent::List(InnerListOp::DeleteMovableListItem {
+                        list_item_id,
+                        elem_id,
+                        pos,
+                    }),
+                },
             },
             crate::op::RawOpContent::Tree(tree) => Op {
                 counter,

@@ -32,12 +32,11 @@ mod movable_list_state;
 mod richtext_state;
 mod tree_state;
 
+pub(crate) use self::movable_list_state::{IdInfo, MovableListState};
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
 pub(crate) use tree_state::{get_meta_value, TreeParentId, TreeState};
-
-use self::movable_list_state::MovableListState;
 
 use super::{arena::SharedArena, event::InternalDocDiff};
 

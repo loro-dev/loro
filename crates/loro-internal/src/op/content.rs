@@ -62,6 +62,15 @@ impl<'a> RawOpContent<'a> {
                     to: *to,
                     from_id: *from_id,
                 }),
+                ListOp::DeleteMovableListItem {
+                    list_item_id,
+                    elem_id,
+                    pos,
+                } => RawOpContent::List(ListOp::DeleteMovableListItem {
+                    list_item_id: *list_item_id,
+                    elem_id: *elem_id,
+                    pos: *pos,
+                }),
             },
             Self::Tree(arg0) => RawOpContent::Tree(*arg0),
         }

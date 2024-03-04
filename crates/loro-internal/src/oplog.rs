@@ -610,6 +610,15 @@ impl OpLog {
                         to: *to,
                     }))
                 }
+                list_op::InnerListOp::DeleteMovableListItem {
+                    list_item_id,
+                    elem_id,
+                    pos,
+                } => contents.push(RawOpContent::List(list_op::ListOp::DeleteMovableListItem {
+                    list_item_id: *list_item_id,
+                    elem_id: *elem_id,
+                    pos: *pos,
+                })),
             },
             crate::op::InnerContent::Map(map) => {
                 let value = map.value.clone();

@@ -95,6 +95,13 @@ pub struct ListHandler {
     state: Weak<Mutex<DocState>>,
 }
 
+#[derive(Clone)]
+pub struct MovableListHandler {
+    txn: Weak<Mutex<Option<Transaction>>>,
+    pub(crate) container_idx: ContainerIdx,
+    state: Weak<Mutex<DocState>>,
+}
+
 impl std::fmt::Debug for ListHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("ListHandler")
@@ -923,6 +930,316 @@ impl ListHandler {
             .unwrap()
             .with_state(self.container_idx, |state| {
                 let a = state.as_list_state().unwrap();
+                a.get(index).cloned()
+            })
+    }
+
+    /// Get value at given index, if it's a container, return a handler to the container
+    pub fn get_(&self, index: usize) -> Option<ValueOrContainer> {
+        let mutex = &self.state.upgrade().unwrap();
+        let doc_state = &mut mutex.lock().unwrap();
+        let arena = doc_state.arena.clone();
+        doc_state.with_state(self.container_idx, |state| {
+            let a = state.as_list_state().unwrap();
+            match a.get(index) {
+                Some(v) => {
+                    if let LoroValue::Container(id) = v {
+                        let idx = arena.register_container(id);
+                        Some(ValueOrContainer::Container(Handler::new(
+                            self.txn.clone(),
+                            idx,
+                            self.state.clone(),
+                        )))
+                    } else {
+                        Some(ValueOrContainer::Value(v.clone()))
+                    }
+                }
+                None => None,
+            }
+        })
+    }
+
+    pub fn for_each<I>(&self, mut f: I)
+    where
+        I: FnMut(ValueOrContainer),
+    {
+        let mutex = &self.state.upgrade().unwrap();
+        let doc_state = &mut mutex.lock().unwrap();
+        let arena = doc_state.arena.clone();
+        doc_state.with_state(self.container_idx, |state| {
+            let a = state.as_list_state().unwrap();
+            for v in a.iter() {
+                match v {
+                    LoroValue::Container(c) => {
+                        let idx = arena.register_container(c);
+                        f(ValueOrContainer::Container(Handler::new(
+                            self.txn.clone(),
+                            idx,
+                            self.state.clone(),
+                        )));
+                    }
+                    value => {
+                        f(ValueOrContainer::Value(value.clone()));
+                    }
+                }
+            }
+        })
+    }
+}
+
+impl MovableListHandler {
+    pub fn new(
+        txn: Weak<Mutex<Option<Transaction>>>,
+        idx: ContainerIdx,
+        state: Weak<Mutex<DocState>>,
+    ) -> Self {
+        assert_eq!(idx.get_type(), ContainerType::List);
+        Self {
+            txn,
+            container_idx: idx,
+            state,
+        }
+    }
+
+    pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.insert_with_txn(txn, pos, v.into()))
+    }
+
+    pub fn insert_with_txn(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        v: LoroValue,
+    ) -> LoroResult<()> {
+        if pos > self.len() {
+            return Err(LoroError::OutOfBound {
+                pos,
+                len: self.len(),
+            });
+        }
+
+        if let Some(container) = v.as_container() {
+            self.insert_container_with_txn(txn, pos, container.container_type())?;
+            return Ok(());
+        }
+
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
+                slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
+                pos,
+            }),
+            EventHint::InsertList { len: 1 },
+            &self.state,
+        )
+    }
+
+    pub fn push(&self, v: LoroValue) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.push_with_txn(txn, v))
+    }
+
+    pub fn push_with_txn(&self, txn: &mut Transaction, v: LoroValue) -> LoroResult<()> {
+        let pos = self.len();
+        self.insert_with_txn(txn, pos, v)
+    }
+
+    pub fn pop(&self) -> LoroResult<Option<LoroValue>> {
+        with_txn(&self.txn, |txn| self.pop_with_txn(txn))
+    }
+
+    pub fn pop_with_txn(&self, txn: &mut Transaction) -> LoroResult<Option<LoroValue>> {
+        let len = self.len();
+        if len == 0 {
+            return Ok(None);
+        }
+
+        let v = self.get(len - 1);
+        self.delete_with_txn(txn, len - 1, 1)?;
+        Ok(v)
+    }
+
+    pub fn insert_container(&self, pos: usize, c_type: ContainerType) -> LoroResult<Handler> {
+        with_txn(&self.txn, |txn| {
+            self.insert_container_with_txn(txn, pos, c_type)
+        })
+    }
+
+    pub fn insert_container_with_txn(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        c_type: ContainerType,
+    ) -> LoroResult<Handler> {
+        if pos > self.len() {
+            return Err(LoroError::OutOfBound {
+                pos,
+                len: self.len(),
+            });
+        }
+
+        let id = txn.next_id();
+        let container_id = ContainerID::new_normal(id, c_type);
+        let child_idx = txn.arena.register_container(&container_id);
+        let v = LoroValue::Container(container_id);
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
+                slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
+                pos,
+            }),
+            EventHint::InsertList { len: 1 },
+            &self.state,
+        )?;
+        Ok(Handler::new(
+            self.txn.clone(),
+            child_idx,
+            self.state.clone(),
+        ))
+    }
+
+    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.delete_with_txn(txn, pos, len))
+    }
+
+    pub fn delete_with_txn(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
+        if len == 0 {
+            return Ok(());
+        }
+
+        if pos + len > self.len() {
+            return Err(LoroError::OutOfBound {
+                pos: pos + len,
+                len: self.len(),
+            });
+        }
+
+        let ids: Vec<_> =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    let list = state.as_movable_list_state().unwrap();
+                    (pos..pos + len)
+                        .map(|i| list.get_id_at(i).unwrap())
+                        .collect()
+                });
+
+        for id in ids.into_iter() {
+            match id {
+                crate::state::IdInfo::Same(id) => {
+                    txn.apply_local_op(
+                        self.container_idx,
+                        crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
+                            id,
+                            pos as isize,
+                            1,
+                        ))),
+                        EventHint::DeleteList(DeleteSpan::new(pos as isize, 1)),
+                        &self.state,
+                    )?;
+                }
+                crate::state::IdInfo::Diff {
+                    list_item_id,
+                    elem_id,
+                } => {
+                    txn.apply_local_op(
+                        self.container_idx,
+                        crate::op::RawOpContent::List(ListOp::DeleteMovableListItem {
+                            list_item_id,
+                            elem_id,
+                            pos,
+                        }),
+                        EventHint::DeleteList(DeleteSpan::new(pos as isize, 1)),
+                        &self.state,
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn get_child_handler(&self, index: usize) -> Handler {
+        let mutex = &self.state.upgrade().unwrap();
+        let mut state = mutex.lock().unwrap();
+        let container_id = state.with_state(self.container_idx, |state| {
+            state
+                .as_movable_list_state()
+                .as_ref()
+                .unwrap()
+                .get(index)
+                .unwrap()
+                .as_container()
+                .unwrap()
+                .clone()
+        });
+        let idx = state.arena.register_container(&container_id);
+        Handler::new(self.txn.clone(), idx, self.state.clone())
+    }
+
+    pub fn len(&self) -> usize {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                state.as_movable_list_state().unwrap().len()
+            })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_value_by_idx(self.container_idx)
+    }
+
+    pub fn get_deep_value(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_container_deep_value(self.container_idx)
+    }
+
+    pub fn get_deep_value_with_id(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_container_deep_value_with_id(self.container_idx, None)
+    }
+
+    pub fn id(&self) -> ContainerID {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .arena
+            .idx_to_id(self.container_idx)
+            .unwrap()
+    }
+
+    pub fn get(&self, index: usize) -> Option<LoroValue> {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_movable_list_state().unwrap();
                 a.get(index).cloned()
             })
     }

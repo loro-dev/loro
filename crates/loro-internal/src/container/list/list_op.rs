@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
-use loro_common::{HasId, HasIdSpan, LoroValue, ID};
+use loro_common::{HasId, HasIdSpan, IdLp, LoroValue, ID};
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +22,11 @@ pub enum ListOp<'a> {
         pos: usize,
     },
     Delete(DeleteSpanWithId),
+    DeleteMovableListItem {
+        list_item_id: IdLp,
+        elem_id: IdLp,
+        pos: usize,
+    },
     Move {
         from: u32,
         to: u32,
@@ -51,6 +56,12 @@ pub enum InnerListOp {
         unicode_start: u32,
         unicode_len: u32,
         pos: u32,
+    },
+    /// Only use this when DeleteSpanWithId is not enough
+    DeleteMovableListItem {
+        list_item_id: IdLp,
+        elem_id: IdLp,
+        pos: usize,
     },
     Delete(DeleteSpanWithId),
     /// StyleStart and StyleEnd must be paired.
@@ -350,7 +361,10 @@ impl<'a> Mergable for ListOp<'a> {
                 ListOp::Delete(other_span) => span.is_mergable(other_span, &()),
                 _ => false,
             },
-            ListOp::StyleStart { .. } | ListOp::StyleEnd { .. } | ListOp::Move { .. } => false,
+            ListOp::StyleStart { .. }
+            | ListOp::StyleEnd { .. }
+            | ListOp::Move { .. }
+            | ListOp::DeleteMovableListItem { .. } => false,
         }
     }
 
@@ -371,7 +385,10 @@ impl<'a> Mergable for ListOp<'a> {
                 ListOp::Delete(other_span) => span.merge(other_span, &()),
                 _ => unreachable!(),
             },
-            ListOp::StyleStart { .. } | ListOp::StyleEnd { .. } | ListOp::Move { .. } => {
+            ListOp::StyleStart { .. }
+            | ListOp::StyleEnd { .. }
+            | ListOp::Move { .. }
+            | ListOp::DeleteMovableListItem { .. } => {
                 unreachable!()
             }
         }
@@ -383,7 +400,10 @@ impl<'a> HasLength for ListOp<'a> {
         match self {
             ListOp::Insert { slice, .. } => slice.content_len(),
             ListOp::Delete(span) => span.atom_len(),
-            ListOp::StyleStart { .. } | ListOp::StyleEnd { .. } | ListOp::Move { .. } => 1,
+            ListOp::StyleStart { .. }
+            | ListOp::StyleEnd { .. }
+            | ListOp::Move { .. }
+            | ListOp::DeleteMovableListItem { .. } => 1,
         }
     }
 }
@@ -396,9 +416,10 @@ impl<'a> Sliceable for ListOp<'a> {
                 pos: *pos + from,
             },
             ListOp::Delete(span) => ListOp::Delete(span.slice(from, to)),
-            a @ (ListOp::StyleStart { .. } | ListOp::StyleEnd { .. } | ListOp::Move { .. }) => {
-                a.clone()
-            }
+            a @ (ListOp::StyleStart { .. }
+            | ListOp::StyleEnd { .. }
+            | ListOp::Move { .. }
+            | ListOp::DeleteMovableListItem { .. }) => a.clone(),
         }
     }
 }
@@ -488,7 +509,8 @@ impl HasLength for InnerListOp {
             InnerListOp::Delete(span) => span.atom_len(),
             InnerListOp::StyleStart { .. }
             | InnerListOp::StyleEnd { .. }
-            | InnerListOp::Move { .. } => 1,
+            | InnerListOp::Move { .. }
+            | InnerListOp::DeleteMovableListItem { .. } => 1,
         }
     }
 }
@@ -522,7 +544,8 @@ impl Sliceable for InnerListOp {
             InnerListOp::Delete(span) => InnerListOp::Delete(span.slice(from, to)),
             InnerListOp::StyleStart { .. }
             | InnerListOp::StyleEnd { .. }
-            | InnerListOp::Move { .. } => self.clone(),
+            | InnerListOp::Move { .. }
+            | InnerListOp::DeleteMovableListItem { .. } => self.clone(),
         }
     }
 }
