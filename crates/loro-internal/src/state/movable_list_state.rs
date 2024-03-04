@@ -242,7 +242,7 @@ impl MovableListState {
         Some(item)
     }
 
-    pub fn get_id_at(&self, index: usize) -> Option<IdInfo> {
+    pub(crate) fn get_id_at(&self, index: usize) -> Option<IdInfo> {
         self.get_list_item_at(index).map(|x| {
             let p = x.pointed_by.unwrap();
             let p: IdLp = p.to_id();
@@ -250,7 +250,7 @@ impl MovableListState {
                 IdInfo::Same(x.id.id())
             } else {
                 IdInfo::Diff {
-                    list_item_id: x.id.idlp(),
+                    list_item_id: x.id.id(),
                     elem_id: p,
                 }
             }
@@ -285,7 +285,7 @@ impl MovableListState {
 
 pub(crate) enum IdInfo {
     Same(ID),
-    Diff { list_item_id: IdLp, elem_id: IdLp },
+    Diff { list_item_id: ID, elem_id: IdLp },
 }
 
 impl ContainerState for MovableListState {

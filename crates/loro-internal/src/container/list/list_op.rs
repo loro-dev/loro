@@ -23,7 +23,7 @@ pub enum ListOp<'a> {
     },
     Delete(DeleteSpanWithId),
     DeleteMovableListItem {
-        list_item_id: IdLp,
+        list_item_id: ID,
         elem_id: IdLp,
         pos: usize,
     },
@@ -59,7 +59,7 @@ pub enum InnerListOp {
     },
     /// Only use this when DeleteSpanWithId is not enough
     DeleteMovableListItem {
-        list_item_id: IdLp,
+        list_item_id: ID,
         elem_id: IdLp,
         pos: usize,
     },
