@@ -137,7 +137,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
     .ops_map;
 
     let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
-    // debug_log::debug_dbg!(&changes);
+
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
         oplog.dag.refresh_frontiers();

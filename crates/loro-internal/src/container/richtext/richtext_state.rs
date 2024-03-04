@@ -2128,8 +2128,7 @@ impl RichtextState {
         };
         assert!(end > start);
         assert!(end <= self.len_entity());
-        // debug_log::debug_dbg!(start, end);
-        // debug_log::debug_dbg!(&self.tree);
+
         let mut style_iter = self
             .style_ranges
             .as_ref()
@@ -2172,7 +2171,7 @@ impl RichtextState {
             }
 
             let iter_chunk = chunk.as_ref()?;
-            // debug_log::debug_dbg!(&iter_chunk, &chunk, offset, chunk_left_len);
+
             let styles = cur_style;
             let iter_len;
             let event_range;

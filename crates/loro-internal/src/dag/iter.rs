@@ -313,8 +313,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         let path = self.dag.find_path(&self.frontier, &deps);
 
         // tracing::span!(tracing::Level::INFO, "Dag Causal");
-        // debug_log::debug_dbg!(&deps);
-        // debug_log::debug_dbg!(&path);
+
         //
 
         // NOTE: we expect user to update the tracker, to apply node, after visiting the node

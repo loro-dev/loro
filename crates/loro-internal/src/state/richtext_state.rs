@@ -275,7 +275,7 @@ impl ContainerState for RichtextState {
                             Delta::new().retain(event_range.start);
                         let mut entity_len_sum = 0;
                         let expected_sum = entity_range.len();
-                        // debug_log::debug_dbg!(&entity_range);
+
                         for IterRangeItem {
                             event_len,
                             chunk,
@@ -284,7 +284,6 @@ impl ContainerState for RichtextState {
                             ..
                         } in self.state.get_mut().iter_range(entity_range)
                         {
-                            // debug_log::debug_dbg!(&chunk, entity_len);
                             entity_len_sum += entity_len;
                             match chunk {
                                 RichtextStateChunk::Text(_) => {

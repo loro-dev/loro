@@ -58,7 +58,7 @@ impl CrdtRope {
         }
 
         // tracing::span!(tracing::Level::INFO, "Inserting {} len={}", content.id, content.rle_len());
-        // debug_log::debug_dbg!(&self.tree);
+
         let pos = pos as i32;
         let start = self.tree.query::<ActiveLenQueryPreferLeft>(&pos).unwrap();
 
@@ -134,7 +134,6 @@ impl CrdtRope {
             (parent_right_leaf, in_between)
         };
 
-        // debug_log::debug_dbg!(&parent_right_leaf, &in_between);
         let mut insert_pos = start.cursor;
 
         if !in_between.is_empty() {
@@ -285,7 +284,6 @@ impl CrdtRope {
                 (true, a, b)
             });
 
-            // debug_log::debug_dbg!(&splitted);
             return smallvec![splitted];
         }
 

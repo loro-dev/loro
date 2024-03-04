@@ -72,8 +72,7 @@ impl Tracker {
 
     pub(crate) fn insert(&mut self, mut op_id: IdFull, mut pos: usize, mut content: RichtextChunk) {
         // tracing::span!(tracing::Level::INFO, "TrackerInsert");
-        // debug_log::debug_dbg!(&op_id, pos, content);
-        // debug_log::debug_dbg!(&self);
+
         let last_id = op_id.inc(content.len() as Counter - 1);
         let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
         if applied_counter_end > op_id.counter {
@@ -138,13 +137,12 @@ impl Tracker {
         let end_id = op_id.inc(content.len() as Counter);
         self.current_vv.extend_to_include_end_id(end_id.id());
         self.applied_vv.extend_to_include_end_id(end_id.id());
-        // debug_log::debug_dbg!(&self);
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
         for &new_leaf_idx in split {
             let leaf = self.rope.tree().get_elem(new_leaf_idx).unwrap();
-            // debug_log::debug_dbg!(&leaf.id_span(), new_leaf_idx);
+
             self.id_to_cursor
                 .update_insert(leaf.id_span(), new_leaf_idx)
         }
@@ -164,8 +162,7 @@ impl Tracker {
         reverse: bool,
     ) {
         // tracing::span!(tracing::Level::INFO, "Tracker Delete");
-        // debug_log::debug_dbg!(&op_id, pos, len, reverse);
-        // debug_log::debug_dbg!(&self);
+
         let last_id = op_id.inc(len as Counter - 1);
         let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
         if applied_counter_end > op_id.counter {
@@ -192,10 +189,9 @@ impl Tracker {
             // If reverse, don't need to change the pos, because it's deleting backwards.
             // If not reverse, we don't need to change the pos either, because the `start` chars after it are already deleted
         }
-        // debug_log::debug_dbg!(&op_id, pos, len, reverse);
 
         // tracing::info!("after forwarding pos={} len={}", pos, len);
-        // debug_log::debug_dbg!(&self);
+
         let mut ans = Vec::new();
         let split = self
             .rope
@@ -223,7 +219,6 @@ impl Tracker {
         let end_id = op_id.inc(len as Counter);
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
-        // debug_log::debug_dbg!(&self);
     }
 
     #[inline]
@@ -379,7 +374,7 @@ impl Tracker {
         self._checkout(from, false);
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();
-        // debug_log::debug_dbg!(&self);
+
         self.rope.get_diff()
     }
 }

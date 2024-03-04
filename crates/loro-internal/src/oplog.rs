@@ -776,7 +776,7 @@ impl OpLog {
                     }
 
                     inner_vv.extend_to_include_end_id(change.id);
-                    // debug_log::debug_dbg!(&change, &inner_vv);
+
                     Some((change, cnt, vv.clone()))
                 } else {
                     None

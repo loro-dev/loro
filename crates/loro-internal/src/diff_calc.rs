@@ -727,7 +727,6 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             }
         }
 
-        // debug_log::debug_dbg!(&self.tracker);
         InternalDiff::RichtextRaw(delta)
     }
 }

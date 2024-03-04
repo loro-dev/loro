@@ -337,9 +337,7 @@ impl DocState {
         let diffs = std::mem::take(&mut recorder.diffs);
         let start = recorder.diff_start_version.take().unwrap();
         recorder.diff_start_version = Some((*diffs.last().unwrap().new_version).to_owned());
-        // debug_dbg!(&diffs);
         let event = self.diffs_to_event(diffs, start);
-        // debug_dbg!(&event);
         self.event_recorder.events.push(event);
     }
 
