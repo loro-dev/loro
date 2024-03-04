@@ -30,7 +30,7 @@ pub enum ListOp<'a> {
     Move {
         from: u32,
         to: u32,
-        from_id: ID,
+        elem_id: IdLp,
     },
     /// StyleStart and StyleEnd must be paired because the end of a style must take an OpID position.
     StyleStart {
@@ -75,7 +75,7 @@ pub enum InnerListOp {
     },
     Move {
         from: u32,
-        from_id: ID,
+        from_id: IdLp,
         to: u32,
     },
     StyleEnd,
@@ -135,6 +135,11 @@ impl DeleteSpanWithId {
     #[inline]
     pub fn start(&self) -> isize {
         self.span.start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> isize {
+        self.span.end()
     }
 
     #[inline]

@@ -1149,7 +1149,7 @@ mod encode {
                         &Value::Move {
                             from: *from as usize,
                             from_idx: register_peer.register(&from_id.peer),
-                            cnt: from_id.counter as usize,
+                            lamport: from_id.lamport as usize,
                         },
                         register_key,
                         register_cid,
@@ -1490,7 +1490,7 @@ mod value {
         Move {
             from: usize,
             from_idx: usize,
-            cnt: usize,
+            lamport: usize,
         },
         TreeMove(EncodedTreeMove),
         Unknown {
@@ -1805,7 +1805,7 @@ mod value {
                 Value::Move {
                     from,
                     from_idx,
-                    cnt,
+                    lamport: cnt,
                 } => {
                     self.write_usize(*from);
                     self.write_usize(*from_idx);

@@ -57,10 +57,14 @@ impl<'a> RawOpContent<'a> {
                     info: *info,
                 }),
                 ListOp::StyleEnd => RawOpContent::List(ListOp::StyleEnd),
-                ListOp::Move { from, to, from_id } => RawOpContent::List(ListOp::Move {
+                ListOp::Move {
+                    from,
+                    to,
+                    elem_id: from_id,
+                } => RawOpContent::List(ListOp::Move {
                     from: *from,
                     to: *to,
-                    from_id: *from_id,
+                    elem_id: *from_id,
                 }),
                 ListOp::DeleteMovableListItem {
                     list_item_id,

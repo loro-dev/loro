@@ -6,16 +6,19 @@ use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue,
 
 use crate::{
     arena::SharedArena,
-    container::idx::ContainerIdx,
+    container::{
+        idx::ContainerIdx,
+        list::list_op::{InnerListOp, ListOp},
+    },
     delta::DeltaItem,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
-    op::{Op, RawOp},
+    op::{ListSlice, Op, RawOp},
     txn::Transaction,
     DocState,
 };
 
-use self::list_item_tree::{MovableListTreeTrait, UserLenQuery};
+use self::list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery};
 
 use super::ContainerState;
 
@@ -38,6 +41,13 @@ struct Element {
     value: LoroValue,
     value_id: IdLp,
     pos: IdLp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IndexType {
+    /// This includes the deleted ones.
+    ForUser,
+    ForOp,
 }
 
 mod list_item_tree {
@@ -88,9 +98,12 @@ mod list_item_tree {
 
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
     pub(super) struct Cache {
-        // This include the ones that were deleted
-        pub all: i32,
-        pub user: i32,
+        /// This length info include the ones that were deleted.
+        /// It's used in op and diff calculation.
+        pub include_dead_len: i32,
+        /// This length info does not include the ones that were deleted.
+        /// So it's facing the users.
+        pub user_len: i32,
     }
 
     impl Add for Cache {
@@ -98,8 +111,8 @@ mod list_item_tree {
 
         fn add(self, rhs: Self) -> Self::Output {
             Self {
-                all: self.all + rhs.all,
-                user: self.user + rhs.user,
+                include_dead_len: self.include_dead_len + rhs.include_dead_len,
+                user_len: self.user_len + rhs.user_len,
             }
         }
     }
@@ -115,8 +128,8 @@ mod list_item_tree {
 
         fn sub(self, rhs: Self) -> Self::Output {
             Self {
-                all: self.all - rhs.all,
-                user: self.user - rhs.user,
+                include_dead_len: self.include_dead_len - rhs.include_dead_len,
+                user_len: self.user_len - rhs.user_len,
             }
         }
     }
@@ -156,9 +169,15 @@ mod list_item_tree {
 
         fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
             if elem.pointed_by.is_some() {
-                Cache { all: 1, user: 1 }
+                Cache {
+                    include_dead_len: 1,
+                    user_len: 1,
+                }
             } else {
-                Cache { all: 1, user: 0 }
+                Cache {
+                    include_dead_len: 1,
+                    user_len: 0,
+                }
             }
         }
 
@@ -176,7 +195,7 @@ mod list_item_tree {
 
     impl QueryByLen<MovableListTreeTrait> for UserLenQueryT {
         fn get_cache_len(cache: &<MovableListTreeTrait as BTreeTrait>::Cache) -> usize {
-            cache.user as usize
+            cache.user_len as usize
         }
 
         fn get_elem_len(elem: &<MovableListTreeTrait as BTreeTrait>::Elem) -> usize {
@@ -199,16 +218,16 @@ mod list_item_tree {
         }
 
         fn get_cache_entity_len(cache: &<MovableListTreeTrait as BTreeTrait>::Cache) -> usize {
-            cache.user as usize
+            cache.user_len as usize
         }
     }
 
-    pub(crate) struct AllLenQueryT;
-    pub(crate) type AllLenQuery = IndexQuery<AllLenQueryT, MovableListTreeTrait>;
+    pub(crate) struct IncludeDeadLenQueryT;
+    pub(crate) type OpLenQuery = IndexQuery<IncludeDeadLenQueryT, MovableListTreeTrait>;
 
-    impl QueryByLen<MovableListTreeTrait> for AllLenQueryT {
+    impl QueryByLen<MovableListTreeTrait> for IncludeDeadLenQueryT {
         fn get_cache_len(cache: &<MovableListTreeTrait as BTreeTrait>::Cache) -> usize {
-            cache.all as usize
+            cache.include_dead_len as usize
         }
 
         fn get_elem_len(elem: &<MovableListTreeTrait as BTreeTrait>::Elem) -> usize {
@@ -223,7 +242,7 @@ mod list_item_tree {
         }
 
         fn get_cache_entity_len(cache: &<MovableListTreeTrait as BTreeTrait>::Cache) -> usize {
-            cache.all as usize
+            cache.include_dead_len as usize
         }
     }
 }
@@ -240,12 +259,13 @@ impl MovableListState {
     }
 
     /// This update may not succeed if the given value_id is smaller than the existing value_id.
-    fn try_update_elem_pos(&mut self, elem_id: IdLp, list_item_id: IdLp) {
+    #[must_use]
+    fn try_update_elem_pos(&mut self, elem_id: IdLp, list_item_id: IdLp) -> bool {
         let id = elem_id.try_into().unwrap();
         let mut old_item_id = None;
         if let Some(element) = self.elements.get_mut(&id) {
             if element.pos > list_item_id {
-                return;
+                return false;
             }
 
             old_item_id = Some(element.pos);
@@ -280,6 +300,8 @@ impl MovableListState {
                 (true, None, None)
             });
         }
+
+        true
     }
 
     /// This update may not succeed if the given value_id is smaller than the existing value_id.
@@ -304,34 +326,86 @@ impl MovableListState {
         }
     }
 
-    fn list_insert(&mut self, index: usize, item: ListItem) {
+    fn list_insert(&mut self, index: usize, item: ListItem, kind: IndexType) {
         let id = item.id;
-        let (cursor, _) = self.list.insert::<UserLenQuery>(&index, item);
+        let (cursor, _) = match kind {
+            IndexType::ForUser => self.list.insert::<UserLenQuery>(&index, item),
+            IndexType::ForOp => self.list.insert::<OpLenQuery>(&index, item),
+        };
         self.id_to_list_leaf.insert(id.idlp(), cursor.leaf);
     }
 
-    fn list_insert_batch(&mut self, index: usize, items: impl Iterator<Item = ListItem>) {
+    fn list_insert_batch(
+        &mut self,
+        index: usize,
+        items: impl Iterator<Item = ListItem>,
+        kind: IndexType,
+    ) {
         for (i, item) in items.enumerate() {
-            self.list_insert(index + i, item);
+            self.list_insert(index + i, item, kind);
         }
     }
 
-    fn list_drain(&mut self, range: std::ops::Range<usize>) {
-        self.list.drain_by_query::<UserLenQuery>(range);
+    fn list_drain(&mut self, range: std::ops::Range<usize>, kind: IndexType) {
+        match kind {
+            IndexType::ForUser => {
+                for item in self.list.drain_by_query::<UserLenQuery>(range) {
+                    if let Some(p) = item.pointed_by.as_ref() {
+                        self.elements.remove(p);
+                    }
+                }
+            }
+            IndexType::ForOp => {
+                for item in self.list.drain_by_query::<OpLenQuery>(range) {
+                    if let Some(p) = item.pointed_by.as_ref() {
+                        self.elements.remove(p);
+                    }
+                }
+            }
+        }
     }
 
-    pub fn get(&self, index: usize) -> Option<&LoroValue> {
+    fn mov(
+        &mut self,
+        from_index: usize,
+        to_index: usize,
+        elem_id: IdLp,
+        new_pos_id: IdFull,
+        kind: IndexType,
+    ) {
+        if self.try_update_elem_pos(elem_id, new_pos_id.idlp()) {
+            let item = ListItem {
+                pointed_by: Some(elem_id.compact()),
+                id: new_pos_id,
+            };
+
+            if cfg!(debug_assertions) {
+                let item = self.get_list_item_at(from_index, kind).unwrap();
+                assert_eq!(item.pointed_by, Some(elem_id.compact()));
+            }
+
+            match kind {
+                IndexType::ForUser => self.list.insert::<UserLenQuery>(&to_index, item),
+                IndexType::ForOp => self.list.insert::<OpLenQuery>(&to_index, item),
+            };
+        }
+    }
+
+    pub fn get(&self, index: usize, kind: IndexType) -> Option<&LoroValue> {
         if index >= self.len() {
             return None;
         }
 
-        let item = self.get_list_item_at(index).unwrap();
+        let item = self.get_list_item_at(index, kind).unwrap();
         let elem = item.pointed_by.unwrap();
         self.elements.get(&elem).map(|x| &x.value)
     }
 
-    fn get_list_item_at(&self, index: usize) -> Option<&ListItem> {
-        let cursor = self.list.query::<UserLenQuery>(&index)?;
+    fn get_list_item_at(&self, index: usize, kind: IndexType) -> Option<&ListItem> {
+        let cursor = match kind {
+            IndexType::ForUser => self.list.query::<UserLenQuery>(&index)?,
+            IndexType::ForOp => self.list.query::<OpLenQuery>(&index)?,
+        };
         if !cursor.found {
             return None;
         }
@@ -340,8 +414,8 @@ impl MovableListState {
         Some(item)
     }
 
-    pub(crate) fn get_id_at(&self, index: usize) -> Option<IdInfo> {
-        self.get_list_item_at(index).map(|x| {
+    pub(crate) fn get_id_at(&self, index: usize, kind: IndexType) -> Option<IdInfo> {
+        self.get_list_item_at(index, kind).map(|x| {
             let p = x.pointed_by.unwrap();
             let p: IdLp = p.to_id();
             if x.id.idlp() == p {
@@ -355,29 +429,54 @@ impl MovableListState {
         })
     }
 
-    pub fn get_list_item_index(&self, id: IdLp) -> Option<usize> {
-        self.id_to_list_leaf.get(&id).map(|leaf| {
-            let mut ans = 0;
-            self.list.visit_previous_caches(
-                Cursor {
-                    leaf: *leaf,
-                    offset: 0,
-                },
-                |cache| match cache {
-                    generic_btree::PreviousCache::NodeCache(c) => ans += c.user,
-                    generic_btree::PreviousCache::PrevSiblingElem(p) => {
-                        ans += if p.pointed_by.is_some() { 1 } else { 0 }
-                    }
-                    generic_btree::PreviousCache::ThisElemAndOffset { .. } => {}
-                },
-            );
+    pub fn convert_user_index_to_op_index(&self, index: usize) -> Option<usize> {
+        if index == self.len() {
+            return Some(self.list.root_cache().include_dead_len as usize);
+        }
 
-            ans as usize
-        })
+        if index > self.len() {
+            return None;
+        }
+
+        let c = self.list.query::<UserLenQuery>(&index).unwrap();
+        Some(self.get_user_index_of(c.cursor.leaf, IndexType::ForOp) as usize)
+    }
+
+    pub fn get_list_item_index(&self, id: IdLp) -> Option<usize> {
+        self.id_to_list_leaf
+            .get(&id)
+            .map(|leaf| self.get_user_index_of(*leaf, IndexType::ForUser) as usize)
+    }
+
+    fn get_user_index_of(&self, leaf: LeafIndex, kind: IndexType) -> i32 {
+        let mut ans = 0;
+        self.list
+            .visit_previous_caches(Cursor { leaf, offset: 0 }, |cache| match cache {
+                generic_btree::PreviousCache::NodeCache(c) => {
+                    if matches!(kind, IndexType::ForUser) {
+                        ans += c.user_len;
+                    } else {
+                        ans += c.include_dead_len;
+                    }
+                }
+                generic_btree::PreviousCache::PrevSiblingElem(p) => {
+                    if matches!(kind, IndexType::ForUser) {
+                        ans += if p.pointed_by.is_some() { 1 } else { 0 };
+                    } else {
+                        ans += 1;
+                    }
+                }
+                generic_btree::PreviousCache::ThisElemAndOffset { .. } => {}
+            });
+        ans
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &LoroValue> {
+        (0..self.len()).map(move |i| self.get(i, IndexType::ForUser).unwrap())
     }
 
     pub fn len(&self) -> usize {
-        self.list.root_cache().user as usize
+        self.list.root_cache().user_len as usize
     }
 }
 
@@ -431,6 +530,7 @@ impl ContainerState for MovableListState {
                                 id: x,
                                 pointed_by: None,
                             }),
+                            IndexType::ForOp,
                         );
                         index += len;
                     }
@@ -438,7 +538,7 @@ impl ContainerState for MovableListState {
                         delete,
                         attributes: _,
                     } => {
-                        self.list_drain(index..index + delete);
+                        self.list_drain(index..index + delete, IndexType::ForOp);
                     }
                 }
             }
@@ -473,8 +573,71 @@ impl ContainerState for MovableListState {
         self.apply_diff_and_convert(diff, arena, txn, state);
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
-        todo!()
+    fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<()> {
+        match op.content.as_list().unwrap() {
+            ListOp::Insert { slice, pos } => match slice {
+                ListSlice::RawData(list) => {
+                    let mut a = None;
+                    let mut b = None;
+                    let v: &mut dyn Iterator<Item = &LoroValue>;
+                    match list {
+                        std::borrow::Cow::Borrowed(list) => {
+                            a = Some(list.iter());
+                            v = a.as_mut().unwrap();
+                        }
+                        std::borrow::Cow::Owned(list) => {
+                            b = Some(list.iter());
+                            v = b.as_mut().unwrap();
+                        }
+                    }
+
+                    for (i, x) in v.enumerate() {
+                        let elem_id = op.idlp().inc(i as i32).try_into().unwrap();
+                        let pos_id = op.id_full().inc(i as i32);
+                        self.elements.insert(
+                            elem_id,
+                            Element {
+                                value: x.clone(),
+                                value_id: elem_id.to_id(),
+                                pos: pos_id.idlp(),
+                            },
+                        );
+
+                        self.list_insert(
+                            *pos + i,
+                            ListItem {
+                                id: pos_id,
+                                pointed_by: Some(elem_id),
+                            },
+                            IndexType::ForOp,
+                        );
+                    }
+                }
+                _ => unreachable!(),
+            },
+            ListOp::Delete(span) => {
+                self.list_drain(span.start() as usize..span.end() as usize, IndexType::ForOp);
+            }
+            ListOp::DeleteMovableListItem {
+                list_item_id,
+                elem_id,
+                pos,
+            } => {
+                self.list_drain(*pos..*pos + 1, IndexType::ForOp);
+            }
+            ListOp::Move { from, to, elem_id } => {
+                self.mov(
+                    *from as usize,
+                    *to as usize,
+                    *elem_id,
+                    op.id_full(),
+                    IndexType::ForOp,
+                );
+            }
+            ListOp::StyleStart { .. } | ListOp::StyleEnd => todo!(),
+        }
+
+        Ok(())
     }
 
     #[doc = r" Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied."]
@@ -490,7 +653,7 @@ impl ContainerState for MovableListState {
     fn get_value(&mut self) -> LoroValue {
         let list = self
             .list
-            .iter_with_filter(|x| (x.user > 0, 0))
+            .iter_with_filter(|x| (x.user_len > 0, 0))
             .filter_map(|(_, item)| item.pointed_by.map(|eid| self.elements[&eid].value.clone()))
             .collect();
         LoroValue::List(Arc::new(list))

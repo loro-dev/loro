@@ -6,7 +6,7 @@ use crate::{
 };
 use crate::{delta::DeltaValue, LoroValue};
 use enum_as_inner::EnumAsInner;
-use loro_common::{CounterSpan, IdFull, IdSpan};
+use loro_common::{CounterSpan, IdFull, IdLp, IdSpan};
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -78,6 +78,10 @@ pub struct RawOp<'a> {
 impl RawOp<'_> {
     pub(crate) fn id_full(&self) -> loro_common::IdFull {
         IdFull::new(self.id.peer, self.id.counter, self.lamport)
+    }
+
+    pub(crate) fn idlp(&self) -> loro_common::IdLp {
+        IdLp::new(self.id.peer, self.lamport)
     }
 }
 

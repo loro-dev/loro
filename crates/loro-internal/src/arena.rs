@@ -310,7 +310,11 @@ impl SharedArena {
                     container,
                     content: InnerContent::List(InnerListOp::StyleEnd),
                 },
-                ListOp::Move { from, to, from_id } => Op {
+                ListOp::Move {
+                    from,
+                    to,
+                    elem_id: from_id,
+                } => Op {
                     counter,
                     container,
                     content: InnerContent::List(InnerListOp::Move { from, to, from_id }),

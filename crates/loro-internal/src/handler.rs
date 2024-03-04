@@ -9,7 +9,7 @@ use crate::{
     },
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
-    state::{RichtextState, TreeParentId},
+    state::{IndexType, RichtextState, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
 };
@@ -1022,11 +1022,22 @@ impl MovableListHandler {
             return Ok(());
         }
 
+        let op_index =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    let list = state.as_movable_list_state().unwrap();
+                    list.convert_user_index_to_op_index(pos).unwrap()
+                });
+
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
-                pos,
+                pos: op_index,
             }),
             EventHint::InsertList { len: 1 },
             &self.state,
@@ -1112,7 +1123,7 @@ impl MovableListHandler {
             });
         }
 
-        let ids: Vec<_> =
+        let (ids, pos) =
             self.state
                 .upgrade()
                 .unwrap()
@@ -1120,12 +1131,16 @@ impl MovableListHandler {
                 .unwrap()
                 .with_state(self.container_idx, |state| {
                     let list = state.as_movable_list_state().unwrap();
-                    (pos..pos + len)
-                        .map(|i| list.get_id_at(i).unwrap())
-                        .collect()
+                    let ids: Vec<_> = (pos..pos + len)
+                        .map(|i| list.get_id_at(i, IndexType::ForUser).unwrap())
+                        .collect();
+                    let poses: Vec<_> = (pos..pos + len)
+                        .map(|i| list.convert_user_index_to_op_index(i).unwrap())
+                        .collect();
+                    (ids, poses)
                 });
 
-        for id in ids.into_iter() {
+        for (id, pos) in ids.into_iter().zip(pos.into_iter()) {
             match id {
                 crate::state::IdInfo::Same(id) => {
                     txn.apply_local_op(
@@ -1168,7 +1183,7 @@ impl MovableListHandler {
                 .as_movable_list_state()
                 .as_ref()
                 .unwrap()
-                .get(index)
+                .get(index, IndexType::ForUser)
                 .unwrap()
                 .as_container()
                 .unwrap()
@@ -1239,7 +1254,7 @@ impl MovableListHandler {
             .unwrap()
             .with_state(self.container_idx, |state| {
                 let a = state.as_movable_list_state().unwrap();
-                a.get(index).cloned()
+                a.get(index, IndexType::ForUser).cloned()
             })
     }
 
@@ -1249,8 +1264,8 @@ impl MovableListHandler {
         let doc_state = &mut mutex.lock().unwrap();
         let arena = doc_state.arena.clone();
         doc_state.with_state(self.container_idx, |state| {
-            let a = state.as_list_state().unwrap();
-            match a.get(index) {
+            let a = state.as_movable_list_state().unwrap();
+            match a.get(index, IndexType::ForUser) {
                 Some(v) => {
                     if let LoroValue::Container(id) = v {
                         let idx = arena.register_container(id);
@@ -1276,7 +1291,7 @@ impl MovableListHandler {
         let doc_state = &mut mutex.lock().unwrap();
         let arena = doc_state.arena.clone();
         doc_state.with_state(self.container_idx, |state| {
-            let a = state.as_list_state().unwrap();
+            let a = state.as_movable_list_state().unwrap();
             for v in a.iter() {
                 match v {
                     LoroValue::Container(c) => {

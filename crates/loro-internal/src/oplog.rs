@@ -606,7 +606,7 @@ impl OpLog {
                 list_op::InnerListOp::Move { from, from_id, to } => {
                     contents.push(RawOpContent::List(list_op::ListOp::Move {
                         from: *from,
-                        from_id: *from_id,
+                        elem_id: *from_id,
                         to: *to,
                     }))
                 }

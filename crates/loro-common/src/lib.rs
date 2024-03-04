@@ -83,6 +83,12 @@ pub struct IdLp {
     pub peer: PeerID,
 }
 
+impl IdLp {
+    pub fn compact(self) -> CompactIdLp {
+        CompactIdLp::new(self.peer, self.lamport)
+    }
+}
+
 /// It's the unique ID of an Op represented by [PeerID] and [Counter].
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct CompactIdLp {
