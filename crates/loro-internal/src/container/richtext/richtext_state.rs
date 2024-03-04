@@ -17,11 +17,9 @@ use std::{
 };
 
 use crate::{
-    container::richtext::{
-        query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex},
-        style_range_map::EMPTY_STYLES,
-    },
+    container::richtext::style_range_map::EMPTY_STYLES,
     delta::{DeltaValue, StyleMeta},
+    utils::query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex, QueryByLen},
 };
 
 // FIXME: Check splice and other things are using unicode index
@@ -34,7 +32,6 @@ use self::{
 };
 
 use super::{
-    query_by_len::{IndexQuery, QueryByLen},
     style_range_map::{IterAnchorItem, StyleRangeMap, Styles},
     AnchorType, RichtextSpan, StyleOp,
 };
@@ -645,7 +642,7 @@ pub(crate) struct PosCache {
     pub(super) unicode_len: i32,
     pub(super) bytes: i32,
     pub(super) utf16_len: i32,
-    pub(super) entity_len: i32,
+    pub(crate) entity_len: i32,
 }
 
 impl PosCache {
@@ -786,6 +783,8 @@ impl BTreeTrait for RichtextTreeTrait {
 
 // This query implementation will prefer right element when both left element and right element are valid.
 mod query {
+    use crate::utils::query_by_len::{IndexQuery, QueryByLen};
+
     use super::*;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

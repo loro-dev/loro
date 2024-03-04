@@ -12,7 +12,6 @@
 
 pub(crate) mod config;
 mod fugue_span;
-mod query_by_len;
 pub(crate) mod richtext_state;
 mod style_range_map;
 mod tracker;

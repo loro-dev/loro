@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex, Weak};
 
 use fxhash::FxHashMap;
-use generic_btree::{BTree, Cursor, LeafIndex, LengthFinder};
+use generic_btree::{BTree, Cursor, LeafIndex};
 use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue, ID};
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
     DocState,
 };
 
-use self::list_item_tree::MovableListTreeTrait;
+use self::list_item_tree::{MovableListTreeTrait, UserLenQuery};
 
 use super::ContainerState;
 
@@ -41,10 +41,17 @@ struct Element {
 }
 
 mod list_item_tree {
+    use std::{
+        iter::Sum,
+        ops::{Add, AddAssign, Sub},
+    };
+
     use generic_btree::{
         rle::{HasLength, Mergeable, Sliceable},
-        BTreeTrait, UseLengthFinder,
+        BTreeTrait,
     };
+
+    use crate::utils::query_by_len::{IndexQuery, QueryByLen};
 
     use super::ListItem;
 
@@ -79,27 +86,68 @@ mod list_item_tree {
         }
     }
 
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+    pub(super) struct Cache {
+        // This include the ones that were deleted
+        pub all: i32,
+        pub user: i32,
+    }
+
+    impl Add for Cache {
+        type Output = Self;
+
+        fn add(self, rhs: Self) -> Self::Output {
+            Self {
+                all: self.all + rhs.all,
+                user: self.user + rhs.user,
+            }
+        }
+    }
+
+    impl AddAssign for Cache {
+        fn add_assign(&mut self, rhs: Self) {
+            *self = *self + rhs;
+        }
+    }
+
+    impl Sub for Cache {
+        type Output = Self;
+
+        fn sub(self, rhs: Self) -> Self::Output {
+            Self {
+                all: self.all - rhs.all,
+                user: self.user - rhs.user,
+            }
+        }
+    }
+
+    impl Sum for Cache {
+        fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+            iter.fold(Self::default(), |acc, x| acc + x)
+        }
+    }
+
     pub(super) struct MovableListTreeTrait;
 
     impl BTreeTrait for MovableListTreeTrait {
         type Elem = ListItem;
 
-        type Cache = i32;
+        type Cache = Cache;
 
-        type CacheDiff = i32;
+        type CacheDiff = Cache;
 
         fn calc_cache_internal(
             cache: &mut Self::Cache,
             caches: &[generic_btree::Child<Self>],
         ) -> Self::CacheDiff {
-            let new: i32 = caches.iter().map(|x| x.cache()).sum();
+            let new: Cache = caches.iter().map(|x| *x.cache()).sum();
             let diff = new - *cache;
             *cache = new;
             diff
         }
 
         fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
-            *cache += diff;
+            *cache += *diff;
         }
 
         fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
@@ -108,9 +156,9 @@ mod list_item_tree {
 
         fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
             if elem.pointed_by.is_some() {
-                1
+                Cache { all: 1, user: 1 }
             } else {
-                0
+                Cache { all: 1, user: 0 }
             }
         }
 
@@ -119,13 +167,63 @@ mod list_item_tree {
         }
 
         fn sub_cache(cache_lhs: &Self::Cache, cache_rhs: &Self::Cache) -> Self::CacheDiff {
-            cache_lhs - cache_rhs
+            *cache_lhs - *cache_rhs
         }
     }
 
-    impl UseLengthFinder<MovableListTreeTrait> for MovableListTreeTrait {
-        fn get_len(cache: &i32) -> usize {
-            *cache as usize
+    pub(crate) struct UserLenQueryT;
+    pub(crate) type UserLenQuery = IndexQuery<UserLenQueryT, MovableListTreeTrait>;
+
+    impl QueryByLen<MovableListTreeTrait> for UserLenQueryT {
+        fn get_cache_len(cache: &<MovableListTreeTrait as BTreeTrait>::Cache) -> usize {
+            cache.user as usize
+        }
+
+        fn get_elem_len(elem: &<MovableListTreeTrait as BTreeTrait>::Elem) -> usize {
+            if elem.pointed_by.is_some() {
+                1
+            } else {
+                0
+            }
+        }
+
+        fn get_offset_and_found(
+            left: usize,
+            elem: &<MovableListTreeTrait as BTreeTrait>::Elem,
+        ) -> (usize, bool) {
+            if elem.pointed_by.is_some() {
+                (0, true)
+            } else {
+                (1, false)
+            }
+        }
+
+        fn get_cache_entity_len(cache: &<MovableListTreeTrait as BTreeTrait>::Cache) -> usize {
+            cache.user as usize
+        }
+    }
+
+    pub(crate) struct AllLenQueryT;
+    pub(crate) type AllLenQuery = IndexQuery<AllLenQueryT, MovableListTreeTrait>;
+
+    impl QueryByLen<MovableListTreeTrait> for AllLenQueryT {
+        fn get_cache_len(cache: &<MovableListTreeTrait as BTreeTrait>::Cache) -> usize {
+            cache.all as usize
+        }
+
+        fn get_elem_len(elem: &<MovableListTreeTrait as BTreeTrait>::Elem) -> usize {
+            1
+        }
+
+        fn get_offset_and_found(
+            left: usize,
+            elem: &<MovableListTreeTrait as BTreeTrait>::Elem,
+        ) -> (usize, bool) {
+            (0, true)
+        }
+
+        fn get_cache_entity_len(cache: &<MovableListTreeTrait as BTreeTrait>::Cache) -> usize {
+            cache.all as usize
         }
     }
 }
@@ -208,7 +306,7 @@ impl MovableListState {
 
     fn list_insert(&mut self, index: usize, item: ListItem) {
         let id = item.id;
-        let (cursor, _) = self.list.insert::<LengthFinder>(&index, item);
+        let (cursor, _) = self.list.insert::<UserLenQuery>(&index, item);
         self.id_to_list_leaf.insert(id.idlp(), cursor.leaf);
     }
 
@@ -219,7 +317,7 @@ impl MovableListState {
     }
 
     fn list_drain(&mut self, range: std::ops::Range<usize>) {
-        self.list.drain_by_query::<LengthFinder>(range);
+        self.list.drain_by_query::<UserLenQuery>(range);
     }
 
     pub fn get(&self, index: usize) -> Option<&LoroValue> {
@@ -233,7 +331,7 @@ impl MovableListState {
     }
 
     fn get_list_item_at(&self, index: usize) -> Option<&ListItem> {
-        let cursor = self.list.query::<LengthFinder>(&index)?;
+        let cursor = self.list.query::<UserLenQuery>(&index)?;
         if !cursor.found {
             return None;
         }
@@ -266,7 +364,7 @@ impl MovableListState {
                     offset: 0,
                 },
                 |cache| match cache {
-                    generic_btree::PreviousCache::NodeCache(c) => ans += *c,
+                    generic_btree::PreviousCache::NodeCache(c) => ans += c.user,
                     generic_btree::PreviousCache::PrevSiblingElem(p) => {
                         ans += if p.pointed_by.is_some() { 1 } else { 0 }
                     }
@@ -279,7 +377,7 @@ impl MovableListState {
     }
 
     pub fn len(&self) -> usize {
-        *self.list.root_cache() as usize
+        self.list.root_cache().user as usize
     }
 }
 
@@ -392,7 +490,7 @@ impl ContainerState for MovableListState {
     fn get_value(&mut self) -> LoroValue {
         let list = self
             .list
-            .iter_with_filter(|x| (*x > 0, 0))
+            .iter_with_filter(|x| (x.user > 0, 0))
             .filter_map(|(_, item)| item.pointed_by.map(|eid| self.elements[&eid].value.clone()))
             .collect();
         LoroValue::List(Arc::new(list))
