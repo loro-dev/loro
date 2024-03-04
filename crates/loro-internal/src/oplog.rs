@@ -551,7 +551,7 @@ impl OpLog {
                             pos: *pos,
                         }));
                     }
-                    loro_common::ContainerType::List => {
+                    loro_common::ContainerType::List | loro_common::ContainerType::MovableList => {
                         contents.push(RawOpContent::List(list_op::ListOp::Insert {
                             slice: ListSlice::RawData(Cow::Owned(
                                 self.arena
@@ -579,6 +579,7 @@ impl OpLog {
                         }));
                     }
                     loro_common::ContainerType::List
+                    | loro_common::ContainerType::MovableList
                     | loro_common::ContainerType::Map
                     | loro_common::ContainerType::Tree => {
                         unreachable!()

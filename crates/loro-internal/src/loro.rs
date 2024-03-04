@@ -21,7 +21,7 @@ use crate::{
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    handler::{TextHandler, TreeHandler},
+    handler::{MovableListHandler, TextHandler, TreeHandler},
     id::PeerID,
     oplog::dag::FrontiersNotIncluded,
     version::Frontiers,
@@ -570,6 +570,14 @@ impl LoroDoc {
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let idx = self.get_container_idx(id, ContainerType::List);
         ListHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    #[inline]
+    pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> MovableListHandler {
+        let idx = self.get_container_idx(id, ContainerType::MovableList);
+        MovableListHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.

@@ -1,15 +1,13 @@
 use std::sync::{Arc, Mutex, Weak};
+use tracing::{debug, instrument};
 
 use fxhash::FxHashMap;
-use generic_btree::{BTree, Cursor, LeafIndex};
+use generic_btree::{BTree, Cursor, LeafIndex, Query};
 use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue, ID};
 
 use crate::{
     arena::SharedArena,
-    container::{
-        idx::ContainerIdx,
-        list::list_op::{InnerListOp, ListOp},
-    },
+    container::{idx::ContainerIdx, list::list_op::ListOp},
     delta::DeltaItem,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
@@ -45,9 +43,10 @@ struct Element {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IndexType {
-    /// This includes the deleted ones.
-    ForUser,
+    /// This includes the ones that are not being pointed at, which may not be visible to users
     ForOp,
+    /// This only includes the ones that are being pointed at, which means visible to users
+    ForUser,
 }
 
 mod list_item_tree {
@@ -210,7 +209,7 @@ mod list_item_tree {
             left: usize,
             elem: &<MovableListTreeTrait as BTreeTrait>::Elem,
         ) -> (usize, bool) {
-            if elem.pointed_by.is_some() {
+            if left == 0 && elem.pointed_by.is_some() {
                 (0, true)
             } else {
                 (1, false)
@@ -236,9 +235,13 @@ mod list_item_tree {
 
         fn get_offset_and_found(
             left: usize,
-            elem: &<MovableListTreeTrait as BTreeTrait>::Elem,
+            _elem: &<MovableListTreeTrait as BTreeTrait>::Elem,
         ) -> (usize, bool) {
-            (0, true)
+            if left == 0 {
+                return (0, true);
+            }
+
+            (1, false)
         }
 
         fn get_cache_entity_len(cache: &<MovableListTreeTrait as BTreeTrait>::Cache) -> usize {
@@ -259,7 +262,6 @@ impl MovableListState {
     }
 
     /// This update may not succeed if the given value_id is smaller than the existing value_id.
-    #[must_use]
     fn try_update_elem_pos(&mut self, elem_id: IdLp, list_item_id: IdLp) -> bool {
         let id = elem_id.try_into().unwrap();
         let mut old_item_id = None;
@@ -328,9 +330,13 @@ impl MovableListState {
 
     fn list_insert(&mut self, index: usize, item: ListItem, kind: IndexType) {
         let id = item.id;
-        let (cursor, _) = match kind {
-            IndexType::ForUser => self.list.insert::<UserLenQuery>(&index, item),
-            IndexType::ForOp => self.list.insert::<OpLenQuery>(&index, item),
+        let cursor = if index == self.len_kind(kind) {
+            self.list.push(item)
+        } else {
+            match kind {
+                IndexType::ForUser => self.list.insert::<UserLenQuery>(&index, item).0,
+                IndexType::ForOp => self.list.insert::<OpLenQuery>(&index, item).0,
+            }
         };
         self.id_to_list_leaf.insert(id.idlp(), cursor.leaf);
     }
@@ -346,23 +352,42 @@ impl MovableListState {
         }
     }
 
+    fn len_kind(&self, kind: IndexType) -> usize {
+        match kind {
+            IndexType::ForUser => self.list.root_cache().user_len as usize,
+            IndexType::ForOp => self.list.root_cache().include_dead_len as usize,
+        }
+    }
+
+    #[instrument(skip(self))]
     fn list_drain(&mut self, range: std::ops::Range<usize>, kind: IndexType) {
         match kind {
             IndexType::ForUser => {
-                for item in self.list.drain_by_query::<UserLenQuery>(range) {
+                for item in Self::drain_by_query::<UserLenQuery>(&mut self.list, range) {
+                    self.id_to_list_leaf.remove(&item.id.idlp());
                     if let Some(p) = item.pointed_by.as_ref() {
                         self.elements.remove(p);
                     }
                 }
             }
             IndexType::ForOp => {
-                for item in self.list.drain_by_query::<OpLenQuery>(range) {
+                for item in Self::drain_by_query::<OpLenQuery>(&mut self.list, range) {
+                    self.id_to_list_leaf.remove(&item.id.idlp());
                     if let Some(p) = item.pointed_by.as_ref() {
                         self.elements.remove(p);
                     }
                 }
             }
         }
+    }
+
+    fn drain_by_query<Q: Query<MovableListTreeTrait>>(
+        list: &mut BTree<MovableListTreeTrait>,
+        range: std::ops::Range<Q::QueryArg>,
+    ) -> generic_btree::iter::Drain<'_, MovableListTreeTrait> {
+        let start = list.query::<Q>(&range.start);
+        let end = list.query::<Q>(&range.end);
+        generic_btree::iter::Drain::new(list, start, end)
     }
 
     fn mov(
@@ -373,25 +398,21 @@ impl MovableListState {
         new_pos_id: IdFull,
         kind: IndexType,
     ) {
-        if self.try_update_elem_pos(elem_id, new_pos_id.idlp()) {
-            let item = ListItem {
-                pointed_by: Some(elem_id.compact()),
-                id: new_pos_id,
-            };
+        // PERF: can be optimized by inlining try update
+        let item = ListItem {
+            pointed_by: None,
+            id: new_pos_id,
+        };
 
-            if cfg!(debug_assertions) {
-                let item = self.get_list_item_at(from_index, kind).unwrap();
-                assert_eq!(item.pointed_by, Some(elem_id.compact()));
-            }
-
-            match kind {
-                IndexType::ForUser => self.list.insert::<UserLenQuery>(&to_index, item),
-                IndexType::ForOp => self.list.insert::<OpLenQuery>(&to_index, item),
-            };
+        if cfg!(debug_assertions) {
+            let item = self.get_list_item_at(from_index, kind).unwrap();
+            assert_eq!(item.pointed_by, Some(elem_id.compact()));
         }
+        self.list_insert(to_index, item, kind);
+        self.try_update_elem_pos(elem_id, new_pos_id.idlp());
     }
 
-    pub fn get(&self, index: usize, kind: IndexType) -> Option<&LoroValue> {
+    pub(crate) fn get(&self, index: usize, kind: IndexType) -> Option<&LoroValue> {
         if index >= self.len() {
             return None;
         }
@@ -412,6 +433,15 @@ impl MovableListState {
 
         let item = self.list.get_elem(cursor.leaf())?;
         Some(item)
+    }
+
+    pub(crate) fn get_elem_id_at_given_pos(
+        &self,
+        index: usize,
+        kind: IndexType,
+    ) -> Option<CompactIdLp> {
+        self.get_list_item_at(index, kind)
+            .and_then(|x| x.pointed_by)
     }
 
     pub(crate) fn get_id_at(&self, index: usize, kind: IndexType) -> Option<IdInfo> {
@@ -480,6 +510,7 @@ impl MovableListState {
     }
 }
 
+#[derive(Debug)]
 pub(crate) enum IdInfo {
     Same(ID),
     Diff { list_item_id: ID, elem_id: IdLp },
@@ -573,6 +604,7 @@ impl ContainerState for MovableListState {
         self.apply_diff_and_convert(diff, arena, txn, state);
     }
 
+    #[instrument(skip_all)]
     fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<()> {
         match op.content.as_list().unwrap() {
             ListOp::Insert { slice, pos } => match slice {
@@ -682,5 +714,31 @@ impl ContainerState for MovableListState {
     #[doc = r" Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{LoroDoc, ToJson};
+    use serde_json::json;
+
+    #[test]
+    fn basic_handler_ops() {
+        let doc = LoroDoc::new_auto_commit();
+        let list = doc.get_movable_list("list");
+        list.insert(0, 0).unwrap();
+        list.insert(1, 1).unwrap();
+        list.insert(2, 2).unwrap();
+        assert_eq!(list.get_value().to_json_value(), json!([0, 1, 2]));
+        list.mov(0, 1).unwrap();
+        assert_eq!(list.get_value().to_json_value(), json!([1, 0, 2]));
+        list.mov(2, 0).unwrap();
+        assert_eq!(list.get_value().to_json_value(), json!([2, 1, 0]));
+        list.delete(0, 2).unwrap();
+        assert_eq!(list.get_value().to_json_value(), json!([0]));
+        list.insert(0, 9).unwrap();
+        assert_eq!(list.get_value().to_json_value(), json!([9, 0]));
+        list.delete(0, 2).unwrap();
+        assert_eq!(list.get_value().to_json_value(), json!([]));
     }
 }

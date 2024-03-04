@@ -9,6 +9,7 @@
     "flate",
     "gmax",
     "heapless",
+    "idlp",
     "idspan",
     "insta",
     "Itertools",

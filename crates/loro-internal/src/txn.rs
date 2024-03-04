@@ -89,6 +89,10 @@ pub(super) enum EventHint {
     InsertList {
         len: u32,
     },
+    Move {
+        from: u32,
+        to: u32,
+    },
     DeleteList(DeleteSpan),
     Map {
         key: InternalString,
@@ -111,6 +115,7 @@ impl generic_btree::rle::HasLength for EventHint {
             EventHint::Map { .. } => 1,
             EventHint::Tree(_) => 1,
             EventHint::MarkEnd => 1,
+            EventHint::Move { .. } => 1,
         }
     }
 }
@@ -587,6 +592,9 @@ fn change_to_diff(
                         idx: op.container,
                         diff: Diff::Tree(diff),
                     });
+                }
+                EventHint::Move { from, to } => {
+                    unimplemented!()
                 }
                 EventHint::MarkEnd => {
                     // do nothing

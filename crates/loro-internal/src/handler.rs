@@ -25,6 +25,7 @@ use std::{
     ops::Deref,
     sync::{Mutex, Weak},
 };
+use tracing::{info, instrument};
 
 #[derive(Debug, Clone, EnumAsInner, Deserialize, Serialize)]
 #[serde(untagged)]
@@ -95,7 +96,7 @@ pub struct ListHandler {
     state: Weak<Mutex<DocState>>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct MovableListHandler {
     txn: Weak<Mutex<Option<Transaction>>>,
     pub(crate) container_idx: ContainerIdx,
@@ -127,6 +128,7 @@ pub enum Handler {
     Text(TextHandler),
     Map(MapHandler),
     List(ListHandler),
+    MovableList(MovableListHandler),
     Tree(TreeHandler),
 }
 
@@ -137,6 +139,7 @@ impl Handler {
             Self::List(x) => x.container_idx,
             Self::Text(x) => x.container_idx,
             Self::Tree(x) => x.container_idx,
+            Self::MovableList(x) => x.container_idx,
         }
     }
 
@@ -146,6 +149,7 @@ impl Handler {
             Self::List(_) => ContainerType::List,
             Self::Text(_) => ContainerType::Text,
             Self::Tree(_) => ContainerType::Tree,
+            Self::MovableList(_) => ContainerType::MovableList,
         }
     }
 }
@@ -161,6 +165,9 @@ impl Handler {
             ContainerType::List => Self::List(ListHandler::new(txn, idx, state)),
             ContainerType::Tree => Self::Tree(TreeHandler::new(txn, idx, state)),
             ContainerType::Text => Self::Text(TextHandler::new(txn, idx, state)),
+            ContainerType::MovableList => {
+                Self::MovableList(MovableListHandler::new(txn, idx, state))
+            }
         }
     }
 }
@@ -992,7 +999,7 @@ impl MovableListHandler {
         idx: ContainerIdx,
         state: Weak<Mutex<DocState>>,
     ) -> Self {
-        assert_eq!(idx.get_type(), ContainerType::List);
+        assert_eq!(idx.get_type(), ContainerType::MovableList);
         Self {
             txn,
             container_idx: idx,
@@ -1004,6 +1011,7 @@ impl MovableListHandler {
         with_txn(&self.txn, |txn| self.insert_with_txn(txn, pos, v.into()))
     }
 
+    #[instrument(skip_all)]
     pub fn insert_with_txn(
         &self,
         txn: &mut Transaction,
@@ -1040,6 +1048,64 @@ impl MovableListHandler {
                 pos: op_index,
             }),
             EventHint::InsertList { len: 1 },
+            &self.state,
+        )
+    }
+
+    #[inline]
+    pub fn mov(&self, from: usize, to: usize) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.move_with_txn(txn, from, to))
+    }
+
+    /// Move element from `from` to `to`. After this op, elem will be at pos `to`.
+    #[instrument(skip_all)]
+    pub fn move_with_txn(&self, txn: &mut Transaction, from: usize, to: usize) -> LoroResult<()> {
+        if from == to {
+            return Ok(());
+        }
+
+        if from >= self.len() {
+            return Err(LoroError::OutOfBound {
+                pos: from,
+                len: self.len(),
+            });
+        }
+
+        if to >= self.len() {
+            return Err(LoroError::OutOfBound {
+                pos: to,
+                len: self.len(),
+            });
+        }
+
+        let (op_from, op_to, elem_id) =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    let list = state.as_movable_list_state().unwrap();
+                    (
+                        list.convert_user_index_to_op_index(from).unwrap(),
+                        list.convert_user_index_to_op_index(if to > from { to + 1 } else { to })
+                            .unwrap(),
+                        list.get_elem_id_at_given_pos(from, IndexType::ForUser)
+                            .unwrap(),
+                    )
+                });
+
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Move {
+                from: op_from as u32,
+                to: op_to as u32,
+                elem_id: elem_id.to_id(),
+            }),
+            EventHint::Move {
+                from: from as u32,
+                to: to as u32,
+            },
             &self.state,
         )
     }
@@ -1111,6 +1177,7 @@ impl MovableListHandler {
         with_txn(&self.txn, |txn| self.delete_with_txn(txn, pos, len))
     }
 
+    #[instrument(skip_all)]
     pub fn delete_with_txn(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
         if len == 0 {
             return Ok(());
@@ -1135,11 +1202,13 @@ impl MovableListHandler {
                         .map(|i| list.get_id_at(i, IndexType::ForUser).unwrap())
                         .collect();
                     let poses: Vec<_> = (pos..pos + len)
-                        .map(|i| list.convert_user_index_to_op_index(i).unwrap())
+                        // need to -i because we delete the previous ones
+                        .map(|i| list.convert_user_index_to_op_index(i).unwrap() - i)
                         .collect();
                     (ids, poses)
                 });
 
+        info!(?ids, ?pos, "delete_with_txn");
         for (id, pos) in ids.into_iter().zip(pos.into_iter()) {
             match id {
                 crate::state::IdInfo::Same(id) => {

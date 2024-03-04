@@ -537,7 +537,11 @@ mod failed_tests {
             unsafe { GUARD = Some(_guard) };
             tracing::subscriber::set_global_default(
                 Registry::default()
-                    .with(tracing_subscriber::fmt::Layer::default())
+                    .with(
+                        tracing_subscriber::fmt::Layer::default()
+                            .with_line_number(true)
+                            .with_file(true),
+                    )
                     .with(chrome_layer),
             )
             .unwrap();

@@ -155,6 +155,12 @@ impl DiffCalculator {
                                         op.container,
                                     )),
                                 ),
+                                crate::ContainerType::MovableList => (
+                                    depth,
+                                    ContainerDiffCalculator::MovableList(
+                                        MovableListDiffCalculator::default(),
+                                    ),
+                                ),
                             }
                         });
                     // checkout use the same diff_calculator, the depth of calculator is not updated
@@ -323,6 +329,7 @@ enum ContainerDiffCalculator {
     List(ListDiffCalculator),
     Richtext(RichtextDiffCalculator),
     Tree(TreeDiffCalculator),
+    MovableList(MovableListDiffCalculator),
 }
 
 #[derive(Debug)]
@@ -731,5 +738,42 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         }
 
         InternalDiff::RichtextRaw(delta)
+    }
+}
+
+#[derive(Debug, Default)]
+struct MovableListDiffCalculator {
+    start_vv: VersionVector,
+    tracker: Box<RichtextTracker>,
+}
+
+impl MovableListDiffCalculator {}
+
+impl DiffCalculatorTrait for MovableListDiffCalculator {
+    fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector) {
+        todo!()
+    }
+
+    fn apply_change(
+        &mut self,
+        oplog: &OpLog,
+        op: crate::op::RichOp,
+        vv: Option<&crate::VersionVector>,
+    ) {
+        todo!()
+    }
+
+    fn stop_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector) {
+        todo!()
+    }
+
+    fn calculate_diff(
+        &mut self,
+        oplog: &OpLog,
+        from: &crate::VersionVector,
+        to: &crate::VersionVector,
+        on_new_container: impl FnMut(&ContainerID),
+    ) -> InternalDiff {
+        todo!()
     }
 }

@@ -1100,6 +1100,9 @@ impl DocState {
                 self.config.text_style_config.clone(),
             ))),
             ContainerType::Tree => State::TreeState(Box::new(TreeState::new(idx))),
+            ContainerType::MovableList => {
+                State::MovableListState(Box::new(MovableListState::new(idx)))
+            }
         }
     }
 }

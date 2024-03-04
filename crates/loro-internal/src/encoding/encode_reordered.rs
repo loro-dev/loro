@@ -1305,6 +1305,9 @@ fn decode_op(
             }
             _ => unreachable!(),
         },
+        ContainerType::MovableList => {
+            unimplemented!()
+        }
     };
 
     Ok(content)

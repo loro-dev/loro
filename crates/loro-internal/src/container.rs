@@ -43,6 +43,7 @@ pub mod idx {
                 1 => ContainerType::List,
                 2 => ContainerType::Text,
                 3 => ContainerType::Tree,
+                4 => ContainerType::MovableList,
                 _ => unreachable!(),
             }
         }
@@ -58,6 +59,7 @@ pub mod idx {
                 ContainerType::List => 1,
                 ContainerType::Text => 2,
                 ContainerType::Tree => 3,
+                ContainerType::MovableList => 4,
             } << 28;
 
             Self(prefix | index)

@@ -11,8 +11,8 @@ use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
-    MapHandler as InnerMapHandler, TextHandler as InnerTextHandler,
-    TreeHandler as InnerTreeHandler,
+    MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
+    TextHandler as InnerTextHandler, TreeHandler as InnerTreeHandler,
 };
 use std::cmp::Ordering;
 use std::ops::Range;
@@ -782,6 +782,11 @@ impl LoroTree {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct LoroMovableList {
+    handler: InnerMovableListHandler,
+}
+
 use enum_as_inner::EnumAsInner;
 
 /// All the CRDT containers supported by loro.
@@ -791,6 +796,7 @@ pub enum Container {
     Map(LoroMap),
     Text(LoroText),
     Tree(LoroTree),
+    MovableList(LoroMovableList),
 }
 
 impl From<InnerHandler> for Container {
@@ -800,6 +806,7 @@ impl From<InnerHandler> for Container {
             InnerHandler::Map(x) => Container::Map(LoroMap { handler: x }),
             InnerHandler::List(x) => Container::List(LoroList { handler: x }),
             InnerHandler::Tree(x) => Container::Tree(LoroTree { handler: x }),
+            InnerHandler::MovableList(x) => Container::MovableList(LoroMovableList { handler: x }),
         }
     }
 }

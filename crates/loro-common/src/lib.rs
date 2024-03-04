@@ -166,6 +166,7 @@ pub enum ContainerType {
     Text,
     Map,
     List,
+    MovableList,
     Tree,
 }
 
@@ -176,6 +177,7 @@ impl ContainerType {
             ContainerType::List => LoroValue::List(Arc::new(Default::default())),
             ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
             ContainerType::Tree => LoroValue::List(Arc::new(Default::default())),
+            ContainerType::MovableList => LoroValue::List(Arc::new(Default::default())),
         }
     }
 
@@ -185,6 +187,7 @@ impl ContainerType {
             ContainerType::List => 2,
             ContainerType::Text => 3,
             ContainerType::Tree => 4,
+            ContainerType::MovableList => 5,
         }
     }
 
@@ -194,6 +197,7 @@ impl ContainerType {
             2 => ContainerType::List,
             3 => ContainerType::Text,
             4 => ContainerType::Tree,
+            5 => ContainerType::MovableList,
             _ => unreachable!(),
         }
     }
@@ -221,6 +225,7 @@ mod container {
             f.write_str(match self {
                 ContainerType::Map => "Map",
                 ContainerType::List => "List",
+                ContainerType::MovableList => "MovableList",
                 ContainerType::Text => "Text",
                 ContainerType::Tree => "Tree",
             })

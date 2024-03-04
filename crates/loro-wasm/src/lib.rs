@@ -604,6 +604,9 @@ impl Loro {
                 }
                 .into()
             }
+            ContainerType::MovableList => {
+                unimplemented!()
+            }
         })
     }
 
@@ -1548,6 +1551,7 @@ impl LoroMap {
                 doc: self.doc.clone(),
             }
             .into(),
+            ContainerType::MovableList => unimplemented!(),
         };
         Ok(container)
     }
@@ -1797,6 +1801,7 @@ impl LoroList {
                 doc: self.doc.clone(),
             }
             .into(),
+            ContainerType::MovableList => unimplemented!(),
         };
         Ok(container)
     }
