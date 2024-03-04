@@ -144,12 +144,13 @@ impl MovableListState {
     /// This update may not succeed if the given value_id is smaller than the existing value_id.
     fn try_update_elem_pos(&mut self, elem_id: IdLp, list_item_id: IdLp) {
         let id = elem_id.try_into().unwrap();
+        let mut old_item_id = None;
         if let Some(element) = self.elements.get_mut(&id) {
             if element.pos > list_item_id {
                 return;
             }
 
-            let _old_pos = element.pos;
+            old_item_id = Some(element.pos);
             // TODO: update list item pointed by
             element.pos = list_item_id;
         } else {
@@ -173,6 +174,14 @@ impl MovableListState {
                 (false, None, None)
             }
         });
+
+        if let Some(old) = old_item_id {
+            let leaf = self.id_to_list_leaf.get(&old).unwrap();
+            self.list.update_leaf(*leaf, |elem| {
+                elem.pointed_by = None;
+                (true, None, None)
+            });
+        }
     }
 
     /// This update may not succeed if the given value_id is smaller than the existing value_id.
