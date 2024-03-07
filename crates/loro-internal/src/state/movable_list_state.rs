@@ -538,9 +538,9 @@ impl ContainerState for MovableListState {
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        _arena: &SharedArena,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
     ) -> Diff {
         let InternalDiff::MovableList(diff) = diff else {
             unreachable!()
@@ -657,8 +657,8 @@ impl ContainerState for MovableListState {
                 self.list_drain(span.start() as usize..span.end() as usize, IndexType::ForOp);
             }
             ListOp::DeleteMovableListItem {
-                list_item_id,
-                elem_id,
+                list_item_id: _,
+                elem_id: _,
                 pos,
             } => {
                 self.list_drain(*pos..*pos + 1, IndexType::ForOp);
@@ -672,7 +672,7 @@ impl ContainerState for MovableListState {
                     IndexType::ForOp,
                 );
             }
-            ListOp::StyleStart { .. } | ListOp::StyleEnd => todo!(),
+            ListOp::StyleStart { .. } | ListOp::StyleEnd => unreachable!(),
         }
 
         Ok(())

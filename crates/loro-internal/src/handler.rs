@@ -194,6 +194,12 @@ impl ValueOrContainer {
     }
 }
 
+impl From<LoroValue> for ValueOrContainer {
+    fn from(value: LoroValue) -> Self {
+        ValueOrContainer::Value(value)
+    }
+}
+
 impl TextHandler {
     pub fn new(
         txn: Weak<Mutex<Option<Transaction>>>,

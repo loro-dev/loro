@@ -22,7 +22,7 @@ use crate::{
     delta::{
         Delta, ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem,
     },
-    event::Diff,
+    event::{Diff, ListDeltaMeta},
     handler::ValueOrContainer,
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
@@ -594,7 +594,17 @@ fn change_to_diff(
                     });
                 }
                 EventHint::Move { from, to } => {
-                    unimplemented!()
+                    ans.push(TxnContainerDiff {
+                        idx: op.container,
+                        diff: Diff::List(Delta::new().retain(from as usize).delete(1).compose(
+                            Delta::new().retain(to as usize).insert_with_meta(
+                                vec![LoroValue::Null.into()],
+                                ListDeltaMeta {
+                                    move_from: Some(from as usize),
+                                },
+                            ),
+                        )),
+                    });
                 }
                 EventHint::MarkEnd => {
                     // do nothing
