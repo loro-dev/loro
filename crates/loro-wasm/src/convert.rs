@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use loro_internal::delta::{DeltaItem, ResolvedMapDelta};
-use loro_internal::event::Diff;
+use loro_internal::event::{Diff, ListDeltaMeta};
 use loro_internal::handler::{Handler, ValueOrContainer};
 use loro_internal::{LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
@@ -114,7 +114,10 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
     obj.into_js_result().unwrap()
 }
 
-fn delta_item_to_js(item: DeltaItem<Vec<ValueOrContainer>, ()>, doc: &Arc<LoroDoc>) -> JsValue {
+fn delta_item_to_js(
+    item: DeltaItem<Vec<ValueOrContainer>, ListDeltaMeta>,
+    doc: &Arc<LoroDoc>,
+) -> JsValue {
     let obj = Object::new();
     match item {
         DeltaItem::Retain { retain: len, .. } => {
@@ -125,7 +128,10 @@ fn delta_item_to_js(item: DeltaItem<Vec<ValueOrContainer>, ()>, doc: &Arc<LoroDo
             )
             .unwrap();
         }
-        DeltaItem::Insert { insert: value, .. } => {
+        DeltaItem::Insert {
+            insert: value,
+            attributes,
+        } => {
             let arr = Array::new_with_length(value.len() as u32);
             for (i, v) in value.into_iter().enumerate() {
                 let value = match v {
@@ -141,6 +147,10 @@ fn delta_item_to_js(item: DeltaItem<Vec<ValueOrContainer>, ()>, doc: &Arc<LoroDo
                 &arr.into_js_result().unwrap(),
             )
             .unwrap();
+
+            if let Some(src) = attributes.move_from {
+                js_sys::Reflect::set(&obj, &JsValue::from_str("move_from"), &src.into()).unwrap();
+            }
         }
         DeltaItem::Delete { delete: len, .. } => {
             js_sys::Reflect::set(

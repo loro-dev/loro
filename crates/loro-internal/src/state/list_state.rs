@@ -322,7 +322,7 @@ impl ContainerState for ListState {
         let InternalDiff::ListRaw(delta) = diff else {
             unreachable!()
         };
-        let mut ans: Delta<_> = Delta::default();
+        let mut ans: Delta<_, _> = Delta::default();
         let mut index = 0;
         for span in delta.iter() {
             match span {

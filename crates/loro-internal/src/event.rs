@@ -6,7 +6,8 @@ use smallvec::SmallVec;
 use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
     delta::{
-        Delta, MapDelta, MovableListInnerDelta, ResolvedMapDelta, StyleMeta, TreeDelta, TreeDiff,
+        Delta, MapDelta, Meta, MovableListInnerDelta, ResolvedMapDelta, StyleMeta, TreeDelta,
+        TreeDiff,
     },
     handler::ValueOrContainer,
     op::SliceRanges,
@@ -152,6 +153,35 @@ impl From<InternalDiff> for DiffVariant {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ListDeltaMeta {
+    /// whether the content of the insert is moved from
+    /// certain index in the original array.
+    pub move_from: Option<usize>,
+}
+
+impl Meta for ListDeltaMeta {
+    fn is_empty(&self) -> bool {
+        self.move_from.is_none()
+    }
+
+    fn compose(
+        &mut self,
+        other: &Self,
+        type_pair: (crate::delta::DeltaType, crate::delta::DeltaType),
+    ) {
+        // We can't have two None because we don't have `move_from` for Retain.
+        // And this function is only called when composing a insert/retain with a retain.
+        assert!(self.move_from.is_none() || other.move_from.is_none())
+    }
+
+    fn is_mergeable(&self, other: &Self) -> bool {
+        self.move_from.is_none() && other.move_from.is_none()
+    }
+
+    fn merge(&mut self, other: &Self) {}
+}
+
 /// Diff is the diff between two versions of a container.
 /// It's used to describe the change of a container and the events.
 ///
@@ -164,7 +194,7 @@ impl From<InternalDiff> for DiffVariant {
 #[non_exhaustive]
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum Diff {
-    List(Delta<Vec<ValueOrContainer>>),
+    List(Delta<Vec<ValueOrContainer>, ListDeltaMeta>),
     // TODO: refactor, doesn't make much sense to use `StyleMeta` here, because sometime style
     // don't have peer and lamport info
     /// - When feature `wasm` is enabled, it should use utf16 indexes.

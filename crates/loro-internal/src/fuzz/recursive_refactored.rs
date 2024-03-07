@@ -9,6 +9,7 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use loro_common::ID;
 use tabled::{TableIteratorExt, Tabled};
+use tracing::instrument;
 
 #[allow(unused_imports)]
 use crate::{
@@ -834,6 +835,7 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
     applied
 }
 
+#[instrument(skip_all)]
 pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     let mut sites = Vec::new();
     for i in 0..site_num {
