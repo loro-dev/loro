@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use std::sync::{Arc, Mutex, Weak};
 use tracing::{debug, instrument};
 
@@ -8,9 +9,10 @@ use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue,
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, list::list_op::ListOp},
-    delta::DeltaItem,
+    delta::{Delta, DeltaItem},
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
+    handler::ValueOrContainer,
     op::{ListSlice, Op, RawOp},
     txn::Transaction,
     DocState,
@@ -508,6 +510,10 @@ impl MovableListState {
     pub fn len(&self) -> usize {
         self.list.root_cache().user_len as usize
     }
+
+    fn to_vec(&self) -> Vec<LoroValue> {
+        self.iter().cloned().collect_vec()
+    }
 }
 
 #[derive(Debug)]
@@ -679,7 +685,14 @@ impl ContainerState for MovableListState {
         txn: &Weak<Mutex<Option<Transaction>>>,
         state: &Weak<Mutex<DocState>>,
     ) -> Diff {
-        todo!()
+        Diff::List(
+            Delta::new().insert(
+                self.to_vec()
+                    .into_iter()
+                    .map(|v| ValueOrContainer::from_value(v, arena, txn, state))
+                    .collect::<Vec<_>>(),
+            ),
+        )
     }
 
     fn get_value(&mut self) -> LoroValue {

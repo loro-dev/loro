@@ -208,6 +208,7 @@ impl ContainerType {
             2 => Ok(ContainerType::List),
             3 => Ok(ContainerType::Text),
             4 => Ok(ContainerType::Tree),
+            5 => Ok(ContainerType::MovableList),
             _ => Err(LoroError::DecodeError(
                 format!("Unknown container type {v}").into_boxed_str(),
             )),
