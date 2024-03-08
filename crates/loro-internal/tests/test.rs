@@ -5,7 +5,7 @@ use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, ID};
 use loro_internal::{
     delta::ResolvedMapValue,
     event::Diff,
-    handler::{Handler, TextDelta, ValueOrContainer},
+    handler::{Handler, TextDelta, ValueOrHandler},
     version::Frontiers,
     ApplyDiff, LoroDoc, ToJson,
 };
@@ -129,10 +129,7 @@ fn handler_in_event() {
             .iter()
             .next()
             .unwrap();
-        assert!(matches!(
-            value,
-            ValueOrContainer::Container(Handler::Text(_))
-        ));
+        assert!(matches!(value, ValueOrHandler::Handler(Handler::Text(_))));
     }));
     let list = doc.get_list("list");
     list.insert_container(0, ContainerType::Text).unwrap();

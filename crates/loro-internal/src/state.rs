@@ -18,7 +18,7 @@ use crate::{
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalContainerDiff, InternalDiff},
     fx_map,
-    handler::ValueOrContainer,
+    handler::ValueOrHandler,
     id::PeerID,
     op::{ListSlice, Op, RawOp, RawOpContent},
     txn::Transaction,
@@ -530,14 +530,11 @@ impl DocState {
                 }
             }
             RawOpContent::Tree(TreeOp { target, .. }) => {
-                let state = get_or_create!(self, container).as_tree_state().unwrap();
                 // create associated metadata container
                 // TODO: maybe we could create map container only when setting metadata
-                if !&state.trees.contains_key(target) {
-                    let container_id = target.associated_meta_container();
-                    let child_idx = self.arena.register_container(&container_id);
-                    self.arena.set_parent(child_idx, Some(container));
-                }
+                let container_id = target.associated_meta_container();
+                let child_idx = self.arena.register_container(&container_id);
+                self.arena.set_parent(child_idx, Some(container));
             }
         }
     }
@@ -569,14 +566,11 @@ impl DocState {
                 }
             }
             InternalDiff::Tree(tree) => {
-                let state = get_or_create!(self, container).as_tree_state().unwrap();
                 for diff in tree.diff.iter() {
                     let target = &diff.target;
-                    if !state.trees.contains_key(target) {
-                        let container_id = target.associated_meta_container();
-                        let child_idx = self.arena.register_container(&container_id);
-                        self.arena.set_parent(child_idx, Some(container));
-                    }
+                    let container_id = target.associated_meta_container();
+                    let child_idx = self.arena.register_container(&container_id);
+                    self.arena.set_parent(child_idx, Some(container));
                 }
             }
             InternalDiff::RichtextRaw(_) => {}
@@ -1126,8 +1120,8 @@ impl SubContainerDiffPatch {
                 for delta in list.iter() {
                     if delta.is_insert() {
                         for v in delta.as_insert().unwrap().0.iter() {
-                            if matches!(v, ValueOrContainer::Container(_)) {
-                                let idx = v.as_container().unwrap().container_idx();
+                            if matches!(v, ValueOrHandler::Handler(_)) {
+                                let idx = v.as_handler().unwrap().container_idx();
                                 if self.all_idx.contains(&idx) {
                                     // There is one in subsequent elements that require applying the diff
                                     self.mark_bring_back.insert(idx);
@@ -1156,7 +1150,7 @@ impl SubContainerDiffPatch {
             }
             Diff::Map(map) => {
                 for (_, v) in map.updated.iter() {
-                    if let Some(ValueOrContainer::Container(handler)) = &v.value {
+                    if let Some(ValueOrHandler::Handler(handler)) = &v.value {
                         let idx = handler.container_idx();
                         if self.all_idx.contains(&idx) {
                             self.mark_bring_back.insert(idx);

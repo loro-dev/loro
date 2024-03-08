@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
     delta::{Delta, MapDelta, ResolvedMapDelta, StyleMeta, TreeDelta, TreeDiff},
-    handler::ValueOrContainer,
+    handler::ValueOrHandler,
     op::SliceRanges,
     utils::string_slice::StringSlice,
     InternalString,
@@ -161,7 +161,7 @@ impl From<InternalDiff> for DiffVariant {
 #[non_exhaustive]
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum Diff {
-    List(Delta<Vec<ValueOrContainer>>),
+    List(Delta<Vec<ValueOrHandler>>),
     // TODO: refactor, doesn't make much sense to use `StyleMeta` here, because sometime style
     // don't have peer and lamport info
     /// - When feature `wasm` is enabled, it should use utf16 indexes.

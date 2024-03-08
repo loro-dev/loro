@@ -13,7 +13,7 @@ use crate::{
     delta::{MapValue, ResolvedMapDelta, ResolvedMapValue},
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
-    handler::ValueOrContainer,
+    handler::ValueOrHandler,
     op::{Op, RawOp, RawOpContent},
     txn::Transaction,
     DocState, InternalString, LoroValue,
@@ -59,7 +59,7 @@ impl ContainerState for MapState {
                     idlp: IdLp::new(value.peer, value.lamp),
                     value: value
                         .value
-                        .map(|v| ValueOrContainer::from_value(v, arena, txn, state)),
+                        .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
                 },
             )
         }

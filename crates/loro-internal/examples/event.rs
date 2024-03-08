@@ -4,7 +4,7 @@ use loro_common::ContainerType;
 use loro_internal::{
     delta::DeltaItem,
     event::Diff,
-    handler::{Handler, ValueOrContainer},
+    handler::{Handler, ValueOrHandler},
     LoroDoc, ToJson,
 };
 
@@ -24,7 +24,7 @@ fn main() {
                         {
                             for v in insert {
                                 match v {
-                                    ValueOrContainer::Container(h) => {
+                                    ValueOrHandler::Handler(h) => {
                                         // You can directly obtain the handler and perform some operations.
                                         if matches!(h, Handler::Map(_)) {
                                             let text = h
@@ -38,7 +38,7 @@ fn main() {
                                                 .unwrap();
                                         }
                                     }
-                                    ValueOrContainer::Value(value) => {
+                                    ValueOrHandler::Value(value) => {
                                         println!("insert value {:?}", value);
                                     }
                                 }

@@ -18,10 +18,10 @@ loro-preload = { path = "../loro-preload", version = "0.2.0" }
 loro-common = { path = "../loro-common", version = "0.2.0" }
 smallvec = { version = "1.8.0", features = ["serde"] }
 postcard = "1"
-fxhash = "0.2.1"
+fxhash = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
-enum-as-inner = "0.5.1"
+enum-as-inner = { workspace = true }
 num = "0.4.0"
 rand = { version = "0.8.5", optional = true }
 arbitrary = { version = "1", optional = true }
@@ -34,7 +34,7 @@ arref = "0.1.0"
 serde_columnar = { version = "0.3.3" }
 append-only-bytes = { version = "0.1.12", features = ["u32_range"] }
 itertools = "0.11.0"
-enum_dispatch = "0.3.11"
+enum_dispatch = { workspace = true }
 im = "15.1.0"
 generic-btree = { version = "0.8.2" }
 getrandom = "0.2.10"

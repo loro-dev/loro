@@ -1,12 +1,12 @@
 use std::{cmp::Ordering, sync::Arc};
 
 use loro::{FrontiersNotIncluded, LoroDoc, LoroError, ToJson};
-use loro_internal::{delta::DeltaItem, handler::TextDelta, id::ID, DiffEvent, LoroResult};
+use loro_internal::{handler::TextDelta, id::ID, LoroResult};
 use serde_json::json;
 
 #[test]
 fn list_checkout() -> Result<(), LoroError> {
-    let mut doc = LoroDoc::new();
+    let doc = LoroDoc::new();
     doc.get_list("list")
         .insert_container(0, loro::ContainerType::Map)?;
     doc.commit();
@@ -148,7 +148,7 @@ fn get_change_at_lamport() {
 
 #[test]
 fn time_travel() {
-    let mut doc = LoroDoc::new();
+    let doc = LoroDoc::new();
     let doc2 = LoroDoc::new();
     let text = doc.get_text("text");
     let text2 = doc2.get_text("text");
@@ -156,13 +156,11 @@ fn time_travel() {
         &text.id(),
         Arc::new(move |x| {
             for event in x.events {
-                let Some(text) = event.diff.as_text() else {
+                let Some(delta) = event.diff.as_text() else {
                     continue;
                 };
-
-                let delta: Vec<TextDelta> = text.iter().map(|x| x.into()).collect();
                 dbg!(&delta);
-                text2.apply_delta(&delta).unwrap();
+                text2.apply_delta(delta).unwrap();
             }
         }),
     );
@@ -184,7 +182,7 @@ fn time_travel() {
 
 #[test]
 fn travel_back_should_remove_styles() {
-    let mut doc = LoroDoc::new();
+    let doc = LoroDoc::new();
     let doc2 = LoroDoc::new();
     let text = doc.get_text("text");
     let text2 = doc2.get_text("text");
@@ -192,13 +190,11 @@ fn travel_back_should_remove_styles() {
         &text.id(),
         Arc::new(move |x| {
             for event in x.events {
-                let Some(text) = event.diff.as_text() else {
+                let Some(delta) = event.diff.as_text() else {
                     continue;
                 };
-
-                let delta: Vec<TextDelta> = text.iter().map(|x| x.into()).collect();
                 // dbg!(&delta);
-                text2.apply_delta(&delta).unwrap();
+                text2.apply_delta(delta).unwrap();
             }
         }),
     );
@@ -384,16 +380,15 @@ fn subscribe() {
 
     doc.subscribe(
         &text.id(),
-        Arc::new(move |event: DiffEvent| {
-            assert!(event.event_meta.local);
+        Arc::new(move |event| {
+            assert!(event.local);
             for event in event.events {
-                let event = event.diff.as_text().unwrap();
-                let delta: Vec<_> = event.iter().cloned().collect();
-                let d = DeltaItem::Insert {
+                let delta = event.diff.as_text().unwrap();
+                let d = TextDelta::Insert {
                     insert: "123".into(),
                     attributes: Default::default(),
                 };
-                assert_eq!(delta, vec![d]);
+                assert_eq!(delta, &vec![d]);
                 ran2.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }),

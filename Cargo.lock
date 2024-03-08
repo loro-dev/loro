@@ -423,6 +423,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "debug-log"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "caf861b629ec23fc562cccc8b47cc98a54d192ecf4e7b575ce30659d8c814c3a"
+dependencies = [
+ "once_cell",
+]
+
+[[package]]
 name = "derive_arbitrary"
 version = "1.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -530,6 +539,20 @@ name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+
+[[package]]
+name = "fuzz"
+version = "0.1.0"
+dependencies = [
+ "arbitrary",
+ "arbtest",
+ "debug-log",
+ "enum-as-inner 0.5.1",
+ "enum_dispatch",
+ "fxhash",
+ "loro",
+ "tabled 0.10.0",
+]
 
 [[package]]
 name = "fxhash"

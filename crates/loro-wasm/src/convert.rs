@@ -3,7 +3,7 @@ use std::sync::Arc;
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use loro_internal::delta::{DeltaItem, ResolvedMapDelta};
 use loro_internal::event::Diff;
-use loro_internal::handler::{Handler, ValueOrContainer};
+use loro_internal::handler::{Handler, ValueOrHandler};
 use loro_internal::{LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
@@ -114,7 +114,7 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
     obj.into_js_result().unwrap()
 }
 
-fn delta_item_to_js(item: DeltaItem<Vec<ValueOrContainer>, ()>, doc: &Arc<LoroDoc>) -> JsValue {
+fn delta_item_to_js(item: DeltaItem<Vec<ValueOrHandler>, ()>, doc: &Arc<LoroDoc>) -> JsValue {
     let obj = Object::new();
     match item {
         DeltaItem::Retain { retain: len, .. } => {
@@ -129,8 +129,8 @@ fn delta_item_to_js(item: DeltaItem<Vec<ValueOrContainer>, ()>, doc: &Arc<LoroDo
             let arr = Array::new_with_length(value.len() as u32);
             for (i, v) in value.into_iter().enumerate() {
                 let value = match v {
-                    ValueOrContainer::Value(v) => convert(v),
-                    ValueOrContainer::Container(h) => handler_to_js_value(h, doc.clone()),
+                    ValueOrHandler::Value(v) => convert(v),
+                    ValueOrHandler::Handler(h) => handler_to_js_value(h, doc.clone()),
                 };
                 arr.set(i as u32, value);
             }
@@ -197,8 +197,8 @@ fn map_delta_to_js(value: &ResolvedMapDelta, doc: &Arc<LoroDoc>) -> JsValue {
     for (key, value) in value.updated.iter() {
         let value = if let Some(value) = value.value.clone() {
             match value {
-                ValueOrContainer::Value(v) => convert(v),
-                ValueOrContainer::Container(h) => handler_to_js_value(h, doc.clone()),
+                ValueOrHandler::Value(v) => convert(v),
+                ValueOrHandler::Handler(h) => handler_to_js_value(h, doc.clone()),
             }
         } else {
             JsValue::null()

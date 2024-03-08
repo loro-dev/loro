@@ -11,7 +11,7 @@ use crate::state::TreeParentId;
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct TreeDiff {
-    pub(crate) diff: Vec<TreeDiffItem>,
+    pub diff: Vec<TreeDiffItem>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -137,6 +137,8 @@ impl TreeDelta {
     }
 }
 
+// TODO: we moved the `TreeValue` to `fuzz` crate,
+//       when we clean up the `fuzz` in `internal` crate, we can remove this.
 #[derive(Debug)]
 pub(crate) struct TreeValue<'a>(pub(crate) &'a mut Vec<LoroValue>);
 

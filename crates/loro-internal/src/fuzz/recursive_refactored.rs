@@ -20,7 +20,7 @@ use crate::{
         richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
     },
     event::Diff,
-    handler::{TextHandler, ValueOrContainer},
+    handler::{TextHandler, ValueOrHandler},
     loro::LoroDoc,
     value::ToJson,
     version::Frontiers,
@@ -174,11 +174,11 @@ impl Actor {
                             match &value.value {
                                 Some(value) => {
                                     let value = match value {
-                                        ValueOrContainer::Container(c) => {
+                                        ValueOrHandler::Handler(c) => {
                                             let id = arena.idx_to_id(c.container_idx()).unwrap();
                                             LoroValue::Container(id)
                                         }
-                                        ValueOrContainer::Value(v) => v.clone(),
+                                        ValueOrHandler::Value(v) => v.clone(),
                                     };
                                     map.insert(key.to_string(), value);
                                 }
@@ -220,12 +220,12 @@ impl Actor {
                                 } => {
                                     for v in value {
                                         let value = match v {
-                                            ValueOrContainer::Container(c) => {
+                                            ValueOrHandler::Handler(c) => {
                                                 let id =
                                                     arena.idx_to_id(c.container_idx()).unwrap();
                                                 LoroValue::Container(id)
                                             }
-                                            ValueOrContainer::Value(v) => v.clone(),
+                                            ValueOrHandler::Value(v) => v.clone(),
                                         };
                                         list.insert(index, value);
                                         index += 1;

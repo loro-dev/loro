@@ -88,47 +88,7 @@ impl Actor {
                         let mut txn = text_doc.txn().unwrap();
                         let text_h = text_doc.get_text("text");
                         // println!("diff {:?}", text_diff);
-                        let text_deltas = text_diff
-                            .iter()
-                            .map(|x| match x {
-                                DeltaItem::Insert { insert, attributes } => {
-                                    let attributes: FxHashMap<_, _> = attributes
-                                        .iter()
-                                        .filter(|(_, v)| !v.data.is_null())
-                                        .map(|(k, v)| (k.to_string(), v.data))
-                                        .collect();
-                                    let attributes = if attributes.is_empty() {
-                                        None
-                                    } else {
-                                        Some(attributes)
-                                    };
-                                    TextDelta::Insert {
-                                        insert: insert.to_string(),
-                                        attributes,
-                                    }
-                                }
-                                DeltaItem::Delete {
-                                    delete,
-                                    attributes: _,
-                                } => TextDelta::Delete { delete: *delete },
-                                DeltaItem::Retain { retain, attributes } => {
-                                    let attributes: FxHashMap<_, _> = attributes
-                                        .iter()
-                                        .filter(|(_, v)| !v.data.is_null())
-                                        .map(|(k, v)| (k.to_string(), v.data))
-                                        .collect();
-                                    let attributes = if attributes.is_empty() {
-                                        None
-                                    } else {
-                                        Some(attributes)
-                                    };
-                                    TextDelta::Retain {
-                                        retain: *retain,
-                                        attributes,
-                                    }
-                                }
-                            })
-                            .collect::<Vec<_>>();
+                        let text_deltas = text_diff.iter().map(TextDelta::from).collect::<Vec<_>>();
                         // println!(
                         //     "\n{} before {:?}",
                         //     text_doc.peer_id(),
