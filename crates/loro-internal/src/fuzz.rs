@@ -1,3 +1,5 @@
+use std::{fmt::Debug, time::Instant};
+
 pub mod recursive_refactored;
 pub mod richtext;
 pub mod tree;
@@ -12,11 +14,7 @@ use crate::{
 };
 use enum_as_inner::EnumAsInner;
 use loro_common::ContainerID;
-use std::{
-    fmt::Debug,
-    sync::{Arc, Mutex},
-    time::Instant,
-};
+use std::sync::{Arc, Mutex};
 use tabled::Tabled;
 
 const STYLES_NAME: [&str; 4] = ["bold", "comment", "link", "highlight"];

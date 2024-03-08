@@ -8,7 +8,7 @@ use loro_common::IdLp;
 use serde::{ser::SerializeStruct, Serialize};
 
 use crate::{
-    arena::SharedArena, change::Lamport, handler::ValueOrContainer, id::PeerID, span::HasLamport,
+    arena::SharedArena, change::Lamport, handler::ValueOrHandler, id::PeerID, span::HasLamport,
     txn::Transaction, DocState, InternalString, LoroValue,
 };
 
@@ -59,7 +59,7 @@ pub struct ResolvedMapDelta {
 
 #[derive(Debug, Clone)]
 pub struct ResolvedMapValue {
-    pub value: Option<ValueOrContainer>,
+    pub value: Option<ValueOrHandler>,
     pub idlp: IdLp,
 }
 
@@ -74,7 +74,7 @@ impl ResolvedMapValue {
             idlp: IdLp::new(v.peer, v.lamp),
             value: v
                 .value
-                .map(|v| ValueOrContainer::from_value(v, arena, txn, state)),
+                .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
         }
     }
 }

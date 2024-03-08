@@ -6,7 +6,7 @@ use loro_internal::{
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
     event::Index,
-    handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrContainer},
+    handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrHandler},
     id::{Counter, TreeID, ID},
     obs::SubID,
     version::Frontiers,
@@ -1405,8 +1405,8 @@ impl LoroMap {
     pub fn get(&self, key: &str) -> JsValueOrContainerOrUndefined {
         let v = self.handler.get_(key);
         (match v {
-            Some(ValueOrContainer::Container(c)) => handler_to_js_value(c, self.doc.clone()),
-            Some(ValueOrContainer::Value(v)) => v.into(),
+            Some(ValueOrHandler::Handler(c)) => handler_to_js_value(c, self.doc.clone()),
+            Some(ValueOrHandler::Value(v)) => v.into(),
             None => JsValue::UNDEFINED,
         })
         .into()
@@ -1687,8 +1687,8 @@ impl LoroList {
         };
 
         (match v {
-            ValueOrContainer::Value(v) => v.into(),
-            ValueOrContainer::Container(h) => handler_to_js_value(h, self.doc.clone()),
+            ValueOrHandler::Value(v) => v.into(),
+            ValueOrHandler::Handler(h) => handler_to_js_value(h, self.doc.clone()),
         })
         .into()
     }
@@ -1720,11 +1720,11 @@ impl LoroList {
         let mut arr: Vec<JsValueOrContainer> = Vec::with_capacity(self.length());
         self.handler.for_each(|x| {
             arr.push(match x {
-                ValueOrContainer::Value(v) => {
+                ValueOrHandler::Value(v) => {
                     let v: JsValue = v.into();
                     v.into()
                 }
-                ValueOrContainer::Container(h) => {
+                ValueOrHandler::Handler(h) => {
                     let v: JsValue = handler_to_js_value(h, self.doc.clone());
                     v.into()
                 }
@@ -2222,13 +2222,13 @@ impl LoroTree {
     }
 }
 
-fn loro_value_to_js_value_or_container(value: ValueOrContainer, doc: &Arc<LoroDoc>) -> JsValue {
+fn loro_value_to_js_value_or_container(value: ValueOrHandler, doc: &Arc<LoroDoc>) -> JsValue {
     match value {
-        ValueOrContainer::Value(v) => {
+        ValueOrHandler::Value(v) => {
             let value: JsValue = v.into();
             value
         }
-        ValueOrContainer::Container(c) => {
+        ValueOrHandler::Handler(c) => {
             let handler: JsValue = handler_to_js_value(c, doc.clone());
             handler
         }

@@ -546,7 +546,6 @@ fn calc_sorted_ops_for_snapshot<'a>(
             origin_top = origin_ops.pop();
             continue;
         };
-
         match inner_origin_top.id_start().cmp(&inner_pos_top.start_id) {
             std::cmp::Ordering::Less => {
                 if inner_origin_top.id_end() <= inner_pos_top.start_id {
