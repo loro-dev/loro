@@ -45,6 +45,12 @@ pub enum ElementDelta {
         new_value: LoroValue,
         value_id: IdLp,
     },
+    New {
+        id: IdLp,
+        new_pos: IdLp,
+        new_value: LoroValue,
+        value_id: IdLp,
+    },
 }
 
 impl ElementDelta {

@@ -172,7 +172,7 @@ impl Meta for ListDeltaMeta {
     ) {
         // We can't have two Some because we don't have `move_from` for Retain.
         // And this function is only called when composing a insert/retain with a retain.
-        assert!(self.move_from.is_none() || other.move_from.is_none())
+        assert!(self.move_from.is_none() || other.move_from.is_none());
         if self.move_from.is_none() && other.move_from.is_some() {
             self.move_from = other.move_from;
         }

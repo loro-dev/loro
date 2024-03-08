@@ -263,6 +263,11 @@ impl MovableListState {
         }
     }
 
+    fn create_new_elem(&mut self, id: IdLp, new_pos: IdLp, new_value: LoroValue, value_id: IdLp) {
+        self.try_update_elem_pos(id, new_pos);
+        self.try_update_elem_value(id, new_value, value_id);
+    }
+
     /// This update may not succeed if the given value_id is smaller than the existing value_id.
     ///
     /// Return whether the update is successful.
@@ -653,9 +658,10 @@ impl ContainerState for MovableListState {
             for delta_item in diff.elements.into_iter() {
                 match delta_item {
                     crate::delta::ElementDelta::PosChange { id, new_pos } => {
-                        let old_index = self.get_index_of_elem(id).unwrap();
+                        let old_index = self.get_index_of_elem(id);
                         let success = self.try_update_elem_pos(id, new_pos);
-                        if success {
+                        if success && old_index.is_some() {
+                            let old_index = old_index.unwrap();
                             let mut new_delta: Delta<Vec<ValueOrContainer>, ListDeltaMeta> =
                                 Delta::new().retain(old_index).delete(1);
                             let new_index = self.get_index_of_elem(id).unwrap();
@@ -676,14 +682,26 @@ impl ContainerState for MovableListState {
                     } => {
                         let success = self.try_update_elem_value(id, new_value.clone(), value_id);
                         if success {
-                            let index = self.get_index_of_elem(id).unwrap();
-                            ans = ans.compose(
-                                Delta::new()
-                                    .retain(index)
-                                    .delete(1)
-                                    .insert(vec![new_value.into()]),
-                            )
+                            let index = self.get_index_of_elem(id);
+                            if let Some(index) = index {
+                                ans = ans.compose(
+                                    Delta::new()
+                                        .retain(index)
+                                        .delete(1)
+                                        .insert(vec![new_value.into()]),
+                                )
+                            }
                         }
+                    }
+                    crate::delta::ElementDelta::New {
+                        id,
+                        new_pos,
+                        new_value,
+                        value_id,
+                    } => {
+                        self.create_new_elem(id, new_pos, new_value.clone(), value_id);
+                        let index = self.get_index_of_elem(id).unwrap();
+                        ans = ans.compose(Delta::new().retain(index).insert(vec![new_value.into()]))
                     }
                 };
             }
@@ -844,4 +862,5 @@ mod test {
         assert_eq!(list.get_value().to_json_value(), json!([9, 0]));
         list.delete(0, 2).unwrap();
         assert_eq!(list.get_value().to_json_value(), json!([]));
-    }}
+    }
+}
