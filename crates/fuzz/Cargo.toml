@@ -13,3 +13,6 @@ debug-log = { workspace = true }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
 enum-as-inner = { workspace = true }
+
+[dev-dependencies]
+arbtest = "^0.2.0"

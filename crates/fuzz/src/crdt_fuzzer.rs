@@ -185,19 +185,19 @@ pub enum FuzzTarget {
     List,
     Text,
     Tree,
-    // All,
+    All,
 }
 
 impl FuzzTarget {
     pub(super) fn support_container_type(&self) -> FxHashSet<ContainerType> {
         let mut set = FxHashSet::default();
         match self {
-            // FuzzTarget::All => {
-            //     set.insert(ContainerType::Map);
-            //     set.insert(ContainerType::List);
-            //     set.insert(ContainerType::Text);
-            //     set.insert(ContainerType::Tree);
-            // }
+            FuzzTarget::All => {
+                set.insert(ContainerType::Map);
+                set.insert(ContainerType::List);
+                set.insert(ContainerType::Text);
+                set.insert(ContainerType::Tree);
+            }
             FuzzTarget::Map => {
                 set.insert(ContainerType::Map);
             }

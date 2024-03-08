@@ -1,8 +1,24 @@
+use arbtest::arbitrary::{self, Unstructured};
 use fuzz::{
     actions::{ActionWrapper::*, GenericAction},
-    crdt_fuzzer::{test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
+    crdt_fuzzer::{test_multi_sites, Action, Action::*, FuzzTarget, FuzzValue::*},
 };
 use loro::ContainerType::*;
+
+const PROPTEST_FACTOR_10: usize = 10;
+
+fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
+    let xs = u.arbitrary::<Vec<Action>>()?;
+    if let Err(e) = std::panic::catch_unwind(|| {
+        test_multi_sites(site_num, vec![FuzzTarget::All], &mut xs.clone());
+    }) {
+        dbg!(xs);
+        println!("{:?}", e);
+        panic!()
+    } else {
+        Ok(())
+    }
+}
 
 #[test]
 fn missing_event_when_checkout() {
@@ -405,4 +421,11 @@ fn list_delete_change_to_diff_assert() {
             },
         ],
     )
+}
+
+#[test]
+fn fuzz_10s() {
+    arbtest::builder()
+        .budget_ms((100 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
+        .run(|u| prop(u, 2))
 }
