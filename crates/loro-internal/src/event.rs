@@ -168,11 +168,14 @@ impl Meta for ListDeltaMeta {
     fn compose(
         &mut self,
         other: &Self,
-        type_pair: (crate::delta::DeltaType, crate::delta::DeltaType),
+        _type_pair: (crate::delta::DeltaType, crate::delta::DeltaType),
     ) {
-        // We can't have two None because we don't have `move_from` for Retain.
+        // We can't have two Some because we don't have `move_from` for Retain.
         // And this function is only called when composing a insert/retain with a retain.
         assert!(self.move_from.is_none() || other.move_from.is_none())
+        if self.move_from.is_none() && other.move_from.is_some() {
+            self.move_from = other.move_from;
+        }
     }
 
     fn is_mergeable(&self, other: &Self) -> bool {

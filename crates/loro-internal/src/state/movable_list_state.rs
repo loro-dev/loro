@@ -11,7 +11,7 @@ use crate::{
     container::{idx::ContainerIdx, list::list_op::ListOp},
     delta::{Delta, DeltaItem},
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
-    event::{Diff, Index, InternalDiff},
+    event::{Diff, Index, InternalDiff, ListDeltaMeta},
     handler::ValueOrContainer,
     op::{ListSlice, Op, RawOp},
     txn::Transaction,
@@ -264,6 +264,8 @@ impl MovableListState {
     }
 
     /// This update may not succeed if the given value_id is smaller than the existing value_id.
+    ///
+    /// Return whether the update is successful.
     fn try_update_elem_pos(&mut self, elem_id: IdLp, list_item_id: IdLp) -> bool {
         let id = elem_id.try_into().unwrap();
         let mut old_item_id = None;
@@ -309,11 +311,13 @@ impl MovableListState {
     }
 
     /// This update may not succeed if the given value_id is smaller than the existing value_id.
-    fn try_update_elem_value(&mut self, elem: IdLp, value: LoroValue, value_id: IdLp) {
+    ///
+    /// Return whether the update is successful.
+    fn try_update_elem_value(&mut self, elem: IdLp, value: LoroValue, value_id: IdLp) -> bool {
         let id = elem.try_into().unwrap();
         if let Some(element) = self.elements.get_mut(&id) {
             if element.value_id > value_id {
-                return;
+                return false;
             }
 
             element.value = value;
@@ -328,6 +332,8 @@ impl MovableListState {
                 },
             );
         }
+
+        true
     }
 
     fn list_insert(&mut self, index: usize, item: ListItem, kind: IndexType) {
@@ -352,6 +358,10 @@ impl MovableListState {
         for (i, item) in items.enumerate() {
             self.list_insert(index + i, item, kind);
         }
+    }
+
+    fn op_len(&self) -> usize {
+        self.list.root_cache().include_dead_len as usize
     }
 
     fn len_kind(&self, kind: IndexType) -> usize {
@@ -461,23 +471,42 @@ impl MovableListState {
         })
     }
 
-    pub fn convert_user_index_to_op_index(&self, index: usize) -> Option<usize> {
-        if index == self.len() {
-            return Some(self.list.root_cache().include_dead_len as usize);
+    pub fn convert_index(&self, index: usize, from: IndexType, to: IndexType) -> Option<usize> {
+        let len = self.len_kind(from);
+        if index == len {
+            return Some(self.len_kind(to));
         }
 
-        if index > self.len() {
+        if index > len {
             return None;
         }
 
-        let c = self.list.query::<UserLenQuery>(&index).unwrap();
-        Some(self.get_user_index_of(c.cursor.leaf, IndexType::ForOp) as usize)
+        let c = match from {
+            IndexType::ForOp => self.list.query::<OpLenQuery>(&index).unwrap(),
+            IndexType::ForUser => self.list.query::<UserLenQuery>(&index).unwrap(),
+        };
+
+        Some(self.get_user_index_of(c.cursor.leaf, to) as usize)
+    }
+
+    fn get_list_item(&self, id: IdLp) -> Option<&ListItem> {
+        self.id_to_list_leaf
+            .get(&id)
+            .and_then(|leaf| self.list.get_elem(*leaf))
     }
 
     pub fn get_list_item_index(&self, id: IdLp) -> Option<usize> {
         self.id_to_list_leaf
             .get(&id)
             .map(|leaf| self.get_user_index_of(*leaf, IndexType::ForUser) as usize)
+    }
+
+    /// Get the user index of elem
+    ///
+    /// If we cannot find the list item in the list, we will return None.
+    fn get_index_of_elem(&self, id: IdLp) -> Option<usize> {
+        let elem = self.elements.get(&id.compact()).unwrap();
+        self.get_list_item_index(elem.pos)
     }
 
     fn get_user_index_of(&self, leaf: LeafIndex, kind: IndexType) -> i32 {
@@ -501,6 +530,30 @@ impl MovableListState {
                 generic_btree::PreviousCache::ThisElemAndOffset { .. } => {}
             });
         ans
+    }
+
+    /// Debug check the consistency between the list and the elements
+    ///
+    /// We need to ensure that:
+    /// - Every element's pos is in the list, and it has a `pointed_by` value that points
+    ///   back to the element
+    /// - Every list item's `pointed_by` value points to an element in the elements, and
+    ///   the element has the correct `pos` value
+    #[cfg(any(debug_assertions, test))]
+    pub(crate) fn check_consistency(&self) {
+        for (id, elem) in self.elements.iter() {
+            let item = self
+                .get_list_item(id.to_id())
+                .expect("Elem's pos should be in the list");
+            assert_eq!(item.pointed_by.unwrap(), *id);
+        }
+
+        for item in self.list.iter() {
+            if let Some(elem_id) = item.pointed_by {
+                let elem = self.elements.get(&elem_id).unwrap();
+                assert_eq!(elem.pos, item.id.idlp());
+            }
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &LoroValue> {
@@ -545,6 +598,9 @@ impl ContainerState for MovableListState {
         let InternalDiff::MovableList(diff) = diff else {
             unreachable!()
         };
+
+        let mut ans: Delta<Vec<ValueOrContainer>, ListDeltaMeta> = Delta::new();
+
         {
             // apply list item changes
             let mut index = 0;
@@ -575,6 +631,17 @@ impl ContainerState for MovableListState {
                         delete,
                         attributes: _,
                     } => {
+                        let user_index = self
+                            .convert_index(index, IndexType::ForOp, IndexType::ForUser)
+                            .unwrap();
+                        let user_index_end = self
+                            .convert_index(index + delete, IndexType::ForOp, IndexType::ForUser)
+                            .unwrap();
+                        ans = ans.compose(
+                            Delta::new()
+                                .retain(user_index)
+                                .delete(user_index_end - user_index),
+                        );
                         self.list_drain(index..index + delete, IndexType::ForOp);
                     }
                 }
@@ -586,18 +653,42 @@ impl ContainerState for MovableListState {
             for delta_item in diff.elements.into_iter() {
                 match delta_item {
                     crate::delta::ElementDelta::PosChange { id, new_pos } => {
-                        self.try_update_elem_pos(id, new_pos);
+                        let old_index = self.get_index_of_elem(id).unwrap();
+                        let success = self.try_update_elem_pos(id, new_pos);
+                        if success {
+                            let mut new_delta: Delta<Vec<ValueOrContainer>, ListDeltaMeta> =
+                                Delta::new().retain(old_index).delete(1);
+                            let new_index = self.get_index_of_elem(id).unwrap();
+                            new_delta =
+                                new_delta.compose(Delta::new().retain(new_index).insert_with_meta(
+                                    vec![LoroValue::Null.into()],
+                                    ListDeltaMeta {
+                                        move_from: Some(old_index),
+                                    },
+                                ));
+                            ans = ans.compose(new_delta);
+                        }
                     }
                     crate::delta::ElementDelta::ValueChange {
                         id,
                         new_value,
                         value_id,
-                    } => self.try_update_elem_value(id, new_value, value_id),
-                }
+                    } => {
+                        let success = self.try_update_elem_value(id, new_value.clone(), value_id);
+                        if success {
+                            let index = self.get_index_of_elem(id).unwrap();
+                            ans = ans.compose(
+                                Delta::new()
+                                    .retain(index)
+                                    .delete(1)
+                                    .insert(vec![new_value.into()]),
+                            )
+                        }
+                    }
+                };
             }
         }
-
-        todo!("Calculate diff")
+        Diff::List(ans)
     }
 
     fn apply_diff(
@@ -753,5 +844,4 @@ mod test {
         assert_eq!(list.get_value().to_json_value(), json!([9, 0]));
         list.delete(0, 2).unwrap();
         assert_eq!(list.get_value().to_json_value(), json!([]));
-    }
-}
+    }}

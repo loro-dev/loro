@@ -1044,7 +1044,8 @@ impl MovableListHandler {
                 .unwrap()
                 .with_state(self.container_idx, |state| {
                     let list = state.as_movable_list_state().unwrap();
-                    list.convert_user_index_to_op_index(pos).unwrap()
+                    list.convert_index(pos, IndexType::ForUser, IndexType::ForOp)
+                        .unwrap()
                 });
 
         txn.apply_local_op(
@@ -1093,9 +1094,14 @@ impl MovableListHandler {
                 .with_state(self.container_idx, |state| {
                     let list = state.as_movable_list_state().unwrap();
                     (
-                        list.convert_user_index_to_op_index(from).unwrap(),
-                        list.convert_user_index_to_op_index(if to > from { to + 1 } else { to })
+                        list.convert_index(from, IndexType::ForUser, IndexType::ForOp)
                             .unwrap(),
+                        list.convert_index(
+                            if to > from { to + 1 } else { to },
+                            IndexType::ForUser,
+                            IndexType::ForOp,
+                        )
+                        .unwrap(),
                         list.get_elem_id_at_given_pos(from, IndexType::ForUser)
                             .unwrap(),
                     )
@@ -1209,7 +1215,11 @@ impl MovableListHandler {
                         .collect();
                     let poses: Vec<_> = (pos..pos + len)
                         // need to -i because we delete the previous ones
-                        .map(|i| list.convert_user_index_to_op_index(i).unwrap() - i)
+                        .map(|i| {
+                            list.convert_index(i, IndexType::ForUser, IndexType::ForOp)
+                                .unwrap()
+                                - i
+                        })
                         .collect();
                     (ids, poses)
                 });
