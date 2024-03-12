@@ -422,8 +422,31 @@ fn list_delete_change_to_diff_assert() {
 }
 
 #[test]
-fn fuzz_10s() {
-    arbtest::builder()
-        .budget_ms((1000 * 10) as u64)
-        .run(|u| prop(u, 2))
+fn random_fuzz_1s_2sites() {
+    arbtest::builder().budget_ms(1000).run(|u| prop(u, 2))
+}
+
+#[test]
+fn random_fuzz_1s_2sites_1() {
+    arbtest::builder().budget_ms(1000).run(|u| prop(u, 2))
+}
+
+#[test]
+fn random_fuzz_1s_2sites_2() {
+    arbtest::builder().budget_ms(1000).run(|u| prop(u, 2))
+}
+
+#[test]
+fn random_fuzz_1s_5sites() {
+    arbtest::builder().budget_ms(1000).run(|u| prop(u, 5))
+}
+
+#[test]
+fn random_fuzz_1s_5sites_1() {
+    arbtest::builder().budget_ms(1000).run(|u| prop(u, 5));
+}
+
+#[test]
+fn random_fuzz_1s_5sites_2() {
+    arbtest::builder().budget_ms(1000).run(|u| prop(u, 5));
 }
