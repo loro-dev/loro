@@ -36,6 +36,7 @@ mod span;
 #[cfg(test)]
 pub mod tests;
 mod utils;
+pub use utils::string_slice::StringSlice;
 
 pub mod delta;
 pub mod event;

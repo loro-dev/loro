@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     delta::{Delta, DeltaItem, Meta, StyleMeta, TreeValue},
     event::{Diff, Index, Path},
-    handler::ValueOrContainer,
+    handler::ValueOrHandler,
     utils::string_slice::StringSlice,
 };
 
@@ -304,10 +304,10 @@ impl ApplyDiff for LoroValue {
     }
 }
 
-pub(crate) fn unresolved_to_collection(v: &ValueOrContainer) -> LoroValue {
+pub(crate) fn unresolved_to_collection(v: &ValueOrHandler) -> LoroValue {
     match v {
-        ValueOrContainer::Value(v) => v.clone(),
-        ValueOrContainer::Container(c) => c.c_type().default_value(),
+        ValueOrHandler::Value(v) => v.clone(),
+        ValueOrHandler::Handler(c) => c.c_type().default_value(),
     }
 }
 

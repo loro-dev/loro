@@ -12,7 +12,7 @@ use crate::{
     delta::{Delta, DeltaItem},
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff, ListDeltaMeta},
-    handler::ValueOrContainer,
+    handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp},
     txn::Transaction,
     DocState,
@@ -604,7 +604,7 @@ impl ContainerState for MovableListState {
             unreachable!()
         };
 
-        let mut ans: Delta<Vec<ValueOrContainer>, ListDeltaMeta> = Delta::new();
+        let mut ans: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
 
         {
             // apply list item changes
@@ -662,7 +662,7 @@ impl ContainerState for MovableListState {
                         let success = self.try_update_elem_pos(id, new_pos);
                         if success && old_index.is_some() {
                             let old_index = old_index.unwrap();
-                            let mut new_delta: Delta<Vec<ValueOrContainer>, ListDeltaMeta> =
+                            let mut new_delta: Delta<Vec<ValueOrHandler>, ListDeltaMeta> =
                                 Delta::new().retain(old_index).delete(1);
                             let new_index = self.get_index_of_elem(id).unwrap();
                             new_delta =
@@ -798,7 +798,7 @@ impl ContainerState for MovableListState {
             Delta::new().insert(
                 self.to_vec()
                     .into_iter()
-                    .map(|v| ValueOrContainer::from_value(v, arena, txn, state))
+                    .map(|v| ValueOrHandler::from_value(v, arena, txn, state))
                     .collect::<Vec<_>>(),
             ),
         )

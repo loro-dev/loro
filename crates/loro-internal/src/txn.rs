@@ -23,7 +23,7 @@ use crate::{
         Delta, ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem,
     },
     event::{Diff, ListDeltaMeta},
-    handler::ValueOrContainer,
+    handler::ValueOrHandler,
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
@@ -560,7 +560,7 @@ fn change_to_diff(
                         let values = arena
                             .get_values(range.to_range())
                             .into_iter()
-                            .map(|v| ValueOrContainer::from_value(v, arena, txn, state))
+                            .map(|v| ValueOrHandler::from_value(v, arena, txn, state))
                             .collect::<Vec<_>>();
                         ans.push(TxnContainerDiff {
                             idx: op.container,
@@ -579,8 +579,7 @@ fn change_to_diff(
                     diff: Diff::Map(ResolvedMapDelta::new().with_entry(
                         key,
                         ResolvedMapValue {
-                            value:
-                                value.map(|v| ValueOrContainer::from_value(v, arena, txn, state)),
+                            value: value.map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
                             idlp: IdLp::new(peer, lamport),
                         },
                     )),

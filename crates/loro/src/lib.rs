@@ -1,14 +1,12 @@
 #![doc = include_str!("../README.md")]
 use either::Either;
+use event::{DiffEvent, Subscriber};
 use loro_internal::change::Timestamp;
-use loro_internal::configure::StyleConfigMap;
 use loro_internal::container::IntoContainerId;
-use loro_internal::handler::TextDelta;
-use loro_internal::handler::ValueOrContainer;
-use loro_internal::id::PeerID;
-use loro_internal::id::TreeID;
+use loro_internal::handler::ValueOrHandler;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
+
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
@@ -16,15 +14,21 @@ use loro_internal::{
 };
 use std::cmp::Ordering;
 use std::ops::Range;
+use std::sync::Arc;
+
+pub mod event;
 
 pub use loro_internal::configure::Configure;
+pub use loro_internal::configure::StyleConfigMap;
 pub use loro_internal::container::richtext::ExpandType;
 pub use loro_internal::container::{ContainerID, ContainerType};
+pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
+pub use loro_internal::event::Index;
+pub use loro_internal::handler::TextDelta;
+pub use loro_internal::id::{PeerID, TreeID, ID};
 pub use loro_internal::obs::SubID;
-pub use loro_internal::obs::Subscriber;
 pub use loro_internal::oplog::FrontiersNotIncluded;
 pub use loro_internal::version::{Frontiers, VersionVector};
-pub use loro_internal::DiffEvent;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
 
@@ -44,6 +48,7 @@ impl LoroDoc {
     pub fn new() -> Self {
         let mut doc = InnerLoroDoc::default();
         doc.start_auto_commit();
+
         LoroDoc { doc }
     }
 
@@ -92,7 +97,7 @@ impl LoroDoc {
     /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
     /// > In a detached state, the document is not editable, and any `import` operations will be
     /// > recorded in the `OpLog` without being applied to the `DocState`.
-    pub fn attach(&mut self) {
+    pub fn attach(&self) {
         self.doc.attach()
     }
 
@@ -104,7 +109,7 @@ impl LoroDoc {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// You should call `attach` to attach the `DocState` to the lastest version of `OpLog`.
-    pub fn checkout(&mut self, frontiers: &Frontiers) -> LoroResult<()> {
+    pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
         self.doc.checkout(frontiers)
     }
 
@@ -294,7 +299,7 @@ impl LoroDoc {
     /// ```
     /// # use loro::LoroDoc;
     /// # use std::sync::{atomic::AtomicBool, Arc};
-    /// # use loro_internal::{delta::DeltaItem, DiffEvent, LoroResult};
+    /// # use loro::{event::DiffEvent, LoroResult, TextDelta};
     /// #
     /// let doc = LoroDoc::new();
     /// let text = doc.get_text("text");
@@ -302,16 +307,15 @@ impl LoroDoc {
     /// let ran2 = ran.clone();
     /// doc.subscribe(
     ///     &text.id(),
-    ///     Arc::new(move |event: DiffEvent| {
-    ///         assert!(event.event_meta.local);
+    ///     Arc::new(move |event| {
+    ///         assert!(event.local);
     ///         for event in event.events {
-    ///             let event = event.diff.as_text().unwrap();
-    ///             let delta: Vec<_> = event.iter().cloned().collect();
-    ///             let d = DeltaItem::Insert {
+    ///             let delta = event.diff.as_text().unwrap();
+    ///             let d = TextDelta::Insert {
     ///                 insert: "123".into(),
     ///                 attributes: Default::default(),
     ///             };
-    ///             assert_eq!(delta, vec![d]);
+    ///             assert_eq!(delta, &vec![d]);
     ///             ran2.store(true, std::sync::atomic::Ordering::Relaxed);
     ///         }
     ///     }),
@@ -321,7 +325,12 @@ impl LoroDoc {
     /// assert!(ran.load(std::sync::atomic::Ordering::Relaxed));
     /// ```
     pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> SubID {
-        self.doc.subscribe(container_id, callback)
+        self.doc.subscribe(
+            container_id,
+            Arc::new(move |e| {
+                callback(DiffEvent::from(e));
+            }),
+        )
     }
 
     /// Subscribe all the events.
@@ -329,7 +338,10 @@ impl LoroDoc {
     /// The callback will be invoked when any part of the [loro_internal::DocState] is changed.
     /// Returns a subscription id that can be used to unsubscribe.
     pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
-        self.doc.subscribe_root(callback)
+        // self.doc.subscribe_root(callback)
+        self.doc.subscribe_root(Arc::new(move |e| {
+            callback(DiffEvent::from(e));
+        }))
     }
 
     /// Remove a subscription.
@@ -378,8 +390,8 @@ impl LoroList {
     #[inline]
     pub fn get(&self, index: usize) -> Option<Either<LoroValue, Container>> {
         match self.handler.get_(index) {
-            Some(ValueOrContainer::Container(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrContainer::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
+            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
             None => None,
         }
     }
@@ -387,6 +399,11 @@ impl LoroList {
     #[inline]
     pub fn get_deep_value(&self) -> LoroValue {
         self.handler.get_deep_value()
+    }
+
+    #[inline]
+    pub fn get_value(&self) -> LoroValue {
+        self.handler.get_value()
     }
 
     #[inline]
@@ -412,7 +429,7 @@ impl LoroList {
 
     pub fn for_each<I>(&self, f: I)
     where
-        I: FnMut(ValueOrContainer),
+        I: FnMut(ValueOrHandler),
     {
         self.handler.for_each(f)
     }
@@ -491,7 +508,7 @@ impl LoroMap {
 
     pub fn for_each<I>(&self, f: I)
     where
-        I: FnMut(&str, ValueOrContainer),
+        I: FnMut(&str, ValueOrHandler),
     {
         self.handler.for_each(f)
     }
@@ -515,8 +532,8 @@ impl LoroMap {
     pub fn get(&self, key: &str) -> Option<Either<LoroValue, Container>> {
         match self.handler.get_(key) {
             None => None,
-            Some(ValueOrContainer::Container(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrContainer::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
+            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
         }
     }
 
@@ -536,6 +553,14 @@ impl LoroMap {
     /// ```
     pub fn insert_container(&self, key: &str, c_type: ContainerType) -> LoroResult<Container> {
         Ok(Container::from(self.handler.insert_container(key, c_type)?))
+    }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.handler.get_value()
+    }
+
+    pub fn get_deep_value(&self) -> LoroValue {
+        self.handler.get_deep_value()
     }
 }
 
@@ -768,6 +793,11 @@ impl LoroTree {
         self.handler.nodes()
     }
 
+    /// Return container id of the tree.
+    pub fn id(&self) -> ContainerID {
+        self.handler.id()
+    }
+
     /// Return the flat array of the forest.
     ///
     /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
@@ -780,11 +810,21 @@ impl LoroTree {
     pub fn get_value_with_meta(&self) -> LoroValue {
         self.handler.get_deep_value()
     }
+
+    #[cfg(feature = "test_utils")]
+    pub fn next_tree_id(&self) -> TreeID {
+        self.handler.next_tree_id()
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct LoroMovableList {
     handler: InnerMovableListHandler,
+}
+impl LoroMovableList {
+    fn id(&self) -> ContainerID {
+        self.handler.id()
+    }
 }
 
 use enum_as_inner::EnumAsInner;
@@ -799,6 +839,28 @@ pub enum Container {
     MovableList(LoroMovableList),
 }
 
+impl Container {
+    pub fn get_type(&self) -> ContainerType {
+        match self {
+            Container::List(_) => ContainerType::List,
+            Container::MovableList(_) => ContainerType::MovableList,
+            Container::Map(_) => ContainerType::Map,
+            Container::Text(_) => ContainerType::Text,
+            Container::Tree(_) => ContainerType::Tree,
+        }
+    }
+
+    pub fn id(&self) -> ContainerID {
+        match self {
+            Container::List(x) => x.id(),
+            Container::MovableList(x) => x.id(),
+            Container::Map(x) => x.id(),
+            Container::Text(x) => x.id(),
+            Container::Tree(x) => x.id(),
+        }
+    }
+}
+
 impl From<InnerHandler> for Container {
     fn from(value: InnerHandler) -> Self {
         match value {
@@ -809,4 +871,10 @@ impl From<InnerHandler> for Container {
             InnerHandler::MovableList(x) => Container::MovableList(LoroMovableList { handler: x }),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum ValueOrContainer {
+    Value(LoroValue),
+    Container(Container),
 }

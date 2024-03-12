@@ -9,7 +9,7 @@ use crate::{
         Delta, MapDelta, Meta, MovableListInnerDelta, ResolvedMapDelta, StyleMeta, TreeDelta,
         TreeDiff,
     },
-    handler::ValueOrContainer,
+    handler::ValueOrHandler,
     op::SliceRanges,
     utils::string_slice::StringSlice,
     InternalString,
@@ -197,7 +197,7 @@ impl Meta for ListDeltaMeta {
 #[non_exhaustive]
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum Diff {
-    List(Delta<Vec<ValueOrContainer>, ListDeltaMeta>),
+    List(Delta<Vec<ValueOrHandler>, ListDeltaMeta>),
     // TODO: refactor, doesn't make much sense to use `StyleMeta` here, because sometime style
     // don't have peer and lamport info
     /// - When feature `wasm` is enabled, it should use utf16 indexes.

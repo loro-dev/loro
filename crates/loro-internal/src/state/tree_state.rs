@@ -32,30 +32,6 @@ pub enum TreeParentId {
     None,
 }
 
-impl TreeParentId {
-    pub(crate) fn from_tree_id(id: Option<TreeID>) -> Self {
-        match id {
-            Some(id) => {
-                if TreeID::is_deleted_root(&id) {
-                    TreeParentId::Deleted
-                } else {
-                    TreeParentId::Node(id)
-                }
-            }
-            None => TreeParentId::None,
-        }
-    }
-
-    pub(crate) fn to_tree_id(self) -> Option<TreeID> {
-        match self {
-            TreeParentId::Node(id) => Some(id),
-            TreeParentId::Deleted => Some(TreeID::delete_root()),
-            TreeParentId::None => None,
-            TreeParentId::Unexist => unreachable!(),
-        }
-    }
-}
-
 /// The state of movable tree.
 ///
 /// using flat representation

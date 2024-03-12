@@ -10,7 +10,7 @@ use crate::{
     delta::Delta,
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
-    handler::ValueOrContainer,
+    handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp, RawOpContent},
     txn::Transaction,
     DocState, LoroValue,
@@ -340,7 +340,7 @@ impl ContainerState for ListState {
                     }
                     ans = ans.insert(
                         arr.iter()
-                            .map(|v| ValueOrContainer::from_value(v.clone(), arena, txn, state))
+                            .map(|v| ValueOrHandler::from_value(v.clone(), arena, txn, state))
                             .collect::<Vec<_>>(),
                     );
                     let len = arr.len();
@@ -439,7 +439,7 @@ impl ContainerState for ListState {
             Delta::new().insert(
                 self.to_vec()
                     .into_iter()
-                    .map(|v| ValueOrContainer::from_value(v, arena, txn, state))
+                    .map(|v| ValueOrHandler::from_value(v, arena, txn, state))
                     .collect::<Vec<_>>(),
             ),
         )

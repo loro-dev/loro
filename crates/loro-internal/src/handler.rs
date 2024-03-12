@@ -27,7 +27,7 @@ use std::{
 };
 use tracing::{info, instrument};
 
-#[derive(Debug, Clone, EnumAsInner, Deserialize, Serialize)]
+#[derive(Debug, Clone, EnumAsInner, Deserialize, Serialize, PartialEq)]
 #[serde(untagged)]
 pub enum TextDelta {
     Retain {
@@ -173,12 +173,12 @@ impl Handler {
 }
 
 #[derive(Clone, EnumAsInner, Debug)]
-pub enum ValueOrContainer {
+pub enum ValueOrHandler {
     Value(LoroValue),
-    Container(Handler),
+    Handler(Handler),
 }
 
-impl ValueOrContainer {
+impl ValueOrHandler {
     pub(crate) fn from_value(
         value: LoroValue,
         arena: &SharedArena,
@@ -187,16 +187,16 @@ impl ValueOrContainer {
     ) -> Self {
         if let LoroValue::Container(c) = value {
             let idx = arena.id_to_idx(&c).unwrap();
-            ValueOrContainer::Container(Handler::new(txn.clone(), idx, state.clone()))
+            ValueOrHandler::Handler(Handler::new(txn.clone(), idx, state.clone()))
         } else {
-            ValueOrContainer::Value(value)
+            ValueOrHandler::Value(value)
         }
     }
 }
 
-impl From<LoroValue> for ValueOrContainer {
+impl From<LoroValue> for ValueOrHandler {
     fn from(value: LoroValue) -> Self {
-        ValueOrContainer::Value(value)
+        ValueOrHandler::Value(value)
     }
 }
 
@@ -947,7 +947,7 @@ impl ListHandler {
     }
 
     /// Get value at given index, if it's a container, return a handler to the container
-    pub fn get_(&self, index: usize) -> Option<ValueOrContainer> {
+    pub fn get_(&self, index: usize) -> Option<ValueOrHandler> {
         let mutex = &self.state.upgrade().unwrap();
         let doc_state = &mut mutex.lock().unwrap();
         let arena = doc_state.arena.clone();
@@ -957,13 +957,13 @@ impl ListHandler {
                 Some(v) => {
                     if let LoroValue::Container(id) = v {
                         let idx = arena.register_container(id);
-                        Some(ValueOrContainer::Container(Handler::new(
+                        Some(ValueOrHandler::Handler(Handler::new(
                             self.txn.clone(),
                             idx,
                             self.state.clone(),
                         )))
                     } else {
-                        Some(ValueOrContainer::Value(v.clone()))
+                        Some(ValueOrHandler::Value(v.clone()))
                     }
                 }
                 None => None,
@@ -973,7 +973,7 @@ impl ListHandler {
 
     pub fn for_each<I>(&self, mut f: I)
     where
-        I: FnMut(ValueOrContainer),
+        I: FnMut(ValueOrHandler),
     {
         let mutex = &self.state.upgrade().unwrap();
         let doc_state = &mut mutex.lock().unwrap();
@@ -984,14 +984,14 @@ impl ListHandler {
                 match v {
                     LoroValue::Container(c) => {
                         let idx = arena.register_container(c);
-                        f(ValueOrContainer::Container(Handler::new(
+                        f(ValueOrHandler::Handler(Handler::new(
                             self.txn.clone(),
                             idx,
                             self.state.clone(),
                         )));
                     }
                     value => {
-                        f(ValueOrContainer::Value(value.clone()));
+                        f(ValueOrHandler::Value(value.clone()));
                     }
                 }
             }
@@ -1344,7 +1344,7 @@ impl MovableListHandler {
     }
 
     /// Get value at given index, if it's a container, return a handler to the container
-    pub fn get_(&self, index: usize) -> Option<ValueOrContainer> {
+    pub fn get_(&self, index: usize) -> Option<ValueOrHandler> {
         let mutex = &self.state.upgrade().unwrap();
         let doc_state = &mut mutex.lock().unwrap();
         let arena = doc_state.arena.clone();
@@ -1354,13 +1354,13 @@ impl MovableListHandler {
                 Some(v) => {
                     if let LoroValue::Container(id) = v {
                         let idx = arena.register_container(id);
-                        Some(ValueOrContainer::Container(Handler::new(
+                        Some(ValueOrHandler::Handler(Handler::new(
                             self.txn.clone(),
                             idx,
                             self.state.clone(),
                         )))
                     } else {
-                        Some(ValueOrContainer::Value(v.clone()))
+                        Some(ValueOrHandler::Value(v.clone()))
                     }
                 }
                 None => None,
@@ -1370,7 +1370,7 @@ impl MovableListHandler {
 
     pub fn for_each<I>(&self, mut f: I)
     where
-        I: FnMut(ValueOrContainer),
+        I: FnMut(ValueOrHandler),
     {
         let mutex = &self.state.upgrade().unwrap();
         let doc_state = &mut mutex.lock().unwrap();
@@ -1381,14 +1381,14 @@ impl MovableListHandler {
                 match v {
                     LoroValue::Container(c) => {
                         let idx = arena.register_container(c);
-                        f(ValueOrContainer::Container(Handler::new(
+                        f(ValueOrHandler::Handler(Handler::new(
                             self.txn.clone(),
                             idx,
                             self.state.clone(),
                         )));
                     }
                     value => {
-                        f(ValueOrContainer::Value(value.clone()));
+                        f(ValueOrHandler::Value(value.clone()));
                     }
                 }
             }
@@ -1502,7 +1502,7 @@ impl MapHandler {
 
     pub fn for_each<I>(&self, mut f: I)
     where
-        I: FnMut(&str, ValueOrContainer),
+        I: FnMut(&str, ValueOrHandler),
     {
         let mutex = &self.state.upgrade().unwrap();
         let mut doc_state = mutex.lock().unwrap();
@@ -1516,14 +1516,14 @@ impl MapHandler {
                             let idx = arena.register_container(c);
                             f(
                                 k,
-                                ValueOrContainer::Container(Handler::new(
+                                ValueOrHandler::Handler(Handler::new(
                                     self.txn.clone(),
                                     idx,
                                     self.state.clone(),
                                 )),
                             )
                         }
-                        value => f(k, ValueOrContainer::Value(value.clone())),
+                        value => f(k, ValueOrHandler::Value(value.clone())),
                     },
                     None => {}
                 }
@@ -1589,7 +1589,7 @@ impl MapHandler {
     }
 
     /// Get the value at given key, if value is a container, return a handler to the container
-    pub fn get_(&self, key: &str) -> Option<ValueOrContainer> {
+    pub fn get_(&self, key: &str) -> Option<ValueOrHandler> {
         let mutex = &self.state.upgrade().unwrap();
         let mut doc_state = mutex.lock().unwrap();
         let arena = doc_state.arena.clone();
@@ -1599,13 +1599,13 @@ impl MapHandler {
             match value {
                 Some(LoroValue::Container(container_id)) => {
                     let idx = arena.register_container(container_id);
-                    Some(ValueOrContainer::Container(Handler::new(
+                    Some(ValueOrHandler::Handler(Handler::new(
                         self.txn.clone(),
                         idx,
                         self.state.clone(),
                     )))
                 }
-                Some(value) => Some(ValueOrContainer::Value(value.clone())),
+                Some(value) => Some(ValueOrHandler::Value(value.clone())),
                 None => None,
             }
         })
@@ -1833,6 +1833,11 @@ impl TreeHandler {
                 let a = state.as_tree_state().unwrap();
                 a.max_counter()
             })
+    }
+
+    #[cfg(feature = "test_utils")]
+    pub fn next_tree_id(&self) -> TreeID {
+        with_txn(&self.txn, |txn| Ok(TreeID::from_id(txn.next_id()))).unwrap()
     }
 }
 
