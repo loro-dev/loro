@@ -292,7 +292,7 @@ impl DocState {
     /// Panic when the diff cannot be merged with the previous diff.
     /// Caller should call [pre_txn] before calling this to avoid panic.
     fn record_diff(&mut self, diff: InternalDocDiff) {
-        if !self.event_recorder.recording_diff {
+        if !self.event_recorder.recording_diff || diff.diff.is_empty() {
             return;
         }
 
