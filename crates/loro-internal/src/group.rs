@@ -6,7 +6,9 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
-use loro_common::{Counter, HasId, HasLamport, InternalString, LoroValue, PeerID, ID};
+use loro_common::{
+    ContainerID, Counter, HasId, HasLamport, IdLp, InternalString, LoroValue, PeerID, ID,
+};
 
 use crate::{
     change::{Change, Lamport},
@@ -70,6 +72,7 @@ impl OpGroups {
 pub(crate) enum OpGroup {
     Map(MapOpGroup),
     Tree(TreeOpGroup),
+    MovableList(MovableListOpGroup),
 }
 
 #[enum_dispatch]
@@ -192,5 +195,86 @@ impl OpGroupTrait for TreeOpGroup {
             counter: op.raw_op().counter,
             peer: op.peer,
         });
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub(crate) struct MovableListOpGroup {
+    /// mappings from elem_id to a set of target poses & values
+    mappings: FxHashMap<IdLp, MovableListTarget>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct MovableListTarget {
+    poses: BTreeSet<GroupedMapOpInfo>,
+    values: BTreeSet<GroupedMapOpInfo>,
+}
+
+impl OpGroupTrait for MovableListOpGroup {
+    fn insert(&mut self, op: &RichOp) {
+        let start_id = op.id_full().idlp();
+        match &op.op().content {
+            InnerContent::List(list) => match list {
+                crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
+                    let full_id = op.id_full();
+                    let mapping = self.mappings.entry(*elem_id).or_default();
+                    mapping.values.insert(GroupedMapOpInfo {
+                        value: Some(value.clone()),
+                        counter: full_id.counter,
+                        lamport: full_id.lamport,
+                        peer: full_id.peer,
+                    });
+                }
+                crate::container::list::list_op::InnerListOp::Insert { slice, pos: _ } => {
+                    for i in slice.0.clone() {
+                        let id = start_id.inc(i as i32);
+                        let full_id = op.id_full().inc(i as i32);
+                        let mapping = self.mappings.entry(id).or_default();
+                        mapping.poses.insert(GroupedMapOpInfo {
+                            value: Some(LoroValue::Container(ContainerID::new_normal(
+                                full_id.id(),
+                                loro_common::ContainerType::Map,
+                            ))),
+                            counter: full_id.counter,
+                            lamport: full_id.lamport,
+                            peer: full_id.peer,
+                        });
+                        mapping.values.insert(GroupedMapOpInfo {
+                            value: Some(LoroValue::Container(ContainerID::new_normal(
+                                full_id.id(),
+                                loro_common::ContainerType::Map,
+                            ))),
+                            counter: full_id.counter,
+                            lamport: full_id.lamport,
+                            peer: full_id.peer,
+                        });
+                    }
+                }
+                crate::container::list::list_op::InnerListOp::Move { from_id, .. } => {
+                    let full_id = op.id_full();
+                    let mapping = self.mappings.entry(*from_id).or_default();
+                    mapping.poses.insert(GroupedMapOpInfo {
+                        value: Some(LoroValue::Container(ContainerID::new_normal(
+                            full_id.id(),
+                            loro_common::ContainerType::Map,
+                        ))),
+                        counter: full_id.counter,
+                        lamport: full_id.lamport,
+                        peer: full_id.peer,
+                    });
+                }
+                // Don't mark deletions for now, but the cost is the state now may contain invalid elements
+                // that are deleted but not removed from the state.
+                // Maybe we can remove the elements with no valid pos mapping directly from the state. When
+                // it's needed, we load it lazily from this group.
+                crate::container::list::list_op::InnerListOp::DeleteMovableListItem { .. } => {}
+                crate::container::list::list_op::InnerListOp::Delete(_) => {}
+                crate::container::list::list_op::InnerListOp::StyleStart { .. }
+                | crate::container::list::list_op::InnerListOp::StyleEnd
+                | crate::container::list::list_op::InnerListOp::InsertText { .. } => unreachable!(),
+            },
+            InnerContent::Map(_) => unreachable!(),
+            InnerContent::Tree(_) => unreachable!(),
+        };
     }
 }

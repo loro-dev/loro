@@ -418,27 +418,6 @@ impl DiffCalculatorTrait for MapDiffCalculator {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CompactMapValue {
-    lamport: Lamport,
-    peer: PeerID,
-    value: Option<LoroValue>,
-}
-
-impl Ord for CompactMapValue {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.lamport
-            .cmp(&other.lamport)
-            .then(self.peer.cmp(&other.peer))
-    }
-}
-
-impl PartialOrd for CompactMapValue {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 use rle::{HasLength, Sliceable};
 
 #[derive(Default)]
@@ -604,6 +583,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             crate::op::InnerContent::List(l) => match l {
                 InnerListOp::Insert { .. }
                 | InnerListOp::Move { .. }
+                | InnerListOp::Set { .. }
                 | InnerListOp::DeleteMovableListItem { .. } => {
                     unreachable!()
                 }
@@ -743,8 +723,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 
 #[derive(Debug, Default)]
 struct MovableListDiffCalculator {
-    start_vv: VersionVector,
-    tracker: Box<RichtextTracker>,
+    list: ListDiffCalculator,
 }
 
 impl MovableListDiffCalculator {}

@@ -620,6 +620,12 @@ impl OpLog {
                     elem_id: *elem_id,
                     pos: *pos,
                 })),
+                list_op::InnerListOp::Set { elem_id, value } => {
+                    contents.push(RawOpContent::List(list_op::ListOp::Set {
+                        elem_id: *elem_id,
+                        value: value.clone(),
+                    }))
+                }
             },
             crate::op::InnerContent::Map(map) => {
                 let value = map.value.clone();

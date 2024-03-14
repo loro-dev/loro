@@ -1049,6 +1049,7 @@ mod encode {
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
                 crate::container::list::list_op::InnerListOp::Move { to, .. } => *to as i32,
+                crate::container::list::list_op::InnerListOp::Set { .. } => 0 as i32,
                 crate::container::list::list_op::InnerListOp::Insert { pos, .. } => *pos as i32,
                 crate::container::list::list_op::InnerListOp::InsertText { pos, .. } => *pos as i32,
                 crate::container::list::list_op::InnerListOp::Delete(span) => span.span.pos as i32,
@@ -1137,6 +1138,9 @@ mod encode {
                         register_cid,
                     );
                     ValueKind::MarkStart
+                }
+                crate::container::list::list_op::InnerListOp::Set { .. } => {
+                    unimplemented!()
                 }
                 crate::container::list::list_op::InnerListOp::StyleEnd => ValueKind::Null,
                 crate::container::list::list_op::InnerListOp::Move {

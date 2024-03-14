@@ -32,6 +32,10 @@ pub enum ListOp<'a> {
         to: u32,
         elem_id: IdLp,
     },
+    Set {
+        elem_id: IdLp,
+        value: LoroValue,
+    },
     /// StyleStart and StyleEnd must be paired because the end of a style must take an OpID position.
     StyleStart {
         start: u32,
@@ -64,6 +68,16 @@ pub enum InnerListOp {
         pos: usize,
     },
     Delete(DeleteSpanWithId),
+    Move {
+        from: u32,
+        /// Element id
+        from_id: IdLp,
+        to: u32,
+    },
+    Set {
+        elem_id: IdLp,
+        value: LoroValue,
+    },
     /// StyleStart and StyleEnd must be paired.
     /// The next op of StyleStart must be StyleEnd.
     StyleStart {
@@ -72,11 +86,6 @@ pub enum InnerListOp {
         key: InternalString,
         value: LoroValue,
         info: TextStyleInfoFlag,
-    },
-    Move {
-        from: u32,
-        from_id: IdLp,
-        to: u32,
     },
     StyleEnd,
 }
@@ -369,6 +378,7 @@ impl<'a> Mergable for ListOp<'a> {
             ListOp::StyleStart { .. }
             | ListOp::StyleEnd { .. }
             | ListOp::Move { .. }
+            | ListOp::Set { .. }
             | ListOp::DeleteMovableListItem { .. } => false,
         }
     }
@@ -393,6 +403,7 @@ impl<'a> Mergable for ListOp<'a> {
             ListOp::StyleStart { .. }
             | ListOp::StyleEnd { .. }
             | ListOp::Move { .. }
+            | ListOp::Set { .. }
             | ListOp::DeleteMovableListItem { .. } => {
                 unreachable!()
             }
@@ -408,6 +419,7 @@ impl<'a> HasLength for ListOp<'a> {
             ListOp::StyleStart { .. }
             | ListOp::StyleEnd { .. }
             | ListOp::Move { .. }
+            | ListOp::Set { .. }
             | ListOp::DeleteMovableListItem { .. } => 1,
         }
     }
@@ -424,6 +436,7 @@ impl<'a> Sliceable for ListOp<'a> {
             a @ (ListOp::StyleStart { .. }
             | ListOp::StyleEnd { .. }
             | ListOp::Move { .. }
+            | ListOp::Set { .. }
             | ListOp::DeleteMovableListItem { .. }) => a.clone(),
         }
     }
@@ -515,6 +528,7 @@ impl HasLength for InnerListOp {
             InnerListOp::StyleStart { .. }
             | InnerListOp::StyleEnd { .. }
             | InnerListOp::Move { .. }
+            | InnerListOp::Set { .. }
             | InnerListOp::DeleteMovableListItem { .. } => 1,
         }
     }
@@ -550,6 +564,7 @@ impl Sliceable for InnerListOp {
             InnerListOp::StyleStart { .. }
             | InnerListOp::StyleEnd { .. }
             | InnerListOp::Move { .. }
+            | InnerListOp::Set { .. }
             | InnerListOp::DeleteMovableListItem { .. } => self.clone(),
         }
     }

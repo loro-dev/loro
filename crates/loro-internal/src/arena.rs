@@ -332,6 +332,11 @@ impl SharedArena {
                         pos,
                     }),
                 },
+                ListOp::Set { elem_id, value } => Op {
+                    counter,
+                    container,
+                    content: InnerContent::List(InnerListOp::Set { elem_id, value }),
+                },
             },
             crate::op::RawOpContent::Tree(tree) => Op {
                 counter,

@@ -422,6 +422,9 @@ impl ContainerState for ListState {
                 ListOp::DeleteMovableListItem { .. } => {
                     unreachable!()
                 }
+                ListOp::Set { .. } => {
+                    unreachable!()
+                }
             },
         }
         Ok(())

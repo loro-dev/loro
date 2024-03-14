@@ -781,6 +781,9 @@ impl ContainerState for MovableListState {
                     IndexType::ForOp,
                 );
             }
+            ListOp::Set {..} => {
+                unimplemented!();
+            }
             ListOp::StyleStart { .. } | ListOp::StyleEnd => unreachable!(),
         }
 

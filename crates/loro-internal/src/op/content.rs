@@ -75,6 +75,9 @@ impl<'a> RawOpContent<'a> {
                     elem_id: *elem_id,
                     pos: *pos,
                 }),
+                ListOp::Set { elem_id, value } => {
+                    RawOpContent::List(ListOp::Set { elem_id: *elem_id, value: value.clone() })
+                }
             },
             Self::Tree(arg0) => RawOpContent::Tree(*arg0),
         }
