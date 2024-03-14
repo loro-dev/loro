@@ -878,3 +878,17 @@ fn missing_event_when_checkout() {
     doc.attach();
     assert!(value.lock().unwrap().contains_key("b"));
 }
+
+#[test]
+fn empty_event() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.get_map("map").insert("key", 123).unwrap();
+    doc.commit_then_renew();
+    let fire = Arc::new(AtomicBool::new(false));
+    let fire_clone = Arc::clone(&fire);
+    doc.subscribe_root(Arc::new(move |_e| {
+        fire_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+    }));
+    doc.import(&doc.export_snapshot()).unwrap();
+    assert!(!fire.load(std::sync::atomic::Ordering::Relaxed));
+}
