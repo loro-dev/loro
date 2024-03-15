@@ -20,7 +20,7 @@ use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use fxhash::FxHashMap;
-use loro_common::{HasCounter, HasId, IdSpan};
+use loro_common::{HasCounter, HasId, IdLp, IdSpan};
 use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
 
@@ -895,6 +895,13 @@ impl OpLog {
         } else {
             None
         }
+    }
+
+    pub(crate) fn id_to_idlp(&self, id_start: ID) -> IdLp {
+        let change = self.get_change_at(id_start).unwrap();
+        let lamport = change.lamport + (id_start.counter - change.id.counter) as Lamport;
+        let peer = id_start.peer;
+        loro_common::IdLp { peer, lamport }
     }
 }
 

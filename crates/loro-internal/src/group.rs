@@ -81,28 +81,28 @@ trait OpGroupTrait {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct GroupedMapOpInfo {
-    pub(crate) value: Option<LoroValue>,
+pub(crate) struct GroupedMapOpInfo<T = Option<LoroValue>> {
+    pub(crate) value: T,
     pub(crate) counter: Counter,
     pub(crate) lamport: Lamport,
     pub(crate) peer: PeerID,
 }
 
-impl PartialEq for GroupedMapOpInfo {
+impl<T> PartialEq for GroupedMapOpInfo<T> {
     fn eq(&self, other: &Self) -> bool {
         self.lamport == other.lamport && self.peer == other.peer
     }
 }
 
-impl Eq for GroupedMapOpInfo {}
+impl<T> Eq for GroupedMapOpInfo<T> {}
 
-impl PartialOrd for GroupedMapOpInfo {
+impl<T> PartialOrd for GroupedMapOpInfo<T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for GroupedMapOpInfo {
+impl<T> Ord for GroupedMapOpInfo<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.lamport
             .cmp(&other.lamport)
@@ -205,9 +205,9 @@ pub(crate) struct MovableListOpGroup {
 }
 
 #[derive(Debug, Default, Clone)]
-struct MovableListTarget {
-    poses: BTreeSet<GroupedMapOpInfo>,
-    values: BTreeSet<GroupedMapOpInfo>,
+pub(crate) struct MovableListTarget {
+    poses: BTreeSet<GroupedMapOpInfo<IdLp>>,
+    values: BTreeSet<GroupedMapOpInfo<LoroValue>>,
 }
 
 impl OpGroupTrait for MovableListOpGroup {
@@ -219,7 +219,7 @@ impl OpGroupTrait for MovableListOpGroup {
                     let full_id = op.id_full();
                     let mapping = self.mappings.entry(*elem_id).or_default();
                     mapping.values.insert(GroupedMapOpInfo {
-                        value: Some(value.clone()),
+                        value: value.clone(),
                         counter: full_id.counter,
                         lamport: full_id.lamport,
                         peer: full_id.peer,
@@ -231,19 +231,16 @@ impl OpGroupTrait for MovableListOpGroup {
                         let full_id = op.id_full().inc(i as i32);
                         let mapping = self.mappings.entry(id).or_default();
                         mapping.poses.insert(GroupedMapOpInfo {
-                            value: Some(LoroValue::Container(ContainerID::new_normal(
-                                full_id.id(),
-                                loro_common::ContainerType::Map,
-                            ))),
+                            value: full_id.idlp(),
                             counter: full_id.counter,
                             lamport: full_id.lamport,
                             peer: full_id.peer,
                         });
                         mapping.values.insert(GroupedMapOpInfo {
-                            value: Some(LoroValue::Container(ContainerID::new_normal(
+                            value: LoroValue::Container(ContainerID::new_normal(
                                 full_id.id(),
                                 loro_common::ContainerType::Map,
-                            ))),
+                            )),
                             counter: full_id.counter,
                             lamport: full_id.lamport,
                             peer: full_id.peer,
@@ -254,10 +251,7 @@ impl OpGroupTrait for MovableListOpGroup {
                     let full_id = op.id_full();
                     let mapping = self.mappings.entry(*from_id).or_default();
                     mapping.poses.insert(GroupedMapOpInfo {
-                        value: Some(LoroValue::Container(ContainerID::new_normal(
-                            full_id.id(),
-                            loro_common::ContainerType::Map,
-                        ))),
+                        value: full_id.idlp(),
                         counter: full_id.counter,
                         lamport: full_id.lamport,
                         peer: full_id.peer,
@@ -276,5 +270,33 @@ impl OpGroupTrait for MovableListOpGroup {
             InnerContent::Map(_) => unreachable!(),
             InnerContent::Tree(_) => unreachable!(),
         };
+    }
+}
+
+impl MovableListOpGroup {
+    pub(crate) fn last_pos(
+        &self,
+        key: &IdLp,
+        vv: &VersionVector,
+    ) -> Option<&GroupedMapOpInfo<IdLp>> {
+        self.mappings.get(key).and_then(|set| {
+            set.poses
+                .iter()
+                .rev()
+                .find(|op| vv.get(&op.peer).copied().unwrap_or(0) > op.counter)
+        })
+    }
+
+    pub(crate) fn last_value(
+        &self,
+        key: &IdLp,
+        vv: &VersionVector,
+    ) -> Option<&GroupedMapOpInfo<LoroValue>> {
+        self.mappings.get(key).and_then(|set| {
+            set.values
+                .iter()
+                .rev()
+                .find(|op| vv.get(&op.peer).copied().unwrap_or(0) > op.counter)
+        })
     }
 }
