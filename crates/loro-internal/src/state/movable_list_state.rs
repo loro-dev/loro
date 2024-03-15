@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{debug, instrument};
+use tracing::instrument;
 
 use fxhash::FxHashMap;
 use generic_btree::{BTree, Cursor, LeafIndex, Query};
@@ -781,7 +781,7 @@ impl ContainerState for MovableListState {
                     IndexType::ForOp,
                 );
             }
-            ListOp::Set {..} => {
+            ListOp::Set { .. } => {
                 unimplemented!();
             }
             ListOp::StyleStart { .. } | ListOp::StyleEnd => unreachable!(),

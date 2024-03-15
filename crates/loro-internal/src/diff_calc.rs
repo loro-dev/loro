@@ -776,7 +776,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             // Apply change on the list items
             // TODO: it needs to ignore Set & Move op internally
             let this = &mut self.list;
-            let _oplog = oplog;
             if let Some(vv) = vv {
                 this.tracker.checkout(vv);
             }
@@ -803,24 +802,21 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         list_item_id,
                         elem_id,
                         pos,
-                    } => todo!(),
-                    InnerListOp::Move { from, from_id, to } => todo!(),
-                    InnerListOp::Set { elem_id, value } => todo!(),
-
-                    InnerListOp::InsertText {
-                        slice,
-                        unicode_start,
-                        unicode_len,
-                        pos,
-                    } => unreachable!(),
-                    InnerListOp::StyleStart {
-                        start,
-                        end,
-                        key,
-                        value,
-                        info,
-                    } => unreachable!(),
-                    InnerListOp::StyleEnd => unreachable!(),
+                    } => {
+                        this.tracker
+                            .delete(op.id_start(), *list_item_id, *pos, 1, false);
+                    }
+                    InnerListOp::Move { from, from_id, to } => {
+                        let from_id = oplog.idlp_to_id(*from_id).unwrap();
+                        this.tracker
+                            .move_item(op.id_full(), from_id, *from as usize, *to as usize);
+                    }
+                    InnerListOp::Set { elem_id, value } => {
+                        // don't need to update tracker here
+                    }
+                    InnerListOp::InsertText { .. }
+                    | InnerListOp::StyleStart { .. }
+                    | InnerListOp::StyleEnd => unreachable!(),
                 },
                 _ => unreachable!(),
             }

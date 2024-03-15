@@ -1,3 +1,5 @@
+use std::ops::ControlFlow;
+
 use generic_btree::{rle::Sliceable, LeafIndex};
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength;
@@ -72,44 +74,27 @@ impl Tracker {
 
     pub(crate) fn insert(&mut self, mut op_id: IdFull, mut pos: usize, mut content: RichtextChunk) {
         // tracing::span!(tracing::Level::INFO, "TrackerInsert");
-
-        let last_id = op_id.inc(content.len() as Counter - 1);
-        let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
-        if applied_counter_end > op_id.counter {
-            if !self.current_vv.includes_id(last_id.id()) {
-                // PERF: may be slow
-                let mut updates = Default::default();
-                let cnt_start = self.current_vv.get(&op_id.peer).copied().unwrap_or(0);
-                self.forward(
-                    IdSpan::new(
-                        op_id.peer,
-                        cnt_start,
-                        op_id.counter + content.len() as Counter,
-                    ),
-                    &mut updates,
-                );
-                self.batch_update(updates, false);
-            }
-
-            if applied_counter_end > last_id.counter {
-                // the op is included in the applied vv
-                self.current_vv.extend_to_include_last_id(last_id.id());
-                // tracing::info!("Ops are already included {:#?}", &self);
-                return;
-            }
-
-            // the op is partially included, need to slice the content
-            let start = (applied_counter_end - op_id.counter) as usize;
-            op_id.lamport += (applied_counter_end - op_id.counter) as Lamport;
-            op_id.counter = applied_counter_end;
-            pos += start;
-            content = content.slice(start..);
+        if let ControlFlow::Break(_) =
+            self.skip_applied(op_id.id(), content.len(), |applied_counter_end| {
+                // the op is partially included, need to slice the content
+                let start = (applied_counter_end - op_id.counter) as usize;
+                op_id.lamport += (applied_counter_end - op_id.counter) as Lamport;
+                op_id.counter = applied_counter_end;
+                pos += start;
+                content = content.slice(start..);
+            })
+        {
+            return;
         }
 
         // {
         //     tracing::span!(tracing::Level::INFO, "before insert {} pos={}", op_id, pos);
         //     debug_log::debug_dbg!(&self);
         // }
+        self._insert(pos, content, op_id);
+    }
+
+    fn _insert(&mut self, pos: usize, content: RichtextChunk, op_id: IdFull) {
         let result = self.rope.insert(
             pos,
             FugueSpan {
@@ -161,37 +146,23 @@ impl Tracker {
         mut len: usize,
         reverse: bool,
     ) {
-        // tracing::span!(tracing::Level::INFO, "Tracker Delete");
-
-        let last_id = op_id.inc(len as Counter - 1);
-        let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
-        if applied_counter_end > op_id.counter {
-            if !self.current_vv.includes_id(last_id) {
-                // PERF: may be slow
-                let mut updates = Default::default();
-                let cnt_start = self.current_vv.get(&op_id.peer).copied().unwrap_or(0);
-                self.forward(
-                    IdSpan::new(op_id.peer, cnt_start, op_id.counter + len as Counter),
-                    &mut updates,
-                );
-                self.batch_update(updates, false);
-            }
-
-            if applied_counter_end > last_id.counter {
-                self.current_vv.extend_to_include_last_id(last_id);
-                return;
-            }
-
+        if let ControlFlow::Break(_) = self.skip_applied(op_id, len, |applied_counter_end: i32| {
             // the op is partially included, need to slice the op
             let start = (applied_counter_end - op_id.counter) as usize;
             op_id.counter = applied_counter_end;
             len -= start;
             // If reverse, don't need to change the pos, because it's deleting backwards.
             // If not reverse, we don't need to change the pos either, because the `start` chars after it are already deleted
+        }) {
+            return;
         }
 
         // tracing::info!("after forwarding pos={} len={}", pos, len);
 
+        self._delete(target_start_id, pos, len, reverse, op_id);
+    }
+
+    fn _delete(&mut self, target_start_id: ID, pos: usize, len: usize, reverse: bool, op_id: ID) {
         let mut ans = Vec::new();
         let split = self
             .rope
@@ -219,6 +190,88 @@ impl Tracker {
         let end_id = op_id.inc(len as Counter);
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
+    }
+
+    #[must_use]
+    fn skip_applied(
+        &mut self,
+        op_id: ID,
+        len: usize,
+        mut f: impl FnMut(Counter),
+    ) -> ControlFlow<()> {
+        let last_id = op_id.inc(len as Counter - 1);
+        let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
+        if applied_counter_end > op_id.counter {
+            if !self.current_vv.includes_id(last_id) {
+                // PERF: may be slow
+                let mut updates = Default::default();
+                let cnt_start = self.current_vv.get(&op_id.peer).copied().unwrap_or(0);
+                self.forward(
+                    IdSpan::new(op_id.peer, cnt_start, op_id.counter + len as Counter),
+                    &mut updates,
+                );
+                self.batch_update(updates, false);
+            }
+
+            if applied_counter_end > last_id.counter {
+                self.current_vv.extend_to_include_last_id(last_id);
+                return ControlFlow::Break(());
+            }
+
+            f(applied_counter_end);
+        }
+        ControlFlow::Continue(())
+    }
+
+    /// Internally it's delete at the src and insert at the dst.
+    ///
+    /// But it needs special behavior for id_to_cursor data structure
+    pub(crate) fn move_item(
+        &mut self,
+        mut op_id: IdFull,
+        deleted_id: ID,
+        from_pos: usize,
+        to_pos: usize,
+    ) {
+        if let ControlFlow::Break(_) = self.skip_applied(op_id.id(), 1, |_| unreachable!()) {
+            return;
+        }
+
+        let split = self
+            .rope
+            .delete(deleted_id, from_pos, 1, false, &mut |span| {});
+
+        for s in split {
+            self.update_insert_by_split(&s.arr);
+        }
+
+        let result = self.rope.insert(
+            to_pos,
+            FugueSpan {
+                content: RichtextChunk::new_unknown(1),
+                id: op_id,
+                real_id: if op_id.peer == UNKNOWN_PEER_ID {
+                    None
+                } else {
+                    Some(op_id.id().try_into().unwrap())
+                },
+                status: Status::default(),
+                diff_status: None,
+                origin_left: None,
+                origin_right: None,
+            },
+            |id| self.id_to_cursor.get_insert(id).unwrap(),
+        );
+        self.update_insert_by_split(&result.splitted.arr);
+
+        self.id_to_cursor.push(
+            op_id.id(),
+            id_to_cursor::Cursor::new_move(result.leaf, deleted_id),
+        );
+
+        let end_id = op_id.inc(1);
+        self.current_vv.extend_to_include_end_id(end_id.id());
+        self.applied_vv.extend_to_include_end_id(end_id.id());
     }
 
     #[inline]
@@ -257,9 +310,35 @@ impl Tracker {
                                         delete_times_diff: -1,
                                     })
                                 }
-                                id_to_cursor::IterCursor::Delete(_) => unreachable!(),
+                                _ => unreachable!(),
                             }
                         }
+                    }
+                    id_to_cursor::IterCursor::Move { from, to, op_id } => {
+                        for to_del in self.id_to_cursor.iter(IdSpan::new(
+                            from.peer,
+                            from.counter,
+                            from.counter + 1,
+                        )) {
+                            match to_del {
+                                id_to_cursor::IterCursor::Insert { leaf, id_span } => {
+                                    updates.push(crdt_rope::LeafUpdate {
+                                        leaf,
+                                        id_span,
+                                        set_future: None,
+                                        delete_times_diff: -1,
+                                    })
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+
+                        updates.push(crdt_rope::LeafUpdate {
+                            leaf: to,
+                            id_span: IdSpan::new(op_id.peer, op_id.counter, op_id.counter + 1),
+                            set_future: Some(true),
+                            delete_times_diff: 0,
+                        });
                     }
                 }
             }
@@ -305,9 +384,35 @@ impl Tracker {
                                     delete_times_diff: 1,
                                 })
                             }
-                            id_to_cursor::IterCursor::Delete(_) => unreachable!(),
+                            _ => unreachable!(),
                         }
                     }
+                }
+                id_to_cursor::IterCursor::Move { from, to, op_id } => {
+                    for to_del in self.id_to_cursor.iter(IdSpan::new(
+                        from.peer,
+                        from.counter,
+                        from.counter + 1,
+                    )) {
+                        match to_del {
+                            id_to_cursor::IterCursor::Insert { leaf, id_span } => {
+                                updates.push(crdt_rope::LeafUpdate {
+                                    leaf,
+                                    id_span,
+                                    set_future: None,
+                                    delete_times_diff: 1,
+                                })
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+
+                    updates.push(crdt_rope::LeafUpdate {
+                        leaf: to,
+                        id_span: IdSpan::new(op_id.peer, op_id.counter, op_id.counter + 1),
+                        set_future: Some(false),
+                        delete_times_diff: 0,
+                    });
                 }
             }
         }
@@ -360,6 +465,7 @@ impl Tracker {
                     span.contains(id_span.id_last());
                 }
                 id_to_cursor::IterCursor::Delete(_) => {}
+                id_to_cursor::IterCursor::Move { .. } => {}
             }
         }
     }
