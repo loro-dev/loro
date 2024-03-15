@@ -231,7 +231,7 @@ mod list_item_tree {
             cache.include_dead_len as usize
         }
 
-        fn get_elem_len(elem: &<MovableListTreeTrait as BTreeTrait>::Elem) -> usize {
+        fn get_elem_len(_elem: &<MovableListTreeTrait as BTreeTrait>::Elem) -> usize {
             1
         }
 
@@ -264,18 +264,18 @@ impl MovableListState {
     }
 
     fn create_new_elem(&mut self, id: IdLp, new_pos: IdLp, new_value: LoroValue, value_id: IdLp) {
-        self.try_update_elem_pos(id, new_pos);
-        self.try_update_elem_value(id, new_value, value_id);
+        self.update_elem_pos(id, new_pos, true);
+        self.update_elem_value(id, new_value, value_id, true);
     }
 
     /// This update may not succeed if the given value_id is smaller than the existing value_id.
     ///
     /// Return whether the update is successful.
-    fn try_update_elem_pos(&mut self, elem_id: IdLp, list_item_id: IdLp) -> bool {
+    fn update_elem_pos(&mut self, elem_id: IdLp, list_item_id: IdLp, force: bool) -> bool {
         let id = elem_id.try_into().unwrap();
         let mut old_item_id = None;
         if let Some(element) = self.elements.get_mut(&id) {
-            if element.pos > list_item_id {
+            if !force && element.pos > list_item_id {
                 return false;
             }
 
@@ -318,10 +318,16 @@ impl MovableListState {
     /// This update may not succeed if the given value_id is smaller than the existing value_id.
     ///
     /// Return whether the update is successful.
-    fn try_update_elem_value(&mut self, elem: IdLp, value: LoroValue, value_id: IdLp) -> bool {
+    fn update_elem_value(
+        &mut self,
+        elem: IdLp,
+        value: LoroValue,
+        value_id: IdLp,
+        force: bool,
+    ) -> bool {
         let id = elem.try_into().unwrap();
         if let Some(element) = self.elements.get_mut(&id) {
-            if element.value_id > value_id {
+            if !force && element.value_id > value_id {
                 return false;
             }
 
@@ -426,7 +432,7 @@ impl MovableListState {
             assert_eq!(item.pointed_by, Some(elem_id.compact()));
         }
         self.list_insert(to_index, item, kind);
-        self.try_update_elem_pos(elem_id, new_pos_id.idlp());
+        self.update_elem_pos(elem_id, new_pos_id.idlp(), false);
     }
 
     pub(crate) fn get(&self, index: usize, kind: IndexType) -> Option<&LoroValue> {
@@ -659,7 +665,7 @@ impl ContainerState for MovableListState {
                 match delta_item {
                     crate::delta::ElementDelta::PosChange { id, new_pos } => {
                         let old_index = self.get_index_of_elem(id);
-                        let success = self.try_update_elem_pos(id, new_pos);
+                        let success = self.update_elem_pos(id, new_pos, true);
                         if success && old_index.is_some() {
                             let old_index = old_index.unwrap();
                             let mut new_delta: Delta<Vec<ValueOrHandler>, ListDeltaMeta> =
@@ -680,7 +686,7 @@ impl ContainerState for MovableListState {
                         new_value,
                         value_id,
                     } => {
-                        let success = self.try_update_elem_value(id, new_value.clone(), value_id);
+                        let success = self.update_elem_value(id, new_value.clone(), value_id, true);
                         if success {
                             let index = self.get_index_of_elem(id);
                             if let Some(index) = index {
