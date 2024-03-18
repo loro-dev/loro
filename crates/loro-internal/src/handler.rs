@@ -1226,35 +1226,16 @@ impl MovableListHandler {
 
         info!(?ids, ?pos, "delete_with_txn");
         for (id, pos) in ids.into_iter().zip(pos.into_iter()) {
-            match id {
-                crate::state::IdInfo::Same(id) => {
-                    txn.apply_local_op(
-                        self.container_idx,
-                        crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
-                            id,
-                            pos as isize,
-                            1,
-                        ))),
-                        EventHint::DeleteList(DeleteSpan::new(pos as isize, 1)),
-                        &self.state,
-                    )?;
-                }
-                crate::state::IdInfo::Diff {
-                    list_item_id,
-                    elem_id,
-                } => {
-                    txn.apply_local_op(
-                        self.container_idx,
-                        crate::op::RawOpContent::List(ListOp::DeleteMovableListItem {
-                            list_item_id,
-                            elem_id,
-                            pos,
-                        }),
-                        EventHint::DeleteList(DeleteSpan::new(pos as isize, 1)),
-                        &self.state,
-                    )?;
-                }
-            }
+            txn.apply_local_op(
+                self.container_idx,
+                crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
+                    id,
+                    pos as isize,
+                    1,
+                ))),
+                EventHint::DeleteList(DeleteSpan::new(pos as isize, 1)),
+                &self.state,
+            )?;
         }
 
         Ok(())

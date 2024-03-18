@@ -1057,9 +1057,6 @@ mod encode {
                     *start as i32
                 }
                 crate::container::list::list_op::InnerListOp::StyleEnd => 0,
-                crate::container::list::list_op::InnerListOp::DeleteMovableListItem {
-                    pos, ..
-                } => *pos as i32,
             },
             crate::op::InnerContent::Map(map) => {
                 let key = register_key.register(&map.key);
@@ -1139,8 +1136,17 @@ mod encode {
                     );
                     ValueKind::MarkStart
                 }
-                crate::container::list::list_op::InnerListOp::Set { .. } => {
-                    unimplemented!()
+                crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
+                    value_writer.write(
+                        &Value::Set {
+                            peer_idx: register_peer.register(&elem_id.peer),
+                            lamport: elem_id.lamport,
+                            value: value.clone(),
+                        },
+                        register_key,
+                        register_cid,
+                    );
+                    ValueKind::Set
                 }
                 crate::container::list::list_op::InnerListOp::StyleEnd => ValueKind::Null,
                 crate::container::list::list_op::InnerListOp::Move {
@@ -1159,11 +1165,6 @@ mod encode {
                     );
                     ValueKind::Move
                 }
-                crate::container::list::list_op::InnerListOp::DeleteMovableListItem {
-                    list_item_id,
-                    elem_id,
-                    pos,
-                } => unimplemented!(),
             },
             crate::op::InnerContent::Map(map) => {
                 assert_eq!(op.container.get_type(), ContainerType::Map);
@@ -1309,7 +1310,67 @@ fn decode_op(
             _ => unreachable!(),
         },
         ContainerType::MovableList => {
-            unimplemented!()
+            let pos = prop as usize;
+            match kind {
+                ValueKind::Array => {
+                    let arr = value_reader.read_value_content(ValueKind::Array, &keys.keys, id)?;
+                    let range = arena.alloc_values(
+                        Arc::try_unwrap(
+                            arr.into_list()
+                                .map_err(|_| LoroError::DecodeDataCorruptionError)?,
+                        )
+                        .unwrap()
+                        .into_iter(),
+                    );
+                    crate::op::InnerContent::List(
+                        crate::container::list::list_op::InnerListOp::Insert {
+                            slice: SliceRange::new(range.start as u32..range.end as u32),
+                            pos,
+                        },
+                    )
+                }
+                ValueKind::DeleteSeq => {
+                    let del_start = del_iter.next().unwrap();
+                    let peer_idx = del_start.peer_idx;
+                    let cnt = del_start.counter;
+                    let len = del_start.len;
+                    crate::op::InnerContent::List(
+                        crate::container::list::list_op::InnerListOp::Delete(
+                            DeleteSpanWithId::new(
+                                ID::new(peers[peer_idx], cnt as Counter),
+                                pos as isize,
+                                len,
+                            ),
+                        ),
+                    )
+                }
+                ValueKind::Set => {
+                    let peer_idx = value_reader.read_usize()?;
+                    let lamport = value_reader.read_usize()?;
+                    let value = value_reader.read_value_type_and_content(&keys.keys, id)?;
+                    let peer = peers[peer_idx];
+                    crate::op::InnerContent::List(
+                        crate::container::list::list_op::InnerListOp::Set {
+                            elem_id: IdLp::new(peer, lamport as Lamport),
+                            value,
+                        },
+                    )
+                }
+                ValueKind::Move => {
+                    let from = value_reader.read_usize()?;
+                    let peer_idx = value_reader.read_usize()?;
+                    let lamport = value_reader.read_usize()?;
+                    let from_peer = peers[peer_idx];
+                    crate::op::InnerContent::List(
+                        crate::container::list::list_op::InnerListOp::Move {
+                            from: from as u32,
+                            from_id: IdLp::new(from_peer, lamport as Lamport),
+                            to: prop as u32,
+                        },
+                    )
+                }
+                _ => unreachable!(),
+            }
         }
     };
 
@@ -1473,7 +1534,7 @@ mod value {
     };
 
     use super::{encode::ValueRegister, MAX_COLLECTION_SIZE};
-    use crate::container::tree::tree_op::TreeOp;
+    use crate::{change::Lamport, container::tree::tree_op::TreeOp};
     use num_traits::{FromPrimitive, ToPrimitive};
 
     #[allow(unused)]
@@ -1497,6 +1558,11 @@ mod value {
             from: usize,
             from_idx: usize,
             lamport: usize,
+        },
+        Set {
+            peer_idx: usize,
+            lamport: Lamport,
+            value: LoroValue,
         },
         TreeMove(EncodedTreeMove),
         Unknown {
@@ -1571,6 +1637,7 @@ mod value {
         TreeMove = 13,
         Binary = 14,
         Move = 15,
+        Set = 16,
         Unknown = 65536,
     }
 
@@ -1608,6 +1675,8 @@ mod value {
                 Some(ValueKind::TreeMove)
             } else if n == ValueKind::Binary as u8 {
                 Some(ValueKind::Binary)
+            } else if n == ValueKind::Set as u8 {
+                Some(ValueKind::Set)
             } else {
                 None
             }
@@ -1645,6 +1714,7 @@ mod value {
                 ValueKind::TreeMove => ValueKind::TreeMove as i64,
                 ValueKind::Binary => ValueKind::Binary as i64,
                 ValueKind::Move => ValueKind::Move as i64,
+                ValueKind::Set => ValueKind::Set as i64,
                 ValueKind::Unknown => ValueKind::Unknown as i64,
             })
         }
@@ -1673,6 +1743,7 @@ mod value {
                 ValueKind::TreeMove => ValueKind::TreeMove as u8,
                 ValueKind::Binary => ValueKind::Binary as u8,
                 ValueKind::Move => ValueKind::Move as u8,
+                ValueKind::Set => ValueKind::Set as u8,
                 ValueKind::Unknown => panic!("Unknown value kind"),
             })
         }
@@ -1697,6 +1768,7 @@ mod value {
                 Value::TreeMove(_) => ValueKind::TreeMove,
                 Value::Binary(_) => ValueKind::Binary,
                 Value::Move { .. } => ValueKind::Move,
+                Value::Set { .. } => ValueKind::Set,
                 Value::Unknown { .. } => ValueKind::Unknown,
             }
         }
@@ -1816,6 +1888,15 @@ mod value {
                     self.write_usize(*from);
                     self.write_usize(*from_idx);
                     self.write_usize(*cnt);
+                }
+                Value::Set {
+                    peer_idx,
+                    lamport,
+                    value,
+                } => {
+                    self.write_usize(*peer_idx);
+                    self.write_usize(*lamport as usize);
+                    self.write_value_type_and_content(value, register_key, register_cid);
                 }
             }
         }

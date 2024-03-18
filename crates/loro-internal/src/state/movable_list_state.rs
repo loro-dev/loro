@@ -467,18 +467,11 @@ impl MovableListState {
             .and_then(|x| x.pointed_by)
     }
 
-    pub(crate) fn get_id_at(&self, index: usize, kind: IndexType) -> Option<IdInfo> {
+    pub(crate) fn get_id_at(&self, index: usize, kind: IndexType) -> Option<ID> {
         self.get_list_item_at(index, kind).map(|x| {
             let p = x.pointed_by.unwrap();
             let p: IdLp = p.to_id();
-            if x.id.idlp() == p {
-                IdInfo::Same(x.id.id())
-            } else {
-                IdInfo::Diff {
-                    list_item_id: x.id.id(),
-                    elem_id: p,
-                }
-            }
+            x.id.id()
         })
     }
 
@@ -770,13 +763,6 @@ impl ContainerState for MovableListState {
             },
             ListOp::Delete(span) => {
                 self.list_drain(span.start() as usize..span.end() as usize, IndexType::ForOp);
-            }
-            ListOp::DeleteMovableListItem {
-                list_item_id: _,
-                elem_id: _,
-                pos,
-            } => {
-                self.list_drain(*pos..*pos + 1, IndexType::ForOp);
             }
             ListOp::Move { from, to, elem_id } => {
                 self.mov(

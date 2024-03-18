@@ -584,8 +584,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             crate::op::InnerContent::List(l) => match l {
                 InnerListOp::Insert { .. }
                 | InnerListOp::Move { .. }
-                | InnerListOp::Set { .. }
-                | InnerListOp::DeleteMovableListItem { .. } => {
+                | InnerListOp::Set { .. }=> {
                     unreachable!()
                 }
                 crate::container::list::list_op::InnerListOp::InsertText {
@@ -753,12 +752,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     self.new_elements.insert(op_id.inc(i as Counter));
                 }
             }
-            // we don't need to track element's changes due to deletions
-            InnerListOp::DeleteMovableListItem {
-                list_item_id,
-                elem_id,
-                pos,
-            } => {}
             InnerListOp::Delete(d) => {}
             InnerListOp::Move { from, from_id, to } => {
                 self.moved_elements.insert(*from_id);
@@ -797,14 +790,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                             del.atom_len(),
                             del.is_reversed(),
                         );
-                    }
-                    InnerListOp::DeleteMovableListItem {
-                        list_item_id,
-                        elem_id,
-                        pos,
-                    } => {
-                        this.tracker
-                            .delete(op.id_start(), *list_item_id, *pos, 1, false);
                     }
                     InnerListOp::Move { from, from_id, to } => {
                         let from_id = oplog.idlp_to_id(*from_id).unwrap();

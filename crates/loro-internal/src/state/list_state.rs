@@ -419,9 +419,6 @@ impl ContainerState for ListState {
                 }
                 ListOp::StyleStart { .. } => unreachable!(),
                 ListOp::StyleEnd { .. } => unreachable!(),
-                ListOp::DeleteMovableListItem { .. } => {
-                    unreachable!()
-                }
                 ListOp::Set { .. } => {
                     unreachable!()
                 }

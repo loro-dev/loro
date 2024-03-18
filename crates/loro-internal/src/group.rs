@@ -261,7 +261,6 @@ impl OpGroupTrait for MovableListOpGroup {
                 // that are deleted but not removed from the state.
                 // Maybe we can remove the elements with no valid pos mapping directly from the state. When
                 // it's needed, we load it lazily from this group.
-                crate::container::list::list_op::InnerListOp::DeleteMovableListItem { .. } => {}
                 crate::container::list::list_op::InnerListOp::Delete(_) => {}
                 crate::container::list::list_op::InnerListOp::StyleStart { .. }
                 | crate::container::list::list_op::InnerListOp::StyleEnd
