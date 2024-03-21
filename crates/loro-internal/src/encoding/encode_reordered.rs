@@ -1,4 +1,11 @@
-use std::{borrow::Cow, cmp::Ordering, mem::take, sync::Arc};
+use std::{
+    borrow::{BorrowMut, Cow},
+    cell::RefCell,
+    cmp::Ordering,
+    mem::take,
+    rc::Rc,
+    sync::Arc,
+};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
@@ -26,7 +33,7 @@ use crate::{
 };
 
 use self::{
-    arena::{decode_arena, encode_arena, ContainerArena, DecodedArenas},
+    arena::{decode_arena, encode_arena, ContainerArena, DecodedArenas, PeerIdArena},
     encode::{encode_changes, encode_ops, init_encode, TempOp, ValueRegister},
     value::ValueReader,
 };
@@ -136,7 +143,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
     )?
     .ops_map;
 
-    let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
+    let changes = decode_changes(iter.changes, iter.start_counters, &peer_ids, deps, ops_map)?;
 
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
@@ -192,7 +199,7 @@ fn import_changes_to_oplog(
 fn decode_changes<'a>(
     encoded_changes: IterableEncodedChange<'_>,
     mut counters: Vec<i32>,
-    peer_ids: arena::PeerIdArena,
+    peer_ids: &arena::PeerIdArena,
     mut deps: impl Iterator<Item = arena::EncodedDep> + 'a,
     mut ops_map: std::collections::HashMap<
         u64,
@@ -371,6 +378,8 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
 
     let mut states = Vec::new();
     let mut state_bytes = Vec::new();
+    let peer_register = Rc::new(RefCell::new(peer_register));
+    let peer_register_1 = Rc::clone(&peer_register);
     for (_, c_idx) in c_pairs.iter() {
         let container_index = *container_idx2index.get(c_idx).unwrap() as u32;
         let state = match state.get_state(*c_idx) {
@@ -387,6 +396,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
 
         let mut op_len = 0;
         let bytes = state.encode_snapshot(super::StateSnapshotEncoder {
+            register_peer: &mut |peer| RefCell::borrow_mut(&peer_register_1).register(&peer),
             check_idspan: &|_id_span| {
                 // TODO: todo!("check intersection by vv that defined by idlp");
                 // if let Some(counter) = vv.intersect_span(id_span) {
@@ -401,7 +411,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
             encoder_by_op: &mut |op| {
                 origin_ops.push(TempOp {
                     op: Cow::Owned(op.op),
-                    peer_idx: peer_register.register(&op.peer) as u32,
+                    peer_idx: RefCell::borrow_mut(&peer_register).register(&op.peer) as u32,
                     peer_id: op.peer,
                     container_index,
                     prop_that_used_for_sort: -1,
@@ -431,6 +441,11 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         state_bytes.extend(bytes);
     }
 
+    drop(peer_register_1);
+    let mut peer_register = match Rc::try_unwrap(peer_register) {
+        Ok(r) => r.into_inner(),
+        Err(_) => unreachable!(),
+    };
     let changes = encode_changes(
         &diff_changes,
         &mut dep_arena,
@@ -669,7 +684,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         true,
     )?;
 
-    let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
+    let changes = decode_changes(iter.changes, iter.start_counters, &peer_ids, deps, ops_map)?;
     let (new_ids, pending_changes) = import_changes_to_oplog(changes, &mut oplog)?;
 
     for op in ops.iter_mut() {
@@ -685,6 +700,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         state_blob_arena,
         ops,
         &oplog,
+        &peer_ids,
     )
     .unwrap();
     assert!(pending_changes.is_empty());
@@ -717,6 +733,7 @@ fn decode_snapshot_states(
     state_blob_arena: &[u8],
     ops: Vec<OpWithId>,
     oplog: &std::sync::MutexGuard<'_, OpLog>,
+    peers: &PeerIdArena,
 ) -> LoroResult<()> {
     let mut state_blob_index: usize = 0;
     let mut ops_index: usize = 0;
@@ -768,6 +785,7 @@ fn decode_snapshot_states(
                 ops: &mut next_ops,
                 blob: state_bytes,
                 mode: crate::encoding::EncodeMode::Snapshot,
+                peers: &peers.peer_ids,
             },
         );
     }

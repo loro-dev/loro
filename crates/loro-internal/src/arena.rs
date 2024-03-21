@@ -375,6 +375,16 @@ impl SharedArena {
             &self.inner.parents.lock().unwrap(),
         )
     }
+
+    pub(crate) fn iter_value_slice(
+        &self,
+        range: Range<usize>,
+    ) -> impl Iterator<Item = LoroValue> + '_ {
+        let values = self.inner.values.lock().unwrap();
+        range
+            .into_iter()
+            .map(move |i| values.get(i).unwrap().clone())
+    }
 }
 
 fn _alloc_str_with_slice(

@@ -32,7 +32,7 @@ mod movable_list_state;
 mod richtext_state;
 mod tree_state;
 
-pub(crate) use self::movable_list_state::{IdInfo, IndexType, MovableListState};
+pub(crate) use self::movable_list_state::{IndexType, MovableListState};
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;

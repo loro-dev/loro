@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
 use tracing::instrument;
 
@@ -371,6 +372,7 @@ impl MovableListState {
         }
     }
 
+    /// Get the length defined by op, where the length includes the ones that are not being pointed at (moved, invisible to users).
     fn op_len(&self) -> usize {
         self.list.root_cache().include_dead_len as usize
     }
@@ -468,14 +470,15 @@ impl MovableListState {
     }
 
     pub(crate) fn get_id_at(&self, index: usize, kind: IndexType) -> Option<ID> {
-        self.get_list_item_at(index, kind).map(|x| {
-            let p = x.pointed_by.unwrap();
-            let p: IdLp = p.to_id();
-            x.id.id()
-        })
+        self.get_list_item_at(index, kind).map(|x| x.id.id())
     }
 
-    pub fn convert_index(&self, index: usize, from: IndexType, to: IndexType) -> Option<usize> {
+    pub(crate) fn convert_index(
+        &self,
+        index: usize,
+        from: IndexType,
+        to: IndexType,
+    ) -> Option<usize> {
         let len = self.len_kind(from);
         if index == len {
             return Some(self.len_kind(to));
@@ -544,6 +547,7 @@ impl MovableListState {
     /// - Every list item's `pointed_by` value points to an element in the elements, and
     ///   the element has the correct `pos` value
     #[cfg(any(debug_assertions, test))]
+    #[allow(unused)]
     pub(crate) fn check_consistency(&self) {
         for (id, elem) in self.elements.iter() {
             let item = self
@@ -561,6 +565,7 @@ impl MovableListState {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &LoroValue> {
+        // PERF: can be optimized
         (0..self.len()).map(move |i| self.get(i, IndexType::ForUser).unwrap())
     }
 
@@ -571,12 +576,30 @@ impl MovableListState {
     fn to_vec(&self) -> Vec<LoroValue> {
         self.iter().cloned().collect_vec()
     }
-}
 
-#[derive(Debug)]
-pub(crate) enum IdInfo {
-    Same(ID),
-    Diff { list_item_id: ID, elem_id: IdLp },
+    /// push a new elem into the list
+    fn push_inner(
+        &mut self,
+        elem_id: CompactIdLp,
+        value: LoroValue,
+        last_set_id: IdLp,
+        list_item_id: IdFull,
+    ) {
+        self.elements.insert(
+            elem_id,
+            Element {
+                value,
+                value_id: last_set_id,
+                pos: list_item_id.idlp(),
+            },
+        );
+        let cursor = self.list.push(ListItem {
+            pointed_by: Some(elem_id),
+            id: list_item_id,
+        });
+        self.id_to_list_leaf
+            .insert(list_item_id.idlp(), cursor.leaf);
+    }
 }
 
 impl ContainerState for MovableListState {
@@ -723,8 +746,8 @@ impl ContainerState for MovableListState {
         match op.content.as_list().unwrap() {
             ListOp::Insert { slice, pos } => match slice {
                 ListSlice::RawData(list) => {
-                    let mut a = None;
-                    let mut b = None;
+                    let mut a;
+                    let mut b;
                     let v: &mut dyn Iterator<Item = &LoroValue>;
                     match list {
                         std::borrow::Cow::Borrowed(list) => {
@@ -819,19 +842,107 @@ impl ContainerState for MovableListState {
         todo!()
     }
 
-    #[doc = r" Encode the ops and the blob that can be used to restore the state to the current state."]
-    #[doc = r""]
-    #[doc = r" State will use the provided encoder to encode the ops and export a blob."]
-    #[doc = r" The ops should be encoded into the snapshot as well as the blob."]
-    #[doc = r" The users then can use the ops and the blob to restore the state to the current state."]
-    fn encode_snapshot(&self, encoder: StateSnapshotEncoder) -> Vec<u8> {
-        todo!()
+    fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
+        let len = self.len();
+        let mut items = Vec::with_capacity(len);
+        let mut ids = Vec::new();
+        for (&eid, elem) in self.elements.iter() {
+            encoder.encode_op(elem.value_id.into(), || todo!());
+            let item = EncodedItem {
+                pos_id_eq_elem_id: elem.pos.compact() == eid,
+            };
+            items.push(item);
+            if !item.pos_id_eq_elem_id {
+                ids.push(EncodedId {
+                    peer_idx: encoder.register_peer(elem.pos.peer),
+                    lamport: elem.pos.lamport,
+                });
+            }
+        }
+
+        let out = EncodedSnapshot { items, ids };
+        serde_columnar::to_vec(&out).unwrap()
     }
 
-    #[doc = r" Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
-        todo!()
+        let iter = serde_columnar::iter_from_bytes::<EncodedSnapshot>(ctx.blob).unwrap();
+        let mut item_iter = iter.items;
+        let mut item_ids = iter.ids;
+        let last_set_op_iter = ctx.ops;
+        for op in last_set_op_iter {
+            let idlp = op.id_full().idlp();
+            match &op.op.content {
+                crate::op::InnerContent::List(l) => match l {
+                    crate::container::list::list_op::InnerListOp::Insert { slice, pos: _ } => {
+                        for (i, v) in ctx
+                            .oplog
+                            .arena
+                            .iter_value_slice(slice.to_range())
+                            .enumerate()
+                        {
+                            let elem_id = idlp.inc(i as i32);
+                            let item = item_iter.next().unwrap();
+                            let pos_id = if item.pos_id_eq_elem_id {
+                                elem_id
+                            } else {
+                                let id = item_ids.next().unwrap();
+                                IdLp::new(ctx.peers[id.peer_idx], id.lamport)
+                            };
+                            let pos_o_id = ctx.oplog.idlp_to_id(pos_id).unwrap();
+                            let pos_full_id = IdFull {
+                                peer: pos_id.peer,
+                                lamport: pos_id.lamport,
+                                counter: pos_o_id.counter,
+                            };
+                            self.push_inner(elem_id.compact(), v, elem_id, pos_full_id);
+                        }
+                    }
+                    crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
+                        let item = item_iter.next().unwrap();
+                        let pos_id = if item.pos_id_eq_elem_id {
+                            *elem_id
+                        } else {
+                            let id = item_ids.next().unwrap();
+                            IdLp::new(ctx.peers[id.peer_idx], id.lamport)
+                        };
+                        let pos_o_id = ctx.oplog.idlp_to_id(pos_id).unwrap();
+                        let pos_full_id = IdFull {
+                            peer: pos_id.peer,
+                            lamport: pos_id.lamport,
+                            counter: pos_o_id.counter,
+                        };
+                        self.push_inner(elem_id.compact(), value.clone(), idlp, pos_full_id);
+                    }
+                    _ => unreachable!(),
+                },
+                _ => unreachable!(),
+            }
+        }
     }
+}
+
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone, Copy)]
+struct EncodedItem {
+    #[columnar(strategy = "BoolRle")]
+    pos_id_eq_elem_id: bool,
+}
+
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
+struct EncodedId {
+    #[columnar(strategy = "DeltaRle")]
+    peer_idx: usize,
+    #[columnar(strategy = "DeltaRle")]
+    lamport: u32,
+}
+
+#[columnar(ser, de)]
+struct EncodedSnapshot {
+    #[columnar(class = "vec", iter = "EncodedItem")]
+    items: Vec<EncodedItem>,
+    #[columnar(class = "vec", iter = "EncodedId")]
+    ids: Vec<EncodedId>,
 }
 
 #[cfg(test)]
