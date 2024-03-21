@@ -81,7 +81,7 @@ impl Clone for OpLog {
     fn clone(&self) -> Self {
         Self {
             dag: self.dag.clone(),
-            arena: Default::default(),
+            arena: self.arena.clone(),
             changes: self.changes.clone(),
             op_groups: self.op_groups.clone(),
             next_lamport: self.next_lamport,
@@ -155,11 +155,12 @@ pub(crate) struct EnsureChangeDepsAreAtTheEnd;
 impl OpLog {
     #[inline]
     pub(crate) fn new() -> Self {
+        let arena = SharedArena::new();
         Self {
             dag: AppDag::default(),
-            arena: Default::default(),
+            op_groups: OpGroups::new(arena.clone()),
             changes: ClientChanges::default(),
-            op_groups: OpGroups::default(),
+            arena,
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),

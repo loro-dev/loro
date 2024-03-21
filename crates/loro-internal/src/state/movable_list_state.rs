@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::instrument;
+use tracing::{debug, instrument};
 
 use fxhash::FxHashMap;
 use generic_btree::{BTree, Cursor, LeafIndex, Query};
@@ -265,14 +265,20 @@ impl MovableListState {
     }
 
     fn create_new_elem(&mut self, id: IdLp, new_pos: IdLp, new_value: LoroValue, value_id: IdLp) {
-        self.update_elem_pos(id, new_pos, true);
+        self.update_elem_pos(id, new_pos, true, false);
         self.update_elem_value(id, new_value, value_id, true);
     }
 
     /// This update may not succeed if the given value_id is smaller than the existing value_id.
     ///
     /// Return whether the update is successful.
-    fn update_elem_pos(&mut self, elem_id: IdLp, list_item_id: IdLp, force: bool) -> bool {
+    fn update_elem_pos(
+        &mut self,
+        elem_id: IdLp,
+        list_item_id: IdLp,
+        force: bool,
+        remove_old_list_item: bool,
+    ) -> bool {
         let id = elem_id.try_into().unwrap();
         let mut old_item_id = None;
         if let Some(element) = self.elements.get_mut(&id) {
@@ -305,12 +311,14 @@ impl MovableListState {
             }
         });
 
-        if let Some(old) = old_item_id {
-            let leaf = self.id_to_list_leaf.get(&old).unwrap();
-            self.list.update_leaf(*leaf, |elem| {
-                elem.pointed_by = None;
-                (true, None, None)
-            });
+        if remove_old_list_item {
+            if let Some(old) = old_item_id {
+                if !old.is_none() {
+                    debug!(?old, ?elem_id, ?list_item_id, "remove_elem_pos");
+                    let leaf = self.id_to_list_leaf.remove(&old).unwrap();
+                    self.list.remove_leaf(Cursor { leaf, offset: 0 });
+                }
+            }
         }
 
         true
@@ -433,8 +441,17 @@ impl MovableListState {
             let item = self.get_list_item_at(from_index, kind).unwrap();
             assert_eq!(item.pointed_by, Some(elem_id.compact()));
         }
-        self.list_insert(to_index, item, kind);
-        self.update_elem_pos(elem_id, new_pos_id.idlp(), false);
+
+        self.list_insert(
+            if to_index > from_index {
+                to_index + 1
+            } else {
+                to_index
+            },
+            item,
+            kind,
+        );
+        self.update_elem_pos(elem_id, new_pos_id.idlp(), false, true);
     }
 
     pub(crate) fn get(&self, index: usize, kind: IndexType) -> Option<&LoroValue> {
@@ -469,8 +486,13 @@ impl MovableListState {
             .and_then(|x| x.pointed_by)
     }
 
-    pub(crate) fn get_id_at(&self, index: usize, kind: IndexType) -> Option<ID> {
+    pub(crate) fn get_list_id_at(&self, index: usize, kind: IndexType) -> Option<ID> {
         self.get_list_item_at(index, kind).map(|x| x.id.id())
+    }
+
+    pub(crate) fn get_elem_id_at(&self, index: usize, kind: IndexType) -> Option<CompactIdLp> {
+        self.get_list_item_at(index, kind)
+            .and_then(|x| x.pointed_by)
     }
 
     pub(crate) fn convert_index(
@@ -626,6 +648,7 @@ impl ContainerState for MovableListState {
             unreachable!()
         };
 
+        debug!(?diff, "movable apply_diff_and_convert");
         let mut ans: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
 
         {
@@ -675,13 +698,17 @@ impl ContainerState for MovableListState {
             }
         }
 
+        debug!(?self, "after apply list diff");
+
         {
             // apply element changes
             for delta_item in diff.elements.into_iter() {
                 match delta_item {
                     crate::delta::ElementDelta::PosChange { id, new_pos } => {
                         let old_index = self.get_index_of_elem(id);
-                        let success = self.update_elem_pos(id, new_pos, true);
+                        // don't need to update old list item, because it's handled by list diff already
+                        let success = self.update_elem_pos(id, new_pos, true, false);
+                        debug!(?new_pos, ?self);
                         if success && old_index.is_some() {
                             let old_index = old_index.unwrap();
                             let mut new_delta: Delta<Vec<ValueOrHandler>, ListDeltaMeta> =
@@ -796,8 +823,8 @@ impl ContainerState for MovableListState {
                     IndexType::ForOp,
                 );
             }
-            ListOp::Set { .. } => {
-                unimplemented!();
+            ListOp::Set { elem_id, value } => {
+                self.update_elem_value(*elem_id, value.clone(), op.idlp(), false);
             }
             ListOp::StyleStart { .. } | ListOp::StyleEnd => unreachable!(),
         }
@@ -823,6 +850,7 @@ impl ContainerState for MovableListState {
     }
 
     fn get_value(&mut self) -> LoroValue {
+        debug!(?self.list, ?self.elements, "get_value");
         let list = self
             .list
             .iter_with_filter(|x| (x.user_len > 0, 0))
@@ -949,6 +977,7 @@ struct EncodedSnapshot {
 mod test {
     use crate::{LoroDoc, ToJson};
     use serde_json::json;
+    use tracing::debug;
 
     #[test]
     fn basic_handler_ops() {
@@ -968,5 +997,32 @@ mod test {
         assert_eq!(list.get_value().to_json_value(), json!([9, 0]));
         list.delete(0, 2).unwrap();
         assert_eq!(list.get_value().to_json_value(), json!([]));
+    }
+
+    #[test]
+    fn basic_sync() {
+        let doc = LoroDoc::new_auto_commit();
+        let list = doc.get_movable_list("list");
+        list.insert(0, 1).unwrap();
+        list.insert(1, 0).unwrap();
+        list.mov(0, 1).unwrap();
+        list.insert(2, 3).unwrap();
+        list.set(2, 2).unwrap();
+        assert_eq!(
+            doc.get_deep_value().to_json_value(),
+            json!({
+                "list": [0, 1, 2]
+            })
+        );
+        {
+            let doc_b = LoroDoc::new_auto_commit();
+            doc_b.import(&doc.export_from(&Default::default())).unwrap();
+            assert_eq!(
+                doc_b.get_deep_value().to_json_value(),
+                json!({
+                    "list": [0, 1, 2]
+                })
+            );
+        }
     }
 }

@@ -9,6 +9,7 @@ use loro_common::{
     ContainerID, Counter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
 };
 use smallvec::SmallVec;
+use tracing::debug;
 
 use crate::{
     change::Lamport,
@@ -489,8 +490,10 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
+        debug!("calc list diff inner");
         let mut delta = Delta::new();
         for item in self.tracker.diff(from, to) {
+            debug!(?item, "diff item");
             match item {
                 CrdtRopeDelta::Retain(len) => {
                     delta = delta.retain(len);
@@ -525,19 +528,29 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                             acc_len += rich_op.content_len();
                             let op = rich_op.op();
                             let lamport = rich_op.lamport();
-                            let content = op.content.as_list().unwrap().as_insert().unwrap();
-                            let range = content.0.clone();
-                            for i in content.0 .0.clone() {
-                                let v = oplog.arena.get_value(i as usize);
-                                if let Some(LoroValue::Container(c)) = &v {
-                                    on_new_container(c);
-                                }
-                            }
 
-                            delta = delta.insert(SliceRanges {
-                                ranges: smallvec::smallvec![range],
-                                id: IdFull::new(id.peer, op.counter, lamport),
-                            });
+                            if let InnerListOp::Insert { slice, pos: _ } =
+                                op.content.as_list().unwrap()
+                            {
+                                let range = slice.clone();
+                                for i in slice.0.clone() {
+                                    let v = oplog.arena.get_value(i as usize);
+                                    if let Some(LoroValue::Container(c)) = &v {
+                                        on_new_container(c);
+                                    }
+                                }
+
+                                delta = delta.insert(SliceRanges {
+                                    ranges: smallvec::smallvec![range],
+                                    id: IdFull::new(id.peer, op.counter, lamport),
+                                });
+                            } else if let InnerListOp::Move { .. } = op.content.as_list().unwrap() {
+                                delta = delta.insert(SliceRanges {
+                                    // FIXME: I think we may not need an actual value here
+                                    ranges: smallvec::smallvec![SliceRange(0..1)],
+                                    id: IdFull::new(id.peer, op.counter, lamport),
+                                });
+                            }
                         }
 
                         debug_assert_eq!(acc_len, len as usize);
@@ -582,9 +595,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         }
         match &op.raw_op().content {
             crate::op::InnerContent::List(l) => match l {
-                InnerListOp::Insert { .. }
-                | InnerListOp::Move { .. }
-                | InnerListOp::Set { .. }=> {
+                InnerListOp::Insert { .. } | InnerListOp::Move { .. } | InnerListOp::Set { .. } => {
                     unreachable!()
                 }
                 crate::container::list::list_op::InnerListOp::InsertText {
@@ -741,6 +752,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         op: crate::op::RichOp,
         vv: Option<&crate::VersionVector>,
     ) {
+        debug!("movable list apply_change");
         let InnerContent::List(l) = &op.raw_op().content else {
             unreachable!()
         };
@@ -824,6 +836,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         else {
             unreachable!()
         };
+        debug!(?list_diff, "calc list done");
         let group = oplog
             .op_groups
             .get(&self.container_idx)
@@ -831,6 +844,16 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             .as_movable_list()
             .unwrap();
         let mut element_changes = Vec::new();
+        for id in self.new_elements.iter() {
+            let pos = group.last_pos(id, to).unwrap();
+            let value = group.last_value(id, to).unwrap();
+            element_changes.push(ElementDelta::New {
+                id: *id,
+                new_pos: pos.value,
+                new_value: value.value.clone(),
+                value_id: IdLp::new(value.peer, value.lamport),
+            });
+        }
         for id in self.updated_elements.iter() {
             let value = group.last_value(id, to).unwrap();
             element_changes.push(ElementDelta::ValueChange {
@@ -844,16 +867,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             element_changes.push(ElementDelta::PosChange {
                 id: *id,
                 new_pos: pos.value,
-            });
-        }
-        for id in self.new_elements.iter() {
-            let pos = group.last_pos(id, to).unwrap();
-            let value = group.last_value(id, to).unwrap();
-            element_changes.push(ElementDelta::New {
-                id: *id,
-                new_pos: pos.value,
-                new_value: value.value.clone(),
-                value_id: IdLp::new(value.peer, value.lamport),
             });
         }
 

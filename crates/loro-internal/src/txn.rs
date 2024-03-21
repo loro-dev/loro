@@ -89,6 +89,10 @@ pub(super) enum EventHint {
     InsertList {
         len: u32,
     },
+    SetList {
+        index: usize,
+        value: LoroValue,
+    },
     Move {
         from: u32,
         to: u32,
@@ -116,6 +120,7 @@ impl generic_btree::rle::HasLength for EventHint {
             EventHint::Tree(_) => 1,
             EventHint::MarkEnd => 1,
             EventHint::Move { .. } => 1,
+            EventHint::SetList { .. } => 1,
         }
     }
 }
@@ -603,6 +608,17 @@ fn change_to_diff(
                                 },
                             ),
                         )),
+                    });
+                }
+                EventHint::SetList { index, value } => {
+                    ans.push(TxnContainerDiff {
+                        idx: op.container,
+                        diff: Diff::List(
+                            Delta::new()
+                                .retain(index)
+                                .delete(1)
+                                .insert(vec![ValueOrHandler::from_value(value, arena, txn, state)]),
+                        ),
                     });
                 }
                 EventHint::MarkEnd => {

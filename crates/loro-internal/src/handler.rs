@@ -1096,12 +1096,8 @@ impl MovableListHandler {
                     (
                         list.convert_index(from, IndexType::ForUser, IndexType::ForOp)
                             .unwrap(),
-                        list.convert_index(
-                            if to > from { to + 1 } else { to },
-                            IndexType::ForUser,
-                            IndexType::ForOp,
-                        )
-                        .unwrap(),
+                        list.convert_index(to, IndexType::ForUser, IndexType::ForOp)
+                            .unwrap(),
                         list.get_elem_id_at_given_pos(from, IndexType::ForUser)
                             .unwrap(),
                     )
@@ -1185,6 +1181,46 @@ impl MovableListHandler {
         ))
     }
 
+    pub(crate) fn set_with_txn(
+        &self,
+        txn: &mut Transaction,
+        index: usize,
+        value: LoroValue,
+    ) -> LoroResult<()> {
+        if index >= self.len() {
+            return Err(LoroError::OutOfBound {
+                pos: index,
+                len: self.len(),
+            });
+        }
+
+        let Some(elem_id) =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    let list = state.as_movable_list_state().unwrap();
+                    list.get_elem_id_at(index, IndexType::ForUser)
+                })
+        else {
+            unreachable!()
+        };
+
+        let op = crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Set {
+            elem_id: elem_id.to_id(),
+            value: value.clone(),
+        });
+
+        let hint = EventHint::SetList { index, value };
+        txn.apply_local_op(self.container_idx, op, hint, &self.state)
+    }
+
+    pub(crate) fn set(&self, index: usize, value: impl Into<LoroValue>) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.set_with_txn(txn, index, value.into()))
+    }
+
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
         with_txn(&self.txn, |txn| self.delete_with_txn(txn, pos, len))
     }
@@ -1211,7 +1247,7 @@ impl MovableListHandler {
                 .with_state(self.container_idx, |state| {
                     let list = state.as_movable_list_state().unwrap();
                     let ids: Vec<_> = (pos..pos + len)
-                        .map(|i| list.get_id_at(i, IndexType::ForUser).unwrap())
+                        .map(|i| list.get_list_id_at(i, IndexType::ForUser).unwrap())
                         .collect();
                     let poses: Vec<_> = (pos..pos + len)
                         // need to -i because we delete the previous ones

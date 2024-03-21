@@ -17,6 +17,7 @@ use loro_common::{
 use num_traits::FromPrimitive;
 use rle::HasLength;
 use serde_columnar::columnar;
+use tracing::{debug, instrument};
 
 use crate::{
     arena::SharedArena,
@@ -122,6 +123,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     serde_columnar::to_vec(&doc).unwrap()
 }
 
+#[instrument(skip_all)]
 pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
     let iter = serde_columnar::iter_from_bytes::<EncodedDoc>(bytes)?;
     let DecodedArenas {
@@ -1108,7 +1110,10 @@ mod encode {
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
                 crate::container::list::list_op::InnerListOp::Insert { slice, .. } => {
-                    assert_eq!(op.container.get_type(), ContainerType::List);
+                    assert!(matches!(
+                        op.container.get_type(),
+                        ContainerType::List | ContainerType::MovableList
+                    ));
                     let value = arena.get_values(slice.0.start as usize..slice.0.end as usize);
                     value_writer.write_value_content(&value.into(), register_key, register_cid);
                     ValueKind::Array
@@ -1214,6 +1219,7 @@ fn decode_op(
     peers: &[u64],
     id: ID,
 ) -> LoroResult<crate::op::InnerContent> {
+    debug!(?cid, ?kind, ?prop, "decode_op");
     let content = match cid.container_type() {
         ContainerType::Text => match kind {
             ValueKind::Str => {
@@ -1332,6 +1338,7 @@ fn decode_op(
             match kind {
                 ValueKind::Array => {
                     let arr = value_reader.read_value_content(ValueKind::Array, &keys.keys, id)?;
+                    debug!(?arr, "movable list decode");
                     let range = arena.alloc_values(
                         Arc::try_unwrap(
                             arr.into_list()
@@ -1663,40 +1670,25 @@ mod value {
         #[allow(trivial_numeric_casts)]
         #[inline]
         fn from_u8(n: u8) -> Option<Self> {
-            if n == ValueKind::Null as u8 {
-                Some(ValueKind::Null)
-            } else if n == ValueKind::True as u8 {
-                Some(ValueKind::True)
-            } else if n == ValueKind::False as u8 {
-                Some(ValueKind::False)
-            } else if n == ValueKind::DeleteOnce as u8 {
-                Some(ValueKind::DeleteOnce)
-            } else if n == ValueKind::I64 as u8 {
-                Some(ValueKind::I64)
-            } else if n == ValueKind::ContainerType as u8 {
-                Some(ValueKind::ContainerType)
-            } else if n == ValueKind::F64 as u8 {
-                Some(ValueKind::F64)
-            } else if n == ValueKind::Str as u8 {
-                Some(ValueKind::Str)
-            } else if n == ValueKind::DeleteSeq as u8 {
-                Some(ValueKind::DeleteSeq)
-            } else if n == ValueKind::DeltaInt as u8 {
-                Some(ValueKind::DeltaInt)
-            } else if n == ValueKind::Array as u8 {
-                Some(ValueKind::Array)
-            } else if n == ValueKind::Map as u8 {
-                Some(ValueKind::Map)
-            } else if n == ValueKind::MarkStart as u8 {
-                Some(ValueKind::MarkStart)
-            } else if n == ValueKind::TreeMove as u8 {
-                Some(ValueKind::TreeMove)
-            } else if n == ValueKind::Binary as u8 {
-                Some(ValueKind::Binary)
-            } else if n == ValueKind::Set as u8 {
-                Some(ValueKind::Set)
-            } else {
-                None
+            match n {
+                n if n == ValueKind::Null as u8 => Some(ValueKind::Null),
+                n if n == ValueKind::True as u8 => Some(ValueKind::True),
+                n if n == ValueKind::False as u8 => Some(ValueKind::False),
+                n if n == ValueKind::DeleteOnce as u8 => Some(ValueKind::DeleteOnce),
+                n if n == ValueKind::I64 as u8 => Some(ValueKind::I64),
+                n if n == ValueKind::ContainerType as u8 => Some(ValueKind::ContainerType),
+                n if n == ValueKind::F64 as u8 => Some(ValueKind::F64),
+                n if n == ValueKind::Str as u8 => Some(ValueKind::Str),
+                n if n == ValueKind::DeleteSeq as u8 => Some(ValueKind::DeleteSeq),
+                n if n == ValueKind::DeltaInt as u8 => Some(ValueKind::DeltaInt),
+                n if n == ValueKind::Array as u8 => Some(ValueKind::Array),
+                n if n == ValueKind::Map as u8 => Some(ValueKind::Map),
+                n if n == ValueKind::MarkStart as u8 => Some(ValueKind::MarkStart),
+                n if n == ValueKind::TreeMove as u8 => Some(ValueKind::TreeMove),
+                n if n == ValueKind::Binary as u8 => Some(ValueKind::Binary),
+                n if n == ValueKind::Move as u8 => Some(ValueKind::Move),
+                n if n == ValueKind::Set as u8 => Some(ValueKind::Set),
+                _ => None,
             }
         }
 

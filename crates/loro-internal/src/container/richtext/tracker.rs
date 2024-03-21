@@ -3,6 +3,7 @@ use std::ops::ControlFlow;
 use generic_btree::{rle::Sliceable, LeafIndex};
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength;
+use tracing::{debug, instrument};
 
 use crate::VersionVector;
 
@@ -50,7 +51,7 @@ impl Tracker {
             origin_left: None,
             origin_right: None,
         });
-        this.id_to_cursor.push(
+        this.id_to_cursor.insert(
             ID::new(UNKNOWN_PEER_ID, 0),
             id_to_cursor::Cursor::new_insert(result.leaf, u32::MAX as usize / 4),
         );
@@ -112,7 +113,7 @@ impl Tracker {
             },
             |id| self.id_to_cursor.get_insert(id).unwrap(),
         );
-        self.id_to_cursor.push(
+        self.id_to_cursor.insert(
             op_id.id(),
             id_to_cursor::Cursor::new_insert(result.leaf, content.len()),
         );
@@ -122,6 +123,7 @@ impl Tracker {
         let end_id = op_id.inc(content.len() as Counter);
         self.current_vv.extend_to_include_end_id(end_id.id());
         self.applied_vv.extend_to_include_end_id(end_id.id());
+        debug!("after insert {:#?}", &self,);
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
@@ -178,7 +180,7 @@ impl Tracker {
         for id_span in ans {
             let len = id_span.atom_len();
             self.id_to_cursor
-                .push(cur_id, id_to_cursor::Cursor::Delete(id_span));
+                .insert(cur_id, id_to_cursor::Cursor::Delete(id_span));
             cur_id = cur_id.inc(len as Counter);
         }
 
@@ -226,25 +228,29 @@ impl Tracker {
     /// Internally it's delete at the src and insert at the dst.
     ///
     /// But it needs special behavior for id_to_cursor data structure
+    ///
+    #[instrument(skip_all)]
     pub(crate) fn move_item(
         &mut self,
-        mut op_id: IdFull,
+        op_id: IdFull,
         deleted_id: ID,
         from_pos: usize,
         to_pos: usize,
     ) {
+        debug!(?self, ?op_id, ?deleted_id, ?from_pos, ?to_pos, "before");
         if let ControlFlow::Break(_) = self.skip_applied(op_id.id(), 1, |_| unreachable!()) {
             return;
         }
 
         let split = self
             .rope
-            .delete(deleted_id, from_pos, 1, false, &mut |span| {});
+            .delete(deleted_id, from_pos, 1, false, &mut |_| {});
 
         for s in split {
             self.update_insert_by_split(&s.arr);
         }
 
+        debug!(?self, "middle");
         let result = self.rope.insert(
             to_pos,
             FugueSpan {
@@ -264,7 +270,7 @@ impl Tracker {
         );
         self.update_insert_by_split(&result.splitted.arr);
 
-        self.id_to_cursor.push(
+        self.id_to_cursor.insert(
             op_id.id(),
             id_to_cursor::Cursor::new_move(result.leaf, deleted_id),
         );
@@ -272,6 +278,7 @@ impl Tracker {
         let end_id = op_id.inc(1);
         self.current_vv.extend_to_include_end_id(end_id.id());
         self.applied_vv.extend_to_include_end_id(end_id.id());
+        debug!("after move {:#?}", &self,);
     }
 
     #[inline]
@@ -290,6 +297,7 @@ impl Tracker {
         let mut updates = Vec::new();
         for span in retreat {
             for c in self.id_to_cursor.iter(span) {
+                debug!(?c, "retreat");
                 match c {
                     id_to_cursor::IterCursor::Insert { leaf, id_span } => {
                         updates.push(crdt_rope::LeafUpdate {
@@ -314,14 +322,31 @@ impl Tracker {
                             }
                         }
                     }
-                    id_to_cursor::IterCursor::Move { from, to, op_id } => {
+                    id_to_cursor::IterCursor::Move {
+                        from_id: from,
+                        to_leaf: to,
+                        new_op_id: op_id,
+                    } => {
                         for to_del in self.id_to_cursor.iter(IdSpan::new(
                             from.peer,
                             from.counter,
                             from.counter + 1,
                         )) {
                             match to_del {
+                                id_to_cursor::IterCursor::Move {
+                                    from_id: _,
+                                    to_leaf: to,
+                                    new_op_id: op_id,
+                                } => updates.push(crdt_rope::LeafUpdate {
+                                    leaf: to,
+                                    id_span: op_id.to_span(1),
+                                    set_future: None,
+                                    delete_times_diff: -1,
+                                }),
+                                // Un delete the from
                                 id_to_cursor::IterCursor::Insert { leaf, id_span } => {
+                                    debug_assert_eq!(id_span.atom_len(), 1);
+                                    debug_assert_eq!(id_span.counter.start, from.counter);
                                     updates.push(crdt_rope::LeafUpdate {
                                         leaf,
                                         id_span,
@@ -333,6 +358,7 @@ impl Tracker {
                             }
                         }
 
+                        // insert the new
                         updates.push(crdt_rope::LeafUpdate {
                             leaf: to,
                             id_span: IdSpan::new(op_id.peer, op_id.counter, op_id.counter + 1),
@@ -388,13 +414,27 @@ impl Tracker {
                         }
                     }
                 }
-                id_to_cursor::IterCursor::Move { from, to, op_id } => {
+                id_to_cursor::IterCursor::Move {
+                    from_id: from,
+                    to_leaf: to,
+                    new_op_id: op_id,
+                } => {
                     for to_del in self.id_to_cursor.iter(IdSpan::new(
                         from.peer,
                         from.counter,
                         from.counter + 1,
                     )) {
                         match to_del {
+                            id_to_cursor::IterCursor::Move {
+                                from_id: _,
+                                to_leaf: to,
+                                new_op_id: op_id,
+                            } => updates.push(crdt_rope::LeafUpdate {
+                                leaf: to,
+                                id_span: op_id.to_span(1),
+                                set_future: None,
+                                delete_times_diff: 1,
+                            }),
                             id_to_cursor::IterCursor::Insert { leaf, id_span } => {
                                 updates.push(crdt_rope::LeafUpdate {
                                     leaf,
@@ -475,11 +515,13 @@ impl Tracker {
         from: &VersionVector,
         to: &VersionVector,
     ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
-        // tracing::span!(tracing::Level::INFO, "From {:?} To {:?}", from, to);
         // tracing::info!("Init: {:#?}, ", &self);
+        debug!("checkout to from {:?}", from);
         self._checkout(from, false);
+        debug!("checkout to to {:?}", to);
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();
+        debug!("{:#?}", &self);
 
         self.rope.get_diff()
     }

@@ -42,7 +42,7 @@ struct InnerSharedArena {
 
 /// This is shared between [OpLog] and [AppState].
 ///
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct SharedArena {
     inner: Arc<InnerSharedArena>,
 }
@@ -55,6 +55,12 @@ pub struct StrAllocResult {
 }
 
 impl SharedArena {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(InnerSharedArena::default()),
+        }
+    }
+
     pub fn register_container(&self, id: &ContainerID) -> ContainerIdx {
         let mut container_id_to_idx = self.inner.container_id_to_idx.lock().unwrap();
         if let Some(&idx) = container_id_to_idx.get(id) {
