@@ -332,7 +332,7 @@ impl CrdtRope {
                 let start = (u.id_span.ctr_start() - elem.id.counter).max(0);
                 let end = u.id_span.ctr_end() - elem.id.counter;
                 let len = elem.rle_len();
-                debug!(?u, ?start, ?end, ?elem.id, ?len);
+
                 tree_update_info.push((
                     leaf,
                     (start as usize).min(elem.rle_len())..(end as usize).min(elem.rle_len()),
@@ -341,7 +341,6 @@ impl CrdtRope {
             }
         }
 
-        debug!("tree_update_info={:#?}", tree_update_info);
         self.tree
             .update_leaves_with_arg_in_ranges(tree_update_info, |elem, arg| {
                 let status = if on_diff_status {

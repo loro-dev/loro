@@ -11,6 +11,7 @@ use std::{
 };
 
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
+use tracing::instrument;
 
 use crate::{
     arena::SharedArena,
@@ -388,6 +389,7 @@ impl LoroDoc {
     }
 
     #[inline(always)]
+    #[instrument(skip_all)]
     pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
         self.import_with(bytes, Default::default())
     }
@@ -536,6 +538,7 @@ impl LoroDoc {
         }
     }
 
+    #[instrument(skip_all)]
     pub fn export_snapshot(&self) -> Vec<u8> {
         self.commit_then_stop();
         let ans = export_snapshot(self);

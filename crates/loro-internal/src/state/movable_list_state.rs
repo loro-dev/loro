@@ -314,7 +314,6 @@ impl MovableListState {
         if remove_old_list_item {
             if let Some(old) = old_item_id {
                 if !old.is_none() {
-                    debug!(?old, ?elem_id, ?list_item_id, "remove_elem_pos");
                     let leaf = self.id_to_list_leaf.remove(&old).unwrap();
                     self.list.remove_leaf(Cursor { leaf, offset: 0 });
                 }
@@ -600,28 +599,31 @@ impl MovableListState {
     }
 
     /// push a new elem into the list
-    fn push_inner(
-        &mut self,
-        elem_id: CompactIdLp,
-        value: LoroValue,
-        last_set_id: IdLp,
-        list_item_id: IdFull,
-    ) {
-        self.elements.insert(
-            elem_id,
-            Element {
-                value,
-                value_id: last_set_id,
-                pos: list_item_id.idlp(),
-            },
-        );
+    fn push_inner(&mut self, list_item_id: IdFull, elem: Option<PushElemInfo>) {
+        let pointed_by = elem.as_ref().map(|x| x.elem_id);
+        if let Some(elem) = elem {
+            self.elements.insert(
+                elem.elem_id,
+                Element {
+                    value: elem.value,
+                    value_id: elem.last_set_id,
+                    pos: list_item_id.idlp(),
+                },
+            );
+        }
         let cursor = self.list.push(ListItem {
-            pointed_by: Some(elem_id),
+            pointed_by,
             id: list_item_id,
         });
         self.id_to_list_leaf
             .insert(list_item_id.idlp(), cursor.leaf);
     }
+}
+
+struct PushElemInfo {
+    elem_id: CompactIdLp,
+    value: LoroValue,
+    last_set_id: IdLp,
 }
 
 impl ContainerState for MovableListState {
@@ -648,7 +650,6 @@ impl ContainerState for MovableListState {
             unreachable!()
         };
 
-        debug!(?diff, "movable apply_diff_and_convert");
         let mut ans: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
 
         {
@@ -698,8 +699,6 @@ impl ContainerState for MovableListState {
             }
         }
 
-        debug!(?self, "after apply list diff");
-
         {
             // apply element changes
             for delta_item in diff.elements.into_iter() {
@@ -708,7 +707,7 @@ impl ContainerState for MovableListState {
                         let old_index = self.get_index_of_elem(id);
                         // don't need to update old list item, because it's handled by list diff already
                         let success = self.update_elem_pos(id, new_pos, true, false);
-                        debug!(?new_pos, ?self);
+
                         if success && old_index.is_some() {
                             let old_index = old_index.unwrap();
                             let mut new_delta: Delta<Vec<ValueOrHandler>, ListDeltaMeta> =
@@ -850,7 +849,6 @@ impl ContainerState for MovableListState {
     }
 
     fn get_value(&mut self) -> LoroValue {
-        debug!(?self.list, ?self.elements, "get_value");
         let list = self
             .list
             .iter_with_filter(|x| (x.user_len > 0, 0))
@@ -862,96 +860,155 @@ impl ContainerState for MovableListState {
     #[doc = r" Get the index of the child container"]
     #[allow(unused)]
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
-        todo!()
+        // FIXME: unimplemented
+        None
     }
 
     #[allow(unused)]
     fn get_child_containers(&self) -> Vec<ContainerID> {
-        todo!()
+        // FIXME: unimplemented
+        Vec::new()
     }
 
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
+        // We need to encode all the list items (including the ones that are not being pointed at)
+        // We also need to encode the elements' ids, values and last set ids as long as the element has a
+        // valid pos pointer (a pointer is valid when the pointee is in the list).
+
+        // But we can infer the element's id, the value by the `last set id` directly.
+        // Because they are included in the corresponding op.
+
+        debug!("encode_snapshot: encode movable list state");
         let len = self.len();
         let mut items = Vec::with_capacity(len);
+        // starts with a sentinel value. The num of `invisible_list_item` may be updated later
+        items.push(EncodedItem {
+            pos_id_eq_elem_id: true,
+            invisible_list_item: 0,
+        });
         let mut ids = Vec::new();
-        for (&eid, elem) in self.elements.iter() {
-            encoder.encode_op(elem.value_id.into(), || todo!());
-            let item = EncodedItem {
-                pos_id_eq_elem_id: elem.pos.compact() == eid,
-            };
-            items.push(item);
-            if !item.pos_id_eq_elem_id {
+        for item in self.list.iter() {
+            if let Some(elem_id) = item.pointed_by {
+                let eq = elem_id.to_id() == item.id.idlp();
+                items.push(EncodedItem {
+                    invisible_list_item: 0,
+                    pos_id_eq_elem_id: eq,
+                });
+                if !eq {
+                    ids.push(EncodedId {
+                        peer_idx: encoder.register_peer(item.id.peer),
+                        lamport: item.id.lamport,
+                    });
+                }
+                let elem = self.elements.get(&elem_id).unwrap();
+                encoder.encode_op(elem.value_id.into(), || unimplemented!());
+            } else {
+                items.last_mut().unwrap().invisible_list_item += 1;
                 ids.push(EncodedId {
-                    peer_idx: encoder.register_peer(elem.pos.peer),
-                    lamport: elem.pos.lamport,
+                    peer_idx: encoder.register_peer(item.id.peer),
+                    lamport: item.id.lamport,
                 });
             }
         }
 
+        debug!("encode_snapshot: encode movable list state > out");
         let out = EncodedSnapshot { items, ids };
-        serde_columnar::to_vec(&out).unwrap()
+        let ans = serde_columnar::to_vec(&out).unwrap();
+        ans
     }
 
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
         let iter = serde_columnar::iter_from_bytes::<EncodedSnapshot>(ctx.blob).unwrap();
-        let mut item_iter = iter.items;
+        let item_iter = iter.items;
         let mut item_ids = iter.ids;
         let last_set_op_iter = ctx.ops;
-        for op in last_set_op_iter {
-            let idlp = op.id_full().idlp();
-            match &op.op.content {
-                crate::op::InnerContent::List(l) => match l {
-                    crate::container::list::list_op::InnerListOp::Insert { slice, pos: _ } => {
-                        for (i, v) in ctx
-                            .oplog
-                            .arena
-                            .iter_value_slice(slice.to_range())
-                            .enumerate()
-                        {
-                            let elem_id = idlp.inc(i as i32);
-                            let item = item_iter.next().unwrap();
-                            let pos_id = if item.pos_id_eq_elem_id {
-                                elem_id
-                            } else {
-                                let id = item_ids.next().unwrap();
-                                IdLp::new(ctx.peers[id.peer_idx], id.lamport)
-                            };
-                            let pos_o_id = ctx.oplog.idlp_to_id(pos_id).unwrap();
-                            let pos_full_id = IdFull {
-                                peer: pos_id.peer,
-                                lamport: pos_id.lamport,
-                                counter: pos_o_id.counter,
-                            };
-                            self.push_inner(elem_id.compact(), v, elem_id, pos_full_id);
+        let mut is_first = true;
+
+        for EncodedItem {
+            invisible_list_item,
+            pos_id_eq_elem_id,
+        } in item_iter
+        {
+            // the first one don't need to read op, it only needs to read the invisible list items
+            if !is_first {
+                let last_set_op = last_set_op_iter.next().unwrap();
+                let idlp = last_set_op.id_full().idlp();
+                let mut get_pos_id_full = |elem_id: IdLp| {
+                    let pos_id = if pos_id_eq_elem_id {
+                        elem_id
+                    } else {
+                        let id = item_ids.next().unwrap();
+                        IdLp::new(ctx.peers[id.peer_idx], id.lamport)
+                    };
+                    let pos_o_id = ctx.oplog.idlp_to_id(pos_id).unwrap();
+                    IdFull {
+                        peer: pos_id.peer,
+                        lamport: pos_id.lamport,
+                        counter: pos_o_id.counter,
+                    }
+                };
+                match &last_set_op.op.content {
+                    crate::op::InnerContent::List(l) => match l {
+                        crate::container::list::list_op::InnerListOp::Insert { slice, pos: _ } => {
+                            for (i, v) in ctx
+                                .oplog
+                                .arena
+                                .iter_value_slice(slice.to_range())
+                                .enumerate()
+                            {
+                                let elem_id = idlp.inc(i as i32);
+                                let pos_full_id = get_pos_id_full(elem_id);
+                                self.push_inner(
+                                    pos_full_id,
+                                    Some(PushElemInfo {
+                                        elem_id: elem_id.compact(),
+                                        value: v,
+                                        last_set_id: elem_id,
+                                    }),
+                                );
+                            }
                         }
-                    }
-                    crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
-                        let item = item_iter.next().unwrap();
-                        let pos_id = if item.pos_id_eq_elem_id {
-                            *elem_id
-                        } else {
-                            let id = item_ids.next().unwrap();
-                            IdLp::new(ctx.peers[id.peer_idx], id.lamport)
-                        };
-                        let pos_o_id = ctx.oplog.idlp_to_id(pos_id).unwrap();
-                        let pos_full_id = IdFull {
-                            peer: pos_id.peer,
-                            lamport: pos_id.lamport,
-                            counter: pos_o_id.counter,
-                        };
-                        self.push_inner(elem_id.compact(), value.clone(), idlp, pos_full_id);
-                    }
+                        crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
+                            let pos_full_id = get_pos_id_full(*elem_id);
+                            self.push_inner(
+                                pos_full_id,
+                                Some(PushElemInfo {
+                                    elem_id: elem_id.compact(),
+                                    value: value.clone(),
+                                    last_set_id: idlp,
+                                }),
+                            );
+                        }
+                        _ => unreachable!(),
+                    },
                     _ => unreachable!(),
-                },
-                _ => unreachable!(),
+                }
+            }
+
+            is_first = false;
+            for _ in 0..invisible_list_item {
+                let id = item_ids.next().unwrap();
+                let pos_id = IdLp::new(ctx.peers[id.peer_idx], id.lamport);
+                let pos_o_id = ctx.oplog.idlp_to_id(pos_id).unwrap();
+                let pos_id_full = IdFull {
+                    peer: pos_id.peer,
+                    lamport: pos_id.lamport,
+                    counter: pos_o_id.counter,
+                };
+                self.push_inner(pos_id_full, None);
             }
         }
+
+        assert!(item_ids.next().is_none());
+        assert!(last_set_op_iter.next().is_none());
     }
 }
 
 #[columnar(vec, ser, de, iterable)]
 #[derive(Debug, Clone, Copy)]
 struct EncodedItem {
+    #[columnar(strategy = "DeltaRle")]
+    invisible_list_item: usize,
     #[columnar(strategy = "BoolRle")]
     pos_id_eq_elem_id: bool,
 }
@@ -977,7 +1034,6 @@ struct EncodedSnapshot {
 mod test {
     use crate::{LoroDoc, ToJson};
     use serde_json::json;
-    use tracing::debug;
 
     #[test]
     fn basic_handler_ops() {
@@ -1006,6 +1062,14 @@ mod test {
         list.insert(0, 1).unwrap();
         list.insert(1, 0).unwrap();
         list.mov(0, 1).unwrap();
+        list.mov(1, 0).unwrap();
+        assert_eq!(
+            doc.get_deep_value().to_json_value(),
+            json!({
+                "list": [1, 0]
+            })
+        );
+        list.mov(0, 1).unwrap();
         list.insert(2, 3).unwrap();
         list.set(2, 2).unwrap();
         assert_eq!(
@@ -1017,6 +1081,16 @@ mod test {
         {
             let doc_b = LoroDoc::new_auto_commit();
             doc_b.import(&doc.export_from(&Default::default())).unwrap();
+            assert_eq!(
+                doc_b.get_deep_value().to_json_value(),
+                json!({
+                    "list": [0, 1, 2]
+                })
+            );
+        }
+        {
+            let doc_b = LoroDoc::new_auto_commit();
+            doc_b.import(&doc.export_snapshot()).unwrap();
             assert_eq!(
                 doc_b.get_deep_value().to_json_value(),
                 json!({

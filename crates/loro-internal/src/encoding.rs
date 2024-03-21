@@ -6,6 +6,7 @@ use crate::{oplog::OpLog, LoroError, VersionVector};
 use loro_common::{IdLpSpan, LoroResult, PeerID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
+use tracing::debug;
 const MAGIC_BYTES: [u8; 4] = *b"loro";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,7 +120,7 @@ impl StateSnapshotEncoder<'_> {
     }
 
     pub(crate) fn register_peer(&mut self, peer: PeerID) -> usize {
-        self.register_peer(peer)
+        (self.register_peer)(peer)
     }
 }
 
@@ -223,6 +224,7 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
         &doc.app_state().try_lock().unwrap(),
         &Default::default(),
     );
+    debug!("encode_snapshot: header_and_body");
     encode_header_and_body(EncodeMode::Snapshot, body)
 }
 

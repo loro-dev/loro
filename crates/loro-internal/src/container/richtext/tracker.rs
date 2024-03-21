@@ -123,7 +123,6 @@ impl Tracker {
         let end_id = op_id.inc(content.len() as Counter);
         self.current_vv.extend_to_include_end_id(end_id.id());
         self.applied_vv.extend_to_include_end_id(end_id.id());
-        debug!("after insert {:#?}", &self,);
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
@@ -237,7 +236,6 @@ impl Tracker {
         from_pos: usize,
         to_pos: usize,
     ) {
-        debug!(?self, ?op_id, ?deleted_id, ?from_pos, ?to_pos, "before");
         if let ControlFlow::Break(_) = self.skip_applied(op_id.id(), 1, |_| unreachable!()) {
             return;
         }
@@ -250,7 +248,6 @@ impl Tracker {
             self.update_insert_by_split(&s.arr);
         }
 
-        debug!(?self, "middle");
         let result = self.rope.insert(
             to_pos,
             FugueSpan {
@@ -278,7 +275,6 @@ impl Tracker {
         let end_id = op_id.inc(1);
         self.current_vv.extend_to_include_end_id(end_id.id());
         self.applied_vv.extend_to_include_end_id(end_id.id());
-        debug!("after move {:#?}", &self,);
     }
 
     #[inline]
@@ -297,7 +293,6 @@ impl Tracker {
         let mut updates = Vec::new();
         for span in retreat {
             for c in self.id_to_cursor.iter(span) {
-                debug!(?c, "retreat");
                 match c {
                     id_to_cursor::IterCursor::Insert { leaf, id_span } => {
                         updates.push(crdt_rope::LeafUpdate {
@@ -516,12 +511,11 @@ impl Tracker {
         to: &VersionVector,
     ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
         // tracing::info!("Init: {:#?}, ", &self);
-        debug!("checkout to from {:?}", from);
+
         self._checkout(from, false);
-        debug!("checkout to to {:?}", to);
+
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();
-        debug!("{:#?}", &self);
 
         self.rope.get_diff()
     }

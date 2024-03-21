@@ -35,7 +35,7 @@ impl OpGroups {
     }
 
     pub(crate) fn insert_by_change(&mut self, change: &Change) {
-        // tracing::debug!("group:insert_by_change {:#?}", change);
+        // tracing::
         for op in change.ops.iter() {
             if matches!(
                 op.container.get_type(),

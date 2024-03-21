@@ -490,10 +490,8 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
-        debug!("calc list diff inner");
         let mut delta = Delta::new();
         for item in self.tracker.diff(from, to) {
-            debug!(?item, "diff item");
             match item {
                 CrdtRopeDelta::Retain(len) => {
                     delta = delta.retain(len);
@@ -752,7 +750,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         op: crate::op::RichOp,
         vv: Option<&crate::VersionVector>,
     ) {
-        debug!("movable list apply_change");
         let InnerContent::List(l) = &op.raw_op().content else {
             unreachable!()
         };
@@ -836,7 +833,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         else {
             unreachable!()
         };
-        debug!(?list_diff, "calc list done");
+
         let group = oplog
             .op_groups
             .get(&self.container_idx)

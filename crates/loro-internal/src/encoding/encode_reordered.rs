@@ -351,6 +351,7 @@ fn extract_ops(
 pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVector) -> Vec<u8> {
     assert!(!state.is_in_txn());
     assert_eq!(oplog.frontiers(), &state.frontiers);
+    debug!("encode_snapshot: start");
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
@@ -382,6 +383,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     let mut state_bytes = Vec::new();
     let peer_register = Rc::new(RefCell::new(peer_register));
     let peer_register_1 = Rc::clone(&peer_register);
+    debug!("encode_snapshot: encode states");
     for (_, c_idx) in c_pairs.iter() {
         let container_index = *container_idx2index.get(c_idx).unwrap() as u32;
         let state = match state.get_state(*c_idx) {
@@ -627,6 +629,7 @@ fn calc_sorted_ops_for_snapshot<'a>(
 }
 
 pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
+    debug!("decode_snapshot: start");
     let mut state = doc.app_state().try_lock().map_err(|_| {
         LoroError::DecodeError(
             "decode_snapshot: failed to lock app state"
@@ -650,6 +653,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
 
     assert!(state.frontiers.is_empty());
     assert!(oplog.frontiers().is_empty());
+    debug!("decode_snapshot: decode_arena");
     let iter = serde_columnar::iter_from_bytes::<EncodedDoc>(bytes)?;
     let DecodedArenas {
         peer_ids,
@@ -671,6 +675,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         })
         .try_collect()?;
 
+    debug!("decode_snapshot: decode_ops");
     let ExtractedOps {
         ops_map,
         mut ops,
@@ -694,6 +699,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         op.lamport = oplog.get_lamport_at(op.id());
     }
 
+    debug!("decode_snapshot: decode_states");
     decode_snapshot_states(
         &mut state,
         frontiers,
@@ -712,6 +718,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         drop(oplog);
         drop(state);
         // TODO: Fix this origin value
+        debug!("decode_snapshot: update_oplog_and_apply_delta_if_needed");
         doc.update_oplog_and_apply_delta_to_state_if_needed(
             |oplog| {
                 if oplog.try_apply_pending(new_ids).should_update && !oplog.batch_importing {
@@ -1219,7 +1226,6 @@ fn decode_op(
     peers: &[u64],
     id: ID,
 ) -> LoroResult<crate::op::InnerContent> {
-    debug!(?cid, ?kind, ?prop, "decode_op");
     let content = match cid.container_type() {
         ContainerType::Text => match kind {
             ValueKind::Str => {
@@ -1338,7 +1344,7 @@ fn decode_op(
             match kind {
                 ValueKind::Array => {
                     let arr = value_reader.read_value_content(ValueKind::Array, &keys.keys, id)?;
-                    debug!(?arr, "movable list decode");
+
                     let range = arena.alloc_values(
                         Arc::try_unwrap(
                             arr.into_list()
