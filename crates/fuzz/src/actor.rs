@@ -6,7 +6,7 @@ use fxhash::FxHashMap;
 use loro::{Container, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, ID};
 
 use crate::{
-    container::{ListActor, TextActor, TreeActor},
+    container::{ListActor, MovableListActor, TextActor, TreeActor},
     value::{ApplyDiff, ContainerTracker, MapTracker, Value},
 };
 
@@ -51,6 +51,7 @@ impl Actor {
             ActionExecutor::ListActor(actor) => actor.add_new_container(container),
             ActionExecutor::TextActor(actor) => actor.add_new_container(container),
             ActionExecutor::TreeActor(actor) => actor.add_new_container(container),
+            ActionExecutor::MovableListActor(actor) => actor.add_new_container(container),
         }
     }
 
@@ -133,7 +134,7 @@ impl Actor {
                     ActionExecutor::MapActor(MapActor::new(self.loro.clone())),
                 );
             }
-            ContainerType::List | ContainerType::MovableList => {
+            ContainerType::List => {
                 self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
                     "list".to_string(),
                     Value::empty_container(ContainerType::List),
@@ -141,6 +142,16 @@ impl Actor {
                 self.targets.insert(
                     target,
                     ActionExecutor::ListActor(ListActor::new(self.loro.clone())),
+                );
+            }
+            ContainerType::MovableList => {
+                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                    "movable_list".to_string(),
+                    Value::empty_container(ContainerType::MovableList),
+                );
+                self.targets.insert(
+                    target,
+                    ActionExecutor::MovableListActor(MovableListActor::new(self.loro.clone())),
                 );
             }
             ContainerType::Text => {
@@ -172,6 +183,7 @@ impl Actor {
 pub enum ActionExecutor {
     MapActor(MapActor),
     ListActor(ListActor),
+    MovableListActor(MovableListActor),
     TextActor(TextActor),
     TreeActor(TreeActor),
 }

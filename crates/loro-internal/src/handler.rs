@@ -1188,6 +1188,10 @@ impl MovableListHandler {
         ))
     }
 
+    pub fn set(&self, index: usize, value: impl Into<LoroValue>) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.set_with_txn(txn, index, value.into()))
+    }
+
     pub fn set_with_txn(
         &self,
         txn: &mut Transaction,
@@ -1224,8 +1228,50 @@ impl MovableListHandler {
         txn.apply_local_op(self.container_idx, op, hint, &self.state)
     }
 
-    pub fn set(&self, index: usize, value: impl Into<LoroValue>) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.set_with_txn(txn, index, value.into()))
+    pub fn set_container(&self, pos: usize, c: ContainerType) -> LoroResult<Handler> {
+        with_txn(&self.txn, |txn| self.set_container_with_txn(txn, pos, c))
+    }
+
+    pub fn set_container_with_txn(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        c_type: ContainerType,
+    ) -> Result<Handler, LoroError> {
+        let id = txn.next_id();
+        let container_id = ContainerID::new_normal(id, c_type);
+        let child_idx = txn.arena.register_container(&container_id);
+        let v = LoroValue::Container(container_id);
+        let Some(elem_id) =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    let list = state.as_movable_list_state().unwrap();
+                    list.get_elem_id_at(pos, IndexType::ForUser)
+                })
+        else {
+            unreachable!()
+        };
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Set {
+                elem_id: elem_id.to_id(),
+                value: v.clone(),
+            }),
+            EventHint::SetList {
+                index: pos,
+                value: v,
+            },
+            &self.state,
+        )?;
+        Ok(Handler::new(
+            self.txn.clone(),
+            child_idx,
+            self.state.clone(),
+        ))
     }
 
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {

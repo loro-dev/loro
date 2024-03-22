@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+use crate::container::MovableListAction;
+
 use super::{
     actor::ActionExecutor,
     container::{ListAction, MapAction, TextAction, TreeAction},
@@ -16,6 +18,7 @@ use tabled::Tabled;
 pub enum ActionInner {
     Map(MapAction),
     List(ListAction),
+    MovableList(MovableListAction),
     Text(TextAction),
     Tree(TreeAction),
 }
@@ -24,8 +27,9 @@ impl ActionInner {
     fn from_generic_action(action: &GenericAction, ty: &ContainerType) -> Self {
         match ty {
             ContainerType::Map => Self::Map(MapAction::from_generic_action(action)),
-            ContainerType::List | ContainerType::MovableList => {
-                Self::List(ListAction::from_generic_action(action))
+            ContainerType::List => Self::List(ListAction::from_generic_action(action)),
+            ContainerType::MovableList => {
+                Self::MovableList(MovableListAction::from_generic_action(action))
             }
             ContainerType::Text => Self::Text(TextAction::from_generic_action(action)),
             ContainerType::Tree => Self::Tree(TreeAction::from_generic_action(action)),

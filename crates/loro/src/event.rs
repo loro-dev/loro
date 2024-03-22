@@ -39,9 +39,16 @@ pub enum Diff<'a> {
 
 #[derive(Debug)]
 pub enum ListDiffItem {
-    Insert { insert: Vec<ValueOrContainer> },
-    Delete { delete: usize },
-    Retain { retain: usize },
+    Insert {
+        insert: Vec<ValueOrContainer>,
+        move_from: Option<usize>,
+    },
+    Delete {
+        delete: usize,
+    },
+    Retain {
+        retain: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -78,11 +85,12 @@ impl<'a> From<&'a DiffInner> for Diff<'a> {
                 let list = l
                     .iter()
                     .map(|d| match d {
-                        DeltaItem::Insert { insert, .. } => ListDiffItem::Insert {
+                        DeltaItem::Insert { insert, attributes } => ListDiffItem::Insert {
                             insert: insert
                                 .iter()
                                 .map(|v| ValueOrContainer::from(v.clone()))
                                 .collect(),
+                            move_from: attributes.move_from,
                         },
                         DeltaItem::Delete { delete, .. } => {
                             ListDiffItem::Delete { delete: *delete }

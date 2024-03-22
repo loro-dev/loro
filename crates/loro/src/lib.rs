@@ -894,6 +894,14 @@ impl LoroMovableList {
     pub fn mov(&self, from: usize, to: usize) -> LoroResult<()> {
         self.handler.mov(from, to)
     }
+
+    pub fn insert_container(&self, pos: usize, c_type: ContainerType) -> LoroResult<Container> {
+        self.handler.insert_container(pos, c_type).map(|c| c.into())
+    }
+
+    pub fn set_container(&self, pos: usize, c: ContainerType) -> LoroResult<Container> {
+        self.handler.set_container(pos, c).map(|c| c.into())
+    }
 }
 
 use enum_as_inner::EnumAsInner;

@@ -1,8 +1,10 @@
 mod list;
 mod map;
+mod movable_list;
 mod text;
 mod tree;
 pub use list::*;
 pub use map::*;
+pub use movable_list::*;
 pub use text::*;
 pub use tree::*;

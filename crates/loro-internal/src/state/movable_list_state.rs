@@ -711,16 +711,13 @@ impl ContainerState for MovableListState {
 
                         if success && old_index.is_some() {
                             let old_index = old_index.unwrap();
-                            let mut new_delta: Delta<Vec<ValueOrHandler>, ListDeltaMeta> =
-                                Delta::new().retain(old_index).delete(1);
                             let new_index = self.get_index_of_elem(id).unwrap();
-                            new_delta =
-                                new_delta.compose(Delta::new().retain(new_index).insert_with_meta(
-                                    vec![LoroValue::Null.into()],
-                                    ListDeltaMeta {
-                                        move_from: Some(old_index),
-                                    },
-                                ));
+                            let new_delta = Delta::new().retain(new_index).retain_with_meta(
+                                1,
+                                ListDeltaMeta {
+                                    move_from: Some(old_index),
+                                },
+                            );
                             ans = ans.compose(new_delta);
                         }
                     }
@@ -755,6 +752,7 @@ impl ContainerState for MovableListState {
                 };
             }
         }
+
         Diff::List(ans)
     }
 

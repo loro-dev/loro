@@ -45,6 +45,7 @@ impl From<ContainerTracker> for Value {
 pub enum ContainerTracker {
     Map(MapTracker),
     List(ListTracker),
+    MovableList(MovableListTracker),
     Text(TextTracker),
     Tree(TreeTracker),
 }
@@ -54,6 +55,7 @@ impl ContainerTracker {
         match self {
             ContainerTracker::Map(map) => map.to_value(),
             ContainerTracker::List(list) => list.to_value(),
+            ContainerTracker::MovableList(list) => list.to_value(),
             ContainerTracker::Text(text) => text.to_value(),
             ContainerTracker::Tree(tree) => tree.to_value(),
         }
@@ -138,7 +140,68 @@ impl ApplyDiff for ListTracker {
                 ListDiffItem::Retain { retain: len } => {
                     index += len;
                 }
-                ListDiffItem::Insert { insert: value } => {
+                ListDiffItem::Insert {
+                    insert: value,
+                    move_from: _,
+                } => {
+                    for v in value {
+                        let value = match v {
+                            ValueOrContainer::Container(c) => Value::empty_container(c.get_type()),
+                            ValueOrContainer::Value(v) => Value::Value(v.clone()),
+                        };
+                        self.insert(index, value);
+                        index += 1;
+                    }
+                }
+                ListDiffItem::Delete { delete: len } => {
+                    self.drain(index..index + *len);
+                }
+            }
+        }
+    }
+
+    fn to_value(&self) -> LoroValue {
+        self.iter()
+            .map(|v| match v {
+                Value::Container(c) => c.to_value(),
+                Value::Value(v) => v.clone(),
+            })
+            .collect::<Vec<_>>()
+            .into()
+    }
+}
+
+#[derive(Debug)]
+pub struct MovableListTracker(Vec<Value>);
+impl Deref for MovableListTracker {
+    type Target = Vec<Value>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl DerefMut for MovableListTracker {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl ApplyDiff for MovableListTracker {
+    fn empty() -> Self {
+        MovableListTracker(Vec::new())
+    }
+
+    fn apply_diff(&mut self, diff: Diff) {
+        let diff = diff.as_list().unwrap();
+        let mut index = 0;
+        for item in diff.iter() {
+            match item {
+                ListDiffItem::Retain { retain: len } => {
+                    index += len;
+                }
+                ListDiffItem::Insert {
+                    insert: value,
+                    move_from,
+                } => {
                     for v in value {
                         let value = match v {
                             ValueOrContainer::Container(c) => Value::empty_container(c.get_type()),
@@ -325,8 +388,11 @@ impl ContainerTracker {
                 ContainerType::Map => {
                     value.as_map_mut().unwrap().apply_diff(diff);
                 }
-                ContainerType::List | ContainerType::MovableList => {
+                ContainerType::List => {
                     value.as_list_mut().unwrap().apply_diff(diff);
+                }
+                ContainerType::MovableList => {
+                    value.as_movable_list_mut().unwrap().apply_diff(diff);
                 }
                 ContainerType::Text => {
                     value.as_text_mut().unwrap().apply_diff(diff);
