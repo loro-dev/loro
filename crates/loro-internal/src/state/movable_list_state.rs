@@ -18,21 +18,22 @@ use crate::{
     event::{Diff, Index, InternalDiff, ListDeltaMeta},
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp},
+    state::movable_list_state::inner::PushElemInfo,
     txn::Transaction,
     DocState,
 };
 
-use self::list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery};
+use self::{
+    inner::InnerState,
+    list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
+};
 
 use super::ContainerState;
 
 #[derive(Debug, Clone)]
 pub struct MovableListState {
     idx: ContainerIdx,
-    list: BTree<MovableListTreeTrait>,
-    id_to_list_leaf: FxHashMap<IdLp, LeafIndex>,
-    elements: FxHashMap<CompactIdLp, Element>,
-    child_container_to_elem: FxHashMap<ContainerID, CompactIdLp>,
+    inner: InnerState,
 }
 
 #[derive(Debug, Clone)]
@@ -267,161 +268,316 @@ mod list_item_tree {
     }
 }
 
-impl MovableListState {
-    pub fn new(idx: ContainerIdx) -> Self {
-        let list = BTree::new();
-        Self {
-            idx,
-            list,
-            id_to_list_leaf: FxHashMap::default(),
-            elements: FxHashMap::default(),
-            child_container_to_elem: FxHashMap::default(),
-        }
+/// The inner state of the list.
+///
+/// The operations inside this mod need to ensure certain invariants.
+///
+/// - list items' `pointed_by` must be consistent with the `elements`' `pos`.
+/// - `id_to_list_leaf` must be consistent with the list.
+/// - `child_container_to_elem` must be consistent with the element.
+mod inner {
+    use fxhash::FxHashMap;
+    use generic_btree::{BTree, Cursor, LeafIndex, Query};
+    use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroValue, PeerID};
+    use tracing::instrument;
+
+    use super::{
+        list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
+        Element, IndexType, ListItem,
+    };
+
+    #[derive(Debug, Clone)]
+    pub(super) struct InnerState {
+        list: BTree<MovableListTreeTrait>,
+        id_to_list_leaf: FxHashMap<IdLp, LeafIndex>,
+        elements: FxHashMap<CompactIdLp, Element>,
+        child_container_to_elem: FxHashMap<ContainerID, CompactIdLp>,
     }
 
-    fn create_new_elem(&mut self, id: IdLp, new_pos: IdLp, new_value: LoroValue, value_id: IdLp) {
-        self.update_elem_pos(id, new_pos, false);
-        self.update_elem_value(id, new_value, value_id);
-    }
-
-    /// This update may not succeed if the given value_id is smaller than the existing value_id.
-    fn update_elem_pos(&mut self, elem_id: IdLp, list_item_id: IdLp, remove_old_list_item: bool) {
-        let id = elem_id.try_into().unwrap();
-        let mut old_item_id = None;
-        if let Some(element) = self.elements.get_mut(&id) {
-            if element.pos != list_item_id {
-                old_item_id = Some(element.pos);
-                element.pos = list_item_id;
+    impl InnerState {
+        pub fn new() -> Self {
+            Self {
+                list: BTree::new(),
+                id_to_list_leaf: FxHashMap::default(),
+                elements: FxHashMap::default(),
+                child_container_to_elem: FxHashMap::default(),
             }
-        } else {
-            self.elements.insert(
-                id,
-                Element {
-                    value: LoroValue::Null,
-                    value_id: IdLp::NONE_ID,
-                    pos: list_item_id,
-                },
-            );
         }
 
-        let leaf = self.id_to_list_leaf.get(&list_item_id).unwrap();
-        self.list.update_leaf(*leaf, |elem| {
-            let was_none = elem.pointed_by.is_none();
-            elem.pointed_by = Some(elem_id.try_into().unwrap());
-            if was_none {
-                (true, None, None)
+        #[inline]
+        pub fn child_container_to_elem(&self) -> &FxHashMap<ContainerID, CompactIdLp> {
+            &self.child_container_to_elem
+        }
+
+        #[inline]
+        pub fn elements(&self) -> &FxHashMap<CompactIdLp, Element> {
+            &self.elements
+        }
+
+        #[inline]
+        pub fn list(&self) -> &BTree<MovableListTreeTrait> {
+            &self.list
+        }
+
+        pub fn get_list_item_index(&self, id: IdLp, kind: IndexType) -> Option<usize> {
+            self.id_to_list_leaf
+                .get(&id)
+                .map(|leaf| self.get_index_of(*leaf, kind) as usize)
+        }
+
+        pub fn get_index_of(&self, leaf: LeafIndex, kind: IndexType) -> i32 {
+            let mut ans = 0;
+            self.list
+                .visit_previous_caches(Cursor { leaf, offset: 0 }, |cache| match cache {
+                    generic_btree::PreviousCache::NodeCache(c) => {
+                        if matches!(kind, IndexType::ForUser) {
+                            ans += c.user_len;
+                        } else {
+                            ans += c.include_dead_len;
+                        }
+                    }
+                    generic_btree::PreviousCache::PrevSiblingElem(p) => {
+                        if matches!(kind, IndexType::ForUser) {
+                            ans += if p.pointed_by.is_some() { 1 } else { 0 };
+                        } else {
+                            ans += 1;
+                        }
+                    }
+                    generic_btree::PreviousCache::ThisElemAndOffset { .. } => {}
+                });
+            ans
+        }
+
+        #[inline]
+        pub fn get_list_item_at(&self, pos: usize, index_type: IndexType) -> Option<&ListItem> {
+            let index = match index_type {
+                IndexType::ForUser => self.list.query::<UserLenQuery>(&pos).unwrap(),
+                IndexType::ForOp => self.list.query::<OpLenQuery>(&pos).unwrap(),
+            };
+            self.list.get_elem(index.leaf()).map(|x| x)
+        }
+
+        pub fn get_child_index(&self, id: &ContainerID, index_type: IndexType) -> Option<usize> {
+            let ans = self.child_container_to_elem.get(id).and_then(|eid| {
+                {
+                    let this = &self;
+                    let elem_id = eid.to_id().compact();
+                    let elem = this.elements.get(&elem_id)?;
+                    if elem.value.as_container() != Some(id) {
+                        // TODO: may be better to find a way clean up these invalid elements?
+                        return None;
+                    }
+                    if let Some(leaf) = self.id_to_list_leaf.get(&elem.pos) {
+                        let list_item = self.list.get_elem(*leaf)?;
+                        assert_eq!(list_item.pointed_by, Some(elem_id));
+                    } else {
+                        return None;
+                    }
+                    this.get_list_item_index(elem.pos, index_type)
+                }
+            });
+
+            ans
+        }
+
+        #[inline]
+        pub fn get_list_item_by_id(&self, id: IdLp) -> Option<&ListItem> {
+            self.id_to_list_leaf
+                .get(&id)
+                .map(|&leaf| self.list.get_elem(leaf).unwrap())
+        }
+
+        pub fn len_kind(&self, kind: IndexType) -> usize {
+            match kind {
+                IndexType::ForUser => self.list.root_cache().user_len as usize,
+                IndexType::ForOp => self.list.root_cache().include_dead_len as usize,
+            }
+        }
+
+        /// Insert a new list item at the given position (op index).
+        pub fn insert_list_item(&mut self, pos: usize, list_item_id: IdFull) {
+            let c = self
+                .list
+                .insert::<OpLenQuery>(
+                    &pos,
+                    ListItem {
+                        pointed_by: None,
+                        id: list_item_id,
+                    },
+                )
+                .0;
+            self.id_to_list_leaf.insert(list_item_id.idlp(), c.leaf);
+        }
+
+        pub fn delete_list_item(&mut self, id: IdLp) {
+            if let Some(leaf) = self.id_to_list_leaf.remove(&id) {
+                self.list.remove_leaf(Cursor { leaf, offset: 0 });
+            }
+        }
+
+        #[instrument(skip(self))]
+        pub fn list_drain(&mut self, range: std::ops::Range<usize>) {
+            for item in Self::drain_by_query::<OpLenQuery>(&mut self.list, range) {
+                self.id_to_list_leaf.remove(&item.id.idlp());
+            }
+        }
+
+        fn drain_by_query<Q: Query<MovableListTreeTrait>>(
+            list: &mut BTree<MovableListTreeTrait>,
+            range: std::ops::Range<Q::QueryArg>,
+        ) -> generic_btree::iter::Drain<'_, MovableListTreeTrait> {
+            let start = list.query::<Q>(&range.start);
+            let end = list.query::<Q>(&range.end);
+            generic_btree::iter::Drain::new(list, start, end)
+        }
+
+        /// Update the pos pointer of an element and the corresponding list items.
+        ///
+        /// The old list item will be removed if `remove_old` is true; Otherwise,
+        /// it will be updated with its `pointed_by` removed.
+        pub fn update_pos(&mut self, elem_id: CompactIdLp, new_pos: IdLp, remove_old: bool) {
+            let mut old_item_id = None;
+            if let Some(element) = self.elements.get_mut(&elem_id) {
+                if element.pos != new_pos {
+                    old_item_id = Some(element.pos);
+                    element.pos = new_pos;
+                }
             } else {
-                (false, None, None)
+                self.elements.insert(
+                    elem_id,
+                    Element {
+                        value: LoroValue::Null,
+                        value_id: IdLp::NONE_ID,
+                        pos: new_pos,
+                    },
+                );
             }
-        });
 
-        if remove_old_list_item {
+            let leaf = self.id_to_list_leaf.get(&new_pos).unwrap();
+            self.list.update_leaf(*leaf, |elem| {
+                let was_none = elem.pointed_by.is_none();
+                elem.pointed_by = Some(elem_id.try_into().unwrap());
+                if was_none {
+                    (true, None, None)
+                } else {
+                    (false, None, None)
+                }
+            });
+
             if let Some(old) = old_item_id {
                 if !old.is_none() {
-                    let leaf = self.id_to_list_leaf.remove(&old).unwrap();
-                    self.list.remove_leaf(Cursor { leaf, offset: 0 });
+                    if remove_old {
+                        let leaf = self.id_to_list_leaf.remove(&old).unwrap();
+                        self.list.remove_leaf(Cursor { leaf, offset: 0 });
+                    } else if let Some(leaf) = self.id_to_list_leaf.get(&old) {
+                        let (still_valid, split) = self.list.update_leaf(*leaf, |item| {
+                            item.pointed_by = None;
+                            (true, None, None)
+                        });
+                        assert!(still_valid);
+                        assert!(split.arr.is_empty());
+                    }
                 }
             }
-        } else if let Some(old) = old_item_id {
-            if !old.is_none() {
-                if let Some(leaf) = self.id_to_list_leaf.get(&old) {
-                    let (still_valid, split) = self.list.update_leaf(*leaf, |item| {
-                        item.pointed_by = None;
-                        (true, None, None)
-                    });
-                    assert!(still_valid);
-                    assert!(split.arr.is_empty());
+        }
+
+        pub fn update_value(&mut self, elem_id: CompactIdLp, new_value: LoroValue, value_id: IdLp) {
+            debug_assert!(elem_id.peer != PeerID::MAX);
+            debug_assert!(!value_id.is_none());
+            if let LoroValue::Container(c) = &new_value {
+                self.child_container_to_elem.insert(c.clone(), elem_id);
+            }
+
+            if let Some(element) = self.elements.get_mut(&elem_id) {
+                if let LoroValue::Container(c) = &element.value {
+                    self.child_container_to_elem.remove(c);
                 }
+                element.value = new_value;
+                element.value_id = value_id;
+            } else {
+                self.elements.insert(
+                    elem_id,
+                    Element {
+                        value: new_value,
+                        value_id,
+                        pos: IdLp::NONE_ID,
+                    },
+                );
             }
         }
-    }
 
-    /// This update may not succeed if the given value_id is smaller than the existing value_id.
-    ///
-    /// Return whether the update is successful.
-    fn update_elem_value(&mut self, elem: IdLp, value: LoroValue, value_id: IdLp) {
-        debug_assert!(!elem.is_none());
-        debug_assert!(!value_id.is_none());
-        let id = elem.try_into().unwrap();
-        if let LoroValue::Container(c) = &value {
-            self.child_container_to_elem.insert(c.clone(), id);
-        }
-
-        if let Some(element) = self.elements.get_mut(&id) {
-            element.value = value;
-            element.value_id = value_id;
-        } else {
-            self.elements.insert(
-                id,
-                Element {
-                    value,
-                    value_id,
-                    pos: IdLp::NONE_ID,
-                },
-            );
-        }
-    }
-
-    fn list_insert(&mut self, index: usize, item: ListItem, kind: IndexType) {
-        let id = item.id;
-        let cursor = if index == self.len_kind(kind) {
-            self.list.push(item)
-        } else {
-            match kind {
-                IndexType::ForUser => self.list.insert::<UserLenQuery>(&index, item).0,
-                IndexType::ForOp => self.list.insert::<OpLenQuery>(&index, item).0,
+        /// push a new elem into the list
+        pub fn push_inner(&mut self, list_item_id: IdFull, elem: Option<PushElemInfo>) {
+            let pointed_by = elem.as_ref().map(|x| x.elem_id);
+            if let Some(elem) = elem {
+                if let LoroValue::Container(c) = &elem.value {
+                    self.child_container_to_elem.insert(c.clone(), elem.elem_id);
+                }
+                debug_assert!(!elem.last_set_id.is_none());
+                self.elements.insert(
+                    elem.elem_id,
+                    Element {
+                        value: elem.value,
+                        value_id: elem.last_set_id,
+                        pos: list_item_id.idlp(),
+                    },
+                );
             }
-        };
-        self.id_to_list_leaf.insert(id.idlp(), cursor.leaf);
+            let cursor = self.list.push(ListItem {
+                pointed_by,
+                id: list_item_id,
+            });
+            self.id_to_list_leaf
+                .insert(list_item_id.idlp(), cursor.leaf);
+        }
     }
 
-    fn list_insert_batch(
+    pub(super) struct PushElemInfo {
+        pub elem_id: CompactIdLp,
+        pub value: LoroValue,
+        pub last_set_id: IdLp,
+    }
+}
+
+impl MovableListState {
+    pub fn new(idx: ContainerIdx) -> Self {
+        Self {
+            idx,
+            inner: InnerState::new(),
+        }
+    }
+
+    #[inline]
+    fn list(&self) -> &BTree<MovableListTreeTrait> {
+        self.inner.list()
+    }
+
+    #[inline]
+    fn elements(&self) -> &FxHashMap<CompactIdLp, Element> {
+        self.inner.elements()
+    }
+
+    fn create_new_elem(
         &mut self,
-        index: usize,
-        items: impl Iterator<Item = ListItem>,
-        kind: IndexType,
+        elem_id: CompactIdLp,
+        new_pos: IdLp,
+        new_value: LoroValue,
+        value_id: IdLp,
     ) {
+        self.inner.update_value(elem_id, new_value, value_id);
+        self.inner.update_pos(elem_id, new_pos, false);
+    }
+
+    fn list_insert_batch(&mut self, index: usize, items: impl Iterator<Item = IdFull>) {
         for (i, item) in items.enumerate() {
-            self.list_insert(index + i, item, kind);
+            self.inner.insert_list_item(index + i, item);
         }
     }
 
     /// Get the length defined by op, where the length includes the ones that are not being pointed at (moved, invisible to users).
     #[allow(unused)]
     fn op_len(&self) -> usize {
-        self.list.root_cache().include_dead_len as usize
-    }
-
-    fn len_kind(&self, kind: IndexType) -> usize {
-        match kind {
-            IndexType::ForUser => self.list.root_cache().user_len as usize,
-            IndexType::ForOp => self.list.root_cache().include_dead_len as usize,
-        }
-    }
-
-    #[instrument(skip(self))]
-    fn list_drain(&mut self, range: std::ops::Range<usize>, kind: IndexType) {
-        match kind {
-            IndexType::ForUser => {
-                for item in Self::drain_by_query::<UserLenQuery>(&mut self.list, range) {
-                    self.id_to_list_leaf.remove(&item.id.idlp());
-                }
-            }
-            IndexType::ForOp => {
-                for item in Self::drain_by_query::<OpLenQuery>(&mut self.list, range) {
-                    self.id_to_list_leaf.remove(&item.id.idlp());
-                }
-            }
-        }
-    }
-
-    fn drain_by_query<Q: Query<MovableListTreeTrait>>(
-        list: &mut BTree<MovableListTreeTrait>,
-        range: std::ops::Range<Q::QueryArg>,
-    ) -> generic_btree::iter::Drain<'_, MovableListTreeTrait> {
-        let start = list.query::<Q>(&range.start);
-        let end = list.query::<Q>(&range.end);
-        generic_btree::iter::Drain::new(list, start, end)
+        self.inner.list().root_cache().include_dead_len as usize
     }
 
     fn mov(
@@ -433,26 +589,21 @@ impl MovableListState {
         kind: IndexType,
     ) {
         // PERF: can be optimized by inlining try update
-        let item = ListItem {
-            pointed_by: None,
-            id: new_pos_id,
-        };
-
         if cfg!(debug_assertions) {
-            let item = self.get_list_item_at(from_index, kind).unwrap();
+            let item = self.inner.get_list_item_at(from_index, kind).unwrap();
             assert_eq!(item.pointed_by, Some(elem_id.compact()));
         }
 
-        self.list_insert(
+        self.inner.insert_list_item(
             if to_index > from_index {
                 to_index + 1
             } else {
                 to_index
             },
-            item,
-            kind,
+            new_pos_id,
         );
-        self.update_elem_pos(elem_id, new_pos_id.idlp(), true);
+        self.inner
+            .update_pos(elem_id.compact(), new_pos_id.idlp(), true);
     }
 
     pub(crate) fn get(&self, index: usize, kind: IndexType) -> Option<&LoroValue> {
@@ -460,22 +611,9 @@ impl MovableListState {
             return None;
         }
 
-        let item = self.get_list_item_at(index, kind).unwrap();
+        let item = self.inner.get_list_item_at(index, kind).unwrap();
         let elem = item.pointed_by.unwrap();
-        self.elements.get(&elem).map(|x| &x.value)
-    }
-
-    fn get_list_item_at(&self, index: usize, kind: IndexType) -> Option<&ListItem> {
-        let cursor = match kind {
-            IndexType::ForUser => self.list.query::<UserLenQuery>(&index)?,
-            IndexType::ForOp => self.list.query::<OpLenQuery>(&index)?,
-        };
-        if !cursor.found {
-            return None;
-        }
-
-        let item = self.list.get_elem(cursor.leaf())?;
-        Some(item)
+        self.inner.elements().get(&elem).map(|x| &x.value)
     }
 
     pub(crate) fn get_elem_at_given_pos(
@@ -483,18 +621,19 @@ impl MovableListState {
         index: usize,
         kind: IndexType,
     ) -> Option<(CompactIdLp, &Element)> {
-        self.get_list_item_at(index, kind).and_then(|x| {
+        self.inner.get_list_item_at(index, kind).and_then(|x| {
             x.pointed_by
-                .map(|pointed_by| (pointed_by, self.elements.get(&pointed_by).unwrap()))
+                .map(|pointed_by| (pointed_by, self.inner.elements().get(&pointed_by).unwrap()))
         })
     }
 
     pub(crate) fn get_list_id_at(&self, index: usize, kind: IndexType) -> Option<ID> {
-        self.get_list_item_at(index, kind).map(|x| x.id.id())
+        self.inner.get_list_item_at(index, kind).map(|x| x.id.id())
     }
 
     pub(crate) fn get_elem_id_at(&self, index: usize, kind: IndexType) -> Option<CompactIdLp> {
-        self.get_list_item_at(index, kind)
+        self.inner
+            .get_list_item_at(index, kind)
             .and_then(|x| x.pointed_by)
     }
 
@@ -504,9 +643,9 @@ impl MovableListState {
         from: IndexType,
         to: IndexType,
     ) -> Option<usize> {
-        let len = self.len_kind(from);
+        let len = self.inner.len_kind(from);
         if index == len {
-            return Some(self.len_kind(to));
+            return Some(self.inner.len_kind(to));
         }
 
         if index > len {
@@ -514,54 +653,23 @@ impl MovableListState {
         }
 
         let c = match from {
-            IndexType::ForOp => self.list.query::<OpLenQuery>(&index).unwrap(),
-            IndexType::ForUser => self.list.query::<UserLenQuery>(&index).unwrap(),
+            IndexType::ForOp => self.inner.list().query::<OpLenQuery>(&index).unwrap(),
+            IndexType::ForUser => self.inner.list().query::<UserLenQuery>(&index).unwrap(),
         };
 
-        Some(self.get_user_index_of(c.cursor.leaf, to) as usize)
+        Some(self.inner.get_index_of(c.cursor.leaf, to) as usize)
     }
 
     fn get_list_item(&self, id: IdLp) -> Option<&ListItem> {
-        self.id_to_list_leaf
-            .get(&id)
-            .and_then(|leaf| self.list.get_elem(*leaf))
-    }
-
-    pub fn get_list_item_index(&self, id: IdLp) -> Option<usize> {
-        self.id_to_list_leaf
-            .get(&id)
-            .map(|leaf| self.get_user_index_of(*leaf, IndexType::ForUser) as usize)
+        self.inner.get_list_item_by_id(id)
     }
 
     /// Get the user index of elem
     ///
     /// If we cannot find the list item in the list, we will return None.
     fn get_index_of_elem(&self, id: IdLp) -> Option<usize> {
-        let elem = self.elements.get(&id.compact())?;
-        self.get_list_item_index(elem.pos)
-    }
-
-    fn get_user_index_of(&self, leaf: LeafIndex, kind: IndexType) -> i32 {
-        let mut ans = 0;
-        self.list
-            .visit_previous_caches(Cursor { leaf, offset: 0 }, |cache| match cache {
-                generic_btree::PreviousCache::NodeCache(c) => {
-                    if matches!(kind, IndexType::ForUser) {
-                        ans += c.user_len;
-                    } else {
-                        ans += c.include_dead_len;
-                    }
-                }
-                generic_btree::PreviousCache::PrevSiblingElem(p) => {
-                    if matches!(kind, IndexType::ForUser) {
-                        ans += if p.pointed_by.is_some() { 1 } else { 0 };
-                    } else {
-                        ans += 1;
-                    }
-                }
-                generic_btree::PreviousCache::ThisElemAndOffset { .. } => {}
-            });
-        ans
+        let elem = self.inner.elements().get(&id.compact())?;
+        self.inner.get_list_item_index(elem.pos, IndexType::ForUser)
     }
 
     /// Debug check the consistency between the list and the elements
@@ -574,16 +682,16 @@ impl MovableListState {
     #[cfg(any(debug_assertions, test))]
     #[allow(unused)]
     pub(crate) fn check_consistency(&self) {
-        for (id, elem) in self.elements.iter() {
+        for (id, elem) in self.inner.elements().iter() {
             let item = self
                 .get_list_item(id.to_id())
                 .expect("Elem's pos should be in the list");
             assert_eq!(item.pointed_by.unwrap(), *id);
         }
 
-        for item in self.list.iter() {
+        for item in self.inner.list().iter() {
             if let Some(elem_id) = item.pointed_by {
-                let elem = self.elements.get(&elem_id).unwrap();
+                let elem = self.inner.elements().get(&elem_id).unwrap();
                 assert_eq!(elem.pos, item.id.idlp());
             }
         }
@@ -595,52 +703,25 @@ impl MovableListState {
     }
 
     pub fn len(&self) -> usize {
-        self.list.root_cache().user_len as usize
+        self.inner.list().root_cache().user_len as usize
     }
 
     fn to_vec(&self) -> Vec<LoroValue> {
         self.iter().cloned().collect_vec()
     }
 
-    /// push a new elem into the list
-    fn push_inner(&mut self, list_item_id: IdFull, elem: Option<PushElemInfo>) {
-        let pointed_by = elem.as_ref().map(|x| x.elem_id);
-        if let Some(elem) = elem {
-            if let LoroValue::Container(c) = &elem.value {
-                self.child_container_to_elem.insert(c.clone(), elem.elem_id);
-            }
-            debug_assert!(!elem.last_set_id.is_none());
-            self.elements.insert(
-                elem.elem_id,
-                Element {
-                    value: elem.value,
-                    value_id: elem.last_set_id,
-                    pos: list_item_id.idlp(),
-                },
-            );
-        }
-        let cursor = self.list.push(ListItem {
-            pointed_by,
-            id: list_item_id,
-        });
-        self.id_to_list_leaf
-            .insert(list_item_id.idlp(), cursor.leaf);
-    }
-
     fn get_value_inner(&self) -> Vec<LoroValue> {
         let list = self
-            .list
+            .inner
+            .list()
             .iter_with_filter(|x| (x.user_len > 0, 0))
-            .filter_map(|(_, item)| item.pointed_by.map(|eid| self.elements[&eid].value.clone()))
+            .filter_map(|(_, item)| {
+                item.pointed_by
+                    .map(|eid| self.elements()[&eid].value.clone())
+            })
             .collect();
         list
     }
-}
-
-struct PushElemInfo {
-    elem_id: CompactIdLp,
-    value: LoroValue,
-    last_set_id: IdLp,
 }
 
 impl ContainerState for MovableListState {
@@ -653,7 +734,7 @@ impl ContainerState for MovableListState {
     }
 
     fn is_state_empty(&self) -> bool {
-        self.list.is_empty() && self.elements.is_empty()
+        self.list().is_empty() && self.elements().is_empty()
     }
 
     fn apply_diff_and_convert(
@@ -667,6 +748,7 @@ impl ContainerState for MovableListState {
             unreachable!()
         };
 
+        debug!(?diff);
         let mut ans: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
 
         {
@@ -685,14 +767,7 @@ impl ContainerState for MovableListState {
                         attributes: _,
                     } => {
                         let len = insert.len();
-                        self.list_insert_batch(
-                            index,
-                            insert.into_iter().map(|x| ListItem {
-                                id: x,
-                                pointed_by: None,
-                            }),
-                            IndexType::ForOp,
-                        );
+                        self.list_insert_batch(index, insert.into_iter());
                         index += len;
                     }
                     DeltaItem::Delete {
@@ -710,7 +785,7 @@ impl ContainerState for MovableListState {
                                 .retain(user_index)
                                 .delete(user_index_end - user_index),
                         );
-                        self.list_drain(index..index + delete, IndexType::ForOp);
+                        self.inner.list_drain(index..index + delete);
                     }
                 }
             }
@@ -723,7 +798,7 @@ impl ContainerState for MovableListState {
                     crate::delta::ElementDelta::PosChange { id, new_pos } => {
                         let old_index = self.get_index_of_elem(id);
                         // don't need to update old list item, because it's handled by list diff already
-                        self.update_elem_pos(id, new_pos, false);
+                        self.inner.update_pos(id.compact(), new_pos, false);
 
                         if old_index.is_some() {
                             let old_index = old_index.unwrap();
@@ -737,7 +812,8 @@ impl ContainerState for MovableListState {
                             ans = ans.compose(new_delta);
                         } else {
                             let new_index = self.get_index_of_elem(id).unwrap();
-                            let new_value = self.elements.get(&id.compact()).unwrap().value.clone();
+                            let new_value =
+                                self.elements().get(&id.compact()).unwrap().value.clone();
                             let new_delta = Delta::new().retain(new_index).insert(vec![
                                 ValueOrHandler::from_value(new_value, arena, txn, state),
                             ]);
@@ -749,7 +825,8 @@ impl ContainerState for MovableListState {
                         new_value,
                         value_id,
                     } => {
-                        self.update_elem_value(id, new_value.clone(), value_id);
+                        self.inner
+                            .update_value(id.compact(), new_value.clone(), value_id);
                         let index = self.get_index_of_elem(id);
                         if let Some(index) = index {
                             ans = ans.compose(Delta::new().retain(index).delete(1).insert(vec![
@@ -763,7 +840,7 @@ impl ContainerState for MovableListState {
                         new_value,
                         value_id,
                     } => {
-                        self.create_new_elem(id, new_pos, new_value.clone(), value_id);
+                        self.create_new_elem(id.compact(), new_pos, new_value.clone(), value_id);
                         let index = self.get_index_of_elem(id).unwrap();
                         ans = ans.compose(Delta::new().retain(index).insert(vec![
                             ValueOrHandler::from_value(new_value, arena, txn, state),
@@ -808,33 +885,15 @@ impl ContainerState for MovableListState {
                     for (i, x) in v.enumerate() {
                         let elem_id = op.idlp().inc(i as i32).try_into().unwrap();
                         let pos_id = op.id_full().inc(i as i32);
-                        if let LoroValue::Container(c) = &x {
-                            self.child_container_to_elem.insert(c.clone(), elem_id);
-                        }
-                        debug_assert!(!elem_id.to_id().is_none());
-                        self.elements.insert(
-                            elem_id,
-                            Element {
-                                value: x.clone(),
-                                value_id: elem_id.to_id(),
-                                pos: pos_id.idlp(),
-                            },
-                        );
-
-                        self.list_insert(
-                            *pos + i,
-                            ListItem {
-                                id: pos_id,
-                                pointed_by: Some(elem_id),
-                            },
-                            IndexType::ForOp,
-                        );
+                        self.inner.insert_list_item(*pos + i, pos_id);
+                        self.create_new_elem(elem_id, pos_id.idlp(), x.clone(), elem_id.to_id());
                     }
                 }
                 _ => unreachable!(),
             },
             ListOp::Delete(span) => {
-                self.list_drain(span.start() as usize..span.end() as usize, IndexType::ForOp);
+                self.inner
+                    .list_drain(span.start() as usize..span.end() as usize);
             }
             ListOp::Move { from, to, elem_id } => {
                 self.mov(
@@ -846,7 +905,8 @@ impl ContainerState for MovableListState {
                 );
             }
             ListOp::Set { elem_id, value } => {
-                self.update_elem_value(*elem_id, value.clone(), op.idlp());
+                self.inner
+                    .update_value(elem_id.compact(), value.clone(), op.idlp());
             }
             ListOp::StyleStart { .. } | ListOp::StyleEnd => unreachable!(),
         }
@@ -876,31 +936,20 @@ impl ContainerState for MovableListState {
         LoroValue::List(Arc::new(list))
     }
 
-    #[doc = r" Get the index of the child container"]
-    #[allow(unused)]
+    /// Get the index of the child container
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
-        let ans = self.child_container_to_elem.get(id).and_then(|eid| {
-            {
-                let this = &self;
-                let elem = this.elements.get(&eid.to_id().compact())?;
-                if elem.value.as_container() != Some(id) {
-                    // TODO: may be better to find a way clean up these invalid elements?
-                    return None;
-                }
-                this.get_list_item_index(elem.pos)
-            }
+        self.inner
+            .get_child_index(id, IndexType::ForUser)
             .map(Index::Seq)
-        });
-
-        ans
     }
 
     #[allow(unused)]
     fn get_child_containers(&self) -> Vec<ContainerID> {
-        self.child_container_to_elem
+        self.inner
+            .child_container_to_elem()
             .iter()
             .filter_map(|(c, elem_id)| {
-                let elem = self.elements.get(elem_id)?;
+                let elem = self.elements().get(elem_id)?;
                 if elem.value.as_container() != Some(c) {
                     None
                 } else {
@@ -926,7 +975,7 @@ impl ContainerState for MovableListState {
             invisible_list_item: 0,
         });
         let mut ids = Vec::new();
-        for item in self.list.iter() {
+        for item in self.list().iter() {
             if let Some(elem_id) = item.pointed_by {
                 let eq = elem_id.to_id() == item.id.idlp();
                 items.push(EncodedItem {
@@ -939,7 +988,7 @@ impl ContainerState for MovableListState {
                         lamport: item.id.lamport,
                     });
                 }
-                let elem = self.elements.get(&elem_id).unwrap();
+                let elem = self.elements().get(&elem_id).unwrap();
                 encoder.encode_op(elem.value_id.into(), || unimplemented!());
             } else {
                 items.last_mut().unwrap().invisible_list_item += 1;
@@ -995,7 +1044,7 @@ impl ContainerState for MovableListState {
                             {
                                 let elem_id = idlp.inc(i as i32);
                                 let pos_full_id = get_pos_id_full(elem_id);
-                                self.push_inner(
+                                self.inner.push_inner(
                                     pos_full_id,
                                     Some(PushElemInfo {
                                         elem_id: elem_id.compact(),
@@ -1007,7 +1056,7 @@ impl ContainerState for MovableListState {
                         }
                         crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
                             let pos_full_id = get_pos_id_full(*elem_id);
-                            self.push_inner(
+                            self.inner.push_inner(
                                 pos_full_id,
                                 Some(PushElemInfo {
                                     elem_id: elem_id.compact(),
@@ -1032,7 +1081,7 @@ impl ContainerState for MovableListState {
                     lamport: pos_id.lamport,
                     counter: pos_o_id.counter,
                 };
-                self.push_inner(pos_id_full, None);
+                self.inner.push_inner(pos_id_full, None);
             }
         }
 

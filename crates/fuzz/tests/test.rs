@@ -211,6 +211,82 @@ fn test_movable_list_3() {
 }
 
 #[test]
+fn test_movable_list_4() {
+    test_multi_sites(
+        5,
+        vec![
+            FuzzTarget::Map,
+            FuzzTarget::List,
+            FuzzTarget::Text,
+            FuzzTarget::Tree,
+            FuzzTarget::MovableList,
+        ],
+        &mut [
+            SyncAll,
+            Handle {
+                site: 91,
+                target: 59,
+                container: 34,
+                action: Generic(GenericAction {
+                    value: I32(-2088551680),
+                    bool: true,
+                    key: 131,
+                    pos: 16855269067351588864,
+                    length: 6911312294037809641,
+                    prop: 16855260268008005471,
+                }),
+            },
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 160,
+                target: 19,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(List),
+                    bool: true,
+                    key: 930317187,
+                    pos: 4251419660595589899,
+                    length: 10993036654195,
+                    prop: 18446743523953737728,
+                }),
+            },
+            SyncAll,
+            Checkout {
+                site: 79,
+                to: 2147483432,
+            },
+            Handle {
+                site: 34,
+                target: 34,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: I32(572662306),
+                    bool: false,
+                    key: 829760512,
+                    pos: 4319796467578386228,
+                    length: 18446744073709551615,
+                    prop: 2676586395008836901,
+                }),
+            },
+            Handle {
+                site: 37,
+                target: 37,
+                container: 37,
+                action: Generic(GenericAction {
+                    value: I32(623191333),
+                    bool: true,
+                    key: 623191333,
+                    pos: 2676586395008836901,
+                    length: 2676586395008836901,
+                    prop: 10455415605503269,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn missing_event_when_checkout() {
     test_multi_sites(
         5,

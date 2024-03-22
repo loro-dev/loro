@@ -353,6 +353,7 @@ impl TreeNode {
 
 impl ContainerTracker {
     pub fn apply_diff(&mut self, diff: DiffEvent) {
+        debug!("apply diff self={:#?}\ndiff={:#?}", &self, &diff);
         for diff in diff.events {
             let path = diff.path;
             let mut value: &mut ContainerTracker = self;
