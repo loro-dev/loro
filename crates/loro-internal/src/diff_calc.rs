@@ -9,10 +9,8 @@ use loro_common::{
     ContainerID, Counter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
 };
 use smallvec::SmallVec;
-use tracing::debug;
 
 use crate::{
-    change::Lamport,
     container::{
         idx::ContainerIdx,
         list::list_op::InnerListOp,
@@ -754,18 +752,23 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             unreachable!()
         };
 
+        // collect the elements that are moved, updated, or inserted
         match l {
-            InnerListOp::Insert { slice, pos } => {
+            InnerListOp::Insert { slice, pos: _ } => {
                 let op_id = op.id_full().idlp();
                 for i in 0..slice.atom_len() {
                     self.new_elements.insert(op_id.inc(i as Counter));
                 }
             }
-            InnerListOp::Delete(d) => {}
-            InnerListOp::Move { from, from_id, to } => {
+            InnerListOp::Delete(_) => {}
+            InnerListOp::Move {
+                from: _,
+                from_id,
+                to: _,
+            } => {
                 self.moved_elements.insert(*from_id);
             }
-            InnerListOp::Set { elem_id, value } => {
+            InnerListOp::Set { elem_id, value: _ } => {
                 self.updated_elements.insert(*elem_id);
             }
 
@@ -805,7 +808,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         this.tracker
                             .move_item(op.id_full(), from_id, *from as usize, *to as usize);
                     }
-                    InnerListOp::Set { elem_id, value } => {
+                    InnerListOp::Set { .. } => {
                         // don't need to update tracker here
                     }
                     InnerListOp::InsertText { .. }

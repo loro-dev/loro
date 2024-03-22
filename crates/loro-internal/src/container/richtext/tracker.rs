@@ -3,7 +3,7 @@ use std::ops::ControlFlow;
 use generic_btree::{rle::Sliceable, LeafIndex};
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength;
-use tracing::{debug, instrument};
+use tracing::instrument;
 
 use crate::VersionVector;
 

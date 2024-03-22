@@ -1098,10 +1098,7 @@ mod cursor_cache {
 
                 let offset = pos - c.pos;
                 let leaf = tree.get_leaf(c.leaf.into());
-                let Some(s) = leaf.elem().as_str() else {
-                    return None;
-                };
-
+                let s = leaf.elem().as_str()?;
                 let Some(offset) = pos_to_unicode_index(s, offset, pos_type) else {
                     continue;
                 };

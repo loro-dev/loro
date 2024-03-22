@@ -55,6 +55,7 @@ pub struct StrAllocResult {
 }
 
 impl SharedArena {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             inner: Arc::new(InnerSharedArena::default()),

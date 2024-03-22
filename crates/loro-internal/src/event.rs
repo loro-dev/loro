@@ -182,7 +182,7 @@ impl Meta for ListDeltaMeta {
         self.move_from.is_none() && other.move_from.is_none()
     }
 
-    fn merge(&mut self, other: &Self) {}
+    fn merge(&mut self, _other: &Self) {}
 }
 
 /// Diff is the diff between two versions of a container.

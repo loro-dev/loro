@@ -7,7 +7,6 @@ use generic_btree::{
 use itertools::Itertools;
 use loro_common::{Counter, HasCounter, HasCounterSpan, HasIdSpan, IdSpan, Lamport, ID};
 use smallvec::{smallvec, SmallVec};
-use tracing::debug;
 
 use crate::container::richtext::{fugue_span::DiffStatus, FugueSpan, RichtextChunk, Status};
 
@@ -330,14 +329,10 @@ impl CrdtRope {
             for u in group {
                 debug_assert_eq!(u.id_span.peer, elem.id.peer);
                 let start = (u.id_span.ctr_start() - elem.id.counter).max(0);
-                let end = u.id_span.ctr_end() - elem.id.counter;
+                let end = (u.id_span.ctr_end() - elem.id.counter).max(0);
                 let len = elem.rle_len();
 
-                tree_update_info.push((
-                    leaf,
-                    (start as usize).min(elem.rle_len())..(end as usize).min(elem.rle_len()),
-                    u,
-                ))
+                tree_update_info.push((leaf, (start as usize).min(len)..(end as usize).min(len), u))
             }
         }
 

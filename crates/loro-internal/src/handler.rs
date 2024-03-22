@@ -1181,7 +1181,7 @@ impl MovableListHandler {
         ))
     }
 
-    pub(crate) fn set_with_txn(
+    pub fn set_with_txn(
         &self,
         txn: &mut Transaction,
         index: usize,
@@ -1217,7 +1217,7 @@ impl MovableListHandler {
         txn.apply_local_op(self.container_idx, op, hint, &self.state)
     }
 
-    pub(crate) fn set(&self, index: usize, value: impl Into<LoroValue>) -> LoroResult<()> {
+    pub fn set(&self, index: usize, value: impl Into<LoroValue>) -> LoroResult<()> {
         with_txn(&self.txn, |txn| self.set_with_txn(txn, index, value.into()))
     }
 

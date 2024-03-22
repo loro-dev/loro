@@ -7,8 +7,7 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, ContainerType, Counter, HasId, HasLamport, IdLp, InternalString, LoroValue,
-    PeerID, ID,
+    ContainerType, Counter, HasId, HasLamport, IdLp, InternalString, LoroValue, PeerID, ID,
 };
 
 use crate::{

@@ -889,6 +889,7 @@ impl OpLog {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn id_to_idlp(&self, id_start: ID) -> IdLp {
         let change = self.get_change_at(id_start).unwrap();
         let lamport = change.lamport + (id_start.counter - change.id.counter) as Lamport;

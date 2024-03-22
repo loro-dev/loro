@@ -380,6 +380,7 @@ impl MovableListState {
     }
 
     /// Get the length defined by op, where the length includes the ones that are not being pointed at (moved, invisible to users).
+    #[allow(unused)]
     fn op_len(&self) -> usize {
         self.list.root_cache().include_dead_len as usize
     }
@@ -913,8 +914,7 @@ impl ContainerState for MovableListState {
 
         debug!("encode_snapshot: encode movable list state > out");
         let out = EncodedSnapshot { items, ids };
-        let ans = serde_columnar::to_vec(&out).unwrap();
-        ans
+        serde_columnar::to_vec(&out).unwrap()
     }
 
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {

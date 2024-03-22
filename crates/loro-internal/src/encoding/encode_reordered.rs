@@ -1,11 +1,4 @@
-use std::{
-    borrow::{BorrowMut, Cow},
-    cell::RefCell,
-    cmp::Ordering,
-    mem::take,
-    rc::Rc,
-    sync::Arc,
-};
+use std::{borrow::Cow, cell::RefCell, cmp::Ordering, mem::take, rc::Rc, sync::Arc};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
@@ -734,6 +727,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_snapshot_states(
     state: &mut DocState,
     frontiers: Frontiers,
@@ -1076,7 +1070,7 @@ mod encode {
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
                 crate::container::list::list_op::InnerListOp::Move { to, .. } => *to as i32,
-                crate::container::list::list_op::InnerListOp::Set { .. } => 0 as i32,
+                crate::container::list::list_op::InnerListOp::Set { .. } => 0,
                 crate::container::list::list_op::InnerListOp::Insert { pos, .. } => *pos as i32,
                 crate::container::list::list_op::InnerListOp::InsertText { pos, .. } => *pos as i32,
                 crate::container::list::list_op::InnerListOp::Delete(span) => span.span.pos as i32,
