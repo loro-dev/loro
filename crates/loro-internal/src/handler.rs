@@ -1464,6 +1464,18 @@ impl MovableListHandler {
             }
         })
     }
+
+    pub fn log_internal_state(&self) -> String {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let state = state.as_movable_list_state().unwrap();
+                format!("{:#?}", state)
+            })
+    }
 }
 
 impl MapHandler {

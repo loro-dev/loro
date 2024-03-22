@@ -69,11 +69,7 @@ mod list_item_tree {
 
     impl HasLength for ListItem {
         fn rle_len(&self) -> usize {
-            if self.pointed_by.is_some() {
-                1
-            } else {
-                0
-            }
+            1
         }
     }
 
@@ -286,9 +282,10 @@ impl MovableListState {
                 return false;
             }
 
-            old_item_id = Some(element.pos);
-            // TODO: update list item pointed by
-            element.pos = list_item_id;
+            if element.pos != list_item_id {
+                old_item_id = Some(element.pos);
+                element.pos = list_item_id;
+            }
         } else {
             self.elements.insert(
                 id,
@@ -316,6 +313,17 @@ impl MovableListState {
                 if !old.is_none() {
                     let leaf = self.id_to_list_leaf.remove(&old).unwrap();
                     self.list.remove_leaf(Cursor { leaf, offset: 0 });
+                }
+            }
+        } else if let Some(old) = old_item_id {
+            if !old.is_none() {
+                if let Some(leaf) = self.id_to_list_leaf.get(&old) {
+                    let (still_valid, split) = self.list.update_leaf(*leaf, |item| {
+                        item.pointed_by = None;
+                        (true, None, None)
+                    });
+                    assert!(still_valid);
+                    assert!(split.arr.is_empty());
                 }
             }
         }
@@ -1060,6 +1068,16 @@ mod test {
         list.insert(0, 1).unwrap();
         list.insert(1, 0).unwrap();
         list.mov(0, 1).unwrap();
+        {
+            let doc_b = LoroDoc::new_auto_commit();
+            doc_b.import(&doc.export_from(&Default::default())).unwrap();
+            assert_eq!(
+                doc_b.get_deep_value().to_json_value(),
+                json!({
+                    "list": [0, 1]
+                })
+            );
+        }
         list.mov(1, 0).unwrap();
         assert_eq!(
             doc.get_deep_value().to_json_value(),
@@ -1067,6 +1085,16 @@ mod test {
                 "list": [1, 0]
             })
         );
+        {
+            let doc_b = LoroDoc::new_auto_commit();
+            doc_b.import(&doc.export_from(&Default::default())).unwrap();
+            assert_eq!(
+                doc_b.get_deep_value().to_json_value(),
+                json!({
+                    "list": [1, 0]
+                })
+            );
+        }
         list.mov(0, 1).unwrap();
         list.insert(2, 3).unwrap();
         list.set(2, 2).unwrap();

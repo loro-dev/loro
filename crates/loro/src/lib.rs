@@ -15,6 +15,8 @@ use loro_internal::{
 use std::cmp::Ordering;
 use std::ops::Range;
 use std::sync::Arc;
+use tracing::debug;
+use tracing::info;
 
 pub mod event;
 
@@ -901,6 +903,13 @@ impl LoroMovableList {
 
     pub fn set_container(&self, pos: usize, c: ContainerType) -> LoroResult<Container> {
         self.handler.set_container(pos, c).map(|c| c.into())
+    }
+
+    pub fn log_internal_state(&self) {
+        info!(
+            "movable_list internal state: {}",
+            self.handler.log_internal_state()
+        )
     }
 }
 

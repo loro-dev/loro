@@ -311,8 +311,8 @@ impl Cursor {
 
     pub fn new_move(leaf: LeafIndex, from_id: ID) -> Self {
         Self::Move {
-            from: from_id,
             to: leaf,
+            from: from_id,
         }
     }
 

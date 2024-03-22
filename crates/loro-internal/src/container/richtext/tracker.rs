@@ -1,9 +1,12 @@
 use std::ops::ControlFlow;
 
-use generic_btree::{rle::Sliceable, LeafIndex};
+use generic_btree::{
+    rle::{HasLength, Sliceable},
+    LeafIndex,
+};
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
-use rle::HasLength;
-use tracing::instrument;
+use rle::HasLength as _;
+use tracing::{debug, instrument};
 
 use crate::VersionVector;
 
@@ -228,7 +231,7 @@ impl Tracker {
     ///
     /// But it needs special behavior for id_to_cursor data structure
     ///
-    #[instrument(skip_all)]
+    #[instrument(skip(self))]
     pub(crate) fn move_item(
         &mut self,
         op_id: IdFull,
@@ -240,9 +243,17 @@ impl Tracker {
             return;
         }
 
-        let split = self
-            .rope
-            .delete(deleted_id, from_pos, 1, false, &mut |_| {});
+        // We record the **fake** id of the deleted item, and store it in the `id_to_cursor`.
+        // This is because when we retreat, we need to know the **fake** id of the deleted item,
+        // so that we can look up the insert pos in `id_to_cursor`
+        //
+        // > `id_to_cursor` only stores the mappings from **fake** insert id to the leaf index.
+        // > **Fake** means the id may be a temporary placeholder, created with UNKNOWN_PEER_ID.
+        let mut cur_delete_id = None;
+        let split = self.rope.delete(deleted_id, from_pos, 1, false, &mut |s| {
+            debug_assert_eq!(s.rle_len(), 1);
+            cur_delete_id = Some(s.id.id());
+        });
 
         for s in split {
             self.update_insert_by_split(&s.arr);
@@ -269,12 +280,13 @@ impl Tracker {
 
         self.id_to_cursor.insert(
             op_id.id(),
-            id_to_cursor::Cursor::new_move(result.leaf, deleted_id),
+            id_to_cursor::Cursor::new_move(result.leaf, cur_delete_id.unwrap()),
         );
 
         let end_id = op_id.inc(1);
         self.current_vv.extend_to_include_end_id(end_id.id());
         self.applied_vv.extend_to_include_end_id(end_id.id());
+        debug!("after_move tracker={:#?}", self);
     }
 
     #[inline]
@@ -283,6 +295,7 @@ impl Tracker {
     }
 
     fn _checkout(&mut self, vv: &VersionVector, on_diff_status: bool) {
+        debug!("checkout to {:?}", vv);
         // tracing::info!("Checkout to {:?} from {:?}", vv, self.current_vv);
         if on_diff_status {
             self.rope.clear_diff_status();
@@ -322,11 +335,14 @@ impl Tracker {
                         to_leaf: to,
                         new_op_id: op_id,
                     } => {
+                        let mut visited = false;
                         for to_del in self.id_to_cursor.iter(IdSpan::new(
                             from.peer,
                             from.counter,
                             from.counter + 1,
                         )) {
+                            visited = true;
+                            debug!("dec del times for {:?}", to_del);
                             match to_del {
                                 id_to_cursor::IterCursor::Move {
                                     from_id: _,
@@ -352,7 +368,7 @@ impl Tracker {
                                 _ => unreachable!(),
                             }
                         }
-
+                        assert!(visited);
                         // insert the new
                         updates.push(crdt_rope::LeafUpdate {
                             leaf: to,

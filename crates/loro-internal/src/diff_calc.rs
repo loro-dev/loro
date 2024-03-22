@@ -738,8 +738,14 @@ struct MovableListDiffCalculator {
 }
 
 impl DiffCalculatorTrait for MovableListDiffCalculator {
-    fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector) {
-        self.list.start_tracking(oplog, vv)
+    fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector) {
+        if !vv.includes_vv(&self.list.start_vv) || !self.list.tracker.all_vv().includes_vv(vv) {
+            self.list.tracker = Box::new(RichtextTracker::new_with_unknown());
+            self.list.start_vv = vv.clone();
+        }
+
+        self.list.tracker.checkout(vv);
+        // TODO: when can we clear the elements info?
     }
 
     fn apply_change(
