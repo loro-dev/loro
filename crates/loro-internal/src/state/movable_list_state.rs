@@ -651,9 +651,9 @@ impl ContainerState for MovableListState {
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
+        arena: &SharedArena,
+        txn: &Weak<Mutex<Option<Transaction>>>,
+        state: &Weak<Mutex<DocState>>,
     ) -> Diff {
         let InternalDiff::MovableList(diff) = diff else {
             unreachable!()
@@ -739,12 +739,10 @@ impl ContainerState for MovableListState {
                         if success {
                             let index = self.get_index_of_elem(id);
                             if let Some(index) = index {
-                                ans = ans.compose(
-                                    Delta::new()
-                                        .retain(index)
-                                        .delete(1)
-                                        .insert(vec![new_value.into()]),
-                                )
+                                ans =
+                                    ans.compose(Delta::new().retain(index).delete(1).insert(vec![
+                                        ValueOrHandler::from_value(new_value, arena, txn, state),
+                                    ]))
                             }
                         }
                     }
@@ -756,7 +754,9 @@ impl ContainerState for MovableListState {
                     } => {
                         self.create_new_elem(id, new_pos, new_value.clone(), value_id);
                         let index = self.get_index_of_elem(id).unwrap();
-                        ans = ans.compose(Delta::new().retain(index).insert(vec![new_value.into()]))
+                        ans = ans.compose(Delta::new().retain(index).insert(vec![
+                            ValueOrHandler::from_value(new_value, arena, txn, state),
+                        ]))
                     }
                 };
             }

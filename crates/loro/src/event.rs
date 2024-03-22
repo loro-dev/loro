@@ -8,6 +8,7 @@ use loro_internal::{
     ContainerDiff as ContainerDiffInner, DiffEvent as DiffEventInner,
 };
 use std::sync::Arc;
+use tracing::debug;
 
 use crate::ValueOrContainer;
 
@@ -80,6 +81,7 @@ impl<'a> From<&'a ContainerDiffInner> for ContainerDiff<'a> {
 
 impl<'a> From<&'a DiffInner> for Diff<'a> {
     fn from(value: &'a DiffInner) -> Self {
+        debug!(?value);
         match value {
             DiffInner::List(l) => {
                 let list = l
