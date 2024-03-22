@@ -1091,23 +1091,26 @@ impl MovableListHandler {
             });
         }
 
-        let (op_from, op_to, elem_id) =
-            self.state
-                .upgrade()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .with_state(self.container_idx, |state| {
-                    let list = state.as_movable_list_state().unwrap();
-                    (
-                        list.convert_index(from, IndexType::ForUser, IndexType::ForOp)
-                            .unwrap(),
-                        list.convert_index(to, IndexType::ForUser, IndexType::ForOp)
-                            .unwrap(),
-                        list.get_elem_id_at_given_pos(from, IndexType::ForUser)
-                            .unwrap(),
-                    )
-                });
+        let (op_from, op_to, elem_id, value) = self
+            .state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let list = state.as_movable_list_state().unwrap();
+                let (elem_id, elem) = list
+                    .get_elem_at_given_pos(from, IndexType::ForUser)
+                    .unwrap();
+                (
+                    list.convert_index(from, IndexType::ForUser, IndexType::ForOp)
+                        .unwrap(),
+                    list.convert_index(to, IndexType::ForUser, IndexType::ForOp)
+                        .unwrap(),
+                    elem_id,
+                    elem.value().clone(),
+                )
+            });
 
         txn.apply_local_op(
             self.container_idx,
@@ -1117,6 +1120,7 @@ impl MovableListHandler {
                 elem_id: elem_id.to_id(),
             }),
             EventHint::Move {
+                value,
                 from: from as u32,
                 to: to as u32,
             },

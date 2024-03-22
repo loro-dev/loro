@@ -9,6 +9,7 @@ use loro_common::{
     ContainerID, Counter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
 };
 use smallvec::SmallVec;
+use tracing::debug;
 
 use crate::{
     container::{
@@ -761,7 +762,9 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             InnerListOp::Insert { slice, pos: _ } => {
                 let op_id = op.id_full().idlp();
                 for i in 0..slice.atom_len() {
-                    self.changed_elements.insert(op_id.inc(i as Counter));
+                    let id = op_id.inc(i as Counter);
+
+                    self.changed_elements.insert(id);
                 }
             }
             InnerListOp::Delete(_) => {}
@@ -858,38 +861,36 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             let value = group.last_value(id, to).unwrap();
             let old_pos = group.last_pos(id, from);
             let old_value = group.last_value(id, from);
-            match (old_pos, old_value) {
-                (None, None) => {
-                    element_changes.push(ElementDelta::New {
-                        id: *id,
-                        new_pos: pos.value,
-                        new_value: value.value.clone(),
-                        value_id: IdLp::new(value.peer, value.lamport),
-                    });
-                }
-                _ => {
-                    if let Some(old_pos) = old_pos {
-                        if old_pos.value != pos.value {
-                            element_changes.push(ElementDelta::PosChange {
-                                id: *id,
-                                new_pos: pos.value,
-                            });
-                        }
+            if old_pos.is_none() || old_value.is_none() {
+                element_changes.push(ElementDelta::New {
+                    id: *id,
+                    new_pos: pos.value,
+                    new_value: value.value.clone(),
+                    value_id: IdLp::new(value.peer, value.lamport),
+                });
+            } else {
+                if let Some(old_pos) = old_pos {
+                    if old_pos != pos {
+                        element_changes.push(ElementDelta::PosChange {
+                            id: *id,
+                            new_pos: pos.value,
+                        });
                     }
-                    if let Some(old_value) = old_value {
-                        if old_value.value != value.value {
-                            element_changes.push(ElementDelta::ValueChange {
-                                id: *id,
-                                new_value: value.value.clone(),
-                                value_id: IdLp::new(value.peer, value.lamport),
-                            });
-                        }
+                }
+
+                if let Some(old_value) = old_value {
+                    if old_value != value {
+                        element_changes.push(ElementDelta::ValueChange {
+                            id: *id,
+                            new_value: value.value.clone(),
+                            value_id: IdLp::new(value.peer, value.lamport),
+                        });
                     }
                 }
             }
         }
 
-        InternalDiff::MovableList(MovableListInnerDelta {
+        let diff = MovableListInnerDelta {
             list: Delta {
                 vec: (list_diff
                     .iter()
@@ -919,7 +920,9 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     .collect()),
             },
             elements: element_changes,
-        })
+        };
+
+        InternalDiff::MovableList(diff)
     }
 }
 

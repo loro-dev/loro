@@ -418,10 +418,9 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
             record_idspan: &mut |id_span| {
                 let len = id_span.atom_len();
                 op_len += len;
+                let start_id = oplog.idlp_to_id(IdLp::new(id_span.peer, id_span.lamport.start));
                 pos_mapping_heap.push(PosMappingItem {
-                    start_id: oplog
-                        .idlp_to_id(IdLp::new(id_span.peer, id_span.lamport.start))
-                        .unwrap(),
+                    start_id: start_id.expect("convert idlp to id failed"),
                     len,
                     target_value: pos_target_value,
                 });

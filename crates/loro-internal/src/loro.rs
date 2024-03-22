@@ -459,8 +459,6 @@ impl LoroDoc {
         let old_frontiers = oplog.frontiers().clone();
         f(&mut oplog)?;
         if !self.detached.load(Acquire) {
-            let s = tracing::span!(tracing::Level::INFO, "Attached. CalcDiff.");
-            let _e = s.enter();
             let mut diff = DiffCalculator::default();
             let diff = diff.calc_diff_internal(
                 &oplog,

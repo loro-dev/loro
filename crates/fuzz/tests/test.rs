@@ -148,6 +148,69 @@ fn test_movable_list_2() {
 }
 
 #[test]
+fn test_movable_list_3() {
+    test_multi_sites(
+        2,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 59,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(-1),
+                    bool: false,
+                    key: 4294967295,
+                    pos: 18446744073709551419,
+                    length: 4268071042561343487,
+                    prop: 4268070197446523698,
+                }),
+            },
+            Handle {
+                site: 59,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: Container(MovableList),
+                    bool: true,
+                    key: 3318072622,
+                    pos: 14251014049101104581,
+                    length: 18391358628880399163,
+                    prop: 4268070197442641920,
+                }),
+            },
+            Handle {
+                site: 59,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(1568286093),
+                    bool: true,
+                    key: 999132557,
+                    pos: 216172782113783807,
+                    length: 15626148457674914619,
+                    prop: 18446693297831399889,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 92,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(1162167621),
+                    bool: true,
+                    key: 993737541,
+                    pos: 15163,
+                    length: 18391358628880386048,
+                    prop: 1099511627774,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn missing_event_when_checkout() {
     test_multi_sites(
         5,

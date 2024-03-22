@@ -10,6 +10,7 @@ use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, IdLp, LoroResult};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
+use tracing::debug;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -94,6 +95,7 @@ pub(super) enum EventHint {
         value: LoroValue,
     },
     Move {
+        value: LoroValue,
         from: u32,
         to: u32,
     },
@@ -597,12 +599,12 @@ fn change_to_diff(
                         diff: Diff::Tree(diff),
                     });
                 }
-                EventHint::Move { from, to } => {
+                EventHint::Move { from, to, value } => {
                     ans.push(TxnContainerDiff {
                         idx: op.container,
                         diff: Diff::List(Delta::new().retain(from as usize).delete(1).compose(
                             Delta::new().retain(to as usize).insert_with_meta(
-                                vec![LoroValue::Null.into()],
+                                vec![ValueOrHandler::from_value(value, arena, txn, state)],
                                 ListDeltaMeta {
                                     move_from: Some(from as usize),
                                 },

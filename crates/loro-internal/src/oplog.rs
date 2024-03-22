@@ -23,6 +23,7 @@ use fxhash::FxHashMap;
 use loro_common::{HasCounter, HasId, IdLp, IdSpan};
 use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
+use tracing::debug;
 
 type ClientChanges = FxHashMap<PeerID, Vec<Change>>;
 pub use self::dag::FrontiersNotIncluded;
@@ -866,17 +867,17 @@ impl OpLog {
 
     pub(crate) fn idlp_to_id(&self, id: loro_common::IdLp) -> Option<ID> {
         if let Some(peer_changes) = self.changes.get(&id.peer) {
-            let r = peer_changes.binary_search_by(|c| {
+            let ans = peer_changes.binary_search_by(|c| {
                 if c.lamport > id.lamport {
                     Ordering::Greater
-                } else if c.lamport + c.atom_len() as Lamport <= id.lamport {
+                } else if (c.lamport + c.atom_len() as Lamport) <= id.lamport {
                     Ordering::Less
                 } else {
                     Ordering::Equal
                 }
             });
 
-            match r {
+            match ans {
                 Ok(index) => {
                     let change = &peer_changes[index];
                     let counter = (id.lamport - change.lamport) as Counter + change.id.counter;

@@ -7,6 +7,7 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
 use loro::{Container, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, ID};
+use tracing::info_span;
 
 use crate::{
     container::{ListActor, MovableListActor, TextActor, TreeActor},
@@ -86,12 +87,14 @@ impl Actor {
     }
 
     pub fn check_tracker(&self) {
-        let loro = &self.loro;
-        let tracker = self.tracker.lock().unwrap();
-        let loro_value = loro.get_deep_value();
-        let tracker_value = tracker.to_value();
-        assert_value_eq(&loro_value, &tracker_value);
-        self.targets.values().for_each(|t| t.check_tracker());
+        info_span!("CheckTracker", peer = self.peer).in_scope(|| {
+            let loro = &self.loro;
+            let tracker = self.tracker.lock().unwrap();
+            let loro_value = loro.get_deep_value();
+            let tracker_value = tracker.to_value();
+            assert_value_eq(&loro_value, &tracker_value);
+            self.targets.values().for_each(|t| t.check_tracker());
+        });
     }
 
     pub fn check_eq(&self, other: &Actor) {
@@ -212,6 +215,7 @@ pub trait ActorTrait {
 
 #[allow(unused)]
 fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
+    #[must_use]
     fn eq(a: &LoroValue, b: &LoroValue) -> bool {
         match (a, b) {
             (LoroValue::Map(a), LoroValue::Map(b)) => {
@@ -225,7 +229,10 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                     if is_empty {
                         continue;
                     }
-                    eq(v, b.get(k).unwrap());
+
+                    if !eq(v, b.get(k).unwrap()) {
+                        return false;
+                    }
                 }
 
                 for (k, v) in b.iter() {

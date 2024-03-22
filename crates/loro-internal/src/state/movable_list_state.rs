@@ -1,6 +1,9 @@
 use itertools::Itertools;
 use serde_columnar::columnar;
-use std::sync::{Arc, Mutex, Weak};
+use std::{
+    f64::consts::E,
+    sync::{Arc, Mutex, Weak},
+};
 use tracing::{debug, field::debug, instrument};
 
 use fxhash::FxHashMap;
@@ -39,10 +42,24 @@ pub struct ListItem {
 }
 
 #[derive(Debug, Clone)]
-struct Element {
+pub(crate) struct Element {
     value: LoroValue,
     value_id: IdLp,
     pos: IdLp,
+}
+
+impl Element {
+    pub(crate) fn pos_id(&self) -> IdLp {
+        self.pos
+    }
+
+    pub(crate) fn value_id(&self) -> IdLp {
+        self.value_id
+    }
+
+    pub(crate) fn value(&self) -> &LoroValue {
+        &self.value
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,27 +280,15 @@ impl MovableListState {
     }
 
     fn create_new_elem(&mut self, id: IdLp, new_pos: IdLp, new_value: LoroValue, value_id: IdLp) {
-        self.update_elem_pos(id, new_pos, true, false);
-        self.update_elem_value(id, new_value, value_id, true);
+        self.update_elem_pos(id, new_pos, false);
+        self.update_elem_value(id, new_value, value_id);
     }
 
     /// This update may not succeed if the given value_id is smaller than the existing value_id.
-    ///
-    /// Return whether the update is successful.
-    fn update_elem_pos(
-        &mut self,
-        elem_id: IdLp,
-        list_item_id: IdLp,
-        force: bool,
-        remove_old_list_item: bool,
-    ) -> bool {
+    fn update_elem_pos(&mut self, elem_id: IdLp, list_item_id: IdLp, remove_old_list_item: bool) {
         let id = elem_id.try_into().unwrap();
         let mut old_item_id = None;
         if let Some(element) = self.elements.get_mut(&id) {
-            if !force && element.pos > list_item_id {
-                return false;
-            }
-
             if element.pos != list_item_id {
                 old_item_id = Some(element.pos);
                 element.pos = list_item_id;
@@ -329,30 +334,20 @@ impl MovableListState {
                 }
             }
         }
-
-        true
     }
 
     /// This update may not succeed if the given value_id is smaller than the existing value_id.
     ///
     /// Return whether the update is successful.
-    fn update_elem_value(
-        &mut self,
-        elem: IdLp,
-        value: LoroValue,
-        value_id: IdLp,
-        force: bool,
-    ) -> bool {
+    fn update_elem_value(&mut self, elem: IdLp, value: LoroValue, value_id: IdLp) {
+        debug_assert!(!elem.is_none());
+        debug_assert!(!value_id.is_none());
         let id = elem.try_into().unwrap();
         if let LoroValue::Container(c) = &value {
             self.child_container_to_elem.insert(c.clone(), id);
         }
 
         if let Some(element) = self.elements.get_mut(&id) {
-            if !force && element.value_id > value_id {
-                return false;
-            }
-
             element.value = value;
             element.value_id = value_id;
         } else {
@@ -365,8 +360,6 @@ impl MovableListState {
                 },
             );
         }
-
-        true
     }
 
     fn list_insert(&mut self, index: usize, item: ListItem, kind: IndexType) {
@@ -412,17 +405,11 @@ impl MovableListState {
             IndexType::ForUser => {
                 for item in Self::drain_by_query::<UserLenQuery>(&mut self.list, range) {
                     self.id_to_list_leaf.remove(&item.id.idlp());
-                    if let Some(p) = item.pointed_by.as_ref() {
-                        self.elements.remove(p);
-                    }
                 }
             }
             IndexType::ForOp => {
                 for item in Self::drain_by_query::<OpLenQuery>(&mut self.list, range) {
                     self.id_to_list_leaf.remove(&item.id.idlp());
-                    if let Some(p) = item.pointed_by.as_ref() {
-                        self.elements.remove(p);
-                    }
                 }
             }
         }
@@ -465,7 +452,7 @@ impl MovableListState {
             item,
             kind,
         );
-        self.update_elem_pos(elem_id, new_pos_id.idlp(), false, true);
+        self.update_elem_pos(elem_id, new_pos_id.idlp(), true);
     }
 
     pub(crate) fn get(&self, index: usize, kind: IndexType) -> Option<&LoroValue> {
@@ -491,13 +478,19 @@ impl MovableListState {
         Some(item)
     }
 
-    pub(crate) fn get_elem_id_at_given_pos(
+    pub(crate) fn get_elem_at_given_pos(
         &self,
         index: usize,
         kind: IndexType,
-    ) -> Option<CompactIdLp> {
-        self.get_list_item_at(index, kind)
-            .and_then(|x| x.pointed_by)
+    ) -> Option<(CompactIdLp, &Element)> {
+        self.get_list_item_at(index, kind).and_then(|x| {
+            x.pointed_by.map(|pointed_by| {
+                (
+                    pointed_by,
+                    self.elements.get(&x.id.idlp().compact()).unwrap(),
+                )
+            })
+        })
     }
 
     pub(crate) fn get_list_id_at(&self, index: usize, kind: IndexType) -> Option<ID> {
@@ -620,6 +613,7 @@ impl MovableListState {
             if let LoroValue::Container(c) = &elem.value {
                 self.child_container_to_elem.insert(c.clone(), elem.elem_id);
             }
+            debug_assert!(!elem.last_set_id.is_none());
             self.elements.insert(
                 elem.elem_id,
                 Element {
@@ -733,9 +727,9 @@ impl ContainerState for MovableListState {
                     crate::delta::ElementDelta::PosChange { id, new_pos } => {
                         let old_index = self.get_index_of_elem(id);
                         // don't need to update old list item, because it's handled by list diff already
-                        let success = self.update_elem_pos(id, new_pos, true, false);
+                        self.update_elem_pos(id, new_pos, false);
 
-                        if success && old_index.is_some() {
+                        if old_index.is_some() {
                             let old_index = old_index.unwrap();
                             let new_index = self.get_index_of_elem(id).unwrap();
                             let new_delta = Delta::new().retain(new_index).retain_with_meta(
@@ -745,6 +739,13 @@ impl ContainerState for MovableListState {
                                 },
                             );
                             ans = ans.compose(new_delta);
+                        } else {
+                            let new_index = self.get_index_of_elem(id).unwrap();
+                            let new_value = self.elements.get(&id.compact()).unwrap().value.clone();
+                            let new_delta = Delta::new().retain(new_index).insert(vec![
+                                ValueOrHandler::from_value(new_value, arena, txn, state),
+                            ]);
+                            ans = ans.compose(new_delta);
                         }
                     }
                     crate::delta::ElementDelta::ValueChange {
@@ -752,15 +753,12 @@ impl ContainerState for MovableListState {
                         new_value,
                         value_id,
                     } => {
-                        let success = self.update_elem_value(id, new_value.clone(), value_id, true);
-                        if success {
-                            let index = self.get_index_of_elem(id);
-                            if let Some(index) = index {
-                                ans =
-                                    ans.compose(Delta::new().retain(index).delete(1).insert(vec![
-                                        ValueOrHandler::from_value(new_value, arena, txn, state),
-                                    ]))
-                            }
+                        self.update_elem_value(id, new_value.clone(), value_id);
+                        let index = self.get_index_of_elem(id);
+                        if let Some(index) = index {
+                            ans = ans.compose(Delta::new().retain(index).delete(1).insert(vec![
+                                ValueOrHandler::from_value(new_value, arena, txn, state),
+                            ]))
                         }
                     }
                     crate::delta::ElementDelta::New {
@@ -817,6 +815,7 @@ impl ContainerState for MovableListState {
                         if let LoroValue::Container(c) = &x {
                             self.child_container_to_elem.insert(c.clone(), elem_id);
                         }
+                        debug_assert!(!elem_id.to_id().is_none());
                         self.elements.insert(
                             elem_id,
                             Element {
@@ -851,7 +850,7 @@ impl ContainerState for MovableListState {
                 );
             }
             ListOp::Set { elem_id, value } => {
-                self.update_elem_value(*elem_id, value.clone(), op.idlp(), false);
+                self.update_elem_value(*elem_id, value.clone(), op.idlp());
             }
             ListOp::StyleStart { .. } | ListOp::StyleEnd => unreachable!(),
         }
@@ -896,12 +895,7 @@ impl ContainerState for MovableListState {
             }
             .map(Index::Seq)
         });
-        debug!(
-            "get_child_index input={} ans={:?} this_value={:?}",
-            id,
-            ans,
-            self.get_value_inner()
-        );
+
         ans
     }
 
