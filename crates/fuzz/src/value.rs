@@ -18,8 +18,11 @@ impl Value {
     pub fn empty_container(ty: ContainerType) -> Self {
         match ty {
             ContainerType::Map => Value::Container(ContainerTracker::Map(MapTracker::empty())),
-            ContainerType::List | ContainerType::MovableList => {
+            ContainerType::List => {
                 Value::Container(ContainerTracker::List(ListTracker(Vec::new())))
+            }
+            ContainerType::MovableList => {
+                Value::Container(ContainerTracker::MovableList(MovableListTracker::empty()))
             }
             ContainerType::Text => Value::Container(ContainerTracker::Text(TextTracker::empty())),
             ContainerType::Tree => {

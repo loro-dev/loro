@@ -186,7 +186,7 @@ impl ValueOrHandler {
         state: &Weak<Mutex<DocState>>,
     ) -> Self {
         if let LoroValue::Container(c) = value {
-            let idx = arena.id_to_idx(&c).unwrap();
+            let idx = arena.register_container(&c);
             ValueOrHandler::Handler(Handler::new(txn.clone(), idx, state.clone()))
         } else {
             ValueOrHandler::Value(value)

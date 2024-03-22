@@ -185,6 +185,7 @@ pub enum FuzzTarget {
     List,
     Text,
     Tree,
+    MovableList,
     All,
 }
 
@@ -197,6 +198,7 @@ impl FuzzTarget {
                 set.insert(ContainerType::List);
                 set.insert(ContainerType::Text);
                 set.insert(ContainerType::Tree);
+                set.insert(ContainerType::MovableList);
             }
             FuzzTarget::Map => {
                 set.insert(ContainerType::Map);
@@ -210,6 +212,9 @@ impl FuzzTarget {
             FuzzTarget::Tree => {
                 set.insert(ContainerType::Tree);
                 set.insert(ContainerType::Map);
+            }
+            FuzzTarget::MovableList => {
+                set.insert(ContainerType::MovableList);
             }
         }
         set

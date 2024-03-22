@@ -90,8 +90,15 @@ impl Actionable for MovableListAction {
                 *pos %= length.max(1) as u8;
             }
             MovableListAction::Delete { pos, len } => {
-                *pos %= length.max(1) as u8;
-                *len %= length as u8 - *pos;
+                if list.is_empty() {
+                    *self = MovableListAction::Insert {
+                        pos: 0,
+                        value: FuzzValue::I32(*pos as i32),
+                    };
+                } else {
+                    *pos %= length.max(1) as u8;
+                    *len %= (length as u8).saturating_sub(*pos).max(1);
+                }
             }
             MovableListAction::Move { from, to } => {
                 if list.is_empty() {
@@ -163,7 +170,7 @@ impl Actionable for MovableListAction {
     }
 
     fn ty(&self) -> ContainerType {
-        ContainerType::List
+        ContainerType::MovableList
     }
 
     fn table_fields(&self) -> [std::borrow::Cow<'_, str>; 2] {

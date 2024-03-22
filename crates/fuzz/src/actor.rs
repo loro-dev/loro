@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    fmt::{Debug, Formatter},
+    sync::{Arc, Mutex},
+};
 
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
@@ -186,6 +189,18 @@ pub enum ActionExecutor {
     MovableListActor(MovableListActor),
     TextActor(TextActor),
     TreeActor(TreeActor),
+}
+
+impl Debug for ActionExecutor {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ActionExecutor::MapActor(_) => write!(f, "MapActor"),
+            ActionExecutor::ListActor(_) => write!(f, "ListActor"),
+            ActionExecutor::MovableListActor(_) => write!(f, "MovableListActor"),
+            ActionExecutor::TextActor(_) => write!(f, "TextActor"),
+            ActionExecutor::TreeActor(_) => write!(f, "TreeActor"),
+        }
+    }
 }
 
 #[enum_dispatch]
