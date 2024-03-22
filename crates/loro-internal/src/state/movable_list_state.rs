@@ -484,12 +484,8 @@ impl MovableListState {
         kind: IndexType,
     ) -> Option<(CompactIdLp, &Element)> {
         self.get_list_item_at(index, kind).and_then(|x| {
-            x.pointed_by.map(|pointed_by| {
-                (
-                    pointed_by,
-                    self.elements.get(&x.id.idlp().compact()).unwrap(),
-                )
-            })
+            x.pointed_by
+                .map(|pointed_by| (pointed_by, self.elements.get(&pointed_by).unwrap()))
         })
     }
 
