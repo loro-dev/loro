@@ -144,7 +144,16 @@ impl LoroDoc {
         self.doc.import_batch(bytes)
     }
 
-    /// Get a [ListHandler] by container id.
+    /// Get a [LoroMovableList] by container id.
+    ///
+    /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> LoroMovableList {
+        LoroMovableList {
+            handler: self.doc.get_movable_list(id),
+        }
+    }
+
+    /// Get a [LoroList] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> LoroList {
@@ -153,7 +162,7 @@ impl LoroDoc {
         }
     }
 
-    /// Get a [MapHandler] by container id.
+    /// Get a [LoroMap] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> LoroMap {
@@ -162,7 +171,7 @@ impl LoroDoc {
         }
     }
 
-    /// Get a [TextHandler] by container id.
+    /// Get a [LoroText] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> LoroText {
@@ -171,7 +180,7 @@ impl LoroDoc {
         }
     }
 
-    /// Get a [TreeHandler] by container id.
+    /// Get a [LoroTree] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> LoroTree {
@@ -821,9 +830,69 @@ impl LoroTree {
 pub struct LoroMovableList {
     handler: InnerMovableListHandler,
 }
+
 impl LoroMovableList {
-    fn id(&self) -> ContainerID {
+    pub fn id(&self) -> ContainerID {
         self.handler.id()
+    }
+
+    pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
+        self.handler.insert(pos, v)
+    }
+
+    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+        self.handler.delete(pos, len)
+    }
+
+    pub fn get(&self, index: usize) -> Option<Either<LoroValue, Container>> {
+        match self.handler.get_(index) {
+            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
+            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            None => None,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.handler.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.handler.get_value()
+    }
+
+    pub fn get_deep_value(&self) -> LoroValue {
+        self.handler.get_deep_value()
+    }
+
+    pub fn pop(&self) -> LoroResult<Option<Either<LoroValue, Container>>> {
+        Ok(match self.handler.pop_()? {
+            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
+            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            None => None,
+        })
+    }
+
+    pub fn push(&self, v: impl Into<LoroValue>) -> LoroResult<()> {
+        self.handler.push(v.into())
+    }
+
+    pub fn push_container(&self, c_type: ContainerType) -> LoroResult<Container> {
+        self.handler
+            .insert_container(self.handler.len(), c_type)
+            .map(|c| c.into())
+    }
+
+    pub fn set(&self, pos: usize, value: impl Into<LoroValue>) -> LoroResult<()> {
+        self.handler.set(pos, value.into())
+    }
+
+    pub fn mov(&self, from: usize, to: usize) -> LoroResult<()> {
+        self.handler.mov(from, to)
     }
 }
 

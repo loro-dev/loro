@@ -5,6 +5,37 @@ use loro_internal::{handler::TextDelta, id::ID, LoroResult};
 use serde_json::json;
 
 #[test]
+fn movable_list() -> Result<(), LoroError> {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("list");
+    list.insert(0, 1)?;
+    list.insert(0, 2)?;
+    list.insert(0, 3)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [3, 2, 1]
+        })
+    );
+    list.mov(0, 2)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [2, 1, 3]
+        })
+    );
+    list.mov(0, 1)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [1, 2, 3]
+        })
+    );
+
+    Ok(())
+}
+
+#[test]
 fn list_checkout() -> Result<(), LoroError> {
     let doc = LoroDoc::new();
     doc.get_list("list")

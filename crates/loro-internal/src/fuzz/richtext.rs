@@ -483,8 +483,9 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
 #[cfg(test)]
 mod failed_tests {
     static mut GUARD: Option<FlushGuard> = None;
+
     #[ctor::ctor]
-    fn init_color_backtrace() {
+    fn init() {
         color_backtrace::install();
         use tracing_chrome::ChromeLayerBuilder;
         use tracing_subscriber::{prelude::*, registry::Registry};

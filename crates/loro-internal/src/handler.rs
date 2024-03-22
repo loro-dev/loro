@@ -1127,6 +1127,13 @@ impl MovableListHandler {
         self.insert_with_txn(txn, pos, v)
     }
 
+    pub fn pop_(&self) -> LoroResult<Option<ValueOrHandler>> {
+        let last = self.len() - 1;
+        let ans = self.get_(last);
+        with_txn(&self.txn, |txn| self.delete_with_txn(txn, last, 1))?;
+        Ok(ans)
+    }
+
     pub fn pop(&self) -> LoroResult<Option<LoroValue>> {
         with_txn(&self.txn, |txn| self.pop_with_txn(txn))
     }
