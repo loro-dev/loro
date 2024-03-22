@@ -9,7 +9,7 @@ use loro_common::{
     ContainerID, Counter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
 };
 use smallvec::SmallVec;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
     container::{
@@ -837,7 +837,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
-        _on_new_container: impl FnMut(&ContainerID),
+        mut on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
         let InternalDiff::ListRaw(list_diff) = self.list.calculate_diff(oplog, from, to, |_| {})
         else {
@@ -860,6 +860,10 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             };
 
             let value = group.last_value(id, to).unwrap();
+            if let LoroValue::Container(c) = &value.value {
+                trace!("New container: {:?}", c);
+                on_new_container(c);
+            }
             let old_pos = group.last_pos(id, from);
             let old_value = group.last_value(id, from);
             if old_pos.is_none() && old_value.is_none() {

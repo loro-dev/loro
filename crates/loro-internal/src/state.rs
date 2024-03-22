@@ -7,7 +7,7 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
-use tracing::{debug, info};
+use tracing::{debug, info, instrument, trace};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -357,7 +357,10 @@ impl DocState {
     }
 
     /// It's expected that diff only contains [`InternalDiff`]
+    ///
+    #[instrument(skip_all)]
     pub(crate) fn apply_diff(&mut self, mut diff: InternalDocDiff<'static>) {
+        trace!(?diff);
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
@@ -391,6 +394,7 @@ impl DocState {
                 }
                 if diff.bring_back {
                     let state = get_or_create!(self, diff.idx);
+                    trace!("bring back{:?} {:#?}", diff.idx, &state);
                     let state_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
                     if diff.diff.is_none() && state_diff.is_empty() {
                         // empty diff, skip it
@@ -467,6 +471,7 @@ impl DocState {
         }
 
         diff.diff = diffs.into();
+        trace!("diff={:#?}", &diff);
         self.frontiers = (*diff.new_version).to_owned();
         if self.is_recording() {
             self.record_diff(diff)

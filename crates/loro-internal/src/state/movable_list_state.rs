@@ -364,23 +364,25 @@ mod inner {
         }
 
         pub fn get_child_index(&self, id: &ContainerID, index_type: IndexType) -> Option<usize> {
+            trace!(?id, ?index_type, "get_child_index");
+            trace!(?self);
             let ans = self.child_container_to_elem.get(id).and_then(|eid| {
-                {
-                    let this = &self;
-                    let elem_id = eid.to_id().compact();
-                    let elem = this.elements.get(&elem_id)?;
-                    if elem.value.as_container() != Some(id) {
-                        // TODO: may be better to find a way clean up these invalid elements?
-                        return None;
-                    }
-                    if let Some(leaf) = self.id_to_list_leaf.get(&elem.pos) {
-                        let list_item = self.list.get_elem(*leaf)?;
-                        assert_eq!(list_item.pointed_by, Some(elem_id));
-                    } else {
-                        return None;
-                    }
-                    this.get_list_item_index(elem.pos, index_type)
+                let this = &self;
+                let elem_id = eid.to_id().compact();
+                let elem = this.elements.get(&elem_id)?;
+                if elem.value.as_container() != Some(id) {
+                    trace!(?elem, "elem value not match");
+                    // TODO: may be better to find a way clean up these invalid elements?
+                    return None;
                 }
+                if let Some(leaf) = self.id_to_list_leaf.get(&elem.pos) {
+                    let list_item = self.list.get_elem(*leaf)?;
+                    assert_eq!(list_item.pointed_by, Some(elem_id));
+                } else {
+                    trace!("cannot find list item for elem");
+                    return None;
+                }
+                this.get_list_item_index(elem.pos, index_type)
             });
 
             ans
@@ -520,7 +522,9 @@ mod inner {
 
             if let Some(element) = self.elements.get_mut(&elem_id) {
                 if let LoroValue::Container(c) = &element.value {
-                    self.child_container_to_elem.remove(c);
+                    if element.value != new_value {
+                        self.child_container_to_elem.remove(c);
+                    }
                 }
                 element.value = new_value;
                 element.value_id = value_id;
