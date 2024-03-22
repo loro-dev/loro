@@ -196,7 +196,6 @@ impl ApplyDiff for MovableListTracker {
     }
 
     fn apply_diff(&mut self, diff: Diff) {
-        debug!("movable list receive diff={:?} this={:?}", diff, &self.0);
         let diff = diff.as_list().unwrap();
         let mut index = 0;
         for item in diff.iter() {
@@ -222,7 +221,6 @@ impl ApplyDiff for MovableListTracker {
                 }
             }
         }
-        debug!("after apply diff this={:?}", &self.0);
     }
 
     fn to_value(&self) -> LoroValue {
@@ -379,13 +377,17 @@ impl ContainerTracker {
                             .meta
                     }
                     Index::Seq(idx) => {
-                        value = value
-                            .as_list_mut()
-                            .unwrap()
-                            .get_mut(*idx)
-                            .unwrap()
-                            .as_container_mut()
-                            .unwrap()
+                        value = match value {
+                            ContainerTracker::List(l) => {
+                                l.get_mut(*idx).unwrap().as_container_mut().unwrap()
+                            }
+                            ContainerTracker::MovableList(l) => {
+                                l.get_mut(*idx).unwrap().as_container_mut().unwrap()
+                            }
+                            _ => {
+                                unreachable!()
+                            }
+                        }
                     }
                 }
             }

@@ -29,6 +29,7 @@ pub struct MovableListState {
     list: BTree<MovableListTreeTrait>,
     id_to_list_leaf: FxHashMap<IdLp, LeafIndex>,
     elements: FxHashMap<CompactIdLp, Element>,
+    child_container_to_elem: FxHashMap<ContainerID, CompactIdLp>,
 }
 
 #[derive(Debug, Clone)]
@@ -257,6 +258,7 @@ impl MovableListState {
             list,
             id_to_list_leaf: FxHashMap::default(),
             elements: FxHashMap::default(),
+            child_container_to_elem: FxHashMap::default(),
         }
     }
 
@@ -342,6 +344,10 @@ impl MovableListState {
         force: bool,
     ) -> bool {
         let id = elem.try_into().unwrap();
+        if let LoroValue::Container(c) = &value {
+            self.child_container_to_elem.insert(c.clone(), id);
+        }
+
         if let Some(element) = self.elements.get_mut(&id) {
             if !force && element.value_id > value_id {
                 return false;
@@ -542,7 +548,7 @@ impl MovableListState {
     ///
     /// If we cannot find the list item in the list, we will return None.
     fn get_index_of_elem(&self, id: IdLp) -> Option<usize> {
-        let elem = self.elements.get(&id.compact()).unwrap();
+        let elem = self.elements.get(&id.compact())?;
         self.get_list_item_index(elem.pos)
     }
 
@@ -611,6 +617,9 @@ impl MovableListState {
     fn push_inner(&mut self, list_item_id: IdFull, elem: Option<PushElemInfo>) {
         let pointed_by = elem.as_ref().map(|x| x.elem_id);
         if let Some(elem) = elem {
+            if let LoroValue::Container(c) = &elem.value {
+                self.child_container_to_elem.insert(c.clone(), elem.elem_id);
+            }
             self.elements.insert(
                 elem.elem_id,
                 Element {
@@ -658,7 +667,6 @@ impl ContainerState for MovableListState {
         let InternalDiff::MovableList(diff) = diff else {
             unreachable!()
         };
-        debug!("Received diff: {:?}", diff);
 
         let mut ans: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
 
@@ -797,6 +805,9 @@ impl ContainerState for MovableListState {
                     for (i, x) in v.enumerate() {
                         let elem_id = op.idlp().inc(i as i32).try_into().unwrap();
                         let pos_id = op.id_full().inc(i as i32);
+                        if let LoroValue::Container(c) = &x {
+                            self.child_container_to_elem.insert(c.clone(), elem_id);
+                        }
                         self.elements.insert(
                             elem_id,
                             Element {
@@ -868,14 +879,24 @@ impl ContainerState for MovableListState {
     #[doc = r" Get the index of the child container"]
     #[allow(unused)]
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
-        // FIXME: unimplemented
-        None
+        self.child_container_to_elem
+            .get(id)
+            .and_then(|eid| self.get_index_of_elem(eid.to_id()).map(Index::Seq))
     }
 
     #[allow(unused)]
     fn get_child_containers(&self) -> Vec<ContainerID> {
-        // FIXME: unimplemented
-        Vec::new()
+        self.child_container_to_elem
+            .iter()
+            .filter_map(|(c, elem_id)| {
+                let elem = self.elements.get(elem_id)?;
+                if elem.value.as_container() != Some(c) {
+                    None
+                } else {
+                    Some(c.clone())
+                }
+            })
+            .collect_vec()
     }
 
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {

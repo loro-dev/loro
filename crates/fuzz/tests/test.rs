@@ -24,7 +24,7 @@ fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
 }
 
 #[test]
-fn test_movable_list() {
+fn test_movable_list_0() {
     test_multi_sites(
         2,
         vec![FuzzTarget::All],
@@ -53,6 +53,43 @@ fn test_movable_list() {
                     pos: 0,
                     length: 0,
                     prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn test_movable_list_1() {
+    test_multi_sites(
+        2,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 164,
+                target: 239,
+                container: 61,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 1768571449,
+                    pos: 5035915790398973222,
+                    length: 12262157610559101276,
+                    prop: 2115599344051559167,
+                }),
+            },
+            Sync { from: 172, to: 249 },
+            Handle {
+                site: 76,
+                target: 185,
+                container: 213,
+                action: Generic(GenericAction {
+                    value: I32(-180416322),
+                    bool: false,
+                    key: 905065406,
+                    pos: 13106072747215825198,
+                    length: 14041671030581285265,
+                    prop: 15938081911894848481,
                 }),
             },
         ],

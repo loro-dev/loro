@@ -81,7 +81,6 @@ impl<'a> From<&'a ContainerDiffInner> for ContainerDiff<'a> {
 
 impl<'a> From<&'a DiffInner> for Diff<'a> {
     fn from(value: &'a DiffInner) -> Self {
-        debug!(?value);
         match value {
             DiffInner::List(l) => {
                 let list = l

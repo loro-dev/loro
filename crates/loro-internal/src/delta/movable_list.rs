@@ -57,6 +57,7 @@ impl ElementDelta {
     pub fn value(&self) -> Option<&LoroValue> {
         match self {
             ElementDelta::ValueChange { new_value, .. } => Some(new_value),
+            ElementDelta::New { new_value, .. } => Some(new_value),
             _ => None,
         }
     }

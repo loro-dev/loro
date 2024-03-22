@@ -7,6 +7,7 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
+use tracing::debug;
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -360,7 +361,6 @@ impl DocState {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
-        // tracing::info!("Diff = {:#?}", &diff);
         let is_recording = self.is_recording();
         self.pre_txn(diff.origin.clone(), diff.local);
         let Cow::Owned(inner) = std::mem::take(&mut diff.diff) else {
@@ -521,6 +521,12 @@ impl DocState {
                         }
                     }
                 }
+                if let ListOp::Set { elem_id: _, value } = op {
+                    if value.is_container() {
+                        let idx = self.arena.register_container(value.as_container().unwrap());
+                        self.arena.set_parent(idx, Some(container));
+                    }
+                }
             }
             RawOpContent::Map(MapSet { key: _, value }) => {
                 if value.is_none() {
@@ -579,12 +585,9 @@ impl DocState {
             InternalDiff::RichtextRaw(_) => {}
             InternalDiff::MovableList(delta) => {
                 for elem in delta.elements.iter() {
-                    if let Some(v) = elem.value() {
-                        if v.is_container() {
-                            let c = v.as_container().unwrap();
-                            let idx = self.arena.register_container(c);
-                            self.arena.set_parent(idx, Some(container));
-                        }
+                    if let Some(LoroValue::Container(c)) = elem.value() {
+                        let idx = self.arena.register_container(c);
+                        self.arena.set_parent(idx, Some(container));
                     }
                 }
             }
@@ -927,10 +930,9 @@ impl DocState {
                     } else {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
-                        tracing::info!(
-                            "⚠️ WARNING: ignore because cannot find path {:#?} deep_value {:#?}",
+                        tracing::warn!(
+                            "⚠️ WARNING: ignore event because cannot find its path {:#?}",
                             &container_diff,
-                            self.get_deep_value_with_id()
                         );
                     }
                     continue;
