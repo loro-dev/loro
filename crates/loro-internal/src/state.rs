@@ -7,7 +7,7 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -989,9 +989,12 @@ impl DocState {
                 idx = parent_idx;
             } else {
                 // this container may be deleted
-                let prop = id.as_root()?.0.clone();
-                tracing::info!(?id, "Container Deleted");
-                ans.push((id, Index::Key(prop)));
+                let Ok(prop) = id.clone().into_root() else {
+                    let id = format!("{}", &id);
+                    info!(?id, "Missing parent - container is deleted");
+                    return None;
+                };
+                ans.push((id, Index::Key(prop.0)));
                 break;
             }
         }

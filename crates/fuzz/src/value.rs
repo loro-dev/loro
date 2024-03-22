@@ -382,7 +382,10 @@ impl ContainerTracker {
                                 l.get_mut(*idx).unwrap().as_container_mut().unwrap()
                             }
                             ContainerTracker::MovableList(l) => {
-                                l.get_mut(*idx).unwrap().as_container_mut().unwrap()
+                                debug!("movable list {:?} idx={} len={}", l, idx, l.len());
+                                let item = l.get_mut(*idx).unwrap();
+                                debug!(?item);
+                                item.as_container_mut().unwrap()
                             }
                             _ => {
                                 unreachable!()

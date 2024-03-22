@@ -97,6 +97,57 @@ fn test_movable_list_1() {
 }
 
 #[test]
+fn test_movable_list_2() {
+    test_multi_sites(
+        2,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 44,
+                target: 124,
+                container: 221,
+                action: Generic(GenericAction {
+                    value: Container(MovableList),
+                    bool: true,
+                    key: 3351758791,
+                    pos: 288230650086410183,
+                    length: 2606365581092837153,
+                    prop: 15553136935972341051,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 109,
+                target: 209,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(1145324612),
+                    bool: true,
+                    key: 3351758806,
+                    pos: 9187202260886079431,
+                    length: 72056541770940543,
+                    prop: 70127282814975,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn missing_event_when_checkout() {
     test_multi_sites(
         5,

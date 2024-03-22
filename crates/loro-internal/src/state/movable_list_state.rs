@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{debug, instrument};
+use tracing::{debug, field::debug, instrument};
 
 use fxhash::FxHashMap;
 use generic_btree::{BTree, Cursor, LeafIndex, Query};
@@ -636,6 +636,15 @@ impl MovableListState {
         self.id_to_list_leaf
             .insert(list_item_id.idlp(), cursor.leaf);
     }
+
+    fn get_value_inner(&self) -> Vec<LoroValue> {
+        let list = self
+            .list
+            .iter_with_filter(|x| (x.user_len > 0, 0))
+            .filter_map(|(_, item)| item.pointed_by.map(|eid| self.elements[&eid].value.clone()))
+            .collect();
+        list
+    }
 }
 
 struct PushElemInfo {
@@ -868,20 +877,32 @@ impl ContainerState for MovableListState {
     }
 
     fn get_value(&mut self) -> LoroValue {
-        let list = self
-            .list
-            .iter_with_filter(|x| (x.user_len > 0, 0))
-            .filter_map(|(_, item)| item.pointed_by.map(|eid| self.elements[&eid].value.clone()))
-            .collect();
+        let list = self.get_value_inner();
         LoroValue::List(Arc::new(list))
     }
 
     #[doc = r" Get the index of the child container"]
     #[allow(unused)]
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
-        self.child_container_to_elem
-            .get(id)
-            .and_then(|eid| self.get_index_of_elem(eid.to_id()).map(Index::Seq))
+        let ans = self.child_container_to_elem.get(id).and_then(|eid| {
+            {
+                let this = &self;
+                let elem = this.elements.get(&eid.to_id().compact())?;
+                if elem.value.as_container() != Some(id) {
+                    // TODO: may be better to find a way clean up these invalid elements?
+                    return None;
+                }
+                this.get_list_item_index(elem.pos)
+            }
+            .map(Index::Seq)
+        });
+        debug!(
+            "get_child_index input={} ans={:?} this_value={:?}",
+            id,
+            ans,
+            self.get_value_inner()
+        );
+        ans
     }
 
     #[allow(unused)]
