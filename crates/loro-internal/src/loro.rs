@@ -713,11 +713,12 @@ impl LoroDoc {
             return;
         }
 
-        tracing::info!("Attached {}", self.peer_id());
-        let f = self.oplog_frontiers();
-        self.checkout(&f).unwrap();
-        self.detached.store(false, Release);
-        self.renew_txn_if_auto_commit();
+        tracing::info_span!("CheckoutToLatest", peer = self.peer_id()).in_scope(|| {
+            let f = self.oplog_frontiers();
+            self.checkout(&f).unwrap();
+            self.detached.store(false, Release);
+            self.renew_txn_if_auto_commit();
+        });
     }
 
     /// Checkout [DocState] to a specific version.

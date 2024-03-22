@@ -525,10 +525,9 @@ impl Tracker {
         to: &VersionVector,
     ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
         // tracing::info!("Init: {:#?}, ", &self);
-
         self._checkout(from, false);
-
         self._checkout(to, true);
+        debug!("After checkout: {:#?}", &self);
         // self.id_to_cursor.diagnose();
 
         self.rope.get_diff()

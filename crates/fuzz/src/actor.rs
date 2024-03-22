@@ -34,8 +34,10 @@ impl Actor {
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(MapTracker::empty())));
         let cb_tracker = tracker.clone();
         loro.subscribe_root(Arc::new(move |e| {
-            let mut tracker = cb_tracker.lock().unwrap();
-            tracker.apply_diff(e)
+            info_span!("ApplyDiff", id = id).in_scope(|| {
+                let mut tracker = cb_tracker.lock().unwrap();
+                tracker.apply_diff(e)
+            })
         }));
         let mut default_history = FxHashMap::default();
         default_history.insert(Vec::new(), loro.get_deep_value());

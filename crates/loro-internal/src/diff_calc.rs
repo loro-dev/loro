@@ -491,6 +491,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
     ) -> InternalDiff {
         let mut delta = Delta::new();
         for item in self.tracker.diff(from, to) {
+            debug!(?item);
             match item {
                 CrdtRopeDelta::Retain(len) => {
                     delta = delta.retain(len);
@@ -836,14 +837,14 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
-        on_new_container: impl FnMut(&ContainerID),
+        _on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
-        let InternalDiff::ListRaw(list_diff) =
-            self.list.calculate_diff(oplog, from, to, on_new_container)
+        let InternalDiff::ListRaw(list_diff) = self.list.calculate_diff(oplog, from, to, |_| {})
         else {
             unreachable!()
         };
 
+        debug!(?list_diff);
         let group = oplog
             .op_groups
             .get(&self.container_idx)
@@ -861,7 +862,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             let value = group.last_value(id, to).unwrap();
             let old_pos = group.last_pos(id, from);
             let old_value = group.last_value(id, from);
-            if old_pos.is_none() || old_value.is_none() {
+            if old_pos.is_none() && old_value.is_none() {
                 element_changes.push(ElementDelta::New {
                     id: *id,
                     new_pos: pos.value,
@@ -876,6 +877,8 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                             new_pos: pos.value,
                         });
                     }
+                } else {
+                    unreachable!()
                 }
 
                 if let Some(old_value) = old_value {
@@ -886,6 +889,8 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                             value_id: IdLp::new(value.peer, value.lamport),
                         });
                     }
+                } else {
+                    unreachable!()
                 }
             }
         }

@@ -234,9 +234,11 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
     let mut applied = Vec::new();
     for action in actions.iter_mut() {
         fuzzer.pre_process(action);
-        applied.push(action.clone());
-        info!("\n{}", (&applied).table());
-        fuzzer.apply_action(action);
+        info_span!("ApplyAction", ?action).in_scope(|| {
+            applied.push(action.clone());
+            info!("OptionsTable \n{}", (&applied).table());
+            fuzzer.apply_action(action);
+        });
     }
     let span = &info_span!("check synced");
     let _g = span.enter();

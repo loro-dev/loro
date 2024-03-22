@@ -197,6 +197,7 @@ impl ApplyDiff for MovableListTracker {
 
     fn apply_diff(&mut self, diff: Diff) {
         let diff = diff.as_list().unwrap();
+        debug!(?self, ?diff, "apply diff");
         let mut index = 0;
         for item in diff.iter() {
             match item {

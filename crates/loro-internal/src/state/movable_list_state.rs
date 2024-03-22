@@ -6,7 +6,7 @@ use std::{
 };
 use tracing::{debug, field::debug, instrument};
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{BTree, Cursor, LeafIndex, Query};
 use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue, ID};
 
@@ -279,7 +279,7 @@ mod inner {
     use fxhash::FxHashMap;
     use generic_btree::{BTree, Cursor, LeafIndex, Query};
     use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroValue, PeerID};
-    use tracing::instrument;
+    use tracing::{debug, instrument, trace};
 
     use super::{
         list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
@@ -292,6 +292,10 @@ mod inner {
         id_to_list_leaf: FxHashMap<IdLp, LeafIndex>,
         elements: FxHashMap<CompactIdLp, Element>,
         child_container_to_elem: FxHashMap<ContainerID, CompactIdLp>,
+        /// Mappings from last `list item id` to `elem id`.
+        /// The elements included by this map have invalid `pointer` that points to the key
+        /// of this map.
+        pending_elements: FxHashMap<IdLp, CompactIdLp>,
     }
 
     impl InnerState {
@@ -301,6 +305,7 @@ mod inner {
                 id_to_list_leaf: FxHashMap::default(),
                 elements: FxHashMap::default(),
                 child_container_to_elem: FxHashMap::default(),
+                pending_elements: FxHashMap::default(),
             }
         }
 
@@ -320,9 +325,10 @@ mod inner {
         }
 
         pub fn get_list_item_index(&self, id: IdLp, kind: IndexType) -> Option<usize> {
-            self.id_to_list_leaf
-                .get(&id)
-                .map(|leaf| self.get_index_of(*leaf, kind) as usize)
+            self.id_to_list_leaf.get(&id).map(|leaf| {
+                debug!("found leaf");
+                self.get_index_of(*leaf, kind) as usize
+            })
         }
 
         pub fn get_index_of(&self, leaf: LeafIndex, kind: IndexType) -> i32 {
@@ -354,7 +360,7 @@ mod inner {
                 IndexType::ForUser => self.list.query::<UserLenQuery>(&pos).unwrap(),
                 IndexType::ForOp => self.list.query::<OpLenQuery>(&pos).unwrap(),
             };
-            self.list.get_elem(index.leaf()).map(|x| x)
+            self.list.get_elem(index.leaf())
         }
 
         pub fn get_child_index(&self, id: &ContainerID, index_type: IndexType) -> Option<usize> {
@@ -395,30 +401,46 @@ mod inner {
         }
 
         /// Insert a new list item at the given position (op index).
-        pub fn insert_list_item(&mut self, pos: usize, list_item_id: IdFull) {
+        /// Return the value if the insertion activated an element.
+        pub fn insert_list_item(
+            &mut self,
+            pos: usize,
+            list_item_id: IdFull,
+        ) -> Option<(CompactIdLp, LoroValue)> {
+            let mut elem_id = self.pending_elements.remove(&list_item_id.idlp());
+            if let Some(e) = elem_id {
+                let elem = self.elements.get(&e).unwrap();
+                if elem.pos != list_item_id.idlp() {
+                    elem_id = None;
+                }
+            }
+
             let c = self
                 .list
                 .insert::<OpLenQuery>(
                     &pos,
                     ListItem {
-                        pointed_by: None,
+                        pointed_by: elem_id,
                         id: list_item_id,
                     },
                 )
                 .0;
             self.id_to_list_leaf.insert(list_item_id.idlp(), c.leaf);
+            elem_id.map(|elem_id| {
+                let elem = self.elements.get_mut(&elem_id).unwrap();
+                (elem_id, elem.value.clone())
+            })
         }
 
-        pub fn delete_list_item(&mut self, id: IdLp) {
-            if let Some(leaf) = self.id_to_list_leaf.remove(&id) {
-                self.list.remove_leaf(Cursor { leaf, offset: 0 });
-            }
-        }
-
+        /// Draint the list items in the given range (op index).
         #[instrument(skip(self))]
         pub fn list_drain(&mut self, range: std::ops::Range<usize>) {
             for item in Self::drain_by_query::<OpLenQuery>(&mut self.list, range) {
                 self.id_to_list_leaf.remove(&item.id.idlp());
+                if let Some(elem_id) = &item.pointed_by {
+                    let old = self.pending_elements.insert(item.id.idlp(), *elem_id);
+                    assert!(old.is_none());
+                }
             }
         }
 
@@ -453,30 +475,38 @@ mod inner {
                 );
             }
 
-            let leaf = self.id_to_list_leaf.get(&new_pos).unwrap();
-            self.list.update_leaf(*leaf, |elem| {
-                let was_none = elem.pointed_by.is_none();
-                elem.pointed_by = Some(elem_id.try_into().unwrap());
-                if was_none {
-                    (true, None, None)
-                } else {
-                    (false, None, None)
-                }
-            });
+            if let Some(leaf) = self.id_to_list_leaf.get(&new_pos) {
+                self.list.update_leaf(*leaf, |elem| {
+                    let was_none = elem.pointed_by.is_none();
+                    elem.pointed_by = Some(elem_id);
+                    if was_none {
+                        (true, None, None)
+                    } else {
+                        (false, None, None)
+                    }
+                });
+                self.pending_elements.remove(&new_pos);
+            } else {
+                // The list item is deleted.
+                self.pending_elements.insert(new_pos, elem_id);
+            }
 
             if let Some(old) = old_item_id {
-                if !old.is_none() {
-                    if remove_old {
-                        let leaf = self.id_to_list_leaf.remove(&old).unwrap();
-                        self.list.remove_leaf(Cursor { leaf, offset: 0 });
-                    } else if let Some(leaf) = self.id_to_list_leaf.get(&old) {
-                        let (still_valid, split) = self.list.update_leaf(*leaf, |item| {
-                            item.pointed_by = None;
-                            (true, None, None)
-                        });
-                        assert!(still_valid);
-                        assert!(split.arr.is_empty());
-                    }
+                if old.is_none() || old == new_pos {
+                    return;
+                }
+
+                if remove_old {
+                    let leaf = self.id_to_list_leaf.remove(&old).unwrap();
+                    let elem = self.list.remove_leaf(Cursor { leaf, offset: 0 }).unwrap();
+                    assert_eq!(elem.pointed_by, Some(elem_id));
+                } else if let Some(leaf) = self.id_to_list_leaf.get(&old) {
+                    let (still_valid, split) = self.list.update_leaf(*leaf, |item| {
+                        item.pointed_by = None;
+                        (true, None, None)
+                    });
+                    assert!(still_valid);
+                    assert!(split.arr.is_empty());
                 }
             }
         }
@@ -568,10 +598,24 @@ impl MovableListState {
         self.inner.update_pos(elem_id, new_pos, false);
     }
 
-    fn list_insert_batch(&mut self, index: usize, items: impl Iterator<Item = IdFull>) {
+    /// Return the values that are activated by the insertions of the list items, and their elem ids.
+    ///
+    /// The activation means there were elements that already points to the list items
+    /// inserted by this op.
+    fn list_insert_batch(
+        &mut self,
+        index: usize,
+        items: impl Iterator<Item = IdFull>,
+    ) -> Vec<(CompactIdLp, LoroValue)> {
+        let mut ans = Vec::new();
         for (i, item) in items.enumerate() {
-            self.inner.insert_list_item(index + i, item);
+            if let Some(v) = self.inner.insert_list_item(index + i, item) {
+                debug_assert!(self.get_index_of_elem(v.0).is_some());
+                ans.push(v);
+            }
         }
+
+        ans
     }
 
     /// Get the length defined by op, where the length includes the ones that are not being pointed at (moved, invisible to users).
@@ -667,8 +711,9 @@ impl MovableListState {
     /// Get the user index of elem
     ///
     /// If we cannot find the list item in the list, we will return None.
-    fn get_index_of_elem(&self, id: IdLp) -> Option<usize> {
-        let elem = self.inner.elements().get(&id.compact())?;
+    fn get_index_of_elem(&self, elem_id: CompactIdLp) -> Option<usize> {
+        let elem = self.inner.elements().get(&elem_id)?;
+        debug!(?elem);
         self.inner.get_list_item_index(elem.pos, IndexType::ForUser)
     }
 
@@ -748,7 +793,8 @@ impl ContainerState for MovableListState {
             unreachable!()
         };
 
-        debug!(?diff);
+        debug!(?diff, ?self);
+        let mut inserted_elem_id = FxHashSet::default();
         let mut ans: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
 
         {
@@ -767,7 +813,27 @@ impl ContainerState for MovableListState {
                         attributes: _,
                     } => {
                         let len = insert.len();
-                        self.list_insert_batch(index, insert.into_iter());
+                        let activated_values = self.list_insert_batch(index, insert.into_iter());
+                        debug!(?activated_values);
+                        if !activated_values.is_empty() {
+                            let user_index = self
+                                .convert_index(index, IndexType::ForOp, IndexType::ForUser)
+                                .unwrap();
+                            ans = ans.compose(
+                                Delta::new().retain(user_index).insert(
+                                    activated_values
+                                        .into_iter()
+                                        .map(|(elem_id, value)| {
+                                            let index = self.get_index_of_elem(elem_id);
+                                            debug!(?elem_id, ?index);
+                                            inserted_elem_id.insert(elem_id);
+                                            ValueOrHandler::from_value(value, arena, txn, state)
+                                        })
+                                        .collect_vec(),
+                                ),
+                            );
+                        }
+
                         index += len;
                     }
                     DeltaItem::Delete {
@@ -796,13 +862,14 @@ impl ContainerState for MovableListState {
             for delta_item in diff.elements.into_iter() {
                 match delta_item {
                     crate::delta::ElementDelta::PosChange { id, new_pos } => {
-                        let old_index = self.get_index_of_elem(id);
+                        let old_index = self.get_index_of_elem(id.compact());
+                        debug!(?old_index, ?id);
                         // don't need to update old list item, because it's handled by list diff already
                         self.inner.update_pos(id.compact(), new_pos, false);
 
                         if old_index.is_some() {
                             let old_index = old_index.unwrap();
-                            let new_index = self.get_index_of_elem(id).unwrap();
+                            let new_index = self.get_index_of_elem(id.compact()).unwrap();
                             let new_delta = Delta::new().retain(new_index).retain_with_meta(
                                 1,
                                 ListDeltaMeta {
@@ -811,7 +878,8 @@ impl ContainerState for MovableListState {
                             );
                             ans = ans.compose(new_delta);
                         } else {
-                            let new_index = self.get_index_of_elem(id).unwrap();
+                            assert!(!inserted_elem_id.contains(&id.compact()));
+                            let new_index = self.get_index_of_elem(id.compact()).unwrap();
                             let new_value =
                                 self.elements().get(&id.compact()).unwrap().value.clone();
                             let new_delta = Delta::new().retain(new_index).insert(vec![
@@ -827,7 +895,7 @@ impl ContainerState for MovableListState {
                     } => {
                         self.inner
                             .update_value(id.compact(), new_value.clone(), value_id);
-                        let index = self.get_index_of_elem(id);
+                        let index = self.get_index_of_elem(id.compact());
                         if let Some(index) = index {
                             ans = ans.compose(Delta::new().retain(index).delete(1).insert(vec![
                                 ValueOrHandler::from_value(new_value, arena, txn, state),
@@ -840,11 +908,15 @@ impl ContainerState for MovableListState {
                         new_value,
                         value_id,
                     } => {
-                        self.create_new_elem(id.compact(), new_pos, new_value.clone(), value_id);
-                        let index = self.get_index_of_elem(id).unwrap();
-                        ans = ans.compose(Delta::new().retain(index).insert(vec![
-                            ValueOrHandler::from_value(new_value, arena, txn, state),
-                        ]))
+                        let elem_id = id.compact();
+                        self.create_new_elem(elem_id, new_pos, new_value.clone(), value_id);
+                        if !inserted_elem_id.contains(&elem_id) {
+                            if let Some(index) = self.get_index_of_elem(elem_id) {
+                                ans = ans.compose(Delta::new().retain(index).insert(vec![
+                                    ValueOrHandler::from_value(new_value, arena, txn, state),
+                                ]))
+                            }
+                        }
                     }
                 };
             }
