@@ -96,11 +96,17 @@ pub struct ListHandler {
     state: Weak<Mutex<DocState>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MovableListHandler {
     txn: Weak<Mutex<Option<Transaction>>>,
     pub(crate) container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
+}
+
+impl std::fmt::Debug for MovableListHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MovableListHandler")
+    }
 }
 
 impl std::fmt::Debug for ListHandler {

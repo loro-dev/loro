@@ -5,6 +5,11 @@ use fuzz::{
 };
 use loro::ContainerType::*;
 
+#[ctor::ctor]
+fn init() {
+    dev_utils::setup_test_log();
+}
+
 fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
     let xs = u.arbitrary::<Vec<Action>>()?;
     if let Err(e) = std::panic::catch_unwind(|| {
@@ -16,6 +21,42 @@ fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
     } else {
         Ok(())
     }
+}
+
+#[test]
+fn test_movable_list() {
+    test_multi_sites(
+        2,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 117,
+                target: 166,
+                container: 10,
+                action: Generic(GenericAction {
+                    value: I32(-273622840),
+                    bool: false,
+                    key: 2741083633,
+                    pos: 6666897757659758022,
+                    length: 8533446734363315434,
+                    prop: 12864568433311511070,
+                }),
+            },
+            Handle {
+                site: 124,
+                target: 14,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
 }
 
 #[test]

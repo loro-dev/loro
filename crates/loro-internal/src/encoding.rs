@@ -224,7 +224,7 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
         &doc.app_state().try_lock().unwrap(),
         &Default::default(),
     );
-    debug!("encode_snapshot: header_and_body");
+
     encode_header_and_body(EncodeMode::Snapshot, body)
 }
 

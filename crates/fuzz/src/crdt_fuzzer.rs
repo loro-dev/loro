@@ -4,6 +4,7 @@ use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
 use loro::{ContainerType, Frontiers};
 use tabled::TableIteratorExt;
+use tracing::{debug, info, info_span, span};
 
 use crate::array_mut_ref;
 
@@ -135,25 +136,31 @@ impl CRDTFuzzer {
     fn check_equal(&mut self) {
         for i in 0..self.site_num() - 1 {
             for j in i + 1..self.site_num() {
-                debug_log::group!("checking {} with {}", i, j);
+                let _s = info_span!("checking eq", ?i, ?j);
+                let _g = _s.enter();
                 let (a, b) = array_mut_ref!(&mut self.actors, [i, j]);
                 let a_doc = &mut a.loro;
                 let b_doc = &mut b.loro;
-                a_doc.attach();
-                b_doc.attach();
+                info_span!("Attach", peer = i).in_scope(|| {
+                    a_doc.attach();
+                });
+                info_span!("Attach", peer = j).in_scope(|| {
+                    b_doc.attach();
+                });
                 if (i + j) % 2 == 0 {
-                    debug_log::group!("Updates {} to {}", j, i);
-                    a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
-
-                    debug_log::group!("Updates {} to {}", i, j);
-                    b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
+                    info_span!("Updates", from = j, to = i).in_scope(|| {
+                        a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
+                    });
+                    info_span!("Updates", from = i, to = j).in_scope(|| {
+                        b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
+                    });
                 } else {
-                    debug_log::group!("Snapshot {} to {}", j, i);
-                    a_doc.import(&b_doc.export_snapshot()).unwrap();
-
-                    debug_log::group!("Snapshot {} to {}", i, j);
-                    let s = a_doc.export_snapshot();
-                    b_doc.import(&s).unwrap();
+                    info_span!("Snapshot", from = i, to = j).in_scope(|| {
+                        b_doc.import(&a_doc.export_snapshot()).unwrap();
+                    });
+                    info_span!("Snapshot", from = j, to = i).in_scope(|| {
+                        a_doc.import(&b_doc.export_snapshot()).unwrap();
+                    });
                 }
                 a.check_eq(b);
                 a.record_history();
@@ -228,10 +235,11 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
     for action in actions.iter_mut() {
         fuzzer.pre_process(action);
         applied.push(action.clone());
-        debug_log::debug_log!("\n{}", (&applied).table());
+        info!("\n{}", (&applied).table());
         fuzzer.apply_action(action);
     }
-    debug_log::group!("check synced");
+    let span = &info_span!("check synced");
+    let _g = span.enter();
     fuzzer.check_equal();
     fuzzer.check_tracker();
     fuzzer.check_history();

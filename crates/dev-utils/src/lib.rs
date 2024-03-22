@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use tracing_subscriber::fmt::format::FmtSpan;
+
 static mut GUARD: Option<tracing_chrome::FlushGuard> = None;
 
 pub fn setup_test_log() {
@@ -22,9 +24,17 @@ pub fn setup_test_log() {
         unsafe { GUARD = Some(_guard) };
         tracing::subscriber::set_global_default(
             Registry::default()
+                // .with(
+                //     HierarchicalLayer::new(4)
+                //         .with_indent_lines(true)
+                //         .with_targets(targets)
+                // )
                 .with(
                     tracing_subscriber::fmt::Layer::default()
+                        .with_span_events(FmtSpan::NEW)
+                        .without_time()
                         .with_line_number(true)
+                        .with_target(false)
                         .with_file(true),
                 )
                 .with(chrome_layer),

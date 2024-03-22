@@ -987,8 +987,8 @@ impl DocState {
                 idx = parent_idx;
             } else {
                 // this container may be deleted
-                tracing::info!("Deleted or root");
                 let prop = id.as_root()?.0.clone();
+                tracing::info!(?id, "Container Deleted");
                 ans.push((id, Index::Key(prop)));
                 break;
             }

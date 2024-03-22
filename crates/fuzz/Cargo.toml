@@ -7,12 +7,14 @@ edition = "2021"
 
 [dependencies]
 loro = { path = "../loro", features = ["test_utils"] }
+tracing = "0.1"
 arbitrary = "1"
 tabled = "0.10"
-debug-log = { workspace = true }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
 enum-as-inner = { workspace = true }
 
 [dev-dependencies]
+ctor = "0.2"
 arbtest = "^0.2.0"
+dev-utils = { path = "../dev-utils" }

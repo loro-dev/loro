@@ -12,3 +12,4 @@ rand = { version = "0.8.5" }
 tracing = "0.1.40"
 color-backtrace = "0.6"
 chrono = "0.4.35"
+tracing-tree = "0.3"

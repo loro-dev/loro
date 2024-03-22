@@ -8,6 +8,8 @@ use loro::{
     event::{Diff, DiffEvent, ListDiffItem},
     ContainerType, Index, LoroDoc, LoroText, LoroValue, TreeExternalDiff, TreeID, ValueOrContainer,
 };
+use tracing::debug;
+use tracing::field::debug;
 #[derive(Debug, EnumAsInner)]
 pub enum Value {
     Value(LoroValue),
@@ -194,6 +196,7 @@ impl ApplyDiff for MovableListTracker {
     }
 
     fn apply_diff(&mut self, diff: Diff) {
+        debug!("movable list receive diff={:?} this={:?}", diff, &self.0);
         let diff = diff.as_list().unwrap();
         let mut index = 0;
         for item in diff.iter() {
@@ -203,7 +206,7 @@ impl ApplyDiff for MovableListTracker {
                 }
                 ListDiffItem::Insert {
                     insert: value,
-                    move_from,
+                    move_from: _,
                 } => {
                     for v in value {
                         let value = match v {
@@ -219,6 +222,7 @@ impl ApplyDiff for MovableListTracker {
                 }
             }
         }
+        debug!("after apply diff this={:?}", &self.0);
     }
 
     fn to_value(&self) -> LoroValue {

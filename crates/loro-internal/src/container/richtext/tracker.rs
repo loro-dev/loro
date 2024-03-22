@@ -286,7 +286,6 @@ impl Tracker {
         let end_id = op_id.inc(1);
         self.current_vv.extend_to_include_end_id(end_id.id());
         self.applied_vv.extend_to_include_end_id(end_id.id());
-        debug!("after_move tracker={:#?}", self);
     }
 
     #[inline]
@@ -295,7 +294,6 @@ impl Tracker {
     }
 
     fn _checkout(&mut self, vv: &VersionVector, on_diff_status: bool) {
-        debug!("checkout to {:?}", vv);
         // tracing::info!("Checkout to {:?} from {:?}", vv, self.current_vv);
         if on_diff_status {
             self.rope.clear_diff_status();
@@ -342,7 +340,7 @@ impl Tracker {
                             from.counter + 1,
                         )) {
                             visited = true;
-                            debug!("dec del times for {:?}", to_del);
+
                             match to_del {
                                 id_to_cursor::IterCursor::Move {
                                     from_id: _,

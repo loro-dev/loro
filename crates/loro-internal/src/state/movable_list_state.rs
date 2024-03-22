@@ -658,6 +658,7 @@ impl ContainerState for MovableListState {
         let InternalDiff::MovableList(diff) = diff else {
             unreachable!()
         };
+        debug!("Received diff: {:?}", diff);
 
         let mut ans: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
 
@@ -885,7 +886,6 @@ impl ContainerState for MovableListState {
         // But we can infer the element's id, the value by the `last set id` directly.
         // Because they are included in the corresponding op.
 
-        debug!("encode_snapshot: encode movable list state");
         let len = self.len();
         let mut items = Vec::with_capacity(len);
         // starts with a sentinel value. The num of `invisible_list_item` may be updated later
@@ -918,7 +918,6 @@ impl ContainerState for MovableListState {
             }
         }
 
-        debug!("encode_snapshot: encode movable list state > out");
         let out = EncodedSnapshot { items, ids };
         serde_columnar::to_vec(&out).unwrap()
     }

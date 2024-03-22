@@ -731,9 +731,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 #[derive(Debug)]
 struct MovableListDiffCalculator {
     container_idx: ContainerIdx,
-    moved_elements: FxHashSet<IdLp>,
-    updated_elements: FxHashSet<IdLp>,
-    new_elements: FxHashSet<IdLp>,
+    changed_elements: FxHashSet<IdLp>,
     list: ListDiffCalculator,
 }
 
@@ -763,7 +761,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             InnerListOp::Insert { slice, pos: _ } => {
                 let op_id = op.id_full().idlp();
                 for i in 0..slice.atom_len() {
-                    self.new_elements.insert(op_id.inc(i as Counter));
+                    self.changed_elements.insert(op_id.inc(i as Counter));
                 }
             }
             InnerListOp::Delete(_) => {}
@@ -772,10 +770,10 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                 from_id,
                 to: _,
             } => {
-                self.moved_elements.insert(*from_id);
+                self.changed_elements.insert(*from_id);
             }
             InnerListOp::Set { elem_id, value: _ } => {
-                self.updated_elements.insert(*elem_id);
+                self.changed_elements.insert(*elem_id);
             }
 
             InnerListOp::StyleStart { .. } => unreachable!(),
@@ -850,30 +848,45 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             .as_movable_list()
             .unwrap();
         let mut element_changes = Vec::new();
-        for id in self.new_elements.iter() {
-            let pos = group.last_pos(id, to).unwrap();
+        for id in self.changed_elements.iter() {
+            // It can be None if the target does not exist before the `to` version
+            // But we don't need to calc from, because the deletion is handled by the diff from list items
+            let Some(pos) = group.last_pos(id, to) else {
+                continue;
+            };
+
             let value = group.last_value(id, to).unwrap();
-            element_changes.push(ElementDelta::New {
-                id: *id,
-                new_pos: pos.value,
-                new_value: value.value.clone(),
-                value_id: IdLp::new(value.peer, value.lamport),
-            });
-        }
-        for id in self.updated_elements.iter() {
-            let value = group.last_value(id, to).unwrap();
-            element_changes.push(ElementDelta::ValueChange {
-                id: *id,
-                new_value: value.value.clone(),
-                value_id: IdLp::new(value.peer, value.lamport),
-            });
-        }
-        for id in self.moved_elements.iter() {
-            let pos = group.last_pos(id, to).unwrap();
-            element_changes.push(ElementDelta::PosChange {
-                id: *id,
-                new_pos: pos.value,
-            });
+            let old_pos = group.last_pos(id, from);
+            let old_value = group.last_value(id, from);
+            match (old_pos, old_value) {
+                (None, None) => {
+                    element_changes.push(ElementDelta::New {
+                        id: *id,
+                        new_pos: pos.value,
+                        new_value: value.value.clone(),
+                        value_id: IdLp::new(value.peer, value.lamport),
+                    });
+                }
+                _ => {
+                    if let Some(old_pos) = old_pos {
+                        if old_pos.value != pos.value {
+                            element_changes.push(ElementDelta::PosChange {
+                                id: *id,
+                                new_pos: pos.value,
+                            });
+                        }
+                    }
+                    if let Some(old_value) = old_value {
+                        if old_value.value != value.value {
+                            element_changes.push(ElementDelta::ValueChange {
+                                id: *id,
+                                new_value: value.value.clone(),
+                                value_id: IdLp::new(value.peer, value.lamport),
+                            });
+                        }
+                    }
+                }
+            }
         }
 
         InternalDiff::MovableList(MovableListInnerDelta {
@@ -914,9 +927,7 @@ impl MovableListDiffCalculator {
     fn new(container: ContainerIdx) -> MovableListDiffCalculator {
         MovableListDiffCalculator {
             container_idx: container,
-            moved_elements: Default::default(),
-            updated_elements: Default::default(),
-            new_elements: Default::default(),
+            changed_elements: Default::default(),
             list: Default::default(),
         }
     }

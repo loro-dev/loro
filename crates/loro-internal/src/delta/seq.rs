@@ -532,7 +532,6 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
     /// Reference: [Quill Delta](https://github.com/quilljs/delta)
     // TODO: PERF use &mut self and &other
     pub fn compose(self, other: Delta<Value, M>) -> Delta<Value, M> {
-        debug!("compose: {:?} {:?}", self, other);
         let mut this_iter = self.into_op_iter();
         let mut other_iter = other.into_op_iter();
         let mut ops = vec![];
@@ -560,7 +559,6 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
         }
         let mut delta = Delta { vec: ops };
         while this_iter.has_next() || other_iter.has_next() {
-            debug!("{:?} {:?}", this_iter.has_next(), other_iter.has_next());
             if other_iter.peek_is_insert() {
                 // nothing to compose here
                 delta.push(other_iter.next(None));
@@ -575,7 +573,6 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
                 // 4. this: insert, other: delete
 
                 let (mut this_op, mut other_op) = this_iter.next_pair(&mut other_iter);
-                debug!("compose>op: {:?} {:?}", this_op, other_op);
                 if other_op.is_retain() {
                     // 1. this: insert, other: retain
                     // 2. this: retain, other: retain

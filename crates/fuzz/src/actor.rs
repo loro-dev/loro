@@ -105,14 +105,13 @@ impl Actor {
     pub fn check_history(&self) {
         for (f, v) in self.history.iter() {
             let f = Frontiers::from(f);
-            debug_log::group!(
-                "Checkout from {:?} to {:?}",
-                &self.loro.state_frontiers(),
-                &f
-            );
-            self.loro.checkout(&f).unwrap();
-            let actual = self.loro.get_deep_value();
-            assert_value_eq(v, &actual);
+            let from = &self.loro.state_frontiers();
+            let to = &f;
+            tracing::info_span!("Checkout", ?from, ?to).in_scope(|| {
+                self.loro.checkout(&f).unwrap();
+                let actual = self.loro.get_deep_value();
+                assert_value_eq(v, &actual);
+            });
         }
     }
 
@@ -213,35 +212,48 @@ pub trait ActorTrait {
 
 #[allow(unused)]
 fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
-    match (a, b) {
-        (LoroValue::Map(a), LoroValue::Map(b)) => {
-            for (k, v) in a.iter() {
-                let is_empty = match v {
-                    LoroValue::String(s) => s.is_empty(),
-                    LoroValue::List(l) => l.is_empty(),
-                    LoroValue::Map(m) => m.is_empty(),
-                    _ => false,
-                };
-                if is_empty {
-                    continue;
-                }
-                assert_value_eq(v, b.get(k).unwrap());
-            }
-
-            for (k, v) in b.iter() {
-                let is_empty = match v {
-                    LoroValue::String(s) => s.is_empty(),
-                    LoroValue::List(l) => l.is_empty(),
-                    LoroValue::Map(m) => m.is_empty(),
-                    _ => false,
-                };
-                if is_empty {
-                    continue;
+    fn eq(a: &LoroValue, b: &LoroValue) -> bool {
+        match (a, b) {
+            (LoroValue::Map(a), LoroValue::Map(b)) => {
+                for (k, v) in a.iter() {
+                    let is_empty = match v {
+                        LoroValue::String(s) => s.is_empty(),
+                        LoroValue::List(l) => l.is_empty(),
+                        LoroValue::Map(m) => m.is_empty(),
+                        _ => false,
+                    };
+                    if is_empty {
+                        continue;
+                    }
+                    eq(v, b.get(k).unwrap());
                 }
 
-                assert_value_eq(v, a.get(k).unwrap());
+                for (k, v) in b.iter() {
+                    let is_empty = match v {
+                        LoroValue::String(s) => s.is_empty(),
+                        LoroValue::List(l) => l.is_empty(),
+                        LoroValue::Map(m) => m.is_empty(),
+                        _ => false,
+                    };
+                    if is_empty {
+                        continue;
+                    }
+
+                    if !eq(v, a.get(k).unwrap()) {
+                        return false;
+                    }
+                }
+
+                true
             }
+            (a, b) => a == b,
         }
-        (a, b) => assert_eq!(a, b),
     }
+
+    assert!(
+        eq(a, b),
+        "Expect left == right, but\nleft = {:#?}\nright = {:#?}",
+        a,
+        b
+    );
 }

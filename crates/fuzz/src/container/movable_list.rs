@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use loro::{Container, ContainerID, ContainerType, LoroDoc, LoroMovableList};
+use tracing::debug;
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
@@ -28,13 +29,13 @@ impl MovableListActor {
         let mut tracker = MapTracker::empty();
         tracker.insert(
             "movable_list".to_string(),
-            Value::empty_container(ContainerType::List),
+            Value::empty_container(ContainerType::MovableList),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let list = tracker.clone();
 
         loro.subscribe(
-            &ContainerID::new_root("movable_list", ContainerType::List),
+            &ContainerID::new_root("movable_list", ContainerType::MovableList),
             Arc::new(move |event| {
                 let mut list = list.lock().unwrap();
                 list.apply_diff(event);
