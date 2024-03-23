@@ -10,7 +10,6 @@ use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, IdLp, LoroResult};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
-use tracing::debug;
 
 use crate::{
     change::{Change, Lamport, Timestamp},

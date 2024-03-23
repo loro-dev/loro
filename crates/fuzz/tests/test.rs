@@ -944,6 +944,76 @@ fn test_movable_list_8() {
 }
 
 #[test]
+fn test_movable_list_9() {
+    test_multi_sites(
+        5,
+        vec![
+            FuzzTarget::Map,
+            FuzzTarget::List,
+            FuzzTarget::Text,
+            FuzzTarget::Tree,
+            FuzzTarget::MovableList,
+        ],
+        &mut [
+            Handle {
+                site: 1,
+                target: 64,
+                container: 36,
+                action: Generic(GenericAction {
+                    value: I32(993737531),
+                    bool: true,
+                    key: 2248146944,
+                    pos: 254396807995,
+                    length: 4268070197446523737,
+                    prop: 18446744073696655675,
+                }),
+            },
+            Handle {
+                site: 59,
+                target: 59,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 4268070197446523648,
+                    prop: 360287970189639680,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 59,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 4268070197446523649,
+                    prop: 4268070196455800882,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 59,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 4294967045,
+                    pos: 18413964932892298239,
+                    length: 3746779384955142143,
+                    prop: 255,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn random_fuzz_1s_2sites() {
     arbtest::builder().budget_ms(1000).run(|u| prop(u, 2))
 }

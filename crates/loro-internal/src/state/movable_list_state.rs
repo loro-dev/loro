@@ -1,13 +1,10 @@
 use itertools::Itertools;
 use serde_columnar::columnar;
-use std::{
-    f64::consts::E,
-    sync::{Arc, Mutex, Weak},
-};
-use tracing::{debug, field::debug, instrument, trace};
+use std::sync::{Arc, Mutex, Weak};
+use tracing::{debug, instrument, trace};
 
-use fxhash::{FxHashMap, FxHashSet};
-use generic_btree::{BTree, Cursor, LeafIndex, Query};
+use fxhash::FxHashMap;
+use generic_btree::BTree;
 use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue, ID};
 
 use crate::{
@@ -279,7 +276,7 @@ mod inner {
     use fxhash::FxHashMap;
     use generic_btree::{BTree, Cursor, LeafIndex, Query};
     use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroValue, PeerID};
-    use tracing::{debug, instrument, trace};
+    use tracing::{instrument, trace};
 
     use super::{
         list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
