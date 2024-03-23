@@ -972,6 +972,7 @@ impl ContainerState for MovableListState {
                             let new_delta = Delta::new().retain(new_index).retain_with_meta(
                                 1,
                                 ListDeltaMeta {
+                                    // FIXME: the old index is wrong
                                     move_from: Some(old_index),
                                 },
                             );
@@ -981,9 +982,11 @@ impl ContainerState for MovableListState {
                             let new_index = self.get_index_of_elem(id.compact()).unwrap();
                             let new_value =
                                 self.elements().get(&id.compact()).unwrap().value.clone();
-                            let new_delta = Delta::new().retain(new_index).insert(vec![
-                                ValueOrHandler::from_value(new_value, arena, txn, state),
-                            ]);
+                            let new_delta = Delta::new().retain(new_index).insert_with_meta(
+                                vec![ValueOrHandler::from_value(new_value, arena, txn, state)],
+                                // FIXME: the move_from value is wrong
+                                ListDeltaMeta { move_from: Some(0) },
+                            );
                             ans = ans.compose(new_delta);
                         }
                     }

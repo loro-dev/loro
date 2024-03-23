@@ -93,6 +93,7 @@ pub(crate) struct InternalDocDiff<'a> {
     pub(crate) origin: InternalString,
     pub(crate) local: bool,
     pub(crate) from_checkout: bool,
+    /// The values inside this array is in random order
     pub(crate) diff: Cow<'a, [InternalContainerDiff]>,
     pub(crate) new_version: Cow<'a, Frontiers>,
 }

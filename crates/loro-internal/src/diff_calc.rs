@@ -290,10 +290,7 @@ impl DiffCalculator {
             }
         }
 
-        ans.into_values()
-            .sorted_by_key(|x| x.0)
-            .map(|x| x.1)
-            .collect_vec()
+        ans.into_values().map(|x| x.1).collect_vec()
     }
 }
 

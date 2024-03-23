@@ -365,91 +365,79 @@ impl DocState {
         }
         let is_recording = self.is_recording();
         self.pre_txn(diff.origin.clone(), diff.local);
-        let Cow::Owned(inner) = std::mem::take(&mut diff.diff) else {
+        let Cow::Owned(mut diffs) = std::mem::take(&mut diff.diff) else {
             unreachable!()
         };
 
-        let mut idx2state_diff = FxHashMap::default();
-        let mut diffs = if is_recording {
-            let mut sub_container_diff_patch = SubContainerDiffPatch {
-                all_idx: inner.iter().map(|d| d.idx).collect(),
-                diff_queue: vec![],
-                mark_bring_back: FxHashSet::default(),
-                arena: self.arena.clone(),
-                txn: self.global_txn.clone(),
-                weak_state: self.weak_state.clone(),
-            };
+        // # Revival
+        //
+        // A Container, if it is deleted from its parent Container, will still exist
+        // in the internal state of Loro;  whereas on the user side, a tree structure
+        // is maintained following Events, and at this point, the corresponding state
+        // is considered deleted.
+        //
+        // Sometimes, this "pseudo-dead" Container may be revived (for example, through
+        // backtracking or parallel editing),  and the user side should receive an Event
+        // that restores the consistency between the revived Container and the  internal
+        // state of Loro. This Event is required to restore the pseudo-dead  Container
+        // State to its current state on Loro, and we refer to this process as "revival".
+        //
+        // Revival occurs during the application of the internal diff, and this operation
+        // is necessary when it needs to be converted into an external Event.
+        //
+        // We can utilize the output of the Diff to determine which child nodes should be revived.
+        //
+        // For nodes that are to be revived, we can disregard the Events output by their
+        // round of apply_diff_and_convert,  and instead, directly convert their state into
+        // an Event once their application is complete.
+        //
+        // Suppose A is revived and B is A's child, and B also needs to be revived; therefore,
+        // we should process each level alternately.
 
-            // To handle the `bring_back`, we need cache the state diff of current version first,
-            // because the state that is applied diffs could be also set to `bring_back` later.
-            // We recursively determine one by one whether we need to bring back and push the diff to the queue.
-            // let mut diff_queue = vec![];
-            // let mut need_bring_back = FxHashSet::default();
-            // let all_idx: FxHashSet<ContainerIdx> = inner.iter().map(|d| d.idx).collect();
-            for mut diff in inner {
-                let idx = diff.idx;
-                if sub_container_diff_patch.marked_bring_back(&idx) {
-                    diff.bring_back = true;
-                }
-                if diff.bring_back {
-                    let state = get_or_create!(self, diff.idx);
-
-                    let state_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
-                    if diff.diff.is_none() && state_diff.is_empty() {
-                        // empty diff, skip it
-                        continue;
-                    }
-                    sub_container_diff_patch.push_diff(diff);
-                    if !state_diff.is_empty() {
-                        sub_container_diff_patch.bring_back_sub_container(
-                            &state_diff,
-                            &mut self.states,
-                            &mut idx2state_diff,
-                        );
-                        idx2state_diff.insert(idx, state_diff);
-                    }
-                } else {
-                    sub_container_diff_patch.push_diff(diff);
-                }
+        let mut to_revive: FxHashSet<ContainerIdx> = FxHashSet::default();
+        {
+            // We need to ensure diff is processed in order
+            for diff in &diffs {
+                let Some(internal_diff) = diff.diff.as_ref() else {
+                    continue;
+                };
+                self.set_parent_by_diff(internal_diff.as_internal().unwrap(), diff.idx);
             }
-            sub_container_diff_patch.take_diff()
-        } else {
-            inner
-        };
-        // apply diff
+
+            diffs.sort_by_cached_key(|diff| self.arena.get_depth(diff.idx));
+        }
+
         for diff in &mut diffs {
             let Some(internal_diff) = std::mem::take(&mut diff.diff) else {
-                // only bring_back
                 if is_recording {
-                    if let Some(state_diff) = idx2state_diff.remove(&diff.idx) {
-                        diff.diff = Some(state_diff.into());
-                    };
+                    let state = get_or_create!(self, diff.idx);
+                    let extern_diff =
+                        state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
+                    trigger_on_new_container(&extern_diff, |cid| {
+                        trace!(?cid);
+                        to_revive.insert(cid);
+                    });
+                    diff.diff = Some(extern_diff.into());
                 }
+                to_revive.remove(&diff.idx);
                 continue;
             };
+            trace!("state apply_diff diff={:#?}", &diff);
             let idx = diff.idx;
-
             if self.in_txn {
                 self.changed_idx_in_txn.insert(idx);
             }
-            self.set_parent_by_diff(internal_diff.as_internal().unwrap(), idx);
             let state = get_or_create!(self, idx);
             if is_recording {
                 // process bring_back before apply
-                let external_diff = if diff.bring_back {
-                    let external_diff = state.apply_diff_and_convert(
+                let external_diff = if diff.bring_back || to_revive.contains(&idx) {
+                    state.apply_diff_and_convert(
                         internal_diff.into_internal().unwrap(),
                         &self.arena,
                         &self.global_txn,
                         &self.weak_state,
                     );
-                    if let Some(state_diff) = idx2state_diff.remove(&idx) {
-                        // use `concat`(hierarchical and relative order) rather than `compose`
-                        state_diff.concat(external_diff)
-                    } else {
-                        // empty state
-                        external_diff
-                    }
+                    state.to_diff(&self.arena, &self.global_txn, &self.weak_state)
                 } else {
                     state.apply_diff_and_convert(
                         internal_diff.into_internal().unwrap(),
@@ -458,6 +446,10 @@ impl DocState {
                         &self.weak_state,
                     )
                 };
+                trigger_on_new_container(&external_diff, |cid| {
+                    trace!(?cid);
+                    to_revive.insert(cid);
+                });
                 diff.diff = Some(external_diff.into());
             } else {
                 state.apply_diff(
@@ -467,10 +459,40 @@ impl DocState {
                     &self.weak_state,
                 );
             }
+
+            to_revive.remove(&idx);
+        }
+
+        while !to_revive.is_empty() {
+            for new in std::mem::take(&mut to_revive) {
+                let state = {
+                    if !self.states.contains_key(&new) {
+                        continue;
+                    }
+                    self.states.get_mut(&new).unwrap()
+                };
+
+                if state.is_state_empty() {
+                    continue;
+                }
+
+                let external_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
+                trigger_on_new_container(&external_diff, |cid| {
+                    trace!(?cid);
+                    to_revive.insert(cid);
+                });
+
+                diffs.push(InternalContainerDiff {
+                    idx: new,
+                    bring_back: true,
+                    is_container_deleted: false,
+                    diff: Some(external_diff.into()),
+                });
+            }
         }
 
         diff.diff = diffs.into();
-
+        trace!("after apply_diff {:#?}", &diff);
         self.frontiers = (*diff.new_version).to_owned();
         if self.is_recording() {
             self.record_diff(diff)
@@ -1113,95 +1135,38 @@ impl DocState {
     }
 }
 
-struct SubContainerDiffPatch {
-    // All the container idx that are in the diff
-    all_idx: FxHashSet<ContainerIdx>,
-    // All diffs after resolving the bring_back
-    diff_queue: Vec<InternalContainerDiff>,
-    // All the container idx that need to be brought back
-    mark_bring_back: FxHashSet<ContainerIdx>,
-    arena: SharedArena,
-    txn: Weak<Mutex<Option<Transaction>>>,
-    weak_state: Weak<Mutex<DocState>>,
-}
+fn trigger_on_new_container(state_diff: &Diff, mut listener: impl FnMut(ContainerIdx)) {
+    match state_diff {
+        Diff::List(list) => {
+            for delta in list.iter() {
+                if let DeltaItem::Insert {
+                    insert: _,
+                    attributes,
+                } = delta
+                {
+                    if attributes.move_from.is_some() {
+                        continue;
+                    }
 
-impl SubContainerDiffPatch {
-    fn take_diff(self) -> Vec<InternalContainerDiff> {
-        self.diff_queue
-    }
-
-    fn marked_bring_back(&self, idx: &ContainerIdx) -> bool {
-        self.mark_bring_back.contains(idx)
-    }
-
-    fn push_diff(&mut self, diff: InternalContainerDiff) {
-        self.diff_queue.push(diff);
-    }
-
-    fn bring_back_sub_container(
-        &mut self,
-        state_diff: &Diff,
-        states: &mut FxHashMap<ContainerIdx, State>,
-        idx2state: &mut FxHashMap<ContainerIdx, Diff>,
-    ) {
-        match state_diff {
-            Diff::List(list) => {
-                for delta in list.iter() {
-                    if delta.is_insert() {
-                        for v in delta.as_insert().unwrap().0.iter() {
-                            if matches!(v, ValueOrHandler::Handler(_)) {
-                                let idx = v.as_handler().unwrap().container_idx();
-                                if self.all_idx.contains(&idx) {
-                                    // There is one in subsequent elements that require applying the diff
-                                    self.mark_bring_back.insert(idx);
-                                } else if let Some(state) = states.get_mut(&idx) {
-                                    // only bring back
-                                    // If the state is not empty, add this to queue and check
-                                    // whether there are sub-containers created by it recursively
-                                    // and finally cache the state
-                                    let diff =
-                                        state.to_diff(&self.arena, &self.txn, &self.weak_state);
-                                    if !diff.is_empty() {
-                                        self.diff_queue.push(InternalContainerDiff {
-                                            idx,
-                                            bring_back: true,
-                                            is_container_deleted: false,
-                                            diff: None,
-                                        });
-                                        self.bring_back_sub_container(&diff, states, idx2state);
-                                        idx2state.insert(idx, diff);
-                                    }
-                                }
-                            }
+                    for v in delta.as_insert().unwrap().0.iter() {
+                        if let ValueOrHandler::Handler(h) = v {
+                            let idx = h.container_idx();
+                            listener(idx);
                         }
                     }
                 }
             }
-            Diff::Map(map) => {
-                for (_, v) in map.updated.iter() {
-                    if let Some(ValueOrHandler::Handler(handler)) = &v.value {
-                        let idx = handler.container_idx();
-                        if self.all_idx.contains(&idx) {
-                            self.mark_bring_back.insert(idx);
-                        } else if let Some(state) = states.get_mut(&idx) {
-                            let diff = state.to_diff(&self.arena, &self.txn, &self.weak_state);
-                            if !diff.is_empty() {
-                                self.diff_queue.push(InternalContainerDiff {
-                                    idx,
-                                    bring_back: true,
-                                    is_container_deleted: false,
-                                    diff: None,
-                                });
-                                self.bring_back_sub_container(&diff, states, idx2state);
-                                idx2state.insert(idx, diff);
-                            }
-                        }
-                    }
+        }
+        Diff::Map(map) => {
+            for (_, v) in map.updated.iter() {
+                if let Some(ValueOrHandler::Handler(h)) = &v.value {
+                    let idx = h.container_idx();
+                    listener(idx);
                 }
             }
-            _ => {}
-        };
-    }
+        }
+        _ => {}
+    };
 }
 
 #[derive(Default, Clone)]
