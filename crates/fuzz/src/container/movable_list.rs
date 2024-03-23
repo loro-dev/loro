@@ -25,10 +25,13 @@ pub struct MovableListActor {
 
 impl MovableListActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker = MapTracker::empty();
+        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
         tracker.insert(
             "movable_list".to_string(),
-            Value::empty_container(ContainerType::MovableList),
+            Value::empty_container(
+                ContainerType::MovableList,
+                ContainerID::new_root("movable_list", ContainerType::MovableList),
+            ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let list = tracker.clone();

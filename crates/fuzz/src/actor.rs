@@ -6,7 +6,7 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
-use loro::{Container, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, ID};
+use loro::{Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, ID};
 use tracing::info_span;
 
 use crate::{
@@ -31,7 +31,9 @@ impl Actor {
     pub fn new(id: PeerID) -> Self {
         let loro = LoroDoc::new();
         loro.set_peer_id(id).unwrap();
-        let tracker = Arc::new(Mutex::new(ContainerTracker::Map(MapTracker::empty())));
+        let tracker = Arc::new(Mutex::new(ContainerTracker::Map(MapTracker::empty(
+            ContainerID::new_root("sys:root", ContainerType::Map),
+        ))));
         let cb_tracker = tracker.clone();
         loro.subscribe_root(Arc::new(move |e| {
             info_span!("ApplyDiff", id = id).in_scope(|| {
@@ -134,7 +136,10 @@ impl Actor {
             ContainerType::Map => {
                 self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
                     "map".to_string(),
-                    Value::empty_container(ContainerType::Map),
+                    Value::empty_container(
+                        ContainerType::Map,
+                        ContainerID::new_root("map", ContainerType::Map),
+                    ),
                 );
                 self.targets.insert(
                     target,
@@ -144,7 +149,10 @@ impl Actor {
             ContainerType::List => {
                 self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
                     "list".to_string(),
-                    Value::empty_container(ContainerType::List),
+                    Value::empty_container(
+                        ContainerType::List,
+                        ContainerID::new_root("list", ContainerType::List),
+                    ),
                 );
                 self.targets.insert(
                     target,
@@ -154,7 +162,10 @@ impl Actor {
             ContainerType::MovableList => {
                 self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
                     "movable_list".to_string(),
-                    Value::empty_container(ContainerType::MovableList),
+                    Value::empty_container(
+                        ContainerType::MovableList,
+                        ContainerID::new_root("movable_list", ContainerType::MovableList),
+                    ),
                 );
                 self.targets.insert(
                     target,
@@ -164,7 +175,10 @@ impl Actor {
             ContainerType::Text => {
                 self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
                     "text".to_string(),
-                    Value::empty_container(ContainerType::Text),
+                    Value::empty_container(
+                        ContainerType::Text,
+                        ContainerID::new_root("text", ContainerType::Text),
+                    ),
                 );
                 self.targets.insert(
                     target,
@@ -174,7 +188,10 @@ impl Actor {
             ContainerType::Tree => {
                 self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
                     "tree".to_string(),
-                    Value::empty_container(ContainerType::Tree),
+                    Value::empty_container(
+                        ContainerType::Tree,
+                        ContainerID::new_root("tree", ContainerType::Tree),
+                    ),
                 );
                 self.targets.insert(
                     target,

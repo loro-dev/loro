@@ -150,14 +150,6 @@ impl Tracker {
         mut len: usize,
         reverse: bool,
     ) {
-        trace!(
-            "ApplyDeleteOp {:?} from {}..{} reverse={}",
-            op_id,
-            pos,
-            pos + len,
-            reverse
-        );
-        trace!("self={:#?}", &self);
         if let ControlFlow::Break(_) = self.skip_applied(op_id, len, |applied_counter_end: i32| {
             // the op is partially included, need to slice the op
             let start = (applied_counter_end - op_id.counter) as usize;
@@ -172,7 +164,6 @@ impl Tracker {
         // tracing::info!("after forwarding pos={} len={}", pos, len);
 
         self._delete(target_start_id, pos, len, reverse, op_id);
-        trace!("self={:#?}", &self);
     }
 
     fn _delete(&mut self, target_start_id: ID, pos: usize, len: usize, reverse: bool, op_id: ID) {
@@ -560,7 +551,7 @@ impl Tracker {
         // tracing::info!("Init: {:#?}, ", &self);
         self._checkout(from, false);
         self._checkout(to, true);
-        debug!("Calculating Diff: {:#?}", &self);
+        // debug!("Calculating Diff: {:#?}", &self);
         // self.id_to_cursor.diagnose();
 
         self.rope.get_diff()

@@ -393,7 +393,7 @@ impl DocState {
                 }
                 if diff.bring_back {
                     let state = get_or_create!(self, diff.idx);
-                    trace!("bring back{:?} {:#?}", diff.idx, &state);
+
                     let state_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
                     if diff.diff.is_none() && state_diff.is_empty() {
                         // empty diff, skip it
@@ -470,7 +470,7 @@ impl DocState {
         }
 
         diff.diff = diffs.into();
-        trace!("diff={:#?}", &diff);
+
         self.frontiers = (*diff.new_version).to_owned();
         if self.is_recording() {
             self.record_diff(diff)

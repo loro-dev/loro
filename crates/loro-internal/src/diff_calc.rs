@@ -9,7 +9,7 @@ use loro_common::{
     ContainerID, Counter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
 };
 use smallvec::SmallVec;
-use tracing::{debug, trace};
+use tracing::{debug, instrument, trace};
 
 use crate::{
     container::{
@@ -491,7 +491,6 @@ impl DiffCalculatorTrait for ListDiffCalculator {
     ) -> InternalDiff {
         let mut delta = Delta::new();
         for item in self.tracker.diff(from, to) {
-            debug!(?item);
             match item {
                 CrdtRopeDelta::Retain(len) => {
                     delta = delta.retain(len);
@@ -846,6 +845,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         self.list.stop_tracking(oplog, vv)
     }
 
+    #[instrument(skip_all)]
     fn calculate_diff(
         &mut self,
         oplog: &OpLog,
@@ -877,7 +877,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             let old_value = group.last_value(id, from);
             if old_pos.is_none() && old_value.is_none() {
                 if let LoroValue::Container(c) = &value.value {
-                    trace!("New container: {:?}", c);
                     on_new_container(c);
                 }
                 element_changes.push(ElementDelta::New {
@@ -901,7 +900,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                 if let Some(old_value) = old_value {
                     if old_value != value {
                         if let LoroValue::Container(c) = &value.value {
-                            trace!("New container 2: {:?}", c);
                             on_new_container(c);
                         }
                         element_changes.push(ElementDelta::ValueChange {

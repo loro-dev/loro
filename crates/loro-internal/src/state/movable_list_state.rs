@@ -467,7 +467,6 @@ mod inner {
                 let elem_id = eid.to_id().compact();
                 let elem = this.elements.get(&elem_id)?;
                 if elem.value.as_container() != Some(id) {
-                    trace!(?elem, "elem value not match");
                     // TODO: may be better to find a way clean up these invalid elements?
                     return None;
                 }
@@ -475,7 +474,6 @@ mod inner {
                     let list_item = self.list.get_elem(*leaf)?;
                     assert_eq!(list_item.pointed_by, Some(elem_id));
                 } else {
-                    trace!("cannot find list item for elem");
                     return None;
                 }
                 this.get_list_item_index(elem.pos, index_type)
@@ -917,7 +915,6 @@ impl ContainerState for MovableListState {
                     } => {
                         let len = insert.len();
                         let activated_values = self.list_insert_batch(index, insert.into_iter());
-                        debug!(?activated_values);
                         if !activated_values.is_empty() {
                             let user_index = self
                                 .convert_index(index, IndexType::ForOp, IndexType::ForUser)
@@ -966,7 +963,6 @@ impl ContainerState for MovableListState {
                 match delta_item {
                     crate::delta::ElementDelta::PosChange { id, new_pos } => {
                         let old_index = self.get_index_of_elem(id.compact());
-                        debug!(?old_index, ?id);
                         // don't need to update old list item, because it's handled by list diff already
                         self.inner.update_pos(id.compact(), new_pos, false);
 
@@ -1034,7 +1030,7 @@ impl ContainerState for MovableListState {
         if cfg!(debug_assertions) {
             self.inner.check_consistency();
         }
-        trace!("OutputEvent Movable {:#?}", &ans);
+
         Diff::List(ans)
     }
 
