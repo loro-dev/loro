@@ -403,9 +403,8 @@ impl Cursor {
                     set.iter().map(|x| x.len as usize).sum::<usize>() as u32
                 );
             }
-            Self::Move { from: _, to: leaf } => {
-                assert!(to == 1 && from == 0);
-                *leaf = new_leaf;
+            Self::Move { .. } => {
+                unreachable!("update_insert on Move")
             }
             _ => unreachable!(),
         }

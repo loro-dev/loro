@@ -262,7 +262,11 @@ impl Tracker {
         let result = self.rope.insert(
             to_pos,
             FugueSpan {
-                content: RichtextChunk::new_unknown(1),
+                // we need to use the special move content to avoid
+                // its merging with other [FugueSpan], which will make
+                // id_to_cursor need to track its split.
+                // It would be much harder to implement correctly
+                content: RichtextChunk::new_move(),
                 id: op_id,
                 real_id: if op_id.peer == UNKNOWN_PEER_ID {
                     None
@@ -324,6 +328,16 @@ impl Tracker {
                                         delete_times_diff: -1,
                                     })
                                 }
+                                id_to_cursor::IterCursor::Move {
+                                    from_id: _,
+                                    to_leaf,
+                                    new_op_id,
+                                } => updates.push(crdt_rope::LeafUpdate {
+                                    leaf: to_leaf,
+                                    id_span: new_op_id.to_span(1),
+                                    set_future: None,
+                                    delete_times_diff: -1,
+                                }),
                                 _ => unreachable!(),
                             }
                         }
@@ -419,6 +433,16 @@ impl Tracker {
                                     delete_times_diff: 1,
                                 })
                             }
+                            id_to_cursor::IterCursor::Move {
+                                from_id: _,
+                                to_leaf,
+                                new_op_id,
+                            } => updates.push(crdt_rope::LeafUpdate {
+                                leaf: to_leaf,
+                                id_span: new_op_id.to_span(1),
+                                set_future: None,
+                                delete_times_diff: 1,
+                            }),
                             _ => unreachable!(),
                         }
                     }

@@ -516,48 +516,61 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                     RichtextChunkValue::StyleAnchor { .. } => unreachable!(),
                     RichtextChunkValue::Unknown(len) => {
                         // assert not unknown id
-                        assert_ne!(id.peer, PeerID::MAX);
-                        let mut acc_len = 0;
-                        for rich_op in oplog.iter_ops(IdSpan::new(
-                            id.peer,
-                            id.counter,
-                            id.counter + len as Counter,
-                        )) {
-                            acc_len += rich_op.content_len();
-                            let op = rich_op.op();
-                            let lamport = rich_op.lamport();
-
-                            if let InnerListOp::Insert { slice, pos: _ } =
-                                op.content.as_list().unwrap()
-                            {
-                                let range = slice.clone();
-                                for i in slice.0.clone() {
-                                    let v = oplog.arena.get_value(i as usize);
-                                    if let Some(LoroValue::Container(c)) = &v {
-                                        on_new_container(c);
-                                    }
-                                }
-
-                                delta = delta.insert(SliceRanges {
-                                    ranges: smallvec::smallvec![range],
-                                    id: IdFull::new(id.peer, op.counter, lamport),
-                                });
-                            } else if let InnerListOp::Move { .. } = op.content.as_list().unwrap() {
-                                delta = delta.insert(SliceRanges {
-                                    // FIXME: I think we may not need an actual value here
-                                    ranges: smallvec::smallvec![SliceRange(0..1)],
-                                    id: IdFull::new(id.peer, op.counter, lamport),
-                                });
-                            }
-                        }
-
-                        debug_assert_eq!(acc_len, len as usize);
+                        delta = handle_unknown(id, oplog, len, &mut on_new_container, delta);
+                    }
+                    RichtextChunkValue::MoveAnchor => {
+                        delta = handle_unknown(id, oplog, 1, &mut on_new_container, delta);
                     }
                 },
                 CrdtRopeDelta::Delete(len) => {
                     delta = delta.delete(len);
                 }
             }
+        }
+
+        fn handle_unknown(
+            id: ID,
+            oplog: &OpLog,
+            len: u32,
+            on_new_container: &mut dyn FnMut(&ContainerID),
+            mut delta: Delta<SliceRanges>,
+        ) -> Delta<SliceRanges> {
+            assert_ne!(id.peer, PeerID::MAX);
+            let mut acc_len = 0;
+            for rich_op in oplog.iter_ops(IdSpan::new(
+                id.peer,
+                id.counter,
+                id.counter + len as Counter,
+            )) {
+                acc_len += rich_op.content_len();
+                let op = rich_op.op();
+                let lamport = rich_op.lamport();
+
+                if let InnerListOp::Insert { slice, pos: _ } = op.content.as_list().unwrap() {
+                    let range = slice.clone();
+                    for i in slice.0.clone() {
+                        let v = oplog.arena.get_value(i as usize);
+                        if let Some(LoroValue::Container(c)) = &v {
+                            (on_new_container)(c);
+                        }
+                    }
+
+                    delta = delta.insert(SliceRanges {
+                        ranges: smallvec::smallvec![range],
+                        id: IdFull::new(id.peer, op.counter, lamport),
+                    });
+                } else if let InnerListOp::Move { .. } = op.content.as_list().unwrap() {
+                    delta = delta.insert(SliceRanges {
+                        // We do NOT need an actual value range,
+                        // movable list container will only use the id info
+                        ranges: smallvec::smallvec![SliceRange(0..1)],
+                        id: IdFull::new(id.peer, op.counter, lamport),
+                    });
+                }
+            }
+
+            debug_assert_eq!(acc_len, len as usize);
+            delta
         }
 
         InternalDiff::ListRaw(delta)
@@ -719,6 +732,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 
                         debug_assert_eq!(acc_len, len as usize);
                     }
+                    RichtextChunkValue::MoveAnchor => unreachable!(),
                 },
                 CrdtRopeDelta::Delete(len) => {
                     delta = delta.delete(len);

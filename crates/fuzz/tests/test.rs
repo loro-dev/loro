@@ -1,26 +1,12 @@
-use arbtest::arbitrary::{self, Unstructured};
 use fuzz::{
     actions::{ActionWrapper::*, GenericAction},
-    crdt_fuzzer::{test_multi_sites, Action, Action::*, FuzzTarget, FuzzValue::*},
+    crdt_fuzzer::{test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
 };
 use loro::ContainerType::*;
 
 #[ctor::ctor]
 fn init() {
     dev_utils::setup_test_log();
-}
-
-fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
-    let xs = u.arbitrary::<Vec<Action>>()?;
-    if let Err(e) = std::panic::catch_unwind(|| {
-        test_multi_sites(site_num, vec![FuzzTarget::All], &mut xs.clone());
-    }) {
-        dbg!(xs);
-        println!("{:?}", e);
-        panic!()
-    } else {
-        Ok(())
-    }
 }
 
 #[test]
@@ -1014,31 +1000,108 @@ fn test_movable_list_9() {
 }
 
 #[test]
-fn random_fuzz_1s_2sites() {
-    arbtest::builder().budget_ms(1000).run(|u| prop(u, 2))
-}
-
-#[test]
-fn random_fuzz_1s_2sites_1() {
-    arbtest::builder().budget_ms(1000).run(|u| prop(u, 2))
-}
-
-#[test]
-fn random_fuzz_1s_2sites_2() {
-    arbtest::builder().budget_ms(1000).run(|u| prop(u, 2))
-}
-
-#[test]
-fn random_fuzz_1s_5sites() {
-    arbtest::builder().budget_ms(1000).run(|u| prop(u, 5))
-}
-
-#[test]
-fn random_fuzz_1s_5sites_1() {
-    arbtest::builder().budget_ms(1000).run(|u| prop(u, 5));
-}
-
-#[test]
-fn random_fuzz_1s_5sites_2() {
-    arbtest::builder().budget_ms(1000).run(|u| prop(u, 5));
+fn test_movable_list_10() {
+    test_multi_sites(
+        5,
+        vec![
+            FuzzTarget::Map,
+            FuzzTarget::List,
+            FuzzTarget::Text,
+            FuzzTarget::Tree,
+            FuzzTarget::MovableList,
+        ],
+        &mut [
+            Handle {
+                site: 1,
+                target: 64,
+                container: 36,
+                action: Generic(GenericAction {
+                    value: I32(989855744),
+                    bool: true,
+                    key: 2248146944,
+                    pos: 4268102928402430779,
+                    length: 4268070197446523707,
+                    prop: 18446744073709551615,
+                }),
+            },
+            Handle {
+                site: 59,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 4294903040,
+                    pos: 4268007270886932479,
+                    length: 3314707854257765179,
+                    prop: 4268070197446523648,
+                }),
+            },
+            Handle {
+                site: 89,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(-281330885),
+                    bool: true,
+                    key: 4294967099,
+                    pos: 13021231110858735615,
+                    length: 13021231110853801140,
+                    prop: 18425550663698396340,
+                }),
+            },
+            Handle {
+                site: 59,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 4278517760,
+                    pos: 2199023255551,
+                    length: 13575924464958210,
+                    prop: 18444988998762561582,
+                }),
+            },
+            Handle {
+                site: 59,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(993722414),
+                    bool: true,
+                    key: 4294916923,
+                    pos: 7306357456639098880,
+                    length: 7306357456645743973,
+                    prop: 7306357456645729125,
+                }),
+            },
+            Checkout {
+                site: 101,
+                to: 1701143909,
+            },
+            Checkout {
+                site: 101,
+                to: 1701143909,
+            },
+            Checkout {
+                site: 101,
+                to: 25957,
+            },
+            SyncAll,
+            Handle {
+                site: 59,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(989867520),
+                    bool: false,
+                    key: 0,
+                    pos: 18446744073709487360,
+                    length: 71833290377462271,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
 }
