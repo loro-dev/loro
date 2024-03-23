@@ -15,7 +15,7 @@ use loro_internal::{
 use std::cmp::Ordering;
 use std::ops::Range;
 use std::sync::Arc;
-use tracing::debug;
+
 use tracing::info;
 
 pub mod event;

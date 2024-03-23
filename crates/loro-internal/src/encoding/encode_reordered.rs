@@ -10,7 +10,7 @@ use loro_common::{
 use num_traits::FromPrimitive;
 use rle::HasLength;
 use serde_columnar::columnar;
-use tracing::{debug, instrument};
+use tracing::instrument;
 
 use crate::{
     arena::SharedArena,

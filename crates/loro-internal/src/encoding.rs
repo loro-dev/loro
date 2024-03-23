@@ -6,7 +6,7 @@ use crate::{oplog::OpLog, LoroError, VersionVector};
 use loro_common::{IdLpSpan, LoroResult, PeerID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
-use tracing::debug;
+
 const MAGIC_BYTES: [u8; 4] = *b"loro";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -23,7 +23,7 @@ use fxhash::FxHashMap;
 use loro_common::{HasCounter, HasId, IdLp, IdSpan};
 use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
-use tracing::debug;
+
 
 type ClientChanges = FxHashMap<PeerID, Vec<Change>>;
 pub use self::dag::FrontiersNotIncluded;

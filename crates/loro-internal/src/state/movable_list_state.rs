@@ -47,14 +47,6 @@ pub(crate) struct Element {
 }
 
 impl Element {
-    pub(crate) fn pos_id(&self) -> IdLp {
-        self.pos
-    }
-
-    pub(crate) fn value_id(&self) -> IdLp {
-        self.value_id
-    }
-
     pub(crate) fn value(&self) -> &LoroValue {
         &self.value
     }

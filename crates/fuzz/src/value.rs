@@ -9,7 +9,7 @@ use loro::{
     ContainerType, Index, LoroDoc, LoroText, LoroValue, TreeExternalDiff, TreeID, ValueOrContainer,
 };
 use tracing::debug;
-use tracing::field::debug;
+
 #[derive(Debug, EnumAsInner)]
 pub enum Value {
     Value(LoroValue),
