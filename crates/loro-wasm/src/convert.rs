@@ -148,8 +148,8 @@ fn delta_item_to_js(
             )
             .unwrap();
 
-            if let Some(src) = attributes.move_from {
-                js_sys::Reflect::set(&obj, &JsValue::from_str("move_from"), &src.into()).unwrap();
+            if attributes.from_move {
+                js_sys::Reflect::set(&obj, &JsValue::from_str("is_move"), &JsValue::TRUE).unwrap();
             }
         }
         DeltaItem::Delete { delete: len, .. } => {

@@ -9,7 +9,6 @@ use loro_internal::{
 };
 use std::sync::Arc;
 
-
 use crate::ValueOrContainer;
 
 pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
@@ -42,7 +41,7 @@ pub enum Diff<'a> {
 pub enum ListDiffItem {
     Insert {
         insert: Vec<ValueOrContainer>,
-        move_from: Option<usize>,
+        is_move: bool,
     },
     Delete {
         delete: usize,
@@ -91,7 +90,7 @@ impl<'a> From<&'a DiffInner> for Diff<'a> {
                                 .iter()
                                 .map(|v| ValueOrContainer::from(v.clone()))
                                 .collect(),
-                            move_from: attributes.move_from,
+                            is_move: attributes.from_move,
                         },
                         DeltaItem::Delete { delete, .. } => {
                             ListDiffItem::Delete { delete: *delete }

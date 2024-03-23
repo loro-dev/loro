@@ -172,10 +172,7 @@ impl ApplyDiff for ListTracker {
                 ListDiffItem::Retain { retain: len } => {
                     index += len;
                 }
-                ListDiffItem::Insert {
-                    insert: value,
-                    move_from: _,
-                } => {
+                ListDiffItem::Insert { insert: value, .. } => {
                     for v in value {
                         let value = match v {
                             ValueOrContainer::Container(c) => {
@@ -245,10 +242,7 @@ impl ApplyDiff for MovableListTracker {
                 ListDiffItem::Retain { retain: len } => {
                     index += len;
                 }
-                ListDiffItem::Insert {
-                    insert: value,
-                    move_from: _,
-                } => {
+                ListDiffItem::Insert { insert: value, .. } => {
                     for v in value {
                         let value = match v {
                             ValueOrContainer::Container(c) => {

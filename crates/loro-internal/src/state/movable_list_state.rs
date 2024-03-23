@@ -3,7 +3,7 @@ use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
 use tracing::{debug, instrument, trace};
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::BTree;
 use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue, ID};
 
@@ -529,11 +529,15 @@ mod inner {
         }
 
         /// Draint the list items in the given range (op index).
-        #[instrument(skip(self))]
-        pub fn list_drain(&mut self, range: std::ops::Range<usize>) {
+        pub fn list_drain(
+            &mut self,
+            range: std::ops::Range<usize>,
+            mut on_elem_id: impl FnMut(CompactIdLp),
+        ) {
             for item in Self::drain_by_query::<OpLenQuery>(&mut self.list, range) {
                 self.id_to_list_leaf.remove(&item.id.idlp());
                 if let Some(elem_id) = &item.pointed_by {
+                    on_elem_id(*elem_id);
                     let old = self.pending_elements.insert(item.id.idlp(), *elem_id);
                     assert!(old.is_none());
                 }
@@ -897,6 +901,7 @@ impl ContainerState for MovableListState {
         debug!("InternalDiff for Movable {:#?}", &diff);
         let mut inserted_elem_id_to_value = FxHashMap::default();
         let mut ans: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
+        let mut deleted_during_diff = FxHashSet::default();
 
         {
             // apply list item changes
@@ -951,7 +956,9 @@ impl ContainerState for MovableListState {
                                 .retain(user_index)
                                 .delete(user_index_end - user_index),
                         );
-                        self.inner.list_drain(index..index + delete);
+                        self.inner.list_drain(index..index + delete, |id| {
+                            deleted_during_diff.insert(id);
+                        });
                     }
                 }
             }
@@ -967,16 +974,13 @@ impl ContainerState for MovableListState {
                         self.inner.update_pos(id.compact(), new_pos, false);
 
                         if old_index.is_some() {
-                            let old_index = old_index.unwrap();
-                            let new_index = self.get_index_of_elem(id.compact()).unwrap();
-                            let new_delta = Delta::new().retain(new_index).retain_with_meta(
-                                1,
-                                ListDeltaMeta {
-                                    // FIXME: the old index is wrong
-                                    move_from: Some(old_index),
-                                },
-                            );
-                            ans = ans.compose(new_delta);
+                            if deleted_during_diff.contains(&id.compact()) {
+                                let new_index = self.get_index_of_elem(id.compact()).unwrap();
+                                let new_delta = Delta::new()
+                                    .retain(new_index)
+                                    .retain_with_meta(1, ListDeltaMeta { from_move: true });
+                                ans = ans.compose(new_delta);
+                            }
                         } else {
                             assert!(!inserted_elem_id_to_value.contains_key(&id.compact()));
                             let new_index = self.get_index_of_elem(id.compact()).unwrap();
@@ -984,8 +988,9 @@ impl ContainerState for MovableListState {
                                 self.elements().get(&id.compact()).unwrap().value.clone();
                             let new_delta = Delta::new().retain(new_index).insert_with_meta(
                                 vec![ValueOrHandler::from_value(new_value, arena, txn, state)],
-                                // FIXME: the move_from value is wrong
-                                ListDeltaMeta { move_from: Some(0) },
+                                ListDeltaMeta {
+                                    from_move: deleted_during_diff.contains(&id.compact()),
+                                },
                             );
                             ans = ans.compose(new_delta);
                         }
@@ -1077,7 +1082,7 @@ impl ContainerState for MovableListState {
             },
             ListOp::Delete(span) => {
                 self.inner
-                    .list_drain(span.start() as usize..span.end() as usize);
+                    .list_drain(span.start() as usize..span.end() as usize, |_| {});
             }
             ListOp::Move { from, to, elem_id } => {
                 self.mov(

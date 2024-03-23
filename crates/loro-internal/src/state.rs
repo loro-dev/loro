@@ -1144,7 +1144,7 @@ fn trigger_on_new_container(state_diff: &Diff, mut listener: impl FnMut(Containe
                     attributes,
                 } = delta
                 {
-                    if attributes.move_from.is_some() {
+                    if attributes.from_move {
                         continue;
                     }
 

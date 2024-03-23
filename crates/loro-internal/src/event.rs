@@ -156,14 +156,19 @@ impl From<InternalDiff> for DiffVariant {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ListDeltaMeta {
-    /// whether the content of the insert is moved from
-    /// certain index in the original array.
-    pub move_from: Option<usize>,
+    /// Whether the content of the insert is moved from
+    /// a deletion in the same delta.
+    ///
+    /// If true, this op must be a move op under the hood.
+    /// But an insert created by a move op doesn't necessarily
+    /// have this flag, because the insert content may not
+    /// be moved from a deletion in the same delta.
+    pub from_move: bool,
 }
 
 impl Meta for ListDeltaMeta {
     fn is_empty(&self) -> bool {
-        self.move_from.is_none()
+        !self.from_move
     }
 
     fn compose(
@@ -173,14 +178,11 @@ impl Meta for ListDeltaMeta {
     ) {
         // We can't have two Some because we don't have `move_from` for Retain.
         // And this function is only called when composing a insert/retain with a retain.
-        assert!(self.move_from.is_none() || other.move_from.is_none());
-        if self.move_from.is_none() && other.move_from.is_some() {
-            self.move_from = other.move_from;
-        }
+        self.from_move = self.from_move || other.from_move;
     }
 
     fn is_mergeable(&self, other: &Self) -> bool {
-        self.move_from.is_none() && other.move_from.is_none()
+        self.from_move == other.from_move
     }
 
     fn merge(&mut self, _other: &Self) {}

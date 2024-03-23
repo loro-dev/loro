@@ -604,9 +604,7 @@ fn change_to_diff(
                         diff: Diff::List(Delta::new().retain(from as usize).delete(1).compose(
                             Delta::new().retain(to as usize).insert_with_meta(
                                 vec![ValueOrHandler::from_value(value, arena, txn, state)],
-                                ListDeltaMeta {
-                                    move_from: Some(from as usize),
-                                },
+                                ListDeltaMeta { from_move: true },
                             ),
                         )),
                     });
