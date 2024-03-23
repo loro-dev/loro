@@ -887,6 +887,10 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
 
                 if let Some(old_value) = old_value {
                     if old_value != value {
+                        if let LoroValue::Container(c) = &value.value {
+                            trace!("New container 2: {:?}", c);
+                            on_new_container(c);
+                        }
                         element_changes.push(ElementDelta::ValueChange {
                             id: *id,
                             new_value: value.value.clone(),
