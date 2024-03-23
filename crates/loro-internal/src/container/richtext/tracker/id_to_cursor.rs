@@ -108,6 +108,7 @@ impl IdToCursor {
     }
 
     pub fn iter(&self, mut iter_id_span: IdSpan) -> impl Iterator<Item = IterCursor> + '_ {
+        // TODO: can be simplified a bit
         iter_id_span.normalize_();
         let list = self.map.get(&iter_id_span.peer).unwrap_or(&EMPTY_VEC);
         let mut index = 0;
@@ -186,8 +187,11 @@ impl IdToCursor {
                     offset_in_insert_set = 0;
                     index += 1;
                     counter = list.get(index).map(|x| x.counter).unwrap_or(Counter::MAX);
+                    if !iter_id_span.counter.contains(f.counter) {
+                        continue;
+                    }
+
                     let op_id = ID::new(iter_id_span.peer, f.counter);
-                    debug_assert!(iter_id_span.contains(op_id));
                     return Some(IterCursor::Move {
                         from_id: *from,
                         to_leaf: *to,
