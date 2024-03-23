@@ -33,7 +33,7 @@ pub struct MovableListState {
     inner: InnerState,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListItem {
     pointed_by: Option<CompactIdLp>,
     id: IdFull,
@@ -265,10 +265,10 @@ mod list_item_tree {
 /// - `id_to_list_leaf` must be consistent with the list.
 /// - `child_container_to_elem` must be consistent with the element.
 mod inner {
-    use fxhash::FxHashMap;
+    use fxhash::{FxHashMap, FxHashSet};
     use generic_btree::{BTree, Cursor, LeafIndex, Query};
     use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroValue, PeerID};
-    use tracing::{instrument, trace};
+    use tracing::{error, instrument, trace};
 
     use super::{
         list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
@@ -284,7 +284,19 @@ mod inner {
         /// Mappings from last `list item id` to `elem id`.
         /// The elements included by this map have invalid `pointer` that points to the key
         /// of this map.
+        ///
+        /// But it's not sure that the corresponding element still points to the list item.
+        /// Otherwise, it would be expensive to maintain this field.
         pending_elements: FxHashMap<IdLp, CompactIdLp>,
+    }
+
+    #[must_use]
+    fn eq<T: PartialEq>(a: T, b: T) -> Result<(), ()> {
+        if a == b {
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 
     impl InnerState {
@@ -311,6 +323,104 @@ mod inner {
         #[inline]
         pub fn list(&self) -> &BTree<MovableListTreeTrait> {
             &self.list
+        }
+
+        #[allow(dead_code)]
+        pub fn check_consistency(&self) {
+            let mut faled = false;
+            if self.check_list_item_consistency().is_err() {
+                error!("list item consistency check failed, self={:#?}", self);
+                faled = true;
+            }
+
+            if self.check_pending_elements_consistency().is_err() {
+                error!(
+                    "pending elements consistency check failed, self={:#?}",
+                    self
+                );
+                faled = true;
+            }
+
+            if self.check_child_container_to_elem_consistency().is_err() {
+                error!(
+                    "child container to elem consistency check failed, self={:#?}",
+                    self
+                );
+                faled = true;
+            }
+
+            if faled {
+                panic!("consistency check failed");
+            }
+        }
+
+        fn check_list_item_consistency(&self) -> Result<(), ()> {
+            let mut visited_ids = FxHashSet::default();
+            for list_item in self.list.iter() {
+                if visited_ids.contains(&list_item.id.idlp()) {
+                    error!("duplicate list item id");
+                    return Err(());
+                }
+                visited_ids.insert(list_item.id.idlp());
+                let leaf = self.id_to_list_leaf.get(&list_item.id.idlp()).unwrap();
+                let elem = self.list.get_elem(*leaf).unwrap();
+                eq(elem, list_item)?;
+                if let Some(pointed_by) = elem.pointed_by {
+                    let elem = self.elements.get(&pointed_by).unwrap();
+                    eq(elem.pos, list_item.id.idlp())?;
+                }
+            }
+
+            for (elem_id, elem) in self.elements.iter() {
+                if let Some(item) = self.get_list_item_by_id(elem.pos) {
+                    eq(item.pointed_by, Some(*elem_id))?;
+                } else {
+                    match self.pending_elements.get(&elem.pos) {
+                        Some(pending) if pending == elem_id => {}
+                        _ => {
+                            error!(
+                                ?elem,
+                                "elem's pos not in list and elem not in pending elements"
+                            );
+                            return Err(());
+                        }
+                    }
+                }
+            }
+
+            Ok(())
+        }
+
+        fn check_pending_elements_consistency(&self) -> Result<(), ()> {
+            for (list_item_id, elem_id) in self.pending_elements.iter() {
+                // we allow elem to point to the other pos
+                eq(self.get_list_item_by_id(*list_item_id), None)?;
+            }
+
+            for (elem_id, elem) in self.elements.iter() {
+                if self.get_list_item_by_id(elem.pos).is_none() {
+                    eq(self.pending_elements.get(&elem.pos), Some(elem_id))?;
+                } else {
+                    eq(self.pending_elements.get(&elem.pos), None)?;
+                }
+            }
+
+            Ok(())
+        }
+
+        fn check_child_container_to_elem_consistency(&self) -> Result<(), ()> {
+            for (container_id, elem_id) in self.child_container_to_elem.iter() {
+                let elem = self.elements.get(elem_id).unwrap();
+                eq(&elem.value, &LoroValue::Container(container_id.clone()))?;
+            }
+
+            for (elem_id, elem) in self.elements.iter() {
+                if let LoroValue::Container(c) = &elem.value {
+                    eq(self.child_container_to_elem.get(c), Some(elem_id))?;
+                }
+            }
+
+            Ok(())
         }
 
         pub fn get_list_item_index(&self, id: IdLp, kind: IndexType) -> Option<usize> {
@@ -703,7 +813,6 @@ impl MovableListState {
     /// If we cannot find the list item in the list, we will return None.
     fn get_index_of_elem(&self, elem_id: CompactIdLp) -> Option<usize> {
         let elem = self.inner.elements().get(&elem_id)?;
-        debug!(?elem);
         self.inner.get_list_item_index(elem.pos, IndexType::ForUser)
     }
 
@@ -783,6 +892,10 @@ impl ContainerState for MovableListState {
             unreachable!()
         };
 
+        if cfg!(debug_assertions) {
+            self.inner.check_consistency();
+        }
+
         debug!("InternalDiff for Movable {:#?}", &diff);
         let mut inserted_elem_id_to_value = FxHashMap::default();
         let mut ans: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
@@ -815,7 +928,6 @@ impl ContainerState for MovableListState {
                                         .into_iter()
                                         .map(|(elem_id, value)| {
                                             let index = self.get_index_of_elem(elem_id);
-                                            debug!(?elem_id, ?index);
                                             inserted_elem_id_to_value
                                                 .insert(elem_id, value.clone());
                                             ValueOrHandler::from_value(value, arena, txn, state)
@@ -919,6 +1031,9 @@ impl ContainerState for MovableListState {
             }
         }
 
+        if cfg!(debug_assertions) {
+            self.inner.check_consistency();
+        }
         trace!("OutputEvent Movable {:#?}", &ans);
         Diff::List(ans)
     }

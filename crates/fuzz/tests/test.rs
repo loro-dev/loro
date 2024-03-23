@@ -1,5 +1,5 @@
 use fuzz::{
-    actions::{ActionWrapper::*, GenericAction},
+    actions::{ActionInner, ActionWrapper::*, GenericAction, MovableListAction},
     crdt_fuzzer::{test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
 };
 use loro::ContainerType::*;
@@ -1101,6 +1101,126 @@ fn test_movable_list_10() {
                     length: 71833290377462271,
                     prop: 0,
                 }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn test_movable_list_11() {
+    test_multi_sites(
+        5,
+        vec![
+            FuzzTarget::Map,
+            FuzzTarget::List,
+            FuzzTarget::Text,
+            FuzzTarget::Tree,
+            FuzzTarget::MovableList,
+        ],
+        &mut [
+            Handle {
+                site: 1,
+                target: 64,
+                container: 36,
+                action: Generic(GenericAction {
+                    value: I32(989855744),
+                    bool: true,
+                    key: 2248146944,
+                    pos: 4268102928402430779,
+                    length: 4268070197446523707,
+                    prop: 18446744073709551615,
+                }),
+            },
+            Handle {
+                site: 59,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 4294903040,
+                    pos: 4268007270886932479,
+                    length: 3314707854257765179,
+                    prop: 4268070197446523648,
+                }),
+            },
+            Handle {
+                site: 89,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(1005534011),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 13021231110853820415,
+                    length: 13021231110853801140,
+                    prop: 18446661286951695540,
+                }),
+            },
+            Handle {
+                site: 59,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 4294903040,
+                    pos: 4268007270886932479,
+                    length: 3314702356699626299,
+                    prop: 18446743228594731776,
+                }),
+            },
+            Sync { from: 163, to: 48 },
+            Sync { from: 163, to: 36 },
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 50,
+                container: 133,
+                action: Generic(GenericAction {
+                    value: Container(List),
+                    bool: false,
+                    key: 4294967190,
+                    pos: 4149669093542199295,
+                    length: 10824746097297668409,
+                    prop: 17578661361369962390,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 59,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: I32(3881728),
+                    bool: false,
+                    key: 993756672,
+                    pos: 4268070197945958459,
+                    length: 18446527724315687739,
+                    prop: 4289181665814642687,
+                }),
+            },
+            Checkout {
+                site: 59,
+                to: 993737531,
+            },
+            Handle {
+                site: 59,
+                target: 59,
+                container: 59,
+                action: Action(ActionInner::MovableList(MovableListAction::Delete {
+                    pos: 0,
+                    len: 3,
+                })),
+            },
+            Checkout {
+                site: 101,
+                to: 1701143909,
+            },
+            Checkout {
+                site: 101,
+                to: 1701143909,
             },
         ],
     )

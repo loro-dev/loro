@@ -1301,7 +1301,7 @@ impl MovableListHandler {
             });
         }
 
-        let (ids, pos) =
+        let (ids, new_poses) =
             self.state
                 .upgrade()
                 .unwrap()
@@ -1314,17 +1314,19 @@ impl MovableListHandler {
                         .collect();
                     let poses: Vec<_> = (pos..pos + len)
                         // need to -i because we delete the previous ones
-                        .map(|i| {
-                            list.convert_index(i, IndexType::ForUser, IndexType::ForOp)
-                                .unwrap()
-                                - i
+                        .map(|user_index| {
+                            let op_index = list
+                                .convert_index(user_index, IndexType::ForUser, IndexType::ForOp)
+                                .unwrap();
+                            assert!(op_index >= user_index);
+                            op_index - (user_index - pos)
                         })
                         .collect();
                     (ids, poses)
                 });
 
-        info!(?ids, ?pos, "delete_with_txn");
-        for (id, pos) in ids.into_iter().zip(pos.into_iter()) {
+        info!(?pos, ?len, ?ids, ?new_poses, "delete_with_txn");
+        for (id, pos) in ids.into_iter().zip(new_poses.into_iter()) {
             txn.apply_local_op(
                 self.container_idx,
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(

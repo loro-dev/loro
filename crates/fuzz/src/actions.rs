@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use crate::container::MovableListAction;
+pub use crate::container::MovableListAction;
 
 use super::{
     actor::ActionExecutor,

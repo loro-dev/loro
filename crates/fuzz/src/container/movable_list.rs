@@ -2,7 +2,6 @@ use std::sync::{Arc, Mutex};
 
 use loro::{Container, ContainerID, ContainerType, LoroDoc, LoroMovableList};
 
-
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
     actor::{ActionExecutor, ActorTrait},

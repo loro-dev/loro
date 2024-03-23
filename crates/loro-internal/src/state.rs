@@ -360,7 +360,6 @@ impl DocState {
     ///
     #[instrument(skip_all)]
     pub(crate) fn apply_diff(&mut self, mut diff: InternalDocDiff<'static>) {
-        trace!(?diff);
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }

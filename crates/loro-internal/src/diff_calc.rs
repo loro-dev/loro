@@ -858,7 +858,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             unreachable!()
         };
 
-        debug!(?list_diff);
         let group = oplog
             .op_groups
             .get(&self.container_idx)
