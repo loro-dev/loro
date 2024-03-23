@@ -700,67 +700,109 @@ fn test_movable_list_5() {
             FuzzTarget::Tree,
             FuzzTarget::MovableList,
         ],
-        &mut   [
-	    Handle {
-	        site: 3,
-	        target: 34,
-	        container: 0,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Map,
-	                ),
-	                bool: false,
-	                key: 50536963,
-	                pos: 217020518514230019,
-	                length: 217020518514230019,
-	                prop: 217020518514230019,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    Handle {
-	        site: 3,
-	        target: 3,
-	        container: 3,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    List,
-	                ),
-	                bool: true,
-	                key: 4294967295,
-	                pos: 3399987922982666239,
-	                length: 940450980798869287,
-	                prop: 5391038347781079093,
-	            },
-	        ),
-	    },
-	    Checkout {
-	        site: 3,
-	        to: 2072347904,
-	    },
-	    Handle {
-	        site: 0,
-	        target: 0,
-	        container: 0,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    0,
-	                ),
-	                bool: false,
-	                key: 0,
-	                pos: 0,
-	                length: 0,
-	                prop: 0,
-	            },
-	        ),
-	    },
-	],
+        &mut [
+            Handle {
+                site: 3,
+                target: 34,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: false,
+                    key: 50536963,
+                    pos: 217020518514230019,
+                    length: 217020518514230019,
+                    prop: 217020518514230019,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 3,
+                target: 3,
+                container: 3,
+                action: Generic(GenericAction {
+                    value: Container(List),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 3399987922982666239,
+                    length: 940450980798869287,
+                    prop: 5391038347781079093,
+                }),
+            },
+            Checkout {
+                site: 3,
+                to: 2072347904,
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
     )
 }
 
+#[test]
+fn test_movable_list_6() {
+    test_multi_sites(
+        5,
+        vec![
+            FuzzTarget::Map,
+            FuzzTarget::List,
+            FuzzTarget::Text,
+            FuzzTarget::Tree,
+            FuzzTarget::MovableList,
+        ],
+        &mut [
+            Handle {
+                site: 44,
+                target: 124,
+                container: 221,
+                action: Generic(GenericAction {
+                    value: Container(MovableList),
+                    bool: false,
+                    key: 38,
+                    pos: 150994944,
+                    length: 18446742974197923840,
+                    prop: 18446744073709551615,
+                }),
+            },
+            Handle {
+                site: 194,
+                target: 239,
+                container: 251,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 18446608833779269692,
+                    prop: 18446744073708503039,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 255,
+                container: 133,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
 
 #[test]
 fn random_fuzz_1s_2sites() {

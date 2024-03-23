@@ -860,13 +860,13 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             };
 
             let value = group.last_value(id, to).unwrap();
-            if let LoroValue::Container(c) = &value.value {
-                trace!("New container: {:?}", c);
-                on_new_container(c);
-            }
             let old_pos = group.last_pos(id, from);
             let old_value = group.last_value(id, from);
             if old_pos.is_none() && old_value.is_none() {
+                if let LoroValue::Container(c) = &value.value {
+                    trace!("New container: {:?}", c);
+                    on_new_container(c);
+                }
                 element_changes.push(ElementDelta::New {
                     id: *id,
                     new_pos: pos.value,

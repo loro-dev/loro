@@ -364,8 +364,6 @@ mod inner {
         }
 
         pub fn get_child_index(&self, id: &ContainerID, index_type: IndexType) -> Option<usize> {
-            trace!(?id, ?index_type, "get_child_index");
-            trace!(?self);
             let ans = self.child_container_to_elem.get(id).and_then(|eid| {
                 let this = &self;
                 let elem_id = eid.to_id().compact();
