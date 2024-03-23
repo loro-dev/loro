@@ -4,7 +4,7 @@ use std::{
     f64::consts::E,
     sync::{Arc, Mutex, Weak},
 };
-use tracing::{debug, field::debug, instrument};
+use tracing::{debug, field::debug, instrument, trace};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{BTree, Cursor, LeafIndex, Query};
@@ -325,10 +325,9 @@ mod inner {
         }
 
         pub fn get_list_item_index(&self, id: IdLp, kind: IndexType) -> Option<usize> {
-            self.id_to_list_leaf.get(&id).map(|leaf| {
-                debug!("found leaf");
-                self.get_index_of(*leaf, kind) as usize
-            })
+            self.id_to_list_leaf
+                .get(&id)
+                .map(|leaf| self.get_index_of(*leaf, kind) as usize)
         }
 
         pub fn get_index_of(&self, leaf: LeafIndex, kind: IndexType) -> i32 {
@@ -795,8 +794,8 @@ impl ContainerState for MovableListState {
             unreachable!()
         };
 
-        debug!(?diff, ?self);
-        let mut inserted_elem_id = FxHashSet::default();
+        debug!("InternalDiff for Movable {:#?}", &diff);
+        let mut inserted_elem_id_to_value = FxHashMap::default();
         let mut ans: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
 
         {
@@ -828,7 +827,8 @@ impl ContainerState for MovableListState {
                                         .map(|(elem_id, value)| {
                                             let index = self.get_index_of_elem(elem_id);
                                             debug!(?elem_id, ?index);
-                                            inserted_elem_id.insert(elem_id);
+                                            inserted_elem_id_to_value
+                                                .insert(elem_id, value.clone());
                                             ValueOrHandler::from_value(value, arena, txn, state)
                                         })
                                         .collect_vec(),
@@ -880,7 +880,7 @@ impl ContainerState for MovableListState {
                             );
                             ans = ans.compose(new_delta);
                         } else {
-                            assert!(!inserted_elem_id.contains(&id.compact()));
+                            assert!(!inserted_elem_id_to_value.contains_key(&id.compact()));
                             let new_index = self.get_index_of_elem(id.compact()).unwrap();
                             let new_value =
                                 self.elements().get(&id.compact()).unwrap().value.clone();
@@ -912,18 +912,25 @@ impl ContainerState for MovableListState {
                     } => {
                         let elem_id = id.compact();
                         self.create_new_elem(elem_id, new_pos, new_value.clone(), value_id);
-                        if !inserted_elem_id.contains(&elem_id) {
-                            if let Some(index) = self.get_index_of_elem(elem_id) {
-                                ans = ans.compose(Delta::new().retain(index).insert(vec![
-                                    ValueOrHandler::from_value(new_value, arena, txn, state),
-                                ]))
+                        if let Some(v) = inserted_elem_id_to_value.get(&elem_id) {
+                            if v != &new_value {
+                                let index = self.get_index_of_elem(elem_id).unwrap();
+                                ans =
+                                    ans.compose(Delta::new().retain(index).delete(1).insert(vec![
+                                        ValueOrHandler::from_value(new_value, arena, txn, state),
+                                    ]));
                             }
+                        } else if let Some(index) = self.get_index_of_elem(elem_id) {
+                            ans = ans.compose(Delta::new().retain(index).insert(vec![
+                                ValueOrHandler::from_value(new_value, arena, txn, state),
+                            ]))
                         }
                     }
                 };
             }
         }
 
+        trace!("OutputEvent Movable {:#?}", &ans);
         Diff::List(ans)
     }
 
