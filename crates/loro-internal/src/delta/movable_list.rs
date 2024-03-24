@@ -36,13 +36,12 @@ impl MovableListInnerDelta {
 
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum ElementDelta {
-    PosChange {
+    Update {
         id: IdLp,
-        new_pos: IdLp,
-    },
-    ValueChange {
-        id: IdLp,
-        new_value: LoroValue,
+        pos: IdLp,
+        pos_updated: bool,
+        value: LoroValue,
+        value_updated: bool,
         value_id: IdLp,
     },
     New {
@@ -56,7 +55,7 @@ pub enum ElementDelta {
 impl ElementDelta {
     pub fn value(&self) -> Option<&LoroValue> {
         match self {
-            ElementDelta::ValueChange { new_value, .. } => Some(new_value),
+            ElementDelta::Update { value, .. } => Some(value),
             ElementDelta::New { new_value, .. } => Some(new_value),
             _ => None,
         }

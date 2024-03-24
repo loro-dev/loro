@@ -11,9 +11,7 @@ use tracing::{info, instrument};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
-    container::{
-        idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw,
-    },
+    container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
     delta::DeltaItem,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalContainerDiff, InternalDiff},

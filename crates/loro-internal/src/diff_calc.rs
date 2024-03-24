@@ -9,7 +9,7 @@ use loro_common::{
     ContainerID, Counter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
 };
 use smallvec::SmallVec;
-use tracing::{instrument};
+use tracing::instrument;
 
 use crate::{
     container::{
@@ -883,31 +883,14 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     value_id: IdLp::new(value.peer, value.lamport),
                 });
             } else {
-                if let Some(old_pos) = old_pos {
-                    if old_pos != pos {
-                        element_changes.push(ElementDelta::PosChange {
-                            id: *id,
-                            new_pos: pos.value,
-                        });
-                    }
-                } else {
-                    unreachable!()
-                }
-
-                if let Some(old_value) = old_value {
-                    if old_value != value {
-                        if let LoroValue::Container(c) = &value.value {
-                            on_new_container(c);
-                        }
-                        element_changes.push(ElementDelta::ValueChange {
-                            id: *id,
-                            new_value: value.value.clone(),
-                            value_id: IdLp::new(value.peer, value.lamport),
-                        });
-                    }
-                } else {
-                    unreachable!()
-                }
+                element_changes.push(ElementDelta::Update {
+                    id: *id,
+                    pos: pos.value,
+                    pos_updated: old_pos.unwrap().value == pos.value,
+                    value: value.value.clone(),
+                    value_updated: old_value.unwrap().value == value.value,
+                    value_id: IdLp::new(value.peer, value.lamport),
+                });
             }
         }
 

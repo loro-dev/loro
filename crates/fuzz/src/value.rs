@@ -2,13 +2,13 @@ use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 
 use enum_as_inner::EnumAsInner;
-use fxhash::{FxHashMap};
+use fxhash::FxHashMap;
 use loro::{
     event::{Diff, DiffEvent, ListDiffItem},
     ContainerType, Index, LoroDoc, LoroText, LoroValue, TreeExternalDiff, TreeID, ValueOrContainer,
 };
 use loro::{ContainerID, ID};
-use tracing::{trace};
+use tracing::trace;
 
 #[derive(Debug, EnumAsInner)]
 pub enum Value {
@@ -429,7 +429,6 @@ impl TreeNode {
 
 impl ContainerTracker {
     pub fn apply_diff(&mut self, diff: DiffEvent) {
-        trace!("Applying diff {:#?} \nself={:#?}", &diff, &self);
         for diff in diff.events {
             let path = diff.path;
             let mut value: &mut ContainerTracker = self;

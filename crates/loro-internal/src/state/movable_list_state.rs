@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, trace};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::BTree;
@@ -557,12 +557,21 @@ mod inner {
         ///
         /// The old list item will be removed if `remove_old` is true; Otherwise,
         /// it will be updated with its `pointed_by` removed.
-        pub fn update_pos(&mut self, elem_id: CompactIdLp, new_pos: IdLp, remove_old: bool) {
+        ///
+        /// Return whether the update is successful. It's not successful if the old pos is the same as the new pos.
+        pub fn update_pos(
+            &mut self,
+            elem_id: CompactIdLp,
+            new_pos: IdLp,
+            remove_old: bool,
+        ) -> bool {
             let mut old_item_id = None;
             if let Some(element) = self.elements.get_mut(&elem_id) {
                 if element.pos != new_pos {
                     old_item_id = Some(element.pos);
                     element.pos = new_pos;
+                } else {
+                    return false;
                 }
             } else {
                 self.elements.insert(
@@ -593,7 +602,7 @@ mod inner {
 
             if let Some(old) = old_item_id {
                 if old.is_none() || old == new_pos {
-                    return;
+                    return true;
                 }
 
                 if remove_old {
@@ -609,6 +618,8 @@ mod inner {
                     assert!(split.arr.is_empty());
                 }
             }
+
+            true
         }
 
         pub fn update_value(&mut self, elem_id: CompactIdLp, new_value: LoroValue, value_id: IdLp) {
@@ -968,46 +979,99 @@ impl ContainerState for MovableListState {
             // apply element changes
             for delta_item in diff.elements.into_iter() {
                 match delta_item {
-                    crate::delta::ElementDelta::PosChange { id, new_pos } => {
-                        let old_index = self.get_index_of_elem(id.compact());
-                        // don't need to update old list item, because it's handled by list diff already
-                        self.inner.update_pos(id.compact(), new_pos, false);
-
-                        if old_index.is_some() {
-                            if deleted_during_diff.contains(&id.compact()) {
-                                let new_index = self.get_index_of_elem(id.compact()).unwrap();
-                                let new_delta = Delta::new()
-                                    .retain(new_index)
-                                    .retain_with_meta(1, ListDeltaMeta { from_move: true });
-                                ans = ans.compose(new_delta);
-                            }
-                        } else {
-                            assert!(!inserted_elem_id_to_value.contains_key(&id.compact()));
-                            if let Some(new_index) = self.get_index_of_elem(id.compact()) {
-                                let new_value =
-                                    self.elements().get(&id.compact()).unwrap().value.clone();
-                                let new_delta = Delta::new().retain(new_index).insert_with_meta(
-                                    vec![ValueOrHandler::from_value(new_value, arena, txn, state)],
-                                    ListDeltaMeta {
-                                        from_move: deleted_during_diff.contains(&id.compact()),
-                                    },
-                                );
-                                ans = ans.compose(new_delta);
-                            }
-                        }
-                    }
-                    crate::delta::ElementDelta::ValueChange {
+                    crate::delta::ElementDelta::Update {
                         id,
-                        new_value,
+                        pos,
+                        pos_updated,
+                        value,
+                        value_updated,
                         value_id,
                     } => {
-                        self.inner
-                            .update_value(id.compact(), new_value.clone(), value_id);
-                        let index = self.get_index_of_elem(id.compact());
-                        if let Some(index) = index {
-                            ans = ans.compose(Delta::new().retain(index).delete(1).insert(vec![
-                                ValueOrHandler::from_value(new_value, arena, txn, state),
-                            ]))
+                        // Element may be dropped after snapshot encoding,
+                        // so we need to check which kind of update we need to do
+                        let elem_id = id.compact();
+                        match self.inner.elements().get(&elem_id).cloned() {
+                            Some(elem) => {
+                                // Update value if needed
+                                if elem.value != value {
+                                    self.inner.update_value(elem_id, value.clone(), value_id);
+                                    let index = self.get_index_of_elem(id.compact());
+                                    if let Some(index) = index {
+                                        ans = ans.compose(
+                                            Delta::new().retain(index).delete(1).insert(vec![
+                                                ValueOrHandler::from_value(
+                                                    value, arena, txn, state,
+                                                ),
+                                            ]),
+                                        )
+                                    }
+                                }
+
+                                // Update pos if needed
+                                if elem.pos != pos {
+                                    let inserted = self.get_index_of_elem(elem_id).is_some();
+                                    // don't need to update old list item, because it's handled by list diff already
+                                    self.inner.update_pos(elem_id, pos, false);
+
+                                    if inserted {
+                                        if deleted_during_diff.contains(&id.compact()) {
+                                            let new_index =
+                                                self.get_index_of_elem(id.compact()).unwrap();
+                                            let new_delta =
+                                                Delta::new().retain(new_index).retain_with_meta(
+                                                    1,
+                                                    ListDeltaMeta { from_move: true },
+                                                );
+                                            ans = ans.compose(new_delta);
+                                        }
+                                    } else {
+                                        assert!(
+                                            !inserted_elem_id_to_value.contains_key(&id.compact())
+                                        );
+                                        if let Some(new_index) =
+                                            self.get_index_of_elem(id.compact())
+                                        {
+                                            let new_value = self
+                                                .elements()
+                                                .get(&id.compact())
+                                                .unwrap()
+                                                .value
+                                                .clone();
+                                            let new_delta =
+                                                Delta::new().retain(new_index).insert_with_meta(
+                                                    vec![ValueOrHandler::from_value(
+                                                        new_value, arena, txn, state,
+                                                    )],
+                                                    ListDeltaMeta {
+                                                        from_move: deleted_during_diff
+                                                            .contains(&id.compact()),
+                                                    },
+                                                );
+                                            ans = ans.compose(new_delta);
+                                        }
+                                    }
+                                }
+                            }
+                            None => {
+                                // Need to create new element
+                                self.create_new_elem(elem_id, pos, value.clone(), value_id);
+                                if let Some(v) = inserted_elem_id_to_value.get(&elem_id) {
+                                    if v != &value {
+                                        let index = self.get_index_of_elem(elem_id).unwrap();
+                                        ans = ans.compose(
+                                            Delta::new().retain(index).delete(1).insert(vec![
+                                                ValueOrHandler::from_value(
+                                                    value, arena, txn, state,
+                                                ),
+                                            ]),
+                                        );
+                                    }
+                                } else if let Some(index) = self.get_index_of_elem(elem_id) {
+                                    ans = ans.compose(Delta::new().retain(index).insert(vec![
+                                        ValueOrHandler::from_value(value, arena, txn, state),
+                                    ]))
+                                }
+                            }
                         }
                     }
                     crate::delta::ElementDelta::New {
@@ -1040,6 +1104,7 @@ impl ContainerState for MovableListState {
             self.inner.check_consistency();
         }
 
+        debug!("MovableListState::apply_diff_and_convert: ans={:#?}", &ans);
         Diff::List(ans)
     }
 
