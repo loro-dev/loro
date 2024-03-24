@@ -32,6 +32,7 @@ pub mod version;
 mod error;
 #[cfg(feature = "test_utils")]
 pub mod fuzz;
+mod parent;
 mod span;
 #[cfg(test)]
 pub mod tests;

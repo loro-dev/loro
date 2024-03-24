@@ -20,10 +20,9 @@ use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use fxhash::FxHashMap;
-use loro_common::{HasCounter, HasId, IdLp, IdSpan};
+use loro_common::{ContainerID, ContainerType, HasCounter, HasId, IdLp, IdSpan, LoroValue};
 use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
-
 
 type ClientChanges = FxHashMap<PeerID, Vec<Change>>;
 pub use self::dag::FrontiersNotIncluded;
@@ -225,9 +224,10 @@ impl OpLog {
         &self.changes
     }
 
-    /// This is the only place to update the `OpLog.changes`
+    /// This is the **only** place to update the `OpLog.changes`
     pub(crate) fn insert_new_change(&mut self, mut change: Change, _: EnsureChangeDepsAreAtTheEnd) {
         self.op_groups.insert_by_change(&change);
+        self.register_container_and_parent_link(&change);
         let entry = self.changes.entry(change.id.peer).or_default();
         match entry.last_mut() {
             Some(last) => {

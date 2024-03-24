@@ -482,11 +482,6 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
 
 #[cfg(test)]
 mod failed_tests {
-    #[ctor::ctor]
-    fn init() {
-        dev_utils::setup_test_log();
-    }
-
     use super::test_multi_sites;
     use super::Action::*;
     use super::RichTextAction;

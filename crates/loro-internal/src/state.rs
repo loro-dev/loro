@@ -369,6 +369,7 @@ impl DocState {
             unreachable!()
         };
 
+        trace!("Before apply_diff {:#?}", &diffs);
         // # Revival
         //
         // A Container, if it is deleted from its parent Container, will still exist
@@ -401,10 +402,16 @@ impl DocState {
                 let Some(internal_diff) = diff.diff.as_ref() else {
                     continue;
                 };
-                self.set_parent_by_diff(internal_diff.as_internal().unwrap(), diff.idx);
             }
 
-            diffs.sort_by_cached_key(|diff| self.arena.get_depth(diff.idx));
+            diffs.sort_by_cached_key(|diff| match self.arena.get_depth(diff.idx) {
+                Some(v) => v,
+                None => {
+                    let id = self.arena.get_container_id(diff.idx).unwrap();
+                    trace!("Cannot Find {:#?}", id);
+                    unreachable!()
+                }
+            });
         }
 
         for diff in &mut diffs {
@@ -501,7 +508,7 @@ impl DocState {
 
     pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
         // set parent first, `MapContainer` will only be created for TreeID that does not contain
-        self.set_container_parent_by_op(raw_op);
+        self.set_container_parent_by_raw_op(raw_op);
         let state = get_or_create!(self, op.container);
         if self.in_txn {
             self.changed_idx_in_txn.insert(op.container);
@@ -524,100 +531,6 @@ impl DocState {
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut State> {
         self.states.values_mut()
-    }
-
-    fn set_container_parent_by_op(&mut self, raw_op: &RawOp) {
-        let container = raw_op.container;
-        match &raw_op.content {
-            RawOpContent::List(op) => {
-                if let ListOp::Insert {
-                    slice: ListSlice::RawData(list),
-                    ..
-                } = op
-                {
-                    let list = match list {
-                        std::borrow::Cow::Borrowed(list) => list.iter(),
-                        std::borrow::Cow::Owned(list) => list.iter(),
-                    };
-                    for value in list {
-                        if value.is_container() {
-                            let c = value.as_container().unwrap();
-                            let idx = self.arena.register_container(c);
-                            self.arena.set_parent(idx, Some(container));
-                        }
-                    }
-                }
-                if let ListOp::Set { elem_id: _, value } = op {
-                    if value.is_container() {
-                        let idx = self.arena.register_container(value.as_container().unwrap());
-                        self.arena.set_parent(idx, Some(container));
-                    }
-                }
-            }
-            RawOpContent::Map(MapSet { key: _, value }) => {
-                if value.is_none() {
-                    return;
-                }
-                let value = value.as_ref().unwrap();
-                if value.is_container() {
-                    let idx = self.arena.register_container(value.as_container().unwrap());
-                    self.arena.set_parent(idx, Some(container));
-                }
-            }
-            RawOpContent::Tree(TreeOp { target, .. }) => {
-                // create associated metadata container
-                // TODO: maybe we could create map container only when setting metadata
-                let container_id = target.associated_meta_container();
-                let child_idx = self.arena.register_container(&container_id);
-                self.arena.set_parent(child_idx, Some(container));
-            }
-        }
-    }
-
-    fn set_parent_by_diff(&mut self, diff: &InternalDiff, container: ContainerIdx) {
-        match diff {
-            InternalDiff::ListRaw(list) => {
-                for span in list.iter() {
-                    if let DeltaItem::Insert { insert: value, .. } = span {
-                        for slices in value.ranges.iter() {
-                            for i in slices.0.start..slices.0.end {
-                                let value = self.arena.get_value(i as usize).unwrap();
-                                if value.is_container() {
-                                    let c = value.as_container().unwrap();
-                                    let idx = self.arena.register_container(c);
-                                    self.arena.set_parent(idx, Some(container));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            InternalDiff::Map(delta) => {
-                for (_, value) in delta.updated.iter() {
-                    if let Some(LoroValue::Container(c)) = &value.value {
-                        let idx = self.arena.register_container(c);
-                        self.arena.set_parent(idx, Some(container));
-                    }
-                }
-            }
-            InternalDiff::Tree(tree) => {
-                for diff in tree.diff.iter() {
-                    let target = &diff.target;
-                    let container_id = target.associated_meta_container();
-                    let child_idx = self.arena.register_container(&container_id);
-                    self.arena.set_parent(child_idx, Some(container));
-                }
-            }
-            InternalDiff::RichtextRaw(_) => {}
-            InternalDiff::MovableList(delta) => {
-                for elem in delta.elements.iter() {
-                    if let Some(LoroValue::Container(c)) = elem.value() {
-                        let idx = self.arena.register_container(c);
-                        self.arena.set_parent(idx, Some(container));
-                    }
-                }
-            }
-        }
     }
 
     pub(crate) fn init_container(
@@ -1009,7 +922,9 @@ impl DocState {
             let s = tracing::span!(tracing::Level::INFO, "GET PATH ", ?id);
             let _e = s.enter();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                let parent_state = self.states.get(&parent_idx).unwrap();
+                let Some(parent_state) = self.states.get(&parent_idx) else {
+                    return None;
+                };
                 let Some(prop) = parent_state.get_child_index(&id) else {
                     tracing::info!("Missing in parent children");
                     return None;
