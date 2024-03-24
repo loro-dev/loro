@@ -6,7 +6,7 @@ use generic_btree::{
 };
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength as _;
-use tracing::{debug, instrument, trace};
+use tracing::{instrument};
 
 use crate::VersionVector;
 

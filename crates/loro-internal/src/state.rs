@@ -12,8 +12,7 @@ use tracing::{info, instrument};
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
     container::{
-        idx::ContainerIdx, list::list_op::ListOp, map::MapSet, richtext::config::StyleConfigMap,
-        tree::tree_op::TreeOp, ContainerIdRaw,
+        idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw,
     },
     delta::DeltaItem,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
@@ -21,7 +20,7 @@ use crate::{
     fx_map,
     handler::ValueOrHandler,
     id::PeerID,
-    op::{ListSlice, Op, RawOp, RawOpContent},
+    op::{Op, RawOp},
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
@@ -399,7 +398,7 @@ impl DocState {
             diffs.sort_by_cached_key(|diff| match self.arena.get_depth(diff.idx) {
                 Some(v) => v,
                 None => {
-                    let id = self.arena.get_container_id(diff.idx).unwrap();
+                    let _id = self.arena.get_container_id(diff.idx).unwrap();
                     unreachable!()
                 }
             });

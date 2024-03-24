@@ -98,7 +98,7 @@ impl DocState {
             }
             RawOpContent::Map(MapSet { key: _, value }) => {
                 if let Some(LoroValue::Container(c)) = value {
-                    let idx = self.arena.register_container(&c);
+                    let idx = self.arena.register_container(c);
                     self.arena.set_parent(idx, Some(container));
                 }
             }

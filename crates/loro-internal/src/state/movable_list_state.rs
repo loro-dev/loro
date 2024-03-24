@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{debug, instrument, trace};
+use tracing::{debug, instrument};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::BTree;
@@ -268,7 +268,7 @@ mod inner {
     use fxhash::{FxHashMap, FxHashSet};
     use generic_btree::{BTree, Cursor, LeafIndex, Query};
     use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroValue, PeerID};
-    use tracing::{error, instrument, trace};
+    use tracing::{error};
 
     use super::{
         list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
@@ -392,7 +392,7 @@ mod inner {
         }
 
         fn check_pending_elements_consistency(&self) -> Result<(), ()> {
-            for (list_item_id, elem_id) in self.pending_elements.iter() {
+            for (list_item_id, _elem_id) in self.pending_elements.iter() {
                 // we allow elem to point to the other pos
                 eq(self.get_list_item_by_id(*list_item_id), None)?;
             }
@@ -929,7 +929,7 @@ impl ContainerState for MovableListState {
                                     activated_values
                                         .into_iter()
                                         .map(|(elem_id, value)| {
-                                            let index = self.get_index_of_elem(elem_id);
+                                            let _index = self.get_index_of_elem(elem_id);
                                             inserted_elem_id_to_value
                                                 .insert(elem_id, value.clone());
                                             ValueOrHandler::from_value(value, arena, txn, state)

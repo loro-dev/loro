@@ -20,7 +20,7 @@ use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, ContainerType, HasCounter, HasId, IdLp, IdSpan, LoroValue};
+use loro_common::{HasCounter, HasId, IdLp, IdSpan};
 use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
 

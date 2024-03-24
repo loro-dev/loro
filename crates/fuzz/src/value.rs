@@ -2,13 +2,13 @@ use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 
 use enum_as_inner::EnumAsInner;
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::{FxHashMap};
 use loro::{
     event::{Diff, DiffEvent, ListDiffItem},
     ContainerType, Index, LoroDoc, LoroText, LoroValue, TreeExternalDiff, TreeID, ValueOrContainer,
 };
 use loro::{ContainerID, ID};
-use tracing::{debug, trace};
+use tracing::{trace};
 
 #[derive(Debug, EnumAsInner)]
 pub enum Value {
