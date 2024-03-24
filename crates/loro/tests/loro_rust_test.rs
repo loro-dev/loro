@@ -3,6 +3,12 @@ use std::{cmp::Ordering, sync::Arc};
 use loro::{FrontiersNotIncluded, LoroDoc, LoroError, ToJson};
 use loro_internal::{handler::TextDelta, id::ID, LoroResult};
 use serde_json::json;
+use tracing::{trace, trace_span};
+
+#[ctor::ctor]
+fn init() {
+    dev_utils::setup_test_log();
+}
 
 #[test]
 fn movable_list() -> Result<(), LoroError> {
@@ -240,8 +246,18 @@ fn travel_back_should_remove_styles() {
     doc.commit();
     let f2 = doc.state_frontiers();
     assert_eq!(text.to_delta(), text2.to_delta());
-    doc.checkout(&f1).unwrap(); // checkout to the middle of the start anchor op and the end anchor op
+    trace_span!("CheckoutToMiddle").in_scope(|| {
+        doc.checkout(&f1).unwrap(); // checkout to the middle of the start anchor op and the end anchor op
+    });
     doc.checkout(&f).unwrap();
+    assert_eq!(
+        text.to_delta().as_list().unwrap().len(),
+        1,
+        "should remove the bold style but got {:?}",
+        text.to_delta()
+    );
+    assert_eq!(doc.state_frontiers(), f);
+    doc.check_state_correctness_slow();
     assert_eq!(text.to_delta(), text2.to_delta());
     doc.checkout(&f2).unwrap();
     assert_eq!(text.to_delta(), text2.to_delta());

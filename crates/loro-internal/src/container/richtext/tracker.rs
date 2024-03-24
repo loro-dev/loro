@@ -6,7 +6,7 @@ use generic_btree::{
 };
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength as _;
-use tracing::{instrument};
+use tracing::{debug, instrument};
 
 use crate::VersionVector;
 
@@ -551,7 +551,7 @@ impl Tracker {
         // tracing::info!("Init: {:#?}, ", &self);
         self._checkout(from, false);
         self._checkout(to, true);
-        // debug!("Calculating Diff: {:#?}", &self);
+        debug!("Calculating Diff: {:#?}", &self);
         // self.id_to_cursor.diagnose();
 
         self.rope.get_diff()

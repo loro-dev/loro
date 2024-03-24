@@ -996,28 +996,41 @@ impl DocState {
 
     /// Check whether two [DocState]s are the same. Panic if not.
     ///
+    /// Compared to check equality on `get_deep_value`, this function also checks the equality on richtext
+    /// styles and states that are not reachable from the root.
+    ///
     /// This is only used for test.
     pub(crate) fn check_is_the_same(&mut self, other: &mut Self) {
-        let arena = self.arena.clone();
-        let f = |state: &mut State| {
-            let id = arena.idx_to_id(state.container_idx()).unwrap();
-            let value = match state {
-                State::RichtextState(s) => s.get_richtext_value(),
-                _ => state.get_value(),
-            };
-            (id, (state.container_idx(), value))
-        };
+        let self_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> = self
+            .states
+            .values_mut()
+            .map(|state: &mut State| {
+                let id = self.arena.idx_to_id(state.container_idx()).unwrap();
+                let value = match state {
+                    State::RichtextState(s) => s.get_richtext_value(),
+                    _ => state.get_value(),
+                };
+                (id, (state.container_idx(), value))
+            })
+            .collect();
+        let mut other_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> = other
+            .states
+            .values_mut()
+            .map(|state: &mut State| {
+                let id = other.arena.idx_to_id(state.container_idx()).unwrap();
+                let value = match state {
+                    State::RichtextState(s) => s.get_richtext_value(),
+                    _ => state.get_value(),
+                };
+                (id, (state.container_idx(), value))
+            })
+            .collect();
 
-        let self_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> =
-            self.states.values_mut().map(f).collect();
-        let mut other_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> =
-            other.states.values_mut().map(f).collect();
-
-        for (id, (idx, value)) in self_id_to_states {
-            let other_state = match other_id_to_states.remove(&id) {
+        for (id, (idx, this_value)) in self_id_to_states {
+            let (_, other_value) = match other_id_to_states.remove(&id) {
                 Some(x) => x,
                 None => {
-                    let is_empty = match value {
+                    let is_empty = match this_value {
                         LoroValue::List(l) => l.is_empty(),
                         LoroValue::Map(m) => m.is_empty(),
                         _ => unreachable!(),
@@ -1033,8 +1046,8 @@ impl DocState {
             };
 
             assert_eq!(
-                value,
-                other_state.1,
+                this_value,
+                other_value,
                 "id: {:?}, path: {:?}",
                 id,
                 self.get_path(idx)

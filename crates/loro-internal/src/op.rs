@@ -227,17 +227,6 @@ impl<'a> HasLamport for RichOp<'a> {
 }
 
 impl<'a> RichOp<'a> {
-    pub fn new(op: &'a Op, client_id: PeerID, lamport: Lamport, timestamp: Timestamp) -> Self {
-        RichOp {
-            op,
-            peer: client_id,
-            lamport,
-            timestamp,
-            start: 0,
-            end: op.content_len(),
-        }
-    }
-
     pub fn new_by_change(change: &Change<Op>, op: &'a Op) -> Self {
         let diff = op.counter - change.id.counter;
         RichOp {

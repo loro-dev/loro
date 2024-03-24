@@ -11,7 +11,7 @@ use std::{
 };
 
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
-use tracing::instrument;
+use tracing::{instrument, trace};
 
 use crate::{
     arena::SharedArena,
@@ -724,6 +724,7 @@ impl LoroDoc {
     ///
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
+    #[instrument(skip(self))]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
         self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
@@ -809,13 +810,11 @@ impl LoroDoc {
     /// Panic when it's not consistent
     pub fn check_state_diff_calc_consistency_slow(&self) {
         self.commit_then_stop();
-        assert!(
-            !self.is_detached(),
-            "Cannot check consistency in detached mode"
-        );
         let bytes = self.export_from(&Default::default());
         let doc = Self::new();
+        doc.detach();
         doc.import(&bytes).unwrap();
+        doc.checkout(&self.state_frontiers()).unwrap();
         let mut calculated_state = doc.app_state().try_lock().unwrap();
         let mut current_state = self.app_state().try_lock().unwrap();
         current_state.check_is_the_same(&mut calculated_state);

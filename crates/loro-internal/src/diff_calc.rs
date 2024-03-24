@@ -9,7 +9,7 @@ use loro_common::{
     ContainerID, Counter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
 };
 use smallvec::SmallVec;
-use tracing::instrument;
+use tracing::{instrument, trace};
 
 use crate::{
     container::{
@@ -593,7 +593,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 
     fn apply_change(
         &mut self,
-        _oplog: &super::oplog::OpLog,
+        oplog: &super::oplog::OpLog,
         op: crate::op::RichOp,
         vv: Option<&crate::VersionVector>,
     ) {
@@ -648,14 +648,44 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         *start as usize,
                         RichtextChunk::new_style_anchor(style_id as u32, AnchorType::Start),
                     );
+                }
+                crate::container::list::list_op::InnerListOp::StyleEnd => {
+                    let id = op.id();
+                    // PERF: this can be sped up by caching the last style op
+                    let start_op = oplog.get_op(op.id().inc(-1));
+                    let InnerListOp::StyleStart {
+                        start: _,
+                        end,
+                        key,
+                        value,
+                        info,
+                    } = start_op.unwrap().content.as_list().unwrap()
+                    else {
+                        unreachable!()
+                    };
+                    let style_id = match self.styles.last() {
+                        Some(last) if last.peer == id.peer && last.cnt == id.counter - 1 => {
+                            self.styles.len() - 1
+                        }
+                        _ => {
+                            self.styles.push(StyleOp {
+                                lamport: op.lamport() - 1,
+                                peer: id.peer,
+                                cnt: id.counter - 1,
+                                key: key.clone(),
+                                value: value.clone(),
+                                info: *info,
+                            });
+                            self.styles.len() - 1
+                        }
+                    };
                     self.tracker.insert(
-                        op.id_full().inc(1),
+                        op.id_full(),
                         // need to shift 1 because we insert the start style anchor before this pos
                         *end as usize + 1,
                         RichtextChunk::new_style_anchor(style_id as u32, AnchorType::End),
                     );
                 }
-                crate::container::list::list_op::InnerListOp::StyleEnd => {}
             },
             crate::op::InnerContent::Map(_) => unreachable!(),
             crate::op::InnerContent::Tree(_) => unreachable!(),

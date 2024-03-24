@@ -363,6 +363,12 @@ impl LoroDoc {
     pub fn log_estimate_size(&self) {
         self.doc.log_estimated_size();
     }
+
+    /// Check the correctness of the document state by comparing it with the state
+    /// calculated by applying all the history.
+    pub fn check_state_correctness_slow(&self) {
+        self.doc.check_state_diff_calc_consistency_slow()
+    }
 }
 
 /// LoroList container. It's used to model array.

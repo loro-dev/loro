@@ -15,6 +15,7 @@ use std::{
     str::Utf8Error,
     sync::Arc,
 };
+use tracing::instrument;
 
 use crate::{
     container::richtext::style_range_map::EMPTY_STYLES,
@@ -1697,6 +1698,7 @@ impl RichtextState {
     // PERF: can be splitted into two methods. One is without cursor_to_event_index
     // PERF: can be speed up a lot by detecting whether the range is in a single leaf first
     /// This is used to accept changes from DiffCalculator
+    #[instrument(skip(self, f))]
     pub(crate) fn drain_by_entity_index(
         &mut self,
         pos: usize,

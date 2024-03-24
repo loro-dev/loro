@@ -118,11 +118,21 @@ impl<'a> InternalDocDiff<'a> {
 
 pub type Path = SmallVec<[Index; 4]>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Index {
     Key(InternalString),
     Seq(usize),
     Node(TreeID),
+}
+
+impl std::fmt::Debug for Index {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Key(arg0) => write!(f, "Index::Key(\"{}\")", arg0),
+            Self::Seq(arg0) => write!(f, "Index::Seq({})", arg0),
+            Self::Node(arg0) => write!(f, "Index::Node({})", arg0),
+        }
+    }
 }
 
 impl DiffVariant {

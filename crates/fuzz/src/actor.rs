@@ -116,6 +116,7 @@ impl Actor {
             let to = &f;
             tracing::info_span!("Checkout", ?from, ?to).in_scope(|| {
                 self.loro.checkout(&f).unwrap();
+                self.loro.check_state_correctness_slow();
                 let actual = self.loro.get_deep_value();
                 assert_value_eq(v, &actual);
             });

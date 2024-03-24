@@ -20,7 +20,7 @@ use crate::{change::Lamport, delta::StyleMeta, utils::string_slice::StringSlice,
 use fugue_span::*;
 use loro_common::{Counter, IdLp, LoroValue, PeerID, ID};
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+use std::{fmt::Debug, ops::Range};
 
 pub(crate) use fugue_span::{RichtextChunk, RichtextChunkValue};
 pub(crate) use richtext_state::RichtextState;

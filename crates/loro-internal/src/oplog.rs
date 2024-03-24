@@ -15,7 +15,7 @@ use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::group::OpGroups;
 use crate::id::{Counter, PeerID, ID};
-use crate::op::{ListSlice, RawOpContent, RemoteOp, RichOp};
+use crate::op::{ListSlice, Op, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
@@ -896,6 +896,11 @@ impl OpLog {
         let lamport = change.lamport + (id_start.counter - change.id.counter) as Lamport;
         let peer = id_start.peer;
         loro_common::IdLp { peer, lamport }
+    }
+
+    pub(crate) fn get_op(&self, id: ID) -> Option<&Op> {
+        let change = self.get_change_at(id)?;
+        change.ops.get_by_atom_index(id.counter).map(|x| x.element)
     }
 }
 
