@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, trace};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::BTree;
@@ -981,7 +981,7 @@ impl ContainerState for MovableListState {
                     crate::delta::ElementDelta::Update {
                         id,
                         pos,
-                        pos_updated: _,
+                        pos_updated,
                         value,
                         value_updated: _,
                         value_id,
@@ -989,6 +989,7 @@ impl ContainerState for MovableListState {
                         // Element may be dropped after snapshot encoding,
                         // so we need to check which kind of update we need to do
                         let elem_id = id.compact();
+
                         match self.inner.elements().get(&elem_id).cloned() {
                             Some(elem) => {
                                 // Update value if needed
@@ -1007,48 +1008,39 @@ impl ContainerState for MovableListState {
                                 }
 
                                 // Update pos if needed
-                                if elem.pos != pos {
-                                    let inserted = self.get_index_of_elem(elem_id).is_some();
+                                let is_deleted = deleted_during_diff.contains(&elem_id);
+                                let is_inserted_back =
+                                    inserted_elem_id_to_value.contains_key(&elem_id);
+                                if elem.pos != pos || (is_deleted && !is_inserted_back) {
                                     // don't need to update old list item, because it's handled by list diff already
                                     self.inner.update_pos(elem_id, pos, false);
-
-                                    if inserted {
-                                        if deleted_during_diff.contains(&id.compact()) {
-                                            let new_index =
-                                                self.get_index_of_elem(id.compact()).unwrap();
-                                            let new_delta =
-                                                Delta::new().retain(new_index).retain_with_meta(
-                                                    1,
-                                                    ListDeltaMeta { from_move: true },
-                                                );
-                                            ans = ans.compose(new_delta);
-                                        }
-                                    } else {
-                                        assert!(
-                                            !inserted_elem_id_to_value.contains_key(&id.compact())
-                                        );
-                                        if let Some(new_index) =
-                                            self.get_index_of_elem(id.compact())
-                                        {
-                                            let new_value = self
-                                                .elements()
-                                                .get(&id.compact())
-                                                .unwrap()
-                                                .value
-                                                .clone();
-                                            let new_delta =
-                                                Delta::new().retain(new_index).insert_with_meta(
-                                                    vec![ValueOrHandler::from_value(
-                                                        new_value, arena, txn, state,
-                                                    )],
-                                                    ListDeltaMeta {
-                                                        from_move: deleted_during_diff
-                                                            .contains(&id.compact()),
-                                                    },
-                                                );
-                                            ans = ans.compose(new_delta);
-                                        }
+                                    if let Some(new_index) = self.get_index_of_elem(id.compact()) {
+                                        let new_value = self
+                                            .elements()
+                                            .get(&id.compact())
+                                            .unwrap()
+                                            .value
+                                            .clone();
+                                        let new_delta =
+                                            Delta::new().retain(new_index).insert_with_meta(
+                                                vec![ValueOrHandler::from_value(
+                                                    new_value, arena, txn, state,
+                                                )],
+                                                ListDeltaMeta {
+                                                    from_move: deleted_during_diff
+                                                        .contains(&id.compact()),
+                                                },
+                                            );
+                                        ans = ans.compose(new_delta);
                                     }
+                                } else if deleted_during_diff.contains(&elem_id) && is_inserted_back
+                                // add meta info if the element's list item is created by move
+                                {
+                                    let new_index = self.get_index_of_elem(id.compact()).unwrap();
+                                    let new_delta = Delta::new()
+                                        .retain(new_index)
+                                        .retain_with_meta(1, ListDeltaMeta { from_move: true });
+                                    ans = ans.compose(new_delta);
                                 }
                             }
                             None => {

@@ -833,7 +833,8 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                 this.tracker.checkout(vv);
             }
 
-            match &op.op().content {
+            let real_op = op.op();
+            match &real_op.content {
                 crate::op::InnerContent::List(l) => match l {
                     crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
                         this.tracker.insert(
@@ -852,9 +853,23 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         );
                     }
                     InnerListOp::Move { from, from_id, to } => {
-                        let from_id = oplog.idlp_to_id(*from_id).unwrap();
-                        this.tracker
-                            .move_item(op.id_full(), from_id, *from as usize, *to as usize);
+                        // TODO: PERF: this lookup can be optimized
+                        let list = oplog
+                            .op_groups
+                            .get(&real_op.container)
+                            .unwrap()
+                            .as_movable_list()
+                            .unwrap();
+                        let last_pos = list
+                            .last_pos(from_id, this.tracker.current_vv())
+                            .unwrap()
+                            .id();
+                        this.tracker.move_item(
+                            op.id_full(),
+                            last_pos,
+                            *from as usize,
+                            *to as usize,
+                        );
                     }
                     InnerListOp::Set { .. } => {
                         // don't need to update tracker here
@@ -913,12 +928,13 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     value_id: IdLp::new(value.peer, value.lamport),
                 });
             } else {
+                // TODO: PERF: can be filtered based on the list_diff and whether the pos/value are updated
                 element_changes.push(ElementDelta::Update {
                     id: *id,
                     pos: pos.value,
-                    pos_updated: old_pos.unwrap().value == pos.value,
+                    pos_updated: old_pos.unwrap().value != pos.value,
                     value: value.value.clone(),
-                    value_updated: old_value.unwrap().value == value.value,
+                    value_updated: old_value.unwrap().value != value.value,
                     value_id: IdLp::new(value.peer, value.lamport),
                 });
             }

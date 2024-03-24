@@ -808,6 +808,7 @@ impl LoroDoc {
     /// and the state calculated by diff calculator from beginning.
     ///
     /// Panic when it's not consistent
+    #[instrument(skip(self))]
     pub fn check_state_diff_calc_consistency_slow(&self) {
         self.commit_then_stop();
         let bytes = self.export_from(&Default::default());

@@ -9,6 +9,7 @@ use fxhash::FxHashMap;
 use loro_common::{
     ContainerType, Counter, HasId, HasLamport, IdLp, InternalString, LoroValue, PeerID, ID,
 };
+use tracing::{instrument, trace};
 
 use crate::{
     arena::SharedArena,
@@ -103,6 +104,12 @@ pub(crate) struct GroupedMapOpInfo<T = Option<LoroValue>> {
     pub(crate) counter: Counter,
     pub(crate) lamport: Lamport,
     pub(crate) peer: PeerID,
+}
+
+impl<T> GroupedMapOpInfo<T> {
+    pub(crate) fn id(&self) -> ID {
+        ID::new(self.peer, self.counter)
+    }
 }
 
 impl<T> PartialEq for GroupedMapOpInfo<T> {
@@ -300,12 +307,13 @@ impl MovableListOpGroup {
         key: &IdLp,
         vv: &VersionVector,
     ) -> Option<&GroupedMapOpInfo<IdLp>> {
-        self.mappings.get(key).and_then(|set| {
+        let ans = self.mappings.get(key).and_then(|set| {
             set.poses
                 .iter()
                 .rev()
                 .find(|op| vv.get(&op.peer).copied().unwrap_or(0) > op.counter)
-        })
+        });
+        ans
     }
 
     pub(crate) fn last_value(

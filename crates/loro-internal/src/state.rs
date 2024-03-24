@@ -1048,7 +1048,7 @@ impl DocState {
             assert_eq!(
                 this_value,
                 other_value,
-                "id: {:?}, path: {:?}",
+                "[self!=other] id: {:?}, path: {:?}",
                 id,
                 self.get_path(idx)
             );

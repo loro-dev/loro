@@ -76,6 +76,11 @@ impl Tracker {
         &self.applied_vv
     }
 
+    #[inline]
+    pub fn current_vv(&self) -> &VersionVector {
+        &self.current_vv
+    }
+
     pub(crate) fn insert(&mut self, mut op_id: IdFull, mut pos: usize, mut content: RichtextChunk) {
         // tracing::span!(tracing::Level::INFO, "TrackerInsert");
         if let ControlFlow::Break(_) =
