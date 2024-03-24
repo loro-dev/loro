@@ -258,6 +258,7 @@ impl Diff {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn is_empty(&self) -> bool {
         match self {
             Diff::List(s) => s.is_empty(),
@@ -267,6 +268,7 @@ impl Diff {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn concat(self, diff: Diff) -> Diff {
         match (self, diff) {
             (Diff::List(a), Diff::List(b)) => Diff::List(a.compose(b)),

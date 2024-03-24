@@ -53,11 +53,11 @@ pub enum ElementDelta {
 }
 
 impl ElementDelta {
+    #[allow(unused)]
     pub fn value(&self) -> Option<&LoroValue> {
         match self {
             ElementDelta::Update { value, .. } => Some(value),
             ElementDelta::New { new_value, .. } => Some(new_value),
-            _ => None,
         }
     }
 }

@@ -952,9 +952,7 @@ impl DocState {
             let s = tracing::span!(tracing::Level::INFO, "GET PATH ", ?id);
             let _e = s.enter();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                let Some(parent_state) = self.states.get(&parent_idx) else {
-                    return None;
-                };
+                let parent_state = self.states.get(&parent_idx)?;
                 let Some(prop) = parent_state.get_child_index(&id) else {
                     tracing::info!("Missing in parent children");
                     return None;

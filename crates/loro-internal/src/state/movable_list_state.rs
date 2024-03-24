@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{debug, instrument, trace};
+use tracing::{debug, instrument};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::BTree;
@@ -290,7 +290,6 @@ mod inner {
         pending_elements: FxHashMap<IdLp, CompactIdLp>,
     }
 
-    #[must_use]
     fn eq<T: PartialEq>(a: T, b: T) -> Result<(), ()> {
         if a == b {
             Ok(())
@@ -982,9 +981,9 @@ impl ContainerState for MovableListState {
                     crate::delta::ElementDelta::Update {
                         id,
                         pos,
-                        pos_updated,
+                        pos_updated: _,
                         value,
-                        value_updated,
+                        value_updated: _,
                         value_id,
                     } => {
                         // Element may be dropped after snapshot encoding,
