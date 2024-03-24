@@ -268,7 +268,7 @@ mod inner {
     use fxhash::{FxHashMap, FxHashSet};
     use generic_btree::{BTree, Cursor, LeafIndex, Query};
     use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroValue, PeerID};
-    use tracing::{error};
+    use tracing::error;
 
     use super::{
         list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
@@ -983,16 +983,17 @@ impl ContainerState for MovableListState {
                             }
                         } else {
                             assert!(!inserted_elem_id_to_value.contains_key(&id.compact()));
-                            let new_index = self.get_index_of_elem(id.compact()).unwrap();
-                            let new_value =
-                                self.elements().get(&id.compact()).unwrap().value.clone();
-                            let new_delta = Delta::new().retain(new_index).insert_with_meta(
-                                vec![ValueOrHandler::from_value(new_value, arena, txn, state)],
-                                ListDeltaMeta {
-                                    from_move: deleted_during_diff.contains(&id.compact()),
-                                },
-                            );
-                            ans = ans.compose(new_delta);
+                            if let Some(new_index) = self.get_index_of_elem(id.compact()) {
+                                let new_value =
+                                    self.elements().get(&id.compact()).unwrap().value.clone();
+                                let new_delta = Delta::new().retain(new_index).insert_with_meta(
+                                    vec![ValueOrHandler::from_value(new_value, arena, txn, state)],
+                                    ListDeltaMeta {
+                                        from_move: deleted_during_diff.contains(&id.compact()),
+                                    },
+                                );
+                                ans = ans.compose(new_delta);
+                            }
                         }
                     }
                     crate::delta::ElementDelta::ValueChange {
