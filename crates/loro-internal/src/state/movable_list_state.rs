@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{debug, instrument, trace};
+use tracing::{debug, instrument};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::BTree;
@@ -21,7 +21,7 @@ use crate::{
 };
 
 use self::{
-    inner::InnerState,
+    inner::{InnerState, UpdateResultFromPosChange},
     list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
 };
 
@@ -326,10 +326,10 @@ mod inner {
 
         #[allow(dead_code)]
         pub fn check_consistency(&self) {
-            let mut faled = false;
+            let mut failed = false;
             if self.check_list_item_consistency().is_err() {
                 error!("list item consistency check failed, self={:#?}", self);
-                faled = true;
+                failed = true;
             }
 
             if self.check_pending_elements_consistency().is_err() {
@@ -337,7 +337,7 @@ mod inner {
                     "pending elements consistency check failed, self={:#?}",
                     self
                 );
-                faled = true;
+                failed = true;
             }
 
             if self.check_child_container_to_elem_consistency().is_err() {
@@ -345,10 +345,10 @@ mod inner {
                     "child container to elem consistency check failed, self={:#?}",
                     self
                 );
-                faled = true;
+                failed = true;
             }
 
-            if faled {
+            if failed {
                 panic!("consistency check failed");
             }
         }
@@ -527,7 +527,7 @@ mod inner {
             })
         }
 
-        /// Draint the list items in the given range (op index).
+        /// Drain the list items in the given range (op index).
         pub fn list_drain(
             &mut self,
             range: std::ops::Range<usize>,
@@ -557,20 +557,23 @@ mod inner {
         /// The old list item will be removed if `remove_old` is true; Otherwise,
         /// it will be updated with its `pointed_by` removed.
         ///
-        /// Return whether the update is successful. It's not successful if the old pos is the same as the new pos.
+        #[must_use]
         pub fn update_pos(
             &mut self,
             elem_id: CompactIdLp,
             new_pos: IdLp,
             remove_old: bool,
-        ) -> bool {
+        ) -> UpdateResultFromPosChange {
             let mut old_item_id = None;
             if let Some(element) = self.elements.get_mut(&elem_id) {
                 if element.pos != new_pos {
                     old_item_id = Some(element.pos);
                     element.pos = new_pos;
                 } else {
-                    return false;
+                    return UpdateResultFromPosChange {
+                        activate_new_list_item: false,
+                        removed_old_list_item_leaf: None,
+                    };
                 }
             } else {
                 self.elements.insert(
@@ -583,32 +586,36 @@ mod inner {
                 );
             }
 
+            let mut ans = UpdateResultFromPosChange {
+                activate_new_list_item: true,
+                removed_old_list_item_leaf: None,
+            };
             if let Some(leaf) = self.id_to_list_leaf.get(&new_pos) {
                 self.list.update_leaf(*leaf, |elem| {
-                    let was_none = elem.pointed_by.is_none();
+                    ans.activate_new_list_item = elem.pointed_by.is_none();
+                    debug_assert!(ans.activate_new_list_item);
                     elem.pointed_by = Some(elem_id);
-                    if was_none {
-                        (true, None, None)
-                    } else {
-                        (false, None, None)
-                    }
+                    (true, None, None)
                 });
                 self.pending_elements.remove(&new_pos);
             } else {
+                ans.activate_new_list_item = false;
                 // The list item is deleted.
                 self.pending_elements.insert(new_pos, elem_id);
             }
 
             if let Some(old) = old_item_id {
                 if old.is_none() || old == new_pos {
-                    return true;
+                    return ans;
                 }
 
                 if remove_old {
                     let leaf = self.id_to_list_leaf.remove(&old).unwrap();
+                    ans.removed_old_list_item_leaf = Some(leaf);
                     let elem = self.list.remove_leaf(Cursor { leaf, offset: 0 }).unwrap();
                     assert_eq!(elem.pointed_by, Some(elem_id));
                 } else if let Some(leaf) = self.id_to_list_leaf.get(&old) {
+                    ans.removed_old_list_item_leaf = Some(*leaf);
                     let (still_valid, split) = self.list.update_leaf(*leaf, |item| {
                         item.pointed_by = None;
                         (true, None, None)
@@ -618,7 +625,7 @@ mod inner {
                 }
             }
 
-            true
+            ans
         }
 
         pub fn update_value(&mut self, elem_id: CompactIdLp, new_value: LoroValue, value_id: IdLp) {
@@ -679,6 +686,13 @@ mod inner {
         pub value: LoroValue,
         pub last_set_id: IdLp,
     }
+
+    pub(super) struct UpdateResultFromPosChange {
+        /// Whether the list item is activated by this change.
+        /// If so, the length of the list will be increased by 1 from the users' perspective.
+        pub activate_new_list_item: bool,
+        pub removed_old_list_item_leaf: Option<LeafIndex>,
+    }
 }
 
 impl MovableListState {
@@ -699,15 +713,21 @@ impl MovableListState {
         self.inner.elements()
     }
 
+    /// Return whether the list item is activated by this change.
+    ///
+    /// If so, the length of the list will be increased by 1 from the users' perspective.
+    ///
+    /// It's false when the list item is already activated or deleted.
+    #[must_use]
     fn create_new_elem(
         &mut self,
         elem_id: CompactIdLp,
         new_pos: IdLp,
         new_value: LoroValue,
         value_id: IdLp,
-    ) {
+    ) -> UpdateResultFromPosChange {
         self.inner.update_value(elem_id, new_value, value_id);
-        self.inner.update_pos(elem_id, new_pos, false);
+        self.inner.update_pos(elem_id, new_pos, false)
     }
 
     /// Return the values that are activated by the insertions of the list items, and their elem ids.
@@ -758,7 +778,8 @@ impl MovableListState {
             },
             new_pos_id,
         );
-        self.inner
+        let _ = self
+            .inner
             .update_pos(elem_id.compact(), new_pos_id.idlp(), true);
     }
 
@@ -893,6 +914,7 @@ impl ContainerState for MovableListState {
         self.list().is_empty() && self.elements().is_empty()
     }
 
+    #[instrument(skip_all)]
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
@@ -939,7 +961,6 @@ impl ContainerState for MovableListState {
                                     activated_values
                                         .into_iter()
                                         .map(|(elem_id, value)| {
-                                            let _index = self.get_index_of_elem(elem_id);
                                             inserted_elem_id_to_value
                                                 .insert(elem_id, value.clone());
                                             ValueOrHandler::from_value(value, arena, txn, state)
@@ -975,13 +996,21 @@ impl ContainerState for MovableListState {
         }
 
         {
-            // apply element changes
+            // Apply element changes
+            //
+            // In this block, we need to handle the events generated from the following sources:
+            //
+            // - The change of elem's pos that activated the list item. This creates an insert event.
+            // - The change of elem's value. This create a deletion and an insert event.
+            //
+            // It doesn't need to worry about the deletion of the list item, because it's handled by the list diff.
+
             for delta_item in diff.elements.into_iter() {
                 match delta_item {
                     crate::delta::ElementDelta::Update {
                         id,
                         pos,
-                        pos_updated,
+                        pos_updated: _,
                         value,
                         value_updated: _,
                         value_id,
@@ -1013,27 +1042,37 @@ impl ContainerState for MovableListState {
                                     inserted_elem_id_to_value.contains_key(&elem_id);
                                 if elem.pos != pos || (is_deleted && !is_inserted_back) {
                                     // don't need to update old list item, because it's handled by list diff already
-                                    self.inner.update_pos(elem_id, pos, false);
-                                    if let Some(new_index) = self.get_index_of_elem(id.compact()) {
-                                        let new_value = self
-                                            .elements()
-                                            .get(&id.compact())
-                                            .unwrap()
-                                            .value
-                                            .clone();
-                                        let new_delta =
-                                            Delta::new().retain(new_index).insert_with_meta(
-                                                vec![ValueOrHandler::from_value(
-                                                    new_value, arena, txn, state,
-                                                )],
-                                                ListDeltaMeta {
-                                                    from_move: deleted_during_diff
-                                                        .contains(&id.compact()),
-                                                },
-                                            );
-                                        ans = ans.compose(new_delta);
+                                    let result = self.inner.update_pos(elem_id, pos, false);
+                                    if let Some(leaf) = result.removed_old_list_item_leaf {
+                                        let index =
+                                            self.inner.get_index_of(leaf, IndexType::ForUser);
+                                        ans = ans
+                                            .compose(Delta::new().retain(index as usize).delete(1));
                                     }
-                                } else if deleted_during_diff.contains(&elem_id) && is_inserted_back
+                                    if result.activate_new_list_item {
+                                        if let Some(new_index) =
+                                            self.get_index_of_elem(id.compact())
+                                        {
+                                            let new_value = self
+                                                .elements()
+                                                .get(&id.compact())
+                                                .unwrap()
+                                                .value
+                                                .clone();
+                                            let new_delta =
+                                                Delta::new().retain(new_index).insert_with_meta(
+                                                    vec![ValueOrHandler::from_value(
+                                                        new_value, arena, txn, state,
+                                                    )],
+                                                    ListDeltaMeta {
+                                                        from_move: deleted_during_diff
+                                                            .contains(&id.compact()),
+                                                    },
+                                                );
+                                            ans = ans.compose(new_delta);
+                                        }
+                                    }
+                                } else if is_deleted && is_inserted_back
                                 // add meta info if the element's list item is created by move
                                 {
                                     let new_index = self.get_index_of_elem(id.compact()).unwrap();
@@ -1045,7 +1084,8 @@ impl ContainerState for MovableListState {
                             }
                             None => {
                                 // Need to create new element
-                                self.create_new_elem(elem_id, pos, value.clone(), value_id);
+                                let result =
+                                    self.create_new_elem(elem_id, pos, value.clone(), value_id);
                                 if let Some(v) = inserted_elem_id_to_value.get(&elem_id) {
                                     if v != &value {
                                         let index = self.get_index_of_elem(elem_id).unwrap();
@@ -1057,10 +1097,22 @@ impl ContainerState for MovableListState {
                                             ]),
                                         );
                                     }
-                                } else if let Some(index) = self.get_index_of_elem(elem_id) {
-                                    ans = ans.compose(Delta::new().retain(index).insert(vec![
-                                        ValueOrHandler::from_value(value, arena, txn, state),
-                                    ]))
+                                } else {
+                                    if let Some(leaf) = result.removed_old_list_item_leaf {
+                                        let index =
+                                            self.inner.get_index_of(leaf, IndexType::ForUser);
+                                        ans = ans
+                                            .compose(Delta::new().retain(index as usize).delete(1));
+                                    }
+                                    if result.activate_new_list_item {
+                                        if let Some(index) = self.get_index_of_elem(elem_id) {
+                                            ans = ans.compose(Delta::new().retain(index).insert(
+                                                vec![ValueOrHandler::from_value(
+                                                    value, arena, txn, state,
+                                                )],
+                                            ))
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1072,7 +1124,8 @@ impl ContainerState for MovableListState {
                         value_id,
                     } => {
                         let elem_id = id.compact();
-                        self.create_new_elem(elem_id, new_pos, new_value.clone(), value_id);
+                        let result =
+                            self.create_new_elem(elem_id, new_pos, new_value.clone(), value_id);
                         if let Some(v) = inserted_elem_id_to_value.get(&elem_id) {
                             if v != &new_value {
                                 let index = self.get_index_of_elem(elem_id).unwrap();
@@ -1081,10 +1134,18 @@ impl ContainerState for MovableListState {
                                         ValueOrHandler::from_value(new_value, arena, txn, state),
                                     ]));
                             }
-                        } else if let Some(index) = self.get_index_of_elem(elem_id) {
-                            ans = ans.compose(Delta::new().retain(index).insert(vec![
-                                ValueOrHandler::from_value(new_value, arena, txn, state),
-                            ]))
+                        } else {
+                            if let Some(leaf) = result.removed_old_list_item_leaf {
+                                let index = self.inner.get_index_of(leaf, IndexType::ForUser);
+                                ans = ans.compose(Delta::new().retain(index as usize).delete(1));
+                            }
+                            if result.activate_new_list_item {
+                                if let Some(index) = self.get_index_of_elem(elem_id) {
+                                    ans = ans.compose(Delta::new().retain(index).insert(vec![
+                                        ValueOrHandler::from_value(new_value, arena, txn, state),
+                                    ]))
+                                }
+                            }
                         }
                     }
                 };
@@ -1132,7 +1193,12 @@ impl ContainerState for MovableListState {
                         let elem_id = op.idlp().inc(i as i32).try_into().unwrap();
                         let pos_id = op.id_full().inc(i as i32);
                         self.inner.insert_list_item(*pos + i, pos_id);
-                        self.create_new_elem(elem_id, pos_id.idlp(), x.clone(), elem_id.to_id());
+                        let _ = self.create_new_elem(
+                            elem_id,
+                            pos_id.idlp(),
+                            x.clone(),
+                            elem_id.to_id(),
+                        );
                     }
                 }
                 _ => unreachable!(),

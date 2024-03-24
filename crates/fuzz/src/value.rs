@@ -8,6 +8,7 @@ use loro::{
     ContainerType, Index, LoroDoc, LoroText, LoroValue, TreeExternalDiff, TreeID, ValueOrContainer,
 };
 use loro::{ContainerID, ID};
+use tracing::debug;
 
 #[derive(Debug, EnumAsInner)]
 pub enum Value {
@@ -232,6 +233,7 @@ impl ApplyDiff for MovableListTracker {
     }
 
     fn apply_diff(&mut self, diff: Diff) {
+        debug!("diff={:#?} self={:#?}", &diff, &self);
         let diff = diff.as_list().unwrap();
         let mut index = 0;
         let mut maybe_from_move = FxHashMap::default();

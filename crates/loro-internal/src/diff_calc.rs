@@ -887,7 +887,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         self.list.stop_tracking(oplog, vv)
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip(self, oplog, on_new_container))]
     fn calculate_diff(
         &mut self,
         oplog: &OpLog,
