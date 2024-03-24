@@ -176,6 +176,26 @@ impl SharedArena {
         }
     }
 
+    pub fn log_all_container(&self) {
+        self.inner
+            .container_id_to_idx
+            .lock()
+            .unwrap()
+            .iter()
+            .for_each(|(id, idx)| {
+                tracing::info!("container {:?} {:?}", id, idx);
+            });
+        self.inner
+            .container_idx_to_id
+            .lock()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .for_each(|(i, id)| {
+                tracing::info!("container {} {:?}", i, id);
+            });
+    }
+
     pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
         self.inner
             .parents
@@ -375,6 +395,7 @@ impl SharedArena {
         self.inner.root_c_idx.lock().unwrap().clone()
     }
 
+    // TODO: this can return a u16 directly now, since the depths are always valid
     pub(crate) fn get_depth(&self, container: ContainerIdx) -> Option<NonZeroU16> {
         get_depth(
             container,

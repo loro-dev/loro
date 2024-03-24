@@ -73,11 +73,13 @@ pub(crate) struct InternalContainerDiff {
     // If true, this event is created by the container which was resurrected by another container
     pub(crate) bring_back: bool,
     pub(crate) is_container_deleted: bool,
-    pub(crate) diff: Option<DiffVariant>,
+    pub(crate) diff: DiffVariant,
 }
 
-#[derive(Debug, Clone, EnumAsInner)]
+#[derive(Default, Debug, Clone, EnumAsInner)]
 pub(crate) enum DiffVariant {
+    #[default]
+    None,
     Internal(InternalDiff),
     External(Diff),
 }

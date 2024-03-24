@@ -21,7 +21,7 @@ use crate::{
         },
     },
     delta::{Delta, DeltaItem, ElementDelta, MapDelta, MapValue, MovableListInnerDelta},
-    event::InternalDiff,
+    event::{DiffVariant, InternalDiff},
     op::{InnerContent, RichOp, SliceRange, SliceRanges},
     span::{HasId, HasLamport},
     version::Frontiers,
@@ -258,7 +258,7 @@ impl DiffCalculator {
                                 idx,
                                 bring_back,
                                 is_container_deleted: false,
-                                diff: Some(diff.into()),
+                                diff: diff.into(),
                             },
                         ),
                     );
@@ -283,7 +283,7 @@ impl DiffCalculator {
                             idx,
                             bring_back: true,
                             is_container_deleted: false,
-                            diff: None,
+                            diff: DiffVariant::None,
                         },
                     ),
                 );

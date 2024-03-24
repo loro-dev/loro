@@ -25,10 +25,13 @@ pub mod idx {
 
     impl std::fmt::Debug for ContainerIdx {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_tuple("ContainerIdx")
-                .field(&self.get_type())
-                .field(&self.to_index())
-                .finish()
+            write!(f, "ContainerIdx({} {})", self.get_type(), self.to_index())
+        }
+    }
+
+    impl std::fmt::Display for ContainerIdx {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "ContainerIdx({} {})", self.get_type(), self.to_index())
         }
     }
 

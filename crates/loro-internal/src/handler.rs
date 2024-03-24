@@ -72,7 +72,7 @@ pub struct TextHandler {
 
 impl std::fmt::Debug for TextHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RichtextHandler")
+        write!(f, "TextHandler {}", self.container_idx)
     }
 }
 
@@ -85,7 +85,7 @@ pub struct MapHandler {
 
 impl std::fmt::Debug for MapHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("MapHandler")
+        write!(f, "MapHandler {}", self.container_idx)
     }
 }
 
@@ -105,13 +105,13 @@ pub struct MovableListHandler {
 
 impl std::fmt::Debug for MovableListHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("MovableListHandler")
+        write!(f, "MovableListHandler {}", self.container_idx)
     }
 }
 
 impl std::fmt::Debug for ListHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("ListHandler")
+        write!(f, "ListHandler {}", self.container_idx)
     }
 }
 
@@ -125,7 +125,7 @@ pub struct TreeHandler {
 
 impl std::fmt::Debug for TreeHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("TreeHandler")
+        write!(f, "TextHandler {}", self.container_idx)
     }
 }
 

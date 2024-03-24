@@ -7,7 +7,7 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
-use tracing::{info, instrument, trace};
+use tracing::{info, instrument};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -369,7 +369,6 @@ impl DocState {
             unreachable!()
         };
 
-        trace!("Before apply_diff {:#?}", &diffs);
         // # Revival
         //
         // A Container, if it is deleted from its parent Container, will still exist
@@ -395,83 +394,119 @@ impl DocState {
         // Suppose A is revived and B is A's child, and B also needs to be revived; therefore,
         // we should process each level alternately.
 
-        let mut to_revive: FxHashSet<ContainerIdx> = FxHashSet::default();
         {
             // We need to ensure diff is processed in order
-            for diff in &diffs {
-                let Some(internal_diff) = diff.diff.as_ref() else {
-                    continue;
-                };
-            }
-
             diffs.sort_by_cached_key(|diff| match self.arena.get_depth(diff.idx) {
                 Some(v) => v,
                 None => {
                     let id = self.arena.get_container_id(diff.idx).unwrap();
-                    trace!("Cannot Find {:#?}", id);
                     unreachable!()
                 }
             });
         }
 
-        for diff in &mut diffs {
-            let Some(internal_diff) = std::mem::take(&mut diff.diff) else {
-                if is_recording {
-                    let state = get_or_create!(self, diff.idx);
-                    let extern_diff =
+        let mut to_revive_in_next_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
+        let mut to_revive_in_this_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
+        let mut last_depth = 0;
+        let len = diffs.len();
+        for mut diff in std::mem::replace(&mut diffs, Vec::with_capacity(len)) {
+            let this_depth = self.arena.get_depth(diff.idx).unwrap().get();
+            while this_depth > last_depth {
+                // Clear `to_revive` when we are going to process a new level
+                // so that we can process the revival of the next level
+                let to_create = std::mem::take(&mut to_revive_in_this_layer);
+                to_revive_in_this_layer = std::mem::take(&mut to_revive_in_next_layer);
+                for new in to_create {
+                    let state = {
+                        if !self.states.contains_key(&new) {
+                            continue;
+                        }
+                        self.states.get_mut(&new).unwrap()
+                    };
+
+                    if state.is_state_empty() {
+                        continue;
+                    }
+
+                    let external_diff =
                         state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
-                    trigger_on_new_container(&extern_diff, |cid| {
-                        trace!(?cid);
-                        to_revive.insert(cid);
+                    trigger_on_new_container(&external_diff, |cid| {
+                        to_revive_in_this_layer.insert(cid);
                     });
-                    diff.diff = Some(extern_diff.into());
+
+                    diffs.push(InternalContainerDiff {
+                        idx: new,
+                        bring_back: true,
+                        is_container_deleted: false,
+                        diff: external_diff.into(),
+                    });
                 }
-                to_revive.remove(&diff.idx);
-                continue;
-            };
-            trace!("state apply_diff diff={:#?}", &diff);
-            let idx = diff.idx;
-            if self.in_txn {
-                self.changed_idx_in_txn.insert(idx);
-            }
-            let state = get_or_create!(self, idx);
-            if is_recording {
-                // process bring_back before apply
-                let external_diff = if diff.bring_back || to_revive.contains(&idx) {
-                    state.apply_diff_and_convert(
-                        internal_diff.into_internal().unwrap(),
-                        &self.arena,
-                        &self.global_txn,
-                        &self.weak_state,
-                    );
-                    state.to_diff(&self.arena, &self.global_txn, &self.weak_state)
-                } else {
-                    state.apply_diff_and_convert(
-                        internal_diff.into_internal().unwrap(),
-                        &self.arena,
-                        &self.global_txn,
-                        &self.weak_state,
-                    )
-                };
-                trigger_on_new_container(&external_diff, |cid| {
-                    trace!(?cid);
-                    to_revive.insert(cid);
-                });
-                diff.diff = Some(external_diff.into());
-            } else {
-                state.apply_diff(
-                    internal_diff.into_internal().unwrap(),
-                    &self.arena,
-                    &self.global_txn,
-                    &self.weak_state,
-                );
+
+                last_depth += 1;
             }
 
-            to_revive.remove(&idx);
+            let idx = diff.idx;
+            let internal_diff = std::mem::take(&mut diff.diff);
+            match &internal_diff {
+                crate::event::DiffVariant::None => {
+                    if is_recording {
+                        let state = get_or_create!(self, diff.idx);
+                        let extern_diff =
+                            state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
+                        trigger_on_new_container(&extern_diff, |cid| {
+                            to_revive_in_next_layer.insert(cid);
+                        });
+                        diff.diff = extern_diff.into();
+                    }
+                }
+                crate::event::DiffVariant::Internal(_) => {
+                    if self.in_txn {
+                        self.changed_idx_in_txn.insert(idx);
+                    }
+                    let state = get_or_create!(self, idx);
+                    if is_recording {
+                        // process bring_back before apply
+                        let external_diff =
+                            if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
+                                state.apply_diff_and_convert(
+                                    internal_diff.into_internal().unwrap(),
+                                    &self.arena,
+                                    &self.global_txn,
+                                    &self.weak_state,
+                                );
+                                state.to_diff(&self.arena, &self.global_txn, &self.weak_state)
+                            } else {
+                                state.apply_diff_and_convert(
+                                    internal_diff.into_internal().unwrap(),
+                                    &self.arena,
+                                    &self.global_txn,
+                                    &self.weak_state,
+                                )
+                            };
+                        trigger_on_new_container(&external_diff, |cid| {
+                            to_revive_in_next_layer.insert(cid);
+                        });
+                        diff.diff = external_diff.into();
+                    } else {
+                        state.apply_diff(
+                            internal_diff.into_internal().unwrap(),
+                            &self.arena,
+                            &self.global_txn,
+                            &self.weak_state,
+                        );
+                    }
+                }
+                crate::event::DiffVariant::External(_) => unreachable!(),
+            }
+
+            to_revive_in_this_layer.remove(&idx);
+            diffs.push(diff);
         }
 
-        while !to_revive.is_empty() {
-            for new in std::mem::take(&mut to_revive) {
+        // Revive the last several layers
+        while !to_revive_in_this_layer.is_empty() || !to_revive_in_next_layer.is_empty() {
+            let to_create = std::mem::take(&mut to_revive_in_this_layer);
+            for new in to_create {
                 let state = {
                     if !self.states.contains_key(&new) {
                         continue;
@@ -485,21 +520,21 @@ impl DocState {
 
                 let external_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
                 trigger_on_new_container(&external_diff, |cid| {
-                    trace!(?cid);
-                    to_revive.insert(cid);
+                    to_revive_in_next_layer.insert(cid);
                 });
 
                 diffs.push(InternalContainerDiff {
                     idx: new,
                     bring_back: true,
                     is_container_deleted: false,
-                    diff: Some(external_diff.into()),
+                    diff: external_diff.into(),
                 });
             }
+
+            to_revive_in_this_layer = std::mem::take(&mut to_revive_in_next_layer);
         }
 
         diff.diff = diffs.into();
-        trace!("after apply_diff {:#?}", &diff);
         self.frontiers = (*diff.new_version).to_owned();
         if self.is_recording() {
             self.record_diff(diff)
@@ -599,11 +634,9 @@ impl DocState {
                     idx,
                     bring_back: false,
                     is_container_deleted: false,
-                    diff: Some(
-                        state
-                            .to_diff(&self.arena, &self.global_txn, &self.weak_state)
-                            .into(),
-                    ),
+                    diff: state
+                        .to_diff(&self.arena, &self.global_txn, &self.weak_state)
+                        .into(),
                 })
                 .collect();
             self.record_diff(InternalDocDiff {
@@ -865,7 +898,7 @@ impl DocState {
                 }
                 let Some((last_container_diff, _)) = containers.get_mut(&container_diff.idx) else {
                     if let Some(path) = self.get_path(container_diff.idx) {
-                        containers.insert(container_diff.idx, (container_diff.diff.unwrap(), path));
+                        containers.insert(container_diff.idx, (container_diff.diff, path));
                     } else {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
@@ -880,7 +913,7 @@ impl DocState {
                 // TODO: PERF avoid this clone
                 *last_container_diff = last_container_diff
                     .clone()
-                    .compose(container_diff.diff.unwrap())
+                    .compose(container_diff.diff)
                     .unwrap();
             }
         }

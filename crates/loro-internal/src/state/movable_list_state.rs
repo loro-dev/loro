@@ -1103,7 +1103,6 @@ impl ContainerState for MovableListState {
         Ok(())
     }
 
-    #[doc = r" Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied."]
     fn to_diff(
         &mut self,
         arena: &SharedArena,

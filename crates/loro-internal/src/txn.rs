@@ -319,7 +319,7 @@ impl Transaction {
                             idx: x.idx,
                             bring_back: false,
                             is_container_deleted: false,
-                            diff: Some(x.diff.into()),
+                            diff: (x.diff.into()),
                         })
                         .collect(),
                 ),

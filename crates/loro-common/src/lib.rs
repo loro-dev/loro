@@ -143,7 +143,7 @@ pub struct IdFull {
 /// - Normal Container: `<counter>@<client>:<type>`
 ///
 /// Note: It will be encoded into binary format, so the order of its fields should not be changed.
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize, Deserialize, EnumAsInner)]
+#[derive(Hash, PartialEq, Eq, Clone, Serialize, Deserialize, EnumAsInner)]
 pub enum ContainerID {
     /// Root container does not need an op to create. It can be created implicitly.
     Root {
@@ -155,6 +155,26 @@ pub enum ContainerID {
         counter: Counter,
         container_type: ContainerType,
     },
+}
+
+impl std::fmt::Debug for ContainerID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Root {
+                name,
+                container_type,
+            } => {
+                write!(f, "Root(\"{}\" {:?})", &name, container_type)
+            }
+            Self::Normal {
+                peer,
+                counter,
+                container_type,
+            } => {
+                write!(f, "Normal({:?} {}@{})", container_type, counter, peer,)
+            }
+        }
+    }
 }
 
 // TODO: add non_exausted
