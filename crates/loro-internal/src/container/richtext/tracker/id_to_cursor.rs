@@ -427,8 +427,11 @@ impl Cursor {
 
                 unreachable!()
             }
+            Cursor::Move { to, .. } => {
+                assert!(pos == 0);
+                Some(*to)
+            }
             Cursor::Delete(_) => unreachable!(),
-            Cursor::Move { .. } => unreachable!(),
         }
     }
 }
