@@ -243,14 +243,19 @@ impl ApplyDiff for MovableListTracker {
                 ListDiffItem::Retain { retain: len } => {
                     index += len;
                 }
-                ListDiffItem::Insert { insert: value, .. } => {
+                ListDiffItem::Insert {
+                    insert: value,
+                    is_move,
+                } => {
                     for v in value {
                         let value = match v {
                             ValueOrContainer::Container(c) => {
                                 if let Some(c) = id_to_container.remove(&c.id()) {
                                     Value::Container(c)
                                 } else {
-                                    maybe_from_move.insert(c.id().clone(), index);
+                                    if *is_move {
+                                        maybe_from_move.insert(c.id().clone(), index);
+                                    }
                                     Value::empty_container(c.get_type(), c.id())
                                 }
                             }
@@ -274,6 +279,8 @@ impl ApplyDiff for MovableListTracker {
         for (id, index) in maybe_from_move {
             if let Some(old) = id_to_container.remove(&id) {
                 self.list[index] = Value::Container(old);
+            } else {
+                panic!("not found id={:?} {:#?}", id, &id_to_container);
             }
         }
     }

@@ -985,7 +985,7 @@ impl ContainerState for MovableListState {
         debug!("InternalDiff for Movable {:#?}", &diff);
         let mut inserted_elem_id_to_value = FxHashMap::default();
         let mut ans: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
-        let mut deleted_during_diff = FxHashSet::default();
+        let mut maybe_moved = FxHashSet::default();
 
         {
             // apply list item changes
@@ -1040,7 +1040,7 @@ impl ContainerState for MovableListState {
                                 .delete(user_index_end - user_index),
                         );
                         self.inner.list_drain(index..index + delete, |id| {
-                            deleted_during_diff.insert(id);
+                            maybe_moved.insert(id);
                         });
                     }
                 }
@@ -1075,6 +1075,7 @@ impl ContainerState for MovableListState {
                             Some(elem) => {
                                 // Update value if needed
                                 if elem.value != value {
+                                    maybe_moved.remove(&elem_id);
                                     self.inner.update_value(elem_id, value.clone(), value_id);
                                     let index = self.get_index_of_elem(id.compact());
                                     if let Some(index) = index {
@@ -1089,10 +1090,12 @@ impl ContainerState for MovableListState {
                                 }
 
                                 // Update pos if needed
-                                let is_deleted = deleted_during_diff.contains(&elem_id);
+                                let is_deleted_during_this_diff = maybe_moved.contains(&elem_id);
                                 let is_inserted_back =
                                     inserted_elem_id_to_value.contains_key(&elem_id);
-                                if elem.pos != pos || (is_deleted && !is_inserted_back) {
+                                if elem.pos != pos
+                                    || (is_deleted_during_this_diff && !is_inserted_back)
+                                {
                                     // don't need to update old list item, because it's handled by list diff already
                                     let result = self.inner.update_pos(elem_id, pos, false);
                                     let result = self.inner.convert_update_to_event_pos(result);
@@ -1109,18 +1112,15 @@ impl ContainerState for MovableListState {
                                                     new_value, arena, txn, state,
                                                 )],
                                                 ListDeltaMeta {
-                                                    from_move: deleted_during_diff
-                                                        .contains(&id.compact()),
+                                                    from_move: is_deleted_during_this_diff,
                                                 },
                                             );
                                         ans = ans.compose(new_delta);
                                     }
                                     if let Some(del_index) = result.delete {
-                                        ans = ans.compose(
-                                            Delta::new().retain(del_index as usize).delete(1),
-                                        );
+                                        ans = ans.compose(Delta::new().retain(del_index).delete(1));
                                     }
-                                } else if is_deleted && is_inserted_back
+                                } else if is_deleted_during_this_diff && is_inserted_back
                                 // add meta info if the element's list item is created by move
                                 {
                                     let new_index = self.get_index_of_elem(id.compact()).unwrap();
@@ -1153,8 +1153,7 @@ impl ContainerState for MovableListState {
                                         ]))
                                     }
                                     if let Some(index) = result.delete {
-                                        ans = ans
-                                            .compose(Delta::new().retain(index as usize).delete(1));
+                                        ans = ans.compose(Delta::new().retain(index).delete(1));
                                     }
                                 }
                             }

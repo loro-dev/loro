@@ -25,7 +25,7 @@ use std::{
     ops::Deref,
     sync::{Mutex, Weak},
 };
-use tracing::{info, instrument};
+use tracing::{info, instrument, trace};
 
 #[derive(Debug, Clone, EnumAsInner, Deserialize, Serialize, PartialEq)]
 #[serde(untagged)]
@@ -663,6 +663,11 @@ impl TextHandler {
         txn: &mut Transaction,
         delta: &[TextDelta],
     ) -> LoroResult<()> {
+        trace!(
+            "apply_delta_with_txn {:#?}, self.len={}",
+            delta,
+            self.len_event()
+        );
         let mut index = 0;
         let mut marks = Vec::new();
         for d in delta {

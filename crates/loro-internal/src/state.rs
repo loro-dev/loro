@@ -7,7 +7,7 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
-use tracing::{info, instrument};
+use tracing::{info, instrument, trace, trace_span};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -401,6 +401,12 @@ impl DocState {
         let len = diffs.len();
         for mut diff in std::mem::replace(&mut diffs, Vec::with_capacity(len)) {
             let this_depth = self.arena.get_depth(diff.idx).unwrap().get();
+            trace!(
+                "calc diff for {}, depth={}, idx={}",
+                self.arena.idx_to_id(diff.idx).unwrap(),
+                this_depth,
+                diff.idx
+            );
             while this_depth > last_depth {
                 // Clear `to_revive` when we are going to process a new level
                 // so that we can process the revival of the next level
@@ -421,6 +427,7 @@ impl DocState {
                     let external_diff =
                         state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
                     trigger_on_new_container(&external_diff, |cid| {
+                        trace!(?cid);
                         to_revive_in_this_layer.insert(cid);
                     });
 
@@ -444,6 +451,7 @@ impl DocState {
                         let extern_diff =
                             state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
                         trigger_on_new_container(&extern_diff, |cid| {
+                            trace!(?cid);
                             to_revive_in_next_layer.insert(cid);
                         });
                         diff.diff = extern_diff.into();
@@ -456,8 +464,11 @@ impl DocState {
                     let state = get_or_create!(self, idx);
                     if is_recording {
                         // process bring_back before apply
+                        let span = trace_span!("handle internal recording");
+                        let _g = span.enter();
                         let external_diff =
                             if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
+                                trace!("should be revived");
                                 state.apply_diff(
                                     internal_diff.into_internal().unwrap(),
                                     &self.arena,
@@ -466,6 +477,7 @@ impl DocState {
                                 );
                                 state.to_diff(&self.arena, &self.global_txn, &self.weak_state)
                             } else {
+                                trace!("should not be revived");
                                 state.apply_diff_and_convert(
                                     internal_diff.into_internal().unwrap(),
                                     &self.arena,
@@ -474,6 +486,7 @@ impl DocState {
                                 )
                             };
                         trigger_on_new_container(&external_diff, |cid| {
+                            trace!(?cid);
                             to_revive_in_next_layer.insert(cid);
                         });
                         diff.diff = external_diff.into();
@@ -1094,6 +1107,7 @@ fn trigger_on_new_container(state_diff: &Diff, mut listener: impl FnMut(Containe
                 } = delta
                 {
                     if attributes.from_move {
+                        trace!("from move");
                         continue;
                     }
 
