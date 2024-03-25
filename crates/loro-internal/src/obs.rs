@@ -234,7 +234,7 @@ impl Observer {
 #[cfg(test)]
 mod test {
 
-    use crate::loro::LoroDoc;
+    use crate::{handler::HandlerTrait, loro::LoroDoc};
 
     use super::*;
 
