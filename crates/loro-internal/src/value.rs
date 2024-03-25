@@ -9,6 +9,7 @@ use crate::{
 
 use loro_common::ContainerType;
 pub use loro_common::LoroValue;
+use tracing::{instrument, trace};
 
 // TODO: rename this trait
 pub trait ToJson {
@@ -145,11 +146,99 @@ enum TypeHint {
 }
 
 pub trait ApplyDiff {
+    fn apply_diff_shallow(&mut self, diff: &[Diff]);
     fn apply_diff(&mut self, diff: &[Diff]);
     fn apply(&mut self, path: &Path, diff: &[Diff]);
 }
 
 impl ApplyDiff for LoroValue {
+    #[instrument(skip_all)]
+    fn apply_diff_shallow(&mut self, diff: &[Diff]) {
+        trace!("value={:#?} diff={:#?}", &self, diff);
+        match self {
+            LoroValue::String(value) => {
+                let mut s = value.to_string();
+                for item in diff.iter() {
+                    let delta = item.as_text().unwrap();
+                    let mut index = 0;
+                    for delta_item in delta.iter() {
+                        match delta_item {
+                            DeltaItem::Retain { retain: len, .. } => {
+                                index += len;
+                            }
+                            DeltaItem::Insert { insert: value, .. } => {
+                                s.insert_str(index, value.as_str());
+                                index += value.len_bytes();
+                            }
+                            DeltaItem::Delete { delete: len, .. } => {
+                                s.drain(index..index + len);
+                            }
+                        }
+                    }
+                }
+                *value = Arc::new(s);
+            }
+            LoroValue::List(seq) => {
+                let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
+                if !is_tree {
+                    let seq = Arc::make_mut(seq);
+                    for item in diff.iter() {
+                        let delta = item.as_list().unwrap();
+                        let mut index = 0;
+                        for delta_item in delta.iter() {
+                            match delta_item {
+                                DeltaItem::Retain { retain: len, .. } => {
+                                    index += len;
+                                }
+                                DeltaItem::Insert { insert: value, .. } => {
+                                    value.iter().for_each(|value| {
+                                        seq.insert(index, value.to_value());
+                                        index += 1;
+                                    });
+                                }
+                                DeltaItem::Delete { delete: len, .. } => {
+                                    seq.drain(index..index + len);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let seq = Arc::make_mut(seq);
+                    for item in diff.iter() {
+                        match item {
+                            Diff::Tree(tree) => {
+                                let mut v = TreeValue(seq);
+                                v.apply_diff(tree);
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+            LoroValue::Map(map) => {
+                for item in diff.iter() {
+                    match item {
+                        Diff::Map(diff) => {
+                            let map = Arc::make_mut(map);
+                            for (key, value) in diff.updated.iter() {
+                                match &value.value {
+                                    Some(value) => {
+                                        map.insert(key.to_string(), value.to_value());
+                                    }
+                                    None => {
+                                        map.remove(&key.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
     fn apply_diff(&mut self, diff: &[Diff]) {
         match self {
             LoroValue::String(value) => {

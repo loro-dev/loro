@@ -310,6 +310,13 @@ impl ValueOrHandler {
             ValueOrHandler::Value(value)
         }
     }
+
+    pub(crate) fn to_value(&self) -> LoroValue {
+        match self {
+            Self::Value(v) => v.clone(),
+            Self::Handler(h) => LoroValue::Container(h.id().clone()),
+        }
+    }
 }
 
 impl From<LoroValue> for ValueOrHandler {
@@ -750,7 +757,7 @@ impl ListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
-            EventHint::InsertList { len: 1 },
+            EventHint::InsertList { len: 1, pos },
             &self.inner.state,
         )
     }
@@ -807,7 +814,7 @@ impl ListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
-            EventHint::InsertList { len: 1 },
+            EventHint::InsertList { len: 1, pos },
             &self.inner.state,
         )?;
         Ok(create_handler(self, container_id))
@@ -967,7 +974,7 @@ impl MovableListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos: op_index,
             }),
-            EventHint::InsertList { len: 1 },
+            EventHint::InsertList { len: 1, pos },
             &self.inner.state,
         )
     }
@@ -1088,7 +1095,7 @@ impl MovableListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
-            EventHint::InsertList { len: 1 },
+            EventHint::InsertList { len: 1, pos },
             &self.inner.state,
         )?;
         Ok(create_handler(self, container_id))

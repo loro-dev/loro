@@ -88,6 +88,7 @@ pub(super) enum EventHint {
     },
     InsertList {
         len: u32,
+        pos: usize,
     },
     SetList {
         index: usize,
@@ -142,7 +143,9 @@ impl generic_btree::rle::Mergeable for EventHint {
                     ..
                 },
             ) => *pos + *event_len == *r_pos && styles == r_styles,
-            (EventHint::InsertList { .. }, EventHint::InsertList { .. }) => true,
+            (EventHint::InsertList { pos, len }, EventHint::InsertList { pos: pos_right, .. }) => {
+                pos + *len as usize == *pos_right
+            }
             // We don't merge delete text because it's hard to infer the correct pos to split:
             // `range` param is in unicode range, but the delete text event is in UTF-16 range.
             // Without the original text, it's impossible to convert the range.
@@ -171,7 +174,10 @@ impl generic_btree::rle::Mergeable for EventHint {
                 *len += *r_len;
                 *event_len += *r_event_len;
             }
-            (EventHint::InsertList { len }, EventHint::InsertList { len: r_len }) => *len += *r_len,
+            (
+                EventHint::InsertList { len, pos: _ },
+                EventHint::InsertList { len: r_len, pos: _ },
+            ) => *len += *r_len,
             (EventHint::DeleteList(l), EventHint::DeleteList(r)) => l.merge(r, &()),
             (
                 EventHint::DeleteText { span, unicode_len },
@@ -588,9 +594,11 @@ fn change_to_diff(
                             .delete(span.len()),
                     ),
                 }),
-                EventHint::InsertList { .. } => {
+                EventHint::InsertList { pos, .. } => {
+                    // We should use pos from event hint because index in op may
+                    // be using op index for the MovableList
                     for op in ops.iter() {
-                        let (range, pos) = op.content.as_list().unwrap().as_insert().unwrap();
+                        let (range, _) = op.content.as_list().unwrap().as_insert().unwrap();
                         let values = arena
                             .get_values(range.to_range())
                             .into_iter()
@@ -598,7 +606,7 @@ fn change_to_diff(
                             .collect::<Vec<_>>();
                         ans.push(TxnContainerDiff {
                             idx: op.container,
-                            diff: Diff::List(Delta::new().retain(*pos).insert(values)),
+                            diff: Diff::List(Delta::new().retain(pos).insert(values)),
                         })
                     }
                 }

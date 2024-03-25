@@ -75,6 +75,7 @@ pub(crate) trait ContainerState: Clone {
 
     fn is_state_empty(&self) -> bool;
 
+    #[must_use]
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
@@ -391,16 +392,8 @@ impl DocState {
         // Suppose A is revived and B is A's child, and B also needs to be revived; therefore,
         // we should process each level alternately.
 
-        {
-            // We need to ensure diff is processed in order
-            diffs.sort_by_cached_key(|diff| match self.arena.get_depth(diff.idx) {
-                Some(v) => v,
-                None => {
-                    let _id = self.arena.get_container_id(diff.idx).unwrap();
-                    unreachable!()
-                }
-            });
-        }
+        // We need to ensure diff is processed in order
+        diffs.sort_by_cached_key(|diff| self.arena.get_depth(diff.idx).unwrap());
 
         let mut to_revive_in_next_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
         let mut to_revive_in_this_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
@@ -465,7 +458,7 @@ impl DocState {
                         // process bring_back before apply
                         let external_diff =
                             if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
-                                state.apply_diff_and_convert(
+                                state.apply_diff(
                                     internal_diff.into_internal().unwrap(),
                                     &self.arena,
                                     &self.global_txn,

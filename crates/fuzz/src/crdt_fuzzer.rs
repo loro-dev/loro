@@ -89,17 +89,21 @@ impl CRDTFuzzer {
         match action {
             Action::SyncAll => {
                 for i in 1..self.site_num() {
-                    let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
-                    a.loro
-                        .import(&b.loro.export_from(&a.loro.oplog_vv()))
-                        .unwrap();
+                    info_span!("importing to 0").in_scope(|| {
+                        let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
+                        a.loro
+                            .import(&b.loro.export_from(&a.loro.oplog_vv()))
+                            .unwrap();
+                    });
                 }
 
                 for i in 1..self.site_num() {
-                    let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
-                    b.loro
-                        .import(&a.loro.export_from(&b.loro.oplog_vv()))
-                        .unwrap();
+                    info_span!("importing to", i).in_scope(|| {
+                        let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
+                        b.loro
+                            .import(&a.loro.export_from(&b.loro.oplog_vv()))
+                            .unwrap();
+                    });
                 }
                 self.actors.iter_mut().for_each(|a| a.record_history());
             }
