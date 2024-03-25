@@ -10,7 +10,8 @@ use loro_internal::{
     id::{Counter, TreeID, ID},
     obs::SubID,
     version::Frontiers,
-    ContainerType, DiffEvent, LoroDoc, LoroValue, VersionVector as InternalVersionVector,
+    ContainerType, DiffEvent, HandlerTrait, LoroDoc, LoroValue,
+    VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};

@@ -11,7 +11,10 @@ pub mod diff_calc;
 pub mod handler;
 pub use event::{ContainerDiff, DiffEvent, DocDiff};
 pub use fxhash::FxHashMap;
-pub use handler::{ListHandler, MapHandler, MovableListHandler, TextHandler, TreeHandler};
+pub use handler::{
+    BasicHandler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextHandler,
+    TreeHandler,
+};
 pub use loro::LoroDoc;
 pub use oplog::OpLog;
 pub use state::DocState;

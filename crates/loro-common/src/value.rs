@@ -396,7 +396,7 @@ pub mod wasm {
 
                 map.into_js_result().unwrap()
             }
-            LoroValue::Container(container_id) => JsValue::from(container_id),
+            LoroValue::Container(container_id) => JsValue::from(&container_id),
         }
     }
 
@@ -447,8 +447,8 @@ pub mod wasm {
         }
     }
 
-    impl From<ContainerID> for JsValue {
-        fn from(id: ContainerID) -> Self {
+    impl From<&ContainerID> for JsValue {
+        fn from(id: &ContainerID) -> Self {
             JsValue::from_str(id.to_string().as_str())
         }
     }

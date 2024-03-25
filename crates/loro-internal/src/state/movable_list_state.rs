@@ -1429,7 +1429,7 @@ struct EncodedSnapshot {
 
 #[cfg(test)]
 mod test {
-    use crate::{LoroDoc, ToJson};
+    use crate::{HandlerTrait, LoroDoc, ToJson};
     use serde_json::json;
 
     #[test]

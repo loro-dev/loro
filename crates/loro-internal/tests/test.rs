@@ -7,7 +7,7 @@ use loro_internal::{
     event::Diff,
     handler::{Handler, TextDelta, ValueOrHandler},
     version::Frontiers,
-    ApplyDiff, LoroDoc, ToJson,
+    ApplyDiff, HandlerTrait, LoroDoc, ToJson,
 };
 use serde_json::json;
 
@@ -183,7 +183,7 @@ fn list() {
 
     let cid = map.id();
     let id = a.get_list("list").get(1);
-    assert_eq!(id.as_ref().unwrap().as_container().unwrap(), &cid);
+    assert_eq!(id.as_ref().unwrap().as_container().unwrap(), cid);
     let map = a.get_map(id.unwrap().into_container().unwrap());
     let new_pos = a.get_map(map.get("pos").unwrap().into_container().unwrap());
     assert_eq!(
@@ -220,7 +220,7 @@ fn richtext_mark_event() {
     a.commit_then_stop();
     let b = LoroDoc::new_auto_commit();
     b.subscribe(
-        &a.get_text("text").id(),
+        a.get_text("text").id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(

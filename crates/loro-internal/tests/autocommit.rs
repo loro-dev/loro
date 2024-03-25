@@ -1,5 +1,5 @@
 use loro_common::ID;
-use loro_internal::{version::Frontiers, LoroDoc, ToJson};
+use loro_internal::{version::Frontiers, HandlerTrait, LoroDoc, ToJson};
 use serde_json::json;
 
 #[test]

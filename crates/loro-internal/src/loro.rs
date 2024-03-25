@@ -22,7 +22,7 @@ use crate::{
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    handler::{MovableListHandler, TextHandler, TreeHandler},
+    handler::{Handler, MovableListHandler, TextHandler, TreeHandler},
     id::PeerID,
     oplog::dag::FrontiersNotIncluded,
     version::Frontiers,
@@ -101,7 +101,7 @@ impl LoroDoc {
     /// If enabled, the Unix timestamp will be recorded for each change automatically.
     ///
     /// You can also set each timestamp manually when you commit a change.
-    /// The timstamp manually set will override the automatic one.
+    /// The timestamp manually set will override the automatic one.
     ///
     /// NOTE: Timestamps are forced to be in ascending order.
     /// If you commit a new change with a timestamp that is less than the existing one,
@@ -560,40 +560,75 @@ impl LoroDoc {
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
-        let idx = self.get_container_idx(id, ContainerType::Text);
-        TextHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
+        let id = id.into_container_id(&self.arena, ContainerType::Text);
+        Handler::new(
+            id,
+            self.arena.clone(),
+            self.get_global_txn(),
+            Arc::downgrade(&self.state),
+        )
+        .into_text()
+        .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
-        let idx = self.get_container_idx(id, ContainerType::List);
-        ListHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
+        let id = id.into_container_id(&self.arena, ContainerType::List);
+        Handler::new(
+            id,
+            self.arena.clone(),
+            self.get_global_txn(),
+            Arc::downgrade(&self.state),
+        )
+        .into_list()
+        .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> MovableListHandler {
-        let idx = self.get_container_idx(id, ContainerType::MovableList);
-        MovableListHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
+        let id = id.into_container_id(&self.arena, ContainerType::MovableList);
+        Handler::new(
+            id,
+            self.arena.clone(),
+            self.get_global_txn(),
+            Arc::downgrade(&self.state),
+        )
+        .into_movable_list()
+        .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
-        let idx = self.get_container_idx(id, ContainerType::Map);
-        MapHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
+        let id = id.into_container_id(&self.arena, ContainerType::Map);
+        Handler::new(
+            id,
+            self.arena.clone(),
+            self.get_global_txn(),
+            Arc::downgrade(&self.state),
+        )
+        .into_map()
+        .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
-        let idx = self.get_container_idx(id, ContainerType::Tree);
-        TreeHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
+        let id = id.into_container_id(&self.arena, ContainerType::Tree);
+        Handler::new(
+            id,
+            self.arena.clone(),
+            self.get_global_txn(),
+            Arc::downgrade(&self.state),
+        )
+        .into_tree()
+        .unwrap()
     }
 
     /// This is for debugging purpose. It will travel the whole oplog

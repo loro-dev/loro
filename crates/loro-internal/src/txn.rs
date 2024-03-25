@@ -23,7 +23,7 @@ use crate::{
         Delta, ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem,
     },
     event::{Diff, ListDeltaMeta},
-    handler::ValueOrHandler,
+    handler::{Handler, ValueOrHandler},
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
@@ -389,29 +389,57 @@ impl Transaction {
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
-        let idx = self.get_container_idx(id, ContainerType::Text);
-        TextHandler::new(self.global_txn.clone(), idx, Arc::downgrade(&self.state))
+        let id = id.into_container_id(&self.arena, ContainerType::Text);
+        Handler::new(
+            id,
+            self.arena.clone(),
+            self.global_txn.clone(),
+            Arc::downgrade(&self.state),
+        )
+        .into_text()
+        .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
-        let idx = self.get_container_idx(id, ContainerType::List);
-        ListHandler::new(self.global_txn.clone(), idx, Arc::downgrade(&self.state))
+        let id = id.into_container_id(&self.arena, ContainerType::List);
+        Handler::new(
+            id,
+            self.arena.clone(),
+            self.global_txn.clone(),
+            Arc::downgrade(&self.state),
+        )
+        .into_list()
+        .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
-        let idx = self.get_container_idx(id, ContainerType::Map);
-        MapHandler::new(self.global_txn.clone(), idx, Arc::downgrade(&self.state))
+        let id = id.into_container_id(&self.arena, ContainerType::Map);
+        Handler::new(
+            id,
+            self.arena.clone(),
+            self.global_txn.clone(),
+            Arc::downgrade(&self.state),
+        )
+        .into_map()
+        .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
-        let idx = self.get_container_idx(id, ContainerType::Tree);
-        TreeHandler::new(self.global_txn.clone(), idx, Arc::downgrade(&self.state))
+        let id = id.into_container_id(&self.arena, ContainerType::Tree);
+        Handler::new(
+            id,
+            self.arena.clone(),
+            self.global_txn.clone(),
+            Arc::downgrade(&self.state),
+        )
+        .into_tree()
+        .unwrap()
     }
 
     fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {

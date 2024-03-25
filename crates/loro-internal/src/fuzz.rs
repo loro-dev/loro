@@ -8,6 +8,7 @@ use crate::{
     array_mut_ref,
     delta::{Delta, DeltaItem, StyleMeta},
     event::Diff,
+    handler::HandlerTrait,
     loro::LoroDoc,
     state::ContainerState,
     utils::string_slice::StringSlice,
@@ -387,12 +388,6 @@ fn check_eq(site_a: &mut LoroDoc, site_b: &mut LoroDoc) {
             );
         }
 
-        text_a.with_state(|s| {
-            dbg!(&s.state);
-        });
-        text_b.with_state(|s| {
-            dbg!(&s.state);
-        });
         assert_eq!(
             value_a,
             value_b,
@@ -551,9 +546,9 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     for (i, (site, text)) in sites.iter().zip(texts.iter()).enumerate() {
         let s = tracing::span!(tracing::Level::INFO, "Check {}", i);
         let _e = s.enter();
-        let diff = site.get_text("text").with_state_mut(|s| {
-            s.to_diff(site.arena(), &site.get_global_txn(), &site.weak_state())
-        });
+        let diff = site
+            .get_text("text")
+            .with_state(|s| s.to_diff(site.arena(), &site.get_global_txn(), &site.weak_state()));
         let mut diff = diff.into_text().unwrap();
         compact(&mut diff);
         let mut text = text.lock().unwrap();
