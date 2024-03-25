@@ -17,7 +17,7 @@ use crate::{
 use crate::{
     delta::TreeValue,
     event::{Diff, Index},
-    handler::TreeHandler,
+    handler::{HandlerTrait, TreeHandler},
     loro::LoroDoc,
     value::{unresolved_to_collection, ToJson},
     version::Frontiers,
@@ -355,16 +355,16 @@ impl Actionable for Vec<Actor> {
                 let (a, b) = array_mut_ref!(self, [*from as usize, *to as usize]);
                 let mut visited = HashSet::new();
                 a.map_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.list_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.text_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.tree_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
 
                 a.loro
@@ -432,16 +432,16 @@ impl Actionable for Vec<Actor> {
                 let mut visited = HashSet::new();
                 let a = &mut self[0];
                 a.map_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.list_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.text_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.tree_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
 
                 for i in 1..self.len() {

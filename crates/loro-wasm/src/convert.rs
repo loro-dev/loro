@@ -180,7 +180,7 @@ pub fn convert(value: LoroValue) -> JsValue {
 
             map.into_js_result().unwrap()
         }
-        LoroValue::Container(container_id) => JsValue::from(container_id),
+        LoroValue::Container(container_id) => JsValue::from(&container_id),
         LoroValue::Binary(binary) => {
             let binary = Arc::try_unwrap(binary).unwrap_or_else(|m| (*m).clone());
             let arr = Uint8Array::new_with_length(binary.len() as u32);

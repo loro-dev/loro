@@ -9,7 +9,7 @@ use crate::{
     },
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
-    state::{RichtextState, TreeParentId},
+    state::{State, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
 };
@@ -61,57 +61,150 @@ impl From<&DeltaItem<StringSlice, StyleMeta>> for TextDelta {
     }
 }
 
+pub trait HandlerTrait {
+    fn inner(&self) -> &BasicHandler;
+
+    fn get_value(&self) -> LoroValue {
+        self.inner()
+            .state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_value_by_idx(self.inner().container_idx)
+    }
+
+    fn get_deep_value(&self) -> LoroValue {
+        self.inner()
+            .state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_container_deep_value(self.inner().container_idx)
+    }
+
+    fn idx(&self) -> ContainerIdx {
+        self.inner().container_idx
+    }
+
+    fn id(&self) -> &ContainerID {
+        &self.inner().id
+    }
+
+    fn with_state<R>(&self, f: impl FnOnce(&mut State) -> R) -> R {
+        let state = self.inner().state.upgrade().unwrap();
+        let mut guard = state.lock().unwrap();
+        guard.with_state_mut(self.idx(), f)
+    }
+
+    fn with_txn<R>(&self, f: impl FnOnce(&mut Transaction) -> LoroResult<R>) -> LoroResult<R> {
+        with_txn(&self.inner().txn, f)
+    }
+}
+
+fn create_handler(handler: &impl HandlerTrait, id: ContainerID) -> Handler {
+    Handler::new(
+        id,
+        handler.inner().arena.clone(),
+        handler.inner().txn.clone(),
+        handler.inner().state.clone(),
+    )
+}
+
+/// Flatten attributes that allow overlap
+#[derive(Clone)]
+pub struct BasicHandler {
+    id: ContainerID,
+    arena: SharedArena,
+    container_idx: ContainerIdx,
+    txn: Weak<Mutex<Option<Transaction>>>,
+    state: Weak<Mutex<DocState>>,
+}
+
+impl BasicHandler {
+    #[inline]
+    fn with_doc_state<R>(&self, f: impl FnOnce(&mut DocState) -> R) -> R {
+        let state = self.state.upgrade().unwrap();
+        let mut guard = state.lock().unwrap();
+        f(&mut guard)
+    }
+
+    fn with_txn(
+        &self,
+        f: impl FnOnce(&mut Transaction) -> Result<(), LoroError>,
+    ) -> Result<(), LoroError> {
+        with_txn(&self.txn, f)
+    }
+}
+
 /// Flatten attributes that allow overlap
 #[derive(Clone)]
 pub struct TextHandler {
-    txn: Weak<Mutex<Option<Transaction>>>,
-    pub(crate) container_idx: ContainerIdx,
-    state: Weak<Mutex<DocState>>,
+    inner: BasicHandler,
+}
+
+impl HandlerTrait for TextHandler {
+    fn inner(&self) -> &BasicHandler {
+        &self.inner
+    }
 }
 
 impl std::fmt::Debug for TextHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RichtextHandler")
+        write!(f, "TextHandler {}", self.inner.id)
     }
 }
 
 #[derive(Clone)]
 pub struct MapHandler {
-    txn: Weak<Mutex<Option<Transaction>>>,
-    pub(crate) container_idx: ContainerIdx,
-    state: Weak<Mutex<DocState>>,
+    inner: BasicHandler,
+}
+
+impl HandlerTrait for MapHandler {
+    fn inner(&self) -> &BasicHandler {
+        &self.inner
+    }
 }
 
 impl std::fmt::Debug for MapHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("MapHandler")
+        write!(f, "MapHandler {}", self.inner.id)
     }
 }
 
 #[derive(Clone)]
 pub struct ListHandler {
-    txn: Weak<Mutex<Option<Transaction>>>,
-    pub(crate) container_idx: ContainerIdx,
-    state: Weak<Mutex<DocState>>,
+    inner: BasicHandler,
 }
 
 impl std::fmt::Debug for ListHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("ListHandler")
+        write!(f, "ListHandler {}", self.inner.id)
+    }
+}
+
+impl HandlerTrait for ListHandler {
+    fn inner(&self) -> &BasicHandler {
+        &self.inner
     }
 }
 
 ///
 #[derive(Clone)]
 pub struct TreeHandler {
-    txn: Weak<Mutex<Option<Transaction>>>,
-    pub(crate) container_idx: ContainerIdx,
-    state: Weak<Mutex<DocState>>,
+    inner: BasicHandler,
+}
+
+impl HandlerTrait for TreeHandler {
+    fn inner(&self) -> &BasicHandler {
+        &self.inner
+    }
 }
 
 impl std::fmt::Debug for TreeHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("TreeHandler")
+        write!(f, "TreeHandler {}", self.inner.id)
     }
 }
 
@@ -124,12 +217,44 @@ pub enum Handler {
 }
 
 impl Handler {
+    pub(crate) fn new(
+        id: ContainerID,
+        arena: SharedArena,
+        txn: Weak<Mutex<Option<Transaction>>>,
+        state: Weak<Mutex<DocState>>,
+    ) -> Self {
+        let kind = id.container_type();
+        let handler = BasicHandler {
+            container_idx: arena.register_container(&id),
+            id,
+            txn,
+            arena,
+            state,
+        };
+
+        match kind {
+            ContainerType::Map => Self::Map(MapHandler { inner: handler }),
+            ContainerType::List => Self::List(ListHandler { inner: handler }),
+            ContainerType::Tree => Self::Tree(TreeHandler { inner: handler }),
+            ContainerType::Text => Self::Text(TextHandler { inner: handler }),
+        }
+    }
+
+    pub fn id(&self) -> &ContainerID {
+        match self {
+            Self::Map(x) => &x.inner.id,
+            Self::List(x) => &x.inner.id,
+            Self::Text(x) => &x.inner.id,
+            Self::Tree(x) => &x.inner.id,
+        }
+    }
+
     pub fn container_idx(&self) -> ContainerIdx {
         match self {
-            Self::Map(x) => x.container_idx,
-            Self::List(x) => x.container_idx,
-            Self::Text(x) => x.container_idx,
-            Self::Tree(x) => x.container_idx,
+            Self::Map(x) => x.inner.container_idx,
+            Self::List(x) => x.inner.container_idx,
+            Self::Text(x) => x.inner.container_idx,
+            Self::Tree(x) => x.inner.container_idx,
         }
     }
 
@@ -139,21 +264,6 @@ impl Handler {
             Self::List(_) => ContainerType::List,
             Self::Text(_) => ContainerType::Text,
             Self::Tree(_) => ContainerType::Tree,
-        }
-    }
-}
-
-impl Handler {
-    pub(crate) fn new(
-        txn: Weak<Mutex<Option<Transaction>>>,
-        idx: ContainerIdx,
-        state: Weak<Mutex<DocState>>,
-    ) -> Self {
-        match idx.get_type() {
-            ContainerType::Map => Self::Map(MapHandler::new(txn, idx, state)),
-            ContainerType::List => Self::List(ListHandler::new(txn, idx, state)),
-            ContainerType::Tree => Self::Tree(TreeHandler::new(txn, idx, state)),
-            ContainerType::Text => Self::Text(TextHandler::new(txn, idx, state)),
         }
     }
 }
@@ -172,8 +282,7 @@ impl ValueOrHandler {
         state: &Weak<Mutex<DocState>>,
     ) -> Self {
         if let LoroValue::Container(c) = value {
-            let idx = arena.id_to_idx(&c).unwrap();
-            ValueOrHandler::Handler(Handler::new(txn.clone(), idx, state.clone()))
+            ValueOrHandler::Handler(Handler::new(c, arena.clone(), txn.clone(), state.clone()))
         } else {
             ValueOrHandler::Value(value)
         }
@@ -181,48 +290,8 @@ impl ValueOrHandler {
 }
 
 impl TextHandler {
-    pub fn new(
-        txn: Weak<Mutex<Option<Transaction>>>,
-        idx: ContainerIdx,
-        state: Weak<Mutex<DocState>>,
-    ) -> Self {
-        assert_eq!(idx.get_type(), ContainerType::Text);
-        Self {
-            txn,
-            container_idx: idx,
-            state,
-        }
-    }
-
-    pub fn get_value(&self) -> LoroValue {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .get_value_by_idx(self.container_idx)
-    }
-
     pub fn get_richtext_value(&self) -> LoroValue {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state_mut(self.container_idx, |state| {
-                state.as_richtext_state_mut().unwrap().get_richtext_value()
-            })
-    }
-
-    pub fn id(&self) -> ContainerID {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .arena
-            .idx_to_id(self.container_idx)
-            .unwrap()
+        self.with_state(|state| state.as_richtext_state_mut().unwrap().get_richtext_value())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -230,83 +299,33 @@ impl TextHandler {
     }
 
     pub fn len_utf8(&self) -> usize {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state_mut(self.container_idx, |state| {
-                state.as_richtext_state_mut().unwrap().len_utf8()
-            })
+        self.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf8())
     }
 
     pub fn len_utf16(&self) -> usize {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state_mut(self.container_idx, |state| {
-                state.as_richtext_state_mut().unwrap().len_utf16()
-            })
+        self.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf16())
     }
 
     pub fn len_unicode(&self) -> usize {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state_mut(self.container_idx, |state| {
-                state.as_richtext_state_mut().unwrap().len_unicode()
-            })
+        self.with_state(|state| state.as_richtext_state_mut().unwrap().len_unicode())
     }
 
     /// if `wasm` feature is enabled, it is a UTF-16 length
     /// otherwise, it is a Unicode length
     pub fn len_event(&self) -> usize {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state_mut(self.container_idx, |state| {
-                if cfg!(feature = "wasm") {
-                    state.as_richtext_state_mut().unwrap().len_utf16()
-                } else {
-                    state.as_richtext_state_mut().unwrap().len_unicode()
-                }
-            })
-    }
-
-    pub(crate) fn with_state<R>(&self, f: impl FnOnce(&RichtextState) -> R) -> R {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                let state = state.as_richtext_state().unwrap();
-                f(state)
-            })
-    }
-
-    pub(crate) fn with_state_mut<R>(&self, f: impl FnOnce(&mut RichtextState) -> R) -> R {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state_mut(self.container_idx, |state| {
-                let state = state.as_richtext_state_mut().unwrap();
-                f(state)
-            })
+        self.with_state(|state| {
+            if cfg!(feature = "wasm") {
+                state.as_richtext_state_mut().unwrap().len_utf16()
+            } else {
+                state.as_richtext_state_mut().unwrap().len_unicode()
+            }
+        })
     }
 
     pub fn diagnose(&self) {
-        self.with_state(|s| {
-            s.diagnose();
-        })
+        todo!();
+
+        // self.inner.diagnose();
     }
 
     /// `pos` is a Event Index:
@@ -316,7 +335,7 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn insert(&self, pos: usize, s: &str) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.insert_with_txn(txn, pos, s))
+        self.inner.with_txn(|txn| self.insert_with_txn(txn, pos, s))
     }
 
     /// `pos` is a Event Index:
@@ -348,18 +367,12 @@ impl TextHandler {
             });
         }
 
-        let (entity_index, styles) = self
-            .state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state_mut(self.container_idx, |state| {
-                let richtext_state = &mut state.as_richtext_state_mut().unwrap();
-                let pos = richtext_state.get_entity_index_for_text_insert(pos);
-                let styles = richtext_state.get_styles_at_entity_index(pos);
-                (pos, styles)
-            });
+        let (entity_index, styles) = self.with_state(|state| {
+            let richtext_state = state.as_richtext_state_mut().unwrap();
+            let pos = richtext_state.get_entity_index_for_text_insert(pos);
+            let styles = richtext_state.get_styles_at_entity_index(pos);
+            (pos, styles)
+        });
 
         let mut override_styles = Vec::new();
         if let Some(attr) = attr {
@@ -392,7 +405,7 @@ impl TextHandler {
         };
 
         txn.apply_local_op(
-            self.container_idx,
+            self.inner.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
                 slice: ListSlice::RawStr {
                     str: Cow::Borrowed(s),
@@ -406,7 +419,7 @@ impl TextHandler {
                 unicode_len: unicode_len as u32,
                 event_len: event_len as u32,
             },
-            &self.state,
+            &self.inner.state,
         )?;
 
         Ok(override_styles)
@@ -419,7 +432,8 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.delete_with_txn(txn, pos, len))
+        self.inner
+            .with_txn(|txn| self.delete_with_txn(txn, pos, len))
     }
 
     /// `pos` is a Event Index:
@@ -440,23 +454,17 @@ impl TextHandler {
 
         let s = tracing::span!(tracing::Level::INFO, "delete pos={} len={}", pos, len);
         let _e = s.enter();
-        let ranges = self
-            .state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state_mut(self.container_idx, |state| {
-                let richtext_state = state.as_richtext_state_mut().unwrap();
-                richtext_state.get_text_entity_ranges_in_event_index_range(pos, len)
-            });
+        let ranges = self.with_state(|state| {
+            let richtext_state = state.as_richtext_state_mut().unwrap();
+            richtext_state.get_text_entity_ranges_in_event_index_range(pos, len)
+        });
 
         debug_assert_eq!(ranges.iter().map(|x| x.event_len).sum::<usize>(), len);
         let mut event_end = (pos + len) as isize;
         for range in ranges.iter().rev() {
             let event_start = event_end - range.event_len as isize;
             txn.apply_local_op(
-                self.container_idx,
+                self.inner.container_idx,
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
                     range.id_start,
                     range.entity_start as isize,
@@ -469,7 +477,7 @@ impl TextHandler {
                     },
                     unicode_len: range.entity_len(),
                 },
-                &self.state,
+                &self.inner.state,
             )?;
             event_end = event_start;
         }
@@ -490,9 +498,8 @@ impl TextHandler {
         key: impl Into<InternalString>,
         value: LoroValue,
     ) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| {
-            self.mark_with_txn(txn, start, end, key, value, false)
-        })
+        self.inner
+            .with_txn(|txn| self.mark_with_txn(txn, start, end, key, value, false))
     }
 
     /// `start` and `end` are [Event Index]s:
@@ -507,9 +514,8 @@ impl TextHandler {
         end: usize,
         key: impl Into<InternalString>,
     ) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| {
-            self.mark_with_txn(txn, start, end, key, LoroValue::Null, true)
-        })
+        self.inner
+            .with_txn(|txn| self.mark_with_txn(txn, start, end, key, LoroValue::Null, true))
     }
 
     /// `start` and `end` are [Event Index]s:
@@ -537,9 +543,10 @@ impl TextHandler {
         }
 
         let key: InternalString = key.into();
-        let mutex = &self.state.upgrade().unwrap();
+
+        let mutex = &self.inner.state.upgrade().unwrap();
         let mut doc_state = mutex.lock().unwrap();
-        let (entity_range, skip) = doc_state.with_state_mut(self.container_idx, |state| {
+        let (entity_range, skip) = doc_state.with_state_mut(self.inner.container_idx, |state| {
             let (entity_range, styles) = state
                 .as_richtext_state_mut()
                 .unwrap()
@@ -575,7 +582,7 @@ impl TextHandler {
         drop(style_config);
         drop(doc_state);
         txn.apply_local_op(
-            self.container_idx,
+            self.inner.container_idx,
             crate::op::RawOpContent::List(ListOp::StyleStart {
                 start: entity_start as u32,
                 end: entity_end as u32,
@@ -588,35 +595,31 @@ impl TextHandler {
                 end: end as u32,
                 style: crate::container::richtext::Style { key, data: value },
             },
-            &self.state,
+            &self.inner.state,
         )?;
 
         txn.apply_local_op(
-            self.container_idx,
+            self.inner.container_idx,
             crate::op::RawOpContent::List(ListOp::StyleEnd),
             EventHint::MarkEnd,
-            &self.state,
+            &self.inner.state,
         )?;
 
         Ok(())
     }
 
     pub fn check(&self) {
-        self.state
-            .upgrade()
-            .unwrap()
-            .try_lock()
-            .unwrap()
-            .with_state_mut(self.container_idx, |state| {
-                state
-                    .as_richtext_state_mut()
-                    .unwrap()
-                    .check_consistency_between_content_and_style_ranges()
-            })
+        self.with_state(|state| {
+            state
+                .as_richtext_state_mut()
+                .unwrap()
+                .check_consistency_between_content_and_style_ranges()
+        })
     }
 
     pub fn apply_delta(&self, delta: &[TextDelta]) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.apply_delta_with_txn(txn, delta))
+        self.inner
+            .with_txn(|txn| self.apply_delta_with_txn(txn, delta))
     }
 
     pub fn apply_delta_with_txn(
@@ -676,7 +679,7 @@ impl TextHandler {
 
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
-        self.with_state_mut(|s| s.to_string_mut())
+        self.with_state(|s| s.as_richtext_state_mut().unwrap().to_string_mut())
     }
 }
 
@@ -689,21 +692,9 @@ fn event_len(s: &str) -> usize {
 }
 
 impl ListHandler {
-    pub fn new(
-        txn: Weak<Mutex<Option<Transaction>>>,
-        idx: ContainerIdx,
-        state: Weak<Mutex<DocState>>,
-    ) -> Self {
-        assert_eq!(idx.get_type(), ContainerType::List);
-        Self {
-            txn,
-            container_idx: idx,
-            state,
-        }
-    }
-
     pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.insert_with_txn(txn, pos, v.into()))
+        self.inner
+            .with_txn(|txn| self.insert_with_txn(txn, pos, v.into()))
     }
 
     pub fn insert_with_txn(
@@ -725,18 +716,18 @@ impl ListHandler {
         }
 
         txn.apply_local_op(
-            self.container_idx,
+            self.inner.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
             EventHint::InsertList { len: 1 },
-            &self.state,
+            &self.inner.state,
         )
     }
 
     pub fn push(&self, v: LoroValue) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.push_with_txn(txn, v))
+        with_txn(&self.inner.txn, |txn| self.push_with_txn(txn, v))
     }
 
     pub fn push_with_txn(&self, txn: &mut Transaction, v: LoroValue) -> LoroResult<()> {
@@ -745,7 +736,7 @@ impl ListHandler {
     }
 
     pub fn pop(&self) -> LoroResult<Option<LoroValue>> {
-        with_txn(&self.txn, |txn| self.pop_with_txn(txn))
+        with_txn(&self.inner.txn, |txn| self.pop_with_txn(txn))
     }
 
     pub fn pop_with_txn(&self, txn: &mut Transaction) -> LoroResult<Option<LoroValue>> {
@@ -760,7 +751,7 @@ impl ListHandler {
     }
 
     pub fn insert_container(&self, pos: usize, c_type: ContainerType) -> LoroResult<Handler> {
-        with_txn(&self.txn, |txn| {
+        with_txn(&self.inner.txn, |txn| {
             self.insert_container_with_txn(txn, pos, c_type)
         })
     }
@@ -780,26 +771,21 @@ impl ListHandler {
 
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, c_type);
-        let child_idx = txn.arena.register_container(&container_id);
-        let v = LoroValue::Container(container_id);
+        let v = LoroValue::Container(container_id.clone());
         txn.apply_local_op(
-            self.container_idx,
+            self.inner.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
             EventHint::InsertList { len: 1 },
-            &self.state,
+            &self.inner.state,
         )?;
-        Ok(Handler::new(
-            self.txn.clone(),
-            child_idx,
-            self.state.clone(),
-        ))
+        Ok(create_handler(self, container_id))
     }
 
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.delete_with_txn(txn, pos, len))
+        with_txn(&self.inner.txn, |txn| self.delete_with_txn(txn, pos, len))
     }
 
     pub fn delete_with_txn(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
@@ -814,29 +800,23 @@ impl ListHandler {
             });
         }
 
-        let ids: Vec<_> =
-            self.state
-                .upgrade()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .with_state(self.container_idx, |state| {
-                    let list = state.as_list_state().unwrap();
-                    (pos..pos + len)
-                        .map(|i| list.get_id_at(i).unwrap())
-                        .collect()
-                });
+        let ids: Vec<_> = self.with_state(|state| {
+            let list = state.as_list_state().unwrap();
+            (pos..pos + len)
+                .map(|i| list.get_id_at(i).unwrap())
+                .collect()
+        });
 
         for id in ids.into_iter() {
             txn.apply_local_op(
-                self.container_idx,
+                self.inner.container_idx,
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
                     id.id(),
                     pos as isize,
                     1,
                 ))),
                 EventHint::DeleteList(DeleteSpan::new(pos as isize, 1)),
-                &self.state,
+                &self.inner.state,
             )?;
         }
 
@@ -844,9 +824,7 @@ impl ListHandler {
     }
 
     pub fn get_child_handler(&self, index: usize) -> Handler {
-        let mutex = &self.state.upgrade().unwrap();
-        let mut state = mutex.lock().unwrap();
-        let container_id = state.with_state(self.container_idx, |state| {
+        let container_id = self.with_state(|state| {
             state
                 .as_list_state()
                 .as_ref()
@@ -857,97 +835,46 @@ impl ListHandler {
                 .unwrap()
                 .clone()
         });
-        let idx = state.arena.register_container(&container_id);
-        Handler::new(self.txn.clone(), idx, self.state.clone())
+        create_handler(self, container_id)
     }
 
     pub fn len(&self) -> usize {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                state.as_list_state().as_ref().unwrap().len()
-            })
+        self.with_state(|state| state.as_list_state().as_ref().unwrap().len())
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    pub fn get_value(&self) -> LoroValue {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .get_value_by_idx(self.container_idx)
-    }
-
-    pub fn get_deep_value(&self) -> LoroValue {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .get_container_deep_value(self.container_idx)
-    }
-
     pub fn get_deep_value_with_id(&self) -> LoroValue {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .get_container_deep_value_with_id(self.container_idx, None)
-    }
-
-    pub fn id(&self) -> ContainerID {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .arena
-            .idx_to_id(self.container_idx)
-            .unwrap()
+        self.inner.with_doc_state(|state| {
+            state.get_container_deep_value_with_id(self.inner.container_idx, None)
+        })
     }
 
     pub fn get(&self, index: usize) -> Option<LoroValue> {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                let a = state.as_list_state().unwrap();
-                a.get(index).cloned()
-            })
+        self.with_state(|state| {
+            let a = state.as_list_state().unwrap();
+            a.get(index).cloned()
+        })
     }
 
     /// Get value at given index, if it's a container, return a handler to the container
     pub fn get_(&self, index: usize) -> Option<ValueOrHandler> {
-        let mutex = &self.state.upgrade().unwrap();
-        let doc_state = &mut mutex.lock().unwrap();
-        let arena = doc_state.arena.clone();
-        doc_state.with_state(self.container_idx, |state| {
-            let a = state.as_list_state().unwrap();
-            match a.get(index) {
-                Some(v) => {
-                    if let LoroValue::Container(id) = v {
-                        let idx = arena.register_container(id);
-                        Some(ValueOrHandler::Handler(Handler::new(
-                            self.txn.clone(),
-                            idx,
-                            self.state.clone(),
-                        )))
-                    } else {
-                        Some(ValueOrHandler::Value(v.clone()))
+        self.inner.with_doc_state(|doc_state| {
+            doc_state.with_state(self.inner.container_idx, |state| {
+                let a = state.as_list_state().unwrap();
+                match a.get(index) {
+                    Some(v) => {
+                        if let LoroValue::Container(id) = v {
+                            Some(ValueOrHandler::Handler(create_handler(self, id.clone())))
+                        } else {
+                            Some(ValueOrHandler::Value(v.clone()))
+                        }
                     }
+                    None => None,
                 }
-                None => None,
-            }
+            })
         })
     }
 
@@ -955,46 +882,27 @@ impl ListHandler {
     where
         I: FnMut(ValueOrHandler),
     {
-        let mutex = &self.state.upgrade().unwrap();
-        let doc_state = &mut mutex.lock().unwrap();
-        let arena = doc_state.arena.clone();
-        doc_state.with_state(self.container_idx, |state| {
-            let a = state.as_list_state().unwrap();
-            for v in a.iter() {
-                match v {
-                    LoroValue::Container(c) => {
-                        let idx = arena.register_container(c);
-                        f(ValueOrHandler::Handler(Handler::new(
-                            self.txn.clone(),
-                            idx,
-                            self.state.clone(),
-                        )));
-                    }
-                    value => {
-                        f(ValueOrHandler::Value(value.clone()));
+        self.inner.with_doc_state(|doc_state| {
+            doc_state.with_state(self.inner.container_idx, |state| {
+                let a = state.as_list_state().unwrap();
+                for v in a.iter() {
+                    match v {
+                        LoroValue::Container(c) => {
+                            f(ValueOrHandler::Handler(create_handler(self, c.clone())));
+                        }
+                        value => {
+                            f(ValueOrHandler::Value(value.clone()));
+                        }
                     }
                 }
-            }
+            })
         })
     }
 }
 
 impl MapHandler {
-    pub fn new(
-        txn: Weak<Mutex<Option<Transaction>>>,
-        idx: ContainerIdx,
-        state: Weak<Mutex<DocState>>,
-    ) -> Self {
-        assert_eq!(idx.get_type(), ContainerType::Map);
-        Self {
-            txn,
-            container_idx: idx,
-            state,
-        }
-    }
-
     pub fn insert(&self, key: &str, value: impl Into<LoroValue>) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| {
+        with_txn(&self.inner.txn, |txn| {
             self.insert_with_txn(txn, key, value.into())
         })
     }
@@ -1016,7 +924,7 @@ impl MapHandler {
         }
 
         txn.apply_local_op(
-            self.container_idx,
+            self.inner.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
                 key: key.into(),
                 value: Some(value.clone()),
@@ -1025,12 +933,12 @@ impl MapHandler {
                 key: key.into(),
                 value: Some(value.clone()),
             },
-            &self.state,
+            &self.inner.state,
         )
     }
 
     pub fn insert_container(&self, key: &str, c_type: ContainerType) -> LoroResult<Handler> {
-        with_txn(&self.txn, |txn| {
+        with_txn(&self.inner.txn, |txn| {
             self.insert_container_with_txn(txn, key, c_type)
         })
     }
@@ -1043,34 +951,29 @@ impl MapHandler {
     ) -> LoroResult<Handler> {
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, c_type);
-        let child_idx = txn.arena.register_container(&container_id);
         txn.apply_local_op(
-            self.container_idx,
+            self.inner.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
                 key: key.into(),
                 value: Some(LoroValue::Container(container_id.clone())),
             }),
             EventHint::Map {
                 key: key.into(),
-                value: Some(LoroValue::Container(container_id)),
+                value: Some(LoroValue::Container(container_id.clone())),
             },
-            &self.state,
+            &self.inner.state,
         )?;
 
-        Ok(Handler::new(
-            self.txn.clone(),
-            child_idx,
-            self.state.clone(),
-        ))
+        Ok(create_handler(self, container_id))
     }
 
     pub fn delete(&self, key: &str) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.delete_with_txn(txn, key))
+        with_txn(&self.inner.txn, |txn| self.delete_with_txn(txn, key))
     }
 
     pub fn delete_with_txn(&self, txn: &mut Transaction, key: &str) -> LoroResult<()> {
         txn.apply_local_op(
-            self.container_idx,
+            self.inner.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
                 key: key.into(),
                 value: None,
@@ -1079,7 +982,7 @@ impl MapHandler {
                 key: key.into(),
                 value: None,
             },
-            &self.state,
+            &self.inner.state,
         )
     }
 
@@ -1087,24 +990,16 @@ impl MapHandler {
     where
         I: FnMut(&str, ValueOrHandler),
     {
-        let mutex = &self.state.upgrade().unwrap();
+        let mutex = &self.inner.state.upgrade().unwrap();
         let mut doc_state = mutex.lock().unwrap();
         let arena = doc_state.arena.clone();
-        doc_state.with_state(self.container_idx, |state| {
+        doc_state.with_state(self.inner.container_idx, |state| {
             let a = state.as_map_state().unwrap();
             for (k, v) in a.iter() {
                 match &v.value {
                     Some(v) => match v {
                         LoroValue::Container(c) => {
-                            let idx = arena.register_container(c);
-                            f(
-                                k,
-                                ValueOrHandler::Handler(Handler::new(
-                                    self.txn.clone(),
-                                    idx,
-                                    self.state.clone(),
-                                )),
-                            )
+                            f(k, ValueOrHandler::Handler(create_handler(self, c.clone())))
                         }
                         value => f(k, ValueOrHandler::Value(value.clone())),
                     },
@@ -1114,19 +1009,8 @@ impl MapHandler {
         })
     }
 
-    pub fn get_value(&self) -> LoroValue {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .get_value_by_idx(self.container_idx)
-    }
-
     pub fn get_child_handler(&self, key: &str) -> Handler {
-        let mutex = &self.state.upgrade().unwrap();
-        let mut state = mutex.lock().unwrap();
-        let container_id = state.with_state(self.container_idx, |state| {
+        let container_id = self.with_state(|state| {
             state
                 .as_map_state()
                 .as_ref()
@@ -1137,83 +1021,39 @@ impl MapHandler {
                 .unwrap()
                 .clone()
         });
-        let idx = state.arena.register_container(&container_id);
-        Handler::new(self.txn.clone(), idx, self.state.clone())
-    }
-
-    pub fn get_deep_value(&self) -> LoroValue {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .get_container_deep_value(self.container_idx)
+        create_handler(self, container_id)
     }
 
     pub fn get_deep_value_with_id(&self) -> LoroValue {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .get_container_deep_value_with_id(self.container_idx, None)
+        self.inner.with_doc_state(|state| {
+            state.get_container_deep_value_with_id(self.inner.container_idx, None)
+        })
     }
 
     pub fn get(&self, key: &str) -> Option<LoroValue> {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                let a = state.as_map_state().unwrap();
-                a.get(key).cloned()
-            })
+        self.with_state(|state| {
+            let a = state.as_map_state().unwrap();
+            a.get(key).cloned()
+        })
     }
 
     /// Get the value at given key, if value is a container, return a handler to the container
     pub fn get_(&self, key: &str) -> Option<ValueOrHandler> {
-        let mutex = &self.state.upgrade().unwrap();
-        let mut doc_state = mutex.lock().unwrap();
-        let arena = doc_state.arena.clone();
-        doc_state.with_state(self.container_idx, |state| {
+        self.with_state(|state| {
             let a = state.as_map_state().unwrap();
             let value = a.get(key);
             match value {
-                Some(LoroValue::Container(container_id)) => {
-                    let idx = arena.register_container(container_id);
-                    Some(ValueOrHandler::Handler(Handler::new(
-                        self.txn.clone(),
-                        idx,
-                        self.state.clone(),
-                    )))
-                }
+                Some(LoroValue::Container(container_id)) => Some(ValueOrHandler::Handler(
+                    create_handler(self, container_id.clone()),
+                )),
                 Some(value) => Some(ValueOrHandler::Value(value.clone())),
                 None => None,
             }
         })
     }
 
-    pub fn id(&self) -> ContainerID {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .arena
-            .idx_to_id(self.container_idx)
-            .unwrap()
-    }
-
     pub fn len(&self) -> usize {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                state.as_map_state().as_ref().unwrap().len()
-            })
+        self.with_state(|state| state.as_map_state().as_ref().unwrap().len())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1222,26 +1062,13 @@ impl MapHandler {
 }
 
 impl TreeHandler {
-    pub fn new(
-        txn: Weak<Mutex<Option<Transaction>>>,
-        idx: ContainerIdx,
-        state: Weak<Mutex<DocState>>,
-    ) -> Self {
-        assert_eq!(idx.get_type(), ContainerType::Tree);
-        Self {
-            txn,
-            container_idx: idx,
-            state,
-        }
-    }
-
     pub fn delete(&self, target: TreeID) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.delete_with_txn(txn, target))
+        with_txn(&self.inner.txn, |txn| self.delete_with_txn(txn, target))
     }
 
     pub fn delete_with_txn(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
         txn.apply_local_op(
-            self.container_idx,
+            self.inner.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
                 target,
                 parent: Some(TreeID::delete_root()),
@@ -1250,12 +1077,12 @@ impl TreeHandler {
                 target,
                 action: TreeExternalDiff::Delete,
             }),
-            &self.state,
+            &self.inner.state,
         )
     }
 
     pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
-        with_txn(&self.txn, |txn| self.create_with_txn(txn, parent))
+        with_txn(&self.inner.txn, |txn| self.create_with_txn(txn, parent))
     }
 
     pub fn create_with_txn<T: Into<Option<TreeID>>>(
@@ -1270,19 +1097,21 @@ impl TreeHandler {
             action: TreeExternalDiff::Create(parent),
         };
         txn.apply_local_op(
-            self.container_idx,
+            self.inner.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
                 target: tree_id,
                 parent,
             }),
             EventHint::Tree(event_hint),
-            &self.state,
+            &self.inner.state,
         )?;
         Ok(tree_id)
     }
 
     pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.mov_with_txn(txn, target, parent))
+        with_txn(&self.inner.txn, |txn| {
+            self.mov_with_txn(txn, target, parent)
+        })
     }
 
     pub fn mov_with_txn<T: Into<Option<TreeID>>>(
@@ -1293,13 +1122,13 @@ impl TreeHandler {
     ) -> LoroResult<()> {
         let parent = parent.into();
         txn.apply_local_op(
-            self.container_idx,
+            self.inner.container_idx,
             crate::op::RawOpContent::Tree(TreeOp { target, parent }),
             EventHint::Tree(TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Move(parent),
             }),
-            &self.state,
+            &self.inner.state,
         )
     }
 
@@ -1308,119 +1137,57 @@ impl TreeHandler {
             return Err(LoroTreeError::TreeNodeNotExist(target).into());
         }
         let map_container_id = target.associated_meta_container();
-        let idx = self
-            .state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .arena
-            .register_container(&map_container_id);
-        let map = MapHandler::new(self.txn.clone(), idx, self.state.clone());
-        Ok(map)
+        let handler = create_handler(self, map_container_id);
+        Ok(handler.into_map().unwrap())
     }
 
     /// Get the parent of the node, if the node is deleted or does not exist, return None
     pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                let a = state.as_tree_state().unwrap();
-                a.parent(target).map(|p| match p {
-                    TreeParentId::None => None,
-                    TreeParentId::Node(parent_id) => Some(parent_id),
-                    _ => unreachable!(),
-                })
+        self.with_state(|state| {
+            let a = state.as_tree_state().unwrap();
+            a.parent(target).map(|p| match p {
+                TreeParentId::None => None,
+                TreeParentId::Node(parent_id) => Some(parent_id),
+                _ => unreachable!(),
             })
+        })
     }
 
     pub fn children(&self, target: TreeID) -> Vec<TreeID> {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                let a = state.as_tree_state().unwrap();
-                a.as_ref()
-                    .get_children(&TreeParentId::Node(target))
-                    .into_iter()
-                    .collect()
-            })
-    }
-
-    pub fn id(&self) -> ContainerID {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .arena
-            .idx_to_id(self.container_idx)
-            .unwrap()
+        self.with_state(|state| {
+            let a = state.as_tree_state().unwrap();
+            a.as_ref()
+                .get_children(&TreeParentId::Node(target))
+                .into_iter()
+                .collect()
+        })
     }
 
     pub fn contains(&self, target: TreeID) -> bool {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                let a = state.as_tree_state().unwrap();
-                a.contains(target)
-            })
-    }
-
-    pub fn get_value(&self) -> LoroValue {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .get_value_by_idx(self.container_idx)
-    }
-
-    pub fn get_deep_value(&self) -> LoroValue {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .get_container_deep_value(self.container_idx)
+        self.with_state(|state| {
+            let a = state.as_tree_state().unwrap();
+            a.contains(target)
+        })
     }
 
     pub fn nodes(&self) -> Vec<TreeID> {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                let a = state.as_tree_state().unwrap();
-                a.nodes()
-            })
+        self.with_state(|state| {
+            let a = state.as_tree_state().unwrap();
+            a.nodes()
+        })
     }
 
     #[cfg(feature = "test_utils")]
     pub fn max_counter(&self) -> i32 {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                let a = state.as_tree_state().unwrap();
-                a.max_counter()
-            })
+        self.with_state(|state| {
+            let a = state.as_tree_state().unwrap();
+            a.max_counter()
+        })
     }
 
     #[cfg(feature = "test_utils")]
     pub fn next_tree_id(&self) -> TreeID {
-        with_txn(&self.txn, |txn| Ok(TreeID::from_id(txn.next_id()))).unwrap()
+        with_txn(&self.inner.txn, |txn| Ok(TreeID::from_id(txn.next_id()))).unwrap()
     }
 }
 
@@ -1439,7 +1206,6 @@ fn with_txn<R>(
 
 #[cfg(test)]
 mod test {
-    use std::ops::Deref;
 
     use crate::loro::LoroDoc;
     use crate::version::Frontiers;
@@ -1447,7 +1213,7 @@ mod test {
     use loro_common::ID;
     use serde_json::json;
 
-    use super::TextDelta;
+    use super::{HandlerTrait, TextDelta};
 
     #[test]
     fn import() {
@@ -1554,10 +1320,7 @@ mod test {
             .import(&loro.export_from(&Default::default()))
             .unwrap();
         let handler2 = loro2.get_text("richtext");
-        assert_eq!(
-            handler2.get_value().as_string().unwrap().deref(),
-            "hello world"
-        );
+        assert_eq!(&**handler2.get_value().as_string().unwrap(), "hello world");
 
         // assert has bold
         let value = handler2.get_richtext_value();

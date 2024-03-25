@@ -3,6 +3,7 @@ use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::change::Timestamp;
 use loro_internal::container::IntoContainerId;
+use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
@@ -408,7 +409,7 @@ impl LoroList {
 
     #[inline]
     pub fn id(&self) -> ContainerID {
-        self.handler.id()
+        self.handler.id().clone()
     }
 
     #[inline]
@@ -522,7 +523,7 @@ impl LoroMap {
     }
 
     pub fn id(&self) -> ContainerID {
-        self.handler.id()
+        self.handler.id().clone()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -573,7 +574,7 @@ pub struct LoroText {
 impl LoroText {
     /// Get the [ContainerID]  of the text container.
     pub fn id(&self) -> ContainerID {
-        self.handler.id()
+        self.handler.id().clone()
     }
 
     /// Insert a string at the given unicode position.
@@ -795,7 +796,7 @@ impl LoroTree {
 
     /// Return container id of the tree.
     pub fn id(&self) -> ContainerID {
-        self.handler.id()
+        self.handler.id().clone()
     }
 
     /// Return the flat array of the forest.

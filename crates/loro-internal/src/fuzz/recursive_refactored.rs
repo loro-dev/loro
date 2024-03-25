@@ -1,12 +1,11 @@
 use std::{
-    collections::HashSet,
     fmt::Debug,
     sync::{Arc, Mutex},
 };
 
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use loro_common::ID;
 use tabled::{TableIteratorExt, Tabled};
 
@@ -20,7 +19,7 @@ use crate::{
         richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
     },
     event::Diff,
-    handler::{TextHandler, ValueOrHandler},
+    handler::{Handler, HandlerTrait, TextHandler, ValueOrHandler},
     loro::LoroDoc,
     value::ToJson,
     version::Frontiers,
@@ -342,24 +341,18 @@ trait Actionable {
 }
 
 impl Actor {
-    fn add_new_container(&mut self, idx: ContainerIdx, type_: ContainerType) {
+    fn add_new_container(&mut self, idx: ContainerIdx, id: ContainerID, type_: ContainerType) {
         let txn = self.loro.get_global_txn();
+        let handler = Handler::new(
+            id,
+            self.loro.arena().clone(),
+            txn,
+            Arc::downgrade(self.loro.app_state()),
+        );
         match type_ {
-            ContainerType::Text => self.text_containers.push(TextHandler::new(
-                txn,
-                idx,
-                Arc::downgrade(self.loro.app_state()),
-            )),
-            ContainerType::Map => self.map_containers.push(MapHandler::new(
-                txn,
-                idx,
-                Arc::downgrade(self.loro.app_state()),
-            )),
-            ContainerType::List => self.list_containers.push(ListHandler::new(
-                txn,
-                idx,
-                Arc::downgrade(self.loro.app_state()),
-            )),
+            ContainerType::Text => self.text_containers.push(handler.into_text().unwrap()),
+            ContainerType::Map => self.map_containers.push(handler.into_map().unwrap()),
+            ContainerType::List => self.list_containers.push(handler.into_list().unwrap()),
             ContainerType::Tree => {
                 // TODO Tree
             }
@@ -441,15 +434,15 @@ impl Actionable for Vec<Actor> {
         match action {
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(self, [*from as usize, *to as usize]);
-                let mut visited = HashSet::new();
+                let mut visited = FxHashSet::default();
                 a.map_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.list_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.text_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
 
                 a.loro
@@ -502,16 +495,16 @@ impl Actionable for Vec<Actor> {
                     .collect();
             }
             Action::SyncAll => {
-                let mut visited = HashSet::new();
+                let mut visited = FxHashSet::default();
                 let a = &mut self[0];
                 a.map_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.list_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.text_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
 
                 for i in 1..self.len() {
@@ -594,11 +587,11 @@ impl Actionable for Vec<Actor> {
                             .unwrap();
                     }
                     FuzzValue::Container(c) => {
-                        let idx = container
+                        let handler = &container
                             .insert_container_with_txn(&mut txn, &key.to_string(), *c)
-                            .unwrap()
-                            .container_idx();
-                        actor.add_new_container(idx, *c);
+                            .unwrap();
+                        let idx = handler.container_idx();
+                        actor.add_new_container(idx, handler.id().clone(), *c);
                     }
                 };
 
@@ -636,11 +629,11 @@ impl Actionable for Vec<Actor> {
                             .unwrap();
                     }
                     FuzzValue::Container(c) => {
-                        let idx = container
+                        let handler = &container
                             .insert_container_with_txn(&mut txn, *key as usize, *c)
-                            .unwrap()
-                            .container_idx();
-                        actor.add_new_container(idx, *c);
+                            .unwrap();
+                        let idx = handler.container_idx();
+                        actor.add_new_container(idx, handler.id().clone(), *c);
                     }
                 };
                 txn.commit().unwrap();
