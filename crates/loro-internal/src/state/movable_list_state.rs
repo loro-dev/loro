@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, trace};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::BTree;
@@ -835,8 +835,8 @@ impl MovableListState {
             return None;
         }
 
-        let item = self.inner.get_list_item_at(index, kind).unwrap();
-        let elem = item.pointed_by.unwrap();
+        let item = self.inner.get_list_item_at(index, kind)?;
+        let elem = item.pointed_by?;
         self.inner.elements().get(&elem).map(|x| &x.value)
     }
 

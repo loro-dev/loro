@@ -1091,6 +1091,12 @@ impl MovableListHandler {
             });
         }
 
+        let op_index = self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            list.convert_index(pos, IndexType::ForUser, IndexType::ForOp)
+                .unwrap()
+        });
+
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, c_type);
         let v = LoroValue::Container(container_id.clone());
@@ -1098,7 +1104,7 @@ impl MovableListHandler {
             self.inner.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
-                pos,
+                pos: op_index,
             }),
             EventHint::InsertList { len: 1, pos },
             &self.inner.state,
@@ -1229,19 +1235,17 @@ impl MovableListHandler {
         Ok(())
     }
 
-    pub fn get_child_handler(&self, index: usize) -> Handler {
+    pub fn get_child_handler(&self, index: usize) -> Option<Handler> {
         let container_id = self.with_state(|state| {
             state
                 .as_movable_list_state()
                 .as_ref()
                 .unwrap()
-                .get(index, IndexType::ForUser)
-                .unwrap()
+                .get(index, IndexType::ForUser)?
                 .as_container()
-                .unwrap()
-                .clone()
+                .cloned()
         });
-        create_handler(self, container_id)
+        Some(create_handler(self, container_id?))
     }
 
     pub fn len(&self) -> usize {

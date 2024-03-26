@@ -277,6 +277,7 @@ impl LoroDoc {
     /// Commit the cumulative auto commit transaction.
     /// This method only has effect when `auto_commit` is true.
     /// If `immediate_renew` is true, a new transaction will be created after the old one is committed
+    #[instrument(skip_all)]
     pub fn commit_with(
         &self,
         origin: Option<InternalString>,
