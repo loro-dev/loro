@@ -1219,15 +1219,15 @@ impl MovableListHandler {
         });
 
         info!(?pos, ?len, ?ids, ?new_poses, "delete_with_txn");
-        for (id, pos) in ids.into_iter().zip(new_poses.into_iter()) {
+        for ((id, op_pos), user_pos) in ids.into_iter().zip(new_poses.into_iter()).zip(pos..) {
             txn.apply_local_op(
                 self.inner.container_idx,
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
                     id,
-                    pos as isize,
+                    op_pos as isize,
                     1,
                 ))),
-                EventHint::DeleteList(DeleteSpan::new(pos as isize, 1)),
+                EventHint::DeleteList(DeleteSpan::new(user_pos as isize, 1)),
                 &self.inner.state,
             )?;
         }
@@ -1409,7 +1409,6 @@ impl MapHandler {
     {
         let mutex = &self.inner.state.upgrade().unwrap();
         let mut doc_state = mutex.lock().unwrap();
-        let arena = doc_state.arena.clone();
         doc_state.with_state(self.inner.container_idx, |state| {
             let a = state.as_map_state().unwrap();
             for (k, v) in a.iter() {

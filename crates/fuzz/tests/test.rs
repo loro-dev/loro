@@ -2936,3 +2936,128 @@ fn test_movable_list_21() {
         ],
     )
 }
+
+#[test]
+fn test_movable_list_22() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Map, FuzzTarget::MovableList],
+        &mut [
+            Handle {
+                site: 0,
+                target: 35,
+                container: 10,
+                action: Generic(GenericAction {
+                    value: Container(Tree),
+                    bool: true,
+                    key: 4278386687,
+                    pos: 2676586395023179775,
+                    length: 2676586395008836901,
+                    prop: 2676586395008836901,
+                }),
+            },
+            Handle {
+                site: 37,
+                target: 37,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: I32(-256),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 18446744073709551615,
+                    length: 9895604649983,
+                    prop: 3746994885677285376,
+                }),
+            },
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 37,
+                target: 37,
+                container: 37,
+                action: Generic(GenericAction {
+                    value: I32(623183141),
+                    bool: true,
+                    key: 3052521929,
+                    pos: 18446744073709551615,
+                    length: 18446744073709551615,
+                    prop: 18446742987082838527,
+                }),
+            },
+            Handle {
+                site: 255,
+                target: 253,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: I32(265),
+                    bool: false,
+                    key: 4294967295,
+                    pos: 16493559407536242687,
+                    length: 3616728050846459108,
+                    prop: 3834029159525384194,
+                }),
+            },
+            Handle {
+                site: 53,
+                target: 53,
+                container: 53,
+                action: Generic(GenericAction {
+                    value: I32(892679477),
+                    bool: true,
+                    key: 805255221,
+                    pos: 72110370596060693,
+                    length: 2108141021440,
+                    prop: 2676586395008837078,
+                }),
+            },
+            Handle {
+                site: 37,
+                target: 37,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: I32(-256),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 18086737578496602879,
+                    length: 2533271535615999,
+                    prop: 18446742974197923840,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 37,
+                container: 37,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: true,
+                    key: 623191333,
+                    pos: 2676586395008836901,
+                    length: 2676586395008836901,
+                    prop: 13088935740243780901,
+                }),
+            },
+            Sync { from: 255, to: 123 },
+            Handle {
+                site: 56,
+                target: 255,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 1155454779397242677,
+                    length: 3026417850081345536,
+                    prop: 18446744073709496617,
+                }),
+            },
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+        ],
+    )
+}
