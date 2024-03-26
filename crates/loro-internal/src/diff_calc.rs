@@ -6,10 +6,11 @@ use itertools::Itertools;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
-    ContainerID, Counter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
+    CompactIdLp, ContainerID, Counter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan, LoroValue,
+    PeerID, ID,
 };
 use smallvec::SmallVec;
-use tracing::{instrument};
+use tracing::instrument;
 
 use crate::{
     container::{
@@ -906,7 +907,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             .unwrap()
             .as_movable_list()
             .unwrap();
-        let mut element_changes = Vec::new();
+        let mut element_changes: FxHashMap<CompactIdLp, ElementDelta> = FxHashMap::default();
         for id in self.changed_elements.iter() {
             // It can be None if the target does not exist before the `to` version
             // But we don't need to calc from, because the deletion is handled by the diff from list items
@@ -921,22 +922,28 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                 if let LoroValue::Container(c) = &value.value {
                     on_new_container(c);
                 }
-                element_changes.push(ElementDelta::New {
-                    id: *id,
-                    new_pos: pos.value,
-                    new_value: value.value.clone(),
-                    value_id: IdLp::new(value.peer, value.lamport),
-                });
+                element_changes.insert(
+                    id.compact(),
+                    ElementDelta {
+                        pos: pos.value,
+                        value: value.value.clone(),
+                        value_id: IdLp::new(value.peer, value.lamport),
+                        pos_updated: true,
+                        value_updated: true,
+                    },
+                );
             } else {
                 // TODO: PERF: can be filtered based on the list_diff and whether the pos/value are updated
-                element_changes.push(ElementDelta::Update {
-                    id: *id,
-                    pos: pos.value,
-                    pos_updated: old_pos.unwrap().value != pos.value,
-                    value: value.value.clone(),
-                    value_updated: old_value.unwrap().value != value.value,
-                    value_id: IdLp::new(value.peer, value.lamport),
-                });
+                element_changes.insert(
+                    id.compact(),
+                    ElementDelta {
+                        pos: pos.value,
+                        pos_updated: old_pos.unwrap().value != pos.value,
+                        value: value.value.clone(),
+                        value_updated: old_value.unwrap().value != value.value,
+                        value_id: IdLp::new(value.peer, value.lamport),
+                    },
+                );
             }
         }
 

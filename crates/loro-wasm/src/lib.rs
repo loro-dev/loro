@@ -241,7 +241,8 @@ impl Loro {
     }
 
     /// If two continuous local changes are within the interval, they will be merged into one change.
-    /// The defualt value is 1000 seconds
+    ///
+    /// The defualt value is 1_000_000, the default unit is miliseconds.
     #[wasm_bindgen(js_name = "setChangeMergeInterval")]
     pub fn set_change_merge_interval(&self, interval: f64) {
         self.0.set_change_merge_interval(interval as i64);

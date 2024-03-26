@@ -3061,3 +3061,138 @@ fn test_movable_list_22() {
         ],
     )
 }
+
+#[test]
+fn test_movable_list_23() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Map, FuzzTarget::MovableList],
+        &mut [
+            Handle {
+                site: 0,
+                target: 35,
+                container: 10,
+                action: Generic(GenericAction {
+                    value: Container(Tree),
+                    bool: true,
+                    key: 4278386687,
+                    pos: 2676586395023175679,
+                    length: 2676586395008836901,
+                    prop: 2676586395008836901,
+                }),
+            },
+            Handle {
+                site: 37,
+                target: 37,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: I32(-256),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 18446744073709551615,
+                    length: 9895591935999,
+                    prop: 3746994885677285376,
+                }),
+            },
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 37,
+                target: 37,
+                container: 37,
+                action: Generic(GenericAction {
+                    value: I32(623191333),
+                    bool: true,
+                    key: 3052521929,
+                    pos: 18390785747968851967,
+                    length: 18446744073696116735,
+                    prop: 18446742987082838527,
+                }),
+            },
+            Handle {
+                site: 255,
+                target: 253,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: I32(265),
+                    bool: false,
+                    key: 4294967295,
+                    pos: 16493559407536242687,
+                    length: 3904675852509832420,
+                    prop: 3834029159525384194,
+                }),
+            },
+            Handle {
+                site: 53,
+                target: 53,
+                container: 53,
+                action: Generic(GenericAction {
+                    value: I32(892679477),
+                    bool: true,
+                    key: 792199476,
+                    pos: 72110370596060693,
+                    length: 2108141021440,
+                    prop: 2676586395008837078,
+                }),
+            },
+            Handle {
+                site: 37,
+                target: 37,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: I32(-256),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 12587190423081956095,
+                    length: 12587190073825341102,
+                    prop: 71968184339443374,
+                }),
+            },
+            Handle {
+                site: 255,
+                target: 255,
+                container: 8,
+                action: Generic(GenericAction {
+                    value: Container(Tree),
+                    bool: true,
+                    key: 151597311,
+                    pos: 18446742974197924105,
+                    length: 16493559523500359679,
+                    prop: 18374686483511829732,
+                }),
+            },
+            Checkout {
+                site: 0,
+                to: 2667577554,
+            },
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 9437183,
+                    pos: 13672292010998890496,
+                    length: 13672292666392100285,
+                    prop: 13672292666396491197,
+                }),
+            },
+            Handle {
+                site: 37,
+                target: 37,
+                container: 37,
+                action: Generic(GenericAction {
+                    value: I32(623191333),
+                    bool: true,
+                    key: 3048580413,
+                    pos: 3401761431743735221,
+                    length: 13552791426844167701,
+                    prop: 65395,
+                }),
+            },
+        ],
+    )
+}

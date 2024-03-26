@@ -11,7 +11,7 @@ use std::{
 };
 
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
-use tracing::{instrument};
+use tracing::instrument;
 
 use crate::{
     arena::SharedArena,
@@ -111,7 +111,7 @@ impl LoroDoc {
         self.config.set_record_timestamp(record);
     }
 
-    /// Set the interval of mergeable changes.
+    /// Set the interval of mergeable changes, in milliseconds.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
     /// The defualt value is 1000 seconds.

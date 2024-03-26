@@ -1,5 +1,6 @@
 use enum_as_inner::EnumAsInner;
-use loro_common::{IdFull, IdLp, LoroValue};
+use fxhash::FxHashMap;
+use loro_common::{CompactIdLp, IdFull, IdLp, LoroValue};
 use smallvec::SmallVec;
 
 use super::{Delta, DeltaValue};
@@ -7,7 +8,7 @@ use super::{Delta, DeltaValue};
 #[derive(Clone, Debug)]
 pub(crate) struct MovableListInnerDelta {
     pub list: Delta<SmallVec<[IdFull; 1]>, ()>,
-    pub elements: Vec<ElementDelta>,
+    pub elements: FxHashMap<CompactIdLp, ElementDelta>,
 }
 
 impl DeltaValue for SmallVec<[IdFull; 1]> {
@@ -34,30 +35,17 @@ impl MovableListInnerDelta {
     }
 }
 
-#[derive(Clone, Debug, EnumAsInner)]
-pub enum ElementDelta {
-    Update {
-        id: IdLp,
-        pos: IdLp,
-        pos_updated: bool,
-        value: LoroValue,
-        value_updated: bool,
-        value_id: IdLp,
-    },
-    New {
-        id: IdLp,
-        new_pos: IdLp,
-        new_value: LoroValue,
-        value_id: IdLp,
-    },
+#[derive(Clone, Debug)]
+pub struct ElementDelta {
+    pub pos: IdLp,
+    pub pos_updated: bool,
+    pub value: LoroValue,
+    pub value_updated: bool,
+    pub value_id: IdLp,
 }
 
 impl ElementDelta {
-    #[allow(unused)]
-    pub fn value(&self) -> Option<&LoroValue> {
-        match self {
-            ElementDelta::Update { value, .. } => Some(value),
-            ElementDelta::New { new_value, .. } => Some(new_value),
-        }
+    pub fn value(&self) -> &LoroValue {
+        &self.value
     }
 }
