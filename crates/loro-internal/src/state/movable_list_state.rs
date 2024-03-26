@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{debug, instrument, trace};
+use tracing::{debug, instrument};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::BTree;

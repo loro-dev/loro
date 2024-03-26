@@ -1294,7 +1294,7 @@ impl LoroText {
         let observer = observer::Observer::new(f);
         let doc = loro.0.clone();
         let ans = loro.0.subscribe(
-            &self.handler.id(),
+            self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc);
             }),
@@ -1579,7 +1579,7 @@ impl LoroMap {
         let observer = observer::Observer::new(f);
         let doc = loro.0.clone();
         let id = loro.0.subscribe(
-            &self.handler.id(),
+            self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc);
             }),
@@ -1827,7 +1827,7 @@ impl LoroList {
         let observer = observer::Observer::new(f);
         let doc = loro.0.clone();
         let ans = loro.0.subscribe(
-            &self.handler.id(),
+            self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc);
             }),
@@ -2198,7 +2198,7 @@ impl LoroTree {
         let observer = observer::Observer::new(f);
         let doc = loro.0.clone();
         let ans = loro.0.subscribe(
-            &self.handler.id(),
+            self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc);
             }),

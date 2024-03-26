@@ -3,7 +3,7 @@ use std::{cmp::Ordering, sync::Arc};
 use loro::{FrontiersNotIncluded, LoroDoc, LoroError, ToJson};
 use loro_internal::{handler::TextDelta, id::ID, LoroResult};
 use serde_json::json;
-use tracing::{trace, trace_span};
+use tracing::{trace_span};
 
 #[ctor::ctor]
 fn init() {

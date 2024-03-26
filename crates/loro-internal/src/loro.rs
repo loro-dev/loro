@@ -11,7 +11,7 @@ use std::{
 };
 
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
-use tracing::{instrument, trace};
+use tracing::{instrument};
 
 use crate::{
     arena::SharedArena,

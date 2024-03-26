@@ -9,7 +9,7 @@ use loro_common::{
     ContainerID, Counter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
 };
 use smallvec::SmallVec;
-use tracing::{instrument, trace};
+use tracing::{instrument};
 
 use crate::{
     container::{

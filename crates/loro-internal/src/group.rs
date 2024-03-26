@@ -9,7 +9,7 @@ use fxhash::FxHashMap;
 use loro_common::{
     ContainerType, Counter, HasId, HasLamport, IdLp, InternalString, LoroValue, PeerID, ID,
 };
-use tracing::{instrument, trace};
+
 
 use crate::{
     arena::SharedArena,

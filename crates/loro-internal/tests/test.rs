@@ -199,7 +199,7 @@ fn list() {
 fn richtext_mark_event() {
     let a = LoroDoc::new_auto_commit();
     a.subscribe(
-        &a.get_text("text").id(),
+        a.get_text("text").id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(
@@ -248,7 +248,7 @@ fn concurrent_richtext_mark_event() {
     c.get_text("text").mark(1, 4, "link", true.into()).unwrap();
     b.merge(&c).unwrap();
     let sub_id = a.subscribe(
-        &a.get_text("text").id(),
+        a.get_text("text").id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(
@@ -266,7 +266,7 @@ fn concurrent_richtext_mark_event() {
     a.unsubscribe(sub_id);
 
     let sub_id = a.subscribe(
-        &a.get_text("text").id(),
+        a.get_text("text").id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(
@@ -290,7 +290,7 @@ fn concurrent_richtext_mark_event() {
     a.merge(&b).unwrap();
     a.unsubscribe(sub_id);
     a.subscribe(
-        &a.get_text("text").id(),
+        a.get_text("text").id(),
         Arc::new(|e| {
             for container_diff in e.events {
                 let delta = container_diff.diff.as_text().unwrap();
@@ -321,7 +321,7 @@ fn insert_richtext_event() {
     a.commit_then_renew();
     let text = a.get_text("text");
     a.subscribe(
-        &text.id(),
+        text.id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(

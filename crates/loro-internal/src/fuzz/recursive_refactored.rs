@@ -342,7 +342,7 @@ trait Actionable {
 }
 
 impl Actor {
-    fn add_new_container(&mut self, idx: ContainerIdx, id: ContainerID, type_: ContainerType) {
+    fn add_new_container(&mut self, _idx: ContainerIdx, id: ContainerID, type_: ContainerType) {
         let txn = self.loro.get_global_txn();
         let handler = Handler::new(
             id,
@@ -460,21 +460,21 @@ impl Actionable for Vec<Actor> {
 
                 b.map_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(&id) {
+                    if !visited.contains(id) {
                         visited.insert(id.clone());
                         a.map_containers.push(a.loro.txn().unwrap().get_map(id))
                     }
                 });
                 b.list_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(&id) {
+                    if !visited.contains(id) {
                         visited.insert(id.clone());
                         a.list_containers.push(a.loro.txn().unwrap().get_list(id))
                     }
                 });
                 b.text_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(&id) {
+                    if !visited.contains(id) {
                         visited.insert(id.clone());
                         a.text_containers.push(a.loro.txn().unwrap().get_text(id))
                     }
@@ -516,21 +516,21 @@ impl Actionable for Vec<Actor> {
                         .unwrap();
                     b.map_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(&id) {
+                        if !visited.contains(id) {
                             visited.insert(id.clone());
                             a.map_containers.push(a.loro.get_map(id))
                         }
                     });
                     b.list_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(&id) {
+                        if !visited.contains(id) {
                             visited.insert(id.clone());
                             a.list_containers.push(a.loro.get_list(id))
                         }
                     });
                     b.text_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(&id) {
+                        if !visited.contains(id) {
                             visited.insert(id.clone());
                             a.text_containers.push(a.loro.get_text(id))
                         }
