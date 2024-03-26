@@ -1219,7 +1219,8 @@ impl MovableListHandler {
         });
 
         info!(?pos, ?len, ?ids, ?new_poses, "delete_with_txn");
-        for ((id, op_pos), user_pos) in ids.into_iter().zip(new_poses.into_iter()).zip(pos..) {
+        let user_pos = pos;
+        for (id, op_pos) in ids.into_iter().zip(new_poses.into_iter()) {
             txn.apply_local_op(
                 self.inner.container_idx,
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
