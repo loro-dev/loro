@@ -45,6 +45,8 @@ pub enum LoroError {
     InvalidFrontierIdNotFound(ID),
     #[error("Cannot import when the doc is in a transaction")]
     ImportWhenInTxn,
+    #[error("The given method ({method}) is not allowed when the container is detached. You should insert the container to the doc first.")]
+    MisuseDettachedContainer { method: &'static str },
 }
 
 #[derive(Error, Debug)]

@@ -561,7 +561,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.get_global_txn(),
@@ -576,7 +576,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::List);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.get_global_txn(),
@@ -591,7 +591,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Map);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.get_global_txn(),
@@ -606,7 +606,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.get_global_txn(),

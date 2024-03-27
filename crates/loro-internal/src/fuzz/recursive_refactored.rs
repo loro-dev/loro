@@ -343,7 +343,7 @@ trait Actionable {
 impl Actor {
     fn add_new_container(&mut self, idx: ContainerIdx, id: ContainerID, type_: ContainerType) {
         let txn = self.loro.get_global_txn();
-        let handler = Handler::new(
+        let handler = Handler::new_attached(
             id,
             self.loro.arena().clone(),
             txn,
