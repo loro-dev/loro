@@ -273,8 +273,13 @@ impl ApplyDiff for TreeTracker {
         }
         // compare by peer and then counter
         list.sort_by_key(|x| {
+            let parent = if let LoroValue::String(p) = x.get("parent").unwrap() {
+                Some(p.clone())
+            } else {
+                None
+            };
             let index = x.get("position").unwrap().as_string().unwrap();
-            index.clone()
+            (parent, index.clone())
         });
         list.into()
     }

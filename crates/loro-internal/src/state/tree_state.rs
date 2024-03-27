@@ -394,11 +394,7 @@ impl ContainerState for TreeState {
     }
 
     fn get_value(&mut self) -> LoroValue {
-        let mut ans: Vec<LoroValue> = vec![];
-        #[cfg(feature = "test_utils")]
-        // The order keep consistent
-        let iter = self.trees.keys().sorted();
-        #[cfg(not(feature = "test_utils"))]
+        let mut ans = vec![];
         let iter = self.trees.keys();
         for target in iter {
             if !self.is_node_deleted(target) {
@@ -420,9 +416,21 @@ impl ContainerState for TreeState {
                     "position".to_string(),
                     node.position.as_ref().unwrap().to_string().into(),
                 );
-                ans.push(t.into());
+                ans.push(t);
             }
         }
+        #[cfg(feature = "test_utils")]
+        ans.sort_by_key(|x| {
+            let parent = if let LoroValue::String(p) = x.get("parent").unwrap() {
+                Some(p.clone())
+            } else {
+                None
+            };
+            (
+                parent,
+                x.get("position").unwrap().as_string().unwrap().clone(),
+            )
+        });
         ans.into()
     }
 
