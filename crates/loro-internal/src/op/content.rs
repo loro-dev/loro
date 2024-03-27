@@ -41,7 +41,7 @@ impl<'a> Clone for RawOpContent<'a> {
         match self {
             Self::Map(arg0) => Self::Map(arg0.clone()),
             Self::List(arg0) => Self::List(arg0.clone()),
-            Self::Tree(arg0) => Self::Tree(*arg0),
+            Self::Tree(arg0) => Self::Tree(arg0.clone()),
         }
     }
 }
@@ -71,7 +71,7 @@ impl<'a> RawOpContent<'a> {
                 }),
                 ListOp::StyleEnd => RawOpContent::List(ListOp::StyleEnd),
             },
-            Self::Tree(arg0) => RawOpContent::Tree(*arg0),
+            Self::Tree(arg0) => RawOpContent::Tree(arg0.clone()),
         }
     }
 }

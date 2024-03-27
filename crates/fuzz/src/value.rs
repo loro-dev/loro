@@ -3,11 +3,12 @@ use std::ops::{Deref, DerefMut};
 
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
-use loro::ID;
 use loro::{
     event::{Diff, DiffEvent, ListDiffItem},
-    ContainerType, Index, LoroDoc, LoroText, LoroValue, TreeExternalDiff, TreeID, ValueOrContainer,
+    ContainerType, Index, LoroDoc, LoroText, LoroValue, ValueOrContainer,
 };
+
+use crate::container::TreeTracker;
 #[derive(Debug, EnumAsInner)]
 pub enum Value {
     Value(LoroValue),
@@ -22,9 +23,7 @@ impl Value {
                 Value::Container(ContainerTracker::List(ListTracker(Vec::new())))
             }
             ContainerType::Text => Value::Container(ContainerTracker::Text(TextTracker::empty())),
-            ContainerType::Tree => {
-                Value::Container(ContainerTracker::Tree(TreeTracker(Vec::new())))
-            }
+            ContainerType::Tree => Value::Container(ContainerTracker::Tree(TreeTracker::empty())),
         }
     }
 }
@@ -193,93 +192,6 @@ impl ApplyDiff for TextTracker {
 
     fn to_value(&self) -> LoroValue {
         self.text.to_string().into()
-    }
-}
-#[derive(Debug)]
-pub struct TreeTracker(Vec<TreeNode>);
-
-impl ApplyDiff for TreeTracker {
-    fn empty() -> Self {
-        TreeTracker(Vec::new())
-    }
-
-    fn apply_diff(&mut self, diff: Diff) {
-        let diff = diff.as_tree().unwrap();
-        for diff in &diff.diff {
-            let target = diff.target;
-            match &diff.action {
-                TreeExternalDiff::Create(parent) => {
-                    let node = TreeNode::new(target, *parent);
-                    self.push(node);
-                }
-                TreeExternalDiff::Delete => {
-                    self.retain(|node| node.id != target && node.parent != Some(target));
-                }
-                TreeExternalDiff::Move(parent) => {
-                    let node = self.iter_mut().find(|node| node.id == target).unwrap();
-                    node.parent = *parent;
-                }
-            }
-        }
-    }
-
-    fn to_value(&self) -> LoroValue {
-        let mut list: Vec<FxHashMap<_, _>> = Vec::new();
-        for node in self.iter() {
-            let mut map = FxHashMap::default();
-            map.insert("id".to_string(), node.id.to_string().into());
-            map.insert("meta".to_string(), node.meta.to_value());
-            map.insert(
-                "parent".to_string(),
-                match node.parent {
-                    Some(parent) => parent.to_string().into(),
-                    None => LoroValue::Null,
-                },
-            );
-            list.push(map);
-        }
-        // compare by peer and then counter
-        list.sort_by_key(|x| {
-            let id: ID = x
-                .get("id")
-                .unwrap()
-                .as_string()
-                .unwrap()
-                .as_str()
-                .try_into()
-                .unwrap();
-            id
-        });
-        list.into()
-    }
-}
-
-impl Deref for TreeTracker {
-    type Target = Vec<TreeNode>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl DerefMut for TreeTracker {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-#[derive(Debug)]
-pub struct TreeNode {
-    id: TreeID,
-    meta: ContainerTracker,
-    parent: Option<TreeID>,
-}
-
-impl TreeNode {
-    pub fn new(id: TreeID, parent: Option<TreeID>) -> Self {
-        TreeNode {
-            id,
-            meta: ContainerTracker::Map(MapTracker::empty()),
-            parent,
-        }
     }
 }
 

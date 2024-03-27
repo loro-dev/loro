@@ -4,8 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::TreeParentId;
 
-use super::fractional_index::FracIndex;
-
 /// The operation of movable tree.
 ///
 /// In the movable tree, there are three actions:
@@ -13,11 +11,10 @@ use super::fractional_index::FracIndex;
 /// - **Move**: move target tree node a child node of the specified parent node.
 /// - **Delete**: move target tree node to [`loro_common::DELETED_TREE_ROOT`].
 ///
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct TreeOp {
     pub(crate) target: TreeID,
     pub(crate) parent: Option<TreeID>,
-    pub(crate) position: Option<FracIndex>,
 }
 
 impl TreeOp {
@@ -45,7 +42,7 @@ impl HasLength for TreeOp {
 impl Sliceable for TreeOp {
     fn slice(&self, from: usize, to: usize) -> Self {
         assert!(from == 0 && to == 1);
-        self.clone()
+        *self
     }
 }
 

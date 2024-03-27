@@ -1441,7 +1441,7 @@ mod value {
     };
 
     use super::{encode::ValueRegister, MAX_COLLECTION_SIZE};
-    use crate::container::tree::tree_op::TreeOp;
+    use crate::container::tree::{fractional_index::FracIndex, tree_op::TreeOp};
     use num_traits::{FromPrimitive, ToPrimitive};
 
     #[allow(unused)]
@@ -1461,7 +1461,7 @@ mod value {
         Map(FxHashMap<InternalString, Value<'a>>),
         Binary(&'a [u8]),
         MarkStart(MarkStart),
-        TreeMove(EncodedTreeMove),
+        TreeMove(EncodedTreeMove<'a>),
         Unknown { kind: u8, data: &'a [u8] },
     }
 
@@ -1472,15 +1472,17 @@ mod value {
         pub info: u8,
     }
 
-    pub struct EncodedTreeMove {
+    #[derive(Debug)]
+    pub struct EncodedTreeMove<'a> {
         pub subject_peer_idx: usize,
         pub subject_cnt: usize,
         pub is_parent_null: bool,
         pub parent_peer_idx: usize,
         pub parent_cnt: usize,
+        pub position: Option<&'a [u8]>,
     }
 
-    impl EncodedTreeMove {
+    impl<'a> EncodedTreeMove<'a> {
         pub fn as_tree_op(&self, peer_ids: &[u64]) -> LoroResult<TreeOp> {
             Ok(TreeOp {
                 target: TreeID::new(
@@ -1499,16 +1501,26 @@ mod value {
                         self.parent_cnt as Counter,
                     ))
                 },
+                // TODO: better
+                position: if let Some(p) = self.position {
+                    Some(
+                        FracIndex::from_bytes(p.to_vec())
+                            .map_err(|_e| LoroError::DecodeDataCorruptionError)?,
+                    )
+                } else {
+                    None
+                },
             })
         }
 
-        pub fn from_tree_op(op: &TreeOp, register_peer_id: &mut ValueRegister<PeerID>) -> Self {
+        pub fn from_tree_op(op: &'a TreeOp, register_peer_id: &mut ValueRegister<PeerID>) -> Self {
             EncodedTreeMove {
                 subject_peer_idx: register_peer_id.register(&op.target.peer),
                 subject_cnt: op.target.counter as usize,
                 is_parent_null: op.parent.is_none(),
                 parent_peer_idx: op.parent.map_or(0, |x| register_peer_id.register(&x.peer)),
                 parent_cnt: op.parent.map_or(0, |x| x.counter as usize),
+                position: op.position.as_ref().map(|x| x.as_bytes()),
             }
         }
     }
@@ -1674,7 +1686,7 @@ mod value {
     }
 
     pub struct ValueWriter {
-        buffer: Vec<u8>,
+        pub(super) buffer: Vec<u8>,
     }
 
     impl ValueWriter {
@@ -1845,10 +1857,15 @@ mod value {
             self.write_usize(op.subject_peer_idx);
             self.write_usize(op.subject_cnt);
             self.write_u8(op.is_parent_null as u8);
+            if let Some(position) = op.position {
+                self.write_u8(true as u8);
+                self.write_binary(position);
+            } else {
+                self.write_u8(false as u8);
+            }
             if op.is_parent_null {
                 return;
             }
-
             self.write_usize(op.parent_peer_idx);
             self.write_usize(op.parent_cnt);
         }
@@ -2201,19 +2218,24 @@ mod value {
             let subject_peer_idx = self.read_usize()?;
             let subject_cnt = self.read_usize()?;
             let is_parent_null = self.read_u8()? != 0;
+            let position = if self.read_u8()? != 0 {
+                Some(self.read_binary()?)
+            } else {
+                None
+            };
             let mut parent_peer_idx = 0;
             let mut parent_cnt = 0;
             if !is_parent_null {
                 parent_peer_idx = self.read_usize()?;
                 parent_cnt = self.read_usize()?;
             }
-
             Ok(EncodedTreeMove {
                 subject_peer_idx,
                 subject_cnt,
                 is_parent_null,
                 parent_peer_idx,
                 parent_cnt,
+                position,
             })
         }
     }

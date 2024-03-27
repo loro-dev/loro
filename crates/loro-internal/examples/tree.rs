@@ -10,13 +10,13 @@ fn checkout() {
     let mut ids = vec![];
     let mut versions = vec![];
     let id1 = loro
-        .with_txn(|txn| tree.create_with_txn(txn, None))
+        .with_txn(|txn| tree.create_with_txn(txn, None, 0))
         .unwrap();
     ids.push(id1);
     versions.push(loro.oplog_frontiers());
     for _ in 1..depth {
         let id = loro
-            .with_txn(|txn| tree.create_with_txn(txn, *ids.last().unwrap()))
+            .with_txn(|txn| tree.create_with_txn(txn, *ids.last().unwrap(), 0))
             .unwrap();
         ids.push(id);
         versions.push(loro.oplog_frontiers());
@@ -38,7 +38,7 @@ fn mov() {
     let size = 10000;
     for _ in 0..size {
         ids.push(
-            loro.with_txn(|txn| tree.create_with_txn(txn, None))
+            loro.with_txn(|txn| tree.create_with_txn(txn, None, 0))
                 .unwrap(),
         )
     }
@@ -49,7 +49,7 @@ fn mov() {
     for _ in 0..n {
         let i = rng.gen::<usize>() % size;
         let j = rng.gen::<usize>() % size;
-        tree.mov_with_txn(&mut txn, ids[i], ids[j])
+        tree.mov_with_txn(&mut txn, ids[i], ids[j], 0)
             .unwrap_or_default();
     }
     drop(txn);

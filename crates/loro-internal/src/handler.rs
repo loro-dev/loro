@@ -5,7 +5,7 @@ use crate::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, DeleteSpanWithId, ListOp},
         richtext::richtext_state::PosType,
-        tree::tree_op::TreeOp,
+        tree::{fractional_index::FracIndex, tree_op::TreeOp},
     },
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
@@ -1119,6 +1119,7 @@ impl TreeHandler {
             crate::op::RawOpContent::Tree(TreeOp {
                 target,
                 parent: Some(TreeID::delete_root()),
+                position: None,
             }),
             EventHint::Tree(TreeDiffItem {
                 target,
@@ -1128,26 +1129,34 @@ impl TreeHandler {
         )
     }
 
-    pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
-        with_txn(&self.inner.txn, |txn| self.create_with_txn(txn, parent))
+    pub fn create<T: Into<Option<TreeID>>>(&self, parent: T, index: usize) -> LoroResult<TreeID> {
+        with_txn(&self.inner.txn, |txn| {
+            self.create_with_txn(txn, parent, index)
+        })
     }
 
     pub fn create_with_txn<T: Into<Option<TreeID>>>(
         &self,
         txn: &mut Transaction,
         parent: T,
+        index: usize,
     ) -> LoroResult<TreeID> {
         let parent: Option<TreeID> = parent.into();
         let tree_id = TreeID::from_id(txn.next_id());
+        let position = self.generate_position_at(parent, index);
         let event_hint = TreeDiffItem {
             target: tree_id,
-            action: TreeExternalDiff::Create(parent),
+            action: TreeExternalDiff::Create {
+                parent,
+                position: position.clone(),
+            },
         };
         txn.apply_local_op(
             self.inner.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
                 target: tree_id,
                 parent,
+                position: Some(position),
             }),
             EventHint::Tree(event_hint),
             &self.inner.state,
@@ -1155,9 +1164,14 @@ impl TreeHandler {
         Ok(tree_id)
     }
 
-    pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
+    pub fn mov<T: Into<Option<TreeID>>>(
+        &self,
+        target: TreeID,
+        parent: T,
+        index: usize,
+    ) -> LoroResult<()> {
         with_txn(&self.inner.txn, |txn| {
-            self.mov_with_txn(txn, target, parent)
+            self.mov_with_txn(txn, target, parent, index)
         })
     }
 
@@ -1166,14 +1180,20 @@ impl TreeHandler {
         txn: &mut Transaction,
         target: TreeID,
         parent: T,
+        index: usize,
     ) -> LoroResult<()> {
         let parent = parent.into();
+        let position = self.generate_position_at(parent, index);
         txn.apply_local_op(
             self.inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp { target, parent }),
+            crate::op::RawOpContent::Tree(TreeOp {
+                target,
+                parent,
+                position: Some(position.clone()),
+            }),
             EventHint::Tree(TreeDiffItem {
                 target,
-                action: TreeExternalDiff::Move(parent),
+                action: TreeExternalDiff::Move { parent, position },
             }),
             &self.inner.state,
         )
@@ -1194,17 +1214,21 @@ impl TreeHandler {
             let a = state.as_tree_state().unwrap();
             a.parent(target).map(|p| match p {
                 TreeParentId::None => None,
-                TreeParentId::Node(parent_id) => Some(parent_id),
+                TreeParentId::Node(parent) => Some(parent),
                 _ => unreachable!(),
             })
         })
     }
 
-    pub fn children(&self, target: TreeID) -> Vec<TreeID> {
+    pub fn children(&self, target: Option<TreeID>) -> Vec<TreeID> {
         self.with_state(|state| {
             let a = state.as_tree_state().unwrap();
             a.as_ref()
-                .get_children(&TreeParentId::Node(target))
+                .get_children(&if let Some(parent) = target {
+                    TreeParentId::Node(parent)
+                } else {
+                    TreeParentId::None
+                })
                 .into_iter()
                 .collect()
         })
@@ -1235,6 +1259,13 @@ impl TreeHandler {
     #[cfg(feature = "test_utils")]
     pub fn next_tree_id(&self) -> TreeID {
         with_txn(&self.inner.txn, |txn| Ok(TreeID::from_id(txn.next_id()))).unwrap()
+    }
+
+    fn generate_position_at(&self, parent: Option<TreeID>, index: usize) -> FracIndex {
+        self.with_state(|state| {
+            let a = state.as_tree_state().unwrap();
+            a.generate_position_at(&TreeParentId::from(parent), index)
+        })
     }
 }
 
@@ -1422,7 +1453,7 @@ mod test {
         loro.set_peer_id(1).unwrap();
         let tree = loro.get_tree("root");
         let id = loro
-            .with_txn(|txn| tree.create_with_txn(txn, None))
+            .with_txn(|txn| tree.create_with_txn(txn, None, 0))
             .unwrap();
         loro.with_txn(|txn| {
             let meta = tree.get_meta(id)?;
@@ -1437,7 +1468,7 @@ mod test {
             .unwrap();
         assert_eq!(meta, 123.into());
         assert_eq!(
-            r#"[{"parent":null,"meta":{"a":123},"id":"0@1"}]"#,
+            r#"[{"parent":null,"meta":{"a":123},"id":"0@1","position":"80"}]"#,
             tree.get_deep_value().to_json()
         );
         let bytes = loro.export_snapshot();
@@ -1452,11 +1483,11 @@ mod test {
         let tree = loro.get_tree("root");
         let text = loro.get_text("text");
         loro.with_txn(|txn| {
-            let id = tree.create_with_txn(txn, None)?;
+            let id = tree.create_with_txn(txn, None, 0)?;
             let meta = tree.get_meta(id)?;
             meta.insert_with_txn(txn, "a", 1.into())?;
             text.insert_with_txn(txn, 0, "abc")?;
-            let _id2 = tree.create_with_txn(txn, None)?;
+            let _id2 = tree.create_with_txn(txn, None, 0)?;
             meta.insert_with_txn(txn, "b", 2.into())?;
             Ok(id)
         })
