@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.12.0
+
+### Minor Changes
+
+- Add getParent and getOrCreate
+
+### Patch Changes
+
+- Updated dependencies
+  - loro-wasm@0.12.0
+
 ## 0.11.1
 
 ### Patch Changes
