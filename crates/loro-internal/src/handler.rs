@@ -1098,7 +1098,10 @@ impl TreeHandler {
         let position = self.generate_position_at(parent, index);
         let event_hint = TreeDiffItem {
             target: tree_id,
-            action: TreeExternalDiff::Create { parent, index },
+            action: TreeExternalDiff::Create {
+                parent,
+                position: position.clone(),
+            },
         };
         txn.apply_local_op(
             self.inner.container_idx,
@@ -1138,11 +1141,11 @@ impl TreeHandler {
             crate::op::RawOpContent::Tree(TreeOp {
                 target,
                 parent,
-                position: Some(position),
+                position: Some(position.clone()),
             }),
             EventHint::Tree(TreeDiffItem {
                 target,
-                action: TreeExternalDiff::Move { parent, index },
+                action: TreeExternalDiff::Move { parent, position },
             }),
             &self.inner.state,
         )
@@ -1417,7 +1420,7 @@ mod test {
             .unwrap();
         assert_eq!(meta, 123.into());
         assert_eq!(
-            r#"[{"parent":null,"meta":{"a":123},"id":"0@1"}]"#,
+            r#"[{"parent":null,"meta":{"a":123},"id":"0@1","position":"80"}]"#,
             tree.get_deep_value().to_json()
         );
         let bytes = loro.export_snapshot();

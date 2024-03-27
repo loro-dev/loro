@@ -380,28 +380,28 @@ impl Actionable for Vec<Actor> {
 
                 b.map_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(&id) {
+                    if !visited.contains(id) {
                         visited.insert(id.clone());
                         a.map_containers.push(a.loro.txn().unwrap().get_map(id))
                     }
                 });
                 b.list_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(&id) {
+                    if !visited.contains(id) {
                         visited.insert(id.clone());
                         a.list_containers.push(a.loro.txn().unwrap().get_list(id))
                     }
                 });
                 b.text_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(&id) {
+                    if !visited.contains(id) {
                         visited.insert(id.clone());
                         a.text_containers.push(a.loro.txn().unwrap().get_text(id))
                     }
                 });
                 b.tree_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(&id) {
+                    if !visited.contains(id) {
                         visited.insert(id.clone());
                         a.tree_containers.push(a.loro.txn().unwrap().get_tree(id))
                     }
@@ -451,28 +451,28 @@ impl Actionable for Vec<Actor> {
                         .unwrap();
                     b.map_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(&id) {
+                        if !visited.contains(id) {
                             visited.insert(id.clone());
                             a.map_containers.push(a.loro.get_map(id))
                         }
                     });
                     b.list_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(&id) {
+                        if !visited.contains(id) {
                             visited.insert(id.clone());
                             a.list_containers.push(a.loro.get_list(id))
                         }
                     });
                     b.text_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(&id) {
+                        if !visited.contains(id) {
                             visited.insert(id.clone());
                             a.text_containers.push(a.loro.get_text(id))
                         }
                     });
                     b.tree_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(&id) {
+                        if !visited.contains(id) {
                             visited.insert(id.clone());
                             a.tree_containers.push(a.loro.get_tree(id))
                         }
@@ -628,7 +628,6 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     let mut a_result = a_doc.get_state_deep_value();
     let mut b_result = b_doc.get_state_deep_value();
     let mut a_value = a_actor.value_tracker.lock().unwrap();
-
     if let Some(tree) = Arc::make_mut(a_result.as_map_mut().unwrap()).get_mut("tree") {
         Arc::make_mut(tree.as_list_mut().unwrap()).sort_by_key(|x| {
             let id = x.as_map().unwrap().get("id").unwrap();
@@ -654,7 +653,6 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     let a = a_doc.get_tree("tree");
     let mut value_a = a.get_deep_value().into_list().unwrap();
     let mut tracker_a = a_actor.tree_tracker.lock().unwrap();
-
     Arc::make_mut(&mut value_a).sort_by_key(|x| {
         let id = x.as_map().unwrap().get("id").unwrap();
         id.clone().into_string().unwrap()

@@ -14,21 +14,21 @@ pub struct TreeDiff {
     pub diff: Vec<TreeDiffItem>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TreeDiffItem {
     pub target: TreeID,
     pub action: TreeExternalDiff,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub enum TreeExternalDiff {
     Create {
         parent: Option<TreeID>,
-        index: usize,
+        position: FracIndex,
     },
     Move {
         parent: Option<TreeID>,
-        index: usize,
+        position: FracIndex,
     },
     Delete,
 }
@@ -165,18 +165,20 @@ impl<'a> TreeValue<'a> {
     pub(crate) fn apply_diff(&mut self, diff: &TreeDiff) {
         for d in diff.diff.iter() {
             let target = d.target;
-            match d.action {
-                TreeExternalDiff::Create { parent, index } => {
+            match &d.action {
+                TreeExternalDiff::Create { parent, position } => {
                     self.create_target(target);
-                    self.mov(target, parent, index);
+                    self.mov(target, *parent, position.clone());
                 }
                 TreeExternalDiff::Delete => self.delete_target(target),
-                TreeExternalDiff::Move { parent, index } => self.mov(target, parent, index),
+                TreeExternalDiff::Move { parent, position } => {
+                    self.mov(target, *parent, position.clone())
+                }
             }
         }
     }
 
-    fn mov(&mut self, target: TreeID, parent: Option<TreeID>, index: usize) {
+    fn mov(&mut self, target: TreeID, parent: Option<TreeID>, position: FracIndex) {
         let map = self
             .0
             .iter_mut()
@@ -194,7 +196,7 @@ impl<'a> TreeValue<'a> {
             LoroValue::Null
         };
         map_mut.insert("parent".to_string(), p);
-        map_mut.insert("index".to_string(), (index as i64).into());
+        map_mut.insert("position".to_string(), (position.to_string()).into());
     }
 
     fn create_target(&mut self, target: TreeID) {

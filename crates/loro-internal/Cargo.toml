@@ -44,10 +44,7 @@ num-traits = "0.2"
 num-derive = "0.3"
 md5 = "0.7.0"
 fractional_index = "2.0.1"
-tracing = { version = "0.1", features = [
-  "max_level_debug",
-  "release_max_level_warn",
-] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 miniz_oxide = "0.7.1"

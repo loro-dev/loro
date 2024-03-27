@@ -21,7 +21,7 @@ pub mod event;
 
 pub use loro_internal::configure::Configure;
 pub use loro_internal::configure::StyleConfigMap;
-pub use loro_internal::container::richtext::ExpandType;
+pub use loro_internal::container::{richtext::ExpandType, FracIndex};
 pub use loro_internal::container::{ContainerID, ContainerType};
 pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
 pub use loro_internal::event::Index;
@@ -716,7 +716,17 @@ impl LoroTree {
     /// let child = tree.create(root).unwrap();
     /// ```
     pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
-        self.handler.create(parent)
+        let parent = parent.into();
+        let index = self.children(parent).len();
+        self.handler.create(parent, index)
+    }
+
+    pub fn create_at<T: Into<Option<TreeID>>>(
+        &self,
+        parent: T,
+        index: usize,
+    ) -> LoroResult<TreeID> {
+        self.handler.create(parent, index)
     }
 
     /// Move the `target` node to be a child of the `parent` node.
@@ -736,7 +746,19 @@ impl LoroTree {
     /// tree.mov(root2, root).unwrap();
     /// ```
     pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
-        self.handler.mov(target, parent.into())
+        let parent = parent.into();
+        let index = self.children(parent).len();
+        self.handler.mov(target, parent, index)
+    }
+
+    pub fn mov_to<T: Into<Option<TreeID>>>(
+        &self,
+        target: TreeID,
+        parent: T,
+        to: usize,
+    ) -> LoroResult<()> {
+        let parent = parent.into();
+        self.handler.mov(target, parent, to)
     }
 
     /// Delete a tree node.
@@ -792,6 +814,10 @@ impl LoroTree {
     /// Return all nodes
     pub fn nodes(&self) -> Vec<TreeID> {
         self.handler.nodes()
+    }
+
+    pub fn children(&self, parent: Option<TreeID>) -> Vec<TreeID> {
+        self.handler.children(parent)
     }
 
     /// Return container id of the tree.
