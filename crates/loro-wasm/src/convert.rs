@@ -212,11 +212,7 @@ fn map_delta_to_js(value: &ResolvedMapDelta, doc: &Arc<LoroDoc>) -> JsValue {
 
 pub(crate) fn handler_to_js_value(handler: Handler, doc: Arc<LoroDoc>) -> JsValue {
     match handler {
-        Handler::Text(t) => LoroText {
-            handler: t,
-            _doc: doc,
-        }
-        .into(),
+        Handler::Text(t) => LoroText { handler: t, doc }.into(),
         Handler::Map(m) => LoroMap { handler: m, doc }.into(),
         Handler::List(l) => LoroList { handler: l, doc }.into(),
         Handler::Tree(t) => LoroTree { handler: t, doc }.into(),

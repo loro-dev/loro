@@ -101,6 +101,10 @@ pub trait HandlerTrait {
     fn with_txn<R>(&self, f: impl FnOnce(&mut Transaction) -> LoroResult<R>) -> LoroResult<R> {
         with_txn(&self.inner().txn, f)
     }
+
+    fn parent(&self) -> Option<Handler> {
+        self.inner().get_parent()
+    }
 }
 
 fn create_handler(handler: &impl HandlerTrait, id: ContainerID) -> Handler {
@@ -135,6 +139,31 @@ impl BasicHandler {
         f: impl FnOnce(&mut Transaction) -> Result<(), LoroError>,
     ) -> Result<(), LoroError> {
         with_txn(&self.txn, f)
+    }
+
+    fn get_parent(&self) -> Option<Handler> {
+        let parent_idx = self.arena.get_parent(self.container_idx)?;
+        let parent_id = self.arena.get_container_id(parent_idx).unwrap();
+        {
+            let arena = self.arena.clone();
+            let txn = self.txn.clone();
+            let state = self.state.clone();
+            let kind = parent_id.container_type();
+            let handler = BasicHandler {
+                container_idx: parent_idx,
+                id: parent_id,
+                txn,
+                arena,
+                state,
+            };
+
+            Some(match kind {
+                ContainerType::Map => Handler::Map(MapHandler { inner: handler }),
+                ContainerType::List => Handler::List(ListHandler { inner: handler }),
+                ContainerType::Tree => Handler::Tree(TreeHandler { inner: handler }),
+                ContainerType::Text => Handler::Text(TextHandler { inner: handler }),
+            })
+        }
     }
 }
 
@@ -1160,7 +1189,7 @@ impl TreeHandler {
     }
 
     /// Get the parent of the node, if the node is deleted or does not exist, return None
-    pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
+    pub fn get_node_parent(&self, target: TreeID) -> Option<Option<TreeID>> {
         self.with_state(|state| {
             let a = state.as_tree_state().unwrap();
             a.parent(target).map(|p| match p {

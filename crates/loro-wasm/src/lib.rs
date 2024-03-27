@@ -6,7 +6,9 @@ use loro_internal::{
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
     event::Index,
-    handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrHandler},
+    handler::{
+        Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrHandler,
+    },
     id::{Counter, TreeID, ID},
     obs::SubID,
     version::Frontiers,
@@ -94,7 +96,7 @@ extern "C" {
     #[wasm_bindgen(typescript_type = "Value | Container | undefined")]
     pub type JsValueOrContainerOrUndefined;
     #[wasm_bindgen(typescript_type = "Container | undefined")]
-    pub type ContainerOrUndefined;
+    pub type JsContainerOrUndefined;
     #[wasm_bindgen(typescript_type = "[string, Value | Container]")]
     pub type MapEntry;
     #[wasm_bindgen(typescript_type = "{[key: string]: { expand: 'before'|'after'|'none'|'both' }}")]
@@ -494,7 +496,7 @@ impl Loro {
             .get_text(js_value_to_container_id(cid, ContainerType::Text)?);
         Ok(LoroText {
             handler: text,
-            _doc: self.0.clone(),
+            doc: self.0.clone(),
         })
     }
 
@@ -595,7 +597,7 @@ impl Loro {
                 let richtext = self.0.get_text(container_id);
                 LoroText {
                     handler: richtext,
-                    _doc: self.0.clone(),
+                    doc: self.0.clone(),
                 }
                 .into()
             }
@@ -1146,7 +1148,7 @@ fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsValue 
 #[wasm_bindgen]
 pub struct LoroText {
     handler: TextHandler,
-    _doc: Arc<LoroDoc>,
+    doc: Arc<LoroDoc>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1340,6 +1342,15 @@ impl LoroText {
         self.handler.apply_delta(&delta)?;
         Ok(())
     }
+
+    /// Get the parent container.
+    pub fn parent(&self) -> JsContainerOrUndefined {
+        if let Some(p) = self.handler.parent() {
+            handler_to_js_value(p, self.doc.clone()).into()
+        } else {
+            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+        }
+    }
 }
 
 /// The handler of a map container.
@@ -1430,7 +1441,7 @@ impl LoroMap {
         &self,
         key: &str,
         container_type: &str,
-    ) -> JsResult<ContainerOrUndefined> {
+    ) -> JsResult<JsContainerOrUndefined> {
         let type_: ContainerType = container_type.try_into()?;
         let v = self.handler.get_or_create_container_(key, type_)?;
         Ok(handler_to_js_value(v, self.doc.clone()).into())
@@ -1544,30 +1555,7 @@ impl LoroMap {
     pub fn insert_container(&mut self, key: &str, container_type: &str) -> JsResult<JsValue> {
         let type_: ContainerType = container_type.try_into()?;
         let c = self.handler.insert_container(key, type_)?;
-
-        let container = match type_ {
-            ContainerType::Map => LoroMap {
-                handler: c.into_map().unwrap(),
-                doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::List => LoroList {
-                handler: c.into_list().unwrap(),
-                doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::Text => LoroText {
-                handler: c.into_text().unwrap(),
-                _doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::Tree => LoroTree {
-                handler: c.into_tree().unwrap(),
-                doc: self.doc.clone(),
-            }
-            .into(),
-        };
-        Ok(container)
+        Ok(handler_to_js_value(c, self.doc.clone()))
     }
 
     /// Subscribe to the changes of the map.
@@ -1635,6 +1623,15 @@ impl LoroMap {
     #[wasm_bindgen(js_name = "size", method, getter)]
     pub fn size(&self) -> usize {
         self.handler.len()
+    }
+
+    /// Get the parent container.
+    pub fn parent(&self) -> JsContainerOrUndefined {
+        if let Some(p) = self.handler.parent() {
+            handler_to_js_value(p, self.doc.clone()).into()
+        } else {
+            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+        }
     }
 }
 
@@ -1788,29 +1785,7 @@ impl LoroList {
     pub fn insert_container(&mut self, index: usize, container: &str) -> JsResult<JsValue> {
         let type_: ContainerType = container.try_into()?;
         let c = self.handler.insert_container(index, type_)?;
-        let container = match type_ {
-            ContainerType::Map => LoroMap {
-                handler: c.into_map().unwrap(),
-                doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::List => LoroList {
-                handler: c.into_list().unwrap(),
-                doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::Text => LoroText {
-                handler: c.into_text().unwrap(),
-                _doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::Tree => LoroTree {
-                handler: c.into_tree().unwrap(),
-                doc: self.doc.clone(),
-            }
-            .into(),
-        };
-        Ok(container)
+        Ok(handler_to_js_value(c, self.doc.clone()))
     }
 
     /// Subscribe to the changes of the list.
@@ -1877,6 +1852,15 @@ impl LoroList {
     #[wasm_bindgen(js_name = "length", method, getter)]
     pub fn length(&self) -> usize {
         self.handler.len()
+    }
+
+    /// Get the parent container.
+    pub fn parent(&self) -> JsContainerOrUndefined {
+        if let Some(p) = self.handler.parent() {
+            handler_to_js_value(p, self.doc.clone()).into()
+        } else {
+            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+        }
     }
 }
 
@@ -1964,7 +1948,7 @@ impl LoroTreeNode {
 
     /// Get the parent node of this node.
     pub fn parent(&self) -> Option<LoroTreeNode> {
-        let parent = self.tree.parent(self.id).flatten();
+        let parent = self.tree.get_node_parent(self.id).flatten();
         parent.map(|p| LoroTreeNode::from_tree(p, self.tree.clone(), self.doc.clone()))
     }
 
@@ -2231,6 +2215,15 @@ impl LoroTree {
     pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
         loro.0.unsubscribe(SubID::from_u32(subscription));
         Ok(())
+    }
+
+    /// Get the parent container of the tree container.
+    pub fn parent(&self) -> JsContainerOrUndefined {
+        if let Some(p) = HandlerTrait::parent(&self.handler) {
+            handler_to_js_value(p, self.doc.clone()).into()
+        } else {
+            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+        }
     }
 }
 

@@ -388,3 +388,18 @@ it("can control the mergeable interval", () => {
     expect(doc.getAllChanges().get("1")?.length).toBe(2);
   }
 });
+
+it("get container parent", () => {
+  const doc = new Loro();
+  const m = doc.getMap("m");
+  expect(m.parent()).toBeUndefined();
+  const list = m.setContainer("t", "List");
+  expect(list.parent()!.id).toBe(m.id);
+  const text = list.insertContainer(0, "Text");
+  expect(text.parent()!.id).toBe(list.id);
+  const tree = list.insertContainer(1, "Tree");
+  expect(tree.parent()!.id).toBe(list.id);
+  const treeNode = tree.createNode();
+  const subtext = treeNode.data.setContainer("t", "Text");
+  expect(subtext.parent()!.id).toBe(treeNode.data.id);
+});
