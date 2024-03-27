@@ -288,12 +288,12 @@ mod container {
 
         fn try_from(value: &str) -> Result<Self, Self::Error> {
             match value {
-                "Map" => Ok(ContainerType::Map),
-                "List" => Ok(ContainerType::List),
-                "Text" => Ok(ContainerType::Text),
-                "Tree" => Ok(ContainerType::Tree),
+                "Map" | "map" => Ok(ContainerType::Map),
+                "List" | "list" => Ok(ContainerType::List),
+                "Text" | "text" => Ok(ContainerType::Text),
+                "Tree" | "tree" => Ok(ContainerType::Tree),
                 _ => Err(LoroError::DecodeError(
-                    ("Unknown container type".to_string() + value).into(),
+                    format!("Unknown container type \"{}\". The valid options are Map|List|Text|Tree|MovableList.", value).into(),
                 )),
             }
         }

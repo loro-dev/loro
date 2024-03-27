@@ -1,6 +1,18 @@
 export * from "loro-wasm";
-import { Container, Delta, LoroText, LoroTree,LoroTreeNode, OpId, Value, ContainerID, Loro, LoroList, LoroMap, TreeID } from "loro-wasm";
-
+import {
+  Container,
+  Delta,
+  LoroText,
+  LoroTree,
+  LoroTreeNode,
+  OpId,
+  Value,
+  ContainerID,
+  Loro,
+  LoroList,
+  LoroMap,
+  TreeID,
+} from "loro-wasm";
 
 Loro.prototype.getTypedMap = function (...args) {
   return this.getMap(...args);
@@ -36,10 +48,10 @@ export type Frontiers = OpId[];
 /**
  * Represents a path to identify the exact location of an event's target.
  * The path is composed of numbers (e.g., indices of a list container) strings
- * (e.g., keys of a map container) and TreeID (the node of a tree container), 
+ * (e.g., keys of a map container) and TreeID (the node of a tree container),
  * indicating the absolute position of the event's source within a loro document.
  */
-export type Path = (number | string | TreeID )[];
+export type Path = (number | string | TreeID)[];
 
 /**
  * A batch of events that created by a single `import`/`transaction`/`checkout`.
@@ -95,9 +107,10 @@ export type MapDiff = {
   updated: Record<string, Value | Container | undefined>;
 };
 
-export type TreeDiffItem = { target: TreeID; action: "create"; parent: TreeID | undefined }
-   | { target: TreeID; action: "delete" }
-   | { target: TreeID; action: "move"; parent: TreeID | undefined };
+export type TreeDiffItem =
+  | { target: TreeID; action: "create"; parent: TreeID | undefined }
+  | { target: TreeID; action: "delete" }
+  | { target: TreeID; action: "move"; parent: TreeID | undefined };
 
 export type TreeDiff = {
   type: "tree";
@@ -212,6 +225,12 @@ declare module "loro-wasm" {
   }
 
   interface LoroMap<T extends Record<string, any> = Record<string, any>> {
+    getOrCreateContainer(key: string, container_type: "Map"): LoroMap;
+    getOrCreateContainer(key: string, container_type: "List"): LoroList;
+    getOrCreateContainer(key: string, container_type: "Text"): LoroText;
+    getOrCreateContainer(key: string, container_type: "Tree"): LoroTree;
+    getOrCreateContainer(key: string, container_type: string): never;
+
     setContainer(key: string, container_type: "Map"): LoroMap;
     setContainer(key: string, container_type: "List"): LoroList;
     setContainer(key: string, container_type: "Text"): LoroText;
@@ -241,7 +260,7 @@ declare module "loro-wasm" {
     subscribe(txn: Loro, listener: Listener): number;
   }
 
-  interface LoroTreeNode{
+  interface LoroTreeNode {
     readonly data: LoroMap;
     createNode(): LoroTreeNode;
     setAsRoot(): void;

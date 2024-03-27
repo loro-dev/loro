@@ -51,6 +51,19 @@ it("basic example", () => {
   });
 });
 
+it("get or create on Map", () => {
+  const docA = new Loro();
+  const map = docA.getMap("map");
+  const container = map.getOrCreateContainer("list", "List");
+  container.insert(0, 1);
+  container.insert(0, 2);
+  const text = map.getOrCreateContainer("text", "Text");
+  text.insert(0, "Hello");
+  expect(docA.toJson()).toStrictEqual({
+    map: { list: [2, 1], text: "Hello" },
+  });
+});
+
 it("basic sync example", () => {
   const docA = new Loro();
   const docB = new Loro();

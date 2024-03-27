@@ -1080,6 +1080,25 @@ impl MapHandler {
         })
     }
 
+    pub fn get_or_create_container_(
+        &self,
+        key: &str,
+        container_type: ContainerType,
+    ) -> LoroResult<Handler> {
+        if let Some(ans) = self.get_(key) {
+            if let ValueOrHandler::Handler(h) = ans {
+                return Ok(h);
+            } else {
+                return Err(LoroError::ArgErr(
+                    format!("Expected value type {} but found {:?}", container_type, ans)
+                        .into_boxed_str(),
+                ));
+            }
+        }
+
+        self.insert_container(key, container_type)
+    }
+
     pub fn len(&self) -> usize {
         self.with_state(|state| state.as_map_state().as_ref().unwrap().len())
     }

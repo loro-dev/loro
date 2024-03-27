@@ -1360,8 +1360,6 @@ pub struct LoroMap {
     doc: Arc<LoroDoc>,
 }
 
-const CONTAINER_TYPE_ERR: &str = "Invalid container type, only supports Text, Map, List, Tree";
-
 #[wasm_bindgen]
 impl LoroMap {
     /// "Map"
@@ -1424,6 +1422,29 @@ impl LoroMap {
             None => JsValue::UNDEFINED,
         })
         .into()
+    }
+
+    /// Get the value of the key. If the value is a child container, the corresponding
+    /// `Container` will be returned.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// const bar = map.get("foo");
+    /// ```
+    #[wasm_bindgen(js_name = "getOrCreateContainer")]
+    pub fn get_or_create_container(
+        &self,
+        key: &str,
+        container_type: &str,
+    ) -> JsResult<JsContainerOrUndefined> {
+        let type_: ContainerType = container_type.try_into()?;
+        let v = self.handler.get_or_create_container_(key, type_)?;
+        Ok(handler_to_js_value(v, self.doc.clone()).into())
     }
 
     /// Get the keys of the map.
@@ -1532,13 +1553,7 @@ impl LoroMap {
     /// ```
     #[wasm_bindgen(js_name = "setContainer")]
     pub fn insert_container(&mut self, key: &str, container_type: &str) -> JsResult<JsValue> {
-        let type_ = match container_type {
-            "text" | "Text" => ContainerType::Text,
-            "map" | "Map" => ContainerType::Map,
-            "list" | "List" => ContainerType::List,
-            "tree" | "Tree" => ContainerType::Tree,
-            _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
-        };
+        let type_: ContainerType = container_type.try_into()?;
         let c = self.handler.insert_container(key, type_)?;
         Ok(handler_to_js_value(c, self.doc.clone()))
     }
@@ -1768,13 +1783,8 @@ impl LoroList {
     /// ```
     #[wasm_bindgen(js_name = "insertContainer")]
     pub fn insert_container(&mut self, index: usize, container: &str) -> JsResult<JsValue> {
-        let _type = match container {
-            "text" | "Text" => ContainerType::Text,
-            "map" | "Map" => ContainerType::Map,
-            "list" | "List" => ContainerType::List,
-            "tree" | "Tree" => ContainerType::Tree,
-            _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
-        };
+        let type_: ContainerType = container.try_into()?;
+        let c = self.handler.insert_container(index, type_)?;
         let c = self.handler.insert_container(index, _type)?;
         Ok(handler_to_js_value(c, self.doc.clone()))
     }
