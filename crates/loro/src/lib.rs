@@ -781,7 +781,7 @@ impl LoroTree {
     /// - If the target node does not exist, return `None`.
     /// - If the target node is a root node, return `Some(None)`.
     pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
-        self.handler.parent(target)
+        self.handler.get_node_parent(target)
     }
 
     /// Return whether target node exists.
