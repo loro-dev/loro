@@ -8,7 +8,7 @@ use loro::{
     ContainerType, Index, LoroDoc, LoroText, LoroValue, TreeExternalDiff, TreeID, ValueOrContainer,
 };
 use loro::{ContainerID, ID};
-use tracing::debug;
+use tracing::{debug, trace};
 
 #[derive(Debug, EnumAsInner)]
 pub enum Value {
@@ -233,7 +233,12 @@ impl ApplyDiff for MovableListTracker {
     }
 
     fn apply_diff(&mut self, diff: Diff) {
-        debug!("diff={:#?} self={:#?}", &diff, &self);
+        debug!(
+            "diff={:#?} self={:#?} tracker.id={}",
+            &diff,
+            &self,
+            self.id()
+        );
         let diff = diff.as_list().unwrap();
         let mut index = 0;
         let mut maybe_from_move = FxHashMap::default();
@@ -280,7 +285,8 @@ impl ApplyDiff for MovableListTracker {
             if let Some(old) = id_to_container.remove(&id) {
                 self.list[index] = Value::Container(old);
             } else {
-                panic!("not found id={:?} {:#?}", id, &id_to_container);
+                // It may happen that the container is moved and also the value changed
+                // thus the container is not in the id_to_container map
             }
         }
     }
@@ -437,6 +443,7 @@ impl TreeNode {
 
 impl ContainerTracker {
     pub fn apply_diff(&mut self, diff: DiffEvent) {
+        debug!("Receive diff: {:#?} \nself: {:#?}", diff, &self);
         for diff in diff.events {
             let path = diff.path;
             let mut value: &mut ContainerTracker = self;

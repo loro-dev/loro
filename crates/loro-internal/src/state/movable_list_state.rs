@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{debug, instrument, trace};
+use tracing::{debug, instrument, trace, trace_span};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::BTree;
@@ -270,6 +270,8 @@ mod inner {
     use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroValue, PeerID};
     use tracing::error;
 
+    use crate::state::list_state::Elem;
+
     use super::{
         list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
         Element, IndexType, ListItem,
@@ -531,12 +533,13 @@ mod inner {
         pub fn list_drain(
             &mut self,
             range: std::ops::Range<usize>,
-            mut on_elem_id: impl FnMut(CompactIdLp),
+            mut on_elem_id: impl FnMut(CompactIdLp, &Element),
         ) {
             for item in Self::drain_by_query::<OpLenQuery>(&mut self.list, range) {
                 self.id_to_list_leaf.remove(&item.id.idlp());
                 if let Some(elem_id) = &item.pointed_by {
-                    on_elem_id(*elem_id);
+                    let elem = self.elements.get(elem_id).unwrap();
+                    on_elem_id(*elem_id, elem);
                     let old = self.pending_elements.insert(item.id.idlp(), *elem_id);
                     assert!(old.is_none());
                 }
@@ -983,11 +986,51 @@ impl ContainerState for MovableListState {
             None
         };
 
+        let id = arena.idx_to_id(self.idx).unwrap();
+        let s = trace_span!("ListState", "ListState.id = {:?}", id);
+        let _e = s.enter();
         debug!("InternalDiff for Movable {:#?}", &diff);
-        trace!("ListState {:#?}", &self);
+
         let mut inserted_elem_id_to_value = FxHashMap::default();
-        let mut ans: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
-        let mut maybe_moved = FxHashSet::default();
+        let mut event: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
+        let mut maybe_moved: FxHashMap<CompactIdLp, (usize, LoroValue)> = FxHashMap::default();
+
+        {
+            // apply deletions and calculate `maybe_moved`
+            let mut index = 0;
+            for delta_item in diff.list.iter() {
+                match delta_item {
+                    DeltaItem::Retain {
+                        retain,
+                        attributes: _,
+                    } => {
+                        index += retain;
+                    }
+                    DeltaItem::Insert { .. } => {}
+                    DeltaItem::Delete {
+                        delete,
+                        attributes: _,
+                    } => {
+                        let mut user_index = self
+                            .convert_index(index, IndexType::ForOp, IndexType::ForUser)
+                            .unwrap();
+                        let user_index_end = self
+                            .convert_index(index + delete, IndexType::ForOp, IndexType::ForUser)
+                            .unwrap();
+                        event = event.compose(
+                            Delta::new()
+                                .retain(user_index)
+                                .delete(user_index_end - user_index),
+                        );
+                        self.inner.list_drain(index..index + delete, |id, elem| {
+                            maybe_moved.insert(id, (user_index, elem.value.clone()));
+                            user_index += 1;
+                        });
+                        assert_eq!(user_index, user_index_end);
+                    }
+                }
+            }
+        }
 
         {
             // apply list item changes
@@ -1010,52 +1053,32 @@ impl ContainerState for MovableListState {
                             let user_index = self
                                 .convert_index(index, IndexType::ForOp, IndexType::ForUser)
                                 .unwrap();
-                            ans = ans.compose(
-                                Delta::new().retain(user_index).insert(
-                                    activated_values
-                                        .into_iter()
-                                        .map(|(elem_id, value)| {
-                                            if let Some(elem) = diff.elements.get(&elem_id) {
-                                                inserted_elem_id_to_value
-                                                    .insert(elem_id, elem.value().clone());
-                                                ValueOrHandler::from_value(
-                                                    elem.value().clone(),
-                                                    arena,
-                                                    txn,
-                                                    state,
-                                                )
-                                            } else {
-                                                inserted_elem_id_to_value
-                                                    .insert(elem_id, value.clone());
-                                                ValueOrHandler::from_value(value, arena, txn, state)
-                                            }
-                                        })
-                                        .collect_vec(),
-                                ),
-                            );
+                            let mut new_delta = Delta::new().retain(user_index);
+                            for (elem_id, value) in activated_values.into_iter() {
+                                let from_move =
+                                    maybe_moved.get(&elem_id).map(|x| &x.1) == Some(&value);
+                                let value = if let Some(elem) = diff.elements.get(&elem_id) {
+                                    inserted_elem_id_to_value.insert(elem_id, elem.value().clone());
+                                    ValueOrHandler::from_value(
+                                        elem.value().clone(),
+                                        arena,
+                                        txn,
+                                        state,
+                                    )
+                                } else {
+                                    inserted_elem_id_to_value.insert(elem_id, value.clone());
+                                    ValueOrHandler::from_value(value, arena, txn, state)
+                                };
+                                new_delta = new_delta
+                                    .insert_with_meta(vec![value], ListDeltaMeta { from_move })
+                            }
+
+                            event = event.compose(new_delta);
                         }
 
                         index += len;
                     }
-                    DeltaItem::Delete {
-                        delete,
-                        attributes: _,
-                    } => {
-                        let user_index = self
-                            .convert_index(index, IndexType::ForOp, IndexType::ForUser)
-                            .unwrap();
-                        let user_index_end = self
-                            .convert_index(index + delete, IndexType::ForOp, IndexType::ForUser)
-                            .unwrap();
-                        ans = ans.compose(
-                            Delta::new()
-                                .retain(user_index)
-                                .delete(user_index_end - user_index),
-                        );
-                        self.inner.list_drain(index..index + delete, |id| {
-                            maybe_moved.insert(id);
-                        });
-                    }
+                    DeltaItem::Delete { .. } => {}
                 }
             }
         }
@@ -1089,87 +1112,103 @@ impl ContainerState for MovableListState {
                             self.inner.update_value(elem_id, value.clone(), value_id);
                             let index = self.get_index_of_elem(elem_id);
                             if let Some(index) = index {
-                                ans =
-                                    ans.compose(Delta::new().retain(index).delete(1).insert(vec![
-                                        ValueOrHandler::from_value(value, arena, txn, state),
-                                    ]))
+                                event = event.compose(
+                                    Delta::new().retain(index).delete(1).insert_with_meta(
+                                        vec![ValueOrHandler::from_value(value, arena, txn, state)],
+                                        ListDeltaMeta { from_move: false },
+                                    ),
+                                )
                             }
                         }
 
                         // Update pos if needed
-                        let is_deleted_during_this_diff = maybe_moved.contains(&elem_id);
-                        let is_inserted_back = inserted_elem_id_to_value.contains_key(&elem_id);
-                        if elem.pos != pos || (is_deleted_during_this_diff && !is_inserted_back) {
+                        if elem.pos != pos {
                             // don't need to update old list item, because it's handled by list diff already
                             let result = self.inner.update_pos(elem_id, pos, false);
                             let result = self.inner.convert_update_to_event_pos(result);
                             if let Some(new_index) = result.insert {
                                 let new_value =
                                     self.elements().get(&elem_id).unwrap().value.clone();
+                                let from_delete =
+                                    maybe_moved.get(&elem_id).map(|x| &x.1) == Some(&new_value);
                                 let new_delta = Delta::new().retain(new_index).insert_with_meta(
                                     vec![ValueOrHandler::from_value(new_value, arena, txn, state)],
                                     ListDeltaMeta {
-                                        from_move: is_deleted_during_this_diff,
+                                        from_move: (result.delete.is_some() && !value_updated)
+                                            || from_delete,
                                     },
                                 );
-                                ans = ans.compose(new_delta);
+                                event = event.compose(new_delta);
                             }
                             if let Some(del_index) = result.delete {
-                                ans = ans.compose(Delta::new().retain(del_index).delete(1));
+                                event = event.compose(Delta::new().retain(del_index).delete(1));
                             }
-                        } else if is_deleted_during_this_diff && is_inserted_back
-                        // add meta info if the element's list item is created by move
-                        {
-                            let new_index = self.get_index_of_elem(elem_id).unwrap();
-                            let new_delta = Delta::new()
-                                .retain(new_index)
-                                .retain_with_meta(1, ListDeltaMeta { from_move: true });
-                            ans = ans.compose(new_delta);
                         }
                     }
                     None => {
                         // Need to create new element
                         let result = self.create_new_elem(elem_id, pos, value.clone(), value_id);
-                        let result = self.inner.convert_update_to_event_pos(result);
-                        if let Some(v) = inserted_elem_id_to_value.get(&elem_id) {
-                            if v != &value {
-                                let index = self.get_index_of_elem(elem_id).unwrap();
-                                ans =
-                                    ans.compose(Delta::new().retain(index).delete(1).insert(vec![
-                                        ValueOrHandler::from_value(value, arena, txn, state),
-                                    ]));
-                            }
-                        } else {
-                            if let Some(index) = result.insert {
-                                ans = ans.compose(Delta::new().retain(index).insert(vec![
-                                    ValueOrHandler::from_value(value, arena, txn, state),
-                                ]))
-                            }
-                            if let Some(index) = result.delete {
-                                ans = ans.compose(Delta::new().retain(index).delete(1));
+                        {
+                            // Composing events
+                            let result = self.inner.convert_update_to_event_pos(result);
+                            if let Some(v) = inserted_elem_id_to_value.get(&elem_id) {
+                                if v != &value {
+                                    // Create event for value change
+                                    let index = self.get_index_of_elem(elem_id).unwrap();
+                                    event = event.compose(
+                                        Delta::new().retain(index).delete(1).insert_with_meta(
+                                            vec![ValueOrHandler::from_value(
+                                                value, arena, txn, state,
+                                            )],
+                                            ListDeltaMeta { from_move: false },
+                                        ),
+                                    );
+                                }
+                            } else {
+                                // Create event for pos change and value change
+                                if let Some(index) = result.insert {
+                                    let from_delete =
+                                        maybe_moved.get(&elem_id).map(|x| &x.1) == Some(&value);
+                                    event =
+                                        event.compose(Delta::new().retain(index).insert_with_meta(
+                                            vec![ValueOrHandler::from_value(
+                                                value, arena, txn, state,
+                                            )],
+                                            ListDeltaMeta {
+                                                from_move: (result.delete.is_some()
+                                                    && !value_updated)
+                                                    || from_delete,
+                                            },
+                                        ))
+                                }
+                                if let Some(index) = result.delete {
+                                    event = event.compose(Delta::new().retain(index).delete(1));
+                                }
                             }
                         }
                     }
                 }
             }
         }
-        trace!("ListState {:#?}", &self);
 
         if cfg!(debug_assertions) {
             self.inner.check_consistency();
             let start_value = start_value.unwrap();
             let mut end_value = start_value.clone();
-            end_value.apply_diff_shallow(&[Diff::List(ans.clone())]);
+            end_value.apply_diff_shallow(&[Diff::List(event.clone())]);
             let cur_value = self.get_value();
             assert_eq!(
                 end_value, cur_value,
                 "start_value={:#?} event={:#?} new_state={:#?} but the end_value={:#?}",
-                start_value, ans, cur_value, end_value
+                start_value, event, cur_value, end_value
             );
         }
 
-        debug!("MovableListState::apply_diff_and_convert: ans={:#?}", &ans);
-        Diff::List(ans)
+        debug!(
+            "MovableListState::apply_diff_and_convert: ans={:#?}",
+            &event
+        );
+        Diff::List(event)
     }
 
     fn apply_diff(
@@ -1217,7 +1256,7 @@ impl ContainerState for MovableListState {
             },
             ListOp::Delete(span) => {
                 self.inner
-                    .list_drain(span.start() as usize..span.end() as usize, |_| {});
+                    .list_drain(span.start() as usize..span.end() as usize, |_, _| {});
             }
             ListOp::Move { from, to, elem_id } => {
                 self.mov(

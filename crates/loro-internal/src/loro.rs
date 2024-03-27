@@ -11,7 +11,7 @@ use std::{
 };
 
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
-use tracing::instrument;
+use tracing::{info_span, instrument, trace, trace_span};
 
 use crate::{
     arena::SharedArena,
@@ -760,40 +760,44 @@ impl LoroDoc {
     ///
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
-    #[instrument(skip(self))]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
-        self.commit_then_stop();
-        let oplog = self.oplog.lock().unwrap();
-        let mut state = self.state.lock().unwrap();
-        self.detached.store(true, Release);
-        let mut calc = self.diff_calculator.lock().unwrap();
-        for &f in frontiers.iter() {
-            if !oplog.dag.contains(f) {
-                return Err(LoroError::InvalidFrontierIdNotFound(f));
+        let from = self.state_frontiers();
+        let span = info_span!("checkout", to=?frontiers, ?from);
+        let _g = span.enter();
+        {
+            self.commit_then_stop();
+            let oplog = self.oplog.lock().unwrap();
+            let mut state = self.state.lock().unwrap();
+            self.detached.store(true, Release);
+            let mut calc = self.diff_calculator.lock().unwrap();
+            for &f in frontiers.iter() {
+                if !oplog.dag.contains(f) {
+                    return Err(LoroError::InvalidFrontierIdNotFound(f));
+                }
             }
+            let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
+            let Some(after) = &oplog.dag.frontiers_to_vv(frontiers) else {
+                return Err(LoroError::NotFoundError(
+                    format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
+                ));
+            };
+            let diff = calc.calc_diff_internal(
+                &oplog,
+                before,
+                Some(&state.frontiers),
+                after,
+                Some(frontiers),
+            );
+            state.apply_diff(InternalDocDiff {
+                origin: "checkout".into(),
+                local: true,
+                diff: Cow::Owned(diff),
+                from_checkout: true,
+                new_version: Cow::Owned(frontiers.clone()),
+            });
+            drop(state);
+            self.emit_events();
         }
-        let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
-        let Some(after) = &oplog.dag.frontiers_to_vv(frontiers) else {
-            return Err(LoroError::NotFoundError(
-                format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
-            ));
-        };
-        let diff = calc.calc_diff_internal(
-            &oplog,
-            before,
-            Some(&state.frontiers),
-            after,
-            Some(frontiers),
-        );
-        state.apply_diff(InternalDocDiff {
-            origin: "checkout".into(),
-            local: true,
-            diff: Cow::Owned(diff),
-            from_checkout: true,
-            new_version: Cow::Owned(frontiers.clone()),
-        });
-        drop(state);
-        self.emit_events();
         Ok(())
     }
 
@@ -844,8 +848,16 @@ impl LoroDoc {
     /// and the state calculated by diff calculator from beginning.
     ///
     /// Panic when it's not consistent
-    #[instrument(skip(self))]
     pub fn check_state_diff_calc_consistency_slow(&self) {
+        static IS_CHECKING: AtomicBool = AtomicBool::new(false);
+        if IS_CHECKING.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+
+        IS_CHECKING.store(true, std::sync::atomic::Ordering::Release);
+        let peer_id = self.peer_id();
+        let s = trace_span!("CheckStateDiffCalcConsistencySlow", ?peer_id);
+        let _g = s.enter();
         self.commit_then_stop();
         let bytes = self.export_from(&Default::default());
         let doc = Self::new();
@@ -856,6 +868,7 @@ impl LoroDoc {
         let mut current_state = self.app_state().try_lock().unwrap();
         current_state.check_is_the_same(&mut calculated_state);
         self.renew_txn_if_auto_commit();
+        IS_CHECKING.store(false, std::sync::atomic::Ordering::Release);
     }
 
     #[inline]

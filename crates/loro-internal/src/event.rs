@@ -169,7 +169,7 @@ impl From<InternalDiff> for DiffVariant {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ListDeltaMeta {
     /// Whether the content of the insert is moved from
-    /// a deletion in the same delta.
+    /// a deletion in the same delta and **the value is not changed**.
     ///
     /// If true, this op must be a move op under the hood.
     /// But an insert created by a move op doesn't necessarily
@@ -186,10 +186,14 @@ impl Meta for ListDeltaMeta {
     fn compose(
         &mut self,
         other: &Self,
-        _type_pair: (crate::delta::DeltaType, crate::delta::DeltaType),
+        type_pair: (crate::delta::DeltaType, crate::delta::DeltaType),
     ) {
         // We can't have two Some because we don't have `move_from` for Retain.
         // And this function is only called when composing a insert/retain with a retain.
+        if let (crate::delta::DeltaType::Insert, crate::delta::DeltaType::Insert) = type_pair {
+            unreachable!()
+        }
+
         self.from_move = self.from_move || other.from_move;
     }
 

@@ -152,9 +152,7 @@ pub trait ApplyDiff {
 }
 
 impl ApplyDiff for LoroValue {
-    #[instrument(skip_all)]
     fn apply_diff_shallow(&mut self, diff: &[Diff]) {
-        trace!("value={:#?} diff={:#?}", &self, diff);
         match self {
             LoroValue::String(value) => {
                 let mut s = value.to_string();

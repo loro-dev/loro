@@ -4,7 +4,7 @@ use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
 use loro::{ContainerType, Frontiers};
 use tabled::TableIteratorExt;
-use tracing::{info, info_span};
+use tracing::{info, info_span, trace};
 
 use crate::array_mut_ref;
 
@@ -89,7 +89,7 @@ impl CRDTFuzzer {
         match action {
             Action::SyncAll => {
                 for i in 1..self.site_num() {
-                    info_span!("importing to 0").in_scope(|| {
+                    info_span!("Importing", "importing to 0 from {}", i).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
                         a.loro
                             .import(&b.loro.export_from(&a.loro.oplog_vv()))
@@ -98,7 +98,7 @@ impl CRDTFuzzer {
                 }
 
                 for i in 1..self.site_num() {
-                    info_span!("importing to", i).in_scope(|| {
+                    info_span!("Importing", "importing to {} from {}", i, 0).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
                         b.loro
                             .import(&a.loro.export_from(&b.loro.oplog_vv()))
@@ -106,6 +106,9 @@ impl CRDTFuzzer {
                     });
                 }
                 self.actors.iter_mut().for_each(|a| a.record_history());
+                // for i in 0..self.site_num() {
+                //     self.actors[i].loro.check_state_correctness_slow();
+                // }
             }
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(&mut self.actors, [*from as usize, *to as usize]);
@@ -133,6 +136,7 @@ impl CRDTFuzzer {
                 let actor = &mut self.actors[*site as usize];
                 let action = action.as_action().unwrap();
                 actor.apply(action, *container);
+                // actor.loro.commit();
             }
         }
     }

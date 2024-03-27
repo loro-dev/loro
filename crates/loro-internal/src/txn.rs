@@ -10,6 +10,7 @@ use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, IdLp, LoroResult};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
+use tracing::trace;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -546,121 +547,118 @@ fn change_to_diff(
                 assert_eq!(ops.len(), 1);
             }
         }
-        'outer: {
-            match hint {
-                EventHint::Mark { start, end, style } => {
-                    let mut meta = StyleMeta::default();
-                    meta.insert(
-                        style.key.clone(),
-                        StyleMetaItem {
-                            lamport,
-                            peer: change.id.peer,
-                            value: style.data,
-                        },
-                    );
-                    let diff = Delta::new()
-                        .retain(start as usize)
-                        .retain_with_meta((end - start) as usize, meta);
-                    ans.push(TxnContainerDiff {
-                        idx: op.container,
-                        diff: Diff::Text(diff),
-                    });
-                }
-                EventHint::InsertText { styles, pos, .. } => {
-                    let mut delta = Delta::new().retain(pos as usize);
-                    for op in ops.iter() {
-                        let InnerListOp::InsertText { slice, .. } = op.content.as_list().unwrap()
-                        else {
-                            unreachable!()
-                        };
+        match hint {
+            EventHint::Mark { start, end, style } => {
+                let mut meta = StyleMeta::default();
+                meta.insert(
+                    style.key.clone(),
+                    StyleMetaItem {
+                        lamport,
+                        peer: change.id.peer,
+                        value: style.data,
+                    },
+                );
+                let diff = Delta::new()
+                    .retain(start as usize)
+                    .retain_with_meta((end - start) as usize, meta);
+                ans.push(TxnContainerDiff {
+                    idx: op.container,
+                    diff: Diff::Text(diff),
+                });
+            }
+            EventHint::InsertText { styles, pos, .. } => {
+                let mut delta = Delta::new().retain(pos as usize);
+                for op in ops.iter() {
+                    let InnerListOp::InsertText { slice, .. } = op.content.as_list().unwrap()
+                    else {
+                        unreachable!()
+                    };
 
-                        delta = delta.insert_with_meta(slice.clone(), styles.clone());
-                    }
+                    delta = delta.insert_with_meta(slice.clone(), styles.clone());
+                }
+                ans.push(TxnContainerDiff {
+                    idx: op.container,
+                    diff: Diff::Text(delta),
+                })
+            }
+            EventHint::DeleteText {
+                span,
+                unicode_len: _,
+                // we don't need to iter over ops here, because we already
+                // know what the events should be
+            } => ans.push(TxnContainerDiff {
+                idx: op.container,
+                diff: Diff::Text(
+                    Delta::new()
+                        .retain(span.start() as usize)
+                        .delete(span.len()),
+                ),
+            }),
+            EventHint::InsertList { pos, .. } => {
+                // We should use pos from event hint because index in op may
+                // be using op index for the MovableList
+                for op in ops.iter() {
+                    let (range, _) = op.content.as_list().unwrap().as_insert().unwrap();
+                    let values = arena
+                        .get_values(range.to_range())
+                        .into_iter()
+                        .map(|v| ValueOrHandler::from_value(v, arena, txn, state))
+                        .collect::<Vec<_>>();
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: Diff::Text(delta),
+                        diff: Diff::List(Delta::new().retain(pos).insert(values)),
                     })
                 }
-                EventHint::DeleteText {
-                    span,
-                    unicode_len: _,
-                    // we don't need to iter over ops here, because we already
-                    // know what the events should be
-                } => ans.push(TxnContainerDiff {
+            }
+            EventHint::DeleteList(s) => {
+                ans.push(TxnContainerDiff {
                     idx: op.container,
-                    diff: Diff::Text(
-                        Delta::new()
-                            .retain(span.start() as usize)
-                            .delete(span.len()),
-                    ),
-                }),
-                EventHint::InsertList { pos, .. } => {
-                    // We should use pos from event hint because index in op may
-                    // be using op index for the MovableList
-                    for op in ops.iter() {
-                        let (range, _) = op.content.as_list().unwrap().as_insert().unwrap();
-                        let values = arena
-                            .get_values(range.to_range())
-                            .into_iter()
-                            .map(|v| ValueOrHandler::from_value(v, arena, txn, state))
-                            .collect::<Vec<_>>();
-                        ans.push(TxnContainerDiff {
-                            idx: op.container,
-                            diff: Diff::List(Delta::new().retain(pos).insert(values)),
-                        })
-                    }
-                }
-                EventHint::DeleteList(s) => {
-                    ans.push(TxnContainerDiff {
-                        idx: op.container,
-                        diff: Diff::List(Delta::new().retain(s.start() as usize).delete(s.len())),
-                    });
-                }
-                EventHint::Map { key, value } => ans.push(TxnContainerDiff {
+                    diff: Diff::List(Delta::new().retain(s.start() as usize).delete(s.len())),
+                });
+            }
+            EventHint::Map { key, value } => ans.push(TxnContainerDiff {
+                idx: op.container,
+                diff: Diff::Map(ResolvedMapDelta::new().with_entry(
+                    key,
+                    ResolvedMapValue {
+                        value: value.map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+                        idlp: IdLp::new(peer, lamport),
+                    },
+                )),
+            }),
+            EventHint::Tree(tree_diff) => {
+                let mut diff = TreeDiff::default();
+                diff.push(tree_diff);
+                ans.push(TxnContainerDiff {
                     idx: op.container,
-                    diff: Diff::Map(ResolvedMapDelta::new().with_entry(
-                        key,
-                        ResolvedMapValue {
-                            value: value.map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
-                            idlp: IdLp::new(peer, lamport),
-                        },
-                    )),
-                }),
-                EventHint::Tree(tree_diff) => {
-                    let mut diff = TreeDiff::default();
-                    diff.push(tree_diff);
-                    ans.push(TxnContainerDiff {
-                        idx: op.container,
-                        diff: Diff::Tree(diff),
-                    });
-                }
-                EventHint::Move { from, to, value } => {
-                    ans.push(TxnContainerDiff {
-                        idx: op.container,
-                        diff: Diff::List(Delta::new().retain(from as usize).delete(1).compose(
-                            Delta::new().retain(to as usize).insert_with_meta(
-                                vec![ValueOrHandler::from_value(value, arena, txn, state)],
-                                ListDeltaMeta { from_move: true },
-                            ),
-                        )),
-                    });
-                }
-                EventHint::SetList { index, value } => {
-                    ans.push(TxnContainerDiff {
-                        idx: op.container,
-                        diff: Diff::List(
-                            Delta::new()
-                                .retain(index)
-                                .delete(1)
-                                .insert(vec![ValueOrHandler::from_value(value, arena, txn, state)]),
+                    diff: Diff::Tree(diff),
+                });
+            }
+            EventHint::Move { from, to, value } => {
+                ans.push(TxnContainerDiff {
+                    idx: op.container,
+                    diff: Diff::List(Delta::new().retain(from as usize).delete(1).compose(
+                        Delta::new().retain(to as usize).insert_with_meta(
+                            vec![ValueOrHandler::from_value(value, arena, txn, state)],
+                            ListDeltaMeta { from_move: true },
                         ),
-                    });
-                }
-                EventHint::MarkEnd => {
-                    // do nothing
-                    break 'outer;
-                }
-            };
+                    )),
+                });
+            }
+            EventHint::SetList { index, value } => {
+                ans.push(TxnContainerDiff {
+                    idx: op.container,
+                    diff: Diff::List(
+                        Delta::new()
+                            .retain(index)
+                            .delete(1)
+                            .insert(vec![ValueOrHandler::from_value(value, arena, txn, state)]),
+                    ),
+                });
+            }
+            EventHint::MarkEnd => {
+                // do nothing
+            }
         }
 
         lamport += ops
