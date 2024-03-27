@@ -8,6 +8,7 @@ use enum_as_inner::EnumAsInner;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::ID;
 use tabled::{TableIteratorExt, Tabled};
+use tracing::instrument;
 
 #[allow(unused_imports)]
 use crate::{
@@ -341,7 +342,7 @@ trait Actionable {
 }
 
 impl Actor {
-    fn add_new_container(&mut self, idx: ContainerIdx, id: ContainerID, type_: ContainerType) {
+    fn add_new_container(&mut self, _idx: ContainerIdx, id: ContainerID, type_: ContainerType) {
         let txn = self.loro.get_global_txn();
         let handler = Handler::new(
             id,
@@ -356,6 +357,7 @@ impl Actor {
             ContainerType::Tree => {
                 // TODO Tree
             }
+            ContainerType::MovableList => {}
         }
     }
 }
@@ -458,21 +460,21 @@ impl Actionable for Vec<Actor> {
 
                 b.map_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(&id) {
+                    if !visited.contains(id) {
                         visited.insert(id.clone());
                         a.map_containers.push(a.loro.txn().unwrap().get_map(id))
                     }
                 });
                 b.list_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(&id) {
+                    if !visited.contains(id) {
                         visited.insert(id.clone());
                         a.list_containers.push(a.loro.txn().unwrap().get_list(id))
                     }
                 });
                 b.text_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(&id) {
+                    if !visited.contains(id) {
                         visited.insert(id.clone());
                         a.text_containers.push(a.loro.txn().unwrap().get_text(id))
                     }
@@ -514,21 +516,21 @@ impl Actionable for Vec<Actor> {
                         .unwrap();
                     b.map_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(&id) {
+                        if !visited.contains(id) {
                             visited.insert(id.clone());
                             a.map_containers.push(a.loro.get_map(id))
                         }
                     });
                     b.list_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(&id) {
+                        if !visited.contains(id) {
                             visited.insert(id.clone());
                             a.list_containers.push(a.loro.get_list(id))
                         }
                     });
                     b.text_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(&id) {
+                        if !visited.contains(id) {
                             visited.insert(id.clone());
                             a.text_containers.push(a.loro.get_text(id))
                         }
@@ -745,26 +747,28 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
 fn check_synced(sites: &mut [Actor]) {
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
-            let s = tracing::span!(tracing::Level::INFO, "checking", i = i, j = j);
+            let s = tracing::span!(tracing::Level::INFO, "CheckSynced", i = i, j = j);
             let _e = s.enter();
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
 
             if (i + j) % 2 == 0 {
-                let s = tracing::span!(tracing::Level::INFO, "Updates {} to {}", j, i);
+                let s = tracing::span!(tracing::Level::INFO, "Updates");
                 let _e = s.enter();
                 a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
+                drop(_e);
 
-                let s = tracing::span!(tracing::Level::INFO, "Updates {} to {}", i, j);
+                let s = tracing::span!(tracing::Level::INFO, "Updates");
                 let _e = s.enter();
                 b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
             } else {
-                let s = tracing::span!(tracing::Level::INFO, "Snapshot {} to {}", j, i);
+                let s = tracing::span!(tracing::Level::INFO, "Snapshot");
                 let _e = s.enter();
                 a_doc.import(&b_doc.export_snapshot()).unwrap();
+                drop(_e);
 
-                let s = tracing::span!(tracing::Level::INFO, "Snapshot {} to {}", i, j);
+                let s = tracing::span!(tracing::Level::INFO, "Snapshot");
                 let _e = s.enter();
                 b_doc.import(&a_doc.export_snapshot()).unwrap();
             }
@@ -826,6 +830,7 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
     applied
 }
 
+#[instrument(skip_all)]
 pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     let mut sites = Vec::new();
     for i in 0..site_num {

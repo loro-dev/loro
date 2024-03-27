@@ -1,12 +1,16 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    fmt::{Debug, Formatter},
+    sync::{Arc, Mutex},
+};
 
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
-use loro::{Container, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, ID};
+use loro::{Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, ID};
+use tracing::info_span;
 
 use crate::{
-    container::{ListActor, TextActor, TreeActor},
+    container::{ListActor, MovableListActor, TextActor, TreeActor},
     value::{ApplyDiff, ContainerTracker, MapTracker, Value},
 };
 
@@ -27,11 +31,15 @@ impl Actor {
     pub fn new(id: PeerID) -> Self {
         let loro = LoroDoc::new();
         loro.set_peer_id(id).unwrap();
-        let tracker = Arc::new(Mutex::new(ContainerTracker::Map(MapTracker::empty())));
+        let tracker = Arc::new(Mutex::new(ContainerTracker::Map(MapTracker::empty(
+            ContainerID::new_root("sys:root", ContainerType::Map),
+        ))));
         let cb_tracker = tracker.clone();
         loro.subscribe_root(Arc::new(move |e| {
-            let mut tracker = cb_tracker.lock().unwrap();
-            tracker.apply_diff(e)
+            info_span!("ApplyDiff", id = id).in_scope(|| {
+                let mut tracker = cb_tracker.lock().unwrap();
+                tracker.apply_diff(e)
+            })
         }));
         let mut default_history = FxHashMap::default();
         default_history.insert(Vec::new(), loro.get_deep_value());
@@ -51,6 +59,7 @@ impl Actor {
             ActionExecutor::ListActor(actor) => actor.add_new_container(container),
             ActionExecutor::TextActor(actor) => actor.add_new_container(container),
             ActionExecutor::TreeActor(actor) => actor.add_new_container(container),
+            ActionExecutor::MovableListActor(actor) => actor.add_new_container(container),
         }
     }
 
@@ -82,12 +91,14 @@ impl Actor {
     }
 
     pub fn check_tracker(&self) {
-        let loro = &self.loro;
-        let tracker = self.tracker.lock().unwrap();
-        let loro_value = loro.get_deep_value();
-        let tracker_value = tracker.to_value();
-        assert_value_eq(&loro_value, &tracker_value);
-        self.targets.values().for_each(|t| t.check_tracker());
+        info_span!("CheckTracker", peer = self.peer).in_scope(|| {
+            let loro = &self.loro;
+            let tracker = self.tracker.lock().unwrap();
+            let loro_value = loro.get_deep_value();
+            let tracker_value = tracker.to_value();
+            assert_value_eq(&loro_value, &tracker_value);
+            self.targets.values().for_each(|t| t.check_tracker());
+        });
     }
 
     pub fn check_eq(&self, other: &Actor) {
@@ -101,14 +112,14 @@ impl Actor {
     pub fn check_history(&self) {
         for (f, v) in self.history.iter() {
             let f = Frontiers::from(f);
-            debug_log::group!(
-                "Checkout from {:?} to {:?}",
-                &self.loro.state_frontiers(),
-                &f
-            );
-            self.loro.checkout(&f).unwrap();
-            let actual = self.loro.get_deep_value();
-            assert_value_eq(v, &actual);
+            let from = &self.loro.state_frontiers();
+            let to = &f;
+            tracing::info_span!("Checkout", ?from, ?to).in_scope(|| {
+                self.loro.checkout(&f).unwrap();
+                // self.loro.check_state_correctness_slow();
+                let actual = self.loro.get_deep_value();
+                assert_value_eq(v, &actual);
+            });
         }
     }
 
@@ -126,7 +137,10 @@ impl Actor {
             ContainerType::Map => {
                 self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
                     "map".to_string(),
-                    Value::empty_container(ContainerType::Map),
+                    Value::empty_container(
+                        ContainerType::Map,
+                        ContainerID::new_root("map", ContainerType::Map),
+                    ),
                 );
                 self.targets.insert(
                     target,
@@ -136,17 +150,36 @@ impl Actor {
             ContainerType::List => {
                 self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
                     "list".to_string(),
-                    Value::empty_container(ContainerType::List),
+                    Value::empty_container(
+                        ContainerType::List,
+                        ContainerID::new_root("list", ContainerType::List),
+                    ),
                 );
                 self.targets.insert(
                     target,
                     ActionExecutor::ListActor(ListActor::new(self.loro.clone())),
                 );
             }
+            ContainerType::MovableList => {
+                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                    "movable_list".to_string(),
+                    Value::empty_container(
+                        ContainerType::MovableList,
+                        ContainerID::new_root("movable_list", ContainerType::MovableList),
+                    ),
+                );
+                self.targets.insert(
+                    target,
+                    ActionExecutor::MovableListActor(MovableListActor::new(self.loro.clone())),
+                );
+            }
             ContainerType::Text => {
                 self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
                     "text".to_string(),
-                    Value::empty_container(ContainerType::Text),
+                    Value::empty_container(
+                        ContainerType::Text,
+                        ContainerID::new_root("text", ContainerType::Text),
+                    ),
                 );
                 self.targets.insert(
                     target,
@@ -156,7 +189,10 @@ impl Actor {
             ContainerType::Tree => {
                 self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
                     "tree".to_string(),
-                    Value::empty_container(ContainerType::Tree),
+                    Value::empty_container(
+                        ContainerType::Tree,
+                        ContainerID::new_root("tree", ContainerType::Tree),
+                    ),
                 );
                 self.targets.insert(
                     target,
@@ -172,8 +208,21 @@ impl Actor {
 pub enum ActionExecutor {
     MapActor(MapActor),
     ListActor(ListActor),
+    MovableListActor(MovableListActor),
     TextActor(TextActor),
     TreeActor(TreeActor),
+}
+
+impl Debug for ActionExecutor {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ActionExecutor::MapActor(_) => write!(f, "MapActor"),
+            ActionExecutor::ListActor(_) => write!(f, "ListActor"),
+            ActionExecutor::MovableListActor(_) => write!(f, "MovableListActor"),
+            ActionExecutor::TextActor(_) => write!(f, "TextActor"),
+            ActionExecutor::TreeActor(_) => write!(f, "TreeActor"),
+        }
+    }
 }
 
 #[enum_dispatch]
@@ -186,35 +235,52 @@ pub trait ActorTrait {
 
 #[allow(unused)]
 fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
-    match (a, b) {
-        (LoroValue::Map(a), LoroValue::Map(b)) => {
-            for (k, v) in a.iter() {
-                let is_empty = match v {
-                    LoroValue::String(s) => s.is_empty(),
-                    LoroValue::List(l) => l.is_empty(),
-                    LoroValue::Map(m) => m.is_empty(),
-                    _ => false,
-                };
-                if is_empty {
-                    continue;
-                }
-                assert_value_eq(v, b.get(k).unwrap());
-            }
+    #[must_use]
+    fn eq(a: &LoroValue, b: &LoroValue) -> bool {
+        match (a, b) {
+            (LoroValue::Map(a), LoroValue::Map(b)) => {
+                for (k, v) in a.iter() {
+                    let is_empty = match v {
+                        LoroValue::String(s) => s.is_empty(),
+                        LoroValue::List(l) => l.is_empty(),
+                        LoroValue::Map(m) => m.is_empty(),
+                        _ => false,
+                    };
+                    if is_empty {
+                        continue;
+                    }
 
-            for (k, v) in b.iter() {
-                let is_empty = match v {
-                    LoroValue::String(s) => s.is_empty(),
-                    LoroValue::List(l) => l.is_empty(),
-                    LoroValue::Map(m) => m.is_empty(),
-                    _ => false,
-                };
-                if is_empty {
-                    continue;
+                    if !eq(v, b.get(k).unwrap()) {
+                        return false;
+                    }
                 }
 
-                assert_value_eq(v, a.get(k).unwrap());
+                for (k, v) in b.iter() {
+                    let is_empty = match v {
+                        LoroValue::String(s) => s.is_empty(),
+                        LoroValue::List(l) => l.is_empty(),
+                        LoroValue::Map(m) => m.is_empty(),
+                        _ => false,
+                    };
+                    if is_empty {
+                        continue;
+                    }
+
+                    if !eq(v, a.get(k).unwrap()) {
+                        return false;
+                    }
+                }
+
+                true
             }
+            (a, b) => a == b,
         }
-        (a, b) => assert_eq!(a, b),
     }
+
+    assert!(
+        eq(a, b),
+        "Expect left == right, but\nleft = {:#?}\nright = {:#?}",
+        a,
+        b
+    );
 }

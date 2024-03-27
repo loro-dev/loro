@@ -178,6 +178,10 @@ impl IdLp {
             lamport: (self.lamport as i32 + offset) as Lamport,
         }
     }
+
+    pub fn is_none(&self) -> bool {
+        self.peer == PeerID::MAX
+    }
 }
 
 impl From<IdLp> for IdLpSpan {

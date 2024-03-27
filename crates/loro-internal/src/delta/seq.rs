@@ -1,6 +1,7 @@
 use enum_as_inner::EnumAsInner;
 use serde::Serialize;
 use std::fmt::Debug;
+use tracing::trace;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Delta<Value, Meta = ()> {
@@ -292,7 +293,7 @@ impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
         if next_op.is_none() {
             return DeltaItem::Retain {
                 retain: other.length(),
-                attributes: other.meta().clone(),
+                attributes: M::empty(),
             };
         }
         let op = next_op.unwrap();

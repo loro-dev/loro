@@ -9,7 +9,7 @@ use crate::{
     },
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
-    state::{State, TreeParentId},
+    state::{IndexType, State, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
 };
@@ -25,6 +25,7 @@ use std::{
     ops::Deref,
     sync::{Mutex, Weak},
 };
+use tracing::{info, instrument, trace};
 
 #[derive(Debug, Clone, EnumAsInner, Deserialize, Serialize, PartialEq)]
 #[serde(untagged)]
@@ -178,6 +179,23 @@ pub struct ListHandler {
     inner: BasicHandler,
 }
 
+#[derive(Clone)]
+pub struct MovableListHandler {
+    inner: BasicHandler,
+}
+
+impl HandlerTrait for MovableListHandler {
+    fn inner(&self) -> &BasicHandler {
+        &self.inner
+    }
+}
+
+impl std::fmt::Debug for MovableListHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MovableListHandler {}", self.id())
+    }
+}
+
 impl std::fmt::Debug for ListHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "ListHandler {}", self.inner.id)
@@ -213,6 +231,7 @@ pub enum Handler {
     Text(TextHandler),
     Map(MapHandler),
     List(ListHandler),
+    MovableList(MovableListHandler),
     Tree(TreeHandler),
 }
 
@@ -237,6 +256,7 @@ impl Handler {
             ContainerType::List => Self::List(ListHandler { inner: handler }),
             ContainerType::Tree => Self::Tree(TreeHandler { inner: handler }),
             ContainerType::Text => Self::Text(TextHandler { inner: handler }),
+            ContainerType::MovableList => Self::MovableList(MovableListHandler { inner: handler }),
         }
     }
 
@@ -246,6 +266,7 @@ impl Handler {
             Self::List(x) => &x.inner.id,
             Self::Text(x) => &x.inner.id,
             Self::Tree(x) => &x.inner.id,
+            Self::MovableList(x) => &x.inner.id,
         }
     }
 
@@ -255,6 +276,7 @@ impl Handler {
             Self::List(x) => x.inner.container_idx,
             Self::Text(x) => x.inner.container_idx,
             Self::Tree(x) => x.inner.container_idx,
+            Self::MovableList(x) => x.inner.container_idx,
         }
     }
 
@@ -264,6 +286,7 @@ impl Handler {
             Self::List(_) => ContainerType::List,
             Self::Text(_) => ContainerType::Text,
             Self::Tree(_) => ContainerType::Tree,
+            Self::MovableList(_) => ContainerType::MovableList,
         }
     }
 }
@@ -286,6 +309,19 @@ impl ValueOrHandler {
         } else {
             ValueOrHandler::Value(value)
         }
+    }
+
+    pub(crate) fn to_value(&self) -> LoroValue {
+        match self {
+            Self::Value(v) => v.clone(),
+            Self::Handler(h) => LoroValue::Container(h.id().clone()),
+        }
+    }
+}
+
+impl From<LoroValue> for ValueOrHandler {
+    fn from(value: LoroValue) -> Self {
+        ValueOrHandler::Value(value)
     }
 }
 
@@ -627,6 +663,11 @@ impl TextHandler {
         txn: &mut Transaction,
         delta: &[TextDelta],
     ) -> LoroResult<()> {
+        trace!(
+            "apply_delta_with_txn {:#?}, self.len={}",
+            delta,
+            self.len_event()
+        );
         let mut index = 0;
         let mut marks = Vec::new();
         for d in delta {
@@ -721,7 +762,7 @@ impl ListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
-            EventHint::InsertList { len: 1 },
+            EventHint::InsertList { len: 1, pos },
             &self.inner.state,
         )
     }
@@ -778,7 +819,7 @@ impl ListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
-            EventHint::InsertList { len: 1 },
+            EventHint::InsertList { len: 1, pos },
             &self.inner.state,
         )?;
         Ok(create_handler(self, container_id))
@@ -900,6 +941,383 @@ impl ListHandler {
     }
 }
 
+impl MovableListHandler {
+    pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
+        with_txn(&self.inner.txn, |txn| {
+            self.insert_with_txn(txn, pos, v.into())
+        })
+    }
+
+    #[instrument(skip_all)]
+    pub fn insert_with_txn(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        v: LoroValue,
+    ) -> LoroResult<()> {
+        if pos > self.len() {
+            return Err(LoroError::OutOfBound {
+                pos,
+                len: self.len(),
+            });
+        }
+
+        if let Some(container) = v.as_container() {
+            self.insert_container_with_txn(txn, pos, container.container_type())?;
+            return Ok(());
+        }
+
+        let op_index = self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            list.convert_index(pos, IndexType::ForUser, IndexType::ForOp)
+                .unwrap()
+        });
+
+        txn.apply_local_op(
+            self.inner.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
+                slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
+                pos: op_index,
+            }),
+            EventHint::InsertList { len: 1, pos },
+            &self.inner.state,
+        )
+    }
+
+    #[inline]
+    pub fn mov(&self, from: usize, to: usize) -> LoroResult<()> {
+        with_txn(&self.inner.txn, |txn| self.move_with_txn(txn, from, to))
+    }
+
+    /// Move element from `from` to `to`. After this op, elem will be at pos `to`.
+    #[instrument(skip_all)]
+    pub fn move_with_txn(&self, txn: &mut Transaction, from: usize, to: usize) -> LoroResult<()> {
+        if from == to {
+            return Ok(());
+        }
+
+        if from >= self.len() {
+            return Err(LoroError::OutOfBound {
+                pos: from,
+                len: self.len(),
+            });
+        }
+
+        if to >= self.len() {
+            return Err(LoroError::OutOfBound {
+                pos: to,
+                len: self.len(),
+            });
+        }
+
+        let (op_from, op_to, elem_id, value) = self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            let (elem_id, elem) = list
+                .get_elem_at_given_pos(from, IndexType::ForUser)
+                .unwrap();
+            (
+                list.convert_index(from, IndexType::ForUser, IndexType::ForOp)
+                    .unwrap(),
+                list.convert_index(to, IndexType::ForUser, IndexType::ForOp)
+                    .unwrap(),
+                elem_id,
+                elem.value().clone(),
+            )
+        });
+
+        txn.apply_local_op(
+            self.inner.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Move {
+                from: op_from as u32,
+                to: op_to as u32,
+                elem_id: elem_id.to_id(),
+            }),
+            EventHint::Move {
+                value,
+                from: from as u32,
+                to: to as u32,
+            },
+            &self.inner.state,
+        )
+    }
+
+    pub fn push(&self, v: LoroValue) -> LoroResult<()> {
+        with_txn(&self.inner.txn, |txn| self.push_with_txn(txn, v))
+    }
+
+    pub fn push_with_txn(&self, txn: &mut Transaction, v: LoroValue) -> LoroResult<()> {
+        let pos = self.len();
+        self.insert_with_txn(txn, pos, v)
+    }
+
+    pub fn pop_(&self) -> LoroResult<Option<ValueOrHandler>> {
+        let last = self.len() - 1;
+        let ans = self.get_(last);
+        with_txn(&self.inner.txn, |txn| self.delete_with_txn(txn, last, 1))?;
+        Ok(ans)
+    }
+
+    pub fn pop(&self) -> LoroResult<Option<LoroValue>> {
+        with_txn(&self.inner.txn, |txn| self.pop_with_txn(txn))
+    }
+
+    pub fn pop_with_txn(&self, txn: &mut Transaction) -> LoroResult<Option<LoroValue>> {
+        let len = self.len();
+        if len == 0 {
+            return Ok(None);
+        }
+
+        let v = self.get(len - 1);
+        self.delete_with_txn(txn, len - 1, 1)?;
+        Ok(v)
+    }
+
+    pub fn insert_container(&self, pos: usize, c_type: ContainerType) -> LoroResult<Handler> {
+        with_txn(&self.inner.txn, |txn| {
+            self.insert_container_with_txn(txn, pos, c_type)
+        })
+    }
+
+    pub fn insert_container_with_txn(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        c_type: ContainerType,
+    ) -> LoroResult<Handler> {
+        if pos > self.len() {
+            return Err(LoroError::OutOfBound {
+                pos,
+                len: self.len(),
+            });
+        }
+
+        let op_index = self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            list.convert_index(pos, IndexType::ForUser, IndexType::ForOp)
+                .unwrap()
+        });
+
+        let id = txn.next_id();
+        let container_id = ContainerID::new_normal(id, c_type);
+        let v = LoroValue::Container(container_id.clone());
+        txn.apply_local_op(
+            self.inner.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
+                slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
+                pos: op_index,
+            }),
+            EventHint::InsertList { len: 1, pos },
+            &self.inner.state,
+        )?;
+        Ok(create_handler(self, container_id))
+    }
+
+    pub fn set(&self, index: usize, value: impl Into<LoroValue>) -> LoroResult<()> {
+        with_txn(&self.inner.txn, |txn| {
+            self.set_with_txn(txn, index, value.into())
+        })
+    }
+
+    pub fn set_with_txn(
+        &self,
+        txn: &mut Transaction,
+        index: usize,
+        value: LoroValue,
+    ) -> LoroResult<()> {
+        if index >= self.len() {
+            return Err(LoroError::OutOfBound {
+                pos: index,
+                len: self.len(),
+            });
+        }
+
+        let Some(elem_id) = self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            list.get_elem_id_at(index, IndexType::ForUser)
+        }) else {
+            unreachable!()
+        };
+
+        let op = crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Set {
+            elem_id: elem_id.to_id(),
+            value: value.clone(),
+        });
+
+        let hint = EventHint::SetList { index, value };
+        txn.apply_local_op(self.inner.container_idx, op, hint, &self.inner.state)
+    }
+
+    pub fn set_container(&self, pos: usize, c: ContainerType) -> LoroResult<Handler> {
+        with_txn(&self.inner.txn, |txn| {
+            self.set_container_with_txn(txn, pos, c)
+        })
+    }
+
+    pub fn set_container_with_txn(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        c_type: ContainerType,
+    ) -> Result<Handler, LoroError> {
+        let id = txn.next_id();
+        let container_id = ContainerID::new_normal(id, c_type);
+        let v = LoroValue::Container(container_id.clone());
+        let Some(elem_id) = self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            list.get_elem_id_at(pos, IndexType::ForUser)
+        }) else {
+            unreachable!()
+        };
+        txn.apply_local_op(
+            self.inner.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Set {
+                elem_id: elem_id.to_id(),
+                value: v.clone(),
+            }),
+            EventHint::SetList {
+                index: pos,
+                value: v,
+            },
+            &self.inner.state,
+        )?;
+        Ok(create_handler(self, container_id))
+    }
+
+    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+        with_txn(&self.inner.txn, |txn| self.delete_with_txn(txn, pos, len))
+    }
+
+    #[instrument(skip_all)]
+    pub fn delete_with_txn(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
+        if len == 0 {
+            return Ok(());
+        }
+
+        if pos + len > self.len() {
+            return Err(LoroError::OutOfBound {
+                pos: pos + len,
+                len: self.len(),
+            });
+        }
+
+        let (ids, new_poses) = self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            let ids: Vec<_> = (pos..pos + len)
+                .map(|i| list.get_list_id_at(i, IndexType::ForUser).unwrap())
+                .collect();
+            let poses: Vec<_> = (pos..pos + len)
+                // need to -i because we delete the previous ones
+                .map(|user_index| {
+                    let op_index = list
+                        .convert_index(user_index, IndexType::ForUser, IndexType::ForOp)
+                        .unwrap();
+                    assert!(op_index >= user_index);
+                    op_index - (user_index - pos)
+                })
+                .collect();
+            (ids, poses)
+        });
+
+        info!(?pos, ?len, ?ids, ?new_poses, "delete_with_txn");
+        let user_pos = pos;
+        for (id, op_pos) in ids.into_iter().zip(new_poses.into_iter()) {
+            txn.apply_local_op(
+                self.inner.container_idx,
+                crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
+                    id,
+                    op_pos as isize,
+                    1,
+                ))),
+                EventHint::DeleteList(DeleteSpan::new(user_pos as isize, 1)),
+                &self.inner.state,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_child_handler(&self, index: usize) -> Option<Handler> {
+        let container_id = self.with_state(|state| {
+            state
+                .as_movable_list_state()
+                .as_ref()
+                .unwrap()
+                .get(index, IndexType::ForUser)?
+                .as_container()
+                .cloned()
+        });
+        Some(create_handler(self, container_id?))
+    }
+
+    pub fn len(&self) -> usize {
+        self.with_state(|state| state.as_movable_list_state().unwrap().len())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn get_deep_value_with_id(&self) -> LoroValue {
+        self.inner
+            .state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_container_deep_value_with_id(self.inner.container_idx, None)
+    }
+
+    pub fn get(&self, index: usize) -> Option<LoroValue> {
+        self.with_state(|state| {
+            let a = state.as_movable_list_state().unwrap();
+            a.get(index, IndexType::ForUser).cloned()
+        })
+    }
+
+    /// Get value at given index, if it's a container, return a handler to the container
+    pub fn get_(&self, index: usize) -> Option<ValueOrHandler> {
+        self.with_state(|state| {
+            let a = state.as_movable_list_state().unwrap();
+            match a.get(index, IndexType::ForUser) {
+                Some(v) => {
+                    if let LoroValue::Container(id) = v {
+                        Some(ValueOrHandler::Handler(create_handler(self, id.clone())))
+                    } else {
+                        Some(ValueOrHandler::Value(v.clone()))
+                    }
+                }
+                None => None,
+            }
+        })
+    }
+
+    pub fn for_each<I>(&self, mut f: I)
+    where
+        I: FnMut(ValueOrHandler),
+    {
+        self.with_state(|state| {
+            let a = state.as_movable_list_state().unwrap();
+            for v in a.iter() {
+                match v {
+                    LoroValue::Container(c) => {
+                        f(ValueOrHandler::Handler(create_handler(self, c.clone())));
+                    }
+                    value => {
+                        f(ValueOrHandler::Value(value.clone()));
+                    }
+                }
+            }
+        })
+    }
+
+    pub fn log_internal_state(&self) -> String {
+        self.with_state(|state| {
+            let state = state.as_movable_list_state().unwrap();
+            format!("{:#?}", state)
+        })
+    }
+}
+
 impl MapHandler {
     pub fn insert(&self, key: &str, value: impl Into<LoroValue>) -> LoroResult<()> {
         with_txn(&self.inner.txn, |txn| {
@@ -992,7 +1410,6 @@ impl MapHandler {
     {
         let mutex = &self.inner.state.upgrade().unwrap();
         let mut doc_state = mutex.lock().unwrap();
-        let arena = doc_state.arena.clone();
         doc_state.with_state(self.inner.container_idx, |state| {
             let a = state.as_map_state().unwrap();
             for (k, v) in a.iter() {

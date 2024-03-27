@@ -6,7 +6,7 @@ use std::{
 use super::ContainerState;
 use crate::{
     arena::SharedArena,
-    container::{idx::ContainerIdx, ContainerID},
+    container::{idx::ContainerIdx, list::list_op::ListOp, ContainerID},
     delta::Delta,
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
@@ -322,7 +322,7 @@ impl ContainerState for ListState {
         let InternalDiff::ListRaw(delta) = diff else {
             unreachable!()
         };
-        let mut ans: Delta<_> = Delta::default();
+        let mut ans: Delta<_, _> = Delta::default();
         let mut index = 0;
         for span in delta.iter() {
             match span {
@@ -400,7 +400,7 @@ impl ContainerState for ListState {
             RawOpContent::Map(_) => unreachable!(),
             RawOpContent::Tree(_) => unreachable!(),
             RawOpContent::List(list) => match list {
-                crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
+                ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(list) => match list {
                         std::borrow::Cow::Borrowed(list) => {
                             self.insert_batch(*pos, list.to_vec(), op.id_full());
@@ -411,11 +411,17 @@ impl ContainerState for ListState {
                     },
                     _ => unreachable!(),
                 },
-                crate::container::list::list_op::ListOp::Delete(del) => {
+                ListOp::Delete(del) => {
                     self.delete_range(del.span.to_urange());
                 }
-                crate::container::list::list_op::ListOp::StyleStart { .. } => unreachable!(),
-                crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),
+                ListOp::Move { .. } => {
+                    todo!("invoke move")
+                }
+                ListOp::StyleStart { .. } => unreachable!(),
+                ListOp::StyleEnd { .. } => unreachable!(),
+                ListOp::Set { .. } => {
+                    unreachable!()
+                }
             },
         }
         Ok(())

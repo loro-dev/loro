@@ -10,12 +10,14 @@ use loro_internal::OpLog;
 
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
-    MapHandler as InnerMapHandler, TextHandler as InnerTextHandler,
-    TreeHandler as InnerTreeHandler,
+    MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
+    TextHandler as InnerTextHandler, TreeHandler as InnerTreeHandler,
 };
 use std::cmp::Ordering;
 use std::ops::Range;
 use std::sync::Arc;
+
+use tracing::info;
 
 pub mod event;
 
@@ -145,7 +147,16 @@ impl LoroDoc {
         self.doc.import_batch(bytes)
     }
 
-    /// Get a [ListHandler] by container id.
+    /// Get a [LoroMovableList] by container id.
+    ///
+    /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> LoroMovableList {
+        LoroMovableList {
+            handler: self.doc.get_movable_list(id),
+        }
+    }
+
+    /// Get a [LoroList] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> LoroList {
@@ -154,7 +165,7 @@ impl LoroDoc {
         }
     }
 
-    /// Get a [MapHandler] by container id.
+    /// Get a [LoroMap] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> LoroMap {
@@ -163,7 +174,7 @@ impl LoroDoc {
         }
     }
 
-    /// Get a [TextHandler] by container id.
+    /// Get a [LoroText] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> LoroText {
@@ -172,7 +183,7 @@ impl LoroDoc {
         }
     }
 
-    /// Get a [TreeHandler] by container id.
+    /// Get a [LoroTree] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> LoroTree {
@@ -352,6 +363,12 @@ impl LoroDoc {
 
     pub fn log_estimate_size(&self) {
         self.doc.log_estimated_size();
+    }
+
+    /// Check the correctness of the document state by comparing it with the state
+    /// calculated by applying all the history.
+    pub fn check_state_correctness_slow(&self) {
+        self.doc.check_state_diff_calc_consistency_slow()
     }
 }
 
@@ -818,6 +835,91 @@ impl LoroTree {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct LoroMovableList {
+    handler: InnerMovableListHandler,
+}
+
+impl LoroMovableList {
+    pub fn id(&self) -> ContainerID {
+        self.handler.id().clone()
+    }
+
+    pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
+        self.handler.insert(pos, v)
+    }
+
+    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+        self.handler.delete(pos, len)
+    }
+
+    pub fn get(&self, index: usize) -> Option<Either<LoroValue, Container>> {
+        match self.handler.get_(index) {
+            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
+            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            None => None,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.handler.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.handler.get_value()
+    }
+
+    pub fn get_deep_value(&self) -> LoroValue {
+        self.handler.get_deep_value()
+    }
+
+    pub fn pop(&self) -> LoroResult<Option<Either<LoroValue, Container>>> {
+        Ok(match self.handler.pop_()? {
+            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
+            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            None => None,
+        })
+    }
+
+    pub fn push(&self, v: impl Into<LoroValue>) -> LoroResult<()> {
+        self.handler.push(v.into())
+    }
+
+    pub fn push_container(&self, c_type: ContainerType) -> LoroResult<Container> {
+        self.handler
+            .insert_container(self.handler.len(), c_type)
+            .map(|c| c.into())
+    }
+
+    pub fn set(&self, pos: usize, value: impl Into<LoroValue>) -> LoroResult<()> {
+        self.handler.set(pos, value.into())
+    }
+
+    pub fn mov(&self, from: usize, to: usize) -> LoroResult<()> {
+        self.handler.mov(from, to)
+    }
+
+    pub fn insert_container(&self, pos: usize, c_type: ContainerType) -> LoroResult<Container> {
+        self.handler.insert_container(pos, c_type).map(|c| c.into())
+    }
+
+    pub fn set_container(&self, pos: usize, c: ContainerType) -> LoroResult<Container> {
+        self.handler.set_container(pos, c).map(|c| c.into())
+    }
+
+    pub fn log_internal_state(&self) {
+        info!(
+            "movable_list internal state: {}",
+            self.handler.log_internal_state()
+        )
+    }
+}
+
 use enum_as_inner::EnumAsInner;
 
 /// All the CRDT containers supported by loro.
@@ -827,12 +929,14 @@ pub enum Container {
     Map(LoroMap),
     Text(LoroText),
     Tree(LoroTree),
+    MovableList(LoroMovableList),
 }
 
 impl Container {
     pub fn get_type(&self) -> ContainerType {
         match self {
             Container::List(_) => ContainerType::List,
+            Container::MovableList(_) => ContainerType::MovableList,
             Container::Map(_) => ContainerType::Map,
             Container::Text(_) => ContainerType::Text,
             Container::Tree(_) => ContainerType::Tree,
@@ -842,6 +946,7 @@ impl Container {
     pub fn id(&self) -> ContainerID {
         match self {
             Container::List(x) => x.id(),
+            Container::MovableList(x) => x.id(),
             Container::Map(x) => x.id(),
             Container::Text(x) => x.id(),
             Container::Tree(x) => x.id(),
@@ -856,6 +961,7 @@ impl From<InnerHandler> for Container {
             InnerHandler::Map(x) => Container::Map(LoroMap { handler: x }),
             InnerHandler::List(x) => Container::List(LoroList { handler: x }),
             InnerHandler::Tree(x) => Container::Tree(LoroTree { handler: x }),
+            InnerHandler::MovableList(x) => Container::MovableList(LoroMovableList { handler: x }),
         }
     }
 }

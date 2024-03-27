@@ -241,7 +241,8 @@ impl Loro {
     }
 
     /// If two continuous local changes are within the interval, they will be merged into one change.
-    /// The defualt value is 1000 seconds
+    ///
+    /// The defualt value is 1_000_000, the default unit is miliseconds.
     #[wasm_bindgen(js_name = "setChangeMergeInterval")]
     pub fn set_change_merge_interval(&self, interval: f64) {
         self.0.set_change_merge_interval(interval as i64);
@@ -604,6 +605,9 @@ impl Loro {
                     doc: self.0.clone(),
                 }
                 .into()
+            }
+            ContainerType::MovableList => {
+                unimplemented!()
             }
         })
     }
@@ -1291,7 +1295,7 @@ impl LoroText {
         let observer = observer::Observer::new(f);
         let doc = loro.0.clone();
         let ans = loro.0.subscribe(
-            &self.handler.id(),
+            self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc);
             }),
@@ -1549,6 +1553,7 @@ impl LoroMap {
                 doc: self.doc.clone(),
             }
             .into(),
+            ContainerType::MovableList => unimplemented!(),
         };
         Ok(container)
     }
@@ -1575,7 +1580,7 @@ impl LoroMap {
         let observer = observer::Observer::new(f);
         let doc = loro.0.clone();
         let id = loro.0.subscribe(
-            &self.handler.id(),
+            self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc);
             }),
@@ -1798,6 +1803,7 @@ impl LoroList {
                 doc: self.doc.clone(),
             }
             .into(),
+            ContainerType::MovableList => unimplemented!(),
         };
         Ok(container)
     }
@@ -1822,7 +1828,7 @@ impl LoroList {
         let observer = observer::Observer::new(f);
         let doc = loro.0.clone();
         let ans = loro.0.subscribe(
-            &self.handler.id(),
+            self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc);
             }),
@@ -2193,7 +2199,7 @@ impl LoroTree {
         let observer = observer::Observer::new(f);
         let doc = loro.0.clone();
         let ans = loro.0.subscribe(
-            &self.handler.id(),
+            self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc);
             }),

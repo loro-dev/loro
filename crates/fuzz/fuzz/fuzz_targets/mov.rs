@@ -7,13 +7,7 @@ use fuzz::{test_multi_sites, Action, FuzzTarget};
 fuzz_target!(|actions: Vec<Action>| {
     test_multi_sites(
         5,
-        vec![
-            FuzzTarget::Map,
-            FuzzTarget::List,
-            FuzzTarget::Text,
-            FuzzTarget::Tree,
-            FuzzTarget::MovableList,
-        ],
+        vec![FuzzTarget::Map, FuzzTarget::MovableList],
         &mut actions.clone(),
     )
 });

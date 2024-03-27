@@ -166,12 +166,8 @@ impl AppDag {
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         let mut vv: VersionVector = Default::default();
         for id in frontiers.iter() {
-            let Some(rle) = self.map.get(&id.peer) else {
-                return None;
-            };
-            let Some(x) = rle.get_by_atom_index(id.counter) else {
-                return None;
-            };
+            let rle = self.map.get(&id.peer)?;
+            let x = rle.get_by_atom_index(id.counter)?;
             vv.extend_to_include_vv(x.element.vv.iter());
             vv.extend_to_include_last_id(*id);
         }
