@@ -526,9 +526,10 @@ impl Actionable for Vec<Actor> {
                 };
                 let mut txn = actor.loro.txn().unwrap();
 
+                // TODO: index
                 match action {
                     TreeAction::Create => {
-                        container.create_with_txn(&mut txn, None).unwrap();
+                        container.create_with_txn(&mut txn, None, 0).unwrap();
                     }
                     TreeAction::Move => {
                         match container.mov_with_txn(
@@ -541,6 +542,7 @@ impl Actionable for Vec<Actor> {
                                 peer: *parent_peer,
                                 counter: *parent_counter,
                             },
+                            0,
                         ) {
                             Ok(_) => {}
                             Err(err) => {

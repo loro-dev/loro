@@ -7,7 +7,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerType, IdFull, LoroValue, TreeID};
 use serde::Serialize;
 
-use crate::state::TreeParentId;
+use crate::{container::tree::fractional_index::FracIndex, state::TreeParentId};
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct TreeDiff {
@@ -22,31 +22,37 @@ pub struct TreeDiffItem {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum TreeExternalDiff {
-    Create(Option<TreeID>),
-    Move(Option<TreeID>),
+    Create {
+        parent: Option<TreeID>,
+        index: usize,
+    },
+    Move {
+        parent: Option<TreeID>,
+        index: usize,
+    },
     Delete,
 }
 
-impl TreeDiffItem {
-    pub(crate) fn from_delta_item(item: TreeDeltaItem) -> Option<TreeDiffItem> {
-        let target = item.target;
-        match item.action {
-            TreeInternalDiff::Create(p) => Some(TreeDiffItem {
-                target,
-                action: TreeExternalDiff::Create(p.into_node().ok()),
-            }),
-            TreeInternalDiff::Move(p) => Some(TreeDiffItem {
-                target,
-                action: TreeExternalDiff::Move(p.into_node().ok()),
-            }),
-            TreeInternalDiff::Delete(_) | TreeInternalDiff::UnCreate => Some(TreeDiffItem {
-                target,
-                action: TreeExternalDiff::Delete,
-            }),
-            TreeInternalDiff::MoveInDelete(_) => None,
-        }
-    }
-}
+// impl TreeDiffItem {
+//     pub(crate) fn from_delta_item(item: TreeDeltaItem) -> Option<TreeDiffItem> {
+//         let target = item.target;
+//         match item.action {
+//             TreeInternalDiff::Create(p) => Some(TreeDiffItem {
+//                 target,
+//                 action: TreeExternalDiff::Create(p.into_node().ok()),
+//             }),
+//             TreeInternalDiff::Move(p) => Some(TreeDiffItem {
+//                 target,
+//                 action: TreeExternalDiff::Move(p.into_node().ok()),
+//             }),
+//             TreeInternalDiff::Delete(_) | TreeInternalDiff::UnCreate => Some(TreeDiffItem {
+//                 target,
+//                 action: TreeExternalDiff::Delete,
+//             }),
+//             TreeInternalDiff::MoveInDelete(_) => None,
+//         }
+//     }
+// }
 
 impl TreeDiff {
     pub(crate) fn compose(self, _other: Self) -> Self {
@@ -66,7 +72,7 @@ pub struct TreeDelta {
 }
 
 /// The semantic action in movable tree.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct TreeDeltaItem {
     pub target: TreeID,
     pub action: TreeInternalDiff,
@@ -74,14 +80,20 @@ pub struct TreeDeltaItem {
 }
 
 /// The action of [`TreeDiff`]. It's the same as  [`crate::container::tree::tree_op::TreeOp`], but semantic.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum TreeInternalDiff {
     /// First create the node, have not seen it before
-    Create(TreeParentId),
+    Create {
+        parent: TreeParentId,
+        position: FracIndex,
+    },
     /// For retreating, if the node is only created, not move it to `DELETED_ROOT` but delete it directly
     UnCreate,
     /// Move the node to the parent, the node exists
-    Move(TreeParentId),
+    Move {
+        parent: TreeParentId,
+        position: FracIndex,
+    },
     /// move under a parent that is deleted
     Delete(TreeParentId),
     /// old parent is deleted, new parent is deleted too
@@ -100,6 +112,7 @@ impl TreeDeltaItem {
         op_id: IdFull,
         is_new_parent_deleted: bool,
         is_old_parent_deleted: bool,
+        position: Option<FracIndex>,
     ) -> Self {
         let action = if matches!(parent, TreeParentId::Unexist) {
             TreeInternalDiff::UnCreate
@@ -110,8 +123,14 @@ impl TreeDeltaItem {
             ) {
                 (true, true) => TreeInternalDiff::MoveInDelete(parent),
                 (true, false) => TreeInternalDiff::Delete(parent),
-                (false, true) => TreeInternalDiff::Create(parent),
-                (false, false) => TreeInternalDiff::Move(parent),
+                (false, true) => TreeInternalDiff::Create {
+                    parent,
+                    position: position.unwrap(),
+                },
+                (false, false) => TreeInternalDiff::Move {
+                    parent,
+                    position: position.unwrap(),
+                },
             }
         };
 
@@ -147,17 +166,17 @@ impl<'a> TreeValue<'a> {
         for d in diff.diff.iter() {
             let target = d.target;
             match d.action {
-                TreeExternalDiff::Create(parent) => {
+                TreeExternalDiff::Create { parent, index } => {
                     self.create_target(target);
-                    self.mov(target, parent);
+                    self.mov(target, parent, index);
                 }
                 TreeExternalDiff::Delete => self.delete_target(target),
-                TreeExternalDiff::Move(parent) => self.mov(target, parent),
+                TreeExternalDiff::Move { parent, index } => self.mov(target, parent, index),
             }
         }
     }
 
-    fn mov(&mut self, target: TreeID, parent: Option<TreeID>) {
+    fn mov(&mut self, target: TreeID, parent: Option<TreeID>, index: usize) {
         let map = self
             .0
             .iter_mut()
@@ -175,6 +194,7 @@ impl<'a> TreeValue<'a> {
             LoroValue::Null
         };
         map_mut.insert("parent".to_string(), p);
+        map_mut.insert("index".to_string(), (index as i64).into());
     }
 
     fn create_target(&mut self, target: TreeID) {

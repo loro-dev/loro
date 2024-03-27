@@ -340,16 +340,18 @@ pub mod wasm {
                 let obj = Object::new();
                 js_sys::Reflect::set(&obj, &"target".into(), &diff.target.into()).unwrap();
                 match diff.action {
-                    TreeExternalDiff::Create(p) => {
+                    TreeExternalDiff::Create { parent, index } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"create".into()).unwrap();
-                        js_sys::Reflect::set(&obj, &"parent".into(), &p.into()).unwrap();
+                        js_sys::Reflect::set(&obj, &"parent".into(), &parent.into()).unwrap();
+                        js_sys::Reflect::set(&obj, &"index".into(), &index.into()).unwrap();
                     }
                     TreeExternalDiff::Delete => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"delete".into()).unwrap();
                     }
-                    TreeExternalDiff::Move(p) => {
+                    TreeExternalDiff::Move { parent, index } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"move".into()).unwrap();
-                        js_sys::Reflect::set(&obj, &"parent".into(), &p.into()).unwrap();
+                        js_sys::Reflect::set(&obj, &"parent".into(), &parent.into()).unwrap();
+                        js_sys::Reflect::set(&obj, &"index".into(), &index.into()).unwrap();
                     }
                 }
                 array.push(&obj);
