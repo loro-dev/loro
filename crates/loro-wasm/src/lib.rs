@@ -1785,7 +1785,6 @@ impl LoroList {
     pub fn insert_container(&mut self, index: usize, container: &str) -> JsResult<JsValue> {
         let type_: ContainerType = container.try_into()?;
         let c = self.handler.insert_container(index, type_)?;
-        let c = self.handler.insert_container(index, _type)?;
         Ok(handler_to_js_value(c, self.doc.clone()))
     }
 
