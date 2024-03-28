@@ -5,19 +5,22 @@ use std::{
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::HasLength;
-use loro_common::{ContainerID, InternalString, LoroResult, LoroValue, ID};
+use loro_common::{ContainerID, IdLp, InternalString, LoroResult, LoroValue, ID};
 
 use crate::{
     arena::SharedArena,
+    change::Lamport,
     container::{
         idx::ContainerIdx,
+        list::list_op,
         richtext::{
             config::StyleConfigMap,
-            richtext_state::{DrainInfo, EntityRangeInfo, IterRangeItem, PosType},
+            richtext_state::{
+                DrainInfo, EntityRangeInfo, IterRangeItem, PosType, RichtextStateChunk,
+            },
             AnchorType, RichtextState as InnerState, StyleOp, Styles,
         },
     },
-    container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
     delta::{Delta, DeltaItem, StyleMeta, StyleMetaItem},
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
@@ -109,6 +112,34 @@ impl RichtextState {
                 pos
             }
         }
+    }
+
+    pub fn get_index_of_id(&self, id: IdLp) -> Option<usize> {
+        let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;
+        let mut a;
+        let mut b;
+        match &self.state {
+            LazyLoad::Src(s) => {
+                a = Some(s.elements.iter());
+                iter = &mut *a.as_mut().unwrap();
+            }
+            LazyLoad::Dst(s) => {
+                b = Some(s.iter_chunk());
+                iter = &mut *b.as_mut().unwrap();
+            }
+        }
+
+        let mut index = 0;
+        for elem in iter {
+            let span = elem.get_id_lp_span();
+            if span.contains(id) {
+                return Some(index + (id.lamport - span.lamport.start) as usize);
+            }
+
+            index += elem.rle_len();
+        }
+
+        None
     }
 }
 

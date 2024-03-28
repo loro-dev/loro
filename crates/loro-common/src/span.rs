@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use crate::{Counter, IdSpanVector, Lamport, PeerID, ID};
+use crate::{Counter, IdLp, IdSpanVector, Lamport, PeerID, ID};
 use rle::{HasLength, Mergable, Slice, Sliceable};
 
 /// This struct supports reverse repr: `from` can be less than `to`.
@@ -263,6 +263,10 @@ impl IdLpSpan {
                 end: to,
             },
         }
+    }
+
+    pub fn contains(&self, id: IdLp) -> bool {
+        self.peer == id.peer && self.lamport.start <= id.lamport && id.lamport < self.lamport.end
     }
 }
 

@@ -18,6 +18,7 @@ pub use state::DocState;
 pub mod loro;
 pub mod obs;
 pub mod oplog;
+mod relative_pos;
 pub mod txn;
 
 pub mod change;
