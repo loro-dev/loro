@@ -10,9 +10,7 @@ mod event {
         let mut ans = vec![];
         for idx in 0..children_num {
             let child_handler = handler
-                .insert_container(idx, ContainerType::List)
-                .unwrap()
-                .into_list()
+                .insert_container(idx, ListHandler::new_detached())
                 .unwrap();
             ans.push(child_handler);
         }

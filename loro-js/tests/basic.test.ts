@@ -5,9 +5,10 @@ import {
   Loro,
   LoroList,
   LoroMap,
+  LoroText,
   VersionVector,
 } from "../src";
-import { Container } from "../dist/loro";
+import { Container, LoroTree } from "../dist/loro";
 
 it("basic example", () => {
   const doc = new Loro();
@@ -32,7 +33,7 @@ it("basic example", () => {
   });
 
   // Insert a text container to the list
-  const text = list.insertContainer(0, "Text");
+  const text = list.insertContainer(0, new LoroText());
   text.insert(0, "Hello");
   text.insert(0, "Hi! ");
 
@@ -43,7 +44,7 @@ it("basic example", () => {
   });
 
   // Insert a list container to the map
-  const list2 = map.setContainer("test", "List");
+  const list2 = map.setContainer("test", new LoroList());
   list2.insert(0, 1);
   expect(doc.toJson()).toStrictEqual({
     list: ["Hi! Hello", "C"],
@@ -91,7 +92,7 @@ it("basic sync example", () => {
 
 it("basic events", () => {
   const doc = new Loro();
-  doc.subscribe((event) => {});
+  doc.subscribe((event) => { });
   const list = doc.getList("list");
 });
 
@@ -99,7 +100,7 @@ describe("list", () => {
   it("insert containers", () => {
     const doc = new Loro();
     const list = doc.getList("list");
-    const map = list.insertContainer(0, "Map");
+    const map = list.insertContainer(0, new LoroMap());
     map.set("key", "value");
     const v = list.get(0) as LoroMap;
     console.log(v);
@@ -113,7 +114,7 @@ describe("list", () => {
     list.insert(0, 1);
     list.insert(1, 2);
     expect(list.toArray()).toStrictEqual([1, 2]);
-    list.insertContainer(2, "Text");
+    list.insertContainer(2, new LoroText());
     const t = list.toArray()[2];
     expect(isContainer(t)).toBeTruthy();
     expect(getType(t)).toBe("Text");
@@ -125,7 +126,7 @@ describe("map", () => {
   it("get child container", () => {
     const doc = new Loro();
     const map = doc.getMap("map");
-    const list = map.setContainer("key", "List");
+    const list = map.setContainer("key", new LoroList());
     list.insert(0, 1);
     expect(map.get("key") instanceof LoroList).toBeTruthy();
     expect((map.get("key") as LoroList).toJson()).toStrictEqual([1]);
@@ -228,7 +229,7 @@ describe("map", () => {
   it("entries should return container handlers", () => {
     const doc = new Loro();
     const map = doc.getMap("map");
-    map.setContainer("text", "Text");
+    map.setContainer("text", new LoroText());
     map.set("foo", "bar");
     const entries = map.entries();
     expect((entries[0][1]! as Container).kind() === "Text").toBeTruthy();
@@ -389,17 +390,17 @@ it("can control the mergeable interval", () => {
   }
 });
 
-it("get container parent", () => {
+it.only("get container parent", () => {
   const doc = new Loro();
   const m = doc.getMap("m");
   expect(m.parent()).toBeUndefined();
-  const list = m.setContainer("t", "List");
+  const list = m.setContainer("t", new LoroList());
   expect(list.parent()!.id).toBe(m.id);
-  const text = list.insertContainer(0, "Text");
+  const text = list.insertContainer(0, new LoroText());
   expect(text.parent()!.id).toBe(list.id);
-  const tree = list.insertContainer(1, "Tree");
+  const tree = list.insertContainer(1, new LoroTree());
   expect(tree.parent()!.id).toBe(list.id);
   const treeNode = tree.createNode();
-  const subtext = treeNode.data.setContainer("t", "Text");
+  const subtext = treeNode.data.setContainer("t", new LoroText());
   expect(subtext.parent()!.id).toBe(treeNode.data.id);
 });

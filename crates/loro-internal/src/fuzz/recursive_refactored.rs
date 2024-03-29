@@ -588,7 +588,11 @@ impl Actionable for Vec<Actor> {
                     }
                     FuzzValue::Container(c) => {
                         let handler = &container
-                            .insert_container_with_txn(&mut txn, &key.to_string(), *c)
+                            .insert_container_with_txn(
+                                &mut txn,
+                                &key.to_string(),
+                                Handler::new_unattached(*c),
+                            )
                             .unwrap();
                         let idx = handler.container_idx();
                         actor.add_new_container(idx, handler.id().clone(), *c);
@@ -630,7 +634,11 @@ impl Actionable for Vec<Actor> {
                     }
                     FuzzValue::Container(c) => {
                         let handler = &container
-                            .insert_container_with_txn(&mut txn, *key as usize, *c)
+                            .insert_container_with_txn(
+                                &mut txn,
+                                *key as usize,
+                                Handler::new_unattached(*c),
+                            )
                             .unwrap();
                         let idx = handler.container_idx();
                         actor.add_new_container(idx, handler.id().clone(), *c);

@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  Loro,
-  LoroList,
-  LoroMap,
-  VersionVector,
-} from "../src";
+import { Loro, LoroList, LoroMap, LoroText, VersionVector } from "../src";
 import { expectTypeOf } from "vitest";
 
 function assertEquals(a: any, b: any) {
@@ -188,7 +183,7 @@ describe("wasm", () => {
   b.set("ab", 123);
   loro.commit();
 
-  const bText = b.setContainer("hh", "Text");
+  const bText = b.setContainer("hh", new LoroText());
   loro.commit();
 
   it("map get", () => {
@@ -222,7 +217,7 @@ describe("type", () => {
   it("test recursive map type", () => {
     const loro = new Loro<{ map: LoroMap<{ map: LoroMap<{ name: "he" }> }> }>();
     const map = loro.getTypedMap("map");
-    map.setContainer("map", "Map");
+    map.setContainer("map", new LoroMap());
 
     const subMap = map.getTyped(loro, "map");
     const name = subMap.getTyped(loro, "name");
@@ -260,7 +255,7 @@ describe("tree", () => {
     assertEquals(child.parent()!.id, root.id);
   });
 
-  it("move",()=>{
+  it("move", () => {
     const root = tree.createNode();
     const child = root.createNode();
     const child2 = root.createNode();
@@ -268,7 +263,7 @@ describe("tree", () => {
     child2.moveTo(child);
     assertEquals(child2.parent()!.id, child.id);
     assertEquals(child.children()[0].id, child2.id);
-  })
+  });
 
   it("meta", () => {
     const root = tree.createNode();

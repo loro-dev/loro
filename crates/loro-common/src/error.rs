@@ -49,6 +49,8 @@ pub enum LoroError {
     MisuseDettachedContainer { method: &'static str },
     #[error("Not implemented: {0}")]
     NotImplemented(&'static str),
+    #[error("Reattach a container that is already attached")]
+    ReattachAttachedContainer,
 }
 
 #[derive(Error, Debug)]

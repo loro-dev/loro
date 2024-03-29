@@ -1,18 +1,16 @@
 use std::{cmp::Ordering, sync::Arc};
 
-use loro::{FrontiersNotIncluded, LoroDoc, LoroError, ToJson};
+use loro::{FrontiersNotIncluded, LoroDoc, LoroError, LoroMap, LoroText, ToJson};
 use loro_internal::{handler::TextDelta, id::ID, LoroResult};
 use serde_json::json;
 
 #[test]
 fn list_checkout() -> Result<(), LoroError> {
     let doc = LoroDoc::new();
-    doc.get_list("list")
-        .insert_container(0, loro::ContainerType::Map)?;
+    doc.get_list("list").insert_container(0, LoroMap::new())?;
     doc.commit();
     let f0 = doc.state_frontiers();
-    doc.get_list("list")
-        .insert_container(0, loro::ContainerType::Text)?;
+    doc.get_list("list").insert_container(0, LoroText::new())?;
     doc.commit();
     let f1 = doc.state_frontiers();
     doc.get_list("list").delete(1, 1)?;
@@ -263,10 +261,7 @@ fn map() -> LoroResult<()> {
     map.insert("null", LoroValue::Null)?;
     map.insert("deleted", LoroValue::Null)?;
     map.delete("deleted")?;
-    let text = map
-        .insert_container("text", loro_internal::ContainerType::Text)?
-        .into_text()
-        .unwrap();
+    let text = map.insert_container("text", LoroText::new())?;
     text.insert(0, "Hello world!")?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),

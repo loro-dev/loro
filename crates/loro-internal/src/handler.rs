@@ -29,13 +29,25 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
+const INSERT_CONTAINER_VALUE_ARG_ERROR: &str =
+    "Cannot insert a LoroValue::Container directly. To create child container, use insert_container";
+
 #[enum_dispatch]
-pub trait HandlerTrait {
+pub trait HandlerTrait: Clone {
     fn is_attached(&self) -> bool;
     fn attached_handler(&self) -> Option<&BasicHandler>;
     fn get_value(&self) -> LoroValue;
     fn get_deep_value(&self) -> LoroValue;
     fn kind(&self) -> ContainerType;
+    fn to_handler(&self) -> Handler;
+    /// This method returns an attached handler.
+    fn attach(
+        &self,
+        txn: &mut Transaction,
+        parent: &BasicHandler,
+        self_id: ContainerID,
+    ) -> LoroResult<Self>;
+
     fn parent(&self) -> Option<Handler> {
         self.attached_handler().and_then(|x| x.parent())
     }
@@ -64,17 +76,13 @@ pub trait HandlerTrait {
     }
 }
 
-fn create_handler(handler: &impl HandlerTrait, id: ContainerID) -> Handler {
-    if let Some(inner) = handler.attached_handler() {
-        Handler::new_attached(
-            id,
-            inner.arena.clone(),
-            inner.txn.clone(),
-            inner.state.clone(),
-        )
-    } else {
-        Handler::new_unattached(id.container_type())
-    }
+fn create_handler(inner: &BasicHandler, id: ContainerID) -> Handler {
+    Handler::new_attached(
+        id,
+        inner.arena.clone(),
+        inner.txn.clone(),
+        inner.state.clone(),
+    )
 }
 
 /// Flatten attributes that allow overlap
@@ -102,6 +110,10 @@ impl<T> Clone for MaybeDettached<T> {
 }
 
 impl<T> MaybeDettached<T> {
+    fn new_detached(v: T) -> Self {
+        MaybeDettached::Dettached(Arc::new(Mutex::new(v)))
+    }
+
     fn is_attached(&self) -> bool {
         match self {
             MaybeDettached::Dettached(_) => false,
@@ -118,7 +130,7 @@ impl<T> MaybeDettached<T> {
 
     fn try_attached_state(&self) -> LoroResult<&BasicHandler> {
         match self {
-            MaybeDettached::Dettached(a) => Err(LoroError::MisuseDettachedContainer {
+            MaybeDettached::Dettached(_) => Err(LoroError::MisuseDettachedContainer {
                 method: "inner_state",
             }),
             MaybeDettached::Attached(a) => Ok(a),
@@ -216,6 +228,36 @@ pub struct TextHandler {
 }
 
 impl HandlerTrait for TextHandler {
+    fn to_handler(&self) -> Handler {
+        Handler::Text(self.clone())
+    }
+
+    fn attach(
+        &self,
+        txn: &mut Transaction,
+        parent: &BasicHandler,
+        self_id: ContainerID,
+    ) -> LoroResult<Self> {
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let t = t.try_lock().unwrap();
+                let inner = create_handler(parent, self_id);
+                let text = inner.into_text().unwrap();
+                let mut delta: Vec<TextDelta> = Vec::new();
+                for span in t.iter() {
+                    delta.push(TextDelta::Insert {
+                        insert: span.text.to_string(),
+                        attributes: span.attributes.to_option_map(),
+                    });
+                }
+
+                text.apply_delta_with_txn(txn, &delta)?;
+                Ok(text)
+            }
+            MaybeDettached::Attached(a) => unreachable!(),
+        }
+    }
+
     fn attached_handler(&self) -> Option<&BasicHandler> {
         self.inner.attached_handler()
     }
@@ -299,6 +341,37 @@ pub struct MapHandler {
 }
 
 impl HandlerTrait for MapHandler {
+    fn to_handler(&self) -> Handler {
+        Handler::Map(self.clone())
+    }
+
+    fn attach(
+        &self,
+        txn: &mut Transaction,
+        parent: &BasicHandler,
+        self_id: ContainerID,
+    ) -> LoroResult<Self> {
+        match &self.inner {
+            MaybeDettached::Dettached(m) => {
+                let m = m.try_lock().unwrap();
+                let inner = create_handler(parent, self_id);
+                let map = inner.into_map().unwrap();
+                for (k, v) in m.iter() {
+                    match v {
+                        ValueOrHandler::Value(v) => {
+                            map.insert_with_txn(txn, &k, v.clone());
+                        }
+                        ValueOrHandler::Handler(h) => {
+                            map.insert_container_with_txn(txn, &k, h.clone());
+                        }
+                    }
+                }
+                Ok(map)
+            }
+            MaybeDettached::Attached(a) => unreachable!(),
+        }
+    }
+
     fn attached_handler(&self) -> Option<&BasicHandler> {
         match &self.inner {
             MaybeDettached::Dettached(_) => None,
@@ -367,6 +440,39 @@ impl std::fmt::Debug for ListHandler {
 }
 
 impl HandlerTrait for ListHandler {
+    fn to_handler(&self) -> Handler {
+        Handler::List(self.clone())
+    }
+
+    fn attach(
+        &self,
+        txn: &mut Transaction,
+        parent: &BasicHandler,
+        self_id: ContainerID,
+    ) -> LoroResult<Self> {
+        match &self.inner {
+            MaybeDettached::Dettached(l) => {
+                let l = l.try_lock().unwrap();
+                let inner = create_handler(parent, self_id);
+                let list = inner.into_list().unwrap();
+                let mut index = 0;
+                for v in l.iter() {
+                    match v {
+                        ValueOrHandler::Value(v) => {
+                            list.insert_with_txn(txn, index, v.clone());
+                        }
+                        ValueOrHandler::Handler(h) => {
+                            list.insert_container_with_txn(txn, index, h.clone());
+                        }
+                    }
+                    index += 1;
+                }
+                Ok(list)
+            }
+            MaybeDettached::Attached(a) => unreachable!(),
+        }
+    }
+
     fn attached_handler(&self) -> Option<&BasicHandler> {
         self.inner.attached_handler()
     }
@@ -377,14 +483,20 @@ impl HandlerTrait for ListHandler {
 
     fn get_value(&self) -> LoroValue {
         match &self.inner {
-            MaybeDettached::Dettached(a) => todo!(),
+            MaybeDettached::Dettached(a) => {
+                let a = a.try_lock().unwrap();
+                LoroValue::List(Arc::new(a.iter().map(|v| v.to_value()).collect()))
+            }
             MaybeDettached::Attached(a) => a.get_value(),
         }
     }
 
     fn get_deep_value(&self) -> LoroValue {
         match &self.inner {
-            MaybeDettached::Dettached(a) => todo!(),
+            MaybeDettached::Dettached(a) => {
+                let a = a.try_lock().unwrap();
+                LoroValue::List(Arc::new(a.iter().map(|v| v.to_deep_value()).collect()))
+            }
             MaybeDettached::Attached(a) => a.get_deep_value(),
         }
     }
@@ -455,6 +567,31 @@ impl TreeInner {
 }
 
 impl HandlerTrait for TreeHandler {
+    fn to_handler(&self) -> Handler {
+        Handler::Tree(self.clone())
+    }
+
+    fn attach(
+        &self,
+        txn: &mut Transaction,
+        parent: &BasicHandler,
+        self_id: ContainerID,
+    ) -> LoroResult<Self> {
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let t = t.try_lock().unwrap();
+                let inner = create_handler(parent, self_id);
+                let tree = inner.into_tree().unwrap();
+                if t.map.is_empty() {
+                    Ok(tree)
+                } else {
+                    unimplemented!("attach detached tree");
+                }
+            }
+            MaybeDettached::Attached(a) => unreachable!(),
+        }
+    }
+
     fn is_attached(&self) -> bool {
         self.inner.is_attached()
     }
@@ -499,6 +636,76 @@ pub enum Handler {
     Tree(TreeHandler),
 }
 
+impl HandlerTrait for Handler {
+    fn is_attached(&self) -> bool {
+        match self {
+            Self::Text(x) => x.is_attached(),
+            Self::Map(x) => x.is_attached(),
+            Self::List(x) => x.is_attached(),
+            Self::Tree(x) => x.is_attached(),
+        }
+    }
+
+    fn attached_handler(&self) -> Option<&BasicHandler> {
+        match self {
+            Self::Text(x) => x.attached_handler(),
+            Self::Map(x) => x.attached_handler(),
+            Self::List(x) => x.attached_handler(),
+            Self::Tree(x) => x.attached_handler(),
+        }
+    }
+
+    fn get_value(&self) -> LoroValue {
+        match self {
+            Self::Text(x) => x.get_value(),
+            Self::Map(x) => x.get_value(),
+            Self::List(x) => x.get_value(),
+            Self::Tree(x) => x.get_value(),
+        }
+    }
+
+    fn get_deep_value(&self) -> LoroValue {
+        match self {
+            Self::Text(x) => x.get_deep_value(),
+            Self::Map(x) => x.get_deep_value(),
+            Self::List(x) => x.get_deep_value(),
+            Self::Tree(x) => x.get_deep_value(),
+        }
+    }
+
+    fn kind(&self) -> ContainerType {
+        match self {
+            Self::Text(x) => x.kind(),
+            Self::Map(x) => x.kind(),
+            Self::List(x) => x.kind(),
+            Self::Tree(x) => x.kind(),
+        }
+    }
+
+    fn to_handler(&self) -> Handler {
+        match self {
+            Self::Text(x) => x.to_handler(),
+            Self::Map(x) => x.to_handler(),
+            Self::List(x) => x.to_handler(),
+            Self::Tree(x) => x.to_handler(),
+        }
+    }
+
+    fn attach(
+        &self,
+        txn: &mut Transaction,
+        parent: &BasicHandler,
+        self_id: ContainerID,
+    ) -> LoroResult<Self> {
+        match self {
+            Self::Text(x) => Ok(Handler::Text(x.attach(txn, parent, self_id)?)),
+            Self::Map(x) => Ok(Handler::Map(x.attach(txn, parent, self_id)?)),
+            Self::List(x) => Ok(Handler::List(x.attach(txn, parent, self_id)?)),
+            Self::Tree(x) => Ok(Handler::Tree(x.attach(txn, parent, self_id)?)),
+        }
+    }
+}
+
 impl Handler {
     pub(crate) fn new_attached(
         id: ContainerID,
@@ -533,10 +740,10 @@ impl Handler {
 
     pub(crate) fn new_unattached(kind: ContainerType) -> Self {
         match kind {
-            ContainerType::Text => todo!(),
-            ContainerType::Map => todo!(),
-            ContainerType::List => todo!(),
-            ContainerType::Tree => todo!(),
+            ContainerType::Text => Self::Text(TextHandler::new_detached()),
+            ContainerType::Map => Self::Map(MapHandler::new_detached()),
+            ContainerType::List => Self::List(ListHandler::new_detached()),
+            ContainerType::Tree => Self::Tree(TreeHandler::new_detached()),
         }
     }
 
@@ -620,6 +827,16 @@ impl ValueOrHandler {
 }
 
 impl TextHandler {
+    /// Create a new container that is detached from the document.
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn new_detached() -> Self {
+        Self {
+            inner: MaybeDettached::new_detached(RichtextState::default()),
+        }
+    }
+
     pub fn get_richtext_value(&self) -> LoroValue {
         match &self.inner {
             MaybeDettached::Dettached(t) => {
@@ -681,9 +898,9 @@ impl TextHandler {
     /// otherwise, it is a Unicode length
     pub fn len_event(&self) -> usize {
         if cfg!(feature = "wasm") {
-            return self.len_utf16();
+            self.len_utf16()
         } else {
-            return self.len_unicode();
+            self.len_unicode()
         }
     }
 
@@ -1165,6 +1382,15 @@ fn event_len(s: &str) -> usize {
 }
 
 impl ListHandler {
+    /// Create a new container that is detached from the document.
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn new_detached() -> Self {
+        Self {
+            inner: MaybeDettached::new_detached(Vec::new()),
+        }
+    }
+
     pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
         match &self.inner {
             MaybeDettached::Dettached(l) => {
@@ -1193,8 +1419,11 @@ impl ListHandler {
 
         let inner = self.inner.try_attached_state()?;
         if let Some(container) = v.as_container() {
-            self.insert_container_with_txn(txn, pos, container.container_type())?;
-            return Ok(());
+            return Err(LoroError::ArgErr(
+                INSERT_CONTAINER_VALUE_ARG_ERROR
+                    .to_string()
+                    .into_boxed_str(),
+            ));
         }
 
         txn.apply_local_op(
@@ -1245,26 +1474,25 @@ impl ListHandler {
         Ok(v)
     }
 
-    pub fn insert_container(&self, pos: usize, c_type: ContainerType) -> LoroResult<Handler> {
+    pub fn insert_container<H: HandlerTrait>(&self, pos: usize, child: H) -> LoroResult<H> {
         match &self.inner {
             MaybeDettached::Dettached(l) => {
                 let mut list = l.try_lock().unwrap();
-                let handler = Handler::new_unattached(c_type);
-                list.insert(pos, ValueOrHandler::Handler(handler.clone()));
-                Ok(handler)
+                list.insert(pos, ValueOrHandler::Handler(child.to_handler()));
+                Ok(child)
             }
             MaybeDettached::Attached(a) => {
-                a.with_txn(|txn| self.insert_container_with_txn(txn, pos, c_type))
+                a.with_txn(|txn| self.insert_container_with_txn(txn, pos, child))
             }
         }
     }
 
-    pub fn insert_container_with_txn(
+    pub fn insert_container_with_txn<H: HandlerTrait>(
         &self,
         txn: &mut Transaction,
         pos: usize,
-        c_type: ContainerType,
-    ) -> LoroResult<Handler> {
+        child: H,
+    ) -> LoroResult<H> {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
@@ -1274,7 +1502,7 @@ impl ListHandler {
 
         let inner = self.inner.try_attached_state()?;
         let id = txn.next_id();
-        let container_id = ContainerID::new_normal(id, c_type);
+        let container_id = ContainerID::new_normal(id, child.kind());
         let v = LoroValue::Container(container_id.clone());
         txn.apply_local_op(
             inner.container_idx,
@@ -1285,7 +1513,8 @@ impl ListHandler {
             EventHint::InsertList { len: 1 },
             &inner.state,
         )?;
-        Ok(create_handler(self, container_id))
+        let ans = child.attach(txn, inner, container_id)?;
+        Ok(ans)
     }
 
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
@@ -1362,7 +1591,7 @@ impl ListHandler {
                         .unwrap()
                         .clone()
                 });
-                Ok(create_handler(self, id))
+                Ok(create_handler(a, id))
             }
         }
     }
@@ -1409,7 +1638,7 @@ impl ListHandler {
                     inner.with_state(|state| state.as_list_state().unwrap().get(index).cloned());
                 match value {
                     Some(LoroValue::Container(container_id)) => Some(ValueOrHandler::Handler(
-                        create_handler(self, container_id.clone()),
+                        create_handler(inner, container_id.clone()),
                     )),
                     Some(value) => Some(ValueOrHandler::Value(value.clone())),
                     None => None,
@@ -1435,7 +1664,7 @@ impl ListHandler {
                     for v in a.iter() {
                         match v {
                             LoroValue::Container(c) => {
-                                f(ValueOrHandler::Handler(create_handler(self, c.clone())));
+                                f(ValueOrHandler::Handler(create_handler(inner, c.clone())));
                             }
                             value => {
                                 f(ValueOrHandler::Value(value.clone()));
@@ -1449,6 +1678,15 @@ impl ListHandler {
 }
 
 impl MapHandler {
+    /// Create a new container that is detached from the document.
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn new_detached() -> Self {
+        Self {
+            inner: MaybeDettached::new_detached(Default::default()),
+        }
+    }
+
     pub fn insert(&self, key: &str, value: impl Into<LoroValue>) -> LoroResult<()> {
         match &self.inner {
             MaybeDettached::Dettached(m) => {
@@ -1469,8 +1707,11 @@ impl MapHandler {
         value: LoroValue,
     ) -> LoroResult<()> {
         if let Some(value) = value.as_container() {
-            self.insert_container_with_txn(txn, key, value.container_type())?;
-            return Ok(());
+            return Err(LoroError::ArgErr(
+                INSERT_CONTAINER_VALUE_ARG_ERROR
+                    .to_string()
+                    .into_boxed_str(),
+            ));
         }
 
         if self.get(key).map(|x| x == value).unwrap_or(false) {
@@ -1493,29 +1734,33 @@ impl MapHandler {
         )
     }
 
-    pub fn insert_container(&self, key: &str, c_type: ContainerType) -> LoroResult<Handler> {
+    pub fn insert_container<T: HandlerTrait>(&self, key: &str, handler: T) -> LoroResult<T> {
+        if handler.is_attached() {
+            return Err(LoroError::ReattachAttachedContainer);
+        }
+
         match &self.inner {
             MaybeDettached::Dettached(m) => {
                 let mut m = m.try_lock().unwrap();
-                let handler = Handler::new_unattached(c_type);
-                m.insert(key.into(), ValueOrHandler::Handler(handler.clone()));
+                let to_insert = handler.to_handler();
+                m.insert(key.into(), ValueOrHandler::Handler(to_insert.clone()));
                 Ok(handler)
             }
             MaybeDettached::Attached(a) => {
-                a.with_txn(|txn| self.insert_container_with_txn(txn, key, c_type))
+                a.with_txn(|txn| self.insert_container_with_txn(txn, key, handler))
             }
         }
     }
 
-    pub fn insert_container_with_txn(
+    pub fn insert_container_with_txn<H: HandlerTrait>(
         &self,
         txn: &mut Transaction,
         key: &str,
-        c_type: ContainerType,
-    ) -> LoroResult<Handler> {
+        child: H,
+    ) -> LoroResult<H> {
         let inner = self.inner.try_attached_state()?;
         let id = txn.next_id();
-        let container_id = ContainerID::new_normal(id, c_type);
+        let container_id = ContainerID::new_normal(id, child.kind());
         txn.apply_local_op(
             inner.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
@@ -1529,14 +1774,14 @@ impl MapHandler {
             &inner.state,
         )?;
 
-        Ok(create_handler(self, container_id))
+        child.attach(txn, inner, container_id)
     }
 
     pub fn delete(&self, key: &str) -> LoroResult<()> {
         match &self.inner {
             MaybeDettached::Dettached(m) => {
                 let mut m = m.try_lock().unwrap();
-                m.remove(key.into());
+                m.remove(key);
                 Ok(())
             }
             MaybeDettached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, key)),
@@ -1565,19 +1810,19 @@ impl MapHandler {
     {
         match &self.inner {
             MaybeDettached::Dettached(m) => {
-                let mut m = m.try_lock().unwrap();
+                let m = m.try_lock().unwrap();
                 for (k, v) in m.iter() {
                     f(k, v.clone());
                 }
             }
-            MaybeDettached::Attached(a) => {
-                a.with_state(|state| {
+            MaybeDettached::Attached(inner) => {
+                inner.with_state(|state| {
                     let a = state.as_map_state().unwrap();
                     for (k, v) in a.iter() {
                         match &v.value {
                             Some(v) => match v {
                                 LoroValue::Container(c) => {
-                                    f(k, ValueOrHandler::Handler(create_handler(self, c.clone())))
+                                    f(k, ValueOrHandler::Handler(create_handler(inner, c.clone())))
                                 }
                                 value => f(k, ValueOrHandler::Value(value.clone())),
                             },
@@ -1592,7 +1837,7 @@ impl MapHandler {
     pub fn get_child_handler(&self, key: &str) -> LoroResult<Handler> {
         match &self.inner {
             MaybeDettached::Dettached(m) => {
-                let mut m = m.try_lock().unwrap();
+                let m = m.try_lock().unwrap();
                 let value = m.get(key).unwrap();
                 match value {
                     ValueOrHandler::Value(v) => Err(LoroError::ArgErr(
@@ -1613,7 +1858,7 @@ impl MapHandler {
                         .unwrap()
                         .clone()
                 });
-                Ok(create_handler(self, container_id))
+                Ok(create_handler(inner, container_id))
             }
         }
     }
@@ -1653,7 +1898,7 @@ impl MapHandler {
                     inner.with_state(|state| state.as_map_state().unwrap().get(key).cloned());
                 match value {
                     Some(LoroValue::Container(container_id)) => Some(ValueOrHandler::Handler(
-                        create_handler(self, container_id.clone()),
+                        create_handler(inner, container_id.clone()),
                     )),
                     Some(value) => Some(ValueOrHandler::Value(value.clone())),
                     None => None,
@@ -1678,7 +1923,7 @@ impl MapHandler {
             }
         }
 
-        self.insert_container(key, container_type)
+        self.insert_container(key, Handler::new_unattached(container_type))
     }
 
     pub fn len(&self) -> usize {
@@ -1696,6 +1941,17 @@ impl MapHandler {
 }
 
 impl TreeHandler {
+    /// Create a new container that is detached from the document.
+    ///
+    /// The edits on a detached container will not be persisted/synced.
+    /// To attach the container to the document, please insert it into an attached
+    /// container.
+    pub fn new_detached() -> Self {
+        Self {
+            inner: MaybeDettached::new_detached(TreeInner::new()),
+        }
+    }
+
     pub fn delete(&self, target: TreeID) -> LoroResult<()> {
         match &self.inner {
             MaybeDettached::Dettached(t) => {
@@ -1790,7 +2046,7 @@ impl TreeHandler {
     pub fn get_meta(&self, target: TreeID) -> LoroResult<MapHandler> {
         match &self.inner {
             MaybeDettached::Dettached(d) => {
-                let mut d = d.try_lock().unwrap();
+                let d = d.try_lock().unwrap();
                 d.map
                     .get(&target)
                     .map(|v| v.clone())
@@ -1801,7 +2057,7 @@ impl TreeHandler {
                     return Err(LoroTreeError::TreeNodeNotExist(target).into());
                 }
                 let map_container_id = target.associated_meta_container();
-                let handler = create_handler(self, map_container_id);
+                let handler = create_handler(a, map_container_id);
                 Ok(handler.into_map().unwrap())
             }
         }

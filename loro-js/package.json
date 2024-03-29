@@ -38,6 +38,6 @@
     "typescript": "^5.0.2",
     "vite": "^4.2.1",
     "vite-plugin-wasm": "^3.2.2",
-    "vitest": "^1.0.4"
+    "vitest": "^1.4.0"
   }
 }

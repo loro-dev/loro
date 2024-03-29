@@ -1,5 +1,5 @@
 use loro_common::ID;
-use loro_internal::{version::Frontiers, HandlerTrait, LoroDoc, ToJson};
+use loro_internal::{version::Frontiers, HandlerTrait, LoroDoc, TextHandler, ToJson};
 use serde_json::json;
 
 #[test]
@@ -32,9 +32,9 @@ fn auto_commit_list() {
     list_a.insert(0, "hello").unwrap();
     assert_eq!(list_a.get_value().to_json_value(), json!(["hello"]));
     let text_a = list_a
-        .insert_container(0, loro_common::ContainerType::Text)
+        .insert_container(0, TextHandler::new_detached())
         .unwrap();
-    let text = text_a.into_text().unwrap();
+    let text = text_a;
     text.insert(0, "world").unwrap();
     let value = doc_a.get_deep_value();
     assert_eq!(value.to_json_value(), json!({"list": ["world", "hello"]}))
