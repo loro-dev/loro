@@ -211,6 +211,7 @@ declare module "loro-wasm" {
     get(index: number): undefined | Value | Container;
     getTyped<Key extends keyof T & number>(loro: Loro, index: Key): T[Key];
     insertTyped<Key extends keyof T & number>(pos: Key, value: T[Key]): void;
+    insert(pos: number, value: Container): never;
     insert(pos: number, value: Value): void;
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;

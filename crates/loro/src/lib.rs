@@ -364,6 +364,11 @@ pub trait ContainerTrait: SealedTrait {
     fn to_container(&self) -> Container;
     fn to_handler(&self) -> Self::Handler;
     fn from_handler(handler: Self::Handler) -> Self;
+    fn is_attached(&self) -> bool;
+    /// If a detached container is attached, this method will return its corresponding attached handler.
+    fn get_attached(&self) -> Option<Self>
+    where
+        Self: Sized;
 }
 
 /// LoroList container. It's used to model array.
@@ -402,6 +407,14 @@ impl ContainerTrait for LoroList {
 
     fn from_handler(handler: Self::Handler) -> Self {
         Self { handler }
+    }
+
+    fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    fn get_attached(&self) -> Option<Self> {
+        self.handler.get_attached().map(Self::from_handler)
     }
 }
 
@@ -570,6 +583,14 @@ impl ContainerTrait for LoroMap {
     fn from_handler(handler: Self::Handler) -> Self {
         Self { handler }
     }
+
+    fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    fn get_attached(&self) -> Option<Self> {
+        self.handler.get_attached().map(Self::from_handler)
+    }
 }
 
 impl LoroMap {
@@ -677,6 +698,14 @@ impl ContainerTrait for LoroText {
 
     fn from_handler(handler: Self::Handler) -> Self {
         Self { handler }
+    }
+
+    fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    fn get_attached(&self) -> Option<Self> {
+        self.handler.get_attached().map(Self::from_handler)
     }
 }
 
@@ -844,6 +873,14 @@ impl ContainerTrait for LoroTree {
 
     fn from_handler(handler: Self::Handler) -> Self {
         Self { handler }
+    }
+
+    fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    fn get_attached(&self) -> Option<Self> {
+        self.handler.get_attached().map(Self::from_handler)
     }
 }
 
@@ -1026,6 +1063,24 @@ impl ContainerTrait for Container {
             InnerHandler::Map(x) => Container::Map(LoroMap { handler: x }),
             InnerHandler::List(x) => Container::List(LoroList { handler: x }),
             InnerHandler::Tree(x) => Container::Tree(LoroTree { handler: x }),
+        }
+    }
+
+    fn is_attached(&self) -> bool {
+        match self {
+            Container::List(x) => x.is_attached(),
+            Container::Map(x) => x.is_attached(),
+            Container::Text(x) => x.is_attached(),
+            Container::Tree(x) => x.is_attached(),
+        }
+    }
+
+    fn get_attached(&self) -> Option<Self> {
+        match self {
+            Container::List(x) => x.get_attached().map(Container::List),
+            Container::Map(x) => x.get_attached().map(Container::Map),
+            Container::Text(x) => x.get_attached().map(Container::Text),
+            Container::Tree(x) => x.get_attached().map(Container::Tree),
         }
     }
 }

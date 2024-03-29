@@ -63,7 +63,7 @@ describe("Frontiers", () => {
   });
 });
 
-it.only("peer id repr should be consistent", () => {
+it("peer id repr should be consistent", () => {
   const doc = new Loro();
   const id = doc.peerIdStr;
   doc.getText("text").insert(0, "hello");

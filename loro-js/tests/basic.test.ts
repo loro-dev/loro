@@ -6,9 +6,9 @@ import {
   LoroList,
   LoroMap,
   LoroText,
-  VersionVector,
+  Container,
+  LoroTree,
 } from "../src";
-import { Container, LoroTree } from "../dist/loro";
 
 it("basic example", () => {
   const doc = new Loro();
@@ -92,7 +92,7 @@ it("basic sync example", () => {
 
 it("basic events", () => {
   const doc = new Loro();
-  doc.subscribe((event) => { });
+  doc.subscribe((event) => {});
   const list = doc.getList("list");
 });
 
@@ -390,7 +390,7 @@ it("can control the mergeable interval", () => {
   }
 });
 
-it.only("get container parent", () => {
+it("get container parent", () => {
   const doc = new Loro();
   const m = doc.getMap("m");
   expect(m.parent()).toBeUndefined();
@@ -403,4 +403,36 @@ it.only("get container parent", () => {
   const treeNode = tree.createNode();
   const subtext = treeNode.data.setContainer("t", new LoroText());
   expect(subtext.parent()!.id).toBe(treeNode.data.id);
+});
+
+it("prelim support", () => {
+  // Now we can create a new container directly
+  const map = new LoroMap();
+  map.set("3", 2);
+  const list = new LoroList();
+  list.insert(0, map);
+  // map should still be valid
+  map.set("9", 9);
+  // the type of setContainer/insertContainer changed
+  const text = map.setContainer("text", new LoroText());
+  const doc = new Loro();
+  const rootMap = doc.getMap("map");
+  rootMap.setContainer("test", map); // new way to create sub-container
+
+  // Use getAttached() to get the attached version of text
+  const attachedText = text.getAttached()!;
+  expect(text.isAttached()).toBeFalsy();
+  expect(attachedText.isAttached()).toBeTruthy();
+  text.insert(0, "Detached");
+  attachedText.insert(0, "Attached");
+  expect(text.toString()).toBe("Detached");
+  expect(doc.toJson()).toStrictEqual({
+    map: {
+      test: {
+        "3": 2,
+        "9": 9,
+        text: "Attached",
+      },
+    },
+  });
 });

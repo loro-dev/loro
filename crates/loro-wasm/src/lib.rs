@@ -98,6 +98,14 @@ extern "C" {
     pub type JsValueOrContainerOrUndefined;
     #[wasm_bindgen(typescript_type = "Container | undefined")]
     pub type JsContainerOrUndefined;
+    #[wasm_bindgen(typescript_type = "LoroText | undefined")]
+    pub type JsLoroTextOrUndefined;
+    #[wasm_bindgen(typescript_type = "LoroMap | undefined")]
+    pub type JsLoroMapOrUndefined;
+    #[wasm_bindgen(typescript_type = "LoroList | undefined")]
+    pub type JsLoroListOrUndefined;
+    #[wasm_bindgen(typescript_type = "LoroTree | undefined")]
+    pub type JsLoroTreeOrUndefined;
     #[wasm_bindgen(typescript_type = "[string, Value | Container]")]
     pub type MapEntry;
     #[wasm_bindgen(typescript_type = "{[key: string]: { expand: 'before'|'after'|'none'|'both' }}")]
@@ -1366,6 +1374,26 @@ impl LoroText {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
     }
+
+    /// Whether the container is attached to a docuemnt.
+    ///
+    /// If it's detached, the operations on the container will not be persisted.
+    #[wasm_bindgen(js_name = "isAttached")]
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    /// Get the attached container associated with this.
+    ///
+    /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
+    #[wasm_bindgen(js_name = "getAttached")]
+    pub fn get_attached(&self) -> JsLoroTextOrUndefined {
+        if let Some(h) = self.handler.get_attached() {
+            handler_to_js_value(Handler::Text(h), self.doc.clone()).into()
+        } else {
+            JsValue::UNDEFINED.into()
+        }
+    }
 }
 
 /// The handler of a map container.
@@ -1661,6 +1689,25 @@ impl LoroMap {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
     }
+
+    /// Whether the container is attached to a docuemnt.
+    ///
+    /// If it's detached, the operations on the container will not be persisted.
+    #[wasm_bindgen(js_name = "isAttached")]
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    /// Get the attached container associated with this.
+    ///
+    /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
+    #[wasm_bindgen(js_name = "getAttached")]
+    pub fn get_attached(&self) -> JsLoroMapOrUndefined {
+        let Some(h) = self.handler.get_attached() else {
+            return JsValue::UNDEFINED.into();
+        };
+        handler_to_js_value(Handler::Map(h), self.doc.clone()).into()
+    }
 }
 
 impl Default for LoroMap {
@@ -1907,6 +1954,26 @@ impl LoroList {
             handler_to_js_value(p, self.doc.clone()).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
+        }
+    }
+
+    /// Whether the container is attached to a docuemnt.
+    ///
+    /// If it's detached, the operations on the container will not be persisted.
+    #[wasm_bindgen(js_name = "isAttached")]
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    /// Get the attached container associated with this.
+    ///
+    /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
+    #[wasm_bindgen(js_name = "getAttached")]
+    pub fn get_attached(&self) -> JsLoroListOrUndefined {
+        if let Some(h) = self.handler.get_attached() {
+            handler_to_js_value(Handler::List(h), self.doc.clone()).into()
+        } else {
+            JsValue::UNDEFINED.into()
         }
     }
 }
@@ -2289,6 +2356,26 @@ impl LoroTree {
             handler_to_js_value(p, self.doc.clone()).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
+        }
+    }
+
+    /// Whether the container is attached to a docuemnt.
+    ///
+    /// If it's detached, the operations on the container will not be persisted.
+    #[wasm_bindgen(js_name = "isAttached")]
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    /// Get the attached container associated with this.
+    ///
+    /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
+    #[wasm_bindgen(js_name = "getAttached")]
+    pub fn get_attached(&self) -> JsLoroTreeOrUndefined {
+        if let Some(h) = self.handler.get_attached() {
+            handler_to_js_value(Handler::Tree(h), self.doc.clone()).into()
+        } else {
+            JsValue::UNDEFINED.into()
         }
     }
 }

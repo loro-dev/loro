@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, sync::Arc};
 
-use loro::{FrontiersNotIncluded, LoroDoc, LoroError, LoroMap, LoroText, ToJson};
+use loro::{FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText, ToJson};
 use loro_internal::{handler::TextDelta, id::ID, LoroResult};
 use serde_json::json;
 
@@ -391,4 +391,50 @@ fn subscribe() {
     text.insert(0, "123").unwrap();
     doc.commit();
     assert!(ran.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+#[test]
+fn prelim_support() -> LoroResult<()> {
+    let map = LoroMap::new();
+    map.insert("key", "value")?;
+    let text = LoroText::new();
+    text.insert(0, "123")?;
+    let text = map.insert_container("text", text)?;
+    let doc = LoroDoc::new();
+    let root_map = doc.get_map("map");
+    let map = root_map.insert_container("child_map", map)?;
+    // `map` is now attached to the doc
+    map.insert("1", "223")?; // "223" now presents in the json value of doc
+    let list = map.insert_container("list", LoroList::new())?; // creating subcontainer will be easier
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "map": {
+                "child_map": {
+                    "key": "value",
+                    "1": "223",
+                    "text": "123",
+                    "list": []
+                }
+            }
+        })
+    );
+    assert!(!text.is_attached());
+    assert!(list.is_attached());
+    text.insert(0, "56")?;
+    list.insert(0, 123)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "map": {
+                "child_map": {
+                    "key": "value",
+                    "1": "223",
+                    "text": "123",
+                    "list": [123]
+                }
+            }
+        })
+    );
+    Ok(())
 }
