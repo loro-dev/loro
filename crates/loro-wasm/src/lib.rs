@@ -1278,7 +1278,7 @@ impl LoroText {
     /// Get the container id of the text.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
-        let value: JsValue = self.handler.id().into();
+        let value: JsValue = (&self.handler.id()).into();
         value.into()
     }
 
@@ -1516,7 +1516,7 @@ impl LoroMap {
     /// The container id of this handler.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
-        let value: JsValue = self.handler.id().into();
+        let value: JsValue = (&self.handler.id()).into();
         value.into()
     }
 
@@ -1711,7 +1711,7 @@ impl LoroList {
     /// Get the id of this container.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
-        let value: JsValue = self.handler.id().into();
+        let value: JsValue = (&self.handler.id()).into();
         value.into()
     }
 
@@ -2089,7 +2089,7 @@ impl LoroTree {
     /// Get the id of the container.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
-        let value: JsValue = self.handler.id().into();
+        let value: JsValue = (&self.handler.id()).into();
         value.into()
     }
 

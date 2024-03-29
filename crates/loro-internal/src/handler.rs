@@ -4,7 +4,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, DeleteSpanWithId, ListOp},
-        richtext::{richtext_state::PosType, RichtextState},
+        richtext::{richtext_state::PosType, RichtextState, StyleOp, TextStyleInfoFlag},
         tree::tree_op::TreeOp,
     },
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
@@ -13,12 +13,13 @@ use crate::{
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
 };
+use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, ContainerType, InternalString, LoroError, LoroResult, LoroTreeError, LoroValue,
-    TreeID, ID,
+    ContainerID, ContainerType, Counter, IdFull, InternalString, LoroError, LoroResult,
+    LoroTreeError, LoroValue, PeerID, TreeID, ID,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -34,13 +35,21 @@ pub trait HandlerTrait {
     fn attached_handler(&self) -> Option<&BasicHandler>;
     fn get_value(&self) -> LoroValue;
     fn get_deep_value(&self) -> LoroValue;
-
-    fn idx(&self) -> Option<ContainerIdx> {
-        self.attached_handler().map(|x| x.container_idx)
+    fn kind(&self) -> ContainerType;
+    fn parent(&self) -> Option<Handler> {
+        self.attached_handler().and_then(|x| x.parent())
     }
 
-    fn id(&self) -> Option<&ContainerID> {
-        self.attached_handler().map(|x| &x.id)
+    fn idx(&self) -> ContainerIdx {
+        self.attached_handler()
+            .map(|x| x.container_idx)
+            .unwrap_or_else(|| ContainerIdx::from_index_and_type(u32::MAX, self.kind()))
+    }
+
+    fn id(&self) -> ContainerID {
+        self.attached_handler()
+            .map(|x| x.id.clone())
+            .unwrap_or_else(|| ContainerID::new_normal(ID::NONE_ID, self.kind()))
     }
 
     fn with_state<R>(&self, f: impl FnOnce(&mut State) -> LoroResult<R>) -> LoroResult<R> {
@@ -212,25 +221,34 @@ impl HandlerTrait for TextHandler {
     }
 
     fn get_value(&self) -> LoroValue {
-        match self.inner {
-            MaybeDettached::Dettached(_) => todo!(),
-            MaybeDettached::Attached(_) => todo!(),
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let t = t.try_lock().unwrap();
+                LoroValue::String(Arc::new(t.to_string()))
+            }
+            MaybeDettached::Attached(a) => {
+                a.with_state(|state| state.as_richtext_state_mut().unwrap().get_value())
+            }
         }
     }
 
     fn get_deep_value(&self) -> LoroValue {
-        todo!()
+        self.get_value()
     }
 
     fn is_attached(&self) -> bool {
         matches!(&self.inner, MaybeDettached::Attached(..))
+    }
+
+    fn kind(&self) -> ContainerType {
+        ContainerType::Text
     }
 }
 
 impl std::fmt::Debug for TextHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.inner {
-            MaybeDettached::Dettached(t) => {
+            MaybeDettached::Dettached(_) => {
                 write!(f, "TextHandler(Unattached)")
             }
             MaybeDettached::Attached(a) => {
@@ -319,6 +337,10 @@ impl HandlerTrait for MapHandler {
     fn is_attached(&self) -> bool {
         matches!(&self.inner, MaybeDettached::Attached(..))
     }
+
+    fn kind(&self) -> ContainerType {
+        ContainerType::Map
+    }
 }
 
 impl std::fmt::Debug for MapHandler {
@@ -366,6 +388,10 @@ impl HandlerTrait for ListHandler {
             MaybeDettached::Attached(a) => a.get_deep_value(),
         }
     }
+
+    fn kind(&self) -> ContainerType {
+        ContainerType::List
+    }
 }
 
 ///
@@ -376,8 +402,56 @@ pub struct TreeHandler {
 
 #[derive(Clone)]
 struct TreeInner {
-    map: FxHashMap<usize, MapHandler>,
-    parent_links: FxHashMap<usize, usize>,
+    next_counter: Counter,
+    map: FxHashMap<TreeID, MapHandler>,
+    parent_links: FxHashMap<TreeID, Option<TreeID>>,
+}
+
+impl TreeInner {
+    fn new() -> Self {
+        TreeInner {
+            next_counter: 0,
+            map: FxHashMap::default(),
+            parent_links: FxHashMap::default(),
+        }
+    }
+
+    fn create(&mut self, parent: Option<TreeID>) -> TreeID {
+        let id = TreeID::new(PeerID::MAX, self.next_counter);
+        self.next_counter += 1;
+        self.map.insert(
+            id,
+            Handler::new_unattached(ContainerType::Map)
+                .into_map()
+                .unwrap(),
+        );
+        self.parent_links.insert(id, parent);
+        id
+    }
+
+    fn delete(&mut self, id: TreeID) {
+        self.map.remove(&id);
+        self.parent_links.remove(&id);
+    }
+
+    fn get_parent(&self, id: TreeID) -> Option<Option<TreeID>> {
+        self.parent_links.get(&id).cloned()
+    }
+
+    fn mov(&mut self, target: TreeID, new_parent: Option<TreeID>) {
+        let old = self.parent_links.insert(target, new_parent);
+        assert!(old.is_some());
+    }
+
+    fn get_children(&self, id: TreeID) -> Option<Vec<TreeID>> {
+        let mut children = Vec::new();
+        for (c, p) in &self.parent_links {
+            if p.as_ref() == Some(&id) {
+                children.push(*c);
+            }
+        }
+        Some(children)
+    }
 }
 
 impl HandlerTrait for TreeHandler {
@@ -401,6 +475,10 @@ impl HandlerTrait for TreeHandler {
             MaybeDettached::Dettached(a) => todo!(),
             MaybeDettached::Attached(a) => a.get_deep_value(),
         }
+    }
+
+    fn kind(&self) -> ContainerType {
+        ContainerType::Tree
     }
 }
 
@@ -462,7 +540,7 @@ impl Handler {
         }
     }
 
-    pub fn id(&self) -> Option<&ContainerID> {
+    pub fn id(&self) -> ContainerID {
         match self {
             Self::Map(x) => x.id(),
             Self::List(x) => x.id(),
@@ -471,7 +549,7 @@ impl Handler {
         }
     }
 
-    pub fn container_idx(&self) -> Option<ContainerIdx> {
+    pub(crate) fn container_idx(&self) -> ContainerIdx {
         match self {
             Self::Map(x) => x.idx(),
             Self::List(x) => x.idx(),
@@ -543,49 +621,82 @@ impl ValueOrHandler {
 
 impl TextHandler {
     pub fn get_richtext_value(&self) -> LoroValue {
-        todo!("handle unattached handler case");
-        self.with_state(|state| Ok(state.as_richtext_state_mut().unwrap().get_richtext_value()))
-            .unwrap()
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let t = t.try_lock().unwrap();
+                t.get_richtext_value()
+            }
+            MaybeDettached::Attached(a) => {
+                a.with_state(|state| state.as_richtext_state_mut().unwrap().get_richtext_value())
+            }
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len_unicode() == 0
+        match &self.inner {
+            MaybeDettached::Dettached(t) => t.try_lock().unwrap().is_empty(),
+            MaybeDettached::Attached(a) => {
+                a.with_state(|state| state.as_richtext_state_mut().unwrap().is_empty())
+            }
+        }
     }
 
     pub fn len_utf8(&self) -> usize {
         match &self.inner {
-            MaybeDettached::Dettached(_) => todo!(),
+            MaybeDettached::Dettached(t) => {
+                let t = t.try_lock().unwrap();
+                t.len_utf8()
+            }
             MaybeDettached::Attached(a) => {
                 a.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf8())
             }
         }
-        self.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf8())
     }
 
     pub fn len_utf16(&self) -> usize {
-        self.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf16())
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let t = t.try_lock().unwrap();
+                t.len_utf16()
+            }
+            MaybeDettached::Attached(a) => {
+                a.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf16())
+            }
+        }
     }
 
     pub fn len_unicode(&self) -> usize {
-        self.with_state(|state| state.as_richtext_state_mut().unwrap().len_unicode())
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let t = t.try_lock().unwrap();
+                t.len_unicode()
+            }
+            MaybeDettached::Attached(a) => {
+                a.with_state(|state| state.as_richtext_state_mut().unwrap().len_unicode())
+            }
+        }
     }
 
     /// if `wasm` feature is enabled, it is a UTF-16 length
     /// otherwise, it is a Unicode length
     pub fn len_event(&self) -> usize {
-        self.with_state(|state| {
-            if cfg!(feature = "wasm") {
-                state.as_richtext_state_mut().unwrap().len_utf16()
-            } else {
-                state.as_richtext_state_mut().unwrap().len_unicode()
-            }
-        })
+        if cfg!(feature = "wasm") {
+            return self.len_utf16();
+        } else {
+            return self.len_unicode();
+        }
     }
 
     pub fn diagnose(&self) {
-        todo!();
-
-        // self.inner.diagnose();
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let t = t.try_lock().unwrap();
+                t.diagnose();
+            }
+            MaybeDettached::Attached(a) => {
+                a.with_state(|state| state.as_richtext_state_mut().unwrap().diagnose());
+            }
+        }
     }
 
     /// `pos` is a Event Index:
@@ -595,7 +706,19 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn insert(&self, pos: usize, s: &str) -> LoroResult<()> {
-        self.inner.with_txn(|txn| self.insert_with_txn(txn, pos, s))
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let mut t = t.try_lock().unwrap();
+                let index = t.get_entity_index_for_text_insert(pos, PosType::Event);
+                t.insert_at_entity_index(
+                    index,
+                    BytesSlice::from_bytes(s.as_bytes()),
+                    IdFull::NONE_ID,
+                );
+                Ok(())
+            }
+            MaybeDettached::Attached(a) => a.with_txn(|txn| self.insert_with_txn(txn, pos, s)),
+        }
     }
 
     /// `pos` is a Event Index:
@@ -627,7 +750,8 @@ impl TextHandler {
             });
         }
 
-        let (entity_index, styles) = self.with_state(|state| {
+        let inner = self.inner.try_attached_state()?;
+        let (entity_index, styles) = inner.with_state(|state| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
             let pos = richtext_state.get_entity_index_for_text_insert(pos);
             let styles = richtext_state.get_styles_at_entity_index(pos);
@@ -665,7 +789,7 @@ impl TextHandler {
         };
 
         txn.apply_local_op(
-            self.inner.container_idx,
+            inner.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
                 slice: ListSlice::RawStr {
                     str: Cow::Borrowed(s),
@@ -679,7 +803,7 @@ impl TextHandler {
                 unicode_len: unicode_len as u32,
                 event_len: event_len as u32,
             },
-            &self.inner.state,
+            &inner.state,
         )?;
 
         Ok(override_styles)
@@ -692,8 +816,17 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
-        self.inner
-            .with_txn(|txn| self.delete_with_txn(txn, pos, len))
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let mut t = t.try_lock().unwrap();
+                let ranges = t.get_text_entity_ranges(pos, len, PosType::Event);
+                for range in ranges.iter().rev() {
+                    t.drain_by_entity_index(range.entity_start, range.entity_len(), None);
+                }
+                Ok(())
+            }
+            MaybeDettached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, pos, len)),
+        }
     }
 
     /// `pos` is a Event Index:
@@ -712,9 +845,10 @@ impl TextHandler {
             });
         }
 
+        let inner = self.inner.try_attached_state()?;
         let s = tracing::span!(tracing::Level::INFO, "delete pos={} len={}", pos, len);
         let _e = s.enter();
-        let ranges = self.with_state(|state| {
+        let ranges = inner.with_state(|state| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
             richtext_state.get_text_entity_ranges_in_event_index_range(pos, len)
         });
@@ -724,7 +858,7 @@ impl TextHandler {
         for range in ranges.iter().rev() {
             let event_start = event_end - range.event_len as isize;
             txn.apply_local_op(
-                self.inner.container_idx,
+                inner.container_idx,
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
                     range.id_start,
                     range.entity_start as isize,
@@ -737,7 +871,7 @@ impl TextHandler {
                     },
                     unicode_len: range.entity_len(),
                 },
-                &self.inner.state,
+                &inner.state,
             )?;
             event_end = event_start;
         }
@@ -758,8 +892,61 @@ impl TextHandler {
         key: impl Into<InternalString>,
         value: LoroValue,
     ) -> LoroResult<()> {
-        self.inner
-            .with_txn(|txn| self.mark_with_txn(txn, start, end, key, value, false))
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                self.mark_for_detached(t, key, &value, start, end, false)
+            }
+            MaybeDettached::Attached(a) => {
+                a.with_txn(|txn| self.mark_with_txn(txn, start, end, key, value, false))
+            }
+        }
+    }
+
+    fn mark_for_detached(
+        &self,
+        t: &Arc<Mutex<RichtextState>>,
+        key: impl Into<InternalString>,
+        value: &LoroValue,
+        start: usize,
+        end: usize,
+        is_delete: bool,
+    ) -> Result<(), LoroError> {
+        let mut state = t.try_lock().unwrap();
+        let key: InternalString = key.into();
+        let len = self.len_event();
+        if start >= end {
+            return Err(loro_common::LoroError::ArgErr(
+                "Start must be less than end".to_string().into_boxed_str(),
+            ));
+        }
+        if end > len {
+            return Err(LoroError::OutOfBound { pos: end, len });
+        }
+        let inner = t.try_lock().unwrap();
+        let (entity_range, styles) =
+            state.get_entity_range_and_text_styles_at_range(start..end, PosType::Event);
+        if let Some(styles) = styles {
+            if styles.has_key_value(&key, &value) {
+                // already has the same style, skip
+                return Ok(());
+            }
+        }
+
+        let style_op = Arc::new(StyleOp {
+            lamport: 0,
+            peer: 0,
+            cnt: 0,
+            key,
+            value: value.clone(),
+            // TODO: describe this behavior in the document
+            info: if is_delete {
+                TextStyleInfoFlag::BOLD.to_delete()
+            } else {
+                TextStyleInfoFlag::BOLD
+            },
+        });
+        state.mark_with_entity_index(entity_range, style_op);
+        Ok(())
     }
 
     /// `start` and `end` are [Event Index]s:
@@ -774,8 +961,14 @@ impl TextHandler {
         end: usize,
         key: impl Into<InternalString>,
     ) -> LoroResult<()> {
-        self.inner
-            .with_txn(|txn| self.mark_with_txn(txn, start, end, key, LoroValue::Null, true))
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                self.mark_for_detached(t, key, &LoroValue::Null, start, end, true)
+            }
+            MaybeDettached::Attached(a) => {
+                a.with_txn(|txn| self.mark_with_txn(txn, start, end, key, LoroValue::Null, true))
+            }
+        }
     }
 
     /// `start` and `end` are [Event Index]s:
@@ -802,11 +995,12 @@ impl TextHandler {
             return Err(LoroError::OutOfBound { pos: end, len });
         }
 
+        let inner = self.inner.try_attached_state()?;
         let key: InternalString = key.into();
 
-        let mutex = &self.inner.state.upgrade().unwrap();
+        let mutex = &inner.state.upgrade().unwrap();
         let mut doc_state = mutex.lock().unwrap();
-        let (entity_range, skip) = doc_state.with_state_mut(self.inner.container_idx, |state| {
+        let (entity_range, skip) = doc_state.with_state_mut(inner.container_idx, |state| {
             let (entity_range, styles) = state
                 .as_richtext_state_mut()
                 .unwrap()
@@ -842,7 +1036,7 @@ impl TextHandler {
         drop(style_config);
         drop(doc_state);
         txn.apply_local_op(
-            self.inner.container_idx,
+            inner.container_idx,
             crate::op::RawOpContent::List(ListOp::StyleStart {
                 start: entity_start as u32,
                 end: entity_end as u32,
@@ -855,31 +1049,45 @@ impl TextHandler {
                 end: end as u32,
                 style: crate::container::richtext::Style { key, data: value },
             },
-            &self.inner.state,
+            &inner.state,
         )?;
 
         txn.apply_local_op(
-            self.inner.container_idx,
+            inner.container_idx,
             crate::op::RawOpContent::List(ListOp::StyleEnd),
             EventHint::MarkEnd,
-            &self.inner.state,
+            &inner.state,
         )?;
 
         Ok(())
     }
 
     pub fn check(&self) {
-        self.with_state(|state| {
-            state
-                .as_richtext_state_mut()
-                .unwrap()
-                .check_consistency_between_content_and_style_ranges()
-        })
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let mut t = t.try_lock().unwrap();
+                t.check_consistency_between_content_and_style_ranges();
+            }
+            MaybeDettached::Attached(a) => a.with_state(|state| {
+                state
+                    .as_richtext_state_mut()
+                    .unwrap()
+                    .check_consistency_between_content_and_style_ranges();
+            }),
+        }
     }
 
     pub fn apply_delta(&self, delta: &[TextDelta]) -> LoroResult<()> {
-        self.inner
-            .with_txn(|txn| self.apply_delta_with_txn(txn, delta))
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let mut t = t.try_lock().unwrap();
+                // TODO: implement
+                return Err(LoroError::NotImplemented(
+                    "`apply_delta` on a detached text container",
+                ));
+            }
+            MaybeDettached::Attached(a) => a.with_txn(|txn| self.apply_delta_with_txn(txn, delta)),
+        }
     }
 
     pub fn apply_delta_with_txn(
@@ -939,7 +1147,12 @@ impl TextHandler {
 
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
-        self.with_state(|s| s.as_richtext_state_mut().unwrap().to_string_mut())
+        match &self.inner {
+            MaybeDettached::Dettached(t) => t.try_lock().unwrap().to_string(),
+            MaybeDettached::Attached(a) => {
+                a.with_state(|s| s.as_richtext_state_mut().unwrap().to_string_mut())
+            }
+        }
     }
 }
 
@@ -1015,7 +1228,7 @@ impl ListHandler {
         match &self.inner {
             MaybeDettached::Dettached(l) => {
                 let mut list = l.try_lock().unwrap();
-                list.pop().map(|v| ValueOrHandler::Value(v.to_value()))
+                Ok(list.pop().map(|v| v.to_value()))
             }
             MaybeDettached::Attached(a) => a.with_txn(|txn| self.pop_with_txn(txn)),
         }
@@ -1131,7 +1344,7 @@ impl ListHandler {
                     len: list.len(),
                 })?;
                 match value {
-                    ValueOrHandler::Handler(h) => Ok(h),
+                    ValueOrHandler::Handler(h) => Ok(h.clone()),
                     _ => Err(LoroError::ArgErr(
                         format!("Expected container at index {}", index).into_boxed_str(),
                     )),
@@ -1354,7 +1567,7 @@ impl MapHandler {
             MaybeDettached::Dettached(m) => {
                 let mut m = m.try_lock().unwrap();
                 for (k, v) in m.iter() {
-                    f(k, v);
+                    f(k, v.clone());
                 }
             }
             MaybeDettached::Attached(a) => {
@@ -1371,7 +1584,6 @@ impl MapHandler {
                             None => {}
                         }
                     }
-                    Ok(())
                 });
             }
         }
@@ -1485,12 +1697,20 @@ impl MapHandler {
 
 impl TreeHandler {
     pub fn delete(&self, target: TreeID) -> LoroResult<()> {
-        with_txn(&self.inner.txn, |txn| self.delete_with_txn(txn, target))
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let mut t = t.try_lock().unwrap();
+                t.map.remove(&target);
+                Ok(())
+            }
+            MaybeDettached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, target)),
+        }
     }
 
     pub fn delete_with_txn(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
+        let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
-            self.inner.container_idx,
+            inner.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
                 target,
                 parent: Some(TreeID::delete_root()),
@@ -1499,12 +1719,18 @@ impl TreeHandler {
                 target,
                 action: TreeExternalDiff::Delete,
             }),
-            &self.inner.state,
+            &inner.state,
         )
     }
 
     pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
-        with_txn(&self.inner.txn, |txn| self.create_with_txn(txn, parent))
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let mut t = t.try_lock().unwrap();
+                Ok(t.create(parent.into()))
+            }
+            MaybeDettached::Attached(a) => a.with_txn(|txn| self.create_with_txn(txn, parent)),
+        }
     }
 
     pub fn create_with_txn<T: Into<Option<TreeID>>>(
@@ -1512,6 +1738,7 @@ impl TreeHandler {
         txn: &mut Transaction,
         parent: T,
     ) -> LoroResult<TreeID> {
+        let inner = self.inner.try_attached_state()?;
         let parent: Option<TreeID> = parent.into();
         let tree_id = TreeID::from_id(txn.next_id());
         let event_hint = TreeDiffItem {
@@ -1519,21 +1746,26 @@ impl TreeHandler {
             action: TreeExternalDiff::Create(parent),
         };
         txn.apply_local_op(
-            self.inner.container_idx,
+            inner.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
                 target: tree_id,
                 parent,
             }),
             EventHint::Tree(event_hint),
-            &self.inner.state,
+            &inner.state,
         )?;
         Ok(tree_id)
     }
 
     pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
-        with_txn(&self.inner.txn, |txn| {
-            self.mov_with_txn(txn, target, parent)
-        })
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let mut t = t.try_lock().unwrap();
+                t.mov(target, parent.into());
+                Ok(())
+            }
+            MaybeDettached::Attached(a) => a.with_txn(|txn| self.mov_with_txn(txn, target, parent)),
+        }
     }
 
     pub fn mov_with_txn<T: Into<Option<TreeID>>>(
@@ -1543,73 +1775,106 @@ impl TreeHandler {
         parent: T,
     ) -> LoroResult<()> {
         let parent = parent.into();
+        let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
-            self.inner.container_idx,
+            inner.container_idx,
             crate::op::RawOpContent::Tree(TreeOp { target, parent }),
             EventHint::Tree(TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Move(parent),
             }),
-            &self.inner.state,
+            &inner.state,
         )
     }
 
     pub fn get_meta(&self, target: TreeID) -> LoroResult<MapHandler> {
-        if !self.contains(target) {
-            return Err(LoroTreeError::TreeNodeNotExist(target).into());
+        match &self.inner {
+            MaybeDettached::Dettached(d) => {
+                let mut d = d.try_lock().unwrap();
+                d.map
+                    .get(&target)
+                    .map(|v| v.clone())
+                    .ok_or(LoroTreeError::TreeNodeNotExist(target).into())
+            }
+            MaybeDettached::Attached(a) => {
+                if !self.contains(target) {
+                    return Err(LoroTreeError::TreeNodeNotExist(target).into());
+                }
+                let map_container_id = target.associated_meta_container();
+                let handler = create_handler(self, map_container_id);
+                Ok(handler.into_map().unwrap())
+            }
         }
-        let map_container_id = target.associated_meta_container();
-        let handler = create_handler(self, map_container_id);
-        Ok(handler.into_map().unwrap())
     }
 
     /// Get the parent of the node, if the node is deleted or does not exist, return None
     pub fn get_node_parent(&self, target: TreeID) -> Option<Option<TreeID>> {
-        self.with_state(|state| {
-            let a = state.as_tree_state().unwrap();
-            a.parent(target).map(|p| match p {
-                TreeParentId::None => None,
-                TreeParentId::Node(parent_id) => Some(parent_id),
-                _ => unreachable!(),
-            })
-        })
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let mut t = t.try_lock().unwrap();
+                t.get_parent(target)
+            }
+            MaybeDettached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.parent(target).map(|p| match p {
+                    TreeParentId::None => None,
+                    TreeParentId::Node(parent_id) => Some(parent_id),
+                    _ => unreachable!(),
+                })
+            }),
+        }
     }
 
     pub fn children(&self, target: TreeID) -> Vec<TreeID> {
-        self.with_state(|state| {
-            let a = state.as_tree_state().unwrap();
-            a.as_ref()
-                .get_children(&TreeParentId::Node(target))
-                .into_iter()
-                .collect()
-        })
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let t = t.try_lock().unwrap();
+                t.get_children(target).unwrap()
+            }
+            MaybeDettached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.get_children(&TreeParentId::Node(target))
+            }),
+        }
     }
 
     pub fn contains(&self, target: TreeID) -> bool {
-        self.with_state(|state| {
-            let a = state.as_tree_state().unwrap();
-            a.contains(target)
-        })
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let mut t = t.try_lock().unwrap();
+                t.map.contains_key(&target)
+            }
+            MaybeDettached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.contains(target)
+            }),
+        }
     }
 
     pub fn nodes(&self) -> Vec<TreeID> {
-        self.with_state(|state| {
-            let a = state.as_tree_state().unwrap();
-            a.nodes()
-        })
-    }
-
-    #[cfg(feature = "test_utils")]
-    pub fn max_counter(&self) -> i32 {
-        self.with_state(|state| {
-            let a = state.as_tree_state().unwrap();
-            a.max_counter()
-        })
+        match &self.inner {
+            MaybeDettached::Dettached(t) => {
+                let mut t = t.try_lock().unwrap();
+                t.map.keys().cloned().collect()
+            }
+            MaybeDettached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.nodes()
+            }),
+        }
     }
 
     #[cfg(feature = "test_utils")]
     pub fn next_tree_id(&self) -> TreeID {
-        with_txn(&self.inner.txn, |txn| Ok(TreeID::from_id(txn.next_id()))).unwrap()
+        match &self.inner {
+            MaybeDettached::Dettached(d) => {
+                let mut d = d.try_lock().unwrap();
+                TreeID::new(PeerID::MAX, d.next_counter)
+            }
+            MaybeDettached::Attached(a) => a
+                .with_txn(|txn| Ok(TreeID::from_id(txn.next_id())))
+                .unwrap(),
+        }
     }
 }
 

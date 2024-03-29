@@ -47,6 +47,8 @@ pub enum LoroError {
     ImportWhenInTxn,
     #[error("The given method ({method}) is not allowed when the container is detached. You should insert the container to the doc first.")]
     MisuseDettachedContainer { method: &'static str },
+    #[error("Not implemented: {0}")]
+    NotImplemented(&'static str),
 }
 
 #[derive(Error, Debug)]
