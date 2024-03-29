@@ -10,7 +10,6 @@ use loro_common::{
     ContainerType, Counter, HasId, HasLamport, IdLp, InternalString, LoroValue, PeerID, ID,
 };
 
-
 use crate::{
     arena::SharedArena,
     change::{Change, Lamport},
@@ -63,6 +62,18 @@ impl OpGroups {
 
     pub(crate) fn get(&self, container_idx: &ContainerIdx) -> Option<&OpGroup> {
         self.groups.get(container_idx)
+    }
+
+    pub(crate) fn get_movable_list(
+        &self,
+        container_idx: &ContainerIdx,
+    ) -> Option<&MovableListOpGroup> {
+        self.groups
+            .get(container_idx)
+            .and_then(|group| match group {
+                OpGroup::MovableList(movable_list) => Some(movable_list),
+                _ => None,
+            })
     }
 
     pub(crate) fn get_tree(&self, container_idx: &ContainerIdx) -> Option<&TreeOpGroup> {
@@ -226,7 +237,9 @@ impl OpGroupTrait for TreeOpGroup {
 pub(crate) struct MovableListOpGroup {
     arena: SharedArena,
     /// mappings from elem_id to a set of target poses & values
-    mappings: FxHashMap<IdLp, MovableListTarget>,
+    elem_mappings: FxHashMap<IdLp, MovableListTarget>,
+    /// mappings from pos to elem_id
+    pos_to_elem: FxHashMap<IdLp, IdLp>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -242,7 +255,7 @@ impl OpGroupTrait for MovableListOpGroup {
             InnerContent::List(list) => match list {
                 crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
                     let full_id = op.id_full();
-                    let mapping = self.mappings.entry(*elem_id).or_default();
+                    let mapping = self.elem_mappings.entry(*elem_id).or_default();
                     mapping.values.insert(GroupedMapOpInfo {
                         value: value.clone(),
                         counter: full_id.counter,
@@ -254,7 +267,7 @@ impl OpGroupTrait for MovableListOpGroup {
                     for (i, v) in self.arena.iter_value_slice(slice.to_range()).enumerate() {
                         let id = start_id.inc(i as i32);
                         let full_id = op.id_full().inc(i as i32);
-                        let mapping = self.mappings.entry(id).or_default();
+                        let mapping = self.elem_mappings.entry(id).or_default();
                         mapping.poses.insert(GroupedMapOpInfo {
                             value: full_id.idlp(),
                             counter: full_id.counter,
@@ -271,13 +284,14 @@ impl OpGroupTrait for MovableListOpGroup {
                 }
                 crate::container::list::list_op::InnerListOp::Move { from_id, .. } => {
                     let full_id = op.id_full();
-                    let mapping = self.mappings.entry(*from_id).or_default();
+                    let mapping = self.elem_mappings.entry(*from_id).or_default();
                     mapping.poses.insert(GroupedMapOpInfo {
                         value: full_id.idlp(),
                         counter: full_id.counter,
                         lamport: full_id.lamport,
                         peer: full_id.peer,
                     });
+                    self.pos_to_elem.insert(full_id.idlp(), *from_id);
                 }
                 // Don't mark deletions for now, but the cost is the state now may contain invalid elements
                 // that are deleted but not removed from the state.
@@ -298,7 +312,8 @@ impl MovableListOpGroup {
     fn new(arena: SharedArena) -> Self {
         Self {
             arena,
-            mappings: Default::default(),
+            pos_to_elem: Default::default(),
+            elem_mappings: Default::default(),
         }
     }
 
@@ -307,7 +322,7 @@ impl MovableListOpGroup {
         key: &IdLp,
         vv: &VersionVector,
     ) -> Option<&GroupedMapOpInfo<IdLp>> {
-        let ans = self.mappings.get(key).and_then(|set| {
+        let ans = self.elem_mappings.get(key).and_then(|set| {
             set.poses
                 .iter()
                 .rev()
@@ -321,11 +336,15 @@ impl MovableListOpGroup {
         key: &IdLp,
         vv: &VersionVector,
     ) -> Option<&GroupedMapOpInfo<LoroValue>> {
-        self.mappings.get(key).and_then(|set| {
+        self.elem_mappings.get(key).and_then(|set| {
             set.values
                 .iter()
                 .rev()
                 .find(|op| vv.get(&op.peer).copied().unwrap_or(0) > op.counter)
         })
+    }
+
+    pub(crate) fn get_elem_from_pos(&self, pos: IdLp) -> IdLp {
+        self.pos_to_elem.get(&pos).cloned().unwrap_or(pos)
     }
 }

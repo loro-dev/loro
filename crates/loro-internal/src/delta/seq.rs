@@ -625,6 +625,16 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
 
         self
     }
+
+    pub fn insert_len(&self) -> usize {
+        self.vec
+            .iter()
+            .map(|x| match x {
+                DeltaItem::Insert { insert, .. } => insert.length(),
+                _ => 0,
+            })
+            .sum()
+    }
 }
 
 impl<Value, M> IntoIterator for Delta<Value, M> {

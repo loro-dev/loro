@@ -1,9 +1,9 @@
 use itertools::Itertools;
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{debug, instrument, trace, trace_span};
+use tracing::{debug, instrument, trace_span, warn};
 
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use generic_btree::BTree;
 use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue, ID};
 
@@ -270,8 +270,6 @@ mod inner {
     use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroValue, PeerID};
     use tracing::error;
 
-    use crate::state::list_state::Elem;
-
     use super::{
         list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
         Element, IndexType, ListItem,
@@ -282,14 +280,10 @@ mod inner {
         list: BTree<MovableListTreeTrait>,
         id_to_list_leaf: FxHashMap<IdLp, LeafIndex>,
         elements: FxHashMap<CompactIdLp, Element>,
+        /// This mapping may be out of date when elem is removed/updated.
+        /// But it's guaranteed that if there is a ContainerID in the actual list,
+        /// it will be mapped correctly.
         child_container_to_elem: FxHashMap<ContainerID, CompactIdLp>,
-        /// Mappings from last `list item id` to `elem id`.
-        /// The elements included by this map have invalid `pointer` that points to the key
-        /// of this map.
-        ///
-        /// But it's not sure that the corresponding element still points to the list item.
-        /// Otherwise, it would be expensive to maintain this field.
-        pending_elements: FxHashMap<IdLp, CompactIdLp>,
     }
 
     fn eq<T: PartialEq>(a: T, b: T) -> Result<(), ()> {
@@ -307,7 +301,6 @@ mod inner {
                 id_to_list_leaf: FxHashMap::default(),
                 elements: FxHashMap::default(),
                 child_container_to_elem: FxHashMap::default(),
-                pending_elements: FxHashMap::default(),
             }
         }
 
@@ -326,19 +319,15 @@ mod inner {
             &self.list
         }
 
+        pub fn remove_elem_by_id(&mut self, elem_id: &CompactIdLp) {
+            self.elements.remove(elem_id);
+        }
+
         #[allow(dead_code)]
         pub fn check_consistency(&self) {
             let mut failed = false;
             if self.check_list_item_consistency().is_err() {
                 error!("list item consistency check failed, self={:#?}", self);
-                failed = true;
-            }
-
-            if self.check_pending_elements_consistency().is_err() {
-                error!(
-                    "pending elements consistency check failed, self={:#?}",
-                    self
-                );
                 failed = true;
             }
 
@@ -358,15 +347,17 @@ mod inner {
         fn check_list_item_consistency(&self) -> Result<(), ()> {
             let mut visited_ids = FxHashSet::default();
             for list_item in self.list.iter() {
-                if visited_ids.contains(&list_item.id.idlp()) {
-                    error!("duplicate list item id");
-                    return Err(());
+                {
+                    if visited_ids.contains(&list_item.id.idlp()) {
+                        error!("duplicate list item id");
+                        return Err(());
+                    }
+                    visited_ids.insert(list_item.id.idlp());
                 }
-                visited_ids.insert(list_item.id.idlp());
                 let leaf = self.id_to_list_leaf.get(&list_item.id.idlp()).unwrap();
-                let elem = self.list.get_elem(*leaf).unwrap();
-                eq(elem, list_item)?;
-                if let Some(pointed_by) = elem.pointed_by {
+                let list_item_found = self.list.get_elem(*leaf).unwrap();
+                eq(list_item_found, list_item)?;
+                if let Some(pointed_by) = list_item_found.pointed_by {
                     let elem = self.elements.get(&pointed_by).unwrap();
                     eq(elem.pos, list_item.id.idlp())?;
                 }
@@ -375,34 +366,6 @@ mod inner {
             for (elem_id, elem) in self.elements.iter() {
                 if let Some(item) = self.get_list_item_by_id(elem.pos) {
                     eq(item.pointed_by, Some(*elem_id))?;
-                } else {
-                    match self.pending_elements.get(&elem.pos) {
-                        Some(pending) if pending == elem_id => {}
-                        _ => {
-                            error!(
-                                ?elem,
-                                "elem's pos not in list and elem not in pending elements"
-                            );
-                            return Err(());
-                        }
-                    }
-                }
-            }
-
-            Ok(())
-        }
-
-        fn check_pending_elements_consistency(&self) -> Result<(), ()> {
-            for (list_item_id, _elem_id) in self.pending_elements.iter() {
-                // we allow elem to point to the other pos
-                eq(self.get_list_item_by_id(*list_item_id), None)?;
-            }
-
-            for (elem_id, elem) in self.elements.iter() {
-                if self.get_list_item_by_id(elem.pos).is_none() {
-                    eq(self.pending_elements.get(&elem.pos), Some(elem_id))?;
-                } else {
-                    eq(self.pending_elements.get(&elem.pos), None)?;
                 }
             }
 
@@ -410,11 +373,6 @@ mod inner {
         }
 
         fn check_child_container_to_elem_consistency(&self) -> Result<(), ()> {
-            for (container_id, elem_id) in self.child_container_to_elem.iter() {
-                let elem = self.elements.get(elem_id).unwrap();
-                eq(&elem.value, &LoroValue::Container(container_id.clone()))?;
-            }
-
             for (elem_id, elem) in self.elements.iter() {
                 if let LoroValue::Container(c) = &elem.value {
                     eq(self.child_container_to_elem.get(c), Some(elem_id))?;
@@ -499,34 +457,18 @@ mod inner {
 
         /// Insert a new list item at the given position (op index).
         /// Return the value if the insertion activated an element.
-        pub fn insert_list_item(
-            &mut self,
-            pos: usize,
-            list_item_id: IdFull,
-        ) -> Option<(CompactIdLp, LoroValue)> {
-            let mut elem_id = self.pending_elements.remove(&list_item_id.idlp());
-            if let Some(e) = elem_id {
-                let elem = self.elements.get(&e).unwrap();
-                if elem.pos != list_item_id.idlp() {
-                    elem_id = None;
-                }
-            }
-
+        pub fn insert_list_item(&mut self, pos: usize, list_item_id: IdFull) {
             let c = self
                 .list
                 .insert::<OpLenQuery>(
                     &pos,
                     ListItem {
-                        pointed_by: elem_id,
+                        pointed_by: None,
                         id: list_item_id,
                     },
                 )
                 .0;
             self.id_to_list_leaf.insert(list_item_id.idlp(), c.leaf);
-            elem_id.map(|elem_id| {
-                let elem = self.elements.get_mut(&elem_id).unwrap();
-                (elem_id, elem.value.clone())
-            })
         }
 
         /// Drain the list items in the given range (op index).
@@ -540,8 +482,7 @@ mod inner {
                 if let Some(elem_id) = &item.pointed_by {
                     let elem = self.elements.get(elem_id).unwrap();
                     on_elem_id(*elem_id, elem);
-                    let old = self.pending_elements.insert(item.id.idlp(), *elem_id);
-                    assert!(old.is_none());
+                    self.elements.remove(elem_id);
                 }
             }
         }
@@ -603,11 +544,8 @@ mod inner {
                     elem.pointed_by = Some(elem_id);
                     (true, None, None)
                 });
-                self.pending_elements.remove(&new_pos);
             } else {
                 ans.activate_new_list_item = false;
-                // The list item is deleted.
-                self.pending_elements.insert(new_pos, elem_id);
             }
 
             if let Some(old) = old_item_id {
@@ -648,22 +586,26 @@ mod inner {
                         insert_pos += 1;
                     }
                     EventPosInfo {
+                        activate_new_list_item: update.activate_new_list_item,
                         insert: Some(insert_pos),
                         delete: Some(del_pos),
                     }
                 } else {
                     EventPosInfo {
+                        activate_new_list_item: update.activate_new_list_item,
                         insert: Some(self.get_index_of(new, IndexType::ForUser) as usize),
                         delete: None,
                     }
                 }
             } else if let Some(del) = update.removed_old_list_item_leaf {
                 EventPosInfo {
+                    activate_new_list_item: update.activate_new_list_item,
                     insert: None,
                     delete: Some(self.get_index_of(del, IndexType::ForUser) as usize),
                 }
             } else {
                 EventPosInfo {
+                    activate_new_list_item: update.activate_new_list_item,
                     insert: None,
                     delete: None,
                 }
@@ -740,6 +682,7 @@ mod inner {
 
     /// This struct assumes we apply insert first and then delete.
     pub(super) struct EventPosInfo {
+        pub activate_new_list_item: bool,
         pub insert: Option<usize>,
         pub delete: Option<usize>,
     }
@@ -784,20 +727,10 @@ impl MovableListState {
     ///
     /// The activation means there were elements that already points to the list items
     /// inserted by this op.
-    fn list_insert_batch(
-        &mut self,
-        index: usize,
-        items: impl Iterator<Item = IdFull>,
-    ) -> Vec<(CompactIdLp, LoroValue)> {
-        let mut ans = Vec::new();
+    fn list_insert_batch(&mut self, index: usize, items: impl Iterator<Item = IdFull>) {
         for (i, item) in items.enumerate() {
-            if let Some(v) = self.inner.insert_list_item(index + i, item) {
-                debug_assert!(self.get_index_of_elem(v.0).is_some());
-                ans.push(v);
-            }
+            self.inner.insert_list_item(index + i, item);
         }
-
-        ans
     }
 
     /// Get the length defined by op, where the length includes the ones that are not being pointed at (moved, invisible to users).
@@ -991,7 +924,6 @@ impl ContainerState for MovableListState {
         let _e = s.enter();
         debug!("InternalDiff for Movable {:#?}", &diff);
 
-        let mut inserted_elem_id_to_value = FxHashMap::default();
         let mut event: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
         let mut maybe_moved: FxHashMap<CompactIdLp, (usize, LoroValue)> = FxHashMap::default();
 
@@ -1048,34 +980,7 @@ impl ContainerState for MovableListState {
                         attributes: _,
                     } => {
                         let len = insert.len();
-                        let activated_values = self.list_insert_batch(index, insert.into_iter());
-                        if !activated_values.is_empty() {
-                            let user_index = self
-                                .convert_index(index, IndexType::ForOp, IndexType::ForUser)
-                                .unwrap();
-                            let mut new_delta = Delta::new().retain(user_index);
-                            for (elem_id, value) in activated_values.into_iter() {
-                                let from_move =
-                                    maybe_moved.get(&elem_id).map(|x| &x.1) == Some(&value);
-                                let value = if let Some(elem) = diff.elements.get(&elem_id) {
-                                    inserted_elem_id_to_value.insert(elem_id, elem.value().clone());
-                                    ValueOrHandler::from_value(
-                                        elem.value().clone(),
-                                        arena,
-                                        txn,
-                                        state,
-                                    )
-                                } else {
-                                    inserted_elem_id_to_value.insert(elem_id, value.clone());
-                                    ValueOrHandler::from_value(value, arena, txn, state)
-                                };
-                                new_delta = new_delta
-                                    .insert_with_meta(vec![value], ListDeltaMeta { from_move })
-                            }
-
-                            event = event.compose(new_delta);
-                        }
-
+                        self.list_insert_batch(index, insert.into_iter());
                         index += len;
                     }
                     DeltaItem::Delete { .. } => {}
@@ -1096,7 +1001,7 @@ impl ContainerState for MovableListState {
             for (elem_id, delta_item) in diff.elements.into_iter() {
                 let crate::delta::ElementDelta {
                     pos,
-                    pos_updated,
+                    pos_updated: _,
                     value,
                     value_updated,
                     value_id,
@@ -1129,8 +1034,13 @@ impl ContainerState for MovableListState {
                             if let Some(new_index) = result.insert {
                                 let new_value =
                                     self.elements().get(&elem_id).unwrap().value.clone();
-                                let from_delete =
-                                    maybe_moved.get(&elem_id).map(|x| &x.1) == Some(&new_value);
+                                let from_delete = if let Some((_elem_index, elem_old_value)) =
+                                    maybe_moved.remove(&elem_id)
+                                {
+                                    elem_old_value == new_value
+                                } else {
+                                    false
+                                };
                                 let new_delta = Delta::new().retain(new_index).insert_with_meta(
                                     vec![ValueOrHandler::from_value(new_value, arena, txn, state)],
                                     ListDeltaMeta {
@@ -1143,51 +1053,54 @@ impl ContainerState for MovableListState {
                             if let Some(del_index) = result.delete {
                                 event = event.compose(Delta::new().retain(del_index).delete(1));
                             }
+                            if !result.activate_new_list_item {
+                                // not matched list item found, remove directly
+                                self.inner.remove_elem_by_id(&elem_id);
+                            }
                         }
                     }
                     None => {
                         // Need to create new element
                         let result = self.create_new_elem(elem_id, pos, value.clone(), value_id);
-                        {
-                            // Composing events
-                            let result = self.inner.convert_update_to_event_pos(result);
-                            if let Some(v) = inserted_elem_id_to_value.get(&elem_id) {
-                                if v != &value {
-                                    // Create event for value change
-                                    let index = self.get_index_of_elem(elem_id).unwrap();
-                                    event = event.compose(
-                                        Delta::new().retain(index).delete(1).insert_with_meta(
-                                            vec![ValueOrHandler::from_value(
-                                                value, arena, txn, state,
-                                            )],
-                                            ListDeltaMeta { from_move: false },
-                                        ),
-                                    );
-                                }
+                        // Composing events
+                        let result = self.inner.convert_update_to_event_pos(result);
+                        // Create event for pos change and value change
+                        if let Some(index) = result.insert {
+                            let from_delete = if let Some((_elem_index, elem_old_value)) =
+                                maybe_moved.remove(&elem_id)
+                            {
+                                elem_old_value == value
                             } else {
-                                // Create event for pos change and value change
-                                if let Some(index) = result.insert {
-                                    let from_delete =
-                                        maybe_moved.get(&elem_id).map(|x| &x.1) == Some(&value);
-                                    event =
-                                        event.compose(Delta::new().retain(index).insert_with_meta(
-                                            vec![ValueOrHandler::from_value(
-                                                value, arena, txn, state,
-                                            )],
-                                            ListDeltaMeta {
-                                                from_move: (result.delete.is_some()
-                                                    && !value_updated)
-                                                    || from_delete,
-                                            },
-                                        ))
-                                }
-                                if let Some(index) = result.delete {
-                                    event = event.compose(Delta::new().retain(index).delete(1));
-                                }
-                            }
+                                false
+                            };
+                            event = event.compose(Delta::new().retain(index).insert_with_meta(
+                                vec![ValueOrHandler::from_value(value, arena, txn, state)],
+                                ListDeltaMeta {
+                                    from_move: (result.delete.is_some() && !value_updated)
+                                        || from_delete,
+                                },
+                            ))
+                        }
+                        if let Some(index) = result.delete {
+                            event = event.compose(Delta::new().retain(index).delete(1));
+                        }
+                        if !result.activate_new_list_item {
+                            // not matched list item found, remove directly
+                            self.inner.remove_elem_by_id(&elem_id);
                         }
                     }
                 }
+            }
+        }
+
+        {
+            // Remove redundant elements
+
+            // We now know that the elements inside `maybe_moved` are actually deleted.
+            // So we can safely remove them.
+            let redundant = maybe_moved;
+            for (elem_id, _) in redundant.iter() {
+                self.inner.remove_elem_by_id(elem_id);
             }
         }
 

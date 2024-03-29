@@ -48,4 +48,14 @@ impl ElementDelta {
     pub fn value(&self) -> &LoroValue {
         &self.value
     }
+
+    pub fn placeholder() -> Self {
+        Self {
+            pos: IdLp::NONE_ID,
+            pos_updated: false,
+            value: LoroValue::Null,
+            value_updated: false,
+            value_id: IdLp::NONE_ID,
+        }
+    }
 }

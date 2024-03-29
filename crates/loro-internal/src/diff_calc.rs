@@ -903,79 +903,96 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
 
         let group = oplog
             .op_groups
+            .get_movable_list(&self.container_idx)
+            .unwrap();
+
+        let mut element_changes: FxHashMap<CompactIdLp, ElementDelta> =
+            FxHashMap::with_capacity_and_hasher(
+                self.changed_elements.len() + list_diff.insert_len(),
+                Default::default(),
+            );
+        for id in self.changed_elements.iter() {
+            element_changes.insert(id.compact(), ElementDelta::placeholder());
+        }
+        let list_diff: Delta<SmallVec<[IdFull; 1]>, ()> = Delta {
+            vec: list_diff
+                .iter()
+                .map(|x| match x {
+                    &DeltaItem::Retain { retain, .. } => DeltaItem::Retain {
+                        retain,
+                        attributes: (),
+                    },
+                    DeltaItem::Insert { insert, .. } => {
+                        let len = insert.ranges.iter().map(|x| x.atom_len()).sum();
+                        let id = insert.id;
+                        let mut new_insert = SmallVec::with_capacity(len);
+                        for i in 0..len {
+                            let id = id.inc(i as i32);
+                            // add the related element id
+                            element_changes.insert(
+                                group.get_elem_from_pos(id.idlp()).compact(),
+                                ElementDelta::placeholder(),
+                            );
+                            new_insert.push(id);
+                        }
+
+                        DeltaItem::Insert {
+                            insert: new_insert,
+                            attributes: (),
+                        }
+                    }
+                    &DeltaItem::Delete { delete, .. } => DeltaItem::Delete {
+                        delete,
+                        attributes: (),
+                    },
+                })
+                .collect(),
+        };
+
+        let group = oplog
+            .op_groups
             .get(&self.container_idx)
             .unwrap()
             .as_movable_list()
             .unwrap();
-        let mut element_changes: FxHashMap<CompactIdLp, ElementDelta> = FxHashMap::default();
-        for id in self.changed_elements.iter() {
+        element_changes.retain(|id, change| {
+            let id = id.to_id();
             // It can be None if the target does not exist before the `to` version
             // But we don't need to calc from, because the deletion is handled by the diff from list items
-            let Some(pos) = group.last_pos(id, to) else {
-                continue;
+            let Some(pos) = group.last_pos(&id, to) else {
+                return false;
             };
 
-            let value = group.last_value(id, to).unwrap();
-            let old_pos = group.last_pos(id, from);
-            let old_value = group.last_value(id, from);
+            let value = group.last_value(&id, to).unwrap();
+            let old_pos = group.last_pos(&id, from);
+            let old_value = group.last_value(&id, from);
             if old_pos.is_none() && old_value.is_none() {
                 if let LoroValue::Container(c) = &value.value {
                     on_new_container(c);
                 }
-                element_changes.insert(
-                    id.compact(),
-                    ElementDelta {
-                        pos: pos.value,
-                        value: value.value.clone(),
-                        value_id: IdLp::new(value.peer, value.lamport),
-                        pos_updated: true,
-                        value_updated: true,
-                    },
-                );
+                *change = ElementDelta {
+                    pos: pos.value,
+                    value: value.value.clone(),
+                    value_id: IdLp::new(value.peer, value.lamport),
+                    pos_updated: true,
+                    value_updated: true,
+                };
             } else {
                 // TODO: PERF: can be filtered based on the list_diff and whether the pos/value are updated
-                element_changes.insert(
-                    id.compact(),
-                    ElementDelta {
-                        pos: pos.value,
-                        pos_updated: old_pos.unwrap().value != pos.value,
-                        value: value.value.clone(),
-                        value_updated: old_value.unwrap().value != value.value,
-                        value_id: IdLp::new(value.peer, value.lamport),
-                    },
-                );
+                *change = ElementDelta {
+                    pos: pos.value,
+                    pos_updated: old_pos.unwrap().value != pos.value,
+                    value: value.value.clone(),
+                    value_updated: old_value.unwrap().value != value.value,
+                    value_id: IdLp::new(value.peer, value.lamport),
+                };
             }
-        }
+
+            true
+        });
 
         let diff = MovableListInnerDelta {
-            list: Delta {
-                vec: (list_diff
-                    .iter()
-                    .map(|x| match x {
-                        &DeltaItem::Retain { retain, .. } => DeltaItem::Retain {
-                            retain,
-                            attributes: (),
-                        },
-                        DeltaItem::Insert { insert, .. } => {
-                            let len = insert.ranges.iter().map(|x| x.atom_len()).sum();
-                            let id = insert.id;
-                            let mut new_insert = SmallVec::with_capacity(len);
-                            for i in 0..len {
-                                new_insert.push(id.inc(i as i32));
-                            }
-
-                            DeltaItem::Insert {
-                                insert: new_insert,
-                                attributes: (),
-                            }
-                        }
-                        &DeltaItem::Delete { delete, .. } => DeltaItem::Delete {
-                            delete,
-                            attributes: (),
-                        },
-                    })
-                    .collect()),
-            },
+            list: list_diff,
             elements: element_changes,
         };
 

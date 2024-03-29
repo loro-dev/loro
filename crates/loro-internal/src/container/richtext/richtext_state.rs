@@ -1117,6 +1117,7 @@ mod cursor_cache {
             None
         }
 
+        #[allow(unused)]
         pub fn diagnose() {
             let hit = CACHE_HIT.load(std::sync::atomic::Ordering::Relaxed);
             let miss = CACHE_MISS.load(std::sync::atomic::Ordering::Relaxed);
