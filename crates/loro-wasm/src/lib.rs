@@ -810,9 +810,9 @@ impl Loro {
     /// const doc = new Loro();
     /// const list = doc.getList("list");
     /// list.insert(0, "Hello");
-    /// const text = list.insertContainer(0, "Text");
+    /// const text = list.insertContainer(0, new LoroText());
     /// text.insert(0, "Hello");
-    /// const map = list.insertContainer(1, "Map");
+    /// const map = list.insertContainer(1, new LoroMap());
     /// map.set("foo", "bar");
     /// /*
     /// {"list": ["Hello", {"foo": "bar"}]}
@@ -1586,7 +1586,7 @@ impl LoroMap {
     /// const doc = new Loro();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
-    /// const text = map.setContainer("text", "Text");
+    /// const text = map.setContainer("text", new LoroText());
     /// text.insert(0, "Hello");
     /// console.log(map.getDeepValue());  // {"foo": "bar", "text": "Hello"}
     /// ```
@@ -1604,8 +1604,8 @@ impl LoroMap {
     /// const doc = new Loro();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
-    /// const text = map.setContainer("text", "Text");
-    /// const list = map.setContainer("list", "List");
+    /// const text = map.setContainer("text", new LoroText());
+    /// const list = map.setContainer("list", new LoroText());
     /// ```
     #[wasm_bindgen(js_name = "setContainer")]
     pub fn insert_container(&mut self, key: &str, child: JsValue) -> JsResult<JsContainer> {
@@ -1821,7 +1821,7 @@ impl LoroList {
     /// list.insert(0, 100);
     /// list.insert(1, "foo");
     /// list.insert(2, true);
-    /// list.insertContainer(3, "Text");
+    /// list.insertContainer(3, new LoroText());
     /// console.log(list.value);  // [100, "foo", true, LoroText];
     /// ```
     #[wasm_bindgen(js_name = "toArray", method)]
@@ -1852,7 +1852,7 @@ impl LoroList {
     /// const doc = new Loro();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
-    /// const text = list.insertContainer(1, "Text");
+    /// const text = list.insertContainer(1, new LoroText());
     /// text.insert(0, "Hello");
     /// console.log(list.getDeepValue());  // [100, "Hello"];
     /// ```
@@ -1871,7 +1871,7 @@ impl LoroList {
     /// const doc = new Loro();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
-    /// const text = list.insertContainer(1, "Text");
+    /// const text = list.insertContainer(1, new LoroText());
     /// text.insert(0, "Hello");
     /// console.log(list.getDeepValue());  // [100, "Hello"];
     /// ```
