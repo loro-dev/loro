@@ -364,6 +364,9 @@ pub trait ContainerTrait: SealedTrait {
     fn to_container(&self) -> Container;
     fn to_handler(&self) -> Self::Handler;
     fn from_handler(handler: Self::Handler) -> Self;
+    fn try_from_container(container: Container) -> Option<Self>
+    where
+        Self: Sized;
     fn is_attached(&self) -> bool;
     /// If a detached container is attached, this method will return its corresponding attached handler.
     fn get_attached(&self) -> Option<Self>
@@ -415,6 +418,10 @@ impl ContainerTrait for LoroList {
 
     fn get_attached(&self) -> Option<Self> {
         self.handler.get_attached().map(Self::from_handler)
+    }
+
+    fn try_from_container(container: Container) -> Option<Self> {
+        container.into_list().ok()
     }
 }
 
@@ -591,6 +598,10 @@ impl ContainerTrait for LoroMap {
     fn get_attached(&self) -> Option<Self> {
         self.handler.get_attached().map(Self::from_handler)
     }
+
+    fn try_from_container(container: Container) -> Option<Self> {
+        container.into_map().ok()
+    }
 }
 
 impl LoroMap {
@@ -670,6 +681,13 @@ impl LoroMap {
     pub fn get_deep_value(&self) -> LoroValue {
         self.handler.get_deep_value()
     }
+
+    pub fn get_or_create_container<C: ContainerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
+        Ok(C::from_handler(
+            self.handler
+                .get_or_create_container(key, child.to_handler())?,
+        ))
+    }
 }
 
 impl Default for LoroMap {
@@ -706,6 +724,10 @@ impl ContainerTrait for LoroText {
 
     fn get_attached(&self) -> Option<Self> {
         self.handler.get_attached().map(Self::from_handler)
+    }
+
+    fn try_from_container(container: Container) -> Option<Self> {
+        container.into_text().ok()
     }
 }
 
@@ -881,6 +903,10 @@ impl ContainerTrait for LoroTree {
 
     fn get_attached(&self) -> Option<Self> {
         self.handler.get_attached().map(Self::from_handler)
+    }
+
+    fn try_from_container(container: Container) -> Option<Self> {
+        container.into_tree().ok()
     }
 }
 
@@ -1082,6 +1108,13 @@ impl ContainerTrait for Container {
             Container::Text(x) => x.get_attached().map(Container::Text),
             Container::Tree(x) => x.get_attached().map(Container::Tree),
         }
+    }
+
+    fn try_from_container(container: Container) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        Some(container)
     }
 }
 

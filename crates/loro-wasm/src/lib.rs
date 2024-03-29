@@ -1396,6 +1396,12 @@ impl LoroText {
     }
 }
 
+impl Default for LoroText {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The handler of a map container.
 #[derive(Clone)]
 #[wasm_bindgen]
@@ -1493,14 +1499,12 @@ impl LoroMap {
     /// const bar = map.get("foo");
     /// ```
     #[wasm_bindgen(js_name = "getOrCreateContainer")]
-    pub fn get_or_create_container(
-        &self,
-        key: &str,
-        container_type: &str,
-    ) -> JsResult<JsContainerOrUndefined> {
-        let type_: ContainerType = container_type.try_into()?;
-        let v = self.handler.get_or_create_container_(key, type_)?;
-        Ok(handler_to_js_value(v, self.doc.clone()).into())
+    pub fn get_or_create_container(&self, key: &str, child: JsContainer) -> JsResult<JsContainer> {
+        let child = convert::js_to_container(child)?;
+        let handler = self
+            .handler
+            .get_or_create_container(key, child.to_handler())?;
+        Ok(handler_to_js_value(handler, self.doc.clone()).into())
     }
 
     /// Get the keys of the map.
@@ -1608,7 +1612,7 @@ impl LoroMap {
     /// const list = map.setContainer("list", new LoroText());
     /// ```
     #[wasm_bindgen(js_name = "setContainer")]
-    pub fn insert_container(&mut self, key: &str, child: JsValue) -> JsResult<JsContainer> {
+    pub fn insert_container(&mut self, key: &str, child: JsContainer) -> JsResult<JsContainer> {
         let child = convert::js_to_container(child)?;
         let c = self.handler.insert_container(key, child.to_handler())?;
         Ok(handler_to_js_value(c, self.doc.clone()).into())
@@ -1876,7 +1880,7 @@ impl LoroList {
     /// console.log(list.getDeepValue());  // [100, "Hello"];
     /// ```
     #[wasm_bindgen(js_name = "insertContainer")]
-    pub fn insert_container(&mut self, index: usize, child: JsValue) -> JsResult<JsContainer> {
+    pub fn insert_container(&mut self, index: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
         let c = self.handler.insert_container(index, child.to_handler())?;
         Ok(handler_to_js_value(c, self.doc.clone()).into())

@@ -7,14 +7,15 @@ use loro_internal::handler::{Handler, ValueOrHandler};
 use loro_internal::{LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
-use crate::{Container, LoroList, LoroMap, LoroText, LoroTree};
+use crate::{Container, JsContainer, LoroList, LoroMap, LoroText, LoroTree};
 use wasm_bindgen::__rt::IntoJsResult;
 use wasm_bindgen::convert::RefFromWasmAbi;
 
 /// Convert a `JsValue` to `T` by constructor's name.
 ///
 /// more details can be found in https://github.com/rustwasm/wasm-bindgen/issues/2231#issuecomment-656293288
-pub(crate) fn js_to_container(js: JsValue) -> Result<Container, JsValue> {
+pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
+    let js: JsValue = js.into();
     if !js.is_object() {
         return Err(JsValue::from_str(&format!(
             "Value supplied is not an object, but {:?}",

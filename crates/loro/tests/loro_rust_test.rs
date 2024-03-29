@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, sync::Arc};
 
 use loro::{FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText, ToJson};
-use loro_internal::{handler::TextDelta, id::ID, LoroResult};
+use loro_internal::{handler::TextDelta, id::ID, op::ListSlice, LoroResult};
 use serde_json::json;
 
 #[test]
@@ -437,4 +437,18 @@ fn prelim_support() -> LoroResult<()> {
         })
     );
     Ok(())
+}
+
+#[test]
+fn init_example() {
+    // create meta/users/0/new_user/{name: string, bio: Text}
+    let doc = LoroDoc::new();
+    let meta = doc.get_map("meta");
+    let user = meta
+        .get_or_create_container("users", LoroList::new())
+        .unwrap()
+        .insert_container(0, LoroMap::new())
+        .unwrap();
+    user.insert("name", "new_user").unwrap();
+    user.insert_container("bio", LoroText::new()).unwrap();
 }

@@ -33,13 +33,14 @@ const INSERT_CONTAINER_VALUE_ARG_ERROR: &str =
     "Cannot insert a LoroValue::Container directly. To create child container, use insert_container";
 
 #[enum_dispatch]
-pub trait HandlerTrait: Clone {
+pub trait HandlerTrait: Clone + Sized {
     fn is_attached(&self) -> bool;
     fn attached_handler(&self) -> Option<&BasicHandler>;
     fn get_value(&self) -> LoroValue;
     fn get_deep_value(&self) -> LoroValue;
     fn kind(&self) -> ContainerType;
     fn to_handler(&self) -> Handler;
+    fn from_handler(h: Handler) -> Option<Self>;
     /// This method returns an attached handler.
     fn attach(
         &self,
@@ -312,6 +313,13 @@ impl HandlerTrait for TextHandler {
             MaybeDetached::Attached(a) => Some(self.clone()),
         }
     }
+
+    fn from_handler(h: Handler) -> Option<Self> {
+        match h {
+            Handler::Text(x) => Some(x),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Debug for TextHandler {
@@ -451,6 +459,13 @@ impl HandlerTrait for MapHandler {
             MaybeDetached::Attached(a) => Some(self.clone()),
         }
     }
+
+    fn from_handler(h: Handler) -> Option<Self> {
+        match h {
+            Handler::Map(x) => Some(x),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Debug for MapHandler {
@@ -551,6 +566,13 @@ impl HandlerTrait for ListHandler {
                 inner: MaybeDetached::Attached(x),
             }),
             MaybeDetached::Attached(a) => Some(self.clone()),
+        }
+    }
+
+    fn from_handler(h: Handler) -> Option<Self> {
+        match h {
+            Handler::List(x) => Some(x),
+            _ => None,
         }
     }
 }
@@ -676,6 +698,13 @@ impl HandlerTrait for TreeHandler {
             MaybeDetached::Attached(a) => Some(self.clone()),
         }
     }
+
+    fn from_handler(h: Handler) -> Option<Self> {
+        match h {
+            Handler::Tree(x) => Some(x),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Debug for TreeHandler {
@@ -771,6 +800,10 @@ impl HandlerTrait for Handler {
             Self::List(x) => x.get_attached().map(Handler::List),
             Self::Tree(x) => x.get_attached().map(Handler::Tree),
         }
+    }
+
+    fn from_handler(h: Handler) -> Option<Self> {
+        Some(h)
     }
 }
 
@@ -1970,7 +2003,7 @@ impl MapHandler {
         match &self.inner {
             MaybeDetached::Dettached(m) => {
                 let m = m.try_lock().unwrap();
-                m.value.get(key).map(|v| v.clone())
+                m.value.get(key).cloned()
             }
             MaybeDetached::Attached(inner) => {
                 let value =
@@ -1986,23 +2019,25 @@ impl MapHandler {
         }
     }
 
-    pub fn get_or_create_container_(
-        &self,
-        key: &str,
-        container_type: ContainerType,
-    ) -> LoroResult<Handler> {
+    pub fn get_or_create_container<C: HandlerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
         if let Some(ans) = self.get_(key) {
             if let ValueOrHandler::Handler(h) = ans {
-                return Ok(h);
+                let kind = h.kind();
+                return C::from_handler(h).ok_or_else(move || {
+                    LoroError::ArgErr(
+                        format!("Expected value type {} but found {:?}", child.kind(), kind)
+                            .into_boxed_str(),
+                    )
+                });
             } else {
                 return Err(LoroError::ArgErr(
-                    format!("Expected value type {} but found {:?}", container_type, ans)
+                    format!("Expected value type {} but found {:?}", child.kind(), ans)
                         .into_boxed_str(),
                 ));
             }
         }
 
-        self.insert_container(key, Handler::new_unattached(container_type))
+        self.insert_container(key, child)
     }
 
     pub fn len(&self) -> usize {

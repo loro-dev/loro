@@ -1,12 +1,12 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
+  Container,
   getType,
   isContainer,
   Loro,
   LoroList,
   LoroMap,
   LoroText,
-  Container,
   LoroTree,
 } from "../src";
 
@@ -55,10 +55,10 @@ it("basic example", () => {
 it("get or create on Map", () => {
   const docA = new Loro();
   const map = docA.getMap("map");
-  const container = map.getOrCreateContainer("list", "List");
+  const container = map.getOrCreateContainer("list", new LoroList());
   container.insert(0, 1);
   container.insert(0, 2);
-  const text = map.getOrCreateContainer("text", "Text");
+  const text = map.getOrCreateContainer("text", new LoroText());
   text.insert(0, "Hello");
   expect(docA.toJson()).toStrictEqual({
     map: { list: [2, 1], text: "Hello" },
