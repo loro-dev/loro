@@ -410,11 +410,18 @@ it("prelim support", () => {
   const map = new LoroMap();
   map.set("3", 2);
   const list = new LoroList();
-  list.insert(0, map);
+  list.insertContainer(0, map);
   // map should still be valid
   map.set("9", 9);
   // the type of setContainer/insertContainer changed
   const text = map.setContainer("text", new LoroText());
+  {
+    // Changes will be reflected in the container tree
+    text.insert(0, "Heello");
+    expect(list.toJson()).toStrictEqual([{ "3": 2, "9": 9, text: "Heello" }]);
+    text.delete(1, 1);
+    expect(list.toJson()).toStrictEqual([{ "3": 2, "9": 9, text: "Hello" }]);
+  }
   const doc = new Loro();
   const rootMap = doc.getMap("map");
   rootMap.setContainer("test", map); // new way to create sub-container
@@ -423,15 +430,15 @@ it("prelim support", () => {
   const attachedText = text.getAttached()!;
   expect(text.isAttached()).toBeFalsy();
   expect(attachedText.isAttached()).toBeTruthy();
-  text.insert(0, "Detached");
-  attachedText.insert(0, "Attached");
-  expect(text.toString()).toBe("Detached");
+  text.insert(0, "Detached ");
+  attachedText.insert(0, "Attached ");
+  expect(text.toString()).toBe("Detached Hello");
   expect(doc.toJson()).toStrictEqual({
     map: {
       test: {
         "3": 2,
         "9": 9,
-        text: "Attached",
+        text: "Attached Hello",
       },
     },
   });
