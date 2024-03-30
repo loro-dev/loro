@@ -12,12 +12,12 @@ import {
 
 it("basic example", () => {
   const doc = new Loro();
-  const list: LoroList = doc.getList("list");
+  const list = doc.getList("list");
   list.insert(0, "A");
   list.insert(1, "B");
   list.insert(2, "C");
 
-  const map: LoroMap = doc.getMap("map");
+  const map = doc.getMap("map");
   // map can only has string key
   map.set("key", "value");
   expect(doc.toJson()).toStrictEqual({
@@ -68,7 +68,7 @@ it("get or create on Map", () => {
 it("basic sync example", () => {
   const docA = new Loro();
   const docB = new Loro();
-  const listA: LoroList = docA.getList("list");
+  const listA = docA.getList("list");
   listA.insert(0, "A");
   listA.insert(1, "B");
   listA.insert(2, "C");
@@ -78,7 +78,7 @@ it("basic sync example", () => {
     list: ["A", "B", "C"],
   });
 
-  const listB: LoroList = docB.getList("list");
+  const listB = docB.getList("list");
   // delete 1 element at index 1
   listB.delete(1, 1);
   // A import the ops from B
@@ -331,12 +331,15 @@ it("getValueType", () => {
   const map = doc.getMap("map");
   const list = doc.getList("list");
   const tree = doc.getTree("tree");
+  const text = doc.getText("text");
   expectTypeOf(getType(map)).toEqualTypeOf<"Map">();
   expect(getType(map)).toBe("Map");
   expectTypeOf(getType(list)).toEqualTypeOf<"List">();
   expect(getType(list)).toBe("List");
   expectTypeOf(getType(tree)).toEqualTypeOf<"Tree">();
   expect(getType(tree)).toBe("Tree");
+  expectTypeOf(getType(text)).toEqualTypeOf<"Text">();
+  expect(getType(text)).toBe("Text");
 });
 
 it("enable timestamp", () => {
