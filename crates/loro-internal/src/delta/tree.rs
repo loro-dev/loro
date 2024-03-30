@@ -95,9 +95,12 @@ pub enum TreeInternalDiff {
         position: FracIndex,
     },
     /// move under a parent that is deleted
-    Delete(TreeParentId),
+    Delete { parent: TreeParentId },
     /// old parent is deleted, new parent is deleted too
-    MoveInDelete(TreeParentId),
+    MoveInDelete {
+        parent: TreeParentId,
+        position: Option<FracIndex>,
+    },
 }
 
 impl TreeDeltaItem {
@@ -121,8 +124,8 @@ impl TreeDeltaItem {
                 is_new_parent_deleted,
                 is_old_parent_deleted || old_parent == TreeParentId::Unexist,
             ) {
-                (true, true) => TreeInternalDiff::MoveInDelete(parent),
-                (true, false) => TreeInternalDiff::Delete(parent),
+                (true, true) => TreeInternalDiff::MoveInDelete { parent, position },
+                (true, false) => TreeInternalDiff::Delete { parent },
                 (false, true) => TreeInternalDiff::Create {
                     parent,
                     position: position.unwrap(),

@@ -13,10 +13,12 @@ use super::fractional_index::FracIndex;
 /// - **Move**: move target tree node a child node of the specified parent node.
 /// - **Delete**: move target tree node to [`loro_common::DELETED_TREE_ROOT`].
 ///
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TreeOp {
     pub(crate) target: TreeID,
     pub(crate) parent: Option<TreeID>,
+    // If the op is `delete`, the position is None
     pub(crate) position: Option<FracIndex>,
 }
 

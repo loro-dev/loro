@@ -1164,11 +1164,11 @@ impl TreeHandler {
     pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
         self.with_state(|state| {
             let a = state.as_tree_state().unwrap();
-            a.parent(target).map(|p| match p {
-                TreeParentId::None => None,
-                TreeParentId::Node(parent) => Some(parent),
-                _ => unreachable!(),
-            })
+            match a.parent(target) {
+                TreeParentId::None => Some(None),
+                TreeParentId::Node(parent) => Some(Some(parent)),
+                TreeParentId::Deleted | TreeParentId::Unexist => None,
+            }
         })
     }
 

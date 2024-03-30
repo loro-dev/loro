@@ -4,7 +4,7 @@ use itertools::Itertools;
 use loro_common::{ContainerID, IdFull, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID};
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::container::idx::ContainerIdx;
@@ -55,6 +55,7 @@ impl From<Option<TreeID>> for TreeParentId {
 pub struct TreeState {
     idx: ContainerIdx,
     pub(crate) trees: FxHashMap<TreeID, TreeStateNode>,
+    pub(crate) children: FxHashMap<TreeParentId, BTreeMap<FracIndex, TreeID>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +71,7 @@ impl TreeState {
         Self {
             idx,
             trees: FxHashMap::default(),
+            children: FxHashMap::default(),
         }
     }
 
@@ -79,9 +81,14 @@ impl TreeState {
         parent: TreeParentId,
         id: IdFull,
         position: Option<FracIndex>,
+        with_check: bool,
     ) -> Result<(), LoroError> {
         if parent.is_none() {
             // new root node
+            self.children
+                .entry(parent)
+                .or_default()
+                .insert(position.clone().unwrap(), target);
             self.trees.insert(
                 target,
                 TreeStateNode {
@@ -92,15 +99,37 @@ impl TreeState {
             );
             return Ok(());
         };
-        if let TreeParentId::Node(parent) = parent {
-            if !self.trees.contains_key(&parent) {
-                return Err(LoroTreeError::TreeNodeParentNotFound(parent).into());
+        if with_check {
+            if let TreeParentId::Node(parent) = parent {
+                if !self.trees.contains_key(&parent) {
+                    return Err(LoroTreeError::TreeNodeParentNotFound(parent).into());
+                }
+            }
+            if self.is_ancestor_of(&target, &parent) {
+                return Err(LoroTreeError::CyclicMoveError.into());
             }
         }
-        if self.is_ancestor_of(&target, &parent) {
-            return Err(LoroTreeError::CyclicMoveError.into());
-        }
         // move or delete or create children node
+        let (old_parent, old_position) = self
+            .trees
+            .get(&target)
+            .map(|x| (x.parent, x.position.clone()))
+            .unwrap_or((TreeParentId::Unexist, None));
+
+        // remove old position
+        if let Some(old_position) = old_position {
+            self.children
+                .get_mut(&old_parent)
+                .map(|x| x.remove(&old_position));
+        }
+
+        if !parent.is_deleted() {
+            self.children
+                .entry(parent)
+                .or_default()
+                .insert(position.clone().unwrap(), target);
+        }
+
         self.trees.insert(
             target,
             TreeStateNode {
@@ -140,12 +169,11 @@ impl TreeState {
     }
 
     /// Get the parent of the node, if the node is deleted or does not exist, return None
-    pub fn parent(&self, target: TreeID) -> Option<TreeParentId> {
-        if self.is_node_deleted(&target) {
-            None
-        } else {
-            self.trees.get(&target).map(|x| x.parent)
-        }
+    pub fn parent(&self, target: TreeID) -> TreeParentId {
+        self.trees
+            .get(&target)
+            .map(|x| x.parent)
+            .unwrap_or(TreeParentId::Unexist)
     }
 
     /// If the node is not deleted or does not exist, return false.
@@ -190,42 +218,54 @@ impl TreeState {
         ans
     }
 
-    pub fn get_children_with_position(&self, parent: &TreeParentId) -> Vec<(&TreeID, &FracIndex)> {
-        debug_assert_ne!(parent, &TreeParentId::Deleted);
-        let mut ans = Vec::new();
-        for (t, p) in self.trees.iter() {
-            if &p.parent == parent {
-                ans.push((t, p.position.as_ref().unwrap()));
-            }
-        }
-        ans
-    }
-
+    // TODO: correct
+    //
     pub fn generate_position_at(&self, parent: &TreeParentId, index: usize) -> FracIndex {
-        let children = self.get_children_with_position(parent);
-        let mut children = children.into_iter().sorted_by_key(|x| x.1);
-        let left = if index > 0 {
-            Some(children.nth(index - 1).unwrap().1)
+        let children_positions = self.children.get(parent);
+        if let Some(positions) = children_positions {
+            let mut positions = positions.keys();
+            let children_num = positions.len();
+            let mut left = None;
+            let mut right = None;
+            if index > 0 {
+                left = Some(positions.nth(index - 1).unwrap());
+            }
+            if index < children_num {
+                right = Some(positions.next().unwrap());
+            }
+            FracIndex::new(left, right).unwrap()
         } else {
-            None
-        };
-        let right = if index < children.len() {
-            Some(children.nth(index).unwrap().1)
-        } else {
-            None
-        };
-        FracIndex::new(left, right).unwrap()
+            debug_assert_eq!(index, 0);
+            FracIndex::default()
+        }
     }
 
-    fn get_index_by_fractional(
+    fn check_new_position(
         &self,
         parent: &TreeParentId,
         position: &FracIndex,
-    ) -> Option<usize> {
-        // TODO: perf
-        let mut children = self.get_children_with_position(parent);
-        children.sort_by_key(|x| x.1);
-        children.into_iter().position(|(_, p)| p == position)
+        op_id: &IdFull,
+    ) -> FracIndex {
+        let mut position = position.clone();
+        let children = self.children.get(parent);
+        // has same position
+        while let Some(conflict_node) = children.and_then(|x| x.get(&position)) {
+            let conflict_id = self.trees.get(conflict_node).unwrap().last_move_op;
+            let left = op_id.peer < conflict_id.peer;
+            position = if left {
+                let left_position = children
+                    .unwrap()
+                    .range(..&position)
+                    .next_back()
+                    .map(|x| x.0);
+                FracIndex::new(left_position, Some(&position)).unwrap()
+            } else {
+                // TODO: Excluded
+                let right_position = children.unwrap().range(&position..).nth(1).map(|x| x.0);
+                FracIndex::new(Some(&position), right_position).unwrap()
+            }
+        }
+        position
     }
 }
 
@@ -253,56 +293,48 @@ impl ContainerState for TreeState {
         if let InternalDiff::Tree(tree) = &diff {
             // assert never cause cycle move
             for diff in tree.diff.iter() {
+                let last_move_op = diff.last_effective_move_op_id;
                 let target = diff.target;
                 // create associated metadata container
                 match &diff.action {
                     TreeInternalDiff::Create { parent, position } => {
-                        self.trees.insert(
-                            target,
-                            TreeStateNode {
-                                parent: *parent,
-                                position: Some(position.clone()),
-                                last_move_op: diff.last_effective_move_op_id,
-                            },
-                        );
+                        let position = self.check_new_position(parent, position, &last_move_op);
+                        self.mov(target, *parent, last_move_op, Some(position.clone()), false)
+                            .unwrap();
                         ans.push(TreeDiffItem {
                             target,
                             action: TreeExternalDiff::Create {
                                 parent: parent.into_node().ok(),
-                                position: position.clone(),
+                                position,
                             },
                         });
                     }
                     TreeInternalDiff::Move { parent, position } => {
-                        self.trees.insert(
-                            target,
-                            TreeStateNode {
-                                parent: *parent,
-                                position: Some(position.clone()),
-                                last_move_op: diff.last_effective_move_op_id,
-                            },
-                        );
+                        let position = self.check_new_position(parent, position, &last_move_op);
+                        self.mov(target, *parent, last_move_op, Some(position.clone()), false)
+                            .unwrap();
                         ans.push(TreeDiffItem {
                             target,
                             action: TreeExternalDiff::Move {
                                 parent: parent.into_node().ok(),
-                                position: position.clone(),
+                                position,
                             },
                         });
                     }
-                    TreeInternalDiff::Delete(p) | TreeInternalDiff::MoveInDelete(p) => {
-                        self.trees.insert(
-                            target,
-                            TreeStateNode {
-                                parent: *p,
-                                position: None,
-                                last_move_op: diff.last_effective_move_op_id,
-                            },
-                        );
+                    TreeInternalDiff::Delete { parent } => {
+                        self.mov(target, *parent, last_move_op, None, false)
+                            .unwrap();
                         ans.push(TreeDiffItem {
                             target,
                             action: TreeExternalDiff::Delete,
                         });
+                    }
+                    TreeInternalDiff::MoveInDelete { parent, position } => {
+                        let position = position
+                            .as_ref()
+                            .map(|p| self.check_new_position(parent, p, &last_move_op));
+                        self.mov(target, *parent, last_move_op, position, false)
+                            .unwrap();
                     }
                     TreeInternalDiff::UnCreate => {
                         ans.push(TreeDiffItem {
@@ -310,7 +342,12 @@ impl ContainerState for TreeState {
                             action: TreeExternalDiff::Delete,
                         });
                         // delete it from state
-                        self.trees.remove(&target);
+                        let parent = self.trees.remove(&target);
+                        if let Some(parent) = parent {
+                            self.children
+                                .get_mut(&parent.parent)
+                                .map(|x| x.remove(&parent.position.unwrap()));
+                        }
                         continue;
                     }
                 };
@@ -323,11 +360,47 @@ impl ContainerState for TreeState {
     fn apply_diff(
         &mut self,
         diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        _arena: &SharedArena,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
     ) {
-        self.apply_diff_and_convert(diff, arena, txn, state);
+        if let InternalDiff::Tree(tree) = &diff {
+            // assert never cause cycle move
+            for diff in tree.diff.iter() {
+                let last_move_op = diff.last_effective_move_op_id;
+                let target = diff.target;
+                // create associated metadata container
+                match &diff.action {
+                    TreeInternalDiff::Create { parent, position }
+                    | TreeInternalDiff::Move { parent, position } => {
+                        let position = self.check_new_position(parent, position, &last_move_op);
+                        self.mov(target, *parent, last_move_op, Some(position.clone()), false)
+                            .unwrap();
+                    }
+                    TreeInternalDiff::Delete { parent } => {
+                        self.mov(target, *parent, last_move_op, None, false)
+                            .unwrap();
+                    }
+                    TreeInternalDiff::MoveInDelete { parent, position } => {
+                        let position = position
+                            .as_ref()
+                            .map(|p| self.check_new_position(parent, p, &last_move_op));
+                        self.mov(target, *parent, last_move_op, position, false)
+                            .unwrap();
+                    }
+                    TreeInternalDiff::UnCreate => {
+                        // delete it from state
+                        let parent = self.trees.remove(&target);
+                        if let Some(parent) = parent {
+                            self.children
+                                .get_mut(&parent.parent)
+                                .map(|x| x.remove(&parent.position.unwrap()));
+                        }
+                        continue;
+                    }
+                };
+            }
+        }
     }
 
     fn apply_local_op(&mut self, raw_op: &RawOp, _op: &crate::op::Op) -> LoroResult<()> {
@@ -349,7 +422,7 @@ impl ContainerState for TreeState {
                     }
                     None => TreeParentId::None,
                 };
-                self.mov(*target, parent, raw_op.id_full(), position.clone())
+                self.mov(*target, parent, raw_op.id_full(), position.clone(), true)
             }
             _ => unreachable!(),
         }
@@ -457,7 +530,12 @@ impl ContainerState for TreeState {
 
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
-        for node in self.trees.values() {
+        // TODO: better
+        for node in self
+            .trees
+            .values()
+            .sorted_by_key(|node| (node.last_move_op.lamport, node.last_move_op.peer))
+        {
             if node.last_move_op == IdFull::NONE_ID {
                 continue;
             }
@@ -475,7 +553,7 @@ impl ContainerState for TreeState {
             let content = op.op.content.as_tree().unwrap();
             let target = content.target;
             let parent = content.parent;
-            let position = content.position.clone();
+            let mut position = content.position.clone();
             // TODO: use TreeParentId
             let parent = match parent {
                 Some(parent) => {
@@ -487,14 +565,11 @@ impl ContainerState for TreeState {
                 }
                 None => TreeParentId::None,
             };
-            self.trees.insert(
-                target,
-                TreeStateNode {
-                    parent,
-                    position,
-                    last_move_op: op.id_full(),
-                },
-            );
+            if let Some(p) = position {
+                position = Some(self.check_new_position(&parent, &p, &op.id_full()));
+            }
+            self.mov(target, parent, op.id_full(), position, false)
+                .unwrap();
         }
     }
 }

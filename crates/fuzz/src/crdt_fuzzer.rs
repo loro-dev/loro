@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
-use loro::{ContainerType, Frontiers};
+use loro::{ContainerType, Frontiers, LoroDoc};
 use tabled::TableIteratorExt;
 
 use crate::array_mut_ref;

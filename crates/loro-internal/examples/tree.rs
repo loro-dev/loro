@@ -3,6 +3,7 @@ use std::time::Instant;
 use loro_internal::LoroDoc;
 use rand::{rngs::StdRng, Rng};
 
+#[allow(unused)]
 fn checkout() {
     let depth = 300;
     let loro = LoroDoc::default();
@@ -54,10 +55,22 @@ fn mov() {
     }
     drop(txn);
 }
+
+#[allow(unused)]
+fn create() {
+    let size = 10000;
+    let loro = LoroDoc::default();
+    let tree = loro.get_tree("tree");
+    for _ in 0..size {
+        loro.with_txn(|txn| tree.create_with_txn(txn, None, 0))
+            .unwrap();
+    }
+}
+
 fn main() {
     let s = Instant::now();
-    for _ in 0..30 {
-        checkout();
+    for _ in 0..2 {
+        create();
     }
 
     println!("{} ms", s.elapsed().as_millis());
