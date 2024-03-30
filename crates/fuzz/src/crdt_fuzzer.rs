@@ -183,8 +183,8 @@ impl CRDTFuzzer {
         }
     }
 
-    fn check_history(&self) {
-        for actor in self.actors.iter() {
+    fn check_history(&mut self) {
+        for actor in self.actors.iter_mut() {
             actor.check_history();
         }
     }

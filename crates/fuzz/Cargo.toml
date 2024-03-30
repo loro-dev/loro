@@ -13,6 +13,7 @@ tabled = "0.10"
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
 enum-as-inner = { workspace = true }
+rand = "0.8.5"
 
 [dev-dependencies]
 ctor = "0.2"

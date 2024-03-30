@@ -116,6 +116,18 @@ impl LoroDoc {
         self.doc.checkout(frontiers)
     }
 
+    /// Checkout the `DocState` to the latest version.
+    ///
+    /// > The document becomes detached during a `checkout` operation.
+    /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
+    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > recorded in the `OpLog` without being applied to the `DocState`.
+    ///
+    /// This has the same effect as `attach`.
+    pub fn checkout_to_latest(&self) {
+        self.doc.checkout_to_latest()
+    }
+
     pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
         self.doc.cmp_with_frontiers(other)
     }
