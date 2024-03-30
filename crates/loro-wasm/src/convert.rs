@@ -22,36 +22,45 @@ pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
             js
         )));
     }
-    let ctor_name = Object::get_prototype_of(&js).constructor().name();
+
+    let kind_method = Reflect::get(&js, &JsValue::from_str("kind"));
+    let kind = match kind_method {
+        Ok(kind_method) if kind_method.is_function() => {
+            let kind_string = js_sys::Function::from(kind_method).call0(&js);
+            match kind_string {
+                Ok(kind_string) if kind_string.is_string() => kind_string.as_string().unwrap(),
+                _ => return Err(JsValue::from_str("kind() did not return a string")),
+            }
+        }
+        _ => return Err(JsValue::from_str("No kind method found or not a function")),
+    };
+
     let Ok(ptr) = Reflect::get(&js, &JsValue::from_str("__wbg_ptr")) else {
         return Err(JsValue::from_str("Cannot find pointer field"));
     };
     let ptr_u32: u32 = ptr.as_f64().unwrap() as u32;
-    let ctor_name = ctor_name
-        .as_string()
-        .ok_or(JsValue::from_str("Constructor name is not a string"))?;
-    let container = match ctor_name.as_str() {
-        "LoroText" => {
+    let container = match kind.as_str() {
+        "Text" => {
             let obj = unsafe { LoroText::ref_from_abi(ptr_u32) };
             Container::Text(obj.clone())
         }
-        "LoroMap" => {
+        "Map" => {
             let obj = unsafe { LoroMap::ref_from_abi(ptr_u32) };
             Container::Map(obj.clone())
         }
-        "LoroList" => {
+        "List" => {
             let obj = unsafe { LoroList::ref_from_abi(ptr_u32) };
             Container::List(obj.clone())
         }
-        "LoroTree" => {
+        "Tree" => {
             let obj = unsafe { LoroTree::ref_from_abi(ptr_u32) };
             Container::Tree(obj.clone())
         }
         _ => {
             return Err(JsValue::from_str(
                 format!(
-                    "Value ctor_name is {} but the valid container name is LoroMap, LoroList, LoroText or LoroTree",
-                    ctor_name
+                    "Value kind is {} but the valid container name is Map, List, Text or Tree",
+                    kind
                 )
                 .as_str(),
             ));
