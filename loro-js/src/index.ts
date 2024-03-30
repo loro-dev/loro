@@ -179,10 +179,10 @@ export function isContainer(value: any): value is Container {
  */
 export function getType<T>(
   value: T,
-): T extends LoroText<any> ? "Text"
-  : T extends LoroMap<any, any> ? "Map"
-  : T extends LoroTree<any, any> ? "Tree"
-  : T extends LoroList<any, any> ? "List"
+): T extends LoroText ? "Text"
+  : T extends LoroMap<any> ? "Map"
+  : T extends LoroTree<any> ? "Tree"
+  : T extends LoroList<any> ? "List"
   : "Json" {
   if (isContainer(value)) {
     return value.kind() as unknown as any;
@@ -212,7 +212,7 @@ declare module "loro-wasm" {
   interface LoroList<
     T extends any[] = any[],
   > {
-    new (): LoroList<T, false>;
+    new (): LoroList<T>;
     insertContainer<C extends Container>(
       pos: number,
       child: C,
@@ -223,13 +223,13 @@ declare module "loro-wasm" {
     insert(pos: number, value: Value): void;
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
-    getAttached(): undefined | LoroList<T, true>;
+    getAttached(): undefined | LoroList<T>;
   }
 
   interface LoroMap<
     T extends Record<string, any> = Record<string, any>,
   > {
-    new (): LoroMap<T, false>;
+    new (): LoroMap<T>;
     getOrCreateContainer<C extends Container>(
       key: string,
       child: C,
@@ -246,8 +246,8 @@ declare module "loro-wasm" {
     subscribe(txn: Loro, listener: Listener): number;
   }
 
-  interface LoroText<Attached extends boolean = false> {
-    new (): LoroText<false>;
+  interface LoroText {
+    new (): LoroText;
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
@@ -256,7 +256,7 @@ declare module "loro-wasm" {
   interface LoroTree<
     T extends Record<string, any> = Record<string, any>,
   > {
-    new (): LoroTree<T, false>;
+    new (): LoroTree<T>;
     createNode(parent: TreeID | undefined): LoroTreeNode<T>;
     move(target: TreeID, parent: TreeID | undefined): void;
     delete(target: TreeID): void;
