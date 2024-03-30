@@ -16,7 +16,7 @@
   "scripts": {
     "build": "rollup -c",
     "watch": "rollup -c -w",
-    "test": "vitest run",
+    "test": "vitest run --typecheck",
     "prepublish": "pnpm run build"
   },
   "author": "Loro",
