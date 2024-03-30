@@ -1,4 +1,4 @@
-use loro::LoroDoc;
+use loro::{LoroDoc, LoroMap};
 
 pub fn init_sheet() -> LoroDoc {
     let doc = LoroDoc::new();
@@ -6,7 +6,7 @@ pub fn init_sheet() -> LoroDoc {
     let cols = doc.get_list("cols");
     let rows = doc.get_list("rows");
     for _ in 0..bench_utils::sheet::SheetAction::MAX_ROW {
-        rows.push_container(loro::ContainerType::Map).unwrap();
+        rows.push_container(LoroMap::new()).unwrap();
     }
 
     for i in 0..bench_utils::sheet::SheetAction::MAX_COL {

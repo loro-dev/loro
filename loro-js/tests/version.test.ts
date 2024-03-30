@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Loro, OpId, VersionVector } from "../src";
+import { Loro, LoroMap, OpId, VersionVector } from "../src";
 
 describe("Frontiers", () => {
   it("two clients", () => {
@@ -40,32 +40,50 @@ describe("Frontiers", () => {
     doc1.getText("text").insert(0, "01234");
     doc1.commit();
 
-    expect(() => { doc1.cmpFrontiers([{ peer: "1", counter: 1 }], [{ peer: "2", counter: 10 }]) }).toThrow();
-    expect(doc1.cmpFrontiers([], [{ peer: "1", counter: 1 }])).toBe(-1)
-    expect(doc1.cmpFrontiers([], [])).toBe(0)
-    expect(doc1.cmpFrontiers([{ peer: "1", counter: 4 }], [{ peer: "2", counter: 3 }])).toBe(-1)
-    expect(doc1.cmpFrontiers([{ peer: "1", counter: 5 }], [{ peer: "2", counter: 3 }])).toBe(1)
-  })
+    expect(() => {
+      doc1.cmpFrontiers([{ peer: "1", counter: 1 }], [{
+        peer: "2",
+        counter: 10,
+      }]);
+    }).toThrow();
+    expect(doc1.cmpFrontiers([], [{ peer: "1", counter: 1 }])).toBe(-1);
+    expect(doc1.cmpFrontiers([], [])).toBe(0);
+    expect(
+      doc1.cmpFrontiers([{ peer: "1", counter: 4 }], [{
+        peer: "2",
+        counter: 3,
+      }]),
+    ).toBe(-1);
+    expect(
+      doc1.cmpFrontiers([{ peer: "1", counter: 5 }], [{
+        peer: "2",
+        counter: 3,
+      }]),
+    ).toBe(1);
+  });
 });
 
-it('peer id repr should be consistent', () => {
+it("peer id repr should be consistent", () => {
   const doc = new Loro();
   const id = doc.peerIdStr;
   doc.getText("text").insert(0, "hello");
   doc.commit();
   const f = doc.frontiers();
   expect(f[0].peer).toBe(id);
-  const map = doc.getList("list").insertContainer(0, "Map");
+  const child = new LoroMap();
+  console.dir(child);
+  const map = doc.getList("list").insertContainer(0, child);
+  console.dir(child);
   const mapId = map.id;
-  const peerIdInContainerId = mapId.split(":")[1].split("@")[1]
+  const peerIdInContainerId = mapId.split(":")[1].split("@")[1];
   expect(peerIdInContainerId).toBe(id);
   doc.commit();
   expect(doc.version().get(id)).toBe(6);
   expect(doc.version().toJSON().get(id)).toBe(6);
   const m = doc.getMap(mapId);
   m.set("0", 1);
-  expect(map.get("0")).toBe(1)
-})
+  expect(map.get("0")).toBe(1);
+});
 
 describe("Version", () => {
   const a = new Loro();
@@ -83,13 +101,17 @@ describe("Version", () => {
       const vv = new Map();
       vv.set("0", 3);
       vv.set("1", 2);
-      expect((a.version().toJSON())).toStrictEqual(vv);
-      expect((a.version().toJSON())).toStrictEqual(vv);
-      expect(a.vvToFrontiers(new VersionVector(vv))).toStrictEqual(a.frontiers());
+      expect(a.version().toJSON()).toStrictEqual(vv);
+      expect(a.version().toJSON()).toStrictEqual(vv);
+      expect(a.vvToFrontiers(new VersionVector(vv))).toStrictEqual(
+        a.frontiers(),
+      );
       const v = a.version();
       const temp = a.vvToFrontiers(v);
       expect(temp).toStrictEqual(a.frontiers());
-      expect(a.frontiers()).toStrictEqual([{ peer: "0", counter: 2 }] as OpId[]);
+      expect(a.frontiers()).toStrictEqual(
+        [{ peer: "0", counter: 2 }] as OpId[],
+      );
     }
   });
 

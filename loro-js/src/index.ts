@@ -1,17 +1,17 @@
 export * from "loro-wasm";
 import {
   Container,
+  ContainerID,
   Delta,
+  Loro,
+  LoroList,
+  LoroMap,
   LoroText,
   LoroTree,
   LoroTreeNode,
   OpId,
-  Value,
-  ContainerID,
-  Loro,
-  LoroList,
-  LoroMap,
   TreeID,
+  Value,
 } from "loro-wasm";
 
 Loro.prototype.getTypedMap = function (...args) {
@@ -179,14 +179,10 @@ export function isContainer(value: any): value is Container {
  */
 export function getType<T>(
   value: T,
-): T extends LoroText
-  ? "Text"
-  : T extends LoroMap
-  ? "Map"
-  : T extends LoroTree
-  ? "Tree"
-  : T extends LoroList
-  ? "List"
+): T extends LoroText ? "Text"
+  : T extends LoroMap ? "Map"
+  : T extends LoroTree ? "Tree"
+  : T extends LoroList ? "List"
   : "Json" {
   if (isContainer(value)) {
     return value.kind();
@@ -210,15 +206,12 @@ declare module "loro-wasm" {
   }
 
   interface LoroList<T extends any[] = any[]> {
-    insertContainer(pos: number, container: "Map"): LoroMap;
-    insertContainer(pos: number, container: "List"): LoroList;
-    insertContainer(pos: number, container: "Text"): LoroText;
-    insertContainer(pos: number, container: "Tree"): LoroTree;
-    insertContainer(pos: number, container: string): never;
+    insertContainer<C extends Container>(pos: number, child: C): C;
 
     get(index: number): undefined | Value | Container;
     getTyped<Key extends keyof T & number>(loro: Loro, index: Key): T[Key];
     insertTyped<Key extends keyof T & number>(pos: Key, value: T[Key]): void;
+    insert(pos: number, value: Container): never;
     insert(pos: number, value: Value): void;
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
@@ -231,11 +224,7 @@ declare module "loro-wasm" {
     getOrCreateContainer(key: string, container_type: "Tree"): LoroTree;
     getOrCreateContainer(key: string, container_type: string): never;
 
-    setContainer(key: string, container_type: "Map"): LoroMap;
-    setContainer(key: string, container_type: "List"): LoroList;
-    setContainer(key: string, container_type: "Text"): LoroText;
-    setContainer(key: string, container_type: "Tree"): LoroTree;
-    setContainer(key: string, container_type: string): never;
+    setContainer<C extends Container>(key: string, child: C): C;
 
     get(key: string): undefined | Value | Container;
     getTyped<Key extends keyof T & string>(txn: Loro, key: Key): T[Key];

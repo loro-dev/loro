@@ -7,61 +7,58 @@ use loro_internal::handler::{Handler, ValueOrHandler};
 use loro_internal::{LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
-use crate::{LoroList, LoroMap, LoroText, LoroTree};
+use crate::{Container, JsContainer, LoroList, LoroMap, LoroText, LoroTree};
 use wasm_bindgen::__rt::IntoJsResult;
-use wasm_bindgen::convert::FromWasmAbi;
+use wasm_bindgen::convert::RefFromWasmAbi;
 
 /// Convert a `JsValue` to `T` by constructor's name.
 ///
 /// more details can be found in https://github.com/rustwasm/wasm-bindgen/issues/2231#issuecomment-656293288
-pub(crate) fn js_to_any<T: FromWasmAbi<Abi = u32>>(
-    js: JsValue,
-    struct_name: &str,
-) -> Result<T, JsValue> {
+pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
+    let js: JsValue = js.into();
     if !js.is_object() {
-        return Err(JsValue::from_str(
-            format!("Value supplied as {} is not an object", struct_name).as_str(),
-        ));
+        return Err(JsValue::from_str(&format!(
+            "Value supplied is not an object, but {:?}",
+            js
+        )));
     }
     let ctor_name = Object::get_prototype_of(&js).constructor().name();
-    if ctor_name == struct_name {
-        let ptr = Reflect::get(&js, &JsValue::from_str("ptr"))?;
-        let ptr_u32: u32 = ptr.as_f64().ok_or(JsValue::NULL)? as u32;
-        let obj = unsafe { T::from_abi(ptr_u32) };
-        Ok(obj)
-    } else {
-        return Err(JsValue::from_str(
-            format!(
-                "Value ctor_name is {} but the required struct name is {}",
-                ctor_name, struct_name
-            )
-            .as_str(),
-        ));
-    }
-}
+    let Ok(ptr) = Reflect::get(&js, &JsValue::from_str("__wbg_ptr")) else {
+        return Err(JsValue::from_str("Cannot find pointer field"));
+    };
+    let ptr_u32: u32 = ptr.as_f64().unwrap() as u32;
+    let ctor_name = ctor_name
+        .as_string()
+        .ok_or(JsValue::from_str("Constructor name is not a string"))?;
+    let container = match ctor_name.as_str() {
+        "LoroText" => {
+            let obj = unsafe { LoroText::ref_from_abi(ptr_u32) };
+            Container::Text(obj.clone())
+        }
+        "LoroMap" => {
+            let obj = unsafe { LoroMap::ref_from_abi(ptr_u32) };
+            Container::Map(obj.clone())
+        }
+        "LoroList" => {
+            let obj = unsafe { LoroList::ref_from_abi(ptr_u32) };
+            Container::List(obj.clone())
+        }
+        "LoroTree" => {
+            let obj = unsafe { LoroTree::ref_from_abi(ptr_u32) };
+            Container::Tree(obj.clone())
+        }
+        _ => {
+            return Err(JsValue::from_str(
+                format!(
+                    "Value ctor_name is {} but the valid container name is LoroMap, LoroList, LoroText or LoroTree",
+                    ctor_name
+                )
+                .as_str(),
+            ));
+        }
+    };
 
-impl TryFrom<JsValue> for LoroText {
-    type Error = JsValue;
-
-    fn try_from(value: JsValue) -> Result<Self, Self::Error> {
-        js_to_any(value, "LoroText")
-    }
-}
-
-impl TryFrom<JsValue> for LoroList {
-    type Error = JsValue;
-
-    fn try_from(value: JsValue) -> Result<Self, Self::Error> {
-        js_to_any(value, "LoroList")
-    }
-}
-
-impl TryFrom<JsValue> for LoroMap {
-    type Error = JsValue;
-
-    fn try_from(value: JsValue) -> Result<Self, Self::Error> {
-        js_to_any(value, "LoroMap")
-    }
+    Ok(container)
 }
 
 pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
@@ -130,7 +127,7 @@ fn delta_item_to_js(item: DeltaItem<Vec<ValueOrHandler>, ()>, doc: &Arc<LoroDoc>
             for (i, v) in value.into_iter().enumerate() {
                 let value = match v {
                     ValueOrHandler::Value(v) => convert(v),
-                    ValueOrHandler::Handler(h) => handler_to_js_value(h, doc.clone()),
+                    ValueOrHandler::Handler(h) => handler_to_js_value(h, Some(doc.clone())),
                 };
                 arr.set(i as u32, value);
             }
@@ -198,7 +195,7 @@ fn map_delta_to_js(value: &ResolvedMapDelta, doc: &Arc<LoroDoc>) -> JsValue {
         let value = if let Some(value) = value.value.clone() {
             match value {
                 ValueOrHandler::Value(v) => convert(v),
-                ValueOrHandler::Handler(h) => handler_to_js_value(h, doc.clone()),
+                ValueOrHandler::Handler(h) => handler_to_js_value(h, Some(doc.clone())),
             }
         } else {
             JsValue::null()
@@ -210,7 +207,7 @@ fn map_delta_to_js(value: &ResolvedMapDelta, doc: &Arc<LoroDoc>) -> JsValue {
     obj.into_js_result().unwrap()
 }
 
-pub(crate) fn handler_to_js_value(handler: Handler, doc: Arc<LoroDoc>) -> JsValue {
+pub(crate) fn handler_to_js_value(handler: Handler, doc: Option<Arc<LoroDoc>>) -> JsValue {
     match handler {
         Handler::Text(t) => LoroText { handler: t, doc }.into(),
         Handler::Map(m) => LoroMap { handler: m, doc }.into(),

@@ -169,7 +169,7 @@ impl Actionable for TreeAction {
                         None
                     }
                     FuzzValue::Container(c) => {
-                        let container = meta.insert_container(k, *c).unwrap();
+                        let container = meta.insert_container(k, Container::new(*c)).unwrap();
                         Some(container)
                     }
                 }

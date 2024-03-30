@@ -379,7 +379,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.global_txn.clone(),
@@ -393,7 +393,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::List);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.global_txn.clone(),
@@ -407,7 +407,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Map);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.global_txn.clone(),
@@ -421,7 +421,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.global_txn.clone(),
@@ -429,11 +429,6 @@ impl Transaction {
         )
         .into_tree()
         .unwrap()
-    }
-
-    fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {
-        let id = id.into_container_id(&self.arena, c_type);
-        self.arena.register_container(&id)
     }
 
     pub fn get_value_by_idx(&self, idx: ContainerIdx) -> LoroValue {

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use loro_common::ContainerType;
+
 use loro_internal::{
     delta::DeltaItem,
     event::Diff,
     handler::{Handler, ValueOrHandler},
-    LoroDoc, ToJson,
+    ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
 };
 
 fn main() {
@@ -30,12 +30,12 @@ fn main() {
                                             let text = h
                                                 .as_map()
                                                 .unwrap()
-                                                .insert_container("text", ContainerType::Text)
+                                                .insert_container(
+                                                    "text",
+                                                    TextHandler::new_detached(),
+                                                )
                                                 .unwrap();
-                                            text.as_text()
-                                                .unwrap()
-                                                .insert(0, "created from event")
-                                                .unwrap();
+                                            text.insert(0, "created from event").unwrap();
                                         }
                                     }
                                     ValueOrHandler::Value(value) => {
@@ -54,10 +54,14 @@ fn main() {
         }
     }));
     list.insert(0, "abc").unwrap();
-    list.insert_container(1, ContainerType::List).unwrap();
-    list.insert_container(2, ContainerType::Map).unwrap();
-    list.insert_container(3, ContainerType::Text).unwrap();
-    list.insert_container(4, ContainerType::Tree).unwrap();
+    list.insert_container(1, ListHandler::new_detached())
+        .unwrap();
+    list.insert_container(2, MapHandler::new_detached())
+        .unwrap();
+    list.insert_container(3, TextHandler::new_detached())
+        .unwrap();
+    list.insert_container(4, TreeHandler::new_detached())
+        .unwrap();
     doc.commit_then_renew();
     assert_eq!(
         doc.get_deep_value().to_json(),
