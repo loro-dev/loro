@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.1
+
+### Patch Changes
+
+- Fix type errors and conversion from js->rust error
+
 ## 0.13.0
 
 ### Minor Changes
