@@ -199,56 +199,51 @@ declare module "loro-wasm" {
   interface Loro<T extends Record<string, any> = Record<string, any>> {
     getTypedMap<Key extends keyof T & string>(
       name: Key,
-    ): T[Key] extends LoroMap ? SetAttached<T[Key], true> : never;
+    ): T[Key] extends LoroMap ? T[Key] : never;
     getTypedList<Key extends keyof T & string>(
       name: Key,
-    ): T[Key] extends LoroList ? SetAttached<T[Key], true> : never;
-    getMap(key: string | ContainerID): LoroMap<T[string], true>;
-    getList(key: string | ContainerID): LoroList<T[string], true>;
-    getTree(key: string | ContainerID): LoroTree<T[string], true>;
-    getText(key: string | ContainerID): LoroText<true>;
+    ): T[Key] extends LoroList ? T[Key] : never;
+    getMap(key: string | ContainerID): LoroMap<T[string]>;
+    getList(key: string | ContainerID): LoroList<T[string]>;
+    getTree(key: string | ContainerID): LoroTree<T[string]>;
+    getText(key: string | ContainerID): LoroText;
   }
 
   interface LoroList<
     T extends any[] = any[],
-    Attached extends boolean = false,
   > {
     new (): LoroList<T, false>;
     insertContainer<C extends Container>(
       pos: number,
       child: C,
-    ): SetAttached<C, Attached>;
-    get(index: number): undefined | Value | SetAttached<Container, Attached>;
+    ): C;
+    get(index: number): undefined | Value | Container;
     getTyped<Key extends keyof T & number>(loro: Loro, index: Key): T[Key];
     insertTyped<Key extends keyof T & number>(pos: Key, value: T[Key]): void;
     insert(pos: number, value: Value): void;
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
     getAttached(): undefined | LoroList<T, true>;
-    isAttached(): Attached;
   }
 
   interface LoroMap<
     T extends Record<string, any> = Record<string, any>,
-    Attached extends boolean = false,
   > {
     new (): LoroMap<T, false>;
     getOrCreateContainer<C extends Container>(
       key: string,
       child: C,
-    ): SetAttached<C, Attached>;
+    ): C;
     setContainer<C extends Container>(
       key: string,
       child: C,
-    ): SetAttached<C, Attached>;
-    get(key: string): undefined | Value | SetAttached<Container, Attached>;
+    ): C;
+    get(key: string): undefined | Value | Container;
     getTyped<Key extends keyof T & string>(txn: Loro, key: Key): T[Key];
     set(key: string, value: Value): void;
     setTyped<Key extends keyof T & string>(key: Key, value: T[Key]): void;
     delete(key: string): void;
     subscribe(txn: Loro, listener: Listener): number;
-    getAttached(): undefined | LoroMap<T, true>;
-    isAttached(): Attached;
   }
 
   interface LoroText<Attached extends boolean = false> {
@@ -256,41 +251,28 @@ declare module "loro-wasm" {
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
-    getAttached(): undefined | LoroText<true>;
-    isAttached(): Attached;
   }
 
   interface LoroTree<
     T extends Record<string, any> = Record<string, any>,
-    Attached extends boolean = false,
   > {
     new (): LoroTree<T, false>;
-    createNode(parent: TreeID | undefined): LoroTreeNode<T, Attached>;
+    createNode(parent: TreeID | undefined): LoroTreeNode<T>;
     move(target: TreeID, parent: TreeID | undefined): void;
     delete(target: TreeID): void;
     has(target: TreeID): boolean;
     getNodeByID(target: TreeID): LoroTreeNode;
     subscribe(txn: Loro, listener: Listener): number;
-    getAttached(): undefined | LoroTree<T, true>;
-    isAttached(): Attached;
   }
 
   interface LoroTreeNode<
     T extends Record<string, any> = Record<string, any>,
-    Attached extends boolean = false,
   > {
-    readonly data: LoroMap<T, Attached>;
-    createNode(): LoroTreeNode<T, Attached>;
+    readonly data: LoroMap<T>;
+    createNode(): LoroTreeNode<T>;
     setAsRoot(): void;
-    moveTo(parent: LoroTreeNode<T, Attached>): void;
+    moveTo(parent: LoroTreeNode<T>): void;
     parent(): LoroTreeNode | undefined;
-    children(): Array<LoroTreeNode<T, Attached>>;
+    children(): Array<LoroTreeNode<T>>;
   }
 }
-
-type SetAttached<T extends Container, Attached extends boolean> = T extends
-  LoroMap<infer U> ? LoroMap<U, Attached>
-  : T extends LoroList<infer U> ? LoroList<U, Attached>
-  : T extends LoroTree<infer U> ? LoroTree<U, Attached>
-  : T extends LoroText ? LoroText<Attached>
-  : never;

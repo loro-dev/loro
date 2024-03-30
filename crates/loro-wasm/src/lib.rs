@@ -1382,7 +1382,7 @@ impl LoroText {
     /// Whether the container is attached to a docuemnt.
     ///
     /// If it's detached, the operations on the container will not be persisted.
-    #[wasm_bindgen(js_name = "isAttached", skip_typescript)]
+    #[wasm_bindgen(js_name = "isAttached")]
     pub fn is_attached(&self) -> bool {
         self.handler.is_attached()
     }
@@ -1702,7 +1702,7 @@ impl LoroMap {
     /// Whether the container is attached to a docuemnt.
     ///
     /// If it's detached, the operations on the container will not be persisted.
-    #[wasm_bindgen(js_name = "isAttached", skip_typescript)]
+    #[wasm_bindgen(js_name = "isAttached")]
     pub fn is_attached(&self) -> bool {
         self.handler.is_attached()
     }
@@ -1970,7 +1970,7 @@ impl LoroList {
     /// Whether the container is attached to a docuemnt.
     ///
     /// If it's detached, the operations on the container will not be persisted.
-    #[wasm_bindgen(js_name = "isAttached", skip_typescript)]
+    #[wasm_bindgen(js_name = "isAttached")]
     pub fn is_attached(&self) -> bool {
         self.handler.is_attached()
     }
@@ -2372,7 +2372,7 @@ impl LoroTree {
     /// Whether the container is attached to a docuemnt.
     ///
     /// If it's detached, the operations on the container will not be persisted.
-    #[wasm_bindgen(js_name = "isAttached", skip_typescript)]
+    #[wasm_bindgen(js_name = "isAttached")]
     pub fn is_attached(&self) -> bool {
         self.handler.is_attached()
     }
