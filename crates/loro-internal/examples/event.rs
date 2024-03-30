@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use loro_common::ContainerType;
+
 use loro_internal::{
     delta::DeltaItem,
     event::Diff,

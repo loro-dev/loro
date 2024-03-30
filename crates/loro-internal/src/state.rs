@@ -693,6 +693,7 @@ impl DocState {
     }
 
     #[inline(always)]
+    #[allow(unused)]
     pub(crate) fn with_state<F, R>(&mut self, idx: ContainerIdx, f: F) -> R
     where
         F: FnOnce(&State) -> R,

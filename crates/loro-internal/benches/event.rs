@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 #[cfg(feature = "test_utils")]
 mod event {
     use super::*;
-    use loro_common::ContainerType;
+    
     use loro_internal::{ListHandler, LoroDoc};
     use std::sync::Arc;
 

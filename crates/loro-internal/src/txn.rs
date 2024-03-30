@@ -431,11 +431,6 @@ impl Transaction {
         .unwrap()
     }
 
-    fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {
-        let id = id.into_container_id(&self.arena, c_type);
-        self.arena.register_container(&id)
-    }
-
     pub fn get_value_by_idx(&self, idx: ContainerIdx) -> LoroValue {
         self.state.lock().unwrap().get_value_by_idx(idx)
     }

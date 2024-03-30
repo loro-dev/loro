@@ -16,7 +16,7 @@ use crate::{
     arena::SharedArena,
     change::Timestamp,
     configure::Configure,
-    container::{idx::ContainerIdx, richtext::config::StyleConfigMap, IntoContainerId},
+    container::{richtext::config::StyleConfigMap, IntoContainerId},
     dag::DagUtils,
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
@@ -620,12 +620,6 @@ impl LoroDoc {
     #[inline]
     pub fn diagnose_size(&self) {
         self.oplog().lock().unwrap().diagnose_size();
-    }
-
-    #[inline]
-    fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {
-        let id = id.into_container_id(&self.arena, c_type);
-        self.arena.register_container(&id)
     }
 
     #[inline]

@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, sync::Arc};
 
 use loro::{FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText, ToJson};
-use loro_internal::{handler::TextDelta, id::ID, op::ListSlice, LoroResult};
+use loro_internal::{handler::TextDelta, id::ID, LoroResult};
 use serde_json::json;
 
 #[test]
