@@ -355,12 +355,12 @@ impl LoroDoc {
     }
 
     /// Get the handler by the path.
-    pub fn get_handler_by_path(&self, path: &[Index]) -> Option<ValueOrContainer> {
+    pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrContainer> {
         self.doc.get_by_path(path).map(ValueOrContainer::from)
     }
 
     /// Get the handler by the string path.
-    pub fn get_handler_by_str_path(&self, path: &str) -> Option<ValueOrContainer> {
+    pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrContainer> {
         self.doc.get_by_str_path(path).map(ValueOrContainer::from)
     }
 }

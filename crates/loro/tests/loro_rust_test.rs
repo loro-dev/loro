@@ -461,7 +461,7 @@ fn get_container_by_str_path() {
         .unwrap()
         .insert(0, 99)
         .unwrap();
-    let c = doc.get_handler_by_str_path("map/key").unwrap();
+    let c = doc.get_by_str_path("map/key").unwrap();
     assert!(c.as_container().unwrap().is_list());
     c.into_container()
         .unwrap()
@@ -477,22 +477,39 @@ fn get_container_by_str_path() {
             }
         })
     );
-    let v = doc.get_handler_by_str_path("map/key/1").unwrap();
+    let v = doc.get_by_str_path("map/key/1").unwrap();
     assert_eq!(v.into_value().unwrap().into_i64().unwrap(), 99);
-    let v = doc.get_handler_by_str_path("map/key/0").unwrap();
+    let v = doc.get_by_str_path("map/key/0").unwrap();
     assert_eq!(v.into_value().unwrap().into_i64().unwrap(), 100);
+
+    doc.get_map("map")
+        .insert_container("text", LoroText::new())
+        .unwrap()
+        .insert(0, "123")
+        .unwrap();
+    let v = doc.get_by_str_path("map/text/0").unwrap();
+    assert_eq!(
+        v.into_value().unwrap().into_string().unwrap().to_string(),
+        "1"
+    );
+    let v = doc.get_by_str_path("map/text/1").unwrap();
+    assert_eq!(
+        v.into_value().unwrap().into_string().unwrap().to_string(),
+        "2"
+    );
+    let v = doc.get_by_str_path("map/text/2").unwrap();
+    assert_eq!(
+        v.into_value().unwrap().into_string().unwrap().to_string(),
+        "3"
+    );
 
     let tree = doc.get_tree("tree");
     let node = tree.create(None).unwrap();
     tree.get_meta(node).unwrap().insert("key", "value").unwrap();
 
-    let node_value = doc
-        .get_handler_by_str_path(&format!("tree/{}", node))
-        .unwrap();
+    let node_value = doc.get_by_str_path(&format!("tree/{}", node)).unwrap();
     assert!(node_value.into_container().unwrap().is_map());
-    let node_map = doc
-        .get_handler_by_str_path(&format!("tree/{}/key", node))
-        .unwrap();
+    let node_map = doc.get_by_str_path(&format!("tree/{}/key", node)).unwrap();
     assert_eq!(
         node_map
             .into_value()
