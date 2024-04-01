@@ -1,3 +1,5 @@
+use std::{fmt::Debug, time::Instant};
+
 pub mod recursive_refactored;
 pub mod richtext;
 pub mod tree;
@@ -6,19 +8,15 @@ use crate::{
     array_mut_ref,
     delta::{Delta, DeltaItem, StyleMeta},
     event::Diff,
+    handler::HandlerTrait,
     loro::LoroDoc,
     state::ContainerState,
     utils::string_slice::StringSlice,
 };
-use debug_log::debug_log;
 use enum_as_inner::EnumAsInner;
 use loro_common::ContainerID;
-use std::{
-    fmt::Debug,
-    sync::{Arc, Mutex},
-    time::Instant,
-};
-use tabled::{TableIteratorExt, Tabled};
+use std::sync::{Arc, Mutex};
+use tabled::Tabled;
 
 const STYLES_NAME: [&str; 4] = ["bold", "comment", "link", "highlight"];
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -323,19 +321,24 @@ pub fn change_pos_to_char_boundary(pos: &mut usize, len: usize) {
 fn check_synced(sites: &mut [LoroDoc], _: &[Arc<Mutex<Delta<StringSlice, StyleMeta>>>]) {
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
-            debug_log::group!("checking {} with {}", i, j);
+            let s = tracing::span!(tracing::Level::INFO, "checking {} with {}", i, j);
+            let _e = s.enter();
             let (a, b) = array_mut_ref!(sites, [i, j]);
             {
                 if (i + j) % 2 == 1 {
-                    debug_log::group!("Import {}'s Snapshot to {}", j, i);
+                    let s =
+                        tracing::span!(tracing::Level::INFO, "Import {}'s Snapshot to {}", j, i);
+                    let _e = s.enter();
                     a.import(&b.export_snapshot()).unwrap();
                 } else {
-                    debug_log::group!("Import {} to {}", j, i);
+                    let s = tracing::span!(tracing::Level::INFO, "Import {} to {}", j, i);
+                    let _e = s.enter();
                     a.import(&b.export_from(&a.oplog_vv())).unwrap();
                 }
             }
             {
-                debug_log::group!("Import {} to {}", i, j);
+                let s = tracing::span!(tracing::Level::INFO, "Import {} to {}", i, j);
+                let _e = s.enter();
                 b.import(&a.export_from(&b.oplog_vv())).unwrap();
             }
             check_eq(a, b);
@@ -345,7 +348,7 @@ fn check_synced(sites: &mut [LoroDoc], _: &[Arc<Mutex<Delta<StringSlice, StyleMe
             //         continue;
             //     }
 
-            //     debug_log::group!("Check {}", x);
+            //     tracing::span!(tracing::Level::INFO, "Check {}", x);
             //     let diff = site.get_text("text").with_state_mut(|s| s.to_diff());
             //     let mut diff = diff.into_text().unwrap();
             //     compact(&mut diff);
@@ -385,12 +388,6 @@ fn check_eq(site_a: &mut LoroDoc, site_b: &mut LoroDoc) {
             );
         }
 
-        text_a.with_state(|s| {
-            dbg!(&s.state);
-        });
-        text_b.with_state(|s| {
-            dbg!(&s.state);
-        });
         assert_eq!(
             value_a,
             value_b,
@@ -505,14 +502,9 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
                 for container_diff in event.events {
                     if let Diff::Text(t) = &container_diff.diff {
                         let mut text = text_clone.lock().unwrap();
-                        debug_log::debug_log!(
-                            "RECEIVE site:{} event:{:#?}\nCURRENT: {:#?}",
-                            i,
-                            t,
-                            &text
-                        );
+                        tracing::info!("RECEIVE site:{} event:{:#?}\nCURRENT: {:#?}", i, t, &text);
                         *text = text.clone().compose(t.clone());
-                        debug_log::debug_log!("new:{:#?}", &text);
+                        tracing::info!("new:{:#?}", &text);
                     }
                 }
             }),
@@ -525,12 +517,11 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     for action in actions.iter_mut() {
         sites.preprocess(action);
         applied.push(action.clone());
-        debug_log!("\n{}", (&applied).table());
-        debug_log::group!("ApplyAction {:?}", &action);
+        tracing::span!(tracing::Level::INFO, "ApplyAction", ?action);
         sites.apply_action(action);
 
         // for (i, (site, text)) in sites.iter().zip(texts.iter()).enumerate() {
-        //     debug_log::group!("Check {}", i);
+        //     tracing::span!(tracing::Level::INFO, "Check {}", i);
         //     let diff = site.get_text("text").with_state_mut(|s| s.to_diff());
         //     let mut diff = diff.into_text().unwrap();
         //     compact(&mut diff);
@@ -545,16 +536,20 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         // }
     }
 
-    debug_log::group!("CheckSynced");
+    let s = tracing::span!(tracing::Level::INFO, "CheckSynced");
+    let _e = s.enter();
     // println!("{}", actions.table());
     check_synced(&mut sites, &texts);
 
-    debug_log::group!("CheckTextEvent");
+    let s = tracing::span!(tracing::Level::INFO, "CheckTextEvent");
+    let _e = s.enter();
     for (i, (site, text)) in sites.iter().zip(texts.iter()).enumerate() {
-        debug_log::group!("Check {}", i);
-        let diff = site.get_text("text").with_state_mut(|s| {
-            s.to_diff(site.arena(), &site.get_global_txn(), &site.weak_state())
-        });
+        let s = tracing::span!(tracing::Level::INFO, "Check {}", i);
+        let _e = s.enter();
+        let diff = site
+            .get_text("text")
+            .with_state(|s| Ok(s.to_diff(site.arena(), &site.get_global_txn(), &site.weak_state())))
+            .unwrap();
         let mut diff = diff.into_text().unwrap();
         compact(&mut diff);
         let mut text = text.lock().unwrap();

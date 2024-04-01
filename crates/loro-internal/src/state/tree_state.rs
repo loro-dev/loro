@@ -32,30 +32,6 @@ pub enum TreeParentId {
     None,
 }
 
-impl TreeParentId {
-    pub(crate) fn from_tree_id(id: Option<TreeID>) -> Self {
-        match id {
-            Some(id) => {
-                if TreeID::is_deleted_root(&id) {
-                    TreeParentId::Deleted
-                } else {
-                    TreeParentId::Node(id)
-                }
-            }
-            None => TreeParentId::None,
-        }
-    }
-
-    pub(crate) fn to_tree_id(self) -> Option<TreeID> {
-        match self {
-            TreeParentId::Node(id) => Some(id),
-            TreeParentId::Deleted => Some(TreeID::delete_root()),
-            TreeParentId::None => None,
-            TreeParentId::Unexist => unreachable!(),
-        }
-    }
-}
-
 /// The state of movable tree.
 ///
 /// using flat representation
@@ -338,10 +314,15 @@ impl ContainerState for TreeState {
     /// Get the index of the child container
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
         let id = id.as_normal().unwrap();
-        Some(Index::Node(TreeID {
+        let tree_id = TreeID {
             peer: *id.0,
             counter: *id.1,
-        }))
+        };
+        if !self.trees.contains_key(&tree_id) || self.is_node_deleted(&tree_id) {
+            None
+        } else {
+            Some(Index::Node(tree_id))
+        }
     }
 
     fn get_child_containers(&self) -> Vec<ContainerID> {

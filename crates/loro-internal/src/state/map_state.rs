@@ -13,7 +13,7 @@ use crate::{
     delta::{MapValue, ResolvedMapDelta, ResolvedMapValue},
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
-    handler::ValueOrContainer,
+    handler::ValueOrHandler,
     op::{Op, RawOp, RawOpContent},
     txn::Transaction,
     DocState, InternalString, LoroValue,
@@ -59,7 +59,7 @@ impl ContainerState for MapState {
                     idlp: IdLp::new(value.peer, value.lamp),
                     value: value
                         .value
-                        .map(|v| ValueOrContainer::from_value(v, arena, txn, state)),
+                        .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
                 },
             )
         }
@@ -131,16 +131,18 @@ impl ContainerState for MapState {
     }
 
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
-        debug_log::group!("Get child index {:?}", id);
+        let s = tracing::span!(tracing::Level::INFO, "Get child index ", id = ?id);
+        let _e = s.enter();
         for (key, value) in self.map.iter() {
-            debug_log::group!("Key {} value {:?}", key, value);
+            let s = tracing::span!(tracing::Level::INFO, "Key Value", key = ?key, value = ?value);
+            let _e = s.enter();
             if let Some(LoroValue::Container(x)) = &value.value {
-                debug_log::debug_log!("Cmp {:?} with {:?}", &x, &id);
+                tracing::info!("Cmp {:?} with {:?}", &x, &id);
                 if x == id {
-                    debug_log::debug_log!("Same");
+                    tracing::info!("Same");
                     return Some(Index::Key(key.clone()));
                 }
-                debug_log::debug_log!("Diff");
+                tracing::info!("Diff");
             }
         }
 

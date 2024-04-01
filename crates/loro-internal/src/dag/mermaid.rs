@@ -41,9 +41,9 @@ fn to_str(output: Output) -> String {
             is_first = false;
             s += format!(
                 "{}-{}(\"c{}: [{}, {})\")",
-                id_span.client_id,
+                id_span.peer,
                 id_span.counter.start,
-                id_span.client_id,
+                id_span.peer,
                 id_span.counter.start,
                 id_span.counter.end
             )

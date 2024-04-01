@@ -1,13 +1,11 @@
 use std::{
-    collections::HashSet,
     fmt::Debug,
     sync::{Arc, Mutex},
 };
 
 use arbitrary::Arbitrary;
-use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use loro_common::ID;
 use tabled::{TableIteratorExt, Tabled};
 
@@ -21,7 +19,7 @@ use crate::{
         richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
     },
     event::Diff,
-    handler::{TextHandler, ValueOrContainer},
+    handler::{Handler, HandlerTrait, TextHandler, ValueOrHandler},
     loro::LoroDoc,
     value::ToJson,
     version::Frontiers,
@@ -104,8 +102,6 @@ impl Actor {
                     &[container_diff.diff.clone()],
                 );
             }
-
-            debug_log::debug_dbg!(&root_value);
         }));
 
         let text = Arc::clone(&actor.text_tracker);
@@ -177,11 +173,11 @@ impl Actor {
                             match &value.value {
                                 Some(value) => {
                                     let value = match value {
-                                        ValueOrContainer::Container(c) => {
+                                        ValueOrHandler::Handler(c) => {
                                             let id = arena.idx_to_id(c.container_idx()).unwrap();
                                             LoroValue::Container(id)
                                         }
-                                        ValueOrContainer::Value(v) => v.clone(),
+                                        ValueOrHandler::Value(v) => v.clone(),
                                     };
                                     map.insert(key.to_string(), value);
                                 }
@@ -191,7 +187,6 @@ impl Actor {
                             }
                         }
                     } else {
-                        debug_dbg!(&container_diff);
                         unreachable!()
                     }
                 }
@@ -224,12 +219,12 @@ impl Actor {
                                 } => {
                                     for v in value {
                                         let value = match v {
-                                            ValueOrContainer::Container(c) => {
+                                            ValueOrHandler::Handler(c) => {
                                                 let id =
                                                     arena.idx_to_id(c.container_idx()).unwrap();
                                                 LoroValue::Container(id)
                                             }
-                                            ValueOrContainer::Value(v) => v.clone(),
+                                            ValueOrHandler::Value(v) => v.clone(),
                                         };
                                         list.insert(index, value);
                                         index += 1;
@@ -346,24 +341,18 @@ trait Actionable {
 }
 
 impl Actor {
-    fn add_new_container(&mut self, idx: ContainerIdx, type_: ContainerType) {
+    fn add_new_container(&mut self, _idx: ContainerIdx, id: ContainerID, type_: ContainerType) {
         let txn = self.loro.get_global_txn();
+        let handler = Handler::new_attached(
+            id,
+            self.loro.arena().clone(),
+            txn,
+            Arc::downgrade(self.loro.app_state()),
+        );
         match type_ {
-            ContainerType::Text => self.text_containers.push(TextHandler::new(
-                txn,
-                idx,
-                Arc::downgrade(self.loro.app_state()),
-            )),
-            ContainerType::Map => self.map_containers.push(MapHandler::new(
-                txn,
-                idx,
-                Arc::downgrade(self.loro.app_state()),
-            )),
-            ContainerType::List => self.list_containers.push(ListHandler::new(
-                txn,
-                idx,
-                Arc::downgrade(self.loro.app_state()),
-            )),
+            ContainerType::Text => self.text_containers.push(handler.into_text().unwrap()),
+            ContainerType::Map => self.map_containers.push(handler.into_map().unwrap()),
+            ContainerType::List => self.list_containers.push(handler.into_list().unwrap()),
             ContainerType::Tree => {
                 // TODO Tree
             }
@@ -445,15 +434,15 @@ impl Actionable for Vec<Actor> {
         match action {
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(self, [*from as usize, *to as usize]);
-                let mut visited = HashSet::new();
+                let mut visited = FxHashSet::default();
                 a.map_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.list_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.text_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
 
                 a.loro
@@ -506,16 +495,16 @@ impl Actionable for Vec<Actor> {
                     .collect();
             }
             Action::SyncAll => {
-                let mut visited = HashSet::new();
+                let mut visited = FxHashSet::default();
                 let a = &mut self[0];
                 a.map_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.list_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.text_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
 
                 for i in 1..self.len() {
@@ -598,11 +587,15 @@ impl Actionable for Vec<Actor> {
                             .unwrap();
                     }
                     FuzzValue::Container(c) => {
-                        let idx = container
-                            .insert_container_with_txn(&mut txn, &key.to_string(), *c)
-                            .unwrap()
-                            .container_idx();
-                        actor.add_new_container(idx, *c);
+                        let handler = &container
+                            .insert_container_with_txn(
+                                &mut txn,
+                                &key.to_string(),
+                                Handler::new_unattached(*c),
+                            )
+                            .unwrap();
+                        let idx = handler.container_idx();
+                        actor.add_new_container(idx, handler.id().clone(), *c);
                     }
                 };
 
@@ -640,11 +633,15 @@ impl Actionable for Vec<Actor> {
                             .unwrap();
                     }
                     FuzzValue::Container(c) => {
-                        let idx = container
-                            .insert_container_with_txn(&mut txn, *key as usize, *c)
-                            .unwrap()
-                            .container_idx();
-                        actor.add_new_container(idx, *c);
+                        let handler = &container
+                            .insert_container_with_txn(
+                                &mut txn,
+                                *key as usize,
+                                Handler::new_unattached(*c),
+                            )
+                            .unwrap();
+                        let idx = handler.container_idx();
+                        actor.add_new_container(idx, handler.id().clone(), *c);
                     }
                 };
                 txn.commit().unwrap();
@@ -726,7 +723,7 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     let a_doc = &mut a_actor.loro;
     let b_doc = &mut b_actor.loro;
     let a_result = a_doc.get_state_deep_value();
-    debug_log::debug_log!("{}", a_result.to_json_pretty());
+    tracing::info!("{}", a_result.to_json_pretty());
     assert_eq!(&a_result, &b_doc.get_state_deep_value());
     assert_value_eq(&a_result, &a_actor.value_tracker.lock().unwrap());
     assert_value_eq(&a_result, &b_actor.value_tracker.lock().unwrap());
@@ -756,23 +753,27 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
 fn check_synced(sites: &mut [Actor]) {
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
-            debug_log::group!("checking {} with {}", i, j);
+            let s = tracing::span!(tracing::Level::INFO, "checking", i = i, j = j);
+            let _e = s.enter();
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
-            debug_log::debug_dbg!(a_doc.get_deep_value_with_id());
-            debug_log::debug_dbg!(b_doc.get_deep_value_with_id());
+
             if (i + j) % 2 == 0 {
-                debug_log::group!("Updates {} to {}", j, i);
+                let s = tracing::span!(tracing::Level::INFO, "Updates {} to {}", j, i);
+                let _e = s.enter();
                 a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
 
-                debug_log::group!("Updates {} to {}", i, j);
+                let s = tracing::span!(tracing::Level::INFO, "Updates {} to {}", i, j);
+                let _e = s.enter();
                 b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
             } else {
-                debug_log::group!("Snapshot {} to {}", j, i);
+                let s = tracing::span!(tracing::Level::INFO, "Snapshot {} to {}", j, i);
+                let _e = s.enter();
                 a_doc.import(&b_doc.export_snapshot()).unwrap();
 
-                debug_log::group!("Snapshot {} to {}", i, j);
+                let s = tracing::span!(tracing::Level::INFO, "Snapshot {} to {}", i, j);
+                let _e = s.enter();
                 b_doc.import(&a_doc.export_snapshot()).unwrap();
             }
 
@@ -792,11 +793,13 @@ fn check_history(actor: &mut Actor) {
     assert!(!actor.history.is_empty());
     for (f, v) in actor.history.iter() {
         let f = Frontiers::from(f);
-        debug_log::group!(
-            "Checkout from {:?} to {:?}",
-            &actor.loro.state_frontiers(),
-            &f
+        let s = tracing::span!(
+            tracing::Level::INFO,
+            "Checkout from ",
+            from = ?actor.loro.state_frontiers(),
+            to = ?f
         );
+        let _e = s.enter();
         actor.loro.checkout(&f).unwrap();
         let actual = actor.loro.get_deep_value();
         assert_value_eq(v, &actual);
@@ -841,11 +844,12 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     for action in actions.iter_mut() {
         sites.preprocess(action);
         applied.push(action.clone());
-        debug_log::debug_log!("\n{}", (&applied).table());
+        tracing::info!("\n{}", (&applied).table());
         sites.apply_action(action);
     }
 
-    debug_log::group!("check synced");
+    let s = tracing::span!(tracing::Level::INFO, "check synced");
+    let _e = s.enter();
     check_synced(&mut sites);
 
     check_history(&mut sites[1]);

@@ -58,3 +58,9 @@ name = "richtext"
 path = "fuzz_targets/richtext.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "map"
+path = "fuzz_targets/map.rs"
+test = false
+doc = false

@@ -16,12 +16,13 @@ use crate::{
     arena::SharedArena,
     change::Timestamp,
     configure::Configure,
-    container::{idx::ContainerIdx, richtext::config::StyleConfigMap, IntoContainerId},
+    container::{richtext::config::StyleConfigMap, IntoContainerId},
     dag::DagUtils,
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    handler::{TextHandler, TreeHandler},
+    event::{str_to_path, Index},
+    handler::{Handler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     oplog::dag::FrontiersNotIncluded,
     relative_pos::{CannotFindRelativePosition, PosQueryResult, RelativePosition},
@@ -409,7 +410,12 @@ impl LoroDoc {
                     return Err(LoroError::ImportWhenInTxn);
                 }
 
-                debug_log::group!("Import updates {}", self.peer_id());
+                let s = tracing::span!(
+                    tracing::Level::INFO,
+                    "Import updates ",
+                    peer = self.peer_id()
+                );
+                let _e = s.enter();
                 self.update_oplog_and_apply_delta_to_state_if_needed(
                     |oplog| oplog.decode(parsed),
                     origin,
@@ -417,16 +423,16 @@ impl LoroDoc {
             }
             true => {
                 if self.can_reset_with_snapshot() {
-                    debug_log::debug_log!("Init by snapshot {}", self.peer_id());
+                    tracing::info!("Init by snapshot {}", self.peer_id());
                     decode_snapshot(self, parsed.mode, parsed.body)?;
                 } else if parsed.mode == EncodeMode::Snapshot {
-                    debug_log::debug_log!("Import updates to {}", self.peer_id());
+                    tracing::info!("Import updates to {}", self.peer_id());
                     self.update_oplog_and_apply_delta_to_state_if_needed(
                         |oplog| oplog.decode(parsed),
                         origin,
                     )?;
                 } else {
-                    debug_log::debug_log!("Import from new doc");
+                    tracing::info!("Import from new doc");
                     let app = LoroDoc::new();
                     decode_snapshot(&app, parsed.mode, parsed.body)?;
                     let oplog = self.oplog.lock().unwrap();
@@ -453,7 +459,8 @@ impl LoroDoc {
         let old_frontiers = oplog.frontiers().clone();
         f(&mut oplog)?;
         if !self.detached.load(Acquire) {
-            debug_log::debug_log!("Attached. CalcDiff.");
+            let s = tracing::span!(tracing::Level::INFO, "Attached. CalcDiff.");
+            let _e = s.enter();
             let mut diff = DiffCalculator::default();
             let diff = diff.calc_diff_internal(
                 &oplog,
@@ -471,7 +478,7 @@ impl LoroDoc {
                 new_version: Cow::Owned(oplog.frontiers().clone()),
             });
         } else {
-            debug_log::debug_log!("Detached");
+            tracing::info!("Detached");
         }
         Ok(())
     }
@@ -551,48 +558,90 @@ impl LoroDoc {
         self.oplog.lock().unwrap().dag.frontiers_to_vv(f).unwrap()
     }
 
+    pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrHandler> {
+        let value: LoroValue = self.state.lock().unwrap().get_value_by_path(path)?;
+        if let LoroValue::Container(c) = value {
+            Some(ValueOrHandler::Handler(Handler::new_attached(
+                c.clone(),
+                self.arena.clone(),
+                self.get_global_txn(),
+                Arc::downgrade(&self.state),
+            )))
+        } else {
+            Some(ValueOrHandler::Value(value))
+        }
+    }
+
+    /// Get the handler by the string path.
+    pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrHandler> {
+        let path = str_to_path(path)?;
+        self.get_by_path(&path)
+    }
+
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
-        let idx = self.get_container_idx(id, ContainerType::Text);
-        TextHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
+        let id = id.into_container_id(&self.arena, ContainerType::Text);
+        Handler::new_attached(
+            id,
+            self.arena.clone(),
+            self.get_global_txn(),
+            Arc::downgrade(&self.state),
+        )
+        .into_text()
+        .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
-        let idx = self.get_container_idx(id, ContainerType::List);
-        ListHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
+        let id = id.into_container_id(&self.arena, ContainerType::List);
+        Handler::new_attached(
+            id,
+            self.arena.clone(),
+            self.get_global_txn(),
+            Arc::downgrade(&self.state),
+        )
+        .into_list()
+        .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
-        let idx = self.get_container_idx(id, ContainerType::Map);
-        MapHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
+        let id = id.into_container_id(&self.arena, ContainerType::Map);
+        Handler::new_attached(
+            id,
+            self.arena.clone(),
+            self.get_global_txn(),
+            Arc::downgrade(&self.state),
+        )
+        .into_map()
+        .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
-        let idx = self.get_container_idx(id, ContainerType::Tree);
-        TreeHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
+        let id = id.into_container_id(&self.arena, ContainerType::Tree);
+        Handler::new_attached(
+            id,
+            self.arena.clone(),
+            self.get_global_txn(),
+            Arc::downgrade(&self.state),
+        )
+        .into_tree()
+        .unwrap()
     }
 
     /// This is for debugging purpose. It will travel the whole oplog
     #[inline]
     pub fn diagnose_size(&self) {
         self.oplog().lock().unwrap().diagnose_size();
-    }
-
-    #[inline]
-    fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {
-        let id = id.into_container_id(&self.arena, c_type);
-        self.arena.register_container(&id)
     }
 
     #[inline]
@@ -699,7 +748,7 @@ impl LoroDoc {
             return;
         }
 
-        debug_log::debug_log!("Attached {}", self.peer_id());
+        tracing::info!("Attached {}", self.peer_id());
         let f = self.oplog_frontiers();
         self.checkout(&f).unwrap();
         self.detached.store(false, Release);

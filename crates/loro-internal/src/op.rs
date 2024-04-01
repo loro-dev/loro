@@ -504,29 +504,33 @@ impl DeltaValue for SliceRanges {
         Ok(())
     }
 
-    // FIXME: this seems wrong
     fn take(&mut self, target_len: usize) -> Self {
         let mut right = Self {
             ranges: Default::default(),
             id: self.id.inc(target_len as i32),
         };
-        let mut cur_len = 0;
-        while cur_len < target_len {
+
+        let right_target_len = self.length() - target_len;
+        let mut right_len = 0;
+        while right_len < right_target_len {
             let range = self.ranges.pop().unwrap();
             let range_len = range.content_len();
-            if cur_len + range_len <= target_len {
+            if right_len + range_len <= target_len {
                 right.ranges.push(range);
-                cur_len += range_len;
+                right_len += range_len;
             } else {
-                let new_range = range.slice(target_len - cur_len, range_len);
+                let new_range = range.slice(right_len * 2 - right_target_len, range_len);
                 right.ranges.push(new_range);
-                self.ranges.push(range.slice(0, target_len - cur_len));
-                cur_len = target_len;
+                self.ranges
+                    .push(range.slice(0, right_len * 2 - right_target_len));
+                right_len = right_target_len;
             }
         }
 
         std::mem::swap(self, &mut right);
-        right // now it's left
+        let left = right;
+        #[allow(clippy::let_and_return)]
+        left
     }
 
     fn length(&self) -> usize {

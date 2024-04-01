@@ -18,7 +18,7 @@ use crate::{
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalContainerDiff, InternalDiff},
     fx_map,
-    handler::ValueOrContainer,
+    handler::ValueOrHandler,
     id::PeerID,
     op::{ListSlice, Op, RawOp, RawOpContent},
     relative_pos::{CannotFindRelativePosition, PosQueryResult, RelativePosition},
@@ -293,7 +293,7 @@ impl DocState {
     /// Panic when the diff cannot be merged with the previous diff.
     /// Caller should call [pre_txn] before calling this to avoid panic.
     fn record_diff(&mut self, diff: InternalDocDiff) {
-        if !self.event_recorder.recording_diff {
+        if !self.event_recorder.recording_diff || diff.diff.is_empty() {
             return;
         }
 
@@ -338,9 +338,7 @@ impl DocState {
         let diffs = std::mem::take(&mut recorder.diffs);
         let start = recorder.diff_start_version.take().unwrap();
         recorder.diff_start_version = Some((*diffs.last().unwrap().new_version).to_owned());
-        // debug_dbg!(&diffs);
         let event = self.diffs_to_event(diffs, start);
-        // debug_dbg!(&event);
         self.event_recorder.events.push(event);
     }
 
@@ -360,7 +358,7 @@ impl DocState {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
-        // debug_log::debug_log!("Diff = {:#?}", &diff);
+        // tracing::info!("Diff = {:#?}", &diff);
         let is_recording = self.is_recording();
         self.pre_txn(diff.origin.clone(), diff.local);
         let Cow::Owned(inner) = std::mem::take(&mut diff.diff) else {
@@ -533,14 +531,11 @@ impl DocState {
                 }
             }
             RawOpContent::Tree(TreeOp { target, .. }) => {
-                let state = get_or_create!(self, container).as_tree_state().unwrap();
                 // create associated metadata container
                 // TODO: maybe we could create map container only when setting metadata
-                if !&state.trees.contains_key(target) {
-                    let container_id = target.associated_meta_container();
-                    let child_idx = self.arena.register_container(&container_id);
-                    self.arena.set_parent(child_idx, Some(container));
-                }
+                let container_id = target.associated_meta_container();
+                let child_idx = self.arena.register_container(&container_id);
+                self.arena.set_parent(child_idx, Some(container));
             }
         }
     }
@@ -572,14 +567,11 @@ impl DocState {
                 }
             }
             InternalDiff::Tree(tree) => {
-                let state = get_or_create!(self, container).as_tree_state().unwrap();
                 for diff in tree.diff.iter() {
                     let target = &diff.target;
-                    if !state.trees.contains_key(target) {
-                        let container_id = target.associated_meta_container();
-                        let child_idx = self.arena.register_container(&container_id);
-                        self.arena.set_parent(child_idx, Some(container));
-                    }
+                    let container_id = target.associated_meta_container();
+                    let child_idx = self.arena.register_container(&container_id);
+                    self.arena.set_parent(child_idx, Some(container));
                 }
             }
             InternalDiff::RichtextRaw(_) => {}
@@ -702,6 +694,7 @@ impl DocState {
     }
 
     #[inline(always)]
+    #[allow(unused)]
     pub(crate) fn with_state<F, R>(&mut self, idx: ContainerIdx, f: F) -> R
     where
         F: FnOnce(&State) -> R,
@@ -922,7 +915,7 @@ impl DocState {
                     } else {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
-                        debug_log::debug_log!(
+                        tracing::info!(
                             "⚠️ WARNING: ignore because cannot find path {:#?} deep_value {:#?}",
                             &container_diff,
                             self.get_deep_value_with_id()
@@ -966,24 +959,23 @@ impl DocState {
 
     // the container may be override, so it may return None
     fn get_path(&self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
-        debug_log::group!("GET PATH {:?}", idx);
+        let s = tracing::span!(tracing::Level::INFO, "GET PATH ", ?idx);
+        let _e = s.enter();
         let mut ans = Vec::new();
         let mut idx = idx;
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
-            debug_log::debug_dbg!(&id);
             if let Some(parent_idx) = self.arena.get_parent(idx) {
                 let parent_state = self.states.get(&parent_idx).unwrap();
-                debug_log::debug_dbg!(&parent_state);
                 let Some(prop) = parent_state.get_child_index(&id) else {
-                    debug_log::debug_log!("Missing in parent children");
+                    tracing::info!("Missing in parent children");
                     return None;
                 };
                 ans.push((id, prop));
                 idx = parent_idx;
             } else {
                 // this container may be deleted
-                debug_log::debug_log!("Deleted or root");
+                tracing::info!("Deleted or root");
                 let prop = id.as_root()?.0.clone();
                 ans.push((id, Index::Key(prop)));
                 break;
@@ -1107,6 +1099,66 @@ impl DocState {
             }
         }
     }
+
+    pub fn get_value_by_path(&mut self, path: &[Index]) -> Option<LoroValue> {
+        if path.is_empty() {
+            return None;
+        }
+
+        let mut state_idx = {
+            let root_index = path[0].as_key()?;
+            self.arena.get_root_container_idx_by_key(root_index)?
+        };
+
+        if path.len() == 1 {
+            let cid = self.arena.idx_to_id(state_idx)?;
+            return Some(LoroValue::Container(cid));
+        }
+
+        for index in path[..path.len() - 1].iter().skip(1) {
+            let parent_state = self.states.get(&state_idx)?;
+            match parent_state {
+                State::ListState(l) => {
+                    let Some(LoroValue::Container(c)) = l.get(*index.as_seq()?) else {
+                        return None;
+                    };
+                    state_idx = self.arena.register_container(c);
+                }
+                State::MapState(m) => {
+                    let Some(LoroValue::Container(c)) = m.get(index.as_key()?) else {
+                        return None;
+                    };
+                    state_idx = self.arena.register_container(c);
+                }
+                State::RichtextState(_) => return None,
+                State::TreeState(_) => {
+                    let id = index.as_node()?;
+                    let cid = id.associated_meta_container();
+                    state_idx = self.arena.register_container(&cid);
+                }
+            }
+        }
+
+        let parent_state = self.states.get_mut(&state_idx)?;
+        let index = path.last().unwrap();
+        let value: LoroValue = match parent_state {
+            State::ListState(l) => l.get(*index.as_seq()?).cloned()?,
+            State::MapState(m) => m.get(index.as_key()?).cloned()?,
+            State::RichtextState(s) => {
+                let s = s.to_string_mut();
+                s.chars()
+                    .nth(*index.as_seq()?)
+                    .map(|c| c.to_string().into())?
+            }
+            State::TreeState(_) => {
+                let id = index.as_node()?;
+                let cid = id.associated_meta_container();
+                cid.into()
+            }
+        };
+
+        Some(value)
+    }
 }
 
 struct SubContainerDiffPatch {
@@ -1145,8 +1197,8 @@ impl SubContainerDiffPatch {
                 for delta in list.iter() {
                     if delta.is_insert() {
                         for v in delta.as_insert().unwrap().0.iter() {
-                            if matches!(v, ValueOrContainer::Container(_)) {
-                                let idx = v.as_container().unwrap().container_idx();
+                            if matches!(v, ValueOrHandler::Handler(_)) {
+                                let idx = v.as_handler().unwrap().container_idx();
                                 if self.all_idx.contains(&idx) {
                                     // There is one in subsequent elements that require applying the diff
                                     self.mark_bring_back.insert(idx);
@@ -1175,7 +1227,7 @@ impl SubContainerDiffPatch {
             }
             Diff::Map(map) => {
                 for (_, v) in map.updated.iter() {
-                    if let Some(ValueOrContainer::Container(handler)) = &v.value {
+                    if let Some(ValueOrHandler::Handler(handler)) = &v.value {
                         let idx = handler.container_idx();
                         if self.all_idx.contains(&idx) {
                             self.mark_bring_back.insert(idx);

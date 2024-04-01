@@ -11,7 +11,7 @@ pub mod diff_calc;
 pub mod handler;
 pub use event::{ContainerDiff, DiffEvent, DocDiff};
 pub use fxhash::FxHashMap;
-pub use handler::{ListHandler, MapHandler, TextHandler, TreeHandler};
+pub use handler::{BasicHandler, HandlerTrait, ListHandler, MapHandler, TextHandler, TreeHandler};
 pub use loro::LoroDoc;
 pub use oplog::OpLog;
 pub use state::DocState;
@@ -25,7 +25,7 @@ pub mod change;
 pub mod configure;
 pub mod container;
 pub mod dag;
-mod encoding;
+pub mod encoding;
 pub mod id;
 pub mod op;
 pub mod version;
@@ -37,6 +37,7 @@ mod span;
 #[cfg(test)]
 pub mod tests;
 mod utils;
+pub use utils::string_slice::StringSlice;
 
 pub mod delta;
 pub mod event;

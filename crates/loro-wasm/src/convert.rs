@@ -2,66 +2,76 @@ use std::sync::Arc;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use loro_internal::delta::{DeltaItem, ResolvedMapDelta};
+use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::event::Diff;
-use loro_internal::handler::{Handler, ValueOrContainer};
+use loro_internal::handler::{Handler, ValueOrHandler};
 use loro_internal::{LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
-use crate::{LoroList, LoroMap, LoroText, LoroTree};
+use crate::{
+    frontiers_to_ids, Container, JsContainer, JsImportBlobMetadata, LoroList, LoroMap, LoroText,
+    LoroTree,
+};
 use wasm_bindgen::__rt::IntoJsResult;
-use wasm_bindgen::convert::FromWasmAbi;
+use wasm_bindgen::convert::RefFromWasmAbi;
 
 /// Convert a `JsValue` to `T` by constructor's name.
 ///
 /// more details can be found in https://github.com/rustwasm/wasm-bindgen/issues/2231#issuecomment-656293288
-pub(crate) fn js_to_any<T: FromWasmAbi<Abi = u32>>(
-    js: JsValue,
-    struct_name: &str,
-) -> Result<T, JsValue> {
+pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
+    let js: JsValue = js.into();
     if !js.is_object() {
-        return Err(JsValue::from_str(
-            format!("Value supplied as {} is not an object", struct_name).as_str(),
-        ));
+        return Err(JsValue::from_str(&format!(
+            "Value supplied is not an object, but {:?}",
+            js
+        )));
     }
-    let ctor_name = Object::get_prototype_of(&js).constructor().name();
-    if ctor_name == struct_name {
-        let ptr = Reflect::get(&js, &JsValue::from_str("ptr"))?;
-        let ptr_u32: u32 = ptr.as_f64().ok_or(JsValue::NULL)? as u32;
-        let obj = unsafe { T::from_abi(ptr_u32) };
-        Ok(obj)
-    } else {
-        return Err(JsValue::from_str(
-            format!(
-                "Value ctor_name is {} but the required struct name is {}",
-                ctor_name, struct_name
-            )
-            .as_str(),
-        ));
-    }
-}
 
-impl TryFrom<JsValue> for LoroText {
-    type Error = JsValue;
+    let kind_method = Reflect::get(&js, &JsValue::from_str("kind"));
+    let kind = match kind_method {
+        Ok(kind_method) if kind_method.is_function() => {
+            let kind_string = js_sys::Function::from(kind_method).call0(&js);
+            match kind_string {
+                Ok(kind_string) if kind_string.is_string() => kind_string.as_string().unwrap(),
+                _ => return Err(JsValue::from_str("kind() did not return a string")),
+            }
+        }
+        _ => return Err(JsValue::from_str("No kind method found or not a function")),
+    };
 
-    fn try_from(value: JsValue) -> Result<Self, Self::Error> {
-        js_to_any(value, "LoroText")
-    }
-}
+    let Ok(ptr) = Reflect::get(&js, &JsValue::from_str("__wbg_ptr")) else {
+        return Err(JsValue::from_str("Cannot find pointer field"));
+    };
+    let ptr_u32: u32 = ptr.as_f64().unwrap() as u32;
+    let container = match kind.as_str() {
+        "Text" => {
+            let obj = unsafe { LoroText::ref_from_abi(ptr_u32) };
+            Container::Text(obj.clone())
+        }
+        "Map" => {
+            let obj = unsafe { LoroMap::ref_from_abi(ptr_u32) };
+            Container::Map(obj.clone())
+        }
+        "List" => {
+            let obj = unsafe { LoroList::ref_from_abi(ptr_u32) };
+            Container::List(obj.clone())
+        }
+        "Tree" => {
+            let obj = unsafe { LoroTree::ref_from_abi(ptr_u32) };
+            Container::Tree(obj.clone())
+        }
+        _ => {
+            return Err(JsValue::from_str(
+                format!(
+                    "Value kind is {} but the valid container name is Map, List, Text or Tree",
+                    kind
+                )
+                .as_str(),
+            ));
+        }
+    };
 
-impl TryFrom<JsValue> for LoroList {
-    type Error = JsValue;
-
-    fn try_from(value: JsValue) -> Result<Self, Self::Error> {
-        js_to_any(value, "LoroList")
-    }
-}
-
-impl TryFrom<JsValue> for LoroMap {
-    type Error = JsValue;
-
-    fn try_from(value: JsValue) -> Result<Self, Self::Error> {
-        js_to_any(value, "LoroMap")
-    }
+    Ok(container)
 }
 
 pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
@@ -71,9 +81,7 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
         Diff::Tree(tree) => {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("tree"))
                 .unwrap();
-
-            // TODO: PERF Avoid clone
-            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &tree.clone().into()).unwrap();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &tree.into()).unwrap();
         }
         Diff::List(list) => {
             // set type as "list"
@@ -96,13 +104,7 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("text"))
                 .unwrap();
             // set diff as array
-            // TODO: PERF Avoid clone
-            js_sys::Reflect::set(
-                &obj,
-                &JsValue::from_str("diff"),
-                &JsValue::from(text.clone()),
-            )
-            .unwrap();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &JsValue::from(text)).unwrap();
         }
         Diff::Map(map) => {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("map"))
@@ -111,8 +113,7 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
             js_sys::Reflect::set(
                 &obj,
                 &JsValue::from_str("updated"),
-                // TODO: PERF Avoid clone
-                &map_delta_to_js(map.clone(), doc),
+                &map_delta_to_js(map, doc),
             )
             .unwrap();
         }
@@ -123,7 +124,7 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
     obj.into_js_result().unwrap()
 }
 
-fn delta_item_to_js(item: DeltaItem<Vec<ValueOrContainer>, ()>, doc: &Arc<LoroDoc>) -> JsValue {
+fn delta_item_to_js(item: DeltaItem<Vec<ValueOrHandler>, ()>, doc: &Arc<LoroDoc>) -> JsValue {
     let obj = Object::new();
     match item {
         DeltaItem::Retain { retain: len, .. } => {
@@ -138,8 +139,8 @@ fn delta_item_to_js(item: DeltaItem<Vec<ValueOrContainer>, ()>, doc: &Arc<LoroDo
             let arr = Array::new_with_length(value.len() as u32);
             for (i, v) in value.into_iter().enumerate() {
                 let value = match v {
-                    ValueOrContainer::Value(v) => convert(v),
-                    ValueOrContainer::Container(h) => handler_to_js_value(h, doc.clone()),
+                    ValueOrHandler::Value(v) => convert(v),
+                    ValueOrHandler::Handler(h) => handler_to_js_value(h, Some(doc.clone())),
                 };
                 arr.set(i as u32, value);
             }
@@ -189,7 +190,7 @@ pub fn convert(value: LoroValue) -> JsValue {
 
             map.into_js_result().unwrap()
         }
-        LoroValue::Container(container_id) => JsValue::from(container_id),
+        LoroValue::Container(container_id) => JsValue::from(&container_id),
         LoroValue::Binary(binary) => {
             let binary = Arc::try_unwrap(binary).unwrap_or_else(|m| (*m).clone());
             let arr = Uint8Array::new_with_length(binary.len() as u32);
@@ -201,13 +202,42 @@ pub fn convert(value: LoroValue) -> JsValue {
     }
 }
 
-fn map_delta_to_js(value: ResolvedMapDelta, doc: &Arc<LoroDoc>) -> JsValue {
+impl From<ImportBlobMetadata> for JsImportBlobMetadata {
+    fn from(meta: ImportBlobMetadata) -> Self {
+        let start_vv = super::VersionVector(meta.partial_start_vv);
+        let end_vv = super::VersionVector(meta.partial_end_vv);
+        let start_vv: JsValue = start_vv.into();
+        let end_vv: JsValue = end_vv.into();
+        let start_timestamp: JsValue = JsValue::from_f64(meta.start_timestamp as f64);
+        let end_timestamp: JsValue = JsValue::from_f64(meta.end_timestamp as f64);
+        let is_snapshot: JsValue = JsValue::from_bool(meta.is_snapshot);
+        let change_num: JsValue = JsValue::from_f64(meta.change_num as f64);
+        let ans = Object::new();
+        js_sys::Reflect::set(
+            &ans,
+            &JsValue::from_str("partialStartVersionVector"),
+            &start_vv,
+        )
+        .unwrap();
+        js_sys::Reflect::set(&ans, &JsValue::from_str("partialEndVersionVector"), &end_vv).unwrap();
+        let js_frontiers: JsValue = frontiers_to_ids(&meta.start_frontiers).into();
+        js_sys::Reflect::set(&ans, &JsValue::from_str("startFrontiers"), &js_frontiers).unwrap();
+        js_sys::Reflect::set(&ans, &JsValue::from_str("startTimestamp"), &start_timestamp).unwrap();
+        js_sys::Reflect::set(&ans, &JsValue::from_str("endTimestamp"), &end_timestamp).unwrap();
+        js_sys::Reflect::set(&ans, &JsValue::from_str("isSnapshot"), &is_snapshot).unwrap();
+        js_sys::Reflect::set(&ans, &JsValue::from_str("changeNum"), &change_num).unwrap();
+        let ans: JsValue = ans.into();
+        ans.into()
+    }
+}
+
+fn map_delta_to_js(value: &ResolvedMapDelta, doc: &Arc<LoroDoc>) -> JsValue {
     let obj = Object::new();
     for (key, value) in value.updated.iter() {
         let value = if let Some(value) = value.value.clone() {
             match value {
-                ValueOrContainer::Value(v) => convert(v),
-                ValueOrContainer::Container(h) => handler_to_js_value(h, doc.clone()),
+                ValueOrHandler::Value(v) => convert(v),
+                ValueOrHandler::Handler(h) => handler_to_js_value(h, Some(doc.clone())),
             }
         } else {
             JsValue::null()
@@ -219,13 +249,9 @@ fn map_delta_to_js(value: ResolvedMapDelta, doc: &Arc<LoroDoc>) -> JsValue {
     obj.into_js_result().unwrap()
 }
 
-pub(crate) fn handler_to_js_value(handler: Handler, doc: Arc<LoroDoc>) -> JsValue {
+pub(crate) fn handler_to_js_value(handler: Handler, doc: Option<Arc<LoroDoc>>) -> JsValue {
     match handler {
-        Handler::Text(t) => LoroText {
-            handler: t,
-            _doc: doc,
-        }
-        .into(),
+        Handler::Text(t) => LoroText { handler: t, doc }.into(),
         Handler::Map(m) => LoroMap { handler: m, doc }.into(),
         Handler::List(l) => LoroList { handler: l, doc }.into(),
         Handler::Tree(t) => LoroTree { handler: t, doc }.into(),

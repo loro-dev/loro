@@ -262,22 +262,22 @@ impl VersionVectorDiff {
     }
 
     pub fn get_id_spans_left(&self) -> impl Iterator<Item = IdSpan> + '_ {
-        self.left.iter().map(|(client_id, span)| IdSpan {
-            client_id: *client_id,
+        self.left.iter().map(|(peer, span)| IdSpan {
+            peer: *peer,
             counter: *span,
         })
     }
 
     pub fn get_id_spans_right(&self) -> impl Iterator<Item = IdSpan> + '_ {
-        self.right.iter().map(|(client_id, span)| IdSpan {
-            client_id: *client_id,
+        self.right.iter().map(|(peer, span)| IdSpan {
+            peer: *peer,
             counter: *span,
         })
     }
 }
 
 fn subtract_start(m: &mut FxHashMap<PeerID, CounterSpan>, target: IdSpan) {
-    if let Some(span) = m.get_mut(&target.client_id) {
+    if let Some(span) = m.get_mut(&target.peer) {
         if span.start < target.counter.end {
             span.start = target.counter.end;
         }
@@ -286,11 +286,11 @@ fn subtract_start(m: &mut FxHashMap<PeerID, CounterSpan>, target: IdSpan) {
 
 fn merge(m: &mut FxHashMap<PeerID, CounterSpan>, mut target: IdSpan) {
     target.normalize_();
-    if let Some(span) = m.get_mut(&target.client_id) {
+    if let Some(span) = m.get_mut(&target.peer) {
         span.start = span.start.min(target.counter.start);
         span.end = span.end.max(target.counter.end);
     } else {
-        m.insert(target.client_id, target.counter);
+        m.insert(target.peer, target.counter);
     }
 }
 
@@ -451,11 +451,11 @@ impl VersionVector {
 
     /// Returns the spans that are in `self` but not in `rhs`
     pub fn sub_iter<'a>(&'a self, rhs: &'a Self) -> impl Iterator<Item = IdSpan> + 'a {
-        self.iter().filter_map(move |(client_id, &counter)| {
-            if let Some(&rhs_counter) = rhs.get(client_id) {
+        self.iter().filter_map(move |(peer, &counter)| {
+            if let Some(&rhs_counter) = rhs.get(peer) {
                 if counter > rhs_counter {
                     Some(IdSpan {
-                        client_id: *client_id,
+                        peer: *peer,
                         counter: CounterSpan {
                             start: rhs_counter,
                             end: counter,
@@ -466,7 +466,7 @@ impl VersionVector {
                 }
             } else if counter > 0 {
                 Some(IdSpan {
-                    client_id: *client_id,
+                    peer: *peer,
                     counter: CounterSpan {
                         start: 0,
                         end: counter,
@@ -479,9 +479,7 @@ impl VersionVector {
     }
 
     pub fn sub_vec(&self, rhs: &Self) -> IdSpanVector {
-        self.sub_iter(rhs)
-            .map(|x| (x.client_id, x.counter))
-            .collect()
+        self.sub_iter(rhs).map(|x| (x.peer, x.counter)).collect()
     }
 
     pub fn distance_to(&self, other: &Self) -> usize {
@@ -618,7 +616,7 @@ impl VersionVector {
     }
 
     pub fn intersect_span(&self, target: IdSpan) -> Option<CounterSpan> {
-        if let Some(&end) = self.get(&target.client_id) {
+        if let Some(&end) = self.get(&target.peer) {
             if end > target.ctr_start() {
                 let count_end = target.ctr_end();
                 return Some(CounterSpan {
@@ -667,22 +665,22 @@ impl VersionVector {
     }
 
     pub fn extend_to_include(&mut self, span: IdSpan) {
-        if let Some(counter) = self.get_mut(&span.client_id) {
+        if let Some(counter) = self.get_mut(&span.peer) {
             if *counter < span.counter.norm_end() {
                 *counter = span.counter.norm_end();
             }
         } else {
-            self.insert(span.client_id, span.counter.norm_end());
+            self.insert(span.peer, span.counter.norm_end());
         }
     }
 
     pub fn shrink_to_exclude(&mut self, span: IdSpan) {
         if span.counter.min() == 0 {
-            self.remove(&span.client_id);
+            self.remove(&span.peer);
             return;
         }
 
-        if let Some(counter) = self.get_mut(&span.client_id) {
+        if let Some(counter) = self.get_mut(&span.peer) {
             if *counter > span.counter.min() {
                 *counter = span.counter.min();
             }
@@ -692,7 +690,7 @@ impl VersionVector {
     pub fn forward(&mut self, spans: &IdSpanVector) {
         for span in spans.iter() {
             self.extend_to_include(IdSpan {
-                client_id: *span.0,
+                peer: *span.0,
                 counter: *span.1,
             });
         }
@@ -701,7 +699,7 @@ impl VersionVector {
     pub fn retreat(&mut self, spans: &IdSpanVector) {
         for span in spans.iter() {
             self.shrink_to_exclude(IdSpan {
-                client_id: *span.0,
+                peer: *span.0,
                 counter: *span.1,
             });
         }
@@ -752,7 +750,7 @@ impl VersionVector {
         shrink_frontiers(last_ids, dag)
     }
 
-    pub(crate) fn trim(&self, vv: &&VersionVector) -> VersionVector {
+    pub(crate) fn trim(&self, vv: &VersionVector) -> VersionVector {
         let mut ans = VersionVector::new();
         for (client_id, &counter) in self.iter() {
             if let Some(&other_counter) = vv.get(client_id) {
@@ -801,6 +799,10 @@ fn shrink_frontiers(mut last_ids: Vec<ID>, dag: &AppDag) -> Frontiers {
 
     let mut frontiers = Frontiers::default();
     let mut frontiers_vv = Vec::new();
+
+    if last_ids.is_empty() {
+        return frontiers;
+    }
 
     if last_ids.len() == 1 {
         frontiers.push(last_ids[0]);
@@ -859,12 +861,22 @@ impl From<Vec<ID>> for VersionVector {
 
 impl FromIterator<ID> for VersionVector {
     fn from_iter<T: IntoIterator<Item = ID>>(iter: T) -> Self {
-        let mut vv = VersionVector::new();
+        let iter = iter.into_iter();
+        let mut vv = VersionVector(FxHashMap::with_capacity_and_hasher(
+            iter.size_hint().0,
+            Default::default(),
+        ));
         for id in iter {
             vv.set_last(id);
         }
 
         vv
+    }
+}
+
+impl FromIterator<(PeerID, Counter)> for VersionVector {
+    fn from_iter<T: IntoIterator<Item = (PeerID, Counter)>>(iter: T) -> Self {
+        VersionVector(FxHashMap::from_iter(iter))
     }
 }
 
@@ -981,35 +993,35 @@ impl PatchedVersionVector {
     #[inline]
     pub fn extend_to_include(&mut self, span: IdSpan) {
         self.patch.extend_to_include(span);
-        self.omit_if_needless(span.client_id);
+        self.omit_if_needless(span.peer);
     }
 
     #[inline]
     pub fn shrink_to_exclude(&mut self, span: IdSpan) {
         self.patch.shrink_to_exclude(span);
-        self.omit_if_needless(span.client_id);
+        self.omit_if_needless(span.peer);
     }
 
     #[inline]
     pub fn forward(&mut self, spans: &IdSpanVector) {
         for span in spans.iter() {
             let span = IdSpan {
-                client_id: *span.0,
+                peer: *span.0,
                 counter: *span.1,
             };
 
-            if let Some(counter) = self.patch.get_mut(&span.client_id) {
+            if let Some(counter) = self.patch.get_mut(&span.peer) {
                 if *counter < span.counter.norm_end() {
                     *counter = span.counter.norm_end();
-                    self.omit_if_needless(span.client_id);
+                    self.omit_if_needless(span.peer);
                 }
             } else {
                 let target = span.counter.norm_end();
-                if self.base.get(&span.client_id) == Some(&target) {
+                if self.base.get(&span.peer) == Some(&target) {
                     continue;
                 }
 
-                self.patch.insert(span.client_id, target);
+                self.patch.insert(span.peer, target);
             }
         }
     }
@@ -1018,14 +1030,14 @@ impl PatchedVersionVector {
     pub fn retreat(&mut self, spans: &IdSpanVector) {
         for span in spans.iter() {
             let span = IdSpan {
-                client_id: *span.0,
+                peer: *span.0,
                 counter: *span.1,
             };
 
-            if let Some(counter) = self.patch.get_mut(&span.client_id) {
+            if let Some(counter) = self.patch.get_mut(&span.peer) {
                 if *counter > span.counter.min() {
                     *counter = span.counter.min();
-                    self.omit_if_needless(span.client_id);
+                    self.omit_if_needless(span.peer);
                 }
             }
         }

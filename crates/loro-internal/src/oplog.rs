@@ -465,7 +465,7 @@ impl OpLog {
 
     pub(crate) fn iter_ops(&self, id_span: IdSpan) -> impl Iterator<Item = RichOp> + '_ {
         self.changes
-            .get(&id_span.client_id)
+            .get(&id_span.peer)
             .map(move |changes| {
                 let len = changes.len();
                 let start = changes
@@ -776,7 +776,7 @@ impl OpLog {
                     }
 
                     inner_vv.extend_to_include_end_id(change.id);
-                    // debug_log::debug_dbg!(&change, &inner_vv);
+
                     Some((change, cnt, vv.clone()))
                 } else {
                     None
@@ -830,7 +830,7 @@ impl OpLog {
     ) -> impl Iterator<Item = &'a Change> + 'a {
         let spans: Vec<_> = from.diff_iter(to).1.collect();
         spans.into_iter().flat_map(move |span| {
-            let peer = span.client_id;
+            let peer = span.peer;
             let cnt = span.counter.start;
             let end_cnt = span.counter.end;
             let peer_changes = self.changes.get(&peer).unwrap();
@@ -867,10 +867,7 @@ impl OpLog {
                     let counter = (id.lamport - change.lamport) as Counter + change.id.counter;
                     Some(ID::new(id.peer, counter))
                 }
-                Err(_) => {
-                    debug_log::debug_dbg!(id, &peer_changes);
-                    None
-                }
+                Err(_) => None,
             }
         } else {
             None

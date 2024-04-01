@@ -108,7 +108,7 @@ impl ID {
     #[inline]
     pub fn to_span(&self, len: usize) -> IdSpan {
         IdSpan {
-            client_id: self.peer,
+            peer: self.peer,
             counter: CounterSpan::new(self.counter, self.counter + len as Counter),
         }
     }

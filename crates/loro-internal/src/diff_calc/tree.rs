@@ -50,7 +50,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             }
         });
 
-        debug_log::debug_log!("\ndiff {:?}", diff);
+        tracing::info!("\ndiff {:?}", diff);
 
         InternalDiff::Tree(diff)
     }
@@ -70,9 +70,11 @@ impl TreeDiffCalculator {
         let tree_ops = oplog.op_groups.get_tree(&self.container).unwrap();
         let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
 
-        debug_log::group!("checkout current {:?} to {:?}", tree_cache.current_vv, to);
+        let s = format!("checkout current {:?} to {:?}", &tree_cache.current_vv, &to);
+        let s = tracing::span!(tracing::Level::INFO, "checkout", s = s);
+        let _e = s.enter();
         if to == &tree_cache.current_vv {
-            debug_log::debug_log!("checkout: to == current_vv");
+            tracing::info!("checkout: to == current_vv");
             return;
         }
         let to_frontiers = to.to_frontiers(&oplog.dag);
@@ -89,7 +91,7 @@ impl TreeDiffCalculator {
                 }
             }
         }
-        debug_log::debug_log!("retreat ops {:?}", retreat_ops);
+        tracing::info!(msg="retreat ops", retreat_ops=?retreat_ops);
         for op in retreat_ops {
             tree_cache.tree.get_mut(&op.target).unwrap().remove(&op);
             tree_cache.current_vv.shrink_to_exclude(IdSpan::new(
@@ -120,7 +122,7 @@ impl TreeDiffCalculator {
                 }
             }
         }
-        debug_log::debug_log!("forward ops {:?}", forward_ops);
+        tracing::info!("forward ops {:?}", forward_ops);
         for (lamport, op) in forward_ops {
             let op = MoveLamportAndID {
                 target: op.value.target,
@@ -142,7 +144,8 @@ impl TreeDiffCalculator {
         let tree_ops = oplog.op_groups.get_tree(&self.container).unwrap();
         let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
 
-        debug_log::group!("checkout_diff");
+        let s = tracing::span!(tracing::Level::INFO, "checkout_diff");
+        let _e = s.enter();
         let to_frontiers = to.to_frontiers(&oplog.dag);
         let from_frontiers = from.to_frontiers(&oplog.dag);
         let common_ancestors = oplog
@@ -150,7 +153,7 @@ impl TreeDiffCalculator {
             .find_common_ancestor(&from_frontiers, &to_frontiers);
         let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
         let lca_frontiers = lca_vv.to_frontiers(&oplog.dag);
-        debug_log::debug_log!(
+        tracing::info!(
             "from vv {:?} to vv {:?} current vv {:?} lca vv {:?}",
             from,
             to,
@@ -162,7 +165,7 @@ impl TreeDiffCalculator {
         let lca_min_lamport = self.get_min_lamport_by_frontiers(&lca_frontiers, oplog);
 
         // retreat for diff
-        debug_log::debug_log!("start retreat");
+        tracing::info!("start retreat");
         let mut diffs = vec![];
         let mut retreat_ops = vec![];
         for (_target, ops) in tree_cache.tree.iter() {
@@ -175,7 +178,7 @@ impl TreeDiffCalculator {
                 }
             }
         }
-        debug_log::debug_log!("retreat ops {:?}", retreat_ops);
+        tracing::info!("retreat ops {:?}", retreat_ops);
         for op in retreat_ops.into_iter().sorted().rev() {
             tree_cache.tree.get_mut(&op.target).unwrap().remove(&op);
             tree_cache.current_vv.shrink_to_exclude(IdSpan::new(
@@ -215,7 +218,7 @@ impl TreeDiffCalculator {
         }
 
         // forward
-        debug_log::debug_log!("forward");
+        tracing::info!("forward");
         let group = oplog
             .op_groups
             .get(&self.container)

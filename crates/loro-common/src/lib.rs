@@ -54,6 +54,13 @@ impl CompactId {
             counter: self.counter.get(),
         }
     }
+
+    pub fn inc(&self, start: i32) -> CompactId {
+        Self {
+            peer: self.peer,
+            counter: NonMaxI32::new(start + self.counter.get()).unwrap(),
+        }
+    }
 }
 
 impl TryFrom<ID> for CompactId {
@@ -115,16 +122,20 @@ pub enum ContainerID {
     Arbitrary, Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord, Serialize, Deserialize,
 )]
 pub enum ContainerType {
-    /// See [`crate::text::TextContent`]
     Text,
     Map,
     List,
     Tree,
-    // TODO: Users can define their own container types.
-    // Custom(u16),
 }
 
 impl ContainerType {
+    pub const ALL_TYPES: [ContainerType; 4] = [
+        ContainerType::Map,
+        ContainerType::List,
+        ContainerType::Text,
+        ContainerType::Tree,
+    ];
+
     pub fn default_value(&self) -> LoroValue {
         match self {
             ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
@@ -284,12 +295,12 @@ mod container {
 
         fn try_from(value: &str) -> Result<Self, Self::Error> {
             match value {
-                "Map" => Ok(ContainerType::Map),
-                "List" => Ok(ContainerType::List),
-                "Text" => Ok(ContainerType::Text),
-                "Tree" => Ok(ContainerType::Tree),
+                "Map" | "map" => Ok(ContainerType::Map),
+                "List" | "list" => Ok(ContainerType::List),
+                "Text" | "text" => Ok(ContainerType::Text),
+                "Tree" | "tree" => Ok(ContainerType::Tree),
                 _ => Err(LoroError::DecodeError(
-                    ("Unknown container type".to_string() + value).into(),
+                    format!("Unknown container type \"{}\". The valid options are Map|List|Text|Tree|MovableList.", value).into(),
                 )),
             }
         }

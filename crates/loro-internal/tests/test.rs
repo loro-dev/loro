@@ -5,9 +5,9 @@ use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, ID};
 use loro_internal::{
     delta::ResolvedMapValue,
     event::Diff,
-    handler::{Handler, TextDelta, ValueOrContainer},
+    handler::{Handler, TextDelta, ValueOrHandler},
     version::Frontiers,
-    ApplyDiff, LoroDoc, ToJson,
+    ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson,
 };
 use serde_json::json;
 
@@ -129,13 +129,11 @@ fn handler_in_event() {
             .iter()
             .next()
             .unwrap();
-        assert!(matches!(
-            value,
-            ValueOrContainer::Container(Handler::Text(_))
-        ));
+        assert!(matches!(value, ValueOrHandler::Handler(Handler::Text(_))));
     }));
     let list = doc.get_list("list");
-    list.insert_container(0, ContainerType::Text).unwrap();
+    list.insert_container(0, TextHandler::new_detached())
+        .unwrap();
     doc.commit_then_renew();
 }
 
@@ -159,7 +157,7 @@ fn out_of_bound_test() {
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
     let err = a
         .get_list("list")
-        .insert_container(3, ContainerType::Map)
+        .insert_container(3, MapHandler::new_detached())
         .unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
 }
@@ -171,15 +169,11 @@ fn list() {
     assert_eq!(a.get_list("list").get(0).unwrap(), LoroValue::from("Hello"));
     let map = a
         .get_list("list")
-        .insert_container(1, ContainerType::Map)
-        .unwrap()
-        .into_map()
+        .insert_container(1, MapHandler::new_detached())
         .unwrap();
     map.insert("Hello", LoroValue::from("u")).unwrap();
     let pos = map
-        .insert_container("pos", ContainerType::Map)
-        .unwrap()
-        .into_map()
+        .insert_container("pos", MapHandler::new_detached())
         .unwrap();
     pos.insert("x", 0).unwrap();
     pos.insert("y", 100).unwrap();
@@ -444,8 +438,9 @@ fn test_checkout() {
     let map = doc_0.get_map("map");
     doc_0
         .with_txn(|txn| {
-            let handler = map.insert_container_with_txn(txn, "text", ContainerType::Text)?;
-            let text = handler.into_text().unwrap();
+            let handler =
+                map.insert_container_with_txn(txn, "text", TextHandler::new_detached())?;
+            let text = handler;
             text.insert_with_txn(txn, 0, "123")
         })
         .unwrap();
@@ -601,14 +596,8 @@ fn a_list_of_map_checkout() {
     let entry = doc.get_map("entry");
     let (list, sub) = doc
         .with_txn(|txn| {
-            let list = entry
-                .insert_container_with_txn(txn, "list", loro_common::ContainerType::List)?
-                .into_list()
-                .unwrap();
-            let sub_map = list
-                .insert_container_with_txn(txn, 0, loro_common::ContainerType::Map)?
-                .into_map()
-                .unwrap();
+            let list = entry.insert_container_with_txn(txn, "list", ListHandler::new_detached())?;
+            let sub_map = list.insert_container_with_txn(txn, 0, MapHandler::new_detached())?;
             sub_map.insert_with_txn(txn, "x", 100.into())?;
             sub_map.insert_with_txn(txn, "y", 1000.into())?;
             Ok((list, sub_map))
@@ -619,8 +608,8 @@ fn a_list_of_map_checkout() {
     doc.with_txn(|txn| {
         list.insert_with_txn(txn, 0, 3.into())?;
         list.push_with_txn(txn, 4.into())?;
-        list.insert_container_with_txn(txn, 2, loro_common::ContainerType::Map)?;
-        list.insert_container_with_txn(txn, 3, loro_common::ContainerType::Map)?;
+        list.insert_container_with_txn(txn, 2, MapHandler::new_detached())?;
+        list.insert_container_with_txn(txn, 3, TextHandler::new_detached())?;
         Ok(())
     })
     .unwrap();
@@ -669,7 +658,6 @@ fn a_list_of_map_checkout() {
     doc.checkout(&v2).unwrap();
     println!("{}", doc.get_deep_value_with_id().to_json_pretty());
     assert_eq!(doc.get_deep_value().to_json(), d2);
-    debug_log::group!("checking out v1");
     doc.checkout(&v1).unwrap();
 
     println!("{}", doc.get_deep_value_with_id().to_json_pretty());
@@ -881,4 +869,18 @@ fn missing_event_when_checkout() {
     // checkout use the same diff_calculator, the depth of calculator is not updated
     doc.attach();
     assert!(value.lock().unwrap().contains_key("b"));
+}
+
+#[test]
+fn empty_event() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.get_map("map").insert("key", 123).unwrap();
+    doc.commit_then_renew();
+    let fire = Arc::new(AtomicBool::new(false));
+    let fire_clone = Arc::clone(&fire);
+    doc.subscribe_root(Arc::new(move |_e| {
+        fire_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+    }));
+    doc.import(&doc.export_snapshot()).unwrap();
+    assert!(!fire.load(std::sync::atomic::Ordering::Relaxed));
 }

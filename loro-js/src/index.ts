@@ -1,6 +1,18 @@
 export * from "loro-wasm";
-import { Container, Delta, LoroText, LoroTree,LoroTreeNode, OpId, Value, ContainerID, Loro, LoroList, LoroMap, TreeID } from "loro-wasm";
-
+import {
+  Container,
+  ContainerID,
+  Delta,
+  Loro,
+  LoroList,
+  LoroMap,
+  LoroText,
+  LoroTree,
+  LoroTreeNode,
+  OpId,
+  TreeID,
+  Value,
+} from "loro-wasm";
 
 Loro.prototype.getTypedMap = function (...args) {
   return this.getMap(...args);
@@ -36,10 +48,10 @@ export type Frontiers = OpId[];
 /**
  * Represents a path to identify the exact location of an event's target.
  * The path is composed of numbers (e.g., indices of a list container) strings
- * (e.g., keys of a map container) and TreeID (the node of a tree container), 
+ * (e.g., keys of a map container) and TreeID (the node of a tree container),
  * indicating the absolute position of the event's source within a loro document.
  */
-export type Path = (number | string | TreeID )[];
+export type Path = (number | string | TreeID)[];
 
 /**
  * A batch of events that created by a single `import`/`transaction`/`checkout`.
@@ -95,9 +107,10 @@ export type MapDiff = {
   updated: Record<string, Value | Container | undefined>;
 };
 
-export type TreeDiffItem = { target: TreeID; action: "create"; parent: TreeID | undefined }
-   | { target: TreeID; action: "delete" }
-   | { target: TreeID; action: "move"; parent: TreeID | undefined };
+export type TreeDiffItem =
+  | { target: TreeID; action: "create"; parent: TreeID | undefined }
+  | { target: TreeID; action: "delete" }
+  | { target: TreeID; action: "move"; parent: TreeID | undefined };
 
 export type TreeDiff = {
   type: "tree";
@@ -168,15 +181,15 @@ export function getType<T>(
   value: T,
 ): T extends LoroText
   ? "Text"
-  : T extends LoroMap
+  : T extends LoroMap<any>
   ? "Map"
-  : T extends LoroTree
+  : T extends LoroTree<any>
   ? "Tree"
-  : T extends LoroList
+  : T extends LoroList<any>
   ? "List"
   : "Json" {
   if (isContainer(value)) {
-    return value.kind();
+    return value.kind() as unknown as any;
   }
 
   return "Json" as any;
@@ -194,30 +207,28 @@ declare module "loro-wasm" {
     getTypedList<Key extends keyof T & string>(
       name: Key,
     ): T[Key] extends LoroList ? T[Key] : never;
+    getMap(key: string | ContainerID): LoroMap<T[string]>;
+    getList(key: string | ContainerID): LoroList<T[string]>;
+    getTree(key: string | ContainerID): LoroTree<T[string]>;
+    getText(key: string | ContainerID): LoroText;
   }
 
   interface LoroList<T extends any[] = any[]> {
-    insertContainer(pos: number, container: "Map"): LoroMap;
-    insertContainer(pos: number, container: "List"): LoroList;
-    insertContainer(pos: number, container: "Text"): LoroText;
-    insertContainer(pos: number, container: "Tree"): LoroTree;
-    insertContainer(pos: number, container: string): never;
-
+    new (): LoroList<T>;
+    insertContainer<C extends Container>(pos: number, child: C): C;
     get(index: number): undefined | Value | Container;
     getTyped<Key extends keyof T & number>(loro: Loro, index: Key): T[Key];
     insertTyped<Key extends keyof T & number>(pos: Key, value: T[Key]): void;
     insert(pos: number, value: Value): void;
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
+    getAttached(): undefined | LoroList<T>;
   }
 
   interface LoroMap<T extends Record<string, any> = Record<string, any>> {
-    setContainer(key: string, container_type: "Map"): LoroMap;
-    setContainer(key: string, container_type: "List"): LoroList;
-    setContainer(key: string, container_type: "Text"): LoroText;
-    setContainer(key: string, container_type: "Tree"): LoroTree;
-    setContainer(key: string, container_type: string): never;
-
+    new (): LoroMap<T>;
+    getOrCreateContainer<C extends Container>(key: string, child: C): C;
+    setContainer<C extends Container>(key: string, child: C): C;
     get(key: string): undefined | Value | Container;
     getTyped<Key extends keyof T & string>(txn: Loro, key: Key): T[Key];
     set(key: string, value: Value): void;
@@ -227,13 +238,15 @@ declare module "loro-wasm" {
   }
 
   interface LoroText {
+    new (): LoroText;
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
   }
 
-  interface LoroTree {
-    createNode(parent: TreeID | undefined): LoroTreeNode;
+  interface LoroTree<T extends Record<string, any> = Record<string, any>> {
+    new (): LoroTree<T>;
+    createNode(parent: TreeID | undefined): LoroTreeNode<T>;
     move(target: TreeID, parent: TreeID | undefined): void;
     delete(target: TreeID): void;
     has(target: TreeID): boolean;
@@ -241,12 +254,12 @@ declare module "loro-wasm" {
     subscribe(txn: Loro, listener: Listener): number;
   }
 
-  interface LoroTreeNode{
-    readonly data: LoroMap;
-    createNode(): LoroTreeNode;
+  interface LoroTreeNode<T extends Record<string, any> = Record<string, any>> {
+    readonly data: LoroMap<T>;
+    createNode(): LoroTreeNode<T>;
     setAsRoot(): void;
-    moveTo(parent: LoroTreeNode): void;
+    moveTo(parent: LoroTreeNode<T>): void;
     parent(): LoroTreeNode | undefined;
-    children(): Array<LoroTreeNode>;
+    children(): Array<LoroTreeNode<T>>;
   }
 }

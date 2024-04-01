@@ -24,7 +24,6 @@ use crate::{
     delta::{DeltaValue, StyleMeta},
 };
 
-// FIXME: Check splice and other things are using unicode index
 use self::{
     cursor_cache::CursorCache,
     query::{
@@ -614,13 +613,13 @@ pub(crate) fn utf16_to_unicode_index(s: &str, utf16_index: usize) -> Result<usiz
             return Ok(i + 1);
         }
         if current_utf16_index > utf16_index {
-            debug_log::debug_log!("WARNING: UTF16 MISMATCHED!");
+            tracing::info!("WARNING: UTF16 MISMATCHED!");
             return Err(i);
         }
         current_unicode_index = i + 1;
     }
 
-    debug_log::debug_log!("WARNING: UTF16 MISMATCHED!");
+    tracing::info!("WARNING: UTF16 MISMATCHED!");
     Err(current_unicode_index)
 }
 
@@ -1100,9 +1099,7 @@ mod cursor_cache {
 
                 let offset = pos - c.pos;
                 let leaf = tree.get_leaf(c.leaf.into());
-                let Some(s) = leaf.elem().as_str() else {
-                    return None;
-                };
+                let s = leaf.elem().as_str()?;
 
                 let Some(offset) = pos_to_unicode_index(s, offset, pos_type) else {
                     continue;
@@ -2128,8 +2125,7 @@ impl RichtextState {
         };
         assert!(end > start);
         assert!(end <= self.len_entity());
-        // debug_log::debug_dbg!(start, end);
-        // debug_log::debug_dbg!(&self.tree);
+
         let mut style_iter = self
             .style_ranges
             .as_ref()
@@ -2172,7 +2168,7 @@ impl RichtextState {
             }
 
             let iter_chunk = chunk.as_ref()?;
-            // debug_log::debug_dbg!(&iter_chunk, &chunk, offset, chunk_left_len);
+
             let styles = cur_style;
             let iter_len;
             let event_range;

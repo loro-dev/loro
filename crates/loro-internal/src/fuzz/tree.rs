@@ -5,7 +5,6 @@ use std::{
 };
 
 use arbitrary::Arbitrary;
-use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use loro_common::{LoroError, LoroTreeError, TreeID, ID};
@@ -18,7 +17,7 @@ use crate::{
 use crate::{
     delta::TreeValue,
     event::{Diff, Index},
-    handler::TreeHandler,
+    handler::{HandlerTrait, TreeHandler},
     loro::LoroDoc,
     value::{unresolved_to_collection, ToJson},
     version::Frontiers,
@@ -104,7 +103,6 @@ impl Actor {
         let root_value = Arc::clone(&actor.value_tracker);
         actor.loro.subscribe_root(Arc::new(move |event| {
             let mut root_value = root_value.lock().unwrap();
-            debug_dbg!(&event);
             for container_diff in event.events {
                 // if id == 0 {
                 //     println!("\nbefore {:?}", root_value);
@@ -166,7 +164,6 @@ impl Actor {
                         let mut v = TreeValue(&mut tree);
                         v.apply_diff(tree_diff);
                     } else {
-                        debug_dbg!(&container_diff);
                         unreachable!()
                     }
                 }
@@ -358,16 +355,16 @@ impl Actionable for Vec<Actor> {
                 let (a, b) = array_mut_ref!(self, [*from as usize, *to as usize]);
                 let mut visited = HashSet::new();
                 a.map_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.list_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.text_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.tree_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
 
                 a.loro
@@ -435,16 +432,16 @@ impl Actionable for Vec<Actor> {
                 let mut visited = HashSet::new();
                 let a = &mut self[0];
                 a.map_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.list_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.text_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
                 a.tree_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
+                    visited.insert(x.id().clone());
                 });
 
                 for i in 1..self.len() {
@@ -648,7 +645,7 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
             id.clone().into_string().unwrap()
         });
     }
-    debug_log::debug_log!("{}", a_result.to_json_pretty());
+    tracing::info!("{}", a_result.to_json_pretty());
     assert_eq!(&a_result, &b_result);
     assert_value_eq(&a_result, &a_value);
 
@@ -671,21 +668,26 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
 fn check_synced(sites: &mut [Actor]) {
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
-            debug_log::group!("checking {} with {}", i, j);
+            let s = tracing::span!(tracing::Level::INFO, "checking {} with {}", i, j);
+            let _e = s.enter();
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
             if (i + j) % 2 == 0 {
-                debug_log::group!("Updates {} to {}", j, i);
+                let s = tracing::span!(tracing::Level::INFO, "Updates {} to {}", j, i);
+                let _e = s.enter();
                 a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
 
-                debug_log::group!("Updates {} to {}", i, j);
+                let s = tracing::span!(tracing::Level::INFO, "Updates {} to {}", i, j);
+                let _e = s.enter();
                 b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
             } else {
-                debug_log::group!("Snapshot {} to {}", j, i);
+                let s = tracing::span!(tracing::Level::INFO, "Snapshot {} to {}", j, i);
+                let _e = s.enter();
                 a_doc.import(&b_doc.export_snapshot()).unwrap();
 
-                debug_log::group!("Snapshot {} to {}", i, j);
+                let s = tracing::span!(tracing::Level::INFO, "Snapshot {} to {}", i, j);
+                let _e = s.enter();
                 b_doc.import(&a_doc.export_snapshot()).unwrap();
             }
             check_eq(a, b);
@@ -760,11 +762,12 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     for action in actions.iter_mut() {
         sites.preprocess(action);
         applied.push(action.clone());
-        debug_log::debug_log!("\n{}", (&applied).table());
+        tracing::info!("\n{}", (&applied).table());
         sites.apply_action(action);
     }
 
-    debug_log::group!("check synced");
+    let s = tracing::span!(tracing::Level::INFO, "check synced");
+    let _e = s.enter();
     check_synced(&mut sites);
 
     check_history(&mut sites[1]);

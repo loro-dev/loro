@@ -1,6 +1,6 @@
 use bytes::{BufMut, BytesMut};
 use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
-use serde_columnar::{columnar, to_vec};
+use serde_columnar::{columnar, to_vec, ColumnarError};
 use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
@@ -184,7 +184,9 @@ pub struct TextRanges {
 
 impl TextRanges {
     #[inline]
-    pub fn decode_iter(bytes: &[u8]) -> LoroResult<impl Iterator<Item = TextRange> + '_> {
+    pub fn decode_iter(
+        bytes: &[u8],
+    ) -> LoroResult<impl Iterator<Item = Result<TextRange, ColumnarError>> + '_> {
         let iter = serde_columnar::iter_from_bytes::<TextRanges>(bytes)?;
         Ok(iter.ranges)
     }

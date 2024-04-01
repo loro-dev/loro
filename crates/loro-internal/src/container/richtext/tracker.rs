@@ -71,9 +71,8 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, mut op_id: IdFull, mut pos: usize, mut content: RichtextChunk) {
-        // debug_log::group!("TrackerInsert");
-        // debug_log::debug_dbg!(&op_id, pos, content);
-        // debug_log::debug_dbg!(&self);
+        // tracing::span!(tracing::Level::INFO, "TrackerInsert");
+
         let last_id = op_id.inc(content.len() as Counter - 1);
         let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
         if applied_counter_end > op_id.counter {
@@ -95,7 +94,7 @@ impl Tracker {
             if applied_counter_end > last_id.counter {
                 // the op is included in the applied vv
                 self.current_vv.extend_to_include_last_id(last_id.id());
-                // debug_log::debug_log!("Ops are already included {:#?}", &self);
+                // tracing::info!("Ops are already included {:#?}", &self);
                 return;
             }
 
@@ -108,7 +107,7 @@ impl Tracker {
         }
 
         // {
-        //     debug_log::group!("before insert {} pos={}", op_id, pos);
+        //     tracing::span!(tracing::Level::INFO, "before insert {} pos={}", op_id, pos);
         //     debug_log::debug_dbg!(&self);
         // }
         let result = self.rope.insert(
@@ -119,7 +118,7 @@ impl Tracker {
                 real_id: if op_id.peer == UNKNOWN_PEER_ID {
                     None
                 } else {
-                    Some(op_id.id())
+                    Some(op_id.id().try_into().unwrap())
                 },
                 status: Status::default(),
                 diff_status: None,
@@ -138,13 +137,12 @@ impl Tracker {
         let end_id = op_id.inc(content.len() as Counter);
         self.current_vv.extend_to_include_end_id(end_id.id());
         self.applied_vv.extend_to_include_end_id(end_id.id());
-        // debug_log::debug_dbg!(&self);
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
         for &new_leaf_idx in split {
             let leaf = self.rope.tree().get_elem(new_leaf_idx).unwrap();
-            // debug_log::debug_dbg!(&leaf.id_span(), new_leaf_idx);
+
             self.id_to_cursor
                 .update_insert(leaf.id_span(), new_leaf_idx)
         }
@@ -163,9 +161,8 @@ impl Tracker {
         mut len: usize,
         reverse: bool,
     ) {
-        // debug_log::group!("Tracker Delete");
-        // debug_log::debug_dbg!(&op_id, pos, len, reverse);
-        // debug_log::debug_dbg!(&self);
+        // tracing::span!(tracing::Level::INFO, "Tracker Delete");
+
         let last_id = op_id.inc(len as Counter - 1);
         let applied_counter_end = self.applied_vv.get(&last_id.peer).copied().unwrap_or(0);
         if applied_counter_end > op_id.counter {
@@ -182,7 +179,6 @@ impl Tracker {
 
             if applied_counter_end > last_id.counter {
                 self.current_vv.extend_to_include_last_id(last_id);
-                debug_log::debug_dbg!(&self);
                 return;
             }
 
@@ -193,10 +189,9 @@ impl Tracker {
             // If reverse, don't need to change the pos, because it's deleting backwards.
             // If not reverse, we don't need to change the pos either, because the `start` chars after it are already deleted
         }
-        // debug_log::debug_dbg!(&op_id, pos, len, reverse);
 
-        // debug_log::debug_log!("after forwarding pos={} len={}", pos, len);
-        // debug_log::debug_dbg!(&self);
+        // tracing::info!("after forwarding pos={} len={}", pos, len);
+
         let mut ans = Vec::new();
         let split = self
             .rope
@@ -224,7 +219,6 @@ impl Tracker {
         let end_id = op_id.inc(len as Counter);
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
-        // debug_log::debug_dbg!(&self);
     }
 
     #[inline]
@@ -233,7 +227,7 @@ impl Tracker {
     }
 
     fn _checkout(&mut self, vv: &VersionVector, on_diff_status: bool) {
-        // debug_log::debug_log!("Checkout to {:?} from {:?}", vv, self.current_vv);
+        // tracing::info!("Checkout to {:?} from {:?}", vv, self.current_vv);
         if on_diff_status {
             self.rope.clear_diff_status();
         }
@@ -375,12 +369,12 @@ impl Tracker {
         from: &VersionVector,
         to: &VersionVector,
     ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
-        // debug_log::group!("From {:?} To {:?}", from, to);
-        // debug_log::debug_log!("Init: {:#?}, ", &self);
+        // tracing::span!(tracing::Level::INFO, "From {:?} To {:?}", from, to);
+        // tracing::info!("Init: {:#?}, ", &self);
         self._checkout(from, false);
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();
-        // debug_log::debug_dbg!(&self);
+
         self.rope.get_diff()
     }
 }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     delta::{Delta, DeltaItem, Meta, StyleMeta, TreeValue},
     event::{Diff, Index, Path},
-    handler::ValueOrContainer,
+    handler::ValueOrHandler,
     utils::string_slice::StringSlice,
 };
 
@@ -304,10 +304,10 @@ impl ApplyDiff for LoroValue {
     }
 }
 
-pub(crate) fn unresolved_to_collection(v: &ValueOrContainer) -> LoroValue {
+pub(crate) fn unresolved_to_collection(v: &ValueOrHandler) -> LoroValue {
     match v {
-        ValueOrContainer::Value(v) => v.clone(),
-        ValueOrContainer::Container(c) => c.c_type().default_value(),
+        ValueOrHandler::Value(v) => v.clone(),
+        ValueOrHandler::Handler(c) => c.c_type().default_value(),
     }
 }
 
@@ -333,10 +333,10 @@ pub mod wasm {
         }
     }
 
-    impl From<TreeDiff> for JsValue {
-        fn from(value: TreeDiff) -> Self {
+    impl From<&TreeDiff> for JsValue {
+        fn from(value: &TreeDiff) -> Self {
             let array = Array::new();
-            for diff in value.diff.into_iter() {
+            for diff in value.diff.iter() {
                 let obj = Object::new();
                 js_sys::Reflect::set(&obj, &"target".into(), &diff.target.into()).unwrap();
                 match diff.action {
@@ -358,8 +358,8 @@ pub mod wasm {
         }
     }
 
-    impl From<Delta<StringSlice, StyleMeta>> for JsValue {
-        fn from(value: Delta<StringSlice, StyleMeta>) -> Self {
+    impl From<&Delta<StringSlice, StyleMeta>> for JsValue {
+        fn from(value: &Delta<StringSlice, StyleMeta>) -> Self {
             let arr = Array::new_with_length(value.len() as u32);
             for (i, v) in value.iter().enumerate() {
                 arr.set(i as u32, JsValue::from(v.clone()));
