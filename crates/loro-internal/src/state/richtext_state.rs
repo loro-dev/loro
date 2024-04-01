@@ -690,6 +690,12 @@ impl RichtextState {
             .get_mut()
             .get_stable_position_at_event_index(event_index, PosType::Event)
     }
+
+    pub(crate) fn entity_index_to_event_index(&mut self, entity_index: usize) -> usize {
+        self.state
+            .get_mut()
+            .entity_index_to_event_index(entity_index)
+    }
 }
 
 #[derive(Debug, Default, Clone)]

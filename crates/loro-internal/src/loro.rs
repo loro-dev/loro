@@ -920,13 +920,10 @@ impl LoroDoc {
                 match diff_calc {
                     crate::diff_calc::ContainerDiffCalculator::Richtext(t) => {
                         let new_pos = t.get_id_latest_pos(id).unwrap();
+                        let handler = self.get_text(&pos.container);
                         Ok(PosQueryResult {
-                            update: self
-                                .get_text(&pos.container)
-                                .get_stable_position(new_pos)
-                                .ok(),
-                            // FIXME: this is a entity position, not a char position
-                            current_pos: new_pos,
+                            update: handler.get_stable_position(new_pos).ok(),
+                            current_pos: handler.convert_entity_index_to_event_index(new_pos),
                         })
                     }
                     crate::diff_calc::ContainerDiffCalculator::List(_) => todo!(),
