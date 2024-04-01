@@ -5,7 +5,7 @@ use std::{
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::HasLength;
-use loro_common::{ContainerID, IdLp, InternalString, LoroResult, LoroValue, ID};
+use loro_common::{ContainerID, InternalString, LoroResult, LoroValue, ID};
 
 use crate::{
     arena::SharedArena,

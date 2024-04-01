@@ -22,6 +22,7 @@ use crate::{
     event::InternalDiff,
     op::{RichOp, SliceRange, SliceRanges},
     span::{HasId, HasLamport},
+    stable_pos::Cursor,
     version::Frontiers,
     InternalString, VersionVector,
 };
@@ -593,7 +594,7 @@ impl RichtextDiffCalculator {
     /// This should be called after calc_diff
     ///
     /// TODO: Refactor, this can be simplified
-    pub fn get_id_latest_pos(&self, id: ID) -> Option<usize> {
+    pub fn get_id_latest_pos(&self, id: ID) -> Option<Cursor> {
         self.tracker.get_target_id_latest_index_at_new_version(id)
     }
 }

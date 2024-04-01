@@ -5,7 +5,7 @@ use generic_btree::{
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength;
 
-use crate::VersionVector;
+use crate::{stable_pos::Cursor, VersionVector};
 
 use self::{crdt_rope::CrdtRope, id_to_cursor::IdToCursor};
 
@@ -367,7 +367,7 @@ impl Tracker {
         }
     }
 
-    pub(crate) fn get_target_id_latest_index_at_new_version(&self, id: ID) -> Option<usize> {
+    pub(crate) fn get_target_id_latest_index_at_new_version(&self, id: ID) -> Option<Cursor> {
         // TODO: PERF this can be sped up from O(n) to O(log(n)) but I'm not sure if it's worth it
         let mut index = 0;
         for span in self.rope.tree.iter() {
@@ -379,7 +379,10 @@ impl Tracker {
                     index += (id.counter - id_span.counter.start) as usize;
                 }
 
-                return Some(index);
+                return Some(Cursor {
+                    pos: index,
+                    side: crate::stable_pos::Side::Left,
+                });
             }
 
             if is_activated {

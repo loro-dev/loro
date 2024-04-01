@@ -22,7 +22,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
-use loro_common::{IdFull, IdLp, IdLpSpan, LoroResult, ID};
+use loro_common::{IdFull, IdLpSpan, LoroResult, ID};
 
 #[derive(Debug)]
 pub struct ListState {

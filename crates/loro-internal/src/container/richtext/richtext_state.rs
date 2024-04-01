@@ -1643,6 +1643,10 @@ impl RichtextState {
             return Vec::new();
         }
 
+        if pos == self.len(pos_type) {
+            return Vec::new();
+        }
+
         let mut ans: Vec<EntityRangeInfo> = Vec::new();
         let (start, end) = match pos_type {
             PosType::Bytes => todo!(),
@@ -2239,6 +2243,16 @@ impl RichtextState {
             self.len_utf16()
         } else {
             self.len_unicode()
+        }
+    }
+
+    fn len(&self, pos_type: PosType) -> usize {
+        match pos_type {
+            PosType::Unicode => self.len_unicode(),
+            PosType::Utf16 => self.len_utf16(),
+            PosType::Entity => self.len_entity(),
+            PosType::Event => self.len_event(),
+            PosType::Bytes => self.len_utf8(),
         }
     }
 }

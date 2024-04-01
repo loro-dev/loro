@@ -9,7 +9,7 @@ use crate::{
     },
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
-    stable_pos::StablePosition,
+    stable_pos::{Side, StablePosition},
     state::{ContainerState, State, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
@@ -1475,24 +1475,36 @@ impl TextHandler {
     }
 
     /// Get the stable position representation for the target pos
-    pub fn get_stable_position(&self, event_index: usize) -> LoroResult<StablePosition> {
+    pub fn get_stable_position(&self, event_index: usize) -> Option<StablePosition> {
         match &self.inner {
-            MaybeDetached::Detached(_) => Err(LoroError::MisuseDettachedContainer {
-                method: "get_stable_position",
-            }),
+            MaybeDetached::Detached(_) => None,
             MaybeDetached::Attached(a) => {
-                let id = a.with_state(|s| {
+                let (id, len) = a.with_state(|s| {
                     let s = s.as_richtext_state_mut().unwrap();
-                    s.get_stable_position(event_index)
+                    (s.get_stable_position(event_index), s.len_event())
                 });
 
-                let id = id.ok_or(LoroError::OutOfBound {
-                    pos: event_index,
-                    len: self.len_event(),
-                })?;
-                Ok(StablePosition {
+                if len == 0 {
+                    return Some(StablePosition {
+                        id: None,
+                        container: self.id(),
+                        side: Side::Left,
+                    });
+                }
+
+                if len == event_index {
+                    return Some(StablePosition {
+                        id: None,
+                        container: self.id(),
+                        side: Side::Right,
+                    });
+                }
+
+                let id = id?;
+                Some(StablePosition {
                     id: Some(id),
                     container: self.id(),
+                    side: Side::Middle,
                 })
             }
         }

@@ -30,7 +30,7 @@ use crate::{
     id::PeerID,
     op::InnerContent,
     oplog::dag::FrontiersNotIncluded,
-    stable_pos::{CannotFindRelativePosition, PosQueryResult, StablePosition},
+    stable_pos::{CannotFindRelativePosition, Cursor, PosQueryResult, StablePosition},
     version::Frontiers,
     HandlerTrait, InternalString, LoroError, VersionVector,
 };
@@ -880,7 +880,10 @@ impl LoroDoc {
         if let Some(ans) = state.get_relative_position(pos) {
             Ok(PosQueryResult {
                 update: None,
-                current_pos: ans,
+                current: Cursor {
+                    pos: ans,
+                    side: pos.side,
+                },
             })
         } else {
             // We need to trace back to the version where the relative position is valid.
@@ -918,13 +921,17 @@ impl LoroDoc {
                 );
                 let diff_calc = diff_calc.get_calc(idx).unwrap();
                 match diff_calc {
-                    crate::diff_calc::ContainerDiffCalculator::Richtext(t) => {
-                        let new_pos = t.get_id_latest_pos(id).unwrap();
+                    crate::diff_calc::ContainerDiffCalculator::Richtext(text) => {
+                        let c = text.get_id_latest_pos(id).unwrap();
+                        let new_pos = c.pos;
                         let handler = self.get_text(&pos.container);
                         let current_pos = handler.convert_entity_index_to_event_index(new_pos);
                         Ok(PosQueryResult {
-                            update: handler.get_stable_position(current_pos).ok(),
-                            current_pos,
+                            update: handler.get_stable_position(current_pos),
+                            current: Cursor {
+                                pos: current_pos,
+                                side: c.side,
+                            },
                         })
                     }
                     crate::diff_calc::ContainerDiffCalculator::List(_) => todo!(),
@@ -939,8 +946,12 @@ impl LoroDoc {
                             update: Some(StablePosition {
                                 id: None,
                                 container: text.id(),
+                                side: pos.side,
                             }),
-                            current_pos: text.len_event(),
+                            current: Cursor {
+                                pos: text.len_event(),
+                                side: pos.side,
+                            },
                         })
                     }
                     ContainerType::Map => todo!(),

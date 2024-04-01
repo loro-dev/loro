@@ -1100,6 +1100,10 @@ impl DocState {
                 }
             }
         } else {
+            if matches!(pos.side, crate::stable_pos::Side::Left) {
+                return Some(0);
+            }
+
             match state {
                 State::ListState(s) => Some(s.len()),
                 State::RichtextState(s) => Some(s.len_event()),

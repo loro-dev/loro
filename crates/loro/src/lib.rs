@@ -892,7 +892,7 @@ impl LoroText {
         self.handler.to_string()
     }
 
-    pub fn get_stable_position_at(&self, pos: usize) -> LoroResult<StablePosition> {
+    pub fn get_stable_position_at(&self, pos: usize) -> Option<StablePosition> {
         self.handler.get_stable_position(pos)
     }
 }
