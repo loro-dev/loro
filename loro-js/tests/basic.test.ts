@@ -446,3 +446,15 @@ it("prelim support", () => {
     },
   });
 });
+
+it("get elem by path", () => {
+  const doc = new Loro();
+  const map = doc.getMap("map");
+  map.set("key", 1);
+  expect(doc.getByPath("map/key")).toBe(1);
+  const map1 = doc.getByPath("map") as LoroMap;
+  console.log(map1);
+  expect(getType(map1)).toBe("Map");
+  map1.set("key1", 1);
+  expect(doc.getByPath("map/key1")).toBe(1);
+});

@@ -129,6 +129,13 @@ pub enum ContainerType {
 }
 
 impl ContainerType {
+    pub const ALL_TYPES: [ContainerType; 4] = [
+        ContainerType::Map,
+        ContainerType::List,
+        ContainerType::Text,
+        ContainerType::Tree,
+    ];
+
     pub fn default_value(&self) -> LoroValue {
         match self {
             ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),

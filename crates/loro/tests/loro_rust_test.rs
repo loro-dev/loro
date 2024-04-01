@@ -452,3 +452,33 @@ fn init_example() {
     user.insert("name", "new_user").unwrap();
     user.insert_container("bio", LoroText::new()).unwrap();
 }
+
+#[test]
+fn get_container_by_str_path() {
+    let doc = LoroDoc::new();
+    doc.get_map("map")
+        .insert_container("key", LoroList::new())
+        .unwrap()
+        .insert(0, 99)
+        .unwrap();
+    let c = doc.get_handler_by_str_path("map/key").unwrap();
+    assert!(c.as_container().unwrap().is_list());
+    c.into_container()
+        .unwrap()
+        .into_list()
+        .unwrap()
+        .insert(0, 100)
+        .unwrap();
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "map": {
+                "key": [100, 99]
+            }
+        })
+    );
+    let v = doc.get_handler_by_str_path("map/key/1").unwrap();
+    assert_eq!(v.into_value().unwrap().into_i64().unwrap(), 99);
+    let v = doc.get_handler_by_str_path("map/key/0").unwrap();
+    assert_eq!(v.into_value().unwrap().into_i64().unwrap(), 100);
+}

@@ -21,7 +21,8 @@ use crate::{
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    handler::{Handler, TextHandler, TreeHandler},
+    event::{str_to_path, Index},
+    handler::{Handler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     oplog::dag::FrontiersNotIncluded,
     version::Frontiers,
@@ -554,6 +555,26 @@ impl LoroDoc {
     pub fn state_vv(&self) -> VersionVector {
         let f = &self.state.lock().unwrap().frontiers;
         self.oplog.lock().unwrap().dag.frontiers_to_vv(f).unwrap()
+    }
+
+    pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrHandler> {
+        let value: LoroValue = self.state.lock().unwrap().get_value_by_path(path)?;
+        if let LoroValue::Container(c) = value {
+            Some(ValueOrHandler::Handler(Handler::new_attached(
+                c.clone(),
+                self.arena.clone(),
+                self.get_global_txn(),
+                Arc::downgrade(&self.state),
+            )))
+        } else {
+            Some(ValueOrHandler::Value(value))
+        }
+    }
+
+    /// Get the handler by the string path.
+    pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrHandler> {
+        let path = str_to_path(path)?;
+        self.get_by_path(&path)
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.

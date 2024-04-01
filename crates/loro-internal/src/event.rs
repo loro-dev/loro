@@ -1,5 +1,6 @@
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHasher64;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -14,10 +15,12 @@ use crate::{
 
 use std::{
     borrow::Cow,
+    fmt::write,
     hash::{Hash, Hasher},
+    path::Display,
 };
 
-use loro_common::{ContainerID, TreeID};
+use loro_common::{ContainerID, Counter, TreeID};
 
 use crate::{container::idx::ContainerIdx, version::Frontiers};
 
@@ -112,11 +115,49 @@ impl<'a> InternalDocDiff<'a> {
 
 pub type Path = SmallVec<[Index; 4]>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, enum_as_inner::EnumAsInner)]
 pub enum Index {
     Key(InternalString),
     Seq(usize),
     Node(TreeID),
+}
+
+impl std::fmt::Display for Index {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Index::Key(key) => write!(f, "{}", key),
+            Index::Seq(s) => write!(f, "{}", s),
+            Index::Node(id) => write!(f, "{}@{}", id.peer, id.counter),
+        }
+    }
+}
+
+impl TryFrom<&str> for Index {
+    type Error = &'static str;
+    fn try_from(s: &str) -> Result<Self, &'static str> {
+        if s.is_empty() {
+            return Ok(Index::Key(InternalString::default()));
+        }
+
+        let c = s.chars().next().unwrap();
+        if c.is_digit(10) {
+            if let Ok(seq) = s.parse::<usize>() {
+                return Ok(Index::Seq(seq));
+            } else {
+                let Some(index) = s.find("@") else {
+                    return Err("Invalid index format.");
+                };
+                let (counter, peer) = s.split_at(index);
+                let peer = peer.parse::<u64>().map_err(|_| "Invalid index format")?;
+                let counter = counter
+                    .parse::<Counter>()
+                    .map_err(|_| "Invalid index format")?;
+                Ok(Index::Node(TreeID { peer, counter }))
+            }
+        } else {
+            Ok(Index::Key(InternalString::from(s)))
+        }
+    }
 }
 
 impl DiffVariant {
@@ -241,6 +282,14 @@ impl Diff {
             _ => unreachable!(),
         }
     }
+}
+
+pub fn str_to_path(s: &str) -> Option<Vec<Index>> {
+    s.split('/').map(|x| x.try_into()).try_collect().ok()
+}
+
+pub fn path_to_str(path: &[Index]) -> String {
+    path.iter().map(|x| x.to_string()).join("/")
 }
 
 #[cfg(test)]

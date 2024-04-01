@@ -1065,6 +1065,29 @@ impl Loro {
         let f = self.0.oplog().lock().unwrap().dag().vv_to_frontiers(&vv.0);
         Ok(frontiers_to_ids(&f))
     }
+
+    /// Get the value or container at the given path
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("key", 1);
+    /// console.log(doc.getByPath("map/key")); // 1
+    /// console.log(doc.getByPath("map"));     // LoroMap
+    /// ```
+    #[wasm_bindgen(js_name = "getByPath")]
+    pub fn get_by_path(&self, path: &str) -> JsValueOrContainerOrUndefined {
+        let ans = self.0.get_by_str_path(path);
+        let v: JsValue = match ans {
+            Some(ValueOrHandler::Handler(h)) => handler_to_js_value(h, Some(self.0.clone())),
+            Some(ValueOrHandler::Value(v)) => v.into(),
+            None => JsValue::UNDEFINED,
+        };
+        v.into()
+    }
 }
 
 #[allow(unused)]

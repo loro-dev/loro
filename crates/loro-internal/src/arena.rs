@@ -1,6 +1,7 @@
 mod str_arena;
 
 use std::{
+    any::Any,
     num::NonZeroU16,
     ops::{Range, RangeBounds},
     sync::{Arc, Mutex, MutexGuard},
@@ -360,6 +361,23 @@ impl SharedArena {
             &mut self.inner.depth.lock().unwrap(),
             &self.inner.parents.lock().unwrap(),
         )
+    }
+
+    pub(crate) fn get_root_container_idx_by_key(
+        &self,
+        root_index: &loro_common::InternalString,
+    ) -> Option<ContainerIdx> {
+        let inner = self.inner.container_id_to_idx.lock().unwrap();
+        for t in loro_common::ContainerType::ALL_TYPES.iter() {
+            let mut cid = ContainerID::Root {
+                name: root_index.clone(),
+                container_type: *t,
+            };
+            if let Some(idx) = inner.get(&cid) {
+                return Some(*idx);
+            }
+        }
+        None
     }
 }
 
