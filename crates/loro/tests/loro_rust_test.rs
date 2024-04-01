@@ -481,4 +481,25 @@ fn get_container_by_str_path() {
     assert_eq!(v.into_value().unwrap().into_i64().unwrap(), 99);
     let v = doc.get_handler_by_str_path("map/key/0").unwrap();
     assert_eq!(v.into_value().unwrap().into_i64().unwrap(), 100);
+
+    let tree = doc.get_tree("tree");
+    let node = tree.create(None).unwrap();
+    tree.get_meta(node).unwrap().insert("key", "value").unwrap();
+
+    let node_value = doc
+        .get_handler_by_str_path(&format!("tree/{}", node))
+        .unwrap();
+    assert!(node_value.into_container().unwrap().is_map());
+    let node_map = doc
+        .get_handler_by_str_path(&format!("tree/{}/key", node))
+        .unwrap();
+    assert_eq!(
+        node_map
+            .into_value()
+            .unwrap()
+            .into_string()
+            .unwrap()
+            .to_string(),
+        "value"
+    );
 }

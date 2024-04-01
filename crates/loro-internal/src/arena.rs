@@ -1,7 +1,6 @@
 mod str_arena;
 
 use std::{
-    any::Any,
     num::NonZeroU16,
     ops::{Range, RangeBounds},
     sync::{Arc, Mutex, MutexGuard},
@@ -369,7 +368,7 @@ impl SharedArena {
     ) -> Option<ContainerIdx> {
         let inner = self.inner.container_id_to_idx.lock().unwrap();
         for t in loro_common::ContainerType::ALL_TYPES.iter() {
-            let mut cid = ContainerID::Root {
+            let cid = ContainerID::Root {
                 name: root_index.clone(),
                 container_type: *t,
             };

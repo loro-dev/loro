@@ -3,7 +3,6 @@ use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::change::Timestamp;
 use loro_internal::container::IntoContainerId;
-use loro_internal::event::str_to_path;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::LoroDoc as InnerLoroDoc;

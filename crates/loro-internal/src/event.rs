@@ -15,9 +15,7 @@ use crate::{
 
 use std::{
     borrow::Cow,
-    fmt::write,
     hash::{Hash, Hasher},
-    path::Display,
 };
 
 use loro_common::{ContainerID, Counter, TreeID};
@@ -140,15 +138,17 @@ impl TryFrom<&str> for Index {
         }
 
         let c = s.chars().next().unwrap();
-        if c.is_digit(10) {
+        if c.is_ascii_digit() {
             if let Ok(seq) = s.parse::<usize>() {
-                return Ok(Index::Seq(seq));
+                Ok(Index::Seq(seq))
             } else {
-                let Some(index) = s.find("@") else {
+                let Some(index) = s.find('@') else {
                     return Err("Invalid index format.");
                 };
                 let (counter, peer) = s.split_at(index);
-                let peer = peer.parse::<u64>().map_err(|_| "Invalid index format")?;
+                let peer = peer[1..]
+                    .parse::<u64>()
+                    .map_err(|_| "Invalid index format")?;
                 let counter = counter
                     .parse::<Counter>()
                     .map_err(|_| "Invalid index format")?;

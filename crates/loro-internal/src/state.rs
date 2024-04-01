@@ -1106,16 +1106,16 @@ impl DocState {
                     let Some(LoroValue::Container(c)) = l.get(*index.as_seq()?) else {
                         return None;
                     };
-                    state_idx = self.arena.register_container(&c);
+                    state_idx = self.arena.register_container(c);
                 }
                 State::MapState(m) => {
                     let Some(LoroValue::Container(c)) = m.get(index.as_key()?) else {
                         return None;
                     };
-                    state_idx = self.arena.register_container(&c);
+                    state_idx = self.arena.register_container(c);
                 }
-                State::RichtextState(v) => return None,
-                State::TreeState(t) => {
+                State::RichtextState(_) => return None,
+                State::TreeState(_) => {
                     let id = index.as_node()?;
                     let cid = id.associated_meta_container();
                     state_idx = self.arena.register_container(&cid);
