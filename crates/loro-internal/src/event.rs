@@ -141,18 +141,10 @@ impl TryFrom<&str> for Index {
         if c.is_ascii_digit() {
             if let Ok(seq) = s.parse::<usize>() {
                 Ok(Index::Seq(seq))
+            } else if let Ok(id) = s.try_into() {
+                Ok(Index::Node(id))
             } else {
-                let Some(index) = s.find('@') else {
-                    return Err("Invalid index format.");
-                };
-                let (counter, peer) = s.split_at(index);
-                let peer = peer[1..]
-                    .parse::<u64>()
-                    .map_err(|_| "Invalid index format")?;
-                let counter = counter
-                    .parse::<Counter>()
-                    .map_err(|_| "Invalid index format")?;
-                Ok(Index::Node(TreeID { peer, counter }))
+                Ok(Index::Key(InternalString::from(s)))
             }
         } else {
             Ok(Index::Key(InternalString::from(s)))
