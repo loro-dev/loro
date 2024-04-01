@@ -9,7 +9,6 @@ use loro_common::{ContainerID, IdLp, InternalString, LoroResult, LoroValue, ID};
 
 use crate::{
     arena::SharedArena,
-    change::Lamport,
     container::{
         idx::ContainerIdx,
         list::list_op,
@@ -114,7 +113,7 @@ impl RichtextState {
         }
     }
 
-    pub fn get_index_of_id(&self, id: IdLp) -> Option<usize> {
+    pub fn get_index_of_id(&self, id: ID) -> Option<usize> {
         let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;
         let mut a;
         let mut b;
@@ -131,9 +130,9 @@ impl RichtextState {
 
         let mut index = 0;
         for elem in iter {
-            let span = elem.get_id_lp_span();
+            let span = elem.get_id_span();
             if span.contains(id) {
-                return Some(index + (id.lamport - span.lamport.start) as usize);
+                return Some(index + (id.counter - span.counter.start) as usize);
             }
 
             index += elem.rle_len();
@@ -622,6 +621,14 @@ impl RichtextState {
         }
     }
 
+    pub fn len_event(&mut self) -> usize {
+        if cfg!(feature = "wasm") {
+            self.len_utf16()
+        } else {
+            self.len_unicode()
+        }
+    }
+
     /// Check if the content and style ranges are consistent.
     ///
     /// Panic if inconsistent.
@@ -675,6 +682,13 @@ impl RichtextState {
     #[inline]
     pub fn get_richtext_value(&mut self) -> LoroValue {
         self.state.get_mut().get_richtext_value()
+    }
+
+    #[inline]
+    pub(crate) fn get_stable_position(&mut self, event_index: usize) -> Option<ID> {
+        self.state
+            .get_mut()
+            .get_stable_position_at_event_index(event_index, PosType::Event)
     }
 }
 

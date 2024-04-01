@@ -9,6 +9,7 @@ use crate::{
     },
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
+    stable_pos::StablePosition,
     state::{ContainerState, State, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
@@ -1469,6 +1470,30 @@ impl TextHandler {
             MaybeDetached::Detached(t) => t.try_lock().unwrap().value.to_string(),
             MaybeDetached::Attached(a) => {
                 a.with_state(|s| s.as_richtext_state_mut().unwrap().to_string_mut())
+            }
+        }
+    }
+
+    /// Get the stable position representation for the target pos
+    pub fn get_stable_position(&self, event_index: usize) -> LoroResult<StablePosition> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => Err(LoroError::MisuseDettachedContainer {
+                method: "get_stable_position",
+            }),
+            MaybeDetached::Attached(a) => {
+                let id = a.with_state(|s| {
+                    let s = s.as_richtext_state_mut().unwrap();
+                    s.get_stable_position(event_index)
+                });
+
+                let id = id.ok_or(LoroError::OutOfBound {
+                    pos: event_index,
+                    len: self.len_event(),
+                })?;
+                Ok(StablePosition {
+                    id: Some(id),
+                    container: self.id(),
+                })
             }
         }
     }

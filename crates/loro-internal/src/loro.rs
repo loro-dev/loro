@@ -10,13 +10,17 @@ use std::{
     },
 };
 
-use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
+use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, ID};
+use rle::HasLength;
 
 use crate::{
     arena::SharedArena,
     change::Timestamp,
     configure::Configure,
-    container::{richtext::config::StyleConfigMap, IntoContainerId},
+    container::{
+        idx::ContainerIdx, list::list_op::InnerListOp, richtext::config::StyleConfigMap,
+        IntoContainerId,
+    },
     dag::DagUtils,
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
@@ -24,10 +28,11 @@ use crate::{
     event::{str_to_path, Index},
     handler::{Handler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
+    op::InnerContent,
     oplog::dag::FrontiersNotIncluded,
-    relative_pos::{CannotFindRelativePosition, PosQueryResult, RelativePosition},
+    stable_pos::{CannotFindRelativePosition, PosQueryResult, StablePosition},
     version::Frontiers,
-    InternalString, LoroError, VersionVector,
+    HandlerTrait, InternalString, LoroError, VersionVector,
 };
 
 use super::{
@@ -468,6 +473,7 @@ impl LoroDoc {
                 Some(&old_frontiers),
                 oplog.vv(),
                 Some(oplog.dag.get_frontiers()),
+                None,
             );
             let mut state = self.state.lock().unwrap();
             state.apply_diff(InternalDocDiff {
@@ -504,6 +510,7 @@ impl LoroDoc {
                 Some(&old_frontiers),
                 oplog.vv(),
                 Some(oplog.dag.get_frontiers()),
+                None,
             );
             let mut state = self.state.lock().unwrap();
             state.apply_diff(InternalDocDiff {
@@ -782,6 +789,7 @@ impl LoroDoc {
             Some(&state.frontiers),
             after,
             Some(frontiers),
+            None,
         );
         state.apply_diff(InternalDocDiff {
             origin: "checkout".into(),
@@ -863,15 +871,16 @@ impl LoroDoc {
         state.log_estimated_size();
     }
 
-    pub fn get_relative_position(
+    /// Get position in a seq container
+    pub fn query_pos(
         &self,
-        pos: &RelativePosition,
+        pos: &StablePosition,
     ) -> Result<PosQueryResult, CannotFindRelativePosition> {
-        let state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         if let Some(ans) = state.get_relative_position(pos) {
             Ok(PosQueryResult {
-                updated_pos: pos.clone(),
-                pos: ans,
+                update: None,
+                current_pos: ans,
             })
         } else {
             // We need to trace back to the version where the relative position is valid.
@@ -880,9 +889,88 @@ impl LoroDoc {
             // But we don't have that info now, so an alternative way is to trace back
             // to version with frontiers of `[pos.id]`. But this may be very slow even if
             // the target is just deleted a few versions ago.
-            todo!("Use DiffCalculator to calculate the relative position")
+            //
+            // What we need is to trace back to the latest version that deletes the target
+            // id.
+
+            // commit the txn to make sure we can query the history correctly
+            drop(state);
+            self.commit_then_renew();
+            let oplog = self.oplog().lock().unwrap();
+            if let Some(id) = pos.id {
+                let idx = oplog
+                    .arena
+                    .id_to_idx(&pos.container)
+                    .ok_or(CannotFindRelativePosition::ContainerDeleted)?;
+                // We know where the target id is when we trace back to the delete_op_id.
+                let delete_op_id = find_last_delete_op(&oplog, id, idx).unwrap();
+                let mut diff_calc = DiffCalculator::new();
+                let before_frontiers: Frontiers = delete_op_id.into();
+                let before = &oplog.dag.frontiers_to_vv(&before_frontiers).unwrap();
+                // TODO: PERF: it doesn't need to calc the effects here
+                diff_calc.calc_diff_internal(
+                    &oplog,
+                    before,
+                    Some(&before_frontiers),
+                    &oplog.dag.vv,
+                    Some(&oplog.dag.frontiers),
+                    Some(&|target| idx == target),
+                );
+                let diff_calc = diff_calc.get_calc(idx).unwrap();
+                match diff_calc {
+                    crate::diff_calc::ContainerDiffCalculator::Richtext(t) => {
+                        let new_pos = t.get_id_latest_pos(id).unwrap();
+                        Ok(PosQueryResult {
+                            update: self
+                                .get_text(&pos.container)
+                                .get_stable_position(new_pos)
+                                .ok(),
+                            // FIXME: this is a entity position, not a char position
+                            current_pos: new_pos,
+                        })
+                    }
+                    crate::diff_calc::ContainerDiffCalculator::List(_) => todo!(),
+                    crate::diff_calc::ContainerDiffCalculator::Tree(_) => unreachable!(),
+                    crate::diff_calc::ContainerDiffCalculator::Map(_) => unreachable!(),
+                }
+            } else {
+                match pos.container.container_type() {
+                    ContainerType::Text => {
+                        let text = self.get_text(&pos.container);
+                        Ok(PosQueryResult {
+                            update: Some(StablePosition {
+                                id: None,
+                                container: text.id(),
+                            }),
+                            current_pos: text.len_event(),
+                        })
+                    }
+                    ContainerType::Map => todo!(),
+                    ContainerType::List => todo!(),
+                    ContainerType::Tree => todo!(),
+                }
+            }
         }
     }
+}
+
+fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
+    let start_vv = oplog.dag.frontiers_to_vv(&id.into()).unwrap();
+    for change in oplog.iter_changes_rev(&start_vv, &oplog.dag.vv) {
+        for op in change.ops.iter().rev() {
+            if op.container != idx {
+                continue;
+            }
+
+            if let InnerContent::List(InnerListOp::Delete(d)) = &op.content {
+                if d.id_start.to_span(d.atom_len()).contains(id) {
+                    return Some(ID::new(change.peer(), op.counter));
+                }
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

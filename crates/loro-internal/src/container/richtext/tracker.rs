@@ -1,4 +1,7 @@
-use generic_btree::{rle::Sliceable, LeafIndex};
+use generic_btree::{
+    rle::{HasLength as _, Sliceable},
+    LeafIndex,
+};
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength;
 
@@ -362,6 +365,29 @@ impl Tracker {
                 id_to_cursor::IterCursor::Delete(_) => {}
             }
         }
+    }
+
+    pub(crate) fn get_target_id_latest_index_at_new_version(&self, id: ID) -> Option<usize> {
+        // TODO: PERF this can be sped up from O(n) to O(log(n)) but I'm not sure if it's worth it
+        let mut index = 0;
+        for span in self.rope.tree.iter() {
+            let is_activated = span.is_activated_in_diff();
+            let span_id = span.real_id();
+            let id_span = span_id.to_span(span.rle_len());
+            if id_span.contains(id) {
+                if is_activated {
+                    index += (id.counter - id_span.counter.start) as usize;
+                }
+
+                return Some(index);
+            }
+
+            if is_activated {
+                index += span.rle_len();
+            }
+        }
+
+        None
     }
 
     pub(crate) fn diff(

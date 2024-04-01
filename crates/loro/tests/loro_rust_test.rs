@@ -586,3 +586,39 @@ fn get_container_by_str_path() {
         "value"
     );
 }
+
+#[test]
+fn get_stable_positions() {
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1).unwrap();
+    let text = doc1.get_text("text");
+    text.insert(0, "6789").unwrap();
+    let pos_7 = text.get_stable_position_at(1).unwrap();
+    let pos_info = doc1.query_pos(&pos_7).unwrap();
+    assert!(pos_info.update.is_none());
+    assert_eq!(pos_info.current_pos, 1);
+    text.insert(0, "012345").unwrap();
+    let pos_info = doc1.query_pos(&pos_7).unwrap();
+    assert!(pos_info.update.is_none());
+    assert_eq!(pos_info.current_pos, 7);
+
+    // test merge
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2).unwrap();
+    let text2 = doc2.get_text("text");
+    text2.insert(0, "ab").unwrap();
+    let pos_a = text2.get_stable_position_at(0).unwrap();
+    let pos_info = doc2.query_pos(&pos_a).unwrap();
+    assert!(pos_info.update.is_none());
+    assert_eq!(pos_info.current_pos, 0);
+    doc2.import(&doc1.export_snapshot()).unwrap();
+    let pos_info = doc2.query_pos(&pos_a).unwrap();
+    assert!(pos_info.update.is_none());
+    assert_eq!(pos_info.current_pos, 10);
+
+    // test delete
+    text2.delete(5, 5).unwrap(); // pos_7 now is 5
+    let pos_info = doc2.query_pos(&pos_7).unwrap(); // it should be fine to query from another doc
+    assert_eq!(pos_info.update.as_ref().unwrap().id.unwrap(), ID::new(2, 0));
+    assert_eq!(pos_info.current_pos, 5);
+}

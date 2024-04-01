@@ -53,6 +53,10 @@ impl DiffCalculator {
         }
     }
 
+    pub(crate) fn get_calc(&self, container: ContainerIdx) -> Option<&ContainerDiffCalculator> {
+        self.calculators.get(&container).map(|(_, c)| c)
+    }
+
     // PERF: if the causal order is linear, we can skip some of the calculation
     #[allow(unused)]
     pub(crate) fn calc_diff(
@@ -61,7 +65,7 @@ impl DiffCalculator {
         before: &crate::VersionVector,
         after: &crate::VersionVector,
     ) -> Vec<InternalContainerDiff> {
-        self.calc_diff_internal(oplog, before, None, after, None)
+        self.calc_diff_internal(oplog, before, None, after, None, None)
     }
 
     pub(crate) fn calc_diff_internal(
@@ -71,6 +75,7 @@ impl DiffCalculator {
         before_frontiers: Option<&Frontiers>,
         after: &crate::VersionVector,
         after_frontiers: Option<&Frontiers>,
+        container_filter: Option<&dyn Fn(ContainerIdx) -> bool>,
     ) -> Vec<InternalContainerDiff> {
         let s = tracing::span!(tracing::Level::INFO, "DiffCalc");
         let _e = s.enter();
@@ -115,6 +120,12 @@ impl DiffCalculator {
                     .unwrap_or_else(|e| e);
                 let mut visited = FxHashSet::default();
                 for mut op in &change.ops.vec()[iter_start..] {
+                    if let Some(filter) = container_filter {
+                        if !filter(op.container) {
+                            continue;
+                        }
+                    }
+
                     // slice the op if needed
                     let stack_sliced_op;
                     if op.counter < start_counter {
@@ -189,6 +200,12 @@ impl DiffCalculator {
                 let mut set = FxHashSet::default();
                 oplog.for_each_change_within(before, after, |change| {
                     for op in change.ops.iter() {
+                        if let Some(filter) = container_filter {
+                            if !filter(op.container) {
+                                continue;
+                            }
+                        }
+
                         set.insert(op.container);
                     }
                 });
@@ -317,7 +334,7 @@ pub(crate) trait DiffCalculatorTrait {
 
 #[enum_dispatch(DiffCalculatorTrait)]
 #[derive(Debug)]
-enum ContainerDiffCalculator {
+pub(crate) enum ContainerDiffCalculator {
     Map(MapDiffCalculator),
     List(ListDiffCalculator),
     Richtext(RichtextDiffCalculator),
@@ -325,7 +342,7 @@ enum ContainerDiffCalculator {
 }
 
 #[derive(Debug)]
-struct MapDiffCalculator {
+pub(crate) struct MapDiffCalculator {
     container_idx: ContainerIdx,
     changed_key: FxHashSet<InternalString>,
 }
@@ -434,7 +451,7 @@ impl PartialOrd for CompactMapValue {
 use rle::{HasLength, Sliceable};
 
 #[derive(Default)]
-struct ListDiffCalculator {
+pub(crate) struct ListDiffCalculator {
     start_vv: VersionVector,
     tracker: Box<RichtextTracker>,
 }
@@ -566,10 +583,19 @@ impl DiffCalculatorTrait for ListDiffCalculator {
 }
 
 #[derive(Debug, Default)]
-struct RichtextDiffCalculator {
+pub(crate) struct RichtextDiffCalculator {
     start_vv: VersionVector,
     tracker: Box<RichtextTracker>,
     styles: Vec<StyleOp>,
+}
+
+impl RichtextDiffCalculator {
+    /// This should be called after calc_diff
+    ///
+    /// TODO: Refactor, this can be simplified
+    pub fn get_id_latest_pos(&self, id: ID) -> Option<usize> {
+        self.tracker.get_target_id_latest_index_at_new_version(id)
+    }
 }
 
 impl DiffCalculatorTrait for RichtextDiffCalculator {

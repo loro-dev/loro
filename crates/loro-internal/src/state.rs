@@ -21,7 +21,7 @@ use crate::{
     handler::ValueOrHandler,
     id::PeerID,
     op::{ListSlice, Op, RawOp, RawOpContent},
-    relative_pos::{CannotFindRelativePosition, PosQueryResult, RelativePosition},
+    stable_pos::StablePosition,
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
@@ -1085,17 +1085,27 @@ impl DocState {
         }
     }
 
-    pub fn get_relative_position(&self, pos: &RelativePosition) -> Option<usize> {
+    pub fn get_relative_position(&mut self, pos: &StablePosition) -> Option<usize> {
         let idx = self.arena.register_container(&pos.container);
-        let Some(state) = self.states.get(&idx) else {
+        let Some(state) = self.states.get_mut(&idx) else {
             return None;
         };
 
-        match state {
-            State::ListState(s) => s.get_index_of_id(pos.id),
-            State::RichtextState(s) => s.get_index_of_id(pos.id),
-            State::MapState(_) | State::TreeState(_) => {
-                unreachable!()
+        if let Some(id) = pos.id {
+            match state {
+                State::ListState(s) => s.get_index_of_id(id),
+                State::RichtextState(s) => s.get_index_of_id(id),
+                State::MapState(_) | State::TreeState(_) => {
+                    unreachable!()
+                }
+            }
+        } else {
+            match state {
+                State::ListState(s) => Some(s.len()),
+                State::RichtextState(s) => Some(s.len_event()),
+                State::MapState(_) | State::TreeState(_) => {
+                    unreachable!()
+                }
             }
         }
     }

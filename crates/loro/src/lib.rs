@@ -6,6 +6,9 @@ use loro_internal::container::IntoContainerId;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
+use loro_internal::stable_pos::CannotFindRelativePosition;
+use loro_internal::stable_pos::PosQueryResult;
+use loro_internal::stable_pos::StablePosition;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 
@@ -368,6 +371,13 @@ impl LoroDoc {
     /// Get the handler by the string path.
     pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrContainer> {
         self.doc.get_by_str_path(path).map(ValueOrContainer::from)
+    }
+
+    pub fn query_pos(
+        &self,
+        pos: &StablePosition,
+    ) -> Result<PosQueryResult, CannotFindRelativePosition> {
+        self.doc.query_pos(pos)
     }
 }
 
@@ -880,6 +890,10 @@ impl LoroText {
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         self.handler.to_string()
+    }
+
+    pub fn get_stable_position_at(&self, pos: usize) -> LoroResult<StablePosition> {
+        self.handler.get_stable_position(pos)
     }
 }
 
