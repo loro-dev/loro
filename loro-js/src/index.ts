@@ -179,10 +179,14 @@ export function isContainer(value: any): value is Container {
  */
 export function getType<T>(
   value: T,
-): T extends LoroText ? "Text"
-  : T extends LoroMap<any> ? "Map"
-  : T extends LoroTree<any> ? "Tree"
-  : T extends LoroList<any> ? "List"
+): T extends LoroText
+  ? "Text"
+  : T extends LoroMap<any>
+  ? "Map"
+  : T extends LoroTree<any>
+  ? "Tree"
+  : T extends LoroList<any>
+  ? "List"
   : "Json" {
   if (isContainer(value)) {
     return value.kind() as unknown as any;
@@ -209,14 +213,9 @@ declare module "loro-wasm" {
     getText(key: string | ContainerID): LoroText;
   }
 
-  interface LoroList<
-    T extends any[] = any[],
-  > {
+  interface LoroList<T extends any[] = any[]> {
     new (): LoroList<T>;
-    insertContainer<C extends Container>(
-      pos: number,
-      child: C,
-    ): C;
+    insertContainer<C extends Container>(pos: number, child: C): C;
     get(index: number): undefined | Value | Container;
     getTyped<Key extends keyof T & number>(loro: Loro, index: Key): T[Key];
     insertTyped<Key extends keyof T & number>(pos: Key, value: T[Key]): void;
@@ -226,18 +225,10 @@ declare module "loro-wasm" {
     getAttached(): undefined | LoroList<T>;
   }
 
-  interface LoroMap<
-    T extends Record<string, any> = Record<string, any>,
-  > {
+  interface LoroMap<T extends Record<string, any> = Record<string, any>> {
     new (): LoroMap<T>;
-    getOrCreateContainer<C extends Container>(
-      key: string,
-      child: C,
-    ): C;
-    setContainer<C extends Container>(
-      key: string,
-      child: C,
-    ): C;
+    getOrCreateContainer<C extends Container>(key: string, child: C): C;
+    setContainer<C extends Container>(key: string, child: C): C;
     get(key: string): undefined | Value | Container;
     getTyped<Key extends keyof T & string>(txn: Loro, key: Key): T[Key];
     set(key: string, value: Value): void;
@@ -253,9 +244,7 @@ declare module "loro-wasm" {
     subscribe(txn: Loro, listener: Listener): number;
   }
 
-  interface LoroTree<
-    T extends Record<string, any> = Record<string, any>,
-  > {
+  interface LoroTree<T extends Record<string, any> = Record<string, any>> {
     new (): LoroTree<T>;
     createNode(parent: TreeID | undefined): LoroTreeNode<T>;
     move(target: TreeID, parent: TreeID | undefined): void;
@@ -265,9 +254,7 @@ declare module "loro-wasm" {
     subscribe(txn: Loro, listener: Listener): number;
   }
 
-  interface LoroTreeNode<
-    T extends Record<string, any> = Record<string, any>,
-  > {
+  interface LoroTreeNode<T extends Record<string, any> = Record<string, any>> {
     readonly data: LoroMap<T>;
     createNode(): LoroTreeNode<T>;
     setAsRoot(): void;

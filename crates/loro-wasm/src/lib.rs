@@ -58,7 +58,7 @@ pub struct Loro(Arc<LoroDoc>);
 
 #[wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen(typescript_type = "number | bigint | string")]
+    #[wasm_bindgen(typescript_type = "number | bigint | `${number}`")]
     pub type JsIntoPeerID;
     #[wasm_bindgen(typescript_type = "ContainerID")]
     pub type JsContainerID;
@@ -167,13 +167,9 @@ fn ids_to_frontiers(ids: Vec<JsID>) -> JsResult<Frontiers> {
 }
 
 fn js_id_to_id(id: JsID) -> Result<ID, JsValue> {
-    let peer = Reflect::get(&id, &"peer".into())?.as_string().unwrap();
+    let peer = js_peer_to_peer(Reflect::get(&id, &"peer".into())?)?;
     let counter = Reflect::get(&id, &"counter".into())?.as_f64().unwrap() as Counter;
-    let id = ID::new(
-        peer.parse()
-            .map_err(|_e| JsValue::from_str(&format!("cannot parse {} to PeerID", peer)))?,
-        counter,
-    );
+    let id = ID::new(peer, counter);
     Ok(id)
 }
 
@@ -472,11 +468,13 @@ impl Loro {
 
     /// Set the peer ID of the current writer.
     ///
+    /// It must be a number, a BigInt, or a decimal string that can be parsed to a unsigned 64-bit integer.
+    ///
     /// Note: use it with caution. You need to make sure there is not chance that two peers
-    /// have the same peer ID.
+    /// have the same peer ID. Otherwise, we cannot ensure the consistency of the document.
     #[wasm_bindgen(js_name = "setPeerId", method)]
     pub fn set_peer_id(&self, peer_id: JsIntoPeerID) -> JsResult<()> {
-        let id = id_value_to_u64(peer_id.into())?;
+        let id = js_peer_to_peer(peer_id.into())?;
         self.0.set_peer_id(id)?;
         Ok(())
     }
@@ -2541,7 +2539,7 @@ impl VersionVector {
     }
 
     pub fn get(&self, peer_id: JsIntoPeerID) -> JsResult<Option<Counter>> {
-        let id = id_value_to_u64(peer_id.into())?;
+        let id = js_peer_to_peer(peer_id.into())?;
         Ok(self.0.get(&id).copied())
     }
 
@@ -2553,21 +2551,25 @@ impl VersionVector {
         })
     }
 }
-
-fn id_value_to_u64(value: JsValue) -> JsResult<u64> {
+const ID_CONVERT_ERROR: &str = "Invalid peer id. It must be a number, a BigInt, or a decimal string that can be parsed to a unsigned 64-bit integer";
+fn js_peer_to_peer(value: JsValue) -> JsResult<u64> {
     if value.is_bigint() {
         let bigint = js_sys::BigInt::from(value);
-        let v: u64 = bigint.try_into().unwrap_throw();
+        let v: u64 = bigint
+            .try_into()
+            .map_err(|_| JsValue::from_str(ID_CONVERT_ERROR))?;
         Ok(v)
     } else if value.is_string() {
-        let v: u64 = value.as_string().unwrap().parse().unwrap_throw();
+        let v: u64 = value
+            .as_string()
+            .unwrap()
+            .parse()
+            .expect_throw(ID_CONVERT_ERROR);
         Ok(v)
     } else if let Some(v) = value.as_f64() {
         Ok(v as u64)
     } else {
-        Err(JsValue::from_str(
-            "id value must be a string, number or bigint",
-        ))
+        Err(JsValue::from_str(ID_CONVERT_ERROR))
     }
 }
 
@@ -2608,7 +2610,7 @@ const TYPES: &'static str = r#"
 */
 export type ContainerType = "Text" | "Map" | "List"| "Tree";
 
-export type PeerID = string;
+export type PeerID = `${number}`;
 /**
 * The unique id of each container.
 *
@@ -2623,12 +2625,12 @@ export type PeerID = string;
 */
 export type ContainerID =
   | `cid:root-${string}:${ContainerType}`
-  | `cid:${number}@${string}:${ContainerType}`;
+  | `cid:${number}@${PeerID}:${ContainerType}`;
 
 /**
  * The unique id of each tree node.
  */
-export type TreeID = `${number}@${string}`;
+export type TreeID = `${number}@${PeerID}`;
 
 interface Loro {
     exportFrom(version?: VersionVector): Uint8Array;
