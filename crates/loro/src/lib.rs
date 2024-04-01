@@ -3,6 +3,7 @@ use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::change::Timestamp;
 use loro_internal::container::IntoContainerId;
+use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::LoroDoc as InnerLoroDoc;
@@ -56,6 +57,11 @@ impl LoroDoc {
     /// Get the configureations of the document.
     pub fn config(&self) -> &Configure {
         self.doc.config()
+    }
+
+    /// Decodes the metadata for an imported blob from the provided bytes.
+    pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
+        InnerLoroDoc::decode_import_blob_meta(bytes)
     }
 
     /// Set whether to record the timestamp of each change. Default is `false`.

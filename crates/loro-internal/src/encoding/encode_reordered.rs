@@ -13,7 +13,7 @@ use serde_columnar::columnar;
 
 use crate::{
     arena::SharedArena,
-    change::{Change, Lamport},
+    change::{Change, Lamport, Timestamp},
     container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
     encoding::{
         encode_reordered::value::{ValueKind, ValueWriter},
@@ -31,6 +31,8 @@ use self::{
     value::ValueReader,
 };
 
+use super::{parse_header_and_body, ImportBlobMetadata};
+
 /// If any section of the document is longer than this, we will not decode it.
 /// It will return an data corruption error instead.
 const MAX_DECODED_SIZE: usize = 1 << 30;
@@ -39,6 +41,24 @@ const MAX_DECODED_SIZE: usize = 1 << 30;
 const MAX_COLLECTION_SIZE: usize = 1 << 28;
 
 pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
+    // skip the ops that current oplog does not have
+    let actual_start_vv: VersionVector = vv
+        .iter()
+        .filter_map(|(&peer, &end_counter)| {
+            if end_counter == 0 {
+                return None;
+            }
+
+            let this_end = oplog.vv().get(&peer).cloned().unwrap_or(0);
+            if this_end <= end_counter {
+                return Some((peer, this_end));
+            }
+
+            Some((peer, end_counter))
+        })
+        .collect();
+
+    let vv = &actual_start_vv;
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
@@ -91,7 +111,8 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     );
 
     let frontiers = oplog
-        .frontiers()
+        .dag
+        .vv_to_frontiers(&actual_start_vv)
         .iter()
         .map(|x| (peer_register.register(&x.peer), x.counter))
         .collect();
@@ -109,7 +130,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             dep_arena,
             &[],
         )),
-        frontiers,
+        start_frontiers: frontiers,
     };
 
     serde_columnar::to_vec(&doc).unwrap()
@@ -145,6 +166,62 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
 
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
     Ok(())
+}
+
+pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
+    let parsed = parse_header_and_body(bytes)?;
+    let is_snapshot = parsed.mode.is_snapshot();
+    let iterators = serde_columnar::iter_from_bytes::<EncodedDoc>(parsed.body)?;
+    let DecodedArenas { peer_ids, .. } = decode_arena(&iterators.arenas)?;
+    let start_vv: VersionVector = iterators
+        .start_counters
+        .iter()
+        .enumerate()
+        .filter_map(|(peer_idx, counter)| {
+            if *counter == 0 {
+                None
+            } else {
+                Some(ID::new(peer_ids.peer_ids[peer_idx], *counter - 1))
+            }
+        })
+        .collect();
+    let frontiers = iterators
+        .start_frontiers
+        .iter()
+        .map(|x| ID::new(peer_ids.peer_ids[x.0], x.1))
+        .collect();
+    let mut end_vv_counters = iterators.start_counters;
+    let mut change_num = 0;
+    let mut start_timestamp = Timestamp::MAX;
+    let mut end_timestamp = Timestamp::MIN;
+
+    for EncodedChange {
+        peer_idx,
+        len,
+        timestamp,
+        ..
+    } in iterators.changes
+    {
+        end_vv_counters[peer_idx] += len as Counter;
+        start_timestamp = start_timestamp.min(timestamp);
+        end_timestamp = end_timestamp.max(timestamp);
+        change_num += 1;
+    }
+
+    Ok(ImportBlobMetadata {
+        is_snapshot,
+        start_frontiers: frontiers,
+        partial_start_vv: start_vv,
+        partial_end_vv: VersionVector::from_iter(
+            end_vv_counters
+                .iter()
+                .enumerate()
+                .map(|(peer_idx, counter)| ID::new(peer_ids.peer_ids[peer_idx], *counter - 1)),
+        ),
+        start_timestamp,
+        end_timestamp,
+        change_num,
+    })
 }
 
 fn import_changes_to_oplog(
@@ -459,11 +536,6 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         &mut key_register,
     );
 
-    let frontiers = oplog
-        .frontiers()
-        .iter()
-        .map(|x| (peer_register.register(&x.peer), x.counter))
-        .collect();
     let doc = EncodedDoc {
         ops: encoded_ops,
         delete_starts: del_starts,
@@ -478,7 +550,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
             dep_arena,
             &state_bytes,
         )),
-        frontiers,
+        start_frontiers: Vec::new(),
     };
 
     serde_columnar::to_vec(&doc).unwrap()
@@ -641,19 +713,6 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         deps,
         state_blob_arena,
     } = decode_arena(&iter.arenas)?;
-    let frontiers: Frontiers = iter
-        .frontiers
-        .iter()
-        .map(|x| {
-            let peer = peer_ids
-                .peer_ids
-                .get(x.0)
-                .ok_or(LoroError::DecodeDataCorruptionError)?;
-            let ans: Result<ID, LoroError> = Ok(ID::new(*peer, x.1));
-            ans
-        })
-        .try_collect()?;
-
     let ExtractedOps {
         ops_map,
         mut ops,
@@ -679,7 +738,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
 
     decode_snapshot_states(
         &mut state,
-        frontiers,
+        oplog.frontiers().clone(),
         iter.states,
         containers,
         state_blob_arena,
@@ -1023,7 +1082,7 @@ mod encode {
         peer_register: &mut ValueRegister<PeerID>,
     ) -> (Vec<i32>, Vec<Cow<'a, Change>>) {
         let self_vv = oplog.vv();
-        let start_vv = vv.trim(&oplog.vv());
+        let start_vv = vv.trim(oplog.vv());
         let mut start_counters = Vec::new();
 
         let mut diff_changes: Vec<Cow<'a, Change>> = Vec::new();
@@ -1362,7 +1421,10 @@ struct EncodedDoc<'a> {
     states: Vec<EncodedStateInfo>,
     /// The first counter value for each change of each peer in `changes`
     start_counters: Vec<Counter>,
-    frontiers: Vec<(PeerIdx, Counter)>,
+    /// The frontiers at the start of this encoded delta.
+    ///
+    /// It's empty when the encoding mode is snapshot.
+    start_frontiers: Vec<(PeerIdx, Counter)>,
     #[columnar(borrow)]
     raw_values: Cow<'a, [u8]>,
 

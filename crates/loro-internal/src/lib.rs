@@ -24,7 +24,7 @@ pub mod change;
 pub mod configure;
 pub mod container;
 pub mod dag;
-mod encoding;
+pub mod encoding;
 pub mod id;
 pub mod op;
 pub mod version;

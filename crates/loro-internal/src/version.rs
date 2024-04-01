@@ -750,7 +750,7 @@ impl VersionVector {
         shrink_frontiers(last_ids, dag)
     }
 
-    pub(crate) fn trim(&self, vv: &&VersionVector) -> VersionVector {
+    pub(crate) fn trim(&self, vv: &VersionVector) -> VersionVector {
         let mut ans = VersionVector::new();
         for (client_id, &counter) in self.iter() {
             if let Some(&other_counter) = vv.get(client_id) {
@@ -799,6 +799,10 @@ fn shrink_frontiers(mut last_ids: Vec<ID>, dag: &AppDag) -> Frontiers {
 
     let mut frontiers = Frontiers::default();
     let mut frontiers_vv = Vec::new();
+
+    if last_ids.is_empty() {
+        return frontiers;
+    }
 
     if last_ids.len() == 1 {
         frontiers.push(last_ids[0]);
@@ -857,12 +861,22 @@ impl From<Vec<ID>> for VersionVector {
 
 impl FromIterator<ID> for VersionVector {
     fn from_iter<T: IntoIterator<Item = ID>>(iter: T) -> Self {
-        let mut vv = VersionVector::new();
+        let iter = iter.into_iter();
+        let mut vv = VersionVector(FxHashMap::with_capacity_and_hasher(
+            iter.size_hint().0,
+            Default::default(),
+        ));
         for id in iter {
             vv.set_last(id);
         }
 
         vv
+    }
+}
+
+impl FromIterator<(PeerID, Counter)> for VersionVector {
+    fn from_iter<T: IntoIterator<Item = (PeerID, Counter)>>(iter: T) -> Self {
+        VersionVector(FxHashMap::from_iter(iter))
     }
 }
 

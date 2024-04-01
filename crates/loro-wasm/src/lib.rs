@@ -5,6 +5,7 @@ use loro_internal::{
     change::Lamport,
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
+    encoding::ImportBlobMetadata,
     event::Index,
     handler::{
         Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrHandler,
@@ -70,6 +71,8 @@ extern "C" {
     pub type JsOrigin;
     #[wasm_bindgen(typescript_type = "{ peer: PeerID, counter: number }")]
     pub type JsID;
+    #[wasm_bindgen(typescript_type = "{ peer: PeerID, counter: number }[]")]
+    pub type JsIDs;
     #[wasm_bindgen(typescript_type = "{ start: number, end: number }")]
     pub type JsRange;
     #[wasm_bindgen(typescript_type = "number|bool|string|null")]
@@ -118,6 +121,8 @@ extern "C" {
     pub type JsPartialOrd;
     #[wasm_bindgen(typescript_type = "'Tree'|'Map'|'List'|'Text'")]
     pub type JsContainerKind;
+    #[wasm_bindgen(typescript_type = "ImportBlobMetadata")]
+    pub type JsImportBlobMetadata;
 }
 
 mod observer {
@@ -173,17 +178,18 @@ fn js_id_to_id(id: JsID) -> Result<ID, JsValue> {
     Ok(id)
 }
 
-fn frontiers_to_ids(frontiers: &Frontiers) -> Vec<JsID> {
-    let mut ans = Vec::with_capacity(frontiers.len());
+fn frontiers_to_ids(frontiers: &Frontiers) -> JsIDs {
+    let js_arr = Array::new();
     for id in frontiers.iter() {
         let obj = Object::new();
         Reflect::set(&obj, &"peer".into(), &id.peer.to_string().into()).unwrap();
         Reflect::set(&obj, &"counter".into(), &id.counter.into()).unwrap();
         let value: JsValue = obj.into_js_result().unwrap();
-        ans.push(value.into());
+        js_arr.push(&value);
     }
 
-    ans
+    let value: JsValue = js_arr.into();
+    value.into()
 }
 
 fn js_value_to_container_id(
@@ -655,7 +661,7 @@ impl Loro {
     ///
     /// If you checkout to a specific version, this value will change.
     #[inline]
-    pub fn frontiers(&self) -> Vec<JsID> {
+    pub fn frontiers(&self) -> JsIDs {
         frontiers_to_ids(&self.0.state_frontiers())
     }
 
@@ -663,7 +669,8 @@ impl Loro {
     ///
     /// If you checkout to a specific version, this value will not change.
     #[inline(always)]
-    pub fn oplog_frontiers(&self) -> Vec<JsID> {
+    #[wasm_bindgen(js_name = "oplogFrontiers")]
+    pub fn oplog_frontiers(&self) -> JsIDs {
         frontiers_to_ids(&self.0.oplog_frontiers())
     }
 
@@ -1061,7 +1068,7 @@ impl Loro {
     /// const frontiers = doc.vvToFrontiers(version);
     /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
-    pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<Vec<JsID>> {
+    pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<JsIDs> {
         let f = self.0.oplog().lock().unwrap().dag().vv_to_frontiers(&vv.0);
         Ok(frontiers_to_ids(&f))
     }
@@ -2614,6 +2621,22 @@ impl Container {
     }
 }
 
+/// Decode the metadata of the import blob.
+///
+/// This method is useful to get the following metadata of the import blob:
+///
+/// - startVersionVector
+/// - endVersionVector
+/// - startTimestamp
+/// - endTimestamp
+/// - isSnapshot
+/// - changeNum
+#[wasm_bindgen(js_name = "decodeImportBlobMeta")]
+pub fn decode_import_blob_meta(blob: &[u8]) -> JsResult<JsImportBlobMetadata> {
+    let meta: ImportBlobMetadata = LoroDoc::decode_import_blob_meta(blob)?;
+    Ok(meta.into())
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
 /**
@@ -2730,4 +2753,29 @@ export type Value =
   | Value[];
 
 export type Container = LoroList | LoroMap | LoroText | LoroTree;
+
+export interface ImportBlobMetadata {
+    /**
+     * The version vector of the start of the import.
+     *
+     * Import blob includes all the ops from `partial_start_vv` to `partial_end_vv`.
+     * However, it does not constitute a complete version vector, as it only contains counters
+     * from peers included within the import blob.
+     */
+    partialStartVersionVector: VersionVector;
+    /**
+     * The version vector of the end of the import.
+     * 
+     * Import blob includes all the ops from `partial_start_vv` to `partial_end_vv`.
+     * However, it does not constitute a complete version vector, as it only contains counters
+     * from peers included within the import blob.
+     */
+    partialEndVersionVector: VersionVector;
+
+    startFrontiers: OpId[],
+    startTimestamp: number;
+    endTimestamp: number;
+    isSnapshot: boolean;
+    changeNum: number;
+}
 "#;
