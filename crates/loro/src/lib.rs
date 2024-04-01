@@ -353,6 +353,16 @@ impl LoroDoc {
     pub fn log_estimate_size(&self) {
         self.doc.log_estimated_size();
     }
+
+    /// Get the handler by the path.
+    pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrContainer> {
+        self.doc.get_by_path(path).map(ValueOrContainer::from)
+    }
+
+    /// Get the handler by the string path.
+    pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrContainer> {
+        self.doc.get_by_str_path(path).map(ValueOrContainer::from)
+    }
 }
 
 /// It's used to prevent the user from implementing the trait directly.
@@ -1163,7 +1173,7 @@ impl From<InnerHandler> for Container {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, EnumAsInner)]
 pub enum ValueOrContainer {
     Value(LoroValue),
     Container(Container),
