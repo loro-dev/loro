@@ -2,12 +2,16 @@ use std::sync::Arc;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use loro_internal::delta::{DeltaItem, ResolvedMapDelta};
+use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::event::Diff;
 use loro_internal::handler::{Handler, ValueOrHandler};
 use loro_internal::{LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
-use crate::{Container, JsContainer, LoroList, LoroMap, LoroText, LoroTree};
+use crate::{
+    frontiers_to_ids, Container, JsContainer, JsImportBlobMetadata, LoroList, LoroMap, LoroText,
+    LoroTree,
+};
 use wasm_bindgen::__rt::IntoJsResult;
 use wasm_bindgen::convert::RefFromWasmAbi;
 
@@ -195,6 +199,35 @@ pub fn convert(value: LoroValue) -> JsValue {
             }
             arr.into_js_result().unwrap()
         }
+    }
+}
+
+impl From<ImportBlobMetadata> for JsImportBlobMetadata {
+    fn from(meta: ImportBlobMetadata) -> Self {
+        let start_vv = super::VersionVector(meta.partial_start_vv);
+        let end_vv = super::VersionVector(meta.partial_end_vv);
+        let start_vv: JsValue = start_vv.into();
+        let end_vv: JsValue = end_vv.into();
+        let start_timestamp: JsValue = JsValue::from_f64(meta.start_timestamp as f64);
+        let end_timestamp: JsValue = JsValue::from_f64(meta.end_timestamp as f64);
+        let is_snapshot: JsValue = JsValue::from_bool(meta.is_snapshot);
+        let change_num: JsValue = JsValue::from_f64(meta.change_num as f64);
+        let ans = Object::new();
+        js_sys::Reflect::set(
+            &ans,
+            &JsValue::from_str("partialStartVersionVector"),
+            &start_vv,
+        )
+        .unwrap();
+        js_sys::Reflect::set(&ans, &JsValue::from_str("partialEndVersionVector"), &end_vv).unwrap();
+        let js_frontiers: JsValue = frontiers_to_ids(&meta.start_frontiers).into();
+        js_sys::Reflect::set(&ans, &JsValue::from_str("startFrontiers"), &js_frontiers).unwrap();
+        js_sys::Reflect::set(&ans, &JsValue::from_str("startTimestamp"), &start_timestamp).unwrap();
+        js_sys::Reflect::set(&ans, &JsValue::from_str("endTimestamp"), &end_timestamp).unwrap();
+        js_sys::Reflect::set(&ans, &JsValue::from_str("isSnapshot"), &is_snapshot).unwrap();
+        js_sys::Reflect::set(&ans, &JsValue::from_str("changeNum"), &change_num).unwrap();
+        let ans: JsValue = ans.into();
+        ans.into()
     }
 }
 

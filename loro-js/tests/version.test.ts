@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { Loro, LoroMap, OpId, VersionVector } from "../src";
+import {
+  decodeImportBlobMeta,
+  Loro,
+  LoroMap,
+  OpId,
+  VersionVector,
+} from "../src";
 
 describe("Frontiers", () => {
   it("two clients", () => {
@@ -133,4 +139,66 @@ describe("Version", () => {
     const change = a.getOpsInChange({ peer: "0", counter: 2 });
     expect(change.length).toBe(1);
   });
+});
+
+it("get import blob metadata", () => {
+  const doc0 = new Loro();
+  doc0.setPeerId(0n);
+  const text = doc0.getText("text");
+  text.insert(0, "0");
+  doc0.commit();
+  {
+    const bytes = doc0.exportFrom();
+    const meta = decodeImportBlobMeta(bytes);
+    expect(meta.changeNum).toBe(1);
+    expect(meta.partialStartVersionVector.get("0")).toBeFalsy();
+    expect(meta.partialEndVersionVector.get("0")).toBe(1);
+    expect(meta.startTimestamp).toBe(0);
+    expect(meta.endTimestamp).toBe(0);
+    expect(meta.isSnapshot).toBeFalsy();
+    console.log(meta.startFrontiers);
+    expect(meta.startFrontiers.length).toBe(0);
+  }
+
+  const doc1 = new Loro();
+  doc1.setPeerId(1);
+  doc1.getText("text").insert(0, "123");
+  doc1.import(doc0.exportFrom());
+  {
+    const bytes = doc1.exportFrom();
+    const meta = decodeImportBlobMeta(bytes);
+    expect(meta.changeNum).toBe(2);
+    expect(meta.partialStartVersionVector.get("0")).toBeFalsy();
+    expect(meta.partialEndVersionVector.get("0")).toBe(1);
+    expect(meta.partialEndVersionVector.get("1")).toBe(3);
+    expect(meta.startTimestamp).toBe(0);
+    expect(meta.endTimestamp).toBe(0);
+    expect(meta.isSnapshot).toBeFalsy();
+    expect(meta.startFrontiers.length).toBe(0);
+  }
+  {
+    const bytes = doc1.exportSnapshot();
+    const meta = decodeImportBlobMeta(bytes);
+    expect(meta.changeNum).toBe(2);
+    expect(meta.partialStartVersionVector.get("0")).toBeFalsy();
+    expect(meta.partialEndVersionVector.get("0")).toBe(1);
+    expect(meta.partialEndVersionVector.get("1")).toBe(3);
+    expect(meta.startTimestamp).toBe(0);
+    expect(meta.endTimestamp).toBe(0);
+    expect(meta.isSnapshot).toBeTruthy();
+    expect(meta.startFrontiers.length).toBe(0);
+  }
+  {
+    const bytes = doc1.exportFrom(doc0.oplogVersion());
+    const meta = decodeImportBlobMeta(bytes);
+    expect(meta.changeNum).toBe(1);
+    expect(meta.partialStartVersionVector.get("0")).toBeUndefined();
+    expect(meta.partialStartVersionVector.get("1")).toBeFalsy();
+    expect(meta.partialEndVersionVector.get("0")).toBeUndefined();
+    expect(meta.partialEndVersionVector.get("1")).toBe(3);
+    expect(meta.startTimestamp).toBe(0);
+    expect(meta.endTimestamp).toBe(0);
+    expect(meta.isSnapshot).toBeFalsy();
+    expect(meta.startFrontiers).toStrictEqual([{ peer: "0", counter: 0 }]);
+  }
 });

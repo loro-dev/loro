@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, sync::Arc};
 
 use loro::{FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText, ToJson};
-use loro_internal::{handler::TextDelta, id::ID, LoroResult};
+use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
 use serde_json::json;
 
 #[test]
@@ -436,6 +436,72 @@ fn prelim_support() -> LoroResult<()> {
             }
         })
     );
+    Ok(())
+}
+
+#[test]
+fn decode_import_blob_meta() -> LoroResult<()> {
+    let doc_1 = LoroDoc::new();
+    doc_1.set_peer_id(1)?;
+    doc_1.get_text("text").insert(0, "123")?;
+    {
+        let bytes = doc_1.export_from(&Default::default());
+        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        assert!(meta.partial_start_vv.is_empty());
+        assert_eq!(meta.partial_end_vv, vv!(1 => 3));
+        assert_eq!(meta.start_timestamp, 0);
+        assert_eq!(meta.end_timestamp, 0);
+        assert!(!meta.is_snapshot);
+        assert!(meta.start_frontiers.is_empty());
+        assert_eq!(meta.change_num, 1);
+
+        let bytes = doc_1.export_snapshot();
+        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        assert!(meta.partial_start_vv.is_empty());
+        assert_eq!(meta.partial_end_vv, vv!(1 => 3));
+        assert_eq!(meta.start_timestamp, 0);
+        assert_eq!(meta.end_timestamp, 0);
+        assert!(meta.is_snapshot);
+        assert!(meta.start_frontiers.is_empty());
+        assert_eq!(meta.change_num, 1);
+    }
+
+    let doc_2 = LoroDoc::new();
+    doc_2.set_peer_id(2)?;
+    doc_2.import(&doc_1.export_snapshot()).unwrap();
+    doc_2.get_text("text").insert(0, "123")?;
+    doc_2.get_text("text").insert(0, "123")?;
+    {
+        let bytes = doc_2.export_from(&doc_1.oplog_vv());
+        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        assert_eq!(meta.partial_start_vv, vv!());
+        assert_eq!(meta.partial_end_vv, vv!(2 => 6));
+        assert_eq!(meta.start_timestamp, 0);
+        assert_eq!(meta.end_timestamp, 0);
+        assert!(!meta.is_snapshot);
+        assert_eq!(meta.start_frontiers, vec![ID::new(1, 2)].into());
+        assert_eq!(meta.change_num, 1);
+
+        let bytes = doc_2.export_from(&vv!(1 => 1));
+        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        assert_eq!(meta.partial_start_vv, vv!(1 => 1));
+        assert_eq!(meta.partial_end_vv, vv!(1 => 3, 2 => 6));
+        assert_eq!(meta.start_timestamp, 0);
+        assert_eq!(meta.end_timestamp, 0);
+        assert!(!meta.is_snapshot);
+        assert_eq!(meta.start_frontiers, vec![ID::new(1, 0)].into());
+        assert_eq!(meta.change_num, 2);
+
+        let bytes = doc_2.export_snapshot();
+        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        assert_eq!(meta.partial_start_vv, vv!());
+        assert_eq!(meta.partial_end_vv, vv!(1 => 3, 2 => 6));
+        assert_eq!(meta.start_timestamp, 0);
+        assert_eq!(meta.end_timestamp, 0);
+        assert!(meta.is_snapshot);
+        assert!(meta.start_frontiers.is_empty());
+        assert_eq!(meta.change_num, 2);
+    }
     Ok(())
 }
 
