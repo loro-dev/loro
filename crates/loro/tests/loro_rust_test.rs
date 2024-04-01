@@ -611,18 +611,25 @@ fn get_stable_positions() {
     let pos_info = doc2.query_pos(&pos_a).unwrap();
     assert!(pos_info.update.is_none());
     assert_eq!(pos_info.current_pos, 0);
+    // text2: 0123456789ab
     doc2.import(&doc1.export_snapshot()).unwrap();
     let pos_info = doc2.query_pos(&pos_a).unwrap();
     assert!(pos_info.update.is_none());
     assert_eq!(pos_info.current_pos, 10);
 
     // test delete
+    // text2: 01234~~56789~~ab
+    // text2: 01234ab
+    //            |___ pos_7
     text2.delete(5, 5).unwrap(); // pos_7 now is 5
     let pos_info = doc2.query_pos(&pos_7).unwrap(); // it should be fine to query from another doc
     assert_eq!(pos_info.update.as_ref().unwrap().id.unwrap(), ID::new(2, 0));
     assert_eq!(pos_info.current_pos, 5);
 
     // rich text
+    //
+    // text2: [01]234ab
+    //              |___ pos_7
     text2.mark(0..2, "bold", true).unwrap();
     let pos_info = doc2.query_pos(&pos_7).unwrap();
     assert_eq!(pos_info.update.as_ref().unwrap().id.unwrap(), ID::new(2, 0));

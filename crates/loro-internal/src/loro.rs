@@ -921,9 +921,10 @@ impl LoroDoc {
                     crate::diff_calc::ContainerDiffCalculator::Richtext(t) => {
                         let new_pos = t.get_id_latest_pos(id).unwrap();
                         let handler = self.get_text(&pos.container);
+                        let current_pos = handler.convert_entity_index_to_event_index(new_pos);
                         Ok(PosQueryResult {
-                            update: handler.get_stable_position(new_pos).ok(),
-                            current_pos: handler.convert_entity_index_to_event_index(new_pos),
+                            update: handler.get_stable_position(current_pos).ok(),
+                            current_pos,
                         })
                     }
                     crate::diff_calc::ContainerDiffCalculator::List(_) => todo!(),
@@ -953,7 +954,7 @@ impl LoroDoc {
 
 fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
     let start_vv = oplog.dag.frontiers_to_vv(&id.into()).unwrap();
-    for change in oplog.iter_changes_rev(&start_vv, &oplog.dag.vv) {
+    for change in oplog.iter_changes_causally_rev(&start_vv, &oplog.dag.vv) {
         for op in change.ops.iter().rev() {
             if op.container != idx {
                 continue;

@@ -826,15 +826,25 @@ impl OpLog {
         }
     }
 
-    pub(crate) fn iter_changes<'a>(
+    pub(crate) fn iter_changes_peer_by_peer<'a>(
         &'a self,
         from: &VersionVector,
         to: &VersionVector,
     ) -> impl Iterator<Item = &'a Change> + 'a {
-        MergedChangeIter::new_change_iter(self, from, to, true)
+        let spans: Vec<_> = from.diff_iter(to).1.collect();
+        spans.into_iter().flat_map(move |span| {
+            let peer = span.peer;
+            let cnt = span.counter.start;
+            let end_cnt = span.counter.end;
+            let peer_changes = self.changes.get(&peer).unwrap();
+            let index = peer_changes.search_atom_index(cnt);
+            peer_changes[index..]
+                .iter()
+                .take_while(move |x| x.ctr_start() < end_cnt)
+        })
     }
 
-    pub(crate) fn iter_changes_rev<'a>(
+    pub(crate) fn iter_changes_causally_rev<'a>(
         &'a self,
         from: &VersionVector,
         to: &VersionVector,
