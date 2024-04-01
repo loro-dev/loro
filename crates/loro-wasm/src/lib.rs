@@ -493,7 +493,10 @@ impl Loro {
             .commit_with(origin.map(|x| x.into()), timestamp.map(|x| x as i64), true);
     }
 
-    /// Get a LoroText by container id
+    /// Get a LoroText by container id.
+    ///
+    /// The object returned is a new js object each time because it need to cross
+    /// the WASM boundary.
     ///
     /// @example
     /// ```ts
@@ -515,6 +518,9 @@ impl Loro {
 
     /// Get a LoroMap by container id
     ///
+    /// The object returned is a new js object each time because it need to cross
+    /// the WASM boundary.
+    ///
     /// @example
     /// ```ts
     /// import { Loro } from "loro-crdt";
@@ -535,6 +541,9 @@ impl Loro {
 
     /// Get a LoroList by container id
     ///
+    /// The object returned is a new js object each time because it need to cross
+    /// the WASM boundary.
+    ///
     /// @example
     /// ```ts
     /// import { Loro } from "loro-crdt";
@@ -554,6 +563,9 @@ impl Loro {
     }
 
     /// Get a LoroTree by container id
+    ///
+    /// The object returned is a new js object each time because it need to cross
+    /// the WASM boundary.
     ///
     /// @example
     /// ```ts
@@ -1371,6 +1383,10 @@ impl LoroText {
     }
 
     /// Get the parent container.
+    ///
+    /// - The parent container of the root tree is `undefined`.
+    /// - The object returned is a new js object each time because it need to cross
+    ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = self.handler.parent() {
             handler_to_js_value(p, self.doc.clone()).into()
@@ -1392,6 +1408,11 @@ impl LoroText {
     /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
     #[wasm_bindgen(js_name = "getAttached")]
     pub fn get_attached(&self) -> JsLoroTextOrUndefined {
+        if self.is_attached() {
+            let value: JsValue = self.clone().into();
+            return value.into();
+        }
+
         if let Some(h) = self.handler.get_attached() {
             handler_to_js_value(Handler::Text(h), self.doc.clone()).into()
         } else {
@@ -1472,6 +1493,9 @@ impl LoroMap {
     /// Get the value of the key. If the value is a child container, the corresponding
     /// `Container` will be returned.
     ///
+    /// The object/value returned is a new js object/value each time because it need to cross
+    /// the WASM boundary.
+    ///
     /// @example
     /// ```ts
     /// import { Loro } from "loro-crdt";
@@ -1493,6 +1517,8 @@ impl LoroMap {
 
     /// Get the value of the key. If the value is a child container, the corresponding
     /// `Container` will be returned.
+    ///
+    /// The object returned is a new js object each time because it need to cross
     ///
     /// @example
     /// ```ts
@@ -1691,6 +1717,10 @@ impl LoroMap {
     }
 
     /// Get the parent container.
+    ///
+    /// - The parent container of the root tree is `undefined`.
+    /// - The object returned is a new js object each time because it need to cross
+    ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = self.handler.parent() {
             handler_to_js_value(p, self.doc.clone()).into()
@@ -1712,6 +1742,11 @@ impl LoroMap {
     /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
     #[wasm_bindgen(js_name = "getAttached")]
     pub fn get_attached(&self) -> JsLoroMapOrUndefined {
+        if self.is_attached() {
+            let value: JsValue = self.clone().into();
+            return value.into();
+        }
+
         let Some(h) = self.handler.get_attached() else {
             return JsValue::UNDEFINED.into();
         };
@@ -1959,6 +1994,10 @@ impl LoroList {
     }
 
     /// Get the parent container.
+    ///
+    /// - The parent container of the root tree is `undefined`.
+    /// - The object returned is a new js object each time because it need to cross
+    ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = self.handler.parent() {
             handler_to_js_value(p, self.doc.clone()).into()
@@ -1980,6 +2019,11 @@ impl LoroList {
     /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
     #[wasm_bindgen(js_name = "getAttached")]
     pub fn get_attached(&self) -> JsLoroListOrUndefined {
+        if self.is_attached() {
+            let value: JsValue = self.clone().into();
+            return value.into();
+        }
+
         if let Some(h) = self.handler.get_attached() {
             handler_to_js_value(Handler::List(h), self.doc.clone()).into()
         } else {
@@ -2078,12 +2122,19 @@ impl LoroTreeNode {
     }
 
     /// Get the parent node of this node.
+    ///
+    /// - The parent container of the root tree is `undefined`.
+    /// - The object returned is a new js object each time because it need to cross
+    ///   the WASM boundary.
     pub fn parent(&self) -> Option<LoroTreeNode> {
         let parent = self.tree.get_node_parent(self.id).flatten();
         parent.map(|p| LoroTreeNode::from_tree(p, self.tree.clone(), self.doc.clone()))
     }
 
     /// Get the children of this node.
+    ///
+    /// The objects returned are new js objects each time because they need to cross
+    /// the WASM boundary.
     pub fn children(&self) -> Array {
         let children = self.tree.children(self.id);
         let children = children.into_iter().map(|c| {
@@ -2361,6 +2412,10 @@ impl LoroTree {
     }
 
     /// Get the parent container of the tree container.
+    ///
+    /// - The parent container of the root tree is `undefined`.
+    /// - The object returned is a new js object each time because it need to cross
+    ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = HandlerTrait::parent(&self.handler) {
             handler_to_js_value(p, self.doc.clone()).into()
@@ -2382,6 +2437,11 @@ impl LoroTree {
     /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
     #[wasm_bindgen(js_name = "getAttached")]
     pub fn get_attached(&self) -> JsLoroTreeOrUndefined {
+        if self.is_attached() {
+            let value: JsValue = self.clone().into();
+            return value.into();
+        }
+
         if let Some(h) = self.handler.get_attached() {
             handler_to_js_value(Handler::Tree(h), self.doc.clone()).into()
         } else {
@@ -2634,7 +2694,7 @@ export interface Change {
 /**
  * Data types supported by loro
  */
-export type Value = 
+export type Value =
   | ContainerID
   | string
   | number
