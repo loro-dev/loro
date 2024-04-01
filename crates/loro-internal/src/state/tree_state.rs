@@ -530,6 +530,7 @@ impl ContainerState for TreeState {
 
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
+        let mut ans = vec![];
         // TODO: better
         for node in self
             .trees
@@ -540,20 +541,23 @@ impl ContainerState for TreeState {
                 continue;
             }
             encoder.encode_op(node.last_move_op.idlp().into(), || unimplemented!());
+            let position_bytes = node.position.as_ref().map(|x| x.as_bytes());
+            ans.push(position_bytes);
         }
 
-        Vec::new()
+        postcard::to_allocvec(&ans).unwrap()
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
         assert_eq!(ctx.mode, EncodeMode::Snapshot);
-        for op in ctx.ops {
+        let positions: Vec<Option<Vec<u8>>> = postcard::from_bytes(ctx.blob).unwrap();
+        for (op, position) in ctx.ops.zip(positions) {
             assert_eq!(op.op.atom_len(), 1);
             let content = op.op.content.as_tree().unwrap();
             let target = content.target;
             let parent = content.parent;
-            let mut position = content.position.clone();
+            let position = position.map(|x| FracIndex::from_bytes(x).unwrap());
             // TODO: use TreeParentId
             let parent = match parent {
                 Some(parent) => {
@@ -565,9 +569,9 @@ impl ContainerState for TreeState {
                 }
                 None => TreeParentId::None,
             };
-            if let Some(p) = position {
-                position = Some(self.check_new_position(&parent, &p, &op.id_full()));
-            }
+            // if let Some(p) = position {
+            //     position = Some(self.check_new_position(&parent, &p, &op.id_full()));
+            // }
             self.mov(target, parent, op.id_full(), position, false)
                 .unwrap();
         }

@@ -127,7 +127,7 @@ impl TreeDiffCalculator {
             let op = MoveLamportAndID {
                 target: op.value.target,
                 parent: op.value.parent_id(),
-                index: op.value.index,
+                position: op.value.position.clone(),
                 id: op.id_start(),
                 lamport,
                 effected: false,
@@ -311,7 +311,7 @@ pub struct MoveLamportAndID {
     pub(crate) id: ID,
     pub(crate) target: TreeID,
     pub(crate) parent: TreeParentId,
-    pub(crate) index: Option<usize>,
+    pub(crate) position: Option<FracIndex>,
     /// Whether this action is applied in the current version.
     /// If this action will cause a circular reference, then this action will not be applied.
     pub(crate) effected: bool,

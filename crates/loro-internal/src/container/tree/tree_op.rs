@@ -2,7 +2,7 @@ use loro_common::TreeID;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
-use crate::state::TreeParentId;
+use crate::{container::FracIndex, state::TreeParentId};
 
 /// The operation of movable tree.
 ///
@@ -12,12 +12,12 @@ use crate::state::TreeParentId;
 /// - **Delete**: move target tree node to [`loro_common::DELETED_TREE_ROOT`].
 ///
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TreeOp {
     pub(crate) target: TreeID,
     pub(crate) parent: Option<TreeID>,
     // If the op is `delete`, the position is None
-    pub(crate) index: Option<usize>,
+    pub(crate) position: Option<FracIndex>,
 }
 
 impl TreeOp {
