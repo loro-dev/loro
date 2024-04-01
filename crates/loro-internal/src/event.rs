@@ -18,7 +18,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use loro_common::{ContainerID, Counter, TreeID};
+use loro_common::{ContainerID, TreeID};
 
 use crate::{container::idx::ContainerIdx, version::Frontiers};
 

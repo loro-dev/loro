@@ -195,13 +195,14 @@ pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
     let mut start_timestamp = Timestamp::MAX;
     let mut end_timestamp = Timestamp::MIN;
 
-    for EncodedChange {
-        peer_idx,
-        len,
-        timestamp,
-        ..
-    } in iterators.changes
+    for iter in iterators.changes
     {
+        let EncodedChange {
+            peer_idx,
+            len,
+            timestamp,
+            ..
+        } = iter?;
         end_vv_counters[peer_idx] += len as Counter;
         start_timestamp = start_timestamp.min(timestamp);
         end_timestamp = end_timestamp.max(timestamp);
