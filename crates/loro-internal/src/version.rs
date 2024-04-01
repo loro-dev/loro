@@ -809,9 +809,6 @@ fn shrink_frontiers(mut last_ids: Vec<ID>, dag: &AppDag) -> Frontiers {
         return frontiers;
     }
 
-    dbg!(&last_ids);
-    dbg!(&dag);
-
     // sort by lamport, ascending
     last_ids.sort_by_cached_key(|x| ((dag.get_lamport(x).unwrap() as isize), x.peer));
 
