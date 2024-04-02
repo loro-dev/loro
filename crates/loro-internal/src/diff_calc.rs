@@ -456,6 +456,11 @@ pub(crate) struct ListDiffCalculator {
     start_vv: VersionVector,
     tracker: Box<RichtextTracker>,
 }
+impl ListDiffCalculator {
+    pub(crate) fn get_id_latest_pos(&self, id: ID) -> Option<crate::stable_pos::Cursor> {
+        self.tracker.get_target_id_latest_index_at_new_version(id)
+    }
+}
 
 impl std::fmt::Debug for ListDiffCalculator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -1844,6 +1844,41 @@ impl ListHandler {
             }
         }
     }
+
+    pub fn get_stable_position(&self, pos: usize) -> Option<StablePosition> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => {
+                let (id, len) = a.with_state(|s| {
+                    let l = s.as_list_state().unwrap();
+                    (l.get_id_at(pos), l.len())
+                });
+
+                if len == 0 {
+                    return Some(StablePosition {
+                        id: None,
+                        container: self.id(),
+                        side: Side::Left,
+                    });
+                }
+
+                if len == pos {
+                    return Some(StablePosition {
+                        id: None,
+                        container: self.id(),
+                        side: Side::Right,
+                    });
+                }
+
+                let id = id?;
+                Some(StablePosition {
+                    id: Some(id.id()),
+                    container: self.id(),
+                    side: Side::Middle,
+                })
+            }
+        }
+    }
 }
 
 impl MapHandler {

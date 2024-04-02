@@ -1087,10 +1087,7 @@ impl DocState {
 
     pub fn get_relative_position(&mut self, pos: &StablePosition) -> Option<usize> {
         let idx = self.arena.register_container(&pos.container);
-        let Some(state) = self.states.get_mut(&idx) else {
-            return None;
-        };
-
+        let state = self.states.get_mut(&idx)?;
         if let Some(id) = pos.id {
             match state {
                 State::ListState(s) => s.get_index_of_id(id),

@@ -650,3 +650,64 @@ fn get_stable_position_at_the_end() {
     text.insert(0, "01234").unwrap();
     assert_eq!(doc.query_pos(&pos).unwrap().current.pos, 5);
 }
+
+#[test]
+fn get_stable_positions_for_list() {
+    let doc = LoroDoc::new();
+    let list = doc.get_list("list");
+    let pos_start = list.get_stable_position(0).unwrap();
+    list.insert(0, 1).unwrap();
+    let pos_0 = list.get_stable_position(0).unwrap();
+    let pos_end = list.get_stable_position(1).unwrap();
+    {
+        let result = doc.query_pos(&pos_start).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.query_pos(&pos_0).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.query_pos(&pos_end).unwrap();
+        assert_eq!(result.current.pos, 1);
+    }
+    list.insert(0, 1).unwrap();
+    {
+        let result = doc.query_pos(&pos_start).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.query_pos(&pos_0).unwrap();
+        assert_eq!(result.current.pos, 1);
+    }
+    {
+        let result = doc.query_pos(&pos_end).unwrap();
+        assert_eq!(result.current.pos, 2);
+    }
+    list.insert(0, 1).unwrap();
+    {
+        let result = doc.query_pos(&pos_start).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.query_pos(&pos_0).unwrap();
+        assert_eq!(result.current.pos, 2);
+    }
+    {
+        let result = doc.query_pos(&pos_end).unwrap();
+        assert_eq!(result.current.pos, 3);
+    }
+    list.insert(0, 1).unwrap();
+    {
+        let result = doc.query_pos(&pos_start).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.query_pos(&pos_0).unwrap();
+        assert_eq!(result.current.pos, 3);
+    }
+    {
+        let result = doc.query_pos(&pos_end).unwrap();
+        assert_eq!(result.current.pos, 4);
+    }
+}

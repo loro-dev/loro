@@ -934,7 +934,18 @@ impl LoroDoc {
                             },
                         })
                     }
-                    crate::diff_calc::ContainerDiffCalculator::List(_) => todo!(),
+                    crate::diff_calc::ContainerDiffCalculator::List(list) => {
+                        let c = list.get_id_latest_pos(id).unwrap();
+                        let new_pos = c.pos;
+                        let handler = self.get_list(&pos.container);
+                        Ok(PosQueryResult {
+                            update: handler.get_stable_position(new_pos),
+                            current: Cursor {
+                                pos: new_pos,
+                                side: c.side,
+                            },
+                        })
+                    }
                     crate::diff_calc::ContainerDiffCalculator::Tree(_) => unreachable!(),
                     crate::diff_calc::ContainerDiffCalculator::Map(_) => unreachable!(),
                 }
@@ -954,9 +965,21 @@ impl LoroDoc {
                             },
                         })
                     }
-                    ContainerType::Map => todo!(),
-                    ContainerType::List => todo!(),
-                    ContainerType::Tree => todo!(),
+                    ContainerType::List => {
+                        let list = self.get_list(&pos.container);
+                        Ok(PosQueryResult {
+                            update: Some(StablePosition {
+                                id: None,
+                                container: list.id(),
+                                side: pos.side,
+                            }),
+                            current: Cursor {
+                                pos: list.len(),
+                                side: pos.side,
+                            },
+                        })
+                    }
+                    ContainerType::Map | ContainerType::Tree => unreachable!(),
                 }
             }
         }

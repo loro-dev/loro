@@ -83,6 +83,7 @@ impl<'a, T: HasLamport> Iterator for MergedChangeIter<'a, T> {
     }
 }
 
+#[allow(unused)]
 impl PeerChangesIter<'_, AppDagNode> {
     pub(crate) fn new_dag_iter(
         changes: &Vec<AppDagNode>,
@@ -106,6 +107,7 @@ impl PeerChangesIter<'_, AppDagNode> {
     }
 }
 
+#[allow(unused)]
 impl<'a> MergedChangeIter<'a, AppDagNode> {
     pub fn new_dag_iter(
         dag: &'a AppDag,

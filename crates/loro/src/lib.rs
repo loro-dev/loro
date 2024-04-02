@@ -558,6 +558,10 @@ impl LoroList {
             self.handler.insert_container(pos, child.to_handler())?,
         ))
     }
+
+    pub fn get_stable_position(&self, pos: usize) -> Option<StablePosition> {
+        self.handler.get_stable_position(pos)
+    }
 }
 
 impl Default for LoroList {
