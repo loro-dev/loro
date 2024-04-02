@@ -996,46 +996,50 @@ impl DocState {
     ///
     /// This is only used for test.
     pub(crate) fn check_is_the_same(&mut self, other: &mut Self) {
+        fn get_entries_for_state(
+            arena: &SharedArena,
+            state: &mut State,
+        ) -> Option<(ContainerID, (ContainerIdx, LoroValue))> {
+            let id = arena.idx_to_id(state.container_idx()).unwrap();
+            let value = match state {
+                State::RichtextState(s) => s.get_richtext_value(),
+                _ => state.get_value(),
+            };
+
+            if match &value {
+                LoroValue::List(l) => l.is_empty(),
+                LoroValue::Map(m) => m.is_empty(),
+                _ => false,
+            } {
+                return None;
+            }
+
+            Some((id, (state.container_idx(), value)))
+        }
+
         let self_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> = self
             .states
             .values_mut()
-            .map(|state: &mut State| {
-                let id = self.arena.idx_to_id(state.container_idx()).unwrap();
-                let value = match state {
-                    State::RichtextState(s) => s.get_richtext_value(),
-                    _ => state.get_value(),
-                };
-                (id, (state.container_idx(), value))
+            .filter_map(|state: &mut State| {
+                let arena = &self.arena;
+                get_entries_for_state(arena, state)
             })
             .collect();
         let mut other_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> = other
             .states
             .values_mut()
-            .map(|state: &mut State| {
-                let id = other.arena.idx_to_id(state.container_idx()).unwrap();
-                let value = match state {
-                    State::RichtextState(s) => s.get_richtext_value(),
-                    _ => state.get_value(),
-                };
-                (id, (state.container_idx(), value))
+            .filter_map(|state: &mut State| {
+                let arena = &other.arena;
+                get_entries_for_state(arena, state)
             })
             .collect();
+        tracing::trace!("self_id_to_states: {:#?}", self_id_to_states);
+        tracing::trace!("other_id_to_states: {:#?}", other_id_to_states);
 
         for (id, (idx, this_value)) in self_id_to_states {
             let (_, other_value) = match other_id_to_states.remove(&id) {
                 Some(x) => x,
                 None => {
-                    let is_empty = match this_value {
-                        LoroValue::List(l) => l.is_empty(),
-                        LoroValue::Map(m) => m.is_empty(),
-                        _ => unreachable!(),
-                    };
-
-                    if is_empty {
-                        // the container is empty, so it's ok
-                        continue;
-                    }
-
                     panic!("id: {:?}, path: {:?} is missing", id, self.get_path(idx));
                 }
             };
