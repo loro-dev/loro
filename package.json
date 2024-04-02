@@ -10,6 +10,7 @@
     "test": "cargo nextest run --features=test_utils && cargo test --doc",
     "test-all": "deno task test & deno task quick-fuzz & deno task test-wasm",
     "test-wasm": "cd crates/loro-wasm && deno task dev && cd ../../loro-js && pnpm i && pnpm run test",
+    "coverage": "mkdir -p coverage && cargo llvm-cov nextest --features test_utils --lcov > coverage/lcov-nextest.info && cargo llvm-cov report",
     "release-wasm": "cd crates/loro-wasm && deno task release && cd ../../loro-js && pnpm i && pnpm build && pnpm run test",
     "check": "cargo clippy --all-features",
     "quick-fuzz": "cd crates/loro-internal && deno task quick-fuzz",

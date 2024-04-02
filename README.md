@@ -79,6 +79,7 @@ https://github.com/loro-dev/loro/assets/18425020/ec2d20a3-3d8c-4483-a601-b200243
 7. **wasm-snip**: Install using `cargo install wasm-snip`.
 8. **cargo-nextest**: Install using `cargo install cargo-nextest --locked`.
 9. **cargo-fuzz**: Run `cargo install cargo-fuzz`.
+10. **cargo-llvm-cov**(to generate coverage report): Run `cargo install cargo-llvm-cov` 
 
 ### Test
 

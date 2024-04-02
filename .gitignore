@@ -7,5 +7,4 @@ dhat-heap.json
 .DS_Store
 node_modules/
 .idea/
-lcov.info
-trace-*.json
+coverage/
