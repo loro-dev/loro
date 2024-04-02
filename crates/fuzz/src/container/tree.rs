@@ -1,12 +1,13 @@
 use std::{
+    collections::VecDeque,
     ops::{Deref, DerefMut},
     sync::{Arc, Mutex},
 };
 
 use fxhash::FxHashMap;
 use loro::{
-    event::Diff, Container, ContainerID, ContainerType, FracIndex, LoroDoc, LoroError, LoroTree,
-    LoroValue, TreeExternalDiff, TreeID,
+    event::Diff, Container, ContainerID, ContainerType, LoroDoc, LoroError, LoroTree, LoroValue,
+    TreeExternalDiff, TreeID,
 };
 
 use crate::{
@@ -229,6 +230,32 @@ impl FromGenericAction for TreeAction {
 #[derive(Debug)]
 pub struct TreeTracker(Vec<TreeNode>);
 
+impl TreeTracker {
+    pub(crate) fn find_node_by_id(&self, id: TreeID) -> Option<&TreeNode> {
+        let mut s = VecDeque::from_iter(self.iter());
+        while let Some(node) = s.pop_front() {
+            if node.id == id {
+                return Some(node);
+            } else {
+                s.extend(node.children.iter())
+            }
+        }
+        None
+    }
+
+    pub(crate) fn find_node_by_id_mut(&mut self, id: TreeID) -> Option<&mut TreeNode> {
+        let mut s = VecDeque::from_iter(self.iter_mut());
+        while let Some(node) = s.pop_front() {
+            if node.id == id {
+                return Some(node);
+            } else {
+                s.extend(node.children.iter_mut())
+            }
+        }
+        None
+    }
+}
+
 impl ApplyDiff for TreeTracker {
     fn empty() -> Self {
         TreeTracker(Vec::new())
@@ -239,17 +266,42 @@ impl ApplyDiff for TreeTracker {
         for diff in &diff.diff {
             let target = diff.target;
             match &diff.action {
-                TreeExternalDiff::Create { parent, position } => {
-                    let node = TreeNode::new(target, *parent, position.clone());
-                    self.push(node);
+                TreeExternalDiff::Create { parent, index } => {
+                    let node = TreeNode::new(target, *parent);
+                    if let Some(parent) = parent {
+                        let parent = self.find_node_by_id_mut(*parent).unwrap();
+                        parent.children.insert(*index, node);
+                    } else {
+                        self.insert(*index, node);
+                    };
                 }
                 TreeExternalDiff::Delete => {
-                    self.retain(|node| node.id != target && node.parent != Some(target));
+                    let node = self.find_node_by_id(target).unwrap();
+                    if let Some(parent) = node.parent {
+                        let parent = self.find_node_by_id_mut(parent).unwrap();
+                        parent.children.retain(|n| n.id != target);
+                    } else {
+                        let index = self.iter().position(|n| n.id == target).unwrap();
+                        self.0.remove(index);
+                    };
                 }
-                TreeExternalDiff::Move { parent, position } => {
-                    let node = self.iter_mut().find(|node| node.id == target).unwrap();
+                TreeExternalDiff::Move { parent, index } => {
+                    let node = self.find_node_by_id(target).unwrap();
+                    let mut node = if let Some(p) = node.parent {
+                        let parent = self.find_node_by_id_mut(p).unwrap();
+                        let index = parent.children.iter().position(|n| n.id == target).unwrap();
+                        parent.children.remove(index)
+                    } else {
+                        let index = self.iter().position(|n| n.id == target).unwrap();
+                        self.0.remove(index)
+                    };
                     node.parent = *parent;
-                    node.position = position.clone();
+                    if let Some(parent) = parent {
+                        let parent = self.find_node_by_id_mut(*parent).unwrap();
+                        parent.children.insert(*index, node);
+                    } else {
+                        self.insert(*index, node);
+                    }
                 }
             }
         }
@@ -257,29 +309,22 @@ impl ApplyDiff for TreeTracker {
 
     fn to_value(&self) -> LoroValue {
         let mut list: Vec<FxHashMap<_, _>> = Vec::new();
-        for node in self.iter() {
-            let mut map = FxHashMap::default();
-            map.insert("id".to_string(), node.id.to_string().into());
-            map.insert("meta".to_string(), node.meta.to_value());
-            map.insert(
-                "parent".to_string(),
-                match node.parent {
-                    Some(parent) => parent.to_string().into(),
-                    None => LoroValue::Null,
-                },
-            );
-            map.insert("position".to_string(), node.position.to_string().into());
-            list.push(map);
+        for (i, node) in self.iter().enumerate() {
+            node.to_value(i, &mut list);
         }
-        // compare by peer and then counter
+
         list.sort_by_key(|x| {
             let parent = if let LoroValue::String(p) = x.get("parent").unwrap() {
                 Some(p.clone())
             } else {
                 None
             };
-            let index = x.get("position").unwrap().as_string().unwrap();
-            (parent, index.clone())
+
+            (
+                parent,
+                *x.get("index").unwrap().as_i64().unwrap(),
+                x.get("id").unwrap().as_string().unwrap().clone(),
+            )
         });
         list.into()
     }
@@ -302,16 +347,34 @@ pub struct TreeNode {
     pub id: TreeID,
     pub meta: ContainerTracker,
     pub parent: Option<TreeID>,
-    pub position: FracIndex,
+    pub children: Vec<TreeNode>,
 }
 
 impl TreeNode {
-    pub fn new(id: TreeID, parent: Option<TreeID>, position: FracIndex) -> Self {
+    pub fn new(id: TreeID, parent: Option<TreeID>) -> Self {
         TreeNode {
             id,
             meta: ContainerTracker::Map(MapTracker::empty()),
             parent,
-            position,
+            children: vec![],
         }
+    }
+
+    fn to_value(&self, index: usize, list: &mut Vec<FxHashMap<String, LoroValue>>) {
+        for (i, child) in self.children.iter().enumerate() {
+            child.to_value(i, list);
+        }
+        let mut map = FxHashMap::default();
+        map.insert("id".to_string(), self.id.to_string().into());
+        map.insert("meta".to_string(), self.meta.to_value());
+        map.insert(
+            "parent".to_string(),
+            match self.parent {
+                Some(parent) => parent.to_string().into(),
+                None => LoroValue::Null,
+            },
+        );
+        map.insert("index".to_string(), (index as i64).into());
+        list.push(map);
     }
 }

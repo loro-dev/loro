@@ -55,6 +55,8 @@ pub enum LoroTreeError {
     TreeNodeParentNotFound(TreeID),
     #[error("TreeID {0:?} doesn't exist")]
     TreeNodeNotExist(TreeID),
+    #[error("The index({index}) should be <= the length of children ({len})")]
+    IndexOutOfBound { len: usize, index: usize },
 }
 
 #[cfg(feature = "wasm")]

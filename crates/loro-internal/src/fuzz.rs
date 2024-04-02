@@ -2,7 +2,7 @@ use std::{fmt::Debug, time::Instant};
 
 pub mod recursive_refactored;
 pub mod richtext;
-pub mod tree;
+// pub mod tree;
 
 use crate::{
     array_mut_ref,

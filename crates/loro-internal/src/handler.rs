@@ -1098,10 +1098,7 @@ impl TreeHandler {
         let position = self.generate_position_at(parent, index);
         let event_hint = TreeDiffItem {
             target: tree_id,
-            action: TreeExternalDiff::Create {
-                parent,
-                position: position.clone(),
-            },
+            action: TreeExternalDiff::Create { parent, index },
         };
         txn.apply_local_op(
             self.inner.container_idx,
@@ -1127,6 +1124,7 @@ impl TreeHandler {
         })
     }
 
+    // TODO: maybe the move op is redundant, we can first find the position of the target node
     pub fn mov_with_txn<T: Into<Option<TreeID>>>(
         &self,
         txn: &mut Transaction,
@@ -1135,7 +1133,36 @@ impl TreeHandler {
         index: usize,
     ) -> LoroResult<()> {
         let parent = parent.into();
-        let position = self.generate_position_at(parent, index);
+
+        let position = {
+            // check the input is valid
+            let children_len = self.children_len(parent);
+            let same_parent = self.is_parent(target, parent);
+            if let Some(mut children_len) = children_len {
+                if same_parent {
+                    // move out first
+                    children_len -= 1;
+                }
+                if index > children_len {
+                    return Err(LoroTreeError::IndexOutOfBound {
+                        len: children_len,
+                        index,
+                    }
+                    .into());
+                }
+            } else if index != 0 {
+                return Err(LoroTreeError::IndexOutOfBound { len: 0, index }.into());
+            }
+            // If the position after moving is same as the current position , do nothing
+            if same_parent {
+                let current_index = self.get_index_by_tree_id(&target, parent).unwrap();
+                if current_index == index {
+                    return Ok(());
+                }
+            }
+
+            self.generate_position_at(parent, index)
+        };
         txn.apply_local_op(
             self.inner.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -1145,7 +1172,7 @@ impl TreeHandler {
             }),
             EventHint::Tree(TreeDiffItem {
                 target,
-                action: TreeExternalDiff::Move { parent, position },
+                action: TreeExternalDiff::Move { parent, index },
             }),
             &self.inner.state,
         )
@@ -1172,17 +1199,20 @@ impl TreeHandler {
         })
     }
 
-    pub fn children(&self, target: Option<TreeID>) -> Vec<TreeID> {
+    pub fn children(&self, parent: Option<TreeID>) -> Vec<TreeID> {
         self.with_state(|state| {
             let a = state.as_tree_state().unwrap();
             a.as_ref()
-                .get_children(&if let Some(parent) = target {
-                    TreeParentId::Node(parent)
-                } else {
-                    TreeParentId::None
-                })
+                .get_children(&TreeParentId::from(parent))
                 .into_iter()
                 .collect()
+        })
+    }
+
+    pub fn children_len(&self, parent: Option<TreeID>) -> Option<usize> {
+        self.with_state(|state| {
+            let a = state.as_tree_state().unwrap();
+            a.as_ref().children_num(&TreeParentId::from(parent))
         })
     }
 
@@ -1197,6 +1227,13 @@ impl TreeHandler {
         self.with_state(|state| {
             let a = state.as_tree_state().unwrap();
             a.nodes()
+        })
+    }
+
+    pub fn is_parent(&self, target: TreeID, parent: Option<TreeID>) -> bool {
+        self.with_state(|state| {
+            let a = state.as_tree_state().unwrap();
+            a.is_parent(&TreeParentId::from(parent), &target)
         })
     }
 
@@ -1217,6 +1254,13 @@ impl TreeHandler {
         self.with_state(|state| {
             let a = state.as_tree_state().unwrap();
             a.generate_position_at(&TreeParentId::from(parent), index)
+        })
+    }
+
+    fn get_index_by_tree_id(&self, target: &TreeID, parent: Option<TreeID>) -> Option<usize> {
+        self.with_state(|state| {
+            let a = state.as_tree_state().unwrap();
+            a.get_index_by_tree_id(&TreeParentId::from(parent), target)
         })
     }
 }

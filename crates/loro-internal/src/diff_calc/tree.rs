@@ -245,7 +245,7 @@ impl TreeDiffCalculator {
                         lamport: *lamport,
                         effected: false,
                     };
-                    let (old_parent, _position, _id) = tree_cache.get_parent_with_id(op.target);
+                    let (old_parent, _position, old_id) = tree_cache.get_parent_with_id(op.target);
                     let is_parent_deleted = tree_cache.is_parent_deleted(op.parent);
                     let is_old_parent_deleted = tree_cache.is_parent_deleted(old_parent);
                     let effected = tree_cache.apply(op.clone());

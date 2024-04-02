@@ -215,8 +215,7 @@ impl ContainerTracker {
                         value = &mut value
                             .as_tree_mut()
                             .unwrap()
-                            .iter_mut()
-                            .find(|node| &node.id == tree_id)
+                            .find_node_by_id_mut(*tree_id)
                             .unwrap()
                             .meta
                     }

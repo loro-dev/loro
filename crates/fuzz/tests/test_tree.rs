@@ -21,7 +21,7 @@ fn init_color_backtrace() {
 }
 
 #[test]
-fn tree() {
+fn tree_same_move() {
     test_actions(vec![
         Handle {
             site: 51,
@@ -30,7 +30,7 @@ fn tree() {
             action: Generic(GenericAction {
                 value: I32(858993459),
                 bool: true,
-                key: 858993459,
+                key: 868562739,
                 pos: 3689348814741910323,
                 length: 3689348814741910323,
                 prop: 3689348814741910323,
@@ -41,18 +41,90 @@ fn tree() {
             target: 51,
             container: 51,
             action: Generic(GenericAction {
-                value: I32(858993467),
+                value: I32(858993459),
                 bool: true,
                 key: 858993459,
                 pos: 3689348814741910323,
-                length: 16083254989265515315,
-                prop: 18446744073659220225,
+                length: 15506794236962091827,
+                prop: 3689348814742553055,
             }),
         },
         Handle {
-            site: 247,
-            target: 45,
-            container: 255,
+            site: 51,
+            target: 197,
+            container: 51,
+            action: Generic(GenericAction {
+                value: I32(858993459),
+                bool: true,
+                key: 858993459,
+                pos: 3689348814741910323,
+                length: 3906369333172056883,
+                prop: 18446744066029139510,
+            }),
+        },
+        Handle {
+            site: 51,
+            target: 51,
+            container: 51,
+            action: Generic(GenericAction {
+                value: I32(858993459),
+                bool: true,
+                key: 858993459,
+                pos: 67078248936243,
+                length: 42099763356696573,
+                prop: 8226,
+            }),
+        },
+    ])
+}
+
+#[test]
+fn tree() {
+    test_actions(vec![
+        Handle {
+            site: 48,
+            target: 91,
+            container: 91,
+            action: Generic(GenericAction {
+                value: Container(Tree),
+                bool: true,
+                key: 4294967295,
+                pos: 18444210798935932927,
+                length: 690624182933323867,
+                prop: 17800764538523027721,
+            }),
+        },
+        Handle {
+            site: 9,
+            target: 151,
+            container: 149,
+            action: Generic(GenericAction {
+                value: I32(151324937),
+                bool: true,
+                key: 4042321929,
+                pos: 651061555542749424,
+                length: 2543209201338633,
+                prop: 11068046444225730836,
+            }),
+        },
+        SyncAll,
+        Handle {
+            site: 9,
+            target: 9,
+            container: 9,
+            action: Generic(GenericAction {
+                value: I32(218695945),
+                bool: true,
+                key: 151587081,
+                pos: 651061555543345417,
+                length: 102185350956910857,
+                prop: 127186009683460245,
+            }),
+        },
+        Handle {
+            site: 91,
+            target: 35,
+            container: 91,
             action: Generic(GenericAction {
                 value: I32(0),
                 bool: false,
@@ -63,4 +135,81 @@ fn tree() {
             }),
         },
     ])
+}
+
+#[test]
+fn tree_meta() {
+    test_actions(vec![
+        Handle {
+            site: 192,
+            target: 255,
+            container: 255,
+            action: Generic(GenericAction {
+                value: Container(List),
+                bool: true,
+                key: 4294967073,
+                pos: 10778686051598729729,
+                length: 18446514557159839127,
+                prop: 18446743678572560383,
+            }),
+        },
+        Handle {
+            site: 189,
+            target: 63,
+            container: 255,
+            action: Generic(GenericAction {
+                value: Container(Tree),
+                bool: true,
+                key: 808976897,
+                pos: 14974299229237936383,
+                length: 144114232942526463,
+                prop: 14925493210863108863,
+            }),
+        },
+        SyncAll,
+        Handle {
+            site: 34,
+            target: 247,
+            container: 207,
+            action: Generic(GenericAction {
+                value: Container(Tree),
+                bool: true,
+                key: 3680174080,
+                pos: 11429747308408484319,
+                length: 11429747308416114334,
+                prop: 10922800942116175874,
+            }),
+        },
+        Handle {
+            site: 255,
+            target: 255,
+            container: 219,
+            action: Generic(GenericAction {
+                value: Container(Tree),
+                bool: true,
+                key: 4294943487,
+                pos: 4313092040194523029,
+                length: 15806468754477883942,
+                prop: 4313092405270512443,
+            }),
+        },
+        Handle {
+            site: 247,
+            target: 255,
+            container: 255,
+            action: Generic(GenericAction {
+                value: Container(Tree),
+                bool: true,
+                key: 573518815,
+                pos: 247,
+                length: 0,
+                prop: 0,
+            }),
+        },
+    ])
+}
+
+#[test]
+fn tree2() {
+    test_actions(vec![])
 }
