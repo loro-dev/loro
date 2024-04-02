@@ -211,5 +211,76 @@ fn tree_meta() {
 
 #[test]
 fn tree2() {
-    test_actions(vec![])
+    test_actions(vec![
+        Handle {
+            site: 11,
+            target: 11,
+            container: 11,
+            action: Generic(GenericAction {
+                value: I32(957025035),
+                bool: true,
+                key: 3659596255,
+                pos: 18446627069606493975,
+                length: 18446744073709551615,
+                prop: 18446744073709551615,
+            }),
+        },
+        Handle {
+            site: 2,
+            target: 255,
+            container: 191,
+            action: Generic(GenericAction {
+                value: Container(Map),
+                bool: true,
+                key: 4294377471,
+                pos: 9104926049750614015,
+                length: 327616501915904,
+                prop: 18444492273895866112,
+            }),
+        },
+        SyncAll,
+        Handle {
+            site: 44,
+            target: 255,
+            container: 0,
+            action: Generic(GenericAction {
+                value: Container(Text),
+                bool: false,
+                key: 4136983551,
+                pos: 18446744073709551615,
+                length: 12826533213727883263,
+                prop: 18446744072635744768,
+            }),
+        },
+        SyncAll,
+        SyncAll,
+        Handle {
+            site: 91,
+            target: 126,
+            container: 0,
+            action: Generic(GenericAction {
+                value: Container(Text),
+                bool: true,
+                key: 4294967295,
+                pos: 18446744073709551615,
+                length: 18446744073709551615,
+                prop: 18446744069649465343,
+            }),
+        },
+        SyncAll,
+        SyncAll,
+        Handle {
+            site: 45,
+            target: 255,
+            container: 255,
+            action: Generic(GenericAction {
+                value: I32(0),
+                bool: false,
+                key: 0,
+                pos: 0,
+                length: 0,
+                prop: 0,
+            }),
+        },
+    ])
 }

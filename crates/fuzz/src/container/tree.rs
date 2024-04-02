@@ -25,9 +25,9 @@ pub struct TreeAction {
 
 #[derive(Debug, Clone)]
 pub enum TreeActionInner {
-    Create,
+    Create { index: usize },
     Delete,
-    Move { parent: (u64, i32) },
+    Move { parent: (u64, i32), index: usize },
     Meta { meta: (String, FuzzValue) },
 }
 
@@ -100,19 +100,21 @@ impl Actionable for TreeAction {
                     TreeActionInner::Move { .. } | TreeActionInner::Meta { .. }
                 ))
         {
-            *action = TreeActionInner::Create;
+            *action = TreeActionInner::Create { index: 0 };
         }
 
         match action {
-            TreeActionInner::Create => {
+            TreeActionInner::Create { index } => {
                 let id = tree.next_tree_id();
+                let len = tree.children_len(None).unwrap_or(0);
+                *index %= len + 1;
                 *target = (id.peer, id.counter);
             }
             TreeActionInner::Delete => {
                 let target_index = target.1 as usize % node_num;
                 *target = (nodes[target_index].peer, nodes[target_index].counter);
             }
-            TreeActionInner::Move { parent } => {
+            TreeActionInner::Move { parent, index } => {
                 let target_index = target.1 as usize % node_num;
                 *target = (nodes[target_index].peer, nodes[target_index].counter);
                 let mut parent_idx = parent.0 as usize % node_num;
@@ -120,6 +122,10 @@ impl Actionable for TreeAction {
                     parent_idx = (parent_idx + 1) % node_num;
                 }
                 *parent = (nodes[parent_idx].peer, nodes[parent_idx].counter);
+                *index %= tree
+                    .children_len(Some(TreeID::new(parent.0, parent.1)))
+                    .unwrap_or(0)
+                    + 1;
             }
             TreeActionInner::Meta { meta: (_, v) } => {
                 let target_index = target.1 as usize % node_num;
@@ -155,20 +161,20 @@ impl Actionable for TreeAction {
             counter: target.1,
         };
         match action {
-            TreeActionInner::Create => {
-                tree.create(None).unwrap();
+            TreeActionInner::Create { index } => {
+                tree.create_at(None, *index).unwrap();
                 None
             }
             TreeActionInner::Delete => {
                 tree.delete(target).unwrap();
                 None
             }
-            TreeActionInner::Move { parent } => {
+            TreeActionInner::Move { parent, index } => {
                 let parent = TreeID {
                     peer: parent.0,
                     counter: parent.1,
                 };
-                if let Err(LoroError::TreeError(_)) = tree.mov(target, Some(parent)) {
+                if let Err(LoroError::TreeError(_)) = tree.mov_to(target, Some(parent), *index) {
                     // cycle move
                 }
                 None
@@ -196,11 +202,12 @@ impl Actionable for TreeAction {
     fn table_fields(&self) -> [std::borrow::Cow<'_, str>; 2] {
         let target = format!("{}@{}", self.target.1, self.target.0).into();
         match &self.action {
-            TreeActionInner::Create => ["create".into(), target],
+            TreeActionInner::Create { index } => [format!("create at {index}",).into(), target],
             TreeActionInner::Delete => ["delete".into(), target],
-            TreeActionInner::Move { parent: (pi, pc) } => {
-                [format!("move to {pc}@{pi}").into(), target]
-            }
+            TreeActionInner::Move {
+                parent: (pi, pc),
+                index,
+            } => [format!("move to {pc}@{pi} at {index}").into(), target],
             TreeActionInner::Meta { meta } => [format!("meta\n {:?}", meta).into(), target],
         }
     }
@@ -214,10 +221,11 @@ impl FromGenericAction for TreeAction {
     fn from_generic_action(action: &GenericAction) -> Self {
         let target = (action.pos as u64, 0);
         let parent = (action.length as u64, 0);
+        let index = action.prop as usize;
         let action = match action.prop % 4 {
-            0 => TreeActionInner::Create,
+            0 => TreeActionInner::Create { index },
             1 => TreeActionInner::Delete,
-            2 => TreeActionInner::Move { parent },
+            2 => TreeActionInner::Move { parent, index },
             3 => TreeActionInner::Meta {
                 meta: (action.key.to_string(), action.value),
             },

@@ -717,7 +717,7 @@ impl LoroTree {
     /// ```
     pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
         let parent = parent.into();
-        let index = self.children(parent).len();
+        let index = self.children_len(parent).unwrap_or(0);
         self.handler.create(parent, index)
     }
 
@@ -747,7 +747,7 @@ impl LoroTree {
     /// ```
     pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
         let parent = parent.into();
-        let index = self.children(parent).len();
+        let index = self.children_len(parent).unwrap_or(0);
         self.handler.mov(target, parent, index)
     }
 
@@ -818,6 +818,10 @@ impl LoroTree {
 
     pub fn children(&self, parent: Option<TreeID>) -> Vec<TreeID> {
         self.handler.children(parent)
+    }
+
+    pub fn children_len(&self, parent: Option<TreeID>) -> Option<usize> {
+        self.handler.children_len(parent)
     }
 
     /// Return container id of the tree.
