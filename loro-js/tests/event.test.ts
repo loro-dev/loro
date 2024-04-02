@@ -5,6 +5,8 @@ import {
   ListDiff,
   Loro,
   LoroEventBatch,
+  LoroList,
+  LoroMap,
   LoroText,
   MapDiff,
   TextDiff,
@@ -32,14 +34,14 @@ describe("event", () => {
       lastEvent = event;
     });
     const map = loro.getMap("map");
-    const subMap = map.setContainer("sub", "Map");
+    const subMap = map.setContainer("sub", new LoroMap());
     subMap.set("0", "1");
     loro.commit();
     await oneMs();
     expect(lastEvent?.events[1].path).toStrictEqual(["map", "sub"]);
-    const list = subMap.setContainer("list", "List");
+    const list = subMap.setContainer("list", new LoroList());
     list.insert(0, "2");
-    const text = list.insertContainer(1, "Text");
+    const text = list.insertContainer(1, new LoroText());
     loro.commit();
     await oneMs();
     text.insert(0, "3");
@@ -184,11 +186,11 @@ describe("event", () => {
         times += 1;
       });
 
-      const subMap = map.setContainer("sub", "Map");
+      const subMap = map.setContainer("sub", new LoroMap());
       loro.commit();
       await oneMs();
       expect(times).toBe(1);
-      const text = subMap.setContainer("k", "Text");
+      const text = subMap.setContainer("k", new LoroText());
       loro.commit();
       await oneMs();
       expect(times).toBe(2);
@@ -213,7 +215,7 @@ describe("event", () => {
         times += 1;
       });
 
-      const text = list.insertContainer(0, "Text");
+      const text = list.insertContainer(0, new LoroText());
       loro.commit();
       await oneMs();
       expect(times).toBe(1);
@@ -294,7 +296,7 @@ describe("event", () => {
           first = false;
         }
       });
-      list.insertContainer(0, "Text");
+      list.insertContainer(0, new LoroText());
       loro.commit();
       await oneMs();
       expect(loro.toJson().list[0]).toBe("abc");
@@ -318,8 +320,8 @@ describe("event", () => {
       }
     });
 
-    list.insertContainer(0, "Map");
-    const t = list.insertContainer(0, "Text");
+    list.insertContainer(0, new LoroMap());
+    const t = list.insertContainer(0, new LoroText());
     t.insert(0, "He");
     t.insert(2, "llo");
     doc.commit();

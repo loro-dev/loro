@@ -548,7 +548,8 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         let _e = s.enter();
         let diff = site
             .get_text("text")
-            .with_state(|s| s.to_diff(site.arena(), &site.get_global_txn(), &site.weak_state()));
+            .with_state(|s| Ok(s.to_diff(site.arena(), &site.get_global_txn(), &site.weak_state())))
+            .unwrap();
         let mut diff = diff.into_text().unwrap();
         compact(&mut diff);
         let mut text = text.lock().unwrap();

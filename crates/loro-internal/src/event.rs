@@ -1,5 +1,6 @@
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHasher64;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -112,11 +113,43 @@ impl<'a> InternalDocDiff<'a> {
 
 pub type Path = SmallVec<[Index; 4]>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, enum_as_inner::EnumAsInner)]
 pub enum Index {
     Key(InternalString),
     Seq(usize),
     Node(TreeID),
+}
+
+impl std::fmt::Display for Index {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Index::Key(key) => write!(f, "{}", key),
+            Index::Seq(s) => write!(f, "{}", s),
+            Index::Node(id) => write!(f, "{}@{}", id.peer, id.counter),
+        }
+    }
+}
+
+impl TryFrom<&str> for Index {
+    type Error = &'static str;
+    fn try_from(s: &str) -> Result<Self, &'static str> {
+        if s.is_empty() {
+            return Ok(Index::Key(InternalString::default()));
+        }
+
+        let c = s.chars().next().unwrap();
+        if c.is_ascii_digit() {
+            if let Ok(seq) = s.parse::<usize>() {
+                Ok(Index::Seq(seq))
+            } else if let Ok(id) = s.try_into() {
+                Ok(Index::Node(id))
+            } else {
+                Ok(Index::Key(InternalString::from(s)))
+            }
+        } else {
+            Ok(Index::Key(InternalString::from(s)))
+        }
+    }
 }
 
 impl DiffVariant {
@@ -241,6 +274,14 @@ impl Diff {
             _ => unreachable!(),
         }
     }
+}
+
+pub fn str_to_path(s: &str) -> Option<Vec<Index>> {
+    s.split('/').map(|x| x.try_into()).try_collect().ok()
+}
+
+pub fn path_to_str(path: &[Index]) -> String {
+    path.iter().map(|x| x.to_string()).join("/")
 }
 
 #[cfg(test)]

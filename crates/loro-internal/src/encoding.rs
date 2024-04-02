@@ -1,11 +1,13 @@
 mod encode_reordered;
 
 use crate::op::OpWithId;
+use crate::version::Frontiers;
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
 use loro_common::{IdLpSpan, LoroResult};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
+use serde::{Deserialize, Serialize};
 const MAGIC_BYTES: [u8; 4] = *b"loro";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -228,5 +230,33 @@ pub(crate) fn decode_snapshot(
     match mode {
         EncodeMode::Snapshot => encode_reordered::decode_snapshot(doc, body),
         _ => unreachable!(),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportBlobMetadata {
+    /// The partial start version vector.
+    ///
+    /// Import blob includes all the ops from `partial_start_vv` to `partial_end_vv`.
+    /// However, it does not constitute a complete version vector, as it only contains counters
+    /// from peers included within the import blob.
+    pub partial_start_vv: VersionVector,
+    /// The partial end version vector.
+    ///
+    /// Import blob includes all the ops from `partial_start_vv` to `partial_end_vv`.
+    /// However, it does not constitute a complete version vector, as it only contains counters
+    /// from peers included within the import blob.
+    pub partial_end_vv: VersionVector,
+    pub start_timestamp: i64,
+    pub start_frontiers: Frontiers,
+    pub end_timestamp: i64,
+    pub change_num: u32,
+    pub is_snapshot: bool,
+}
+
+impl LoroDoc {
+    /// Decodes the metadata for an imported blob from the provided bytes.
+    pub fn decode_import_blob_meta(blob: &[u8]) -> LoroResult<ImportBlobMetadata> {
+        encode_reordered::decode_import_blob_meta(blob)
     }
 }

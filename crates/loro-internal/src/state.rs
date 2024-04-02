@@ -693,6 +693,7 @@ impl DocState {
     }
 
     #[inline(always)]
+    #[allow(unused)]
     pub(crate) fn with_state<F, R>(&mut self, idx: ContainerIdx, f: F) -> R
     where
         F: FnOnce(&State) -> R,
@@ -1081,6 +1082,66 @@ impl DocState {
             ))),
             ContainerType::Tree => State::TreeState(Box::new(TreeState::new(idx))),
         }
+    }
+
+    pub fn get_value_by_path(&mut self, path: &[Index]) -> Option<LoroValue> {
+        if path.is_empty() {
+            return None;
+        }
+
+        let mut state_idx = {
+            let root_index = path[0].as_key()?;
+            self.arena.get_root_container_idx_by_key(root_index)?
+        };
+
+        if path.len() == 1 {
+            let cid = self.arena.idx_to_id(state_idx)?;
+            return Some(LoroValue::Container(cid));
+        }
+
+        for index in path[..path.len() - 1].iter().skip(1) {
+            let parent_state = self.states.get(&state_idx)?;
+            match parent_state {
+                State::ListState(l) => {
+                    let Some(LoroValue::Container(c)) = l.get(*index.as_seq()?) else {
+                        return None;
+                    };
+                    state_idx = self.arena.register_container(c);
+                }
+                State::MapState(m) => {
+                    let Some(LoroValue::Container(c)) = m.get(index.as_key()?) else {
+                        return None;
+                    };
+                    state_idx = self.arena.register_container(c);
+                }
+                State::RichtextState(_) => return None,
+                State::TreeState(_) => {
+                    let id = index.as_node()?;
+                    let cid = id.associated_meta_container();
+                    state_idx = self.arena.register_container(&cid);
+                }
+            }
+        }
+
+        let parent_state = self.states.get_mut(&state_idx)?;
+        let index = path.last().unwrap();
+        let value: LoroValue = match parent_state {
+            State::ListState(l) => l.get(*index.as_seq()?).cloned()?,
+            State::MapState(m) => m.get(index.as_key()?).cloned()?,
+            State::RichtextState(s) => {
+                let s = s.to_string_mut();
+                s.chars()
+                    .nth(*index.as_seq()?)
+                    .map(|c| c.to_string().into())?
+            }
+            State::TreeState(_) => {
+                let id = index.as_node()?;
+                let cid = id.associated_meta_container();
+                cid.into()
+            }
+        };
+
+        Some(value)
     }
 }
 

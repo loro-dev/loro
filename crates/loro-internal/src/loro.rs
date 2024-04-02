@@ -16,12 +16,13 @@ use crate::{
     arena::SharedArena,
     change::Timestamp,
     configure::Configure,
-    container::{idx::ContainerIdx, richtext::config::StyleConfigMap, IntoContainerId},
+    container::{richtext::config::StyleConfigMap, IntoContainerId},
     dag::DagUtils,
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    handler::{Handler, TextHandler, TreeHandler},
+    event::{str_to_path, Index},
+    handler::{Handler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     oplog::dag::FrontiersNotIncluded,
     version::Frontiers,
@@ -556,12 +557,32 @@ impl LoroDoc {
         self.oplog.lock().unwrap().dag.frontiers_to_vv(f).unwrap()
     }
 
+    pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrHandler> {
+        let value: LoroValue = self.state.lock().unwrap().get_value_by_path(path)?;
+        if let LoroValue::Container(c) = value {
+            Some(ValueOrHandler::Handler(Handler::new_attached(
+                c.clone(),
+                self.arena.clone(),
+                self.get_global_txn(),
+                Arc::downgrade(&self.state),
+            )))
+        } else {
+            Some(ValueOrHandler::Value(value))
+        }
+    }
+
+    /// Get the handler by the string path.
+    pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrHandler> {
+        let path = str_to_path(path)?;
+        self.get_by_path(&path)
+    }
+
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.get_global_txn(),
@@ -576,7 +597,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::List);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.get_global_txn(),
@@ -591,7 +612,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Map);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.get_global_txn(),
@@ -606,7 +627,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.get_global_txn(),
@@ -620,12 +641,6 @@ impl LoroDoc {
     #[inline]
     pub fn diagnose_size(&self) {
         self.oplog().lock().unwrap().diagnose_size();
-    }
-
-    #[inline]
-    fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {
-        let id = id.into_container_id(&self.arena, c_type);
-        self.arena.register_container(&id)
     }
 
     #[inline]

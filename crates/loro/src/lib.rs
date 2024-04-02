@@ -3,6 +3,7 @@ use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::change::Timestamp;
 use loro_internal::container::IntoContainerId;
+use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::LoroDoc as InnerLoroDoc;
@@ -56,6 +57,11 @@ impl LoroDoc {
     /// Get the configureations of the document.
     pub fn config(&self) -> &Configure {
         self.doc.config()
+    }
+
+    /// Decodes the metadata for an imported blob from the provided bytes.
+    pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
+        InnerLoroDoc::decode_import_blob_meta(bytes)
     }
 
     /// Set whether to record the timestamp of each change. Default is `false`.
@@ -353,6 +359,35 @@ impl LoroDoc {
     pub fn log_estimate_size(&self) {
         self.doc.log_estimated_size();
     }
+
+    /// Get the handler by the path.
+    pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrContainer> {
+        self.doc.get_by_path(path).map(ValueOrContainer::from)
+    }
+
+    /// Get the handler by the string path.
+    pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrContainer> {
+        self.doc.get_by_str_path(path).map(ValueOrContainer::from)
+    }
+}
+
+/// It's used to prevent the user from implementing the trait directly.
+#[allow(private_bounds)]
+trait SealedTrait {}
+#[allow(private_bounds)]
+pub trait ContainerTrait: SealedTrait {
+    type Handler: HandlerTrait;
+    fn to_container(&self) -> Container;
+    fn to_handler(&self) -> Self::Handler;
+    fn from_handler(handler: Self::Handler) -> Self;
+    fn try_from_container(container: Container) -> Option<Self>
+    where
+        Self: Sized;
+    fn is_attached(&self) -> bool;
+    /// If a detached container is attached, this method will return its corresponding attached handler.
+    fn get_attached(&self) -> Option<Self>
+    where
+        Self: Sized;
 }
 
 /// LoroList container. It's used to model array.
@@ -378,7 +413,53 @@ pub struct LoroList {
     handler: InnerListHandler,
 }
 
+impl SealedTrait for LoroList {}
+impl ContainerTrait for LoroList {
+    type Handler = InnerListHandler;
+    fn to_container(&self) -> Container {
+        Container::List(self.clone())
+    }
+
+    fn to_handler(&self) -> Self::Handler {
+        self.handler.clone()
+    }
+
+    fn from_handler(handler: Self::Handler) -> Self {
+        Self { handler }
+    }
+
+    fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    fn get_attached(&self) -> Option<Self> {
+        self.handler.get_attached().map(Self::from_handler)
+    }
+
+    fn try_from_container(container: Container) -> Option<Self> {
+        container.into_list().ok()
+    }
+}
+
 impl LoroList {
+    /// Create a new container that is detached from the document.
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn new() -> Self {
+        Self {
+            handler: InnerListHandler::new_detached(),
+        }
+    }
+
+    /// Whether the container is attached to a document
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
     pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
         self.handler.insert(pos, v)
     }
@@ -423,9 +504,11 @@ impl LoroList {
     }
 
     #[inline]
-    pub fn push_container(&self, c_type: ContainerType) -> LoroResult<Container> {
+    pub fn push_container<C: ContainerTrait>(&self, child: C) -> LoroResult<C> {
         let pos = self.handler.len();
-        Ok(Container::from(self.handler.insert_container(pos, c_type)?))
+        Ok(C::from_handler(
+            self.handler.insert_container(pos, child.to_handler())?,
+        ))
     }
 
     pub fn for_each<I>(&self, f: I)
@@ -450,18 +533,26 @@ impl LoroList {
     /// # Example
     ///
     /// ```
-    /// # use loro::{LoroDoc, ContainerType, ToJson};
+    /// # use loro::{LoroDoc, ContainerType, LoroText, ToJson};
     /// # use serde_json::json;
     /// let doc = LoroDoc::new();
     /// let list = doc.get_list("m");
-    /// let text = list.insert_container(0, ContainerType::Text).unwrap().into_text().unwrap();
+    /// let text = list.insert_container(0, LoroText::new()).unwrap();
     /// text.insert(0, "12");
     /// text.insert(0, "0");
     /// assert_eq!(doc.get_deep_value().to_json_value(), json!({"m": ["012"]}));
     /// ```
     #[inline]
-    pub fn insert_container(&self, pos: usize, c_type: ContainerType) -> LoroResult<Container> {
-        Ok(Container::from(self.handler.insert_container(pos, c_type)?))
+    pub fn insert_container<C: ContainerTrait>(&self, pos: usize, child: C) -> LoroResult<C> {
+        Ok(C::from_handler(
+            self.handler.insert_container(pos, child.to_handler())?,
+        ))
+    }
+}
+
+impl Default for LoroList {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -471,7 +562,7 @@ impl LoroList {
 ///
 /// # Example
 /// ```
-/// # use loro::{LoroDoc, ToJson, ExpandType, LoroValue};
+/// # use loro::{LoroDoc, ToJson, ExpandType, LoroText, LoroValue};
 /// # use serde_json::json;
 /// let doc = LoroDoc::new();
 /// let map = doc.get_map("map");
@@ -481,9 +572,7 @@ impl LoroList {
 /// map.insert("deleted", LoroValue::Null).unwrap();
 /// map.delete("deleted").unwrap();
 /// let text = map
-///    .insert_container("text", loro_internal::ContainerType::Text).unwrap()
-///    .into_text()
-///    .unwrap();
+///    .insert_container("text", LoroText::new()).unwrap();
 /// text.insert(0, "Hello world!").unwrap();
 /// assert_eq!(
 ///     doc.get_deep_value().to_json_value(),
@@ -502,7 +591,50 @@ pub struct LoroMap {
     handler: InnerMapHandler,
 }
 
+impl SealedTrait for LoroMap {}
+impl ContainerTrait for LoroMap {
+    type Handler = InnerMapHandler;
+
+    fn to_container(&self) -> Container {
+        Container::Map(self.clone())
+    }
+
+    fn to_handler(&self) -> Self::Handler {
+        self.handler.clone()
+    }
+
+    fn from_handler(handler: Self::Handler) -> Self {
+        Self { handler }
+    }
+
+    fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    fn get_attached(&self) -> Option<Self> {
+        self.handler.get_attached().map(Self::from_handler)
+    }
+
+    fn try_from_container(container: Container) -> Option<Self> {
+        container.into_map().ok()
+    }
+}
+
 impl LoroMap {
+    /// Create a new container that is detached from the document.
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn new() -> Self {
+        Self {
+            handler: InnerMapHandler::new_detached(),
+        }
+    }
+
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
     pub fn delete(&self, key: &str) -> LoroResult<()> {
         self.handler.delete(key)
     }
@@ -543,17 +675,19 @@ impl LoroMap {
     /// # Example
     ///
     /// ```
-    /// # use loro::{LoroDoc, ContainerType, ToJson};
+    /// # use loro::{LoroDoc, LoroText, ContainerType, ToJson};
     /// # use serde_json::json;
     /// let doc = LoroDoc::new();
     /// let map = doc.get_map("m");
-    /// let text = map.insert_container("t", ContainerType::Text).unwrap().into_text().unwrap();
+    /// let text = map.insert_container("t", LoroText::new()).unwrap();
     /// text.insert(0, "12");
     /// text.insert(0, "0");
     /// assert_eq!(doc.get_deep_value().to_json_value(), json!({"m": {"t": "012"}}));
     /// ```
-    pub fn insert_container(&self, key: &str, c_type: ContainerType) -> LoroResult<Container> {
-        Ok(Container::from(self.handler.insert_container(key, c_type)?))
+    pub fn insert_container<C: ContainerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
+        Ok(C::from_handler(
+            self.handler.insert_container(key, child.to_handler())?,
+        ))
     }
 
     pub fn get_value(&self) -> LoroValue {
@@ -563,6 +697,19 @@ impl LoroMap {
     pub fn get_deep_value(&self) -> LoroValue {
         self.handler.get_deep_value()
     }
+
+    pub fn get_or_create_container<C: ContainerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
+        Ok(C::from_handler(
+            self.handler
+                .get_or_create_container(key, child.to_handler())?,
+        ))
+    }
+}
+
+impl Default for LoroMap {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// LoroText container. It's used to model plaintext/richtext.
@@ -571,7 +718,54 @@ pub struct LoroText {
     handler: InnerTextHandler,
 }
 
+impl SealedTrait for LoroText {}
+impl ContainerTrait for LoroText {
+    type Handler = InnerTextHandler;
+
+    fn to_container(&self) -> Container {
+        Container::Text(self.clone())
+    }
+
+    fn to_handler(&self) -> Self::Handler {
+        self.handler.clone()
+    }
+
+    fn from_handler(handler: Self::Handler) -> Self {
+        Self { handler }
+    }
+
+    fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    fn get_attached(&self) -> Option<Self> {
+        self.handler.get_attached().map(Self::from_handler)
+    }
+
+    fn try_from_container(container: Container) -> Option<Self> {
+        container.into_text().ok()
+    }
+}
+
 impl LoroText {
+    /// Create a new container that is detached from the document.
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn new() -> Self {
+        Self {
+            handler: InnerTextHandler::new_detached(),
+        }
+    }
+
+    /// Whether the container is attached to a document
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
     /// Get the [ContainerID]  of the text container.
     pub fn id(&self) -> ContainerID {
         self.handler.id().clone()
@@ -689,6 +883,12 @@ impl LoroText {
     }
 }
 
+impl Default for LoroText {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// LoroTree container. It's used to model movable trees.
 ///
 /// You may use it to model directories, outline or other movable hierarchical data.
@@ -697,7 +897,54 @@ pub struct LoroTree {
     handler: InnerTreeHandler,
 }
 
+impl SealedTrait for LoroTree {}
+impl ContainerTrait for LoroTree {
+    type Handler = InnerTreeHandler;
+
+    fn to_container(&self) -> Container {
+        Container::Tree(self.clone())
+    }
+
+    fn to_handler(&self) -> Self::Handler {
+        self.handler.clone()
+    }
+
+    fn from_handler(handler: Self::Handler) -> Self {
+        Self { handler }
+    }
+
+    fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    fn get_attached(&self) -> Option<Self> {
+        self.handler.get_attached().map(Self::from_handler)
+    }
+
+    fn try_from_container(container: Container) -> Option<Self> {
+        container.into_tree().ok()
+    }
+}
+
 impl LoroTree {
+    /// Create a new container that is detached from the document.
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn new() -> Self {
+        Self {
+            handler: InnerTreeHandler::new_detached(),
+        }
+    }
+
+    /// Whether the container is attached to a document
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
     /// Create a new tree node and return the [`TreeID`].
     ///
     /// If the `parent` is `None`, the created node is the root of a tree.
@@ -803,7 +1050,7 @@ impl LoroTree {
     /// - If the target node does not exist, return `None`.
     /// - If the target node is a root node, return `Some(None)`.
     pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
-        self.handler.parent(target)
+        self.handler.get_node_parent(target)
     }
 
     /// Return whether target node exists.
@@ -848,6 +1095,12 @@ impl LoroTree {
     }
 }
 
+impl Default for LoroTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 use enum_as_inner::EnumAsInner;
 
 /// All the CRDT containers supported by loro.
@@ -859,7 +1112,73 @@ pub enum Container {
     Tree(LoroTree),
 }
 
+impl SealedTrait for Container {}
+impl ContainerTrait for Container {
+    type Handler = loro_internal::handler::Handler;
+
+    fn to_container(&self) -> Container {
+        self.clone()
+    }
+
+    fn to_handler(&self) -> Self::Handler {
+        match self {
+            Container::List(x) => Self::Handler::List(x.to_handler()),
+            Container::Map(x) => Self::Handler::Map(x.to_handler()),
+            Container::Text(x) => Self::Handler::Text(x.to_handler()),
+            Container::Tree(x) => Self::Handler::Tree(x.to_handler()),
+        }
+    }
+
+    fn from_handler(handler: Self::Handler) -> Self {
+        match handler {
+            InnerHandler::Text(x) => Container::Text(LoroText { handler: x }),
+            InnerHandler::Map(x) => Container::Map(LoroMap { handler: x }),
+            InnerHandler::List(x) => Container::List(LoroList { handler: x }),
+            InnerHandler::Tree(x) => Container::Tree(LoroTree { handler: x }),
+        }
+    }
+
+    fn is_attached(&self) -> bool {
+        match self {
+            Container::List(x) => x.is_attached(),
+            Container::Map(x) => x.is_attached(),
+            Container::Text(x) => x.is_attached(),
+            Container::Tree(x) => x.is_attached(),
+        }
+    }
+
+    fn get_attached(&self) -> Option<Self> {
+        match self {
+            Container::List(x) => x.get_attached().map(Container::List),
+            Container::Map(x) => x.get_attached().map(Container::Map),
+            Container::Text(x) => x.get_attached().map(Container::Text),
+            Container::Tree(x) => x.get_attached().map(Container::Tree),
+        }
+    }
+
+    fn try_from_container(container: Container) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        Some(container)
+    }
+}
+
 impl Container {
+    /// Create a detached container of the given type.
+    ///
+    /// A detached container is a container that is not attached to a document.
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn new(kind: ContainerType) -> Self {
+        match kind {
+            ContainerType::List => Container::List(LoroList::new()),
+            ContainerType::Map => Container::Map(LoroMap::new()),
+            ContainerType::Text => Container::Text(LoroText::new()),
+            ContainerType::Tree => Container::Tree(LoroTree::new()),
+        }
+    }
+
     pub fn get_type(&self) -> ContainerType {
         match self {
             Container::List(_) => ContainerType::List,
@@ -890,7 +1209,7 @@ impl From<InnerHandler> for Container {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, EnumAsInner)]
 pub enum ValueOrContainer {
     Value(LoroValue),
     Container(Container),
