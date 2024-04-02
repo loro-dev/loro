@@ -1100,7 +1100,6 @@ impl TreeHandler {
             Err(mut ids) => {
                 let mut i = index + ids.len() - 1;
                 while let Some(right) = ids.pop() {
-                    println!("state {:?} move {} {}", self.children(parent), right, i);
                     self.mov_with_txn(txn, right, parent, i, true)?;
                     i -= 1;
                 }
