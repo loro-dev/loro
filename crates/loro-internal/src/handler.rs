@@ -1490,7 +1490,7 @@ mod test {
             .unwrap();
         assert_eq!(meta, 123.into());
         assert_eq!(
-            r#"[{"parent":null,"meta":{"a":123},"id":"0@1","position":"80"}]"#,
+            r#"[{"parent":null,"meta":{"a":123},"id":"0@1","index":0}]"#,
             tree.get_deep_value().to_json()
         );
         let bytes = loro.export_snapshot();

@@ -284,3 +284,114 @@ fn left_right_same_position() {
         },
     ])
 }
+
+#[test]
+fn meta() {
+    test_actions(vec![
+        Handle {
+            site: 131,
+            target: 183,
+            container: 129,
+            action: Generic(GenericAction {
+                value: Container(Text),
+                bool: true,
+                key: 522133279,
+                pos: 2242545357980385567,
+                length: 18446744073709551615,
+                prop: 2242545357980377087,
+            }),
+        },
+        Handle {
+            site: 31,
+            target: 31,
+            container: 159,
+            action: Generic(GenericAction {
+                value: I32(522133279),
+                bool: true,
+                key: 4294967295,
+                pos: 2242545357980434431,
+                length: 2242545357980376863,
+                prop: 2242545357980376991,
+            }),
+        },
+        Handle {
+            site: 31,
+            target: 31,
+            container: 31,
+            action: Generic(GenericAction {
+                value: Container(Tree),
+                bool: true,
+                key: 4294967295,
+                pos: 18446734178104901631,
+                length: 6196830562867428351,
+                prop: 10416984401456865055,
+            }),
+        },
+        Sync { from: 31, to: 31 },
+        Handle {
+            site: 31,
+            target: 31,
+            container: 31,
+            action: Generic(GenericAction {
+                value: I32(-57569),
+                bool: true,
+                key: 4294967295,
+                pos: 2242545357980434431,
+                length: 2242545357980376863,
+                prop: 18391046246847422367,
+            }),
+        },
+        Handle {
+            site: 47,
+            target: 147,
+            container: 47,
+            action: Generic(GenericAction {
+                value: I32(791621377),
+                bool: true,
+                key: 791621423,
+                pos: 3399988123389603631,
+                length: 18415500351294668799,
+                prop: 6196831041463842363,
+            }),
+        },
+        Handle {
+            site: 31,
+            target: 31,
+            container: 129,
+            action: Generic(GenericAction {
+                value: Container(List),
+                bool: true,
+                key: 2172748161,
+                pos: 9331882296111890817,
+                length: 9331882296111890817,
+                prop: 9331882296111890817,
+            }),
+        },
+        Handle {
+            site: 31,
+            target: 31,
+            container: 31,
+            action: Generic(GenericAction {
+                value: Container(Tree),
+                bool: true,
+                key: 522190847,
+                pos: 2242545357980376863,
+                length: 2242545907736190751,
+                prop: 3399989020233178911,
+            }),
+        },
+        Handle {
+            site: 47,
+            target: 47,
+            container: 47,
+            action: Generic(GenericAction {
+                value: I32(791621423),
+                bool: true,
+                key: 522133295,
+                pos: 2242545357980376863,
+                length: 6196831041471119135,
+                prop: 563538504058,
+            }),
+        },
+    ])
+}
