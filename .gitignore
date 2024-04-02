@@ -8,3 +8,4 @@ dhat-heap.json
 node_modules/
 .idea/
 coverage/
+trace-*.json
