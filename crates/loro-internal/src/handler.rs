@@ -622,14 +622,18 @@ impl TreeInner {
         assert!(old.is_some());
     }
 
-    fn get_children(&self, id: TreeID) -> Option<Vec<TreeID>> {
+    fn get_children(&self, parent: Option<TreeID>) -> Option<Vec<TreeID>> {
         let mut children = Vec::new();
         for (c, p) in &self.parent_links {
-            if p.as_ref() == Some(&id) {
+            if p == &parent {
                 children.push(*c);
             }
         }
         Some(children)
+    }
+
+    fn children_num(&self, parent: Option<TreeID>) -> Option<usize> {
+        self.get_children(parent).map(|x| x.len())
     }
 }
 
@@ -2272,7 +2276,7 @@ impl TreeHandler {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.try_lock().unwrap();
-                t.value.get_children(target).unwrap()
+                t.value.get_children(parent).unwrap()
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
@@ -2282,17 +2286,41 @@ impl TreeHandler {
     }
 
     pub fn children_len(&self, parent: Option<TreeID>) -> Option<usize> {
-        self.with_state(|state| {
-            let a = state.as_tree_state().unwrap();
-            a.as_ref().children_num(&TreeParentId::from(parent))
-        })
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = t.try_lock().unwrap();
+                t.value.children_num(parent)
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.children_num(&TreeParentId::from(parent))
+            }),
+        }
     }
 
     pub fn contains(&self, target: TreeID) -> bool {
-        self.with_state(|state| {
-            let a = state.as_tree_state().unwrap();
-            a.contains(target)
-        })
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = t.try_lock().unwrap();
+                t.value.map.contains_key(&target)
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.contains(target)
+            }),
+        }
+    }
+
+    pub fn is_parent(&self, target: TreeID, parent: Option<TreeID>) -> bool {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unimplemented!()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.is_parent(&TreeParentId::from(parent), &target)
+            }),
+        }
     }
 
     pub fn nodes(&self) -> Vec<TreeID> {
@@ -2329,27 +2357,17 @@ impl TreeHandler {
     ) -> Result<FracIndex, Vec<TreeID>> {
         self.with_state(|state| {
             let a = state.as_tree_state().unwrap();
-            a.generate_position_at(&TreeParentId::from(parent), index, move_out_first)
+            Ok(a.generate_position_at(&TreeParentId::from(parent), index, move_out_first))
         })
-    }
-
-    fn generate_position_at(
-        &self,
-        parent: Option<TreeID>,
-        index: usize,
-        move_out_first: bool,
-    ) -> Result<FracIndex, Vec<TreeID>> {
-        self.with_state(|state| {
-            let a = state.as_tree_state().unwrap();
-            a.generate_position_at(&TreeParentId::from(parent), index, move_out_first)
-        })
+        .unwrap()
     }
 
     fn get_index_by_tree_id(&self, target: &TreeID, parent: Option<TreeID>) -> Option<usize> {
         self.with_state(|state| {
             let a = state.as_tree_state().unwrap();
-            a.get_index_by_tree_id(&TreeParentId::from(parent), target)
+            Ok(a.get_index_by_tree_id(&TreeParentId::from(parent), target))
         })
+        .unwrap()
     }
 }
 
