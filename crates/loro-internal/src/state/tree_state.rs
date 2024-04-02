@@ -239,23 +239,50 @@ impl TreeState {
 
     // TODO: correct
     //
-    pub(crate) fn generate_position_at(&self, parent: &TreeParentId, index: usize) -> FracIndex {
+    pub(crate) fn generate_position_at(
+        &self,
+        parent: &TreeParentId,
+        index: usize,
+        move_out_first: bool,
+    ) -> Result<FracIndex, Vec<TreeID>> {
         let children_positions = self.children.get(parent);
         if let Some(positions) = children_positions {
-            let mut positions = positions.keys();
+            let mut positions = positions.iter();
             let children_num = positions.len();
             let mut left = None;
             let mut right = None;
+            let mut right_id = None;
             if index > 0 {
-                left = Some(positions.nth(index - 1).unwrap());
+                left = Some(&positions.nth(index - 1).unwrap().0.position);
             }
             if index < children_num {
-                right = Some(positions.next().unwrap());
+                let t = positions.next().unwrap();
+                right = Some(&t.0.position);
+                right_id = Some(t.1);
             }
-            FracIndex::new(left.map(|x| &x.position), right.map(|x| &x.position)).unwrap()
+
+            if move_out_first {
+                let t = positions.next();
+                right = t.map(|x| &x.0.position);
+                right_id = t.map(|x| x.1);
+            }
+
+            if left.is_some() && left == right {
+                let mut ans = vec![*right_id.unwrap()];
+                // TODO: the min length between left and right
+                for (p, tree_id) in positions {
+                    if p.position == *right.unwrap() {
+                        ans.push(*tree_id);
+                    } else {
+                        break;
+                    }
+                }
+                return Err(ans);
+            }
+            Ok(FracIndex::new(left, right).unwrap())
         } else {
             debug_assert_eq!(index, 0);
-            FracIndex::default()
+            Ok(FracIndex::default())
         }
     }
 

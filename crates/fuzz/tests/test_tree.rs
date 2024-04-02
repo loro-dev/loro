@@ -210,7 +210,7 @@ fn tree_meta() {
 }
 
 #[test]
-fn tree2() {
+fn left_right_same_position() {
     test_actions(vec![
         Handle {
             site: 11,

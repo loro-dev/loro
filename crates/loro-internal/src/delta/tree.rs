@@ -30,8 +30,10 @@ pub enum TreeExternalDiff {
 }
 
 impl TreeDiff {
-    pub(crate) fn compose(self, _other: Self) -> Self {
-        unreachable!("tree compose")
+    pub(crate) fn compose(mut self, other: Self) -> Self {
+        // TODO: better compose
+        self.diff.extend(other.diff);
+        self
     }
 
     pub(crate) fn extend<I: IntoIterator<Item = TreeDiffItem>>(mut self, other: I) -> Self {
@@ -130,8 +132,9 @@ impl Deref for TreeDelta {
 
 impl TreeDelta {
     // TODO: cannot handle this for now
-    pub(crate) fn compose(&self, _x: TreeDelta) -> TreeDelta {
-        unimplemented!("tree compose")
+    pub(crate) fn compose(mut self, x: TreeDelta) -> TreeDelta {
+        self.diff.extend(x.diff);
+        self
     }
 }
 

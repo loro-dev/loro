@@ -1095,7 +1095,18 @@ impl TreeHandler {
     ) -> LoroResult<TreeID> {
         let parent: Option<TreeID> = parent.into();
         let tree_id = TreeID::from_id(txn.next_id());
-        let position = self.generate_position_at(parent, index);
+        let position = match self.generate_position_at(parent, index, false) {
+            Ok(position) => position,
+            Err(mut ids) => {
+                let mut i = index + ids.len() - 1;
+                while let Some(right) = ids.pop() {
+                    println!("state {:?} move {} {}", self.children(parent), right, i);
+                    self.mov_with_txn(txn, right, parent, i, true)?;
+                    i -= 1;
+                }
+                self.generate_position_at(parent, index, false).unwrap()
+            }
+        };
         let event_hint = TreeDiffItem {
             target: tree_id,
             action: TreeExternalDiff::Create { parent, index },
@@ -1120,7 +1131,7 @@ impl TreeHandler {
         index: usize,
     ) -> LoroResult<()> {
         with_txn(&self.inner.txn, |txn| {
-            self.mov_with_txn(txn, target, parent, index)
+            self.mov_with_txn(txn, target, parent, index, false)
         })
     }
 
@@ -1131,6 +1142,7 @@ impl TreeHandler {
         target: TreeID,
         parent: T,
         index: usize,
+        move_out_first: bool,
     ) -> LoroResult<()> {
         let parent = parent.into();
 
@@ -1154,14 +1166,24 @@ impl TreeHandler {
                 return Err(LoroTreeError::IndexOutOfBound { len: 0, index }.into());
             }
             // If the position after moving is same as the current position , do nothing
-            if same_parent {
-                let current_index = self.get_index_by_tree_id(&target, parent).unwrap();
-                if current_index == index {
-                    return Ok(());
+            // if same_parent {
+            //     let current_index = self.get_index_by_tree_id(&target, parent).unwrap();
+            //     if current_index == index {
+            //         return Ok(());
+            //     }
+            // }
+
+            match self.generate_position_at(parent, index, move_out_first) {
+                Ok(position) => position,
+                Err(mut ids) => {
+                    let mut i = index + ids.len();
+                    while let Some(right) = ids.pop() {
+                        self.mov_with_txn(txn, right, parent, i, true)?;
+                        i -= 1;
+                    }
+                    self.generate_position_at(parent, index, false).unwrap()
                 }
             }
-
-            self.generate_position_at(parent, index)
         };
         txn.apply_local_op(
             self.inner.container_idx,
@@ -1250,10 +1272,15 @@ impl TreeHandler {
         with_txn(&self.inner.txn, |txn| Ok(TreeID::from_id(txn.next_id()))).unwrap()
     }
 
-    fn generate_position_at(&self, parent: Option<TreeID>, index: usize) -> FracIndex {
+    fn generate_position_at(
+        &self,
+        parent: Option<TreeID>,
+        index: usize,
+        move_out_first: bool,
+    ) -> Result<FracIndex, Vec<TreeID>> {
         self.with_state(|state| {
             let a = state.as_tree_state().unwrap();
-            a.generate_position_at(&TreeParentId::from(parent), index)
+            a.generate_position_at(&TreeParentId::from(parent), index, move_out_first)
         })
     }
 
