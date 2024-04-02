@@ -2167,7 +2167,6 @@ impl TreeHandler {
         }
     }
 
-    // TODO: maybe the move op is redundant, we can first find the position of the target node
     pub fn mov_with_txn<T: Into<Option<TreeID>>>(
         &self,
         txn: &mut Transaction,
@@ -2199,12 +2198,12 @@ impl TreeHandler {
                 return Err(LoroTreeError::IndexOutOfBound { len: 0, index }.into());
             }
             // If the position after moving is same as the current position , do nothing
-            // if same_parent {
-            //     let current_index = self.get_index_by_tree_id(&target, parent).unwrap();
-            //     if current_index == index {
-            //         return Ok(());
-            //     }
-            // }
+            if same_parent && !move_out_first {
+                let current_index = self.get_index_by_tree_id(&target, parent).unwrap();
+                if current_index == index {
+                    return Ok(());
+                }
+            }
 
             match self.generate_position_at(parent, index, move_out_first) {
                 Ok(position) => position,
