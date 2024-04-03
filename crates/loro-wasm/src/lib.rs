@@ -123,6 +123,14 @@ extern "C" {
     pub type JsPartialOrd;
     #[wasm_bindgen(typescript_type = "'Tree'|'Map'|'List'|'Text'")]
     pub type JsContainerKind;
+    #[wasm_bindgen(typescript_type = "'Text'")]
+    pub type JsTextStr;
+    #[wasm_bindgen(typescript_type = "'Tree'")]
+    pub type JsTreeStr;
+    #[wasm_bindgen(typescript_type = "'Map'")]
+    pub type JsMapStr;
+    #[wasm_bindgen(typescript_type = "'List'")]
+    pub type JsListStr;
     #[wasm_bindgen(typescript_type = "ImportBlobMetadata")]
     pub type JsImportBlobMetadata;
 }
@@ -1222,7 +1230,7 @@ impl LoroText {
     }
 
     /// "Text"
-    pub fn kind(&self) -> JsContainerKind {
+    pub fn kind(&self) -> JsTextStr {
         JsValue::from_str("Text").into()
     }
 
@@ -1473,7 +1481,7 @@ impl LoroMap {
     }
 
     /// "Map"
-    pub fn kind(&self) -> JsContainerKind {
+    pub fn kind(&self) -> JsMapStr {
         JsValue::from_str("Map").into()
     }
 
@@ -1806,7 +1814,7 @@ impl LoroList {
     }
 
     /// "List"
-    pub fn kind(&self) -> JsContainerKind {
+    pub fn kind(&self) -> JsListStr {
         JsValue::from_str("List").into()
     }
 
@@ -2183,7 +2191,7 @@ impl LoroTree {
     }
 
     /// "Tree"
-    pub fn kind(&self) -> JsContainerKind {
+    pub fn kind(&self) -> JsTreeStr {
         JsValue::from_str("Tree").into()
     }
 

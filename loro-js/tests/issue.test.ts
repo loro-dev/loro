@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { Loro } from "../src";
-import { Container, LoroText, OpId } from "../dist/loro";
+import { Container, LoroText, OpId } from "../src";
 import { setDebug } from "loro-wasm";
 
 it("#211", () => {
