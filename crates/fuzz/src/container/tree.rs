@@ -106,7 +106,7 @@ impl Actionable for TreeAction {
         match action {
             TreeActionInner::Create { index } => {
                 let id = tree.next_tree_id();
-                let len = tree.children_len(None).unwrap_or(0);
+                let len = tree.children_num(None).unwrap_or(0);
                 *index %= len + 1;
                 *target = (id.peer, id.counter);
             }
@@ -123,7 +123,7 @@ impl Actionable for TreeAction {
                 }
                 *parent = (nodes[parent_idx].peer, nodes[parent_idx].counter);
                 *index %= tree
-                    .children_len(Some(TreeID::new(parent.0, parent.1)))
+                    .children_num(Some(TreeID::new(parent.0, parent.1)))
                     .unwrap_or(0)
                     + 1;
             }

@@ -2180,7 +2180,7 @@ impl TreeHandler {
 
         let position = {
             // check the input is valid
-            let children_len = self.children_len(parent);
+            let children_len = self.children_num(parent);
             let same_parent = self.is_parent(target, parent);
             if let Some(mut children_len) = children_len {
                 if same_parent {
@@ -2284,7 +2284,7 @@ impl TreeHandler {
         }
     }
 
-    pub fn children_len(&self, parent: Option<TreeID>) -> Option<usize> {
+    pub fn children_num(&self, parent: Option<TreeID>) -> Option<usize> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.try_lock().unwrap();

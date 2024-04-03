@@ -537,8 +537,8 @@ impl ContainerState for TreeState {
     }
 
     fn get_child_containers(&self) -> Vec<ContainerID> {
-        self.nodes()
-            .into_iter()
+        self.trees
+            .keys()
             .map(|n| n.associated_meta_container())
             .collect_vec()
     }
