@@ -87,7 +87,7 @@ pub struct DocDiff {
     pub from: Frontiers,
     pub to: Frontiers,
     pub origin: InternalString,
-    pub triggered_by: EventTriggerKind,
+    pub by: EventTriggerKind,
     pub diff: Vec<ContainerDiff>,
 }
 
@@ -125,7 +125,7 @@ pub(crate) enum DiffVariant {
 #[derive(Debug, Clone)]
 pub(crate) struct InternalDocDiff<'a> {
     pub(crate) origin: InternalString,
-    pub(crate) triggered_by: EventTriggerKind,
+    pub(crate) by: EventTriggerKind,
     pub(crate) diff: Cow<'a, [InternalContainerDiff]>,
     pub(crate) new_version: Cow<'a, Frontiers>,
 }
@@ -134,14 +134,14 @@ impl<'a> InternalDocDiff<'a> {
     pub fn into_owned(self) -> InternalDocDiff<'static> {
         InternalDocDiff {
             origin: self.origin,
-            triggered_by: self.triggered_by,
+            by: self.by,
             diff: Cow::Owned((*self.diff).to_owned()),
             new_version: Cow::Owned((*self.new_version).to_owned()),
         }
     }
 
     pub fn can_merge(&self, other: &Self) -> bool {
-        self.triggered_by == other.triggered_by
+        self.by == other.by
     }
 }
 

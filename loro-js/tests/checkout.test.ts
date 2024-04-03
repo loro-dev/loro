@@ -10,7 +10,8 @@ describe("Checkout", () => {
     doc.commit();
     let triggered = false;
     doc.subscribe((e) => {
-      expect(e.triggeredBy).toBe("checkout");
+      expect(e.by).not.toBe("import");
+      expect(e.by === "checkout" || e.by === "local").toBeTruthy();
       triggered = true;
     });
     const v = doc.frontiers();

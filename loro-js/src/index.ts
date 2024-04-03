@@ -55,7 +55,7 @@ export type Path = (number | string | TreeID)[];
 /**
  * A batch of events that created by a single `import`/`transaction`/`checkout`.
  *
- * @prop triggeredBy - How the event is triggered.
+ * @prop by - How the event is triggered.
  * @prop origin - (Optional) Provides information about the origin of the event.
  * @prop diff - Contains the differential information related to the event.
  * @prop target - Identifies the container ID of the event's target.
@@ -69,7 +69,7 @@ export interface LoroEventBatch {
    * - `import`: The event is triggered by an import operation.
    * - `checkout`: The event is triggered by a checkout operation.
    */
-  triggeredBy: "local" | "import" | "checkout";
+  by: "local" | "import" | "checkout";
   origin?: string;
   /**
    * The container ID of the current event receiver.

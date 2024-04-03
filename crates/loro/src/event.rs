@@ -52,7 +52,7 @@ pub struct MapDelta<'a> {
 impl<'a> From<DiffEventInner<'a>> for DiffEvent<'a> {
     fn from(value: DiffEventInner<'a>) -> Self {
         DiffEvent {
-            triggered_by: value.event_meta.triggered_by,
+            triggered_by: value.event_meta.by,
             origin: &value.event_meta.origin,
             current_target: value.current_target,
             events: value.events.iter().map(|&diff| diff.into()).collect(),

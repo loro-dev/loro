@@ -300,7 +300,7 @@ impl Transaction {
         state.commit_txn(
             Frontiers::from_id(last_id),
             diff.map(|arr| InternalDocDiff {
-                triggered_by: crate::event::EventTriggerKind::Local,
+                by: crate::event::EventTriggerKind::Local,
                 origin: self.origin.clone(),
                 diff: Cow::Owned(
                     arr.into_iter()

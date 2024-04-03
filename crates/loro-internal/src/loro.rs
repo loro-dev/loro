@@ -472,7 +472,7 @@ impl LoroDoc {
             state.apply_diff(InternalDocDiff {
                 origin,
                 diff: (diff).into(),
-                triggered_by: EventTriggerKind::Import,
+                by: EventTriggerKind::Import,
                 new_version: Cow::Owned(oplog.frontiers().clone()),
             });
         } else {
@@ -507,7 +507,7 @@ impl LoroDoc {
             state.apply_diff(InternalDocDiff {
                 origin: "".into(),
                 diff: (diff).into(),
-                triggered_by: EventTriggerKind::Import,
+                by: EventTriggerKind::Import,
                 new_version: Cow::Owned(oplog.frontiers().clone()),
             });
         }
@@ -782,7 +782,7 @@ impl LoroDoc {
         );
         state.apply_diff(InternalDocDiff {
             origin: "checkout".into(),
-            triggered_by: EventTriggerKind::Checkout,
+            by: EventTriggerKind::Checkout,
             diff: Cow::Owned(diff),
             new_version: Cow::Owned(frontiers.clone()),
         });

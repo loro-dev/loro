@@ -1139,12 +1139,7 @@ impl Default for Loro {
 
 fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDoc>) -> JsValue {
     let obj = js_sys::Object::new();
-    Reflect::set(
-        &obj,
-        &"triggeredBy".into(),
-        &event.event_meta.triggered_by.to_string().into(),
-    )
-    .unwrap();
+    Reflect::set(&obj, &"by".into(), &event.event_meta.by.to_string().into()).unwrap();
     let origin: &str = &event.event_meta.origin;
     Reflect::set(&obj, &"origin".into(), &JsValue::from_str(origin)).unwrap();
     if let Some(t) = event.current_target.as_ref() {

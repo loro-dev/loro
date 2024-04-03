@@ -95,7 +95,7 @@ fn event_from_checkout() {
     let a = LoroDoc::new_auto_commit();
     let sub_id = a.subscribe_root(Arc::new(|event| {
         assert!(matches!(
-            event.event_meta.triggered_by,
+            event.event_meta.by,
             EventTriggerKind::Checkout | EventTriggerKind::Local
         ));
     }));
@@ -108,7 +108,7 @@ fn event_from_checkout() {
     let ran = Arc::new(AtomicBool::new(false));
     let ran_cloned = ran.clone();
     a.subscribe_root(Arc::new(move |event| {
-        assert!(event.event_meta.triggered_by.is_checkout());
+        assert!(event.event_meta.by.is_checkout());
         ran.store(true, std::sync::atomic::Ordering::Relaxed);
     }));
     a.checkout(&version).unwrap();

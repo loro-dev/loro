@@ -47,24 +47,39 @@ describe("Frontiers", () => {
     doc1.commit();
 
     expect(() => {
-      doc1.cmpFrontiers([{ peer: "1", counter: 1 }], [{
-        peer: "2",
-        counter: 10,
-      }]);
+      doc1.cmpFrontiers(
+        [{ peer: "1", counter: 1 }],
+        [
+          {
+            peer: "2",
+            counter: 10,
+          },
+        ],
+      );
     }).toThrow();
     expect(doc1.cmpFrontiers([], [{ peer: "1", counter: 1 }])).toBe(-1);
     expect(doc1.cmpFrontiers([], [])).toBe(0);
     expect(
-      doc1.cmpFrontiers([{ peer: "1", counter: 4 }], [{
-        peer: "2",
-        counter: 3,
-      }]),
+      doc1.cmpFrontiers(
+        [{ peer: "1", counter: 4 }],
+        [
+          {
+            peer: "2",
+            counter: 3,
+          },
+        ],
+      ),
     ).toBe(-1);
     expect(
-      doc1.cmpFrontiers([{ peer: "1", counter: 5 }], [{
-        peer: "2",
-        counter: 3,
-      }]),
+      doc1.cmpFrontiers(
+        [{ peer: "1", counter: 5 }],
+        [
+          {
+            peer: "2",
+            counter: 3,
+          },
+        ],
+      ),
     ).toBe(1);
   });
 });
@@ -77,9 +92,7 @@ it("peer id repr should be consistent", () => {
   const f = doc.frontiers();
   expect(f[0].peer).toBe(id);
   const child = new LoroMap();
-  console.dir(child);
   const map = doc.getList("list").insertContainer(0, child);
-  console.dir(child);
   const mapId = map.id;
   const peerIdInContainerId = mapId.split(":")[1].split("@")[1];
   expect(peerIdInContainerId).toBe(id);
@@ -115,9 +128,9 @@ describe("Version", () => {
       const v = a.version();
       const temp = a.vvToFrontiers(v);
       expect(temp).toStrictEqual(a.frontiers());
-      expect(a.frontiers()).toStrictEqual(
-        [{ peer: "0", counter: 2 }] as OpId[],
-      );
+      expect(a.frontiers()).toStrictEqual([
+        { peer: "0", counter: 2 },
+      ] as OpId[]);
     }
   });
 
@@ -156,7 +169,6 @@ it("get import blob metadata", () => {
     expect(meta.startTimestamp).toBe(0);
     expect(meta.endTimestamp).toBe(0);
     expect(meta.isSnapshot).toBeFalsy();
-    console.log(meta.startFrontiers);
     expect(meta.startFrontiers.length).toBe(0);
   }
 

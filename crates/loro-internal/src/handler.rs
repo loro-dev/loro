@@ -2477,7 +2477,7 @@ mod test {
 
         let loro2 = LoroDoc::new();
         loro2.subscribe_root(Arc::new(|e| {
-            println!("{} {:?} ", e.event_meta.triggered_by, e.event_meta.diff)
+            println!("{} {:?} ", e.event_meta.by, e.event_meta.diff)
         }));
         loro2.import(&loro.export_from(&loro2.oplog_vv())).unwrap();
         assert_eq!(loro.get_deep_value(), loro2.get_deep_value());

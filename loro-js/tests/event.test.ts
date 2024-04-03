@@ -17,7 +17,7 @@ describe("event", () => {
     const loro = new Loro();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
-      expect(event.triggeredBy).toBe("local");
+      expect(event.by).toBe("local");
       lastEvent = event;
     });
     const text = loro.getText("text");
@@ -132,7 +132,6 @@ describe("event", () => {
     const loro = new Loro();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
-      console.log(event);
       lastEvent = event;
     });
     const tree = loro.getTree("tree");
@@ -338,7 +337,7 @@ describe("event", () => {
       const doc2 = new Loro();
       let triggered = false;
       doc2.subscribe((event) => {
-        expect(event.triggeredBy).toBe("import");
+        expect(event.by).toBe("import");
         triggered = true;
       });
       doc2.import(doc.exportFrom());
@@ -349,7 +348,7 @@ describe("event", () => {
       const doc2 = new Loro();
       let triggered = false;
       doc2.subscribe((event) => {
-        expect(event.triggeredBy).toBe("import");
+        expect(event.by).toBe("import");
         triggered = true;
       });
       doc2.import(doc.exportSnapshot());
@@ -362,9 +361,10 @@ describe("event", () => {
     const doc = new Loro();
     const list = doc.getList("list");
     list.insert(0, 123);
+    doc.commit();
     let triggered = false;
     doc.subscribe((e) => {
-      expect(e.triggeredBy).toBe("checkout");
+      expect(e.by).toBe("checkout");
       triggered = true;
     });
 

@@ -319,7 +319,7 @@ impl DocState {
             return;
         };
 
-        if last_diff.origin == next_origin && last_diff.triggered_by == next_trigger {
+        if last_diff.origin == next_origin && last_diff.by == next_trigger {
             return;
         }
 
@@ -359,7 +359,7 @@ impl DocState {
         }
         // tracing::info!("Diff = {:#?}", &diff);
         let is_recording = self.is_recording();
-        self.pre_txn(diff.origin.clone(), diff.triggered_by);
+        self.pre_txn(diff.origin.clone(), diff.by);
         let Cow::Owned(inner) = std::mem::take(&mut diff.diff) else {
             unreachable!()
         };
@@ -652,7 +652,7 @@ impl DocState {
                 .collect();
             self.record_diff(InternalDocDiff {
                 origin: Default::default(),
-                triggered_by: EventTriggerKind::Import,
+                by: EventTriggerKind::Import,
                 diff,
                 new_version: Cow::Borrowed(&frontiers),
             });
@@ -895,8 +895,8 @@ impl DocState {
             panic!("diffs is empty");
         }
 
-        let triggered_by = diffs[0].triggered_by;
-        assert!(diffs.iter().all(|x| x.triggered_by == triggered_by));
+        let triggered_by = diffs[0].by;
+        assert!(diffs.iter().all(|x| x.by == triggered_by));
         let mut containers = FxHashMap::default();
         let to = (*diffs.last().unwrap().new_version).to_owned();
         let origin = diffs[0].origin.clone();
@@ -949,7 +949,7 @@ impl DocState {
             from,
             to,
             origin,
-            triggered_by,
+            by: triggered_by,
             diff,
         }
     }

@@ -130,14 +130,14 @@ describe("sync", () => {
     let a_version: undefined | VersionVector = undefined;
     let b_version: undefined | VersionVector = undefined;
     a.subscribe((e) => {
-      if (e.triggeredBy == "local") {
+      if (e.by == "local") {
         const exported = a.exportFrom(a_version);
         b.import(exported);
         a_version = a.version();
       }
     });
     b.subscribe((e) => {
-      if (e.triggeredBy == "local") {
+      if (e.by == "local") {
         const exported = b.exportFrom(b_version);
         a.import(exported);
         b_version = b.version();

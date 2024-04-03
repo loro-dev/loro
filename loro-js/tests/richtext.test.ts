@@ -38,7 +38,6 @@ describe("richtext", () => {
     const text = doc.getText("text");
     let triggered = false;
     text.subscribe(doc, (e) => {
-      console.dir(e);
       for (const event of e.events) {
         if (event.diff.type == "text") {
           expect(event.diff.diff).toStrictEqual([
