@@ -230,53 +230,75 @@ impl TreeState {
             .map_or(false, |x| x.parent == *parent)
     }
 
+    pub(crate) fn delete_position(&mut self, parent: &TreeParentId, target: TreeID) {
+        if let Some(x) = self.children.get_mut(parent) {
+            x.retain(|_, v| v != &target);
+        }
+    }
+
     // TODO: correct
     //
     pub(crate) fn generate_position_at(
-        &self,
+        &mut self,
         parent: &TreeParentId,
         index: usize,
-        move_out_first: bool,
-    ) -> Result<FracIndex, Vec<TreeID>> {
-        let children_positions = self.children.get(parent);
-        if let Some(positions) = children_positions {
-            let mut positions = positions.iter();
-            let children_num = positions.len();
+    ) -> FracIndex {
+        let (left, mut right, mut same_positions) = {
+            let mut same_positions = vec![];
             let mut left = None;
             let mut right = None;
-            let mut right_id = None;
+            let children_positions = self.children.get(parent);
+            if children_positions.is_none() {
+                debug_assert_eq!(index, 0);
+                return FracIndex::default();
+            }
+            let mut positions = children_positions.unwrap().iter();
+            let children_num = positions.len();
+
             if index > 0 {
-                left = Some(&positions.nth(index - 1).unwrap().0.position);
+                left = Some(positions.nth(index - 1).unwrap().0.clone().position);
             }
             if index < children_num {
-                let t = positions.next().unwrap();
-                right = Some(&t.0.position);
-                right_id = Some(t.1);
+                right = Some(positions.next().unwrap().0.clone());
             }
 
-            if move_out_first {
-                let t = positions.next();
-                right = t.map(|x| &x.0.position);
-                right_id = t.map(|x| x.1);
-            }
-
-            if left.is_some() && left == right {
-                let mut ans = vec![*right_id.unwrap()];
+            if left.is_some() && left.as_ref() == right.as_ref().map(|x| &x.position) {
+                same_positions.push((right.as_ref().unwrap().clone(), index));
                 // TODO: the min length between left and right
-                for (p, tree_id) in positions {
-                    if p.position == *right.unwrap() {
-                        ans.push(*tree_id);
+                let mut right_index = index;
+                for (p, _) in positions {
+                    if p.position == right.as_ref().unwrap().position {
+                        same_positions.push((p.clone(), right_index));
+                        right_index += 1;
                     } else {
                         break;
                     }
                 }
-                return Err(ans);
             }
-            Ok(FracIndex::new(left, right).unwrap())
-        } else {
-            debug_assert_eq!(index, 0);
-            Ok(FracIndex::default())
+            (left, right, same_positions)
+        };
+
+        while let Some((position, right_index)) = same_positions.pop() {
+            // delete the position
+            let tree_id = self
+                .children
+                .get_mut(parent)
+                .unwrap()
+                .remove(&position)
+                .unwrap();
+            let frac_index = self.generate_position_at(parent, right_index);
+            let new_position = NodePosition {
+                position: frac_index,
+                id: position.id,
+            };
+            right = Some(new_position.clone());
+            // cache children
+            self.children
+                .get_mut(parent)
+                .unwrap()
+                .insert(new_position, tree_id);
         }
+        FracIndex::new(left.as_ref(), right.as_ref().map(|x| &x.position)).unwrap()
     }
 
     pub(crate) fn get_index_by_tree_id(
@@ -331,6 +353,7 @@ impl ContainerState for TreeState {
                             action: TreeExternalDiff::Create {
                                 parent: parent.into_node().ok(),
                                 index,
+                                position: position.clone(),
                             },
                         });
                     }
@@ -343,6 +366,7 @@ impl ContainerState for TreeState {
                             action: TreeExternalDiff::Move {
                                 parent: parent.into_node().ok(),
                                 index,
+                                position: position.clone(),
                             },
                         });
                     }
@@ -458,10 +482,10 @@ impl ContainerState for TreeState {
             return Diff::Tree(TreeDiff { diff: vec![] });
         };
 
-        let mut q = VecDeque::from_iter(roots.values());
+        let mut q = VecDeque::from_iter(roots.iter());
         let mut index = 0;
         let mut parent = TreeParentId::None;
-        while let Some(node) = q.pop_front() {
+        while let Some((position, node)) = q.pop_front() {
             let node_parent = self.trees.get(node).unwrap().parent;
             if node_parent != parent {
                 index = 0;
@@ -472,12 +496,13 @@ impl ContainerState for TreeState {
                 action: TreeExternalDiff::Create {
                     parent: node_parent.into_node().ok(),
                     index,
+                    position: position.position.clone(),
                 },
             };
             index += 1;
             diffs.push(diff);
             if let Some(children) = self.children.get(&TreeParentId::Node(*node)) {
-                q.extend(children.values());
+                q.extend(children.iter());
             }
         }
 
@@ -506,6 +531,11 @@ impl ContainerState for TreeState {
                 t.insert(
                     "index".to_string(),
                     (self.get_index_by_tree_id(&node.parent, target).unwrap() as i64).into(),
+                );
+                #[cfg(feature = "test_utils")]
+                t.insert(
+                    "position".to_string(),
+                    node.position.clone().unwrap().to_string().into(),
                 );
                 ans.push(t);
             }

@@ -11,21 +11,23 @@ pub struct TreeDiff {
     pub diff: Vec<TreeDiffItem>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TreeDiffItem {
     pub target: TreeID,
     pub action: TreeExternalDiff,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub enum TreeExternalDiff {
     Create {
         parent: Option<TreeID>,
         index: usize,
+        position: FracIndex,
     },
     Move {
         parent: Option<TreeID>,
         index: usize,
+        position: FracIndex,
     },
     Delete,
 }

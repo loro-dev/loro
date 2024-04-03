@@ -274,7 +274,11 @@ impl ApplyDiff for TreeTracker {
         for diff in &diff.diff {
             let target = diff.target;
             match &diff.action {
-                TreeExternalDiff::Create { parent, index } => {
+                TreeExternalDiff::Create {
+                    parent,
+                    index,
+                    position,
+                } => {
                     let node = TreeNode::new(target, *parent);
                     if let Some(parent) = parent {
                         let parent = self.find_node_by_id_mut(*parent).unwrap();
@@ -293,7 +297,11 @@ impl ApplyDiff for TreeTracker {
                         self.0.remove(index);
                     };
                 }
-                TreeExternalDiff::Move { parent, index } => {
+                TreeExternalDiff::Move {
+                    parent,
+                    index,
+                    position,
+                } => {
                     let node = self.find_node_by_id(target).unwrap();
                     let mut node = if let Some(p) = node.parent {
                         let parent = self.find_node_by_id_mut(p).unwrap();
