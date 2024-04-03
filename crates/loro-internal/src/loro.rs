@@ -21,7 +21,7 @@ use crate::{
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    event::{str_to_path, Index},
+    event::{str_to_path, EventTriggerKind, Index},
     handler::{Handler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     oplog::dag::FrontiersNotIncluded,
@@ -471,9 +471,8 @@ impl LoroDoc {
             let mut state = self.state.lock().unwrap();
             state.apply_diff(InternalDocDiff {
                 origin,
-                local: false,
                 diff: (diff).into(),
-                from_checkout: false,
+                triggered_by: EventTriggerKind::Import,
                 new_version: Cow::Owned(oplog.frontiers().clone()),
             });
         } else {
@@ -507,9 +506,8 @@ impl LoroDoc {
             let mut state = self.state.lock().unwrap();
             state.apply_diff(InternalDocDiff {
                 origin: "".into(),
-                local: false,
                 diff: (diff).into(),
-                from_checkout: false,
+                triggered_by: EventTriggerKind::Import,
                 new_version: Cow::Owned(oplog.frontiers().clone()),
             });
         }
@@ -784,9 +782,8 @@ impl LoroDoc {
         );
         state.apply_diff(InternalDocDiff {
             origin: "checkout".into(),
-            local: true,
+            triggered_by: EventTriggerKind::Checkout,
             diff: Cow::Owned(diff),
-            from_checkout: true,
             new_version: Cow::Owned(frontiers.clone()),
         });
         drop(state);

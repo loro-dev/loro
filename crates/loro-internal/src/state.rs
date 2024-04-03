@@ -16,7 +16,7 @@ use crate::{
     },
     delta::DeltaItem,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
-    event::{Diff, Index, InternalContainerDiff, InternalDiff},
+    event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
     fx_map,
     handler::ValueOrHandler,
     id::PeerID,
@@ -310,7 +310,7 @@ impl DocState {
     }
 
     /// This should be called when DocState is going to apply a transaction / a diff.
-    fn pre_txn(&mut self, next_origin: InternalString, next_local: bool) {
+    fn pre_txn(&mut self, next_origin: InternalString, next_trigger: EventTriggerKind) {
         if !self.is_recording() {
             return;
         }
@@ -319,7 +319,7 @@ impl DocState {
             return;
         };
 
-        if last_diff.origin == next_origin && last_diff.local == next_local {
+        if last_diff.origin == next_origin && last_diff.triggered_by == next_trigger {
             return;
         }
 
@@ -359,7 +359,7 @@ impl DocState {
         }
         // tracing::info!("Diff = {:#?}", &diff);
         let is_recording = self.is_recording();
-        self.pre_txn(diff.origin.clone(), diff.local);
+        self.pre_txn(diff.origin.clone(), diff.triggered_by);
         let Cow::Owned(inner) = std::mem::take(&mut diff.diff) else {
             unreachable!()
         };
@@ -480,8 +480,8 @@ impl DocState {
         state.apply_local_op(raw_op, op)
     }
 
-    pub(crate) fn start_txn(&mut self, origin: InternalString, local: bool) {
-        self.pre_txn(origin, local);
+    pub(crate) fn start_txn(&mut self, origin: InternalString, trigger: EventTriggerKind) {
+        self.pre_txn(origin, trigger);
         self.in_txn = true;
     }
 
@@ -626,7 +626,7 @@ impl DocState {
         frontiers: Frontiers,
     ) {
         assert!(self.states.is_empty(), "overriding states");
-        self.pre_txn(Default::default(), false);
+        self.pre_txn(Default::default(), EventTriggerKind::Import);
         self.states = states;
         for (idx, state) in self.states.iter() {
             for child_id in state.get_child_containers() {
@@ -652,8 +652,7 @@ impl DocState {
                 .collect();
             self.record_diff(InternalDocDiff {
                 origin: Default::default(),
-                local: false,
-                from_checkout: false,
+                triggered_by: EventTriggerKind::Import,
                 diff,
                 new_version: Cow::Borrowed(&frontiers),
             });
@@ -896,11 +895,11 @@ impl DocState {
             panic!("diffs is empty");
         }
 
+        let triggered_by = diffs[0].triggered_by;
+        assert!(diffs.iter().all(|x| x.triggered_by == triggered_by));
         let mut containers = FxHashMap::default();
         let to = (*diffs.last().unwrap().new_version).to_owned();
         let origin = diffs[0].origin.clone();
-        let local = diffs[0].local;
-        let from_checkout = diffs[0].from_checkout;
         for diff in diffs {
             #[allow(clippy::unnecessary_to_owned)]
             for container_diff in diff.diff.into_owned() {
@@ -950,8 +949,7 @@ impl DocState {
             from,
             to,
             origin,
-            from_checkout,
-            local,
+            triggered_by,
             diff,
         }
     }

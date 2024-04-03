@@ -33,26 +33,34 @@ describe("richtext", () => {
     expect(text.toString()).toBe("👨‍👩‍👦a");
   });
 
-  it("emit event correctly", () => {
+  it("emit event correctly", async () => {
     const doc = new Loro();
     const text = doc.getText("text");
-    text.subscribe(doc, (event) => {
-      if (event.diff.type == "text") {
-        expect(event.diff.diff).toStrictEqual([
-          {
-            insert: "Hello",
-            attributes: {
-              bold: true,
+    let triggered = false;
+    text.subscribe(doc, (e) => {
+      console.dir(e);
+      for (const event of e.events) {
+        if (event.diff.type == "text") {
+          expect(event.diff.diff).toStrictEqual([
+            {
+              insert: "Hello",
+              attributes: {
+                bold: true,
+              },
             },
-          },
-          {
-            insert: " World!",
-          },
-        ] as Delta<string>[]);
+            {
+              insert: " World!",
+            },
+          ] as Delta<string>[]);
+          triggered = true;
+        }
       }
     });
     text.insert(0, "Hello World!");
     text.mark({ start: 0, end: 5 }, "bold", true);
+    doc.commit();
+    await new Promise((r) => setTimeout(r, 1));
+    expect(triggered).toBeTruthy();
   });
 
   it("emit event from merging doc correctly", async () => {

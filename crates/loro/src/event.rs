@@ -1,6 +1,7 @@
 use enum_as_inner::EnumAsInner;
 use loro_internal::container::ContainerID;
 use loro_internal::delta::{DeltaItem, TreeDiff};
+use loro_internal::event::EventTriggerKind;
 use loro_internal::handler::{TextDelta, ValueOrHandler};
 use loro_internal::FxHashMap;
 use loro_internal::{
@@ -15,8 +16,7 @@ pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
 
 #[derive(Debug)]
 pub struct DiffEvent<'a> {
-    pub local: bool,
-    pub from_checkout: bool,
+    pub triggered_by: EventTriggerKind,
     pub origin: &'a str,
     pub current_target: Option<ContainerID>,
     pub events: Vec<ContainerDiff<'a>>,
@@ -52,8 +52,7 @@ pub struct MapDelta<'a> {
 impl<'a> From<DiffEventInner<'a>> for DiffEvent<'a> {
     fn from(value: DiffEventInner<'a>) -> Self {
         DiffEvent {
-            local: value.event_meta.local,
-            from_checkout: value.event_meta.from_checkout,
+            triggered_by: value.event_meta.triggered_by,
             origin: &value.event_meta.origin,
             current_target: value.current_target,
             events: value.events.iter().map(|&diff| diff.into()).collect(),
