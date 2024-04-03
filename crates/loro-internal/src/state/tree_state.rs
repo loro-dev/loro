@@ -111,18 +111,11 @@ impl TreeState {
             }
         }
         // move or delete or create children node
-        let (old_parent, old_position) = self
+        let old_parent = self
             .trees
             .get(&target)
-            .map(|x| {
-                (
-                    x.parent,
-                    x.position
-                        .clone()
-                        .map(|i| NodePosition::new(i, x.last_move_op)),
-                )
-            })
-            .unwrap_or((TreeParentId::Unexist, None));
+            .map(|x| x.parent)
+            .unwrap_or(TreeParentId::Unexist);
 
         // remove old position
         if let Some(x) = self.children.get_mut(&old_parent) {
@@ -461,41 +454,31 @@ impl ContainerState for TreeState {
         _state: &Weak<Mutex<DocState>>,
     ) -> Diff {
         let mut diffs = vec![];
-        // TODO: perf
-        let mut forest = Forest::from_tree_state(&self.trees);
-        if forest.roots.is_empty() {
+        let Some(roots) = self.children.get(&TreeParentId::None) else {
             return Diff::Tree(TreeDiff { diff: vec![] });
-        }
-        forest.roots.sort_by_key(|x| x.position.clone());
-        // TODO: perf sort
-        let mut q = VecDeque::from(forest.roots);
+        };
 
+        let mut q = VecDeque::from_iter(roots.values());
         let mut index = 0;
-        let mut current_parent = TreeParentId::Unexist;
-        while let Some(mut node) = q.pop_front() {
-            let parent = if let Some(p) = node.parent {
-                TreeParentId::Node(p)
-            } else {
-                TreeParentId::None
-            };
-
-            if parent != current_parent {
+        let mut parent = TreeParentId::None;
+        while let Some(node) = q.pop_front() {
+            let node_parent = self.trees.get(node).unwrap().parent;
+            if node_parent != parent {
                 index = 0;
-                current_parent = parent;
+                parent = node_parent;
             }
-
             let diff = TreeDiffItem {
-                target: node.id,
+                target: *node,
                 action: TreeExternalDiff::Create {
-                    parent: parent.into_node().ok(),
+                    parent: node_parent.into_node().ok(),
                     index,
                 },
             };
             index += 1;
             diffs.push(diff);
-            // TODO: perf sort
-            node.children.sort_by_key(|x| x.position.clone());
-            q.extend(node.children);
+            if let Some(children) = self.children.get(&TreeParentId::Node(*node)) {
+                q.extend(children.values());
+            }
         }
 
         Diff::Tree(TreeDiff { diff: diffs })
@@ -595,102 +578,6 @@ impl ContainerState for TreeState {
             self.mov(target, parent, op.id_full(), position, false)
                 .unwrap();
         }
-    }
-}
-
-/// Convert flatten tree structure to hierarchy for user interface.
-///
-/// ```json
-/// {
-///     "roots": [......],
-///     // "deleted": [......]
-/// }
-/// ```
-#[derive(Debug, Default)]
-pub struct Forest {
-    pub roots: Vec<TreeNode>,
-    // deleted: Vec<TreeNode>,
-}
-
-/// The node with metadata in hierarchy tree structure.
-#[derive(Debug)]
-pub struct TreeNode {
-    id: TreeID,
-    meta: LoroValue,
-    parent: Option<TreeID>,
-    position: NodePosition,
-    children: Vec<TreeNode>,
-}
-
-impl Forest {
-    pub(crate) fn from_tree_state(state: &FxHashMap<TreeID, TreeStateNode>) -> Self {
-        let mut forest = Self::default();
-        let mut parent_id_to_children = FxHashMap::default();
-
-        for id in state.keys() {
-            let parent = state.get(id).unwrap();
-            parent_id_to_children
-                .entry(parent.parent)
-                .or_insert_with(Vec::new)
-                .push(*id)
-        }
-
-        if let Some(roots) = parent_id_to_children.get(&TreeParentId::None) {
-            for root in roots.iter().copied() {
-                if TreeID::is_deleted_root(&root) {
-                    continue;
-                }
-                let position = state.get(&root).unwrap().position.clone();
-                let id = state.get(&root).unwrap().last_move_op;
-                let mut stack = vec![(
-                    root,
-                    TreeNode {
-                        id: root,
-                        parent: None,
-                        position: NodePosition::new(position.unwrap(), id),
-                        meta: LoroValue::Container(root.associated_meta_container()),
-                        children: vec![],
-                    },
-                )];
-                let mut id_to_node = FxHashMap::default();
-                while let Some((id, mut node)) = stack.pop() {
-                    if let Some(children) = parent_id_to_children.get(&TreeParentId::Node(id)) {
-                        let mut children_to_stack = Vec::new();
-                        for child in children {
-                            if let Some(child_node) = id_to_node.remove(child) {
-                                node.children.push(child_node);
-                            } else {
-                                let position = state.get(child).unwrap().position.clone().unwrap();
-                                let op_id = state.get(child).unwrap().last_move_op;
-                                children_to_stack.push((
-                                    *child,
-                                    TreeNode {
-                                        id: *child,
-                                        parent: Some(id),
-                                        position: NodePosition::new(position, op_id),
-                                        meta: LoroValue::Container(
-                                            child.associated_meta_container(),
-                                        ),
-                                        children: vec![],
-                                    },
-                                ));
-                            }
-                        }
-                        if !children_to_stack.is_empty() {
-                            stack.push((id, node));
-                            stack.extend(children_to_stack);
-                        } else {
-                            id_to_node.insert(id, node);
-                        }
-                    } else {
-                        id_to_node.insert(id, node);
-                    }
-                }
-                let root_node = id_to_node.remove(&root).unwrap();
-                forest.roots.push(root_node);
-            }
-        }
-        forest
     }
 }
 
