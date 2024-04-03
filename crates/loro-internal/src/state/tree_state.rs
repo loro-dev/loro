@@ -242,63 +242,47 @@ impl TreeState {
         &mut self,
         parent: &TreeParentId,
         index: usize,
-    ) -> FracIndex {
-        let (left, mut right, mut same_positions) = {
-            let mut same_positions = vec![];
+    ) -> Result<FracIndex, Vec<TreeID>> {
+        let mut same_position = vec![];
+        {
             let mut left = None;
             let mut right = None;
             let children_positions = self.children.get(parent);
             if children_positions.is_none() {
                 debug_assert_eq!(index, 0);
-                return FracIndex::default();
+                return Ok(FracIndex::default());
             }
             let mut positions = children_positions.unwrap().iter();
             let children_num = positions.len();
 
             if index > 0 {
-                left = Some(positions.nth(index - 1).unwrap().0.clone().position);
+                left = Some(&positions.nth(index - 1).unwrap().0.position);
             }
             if index < children_num {
-                right = Some(positions.next().unwrap().0.clone());
+                let t = positions.next().unwrap();
+                right = Some(t.0);
             }
 
-            if left.is_some() && left.as_ref() == right.as_ref().map(|x| &x.position) {
-                same_positions.push((right.as_ref().unwrap().clone(), index));
+            if left.is_some() && left == right.map(|x| &x.position) {
                 // TODO: the min length between left and right
-                let mut right_index = index;
+                same_position.push(right.unwrap().clone());
                 for (p, _) in positions {
-                    if p.position == right.as_ref().unwrap().position {
-                        same_positions.push((p.clone(), right_index));
-                        right_index += 1;
+                    if p.position == right.unwrap().position {
+                        same_position.push(p.clone());
                     } else {
                         break;
                     }
                 }
             }
-            (left, right, same_positions)
-        };
 
-        while let Some((position, right_index)) = same_positions.pop() {
-            // delete the position
-            let tree_id = self
-                .children
-                .get_mut(parent)
-                .unwrap()
-                .remove(&position)
-                .unwrap();
-            let frac_index = self.generate_position_at(parent, right_index);
-            let new_position = NodePosition {
-                position: frac_index,
-                id: position.id,
-            };
-            right = Some(new_position.clone());
-            // cache children
-            self.children
-                .get_mut(parent)
-                .unwrap()
-                .insert(new_position, tree_id);
+            if same_position.is_empty() {
+                return Ok(FracIndex::new(left, right.map(|x| &x.position)).unwrap());
+            }
         }
-        FracIndex::new(left.as_ref(), right.as_ref().map(|x| &x.position)).unwrap()
+        Err(same_position
+            .into_iter()
+            .map(|x| self.children.get_mut(parent).unwrap().remove(&x).unwrap())
+            .collect())
     }
 
     pub(crate) fn get_index_by_tree_id(
@@ -310,7 +294,7 @@ impl TreeState {
             .then(|| {
                 self.children
                     .get(parent)
-                    .map(|x| x.values().position(|x| x == target).unwrap())
+                    .and_then(|x| x.values().position(|x| x == target))
             })
             .flatten()
     }

@@ -141,7 +141,6 @@ impl CRDTFuzzer {
                 let b_doc = &mut b.loro;
                 a_doc.attach();
                 b_doc.attach();
-                println!("before {:?}", b_doc.get_deep_value());
                 if (i + j) % 2 == 0 {
                     debug_log::group!("Updates {} to {}", j, i);
                     a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();

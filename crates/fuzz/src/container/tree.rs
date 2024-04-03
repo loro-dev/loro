@@ -279,7 +279,7 @@ impl ApplyDiff for TreeTracker {
                     index,
                     position,
                 } => {
-                    let node = TreeNode::new(target, *parent);
+                    let node = TreeNode::new(target, *parent, position.to_string());
                     if let Some(parent) = parent {
                         let parent = self.find_node_by_id_mut(*parent).unwrap();
                         parent.children.insert(*index, node);
@@ -312,6 +312,7 @@ impl ApplyDiff for TreeTracker {
                         self.0.remove(index)
                     };
                     node.parent = *parent;
+                    node.position = position.to_string();
                     if let Some(parent) = parent {
                         let parent = self.find_node_by_id_mut(*parent).unwrap();
                         parent.children.insert(*index, node);
@@ -363,15 +364,17 @@ pub struct TreeNode {
     pub id: TreeID,
     pub meta: ContainerTracker,
     pub parent: Option<TreeID>,
+    pub position: String,
     pub children: Vec<TreeNode>,
 }
 
 impl TreeNode {
-    pub fn new(id: TreeID, parent: Option<TreeID>) -> Self {
+    pub fn new(id: TreeID, parent: Option<TreeID>, position: String) -> Self {
         TreeNode {
             id,
             meta: ContainerTracker::Map(MapTracker::empty()),
             parent,
+            position,
             children: vec![],
         }
     }
@@ -390,6 +393,7 @@ impl TreeNode {
                 None => LoroValue::Null,
             },
         );
+        map.insert("position".to_string(), self.position.clone().into());
         map.insert("index".to_string(), (index as i64).into());
         list.push(map);
     }
