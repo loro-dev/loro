@@ -395,3 +395,114 @@ fn meta() {
         },
     ])
 }
+
+#[test]
+fn tree2() {
+    test_actions(vec![
+        Handle {
+            site: 23,
+            target: 255,
+            container: 112,
+            action: Generic(GenericAction {
+                value: I32(0),
+                bool: false,
+                key: 524288,
+                pos: 0,
+                length: 11140386617070441728,
+                prop: 230695578868378,
+            }),
+        },
+        SyncAll,
+        Handle {
+            site: 45,
+            target: 45,
+            container: 45,
+            action: Generic(GenericAction {
+                value: I32(-1792201427),
+                bool: false,
+                key: 8280884,
+                pos: 4035225660500335393,
+                length: 1975674142468,
+                prop: 18446744073709551615,
+            }),
+        },
+        Handle {
+            site: 9,
+            target: 56,
+            container: 9,
+            action: Generic(GenericAction {
+                value: Container(Text),
+                bool: true,
+                key: 16844041,
+                pos: 88384250654424831,
+                length: 72340172838076673,
+                prop: 72340172838076673,
+            }),
+        },
+        Handle {
+            site: 1,
+            target: 1,
+            container: 1,
+            action: Generic(GenericAction {
+                value: I32(16843009),
+                bool: true,
+                key: 1459683585,
+                pos: 361700864190404439,
+                length: 361700864190383365,
+                prop: 361700864190383365,
+            }),
+        },
+        Handle {
+            site: 1,
+            target: 1,
+            container: 1,
+            action: Generic(GenericAction {
+                value: I32(16843009),
+                bool: true,
+                key: 1465341783,
+                pos: 6293595036912670551,
+                length: 361700864190383365,
+                prop: 361700864190383365,
+            }),
+        },
+        Handle {
+            site: 5,
+            target: 5,
+            container: 5,
+            action: Generic(GenericAction {
+                value: I32(16843009),
+                bool: true,
+                key: 16843009,
+                pos: 130551402805920001,
+                length: 18374969075786385665,
+                prop: 72402845017046782,
+            }),
+        },
+        Handle {
+            site: 1,
+            target: 1,
+            container: 1,
+            action: Generic(GenericAction {
+                value: I32(16843009),
+                bool: true,
+                key: 16843009,
+                pos: 72340172838076673,
+                length: 288231479975149825,
+                prop: 72340172838010880,
+            }),
+        },
+        Handle {
+            site: 9,
+            target: 0,
+            container: 0,
+            action: Generic(GenericAction {
+                value: I32(0),
+                bool: false,
+                key: 0,
+                pos: 0,
+                length: 0,
+                prop: 0,
+            }),
+        },
+    ])
+}

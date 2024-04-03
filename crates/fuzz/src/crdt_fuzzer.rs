@@ -218,7 +218,6 @@ impl FuzzTarget {
 
 pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &mut [Action]) {
     let mut fuzzer = CRDTFuzzer::new(site_num, fuzz_targets);
-
     let mut applied = Vec::new();
     for action in actions.iter_mut() {
         fuzzer.pre_process(action);

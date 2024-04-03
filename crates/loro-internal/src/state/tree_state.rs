@@ -353,8 +353,8 @@ impl ContainerState for TreeState {
                             },
                         });
                     }
-                    TreeInternalDiff::Delete { parent } => {
-                        self.mov(target, *parent, last_move_op, None, false)
+                    TreeInternalDiff::Delete { parent, position } => {
+                        self.mov(target, *parent, last_move_op, position.clone(), false)
                             .unwrap();
                         ans.push(TreeDiffItem {
                             target,
@@ -406,8 +406,8 @@ impl ContainerState for TreeState {
                         self.mov(target, *parent, last_move_op, Some(position.clone()), false)
                             .unwrap();
                     }
-                    TreeInternalDiff::Delete { parent } => {
-                        self.mov(target, *parent, last_move_op, None, false)
+                    TreeInternalDiff::Delete { parent, position } => {
+                        self.mov(target, *parent, last_move_op, position.clone(), false)
                             .unwrap();
                     }
                     TreeInternalDiff::MoveInDelete { parent, position } => {

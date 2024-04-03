@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 
 use loro_common::{IdFull, TreeID};
@@ -43,9 +44,19 @@ impl TreeDiff {
 }
 
 /// Representation of differences in movable tree. It's an ordered list of [`TreeDiff`].
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct TreeDelta {
     pub(crate) diff: Vec<TreeDeltaItem>,
+}
+
+impl Debug for TreeDelta {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TreeDelta{ diff: [\n")?;
+        for item in self.diff.iter() {
+            f.write_fmt(format_args!("\t{:?}, \n", item))?;
+        }
+        f.write_str("]}")
+    }
 }
 
 /// The semantic action in movable tree.
@@ -72,7 +83,10 @@ pub enum TreeInternalDiff {
         position: FracIndex,
     },
     /// move under a parent that is deleted
-    Delete { parent: TreeParentId },
+    Delete {
+        parent: TreeParentId,
+        position: Option<FracIndex>,
+    },
     /// old parent is deleted, new parent is deleted too
     MoveInDelete {
         parent: TreeParentId,
@@ -103,7 +117,7 @@ impl TreeDeltaItem {
                 is_old_parent_deleted || old_parent == TreeParentId::Unexist,
             ) {
                 (true, true) => TreeInternalDiff::MoveInDelete { parent, position },
-                (true, false) => TreeInternalDiff::Delete { parent },
+                (true, false) => TreeInternalDiff::Delete { parent, position },
                 (false, true) => TreeInternalDiff::Create {
                     parent,
                     position: position.unwrap(),
