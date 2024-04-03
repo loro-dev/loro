@@ -129,15 +129,15 @@ describe("sync", () => {
     const b = new Loro();
     let a_version: undefined | VersionVector = undefined;
     let b_version: undefined | VersionVector = undefined;
-    a.subscribe((e: { local: boolean }) => {
-      if (e.local) {
+    a.subscribe((e) => {
+      if (e.by == "local") {
         const exported = a.exportFrom(a_version);
         b.import(exported);
         a_version = a.version();
       }
     });
-    b.subscribe((e: { local: boolean }) => {
-      if (e.local) {
+    b.subscribe((e) => {
+      if (e.by == "local") {
         const exported = b.exportFrom(b_version);
         a.import(exported);
         b_version = b.version();

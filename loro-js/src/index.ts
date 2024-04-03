@@ -8,7 +8,6 @@ import {
   LoroMap,
   LoroText,
   LoroTree,
-  LoroTreeNode,
   OpId,
   TreeID,
   Value,
@@ -56,18 +55,21 @@ export type Path = (number | string | TreeID)[];
 /**
  * A batch of events that created by a single `import`/`transaction`/`checkout`.
  *
- * @prop local - Indicates whether the event is local.
+ * @prop by - How the event is triggered.
  * @prop origin - (Optional) Provides information about the origin of the event.
  * @prop diff - Contains the differential information related to the event.
  * @prop target - Identifies the container ID of the event's target.
  * @prop path - Specifies the absolute path of the event's emitter, which can be an index of a list container or a key of a map container.
  */
 export interface LoroEventBatch {
-  local: boolean;
   /**
-   * If true, this event was triggered by a checkout.
+   * How the event is triggered.
+   *
+   * - `local`: The event is triggered by a local transaction.
+   * - `import`: The event is triggered by an import operation.
+   * - `checkout`: The event is triggered by a checkout operation.
    */
-  fromCheckout: boolean;
+  by: "local" | "import" | "checkout";
   origin?: string;
   /**
    * The container ID of the current event receiver.

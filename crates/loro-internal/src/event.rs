@@ -30,6 +30,44 @@ pub struct ContainerDiff {
     pub diff: Diff,
 }
 
+///
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EventTriggerKind {
+    /// The event is triggered by a local transaction.
+    Local,
+    /// The event is triggered by importing
+    Import,
+    /// The event is triggered by checkout
+    Checkout,
+}
+
+impl std::fmt::Display for EventTriggerKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EventTriggerKind::Local => write!(f, "local"),
+            EventTriggerKind::Import => write!(f, "import"),
+            EventTriggerKind::Checkout => write!(f, "checkout"),
+        }
+    }
+}
+
+impl EventTriggerKind {
+    #[inline]
+    pub fn is_local(&self) -> bool {
+        matches!(self, EventTriggerKind::Local)
+    }
+
+    #[inline]
+    pub fn is_import(&self) -> bool {
+        matches!(self, EventTriggerKind::Import)
+    }
+
+    #[inline]
+    pub fn is_checkout(&self) -> bool {
+        matches!(self, EventTriggerKind::Checkout)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DiffEvent<'a> {
     /// The receiver of the event.
@@ -49,9 +87,7 @@ pub struct DocDiff {
     pub from: Frontiers,
     pub to: Frontiers,
     pub origin: InternalString,
-    pub local: bool,
-    /// Whether the diff is created from the checkout operation.
-    pub from_checkout: bool,
+    pub by: EventTriggerKind,
     pub diff: Vec<ContainerDiff>,
 }
 
@@ -89,8 +125,7 @@ pub(crate) enum DiffVariant {
 #[derive(Debug, Clone)]
 pub(crate) struct InternalDocDiff<'a> {
     pub(crate) origin: InternalString,
-    pub(crate) local: bool,
-    pub(crate) from_checkout: bool,
+    pub(crate) by: EventTriggerKind,
     pub(crate) diff: Cow<'a, [InternalContainerDiff]>,
     pub(crate) new_version: Cow<'a, Frontiers>,
 }
@@ -99,15 +134,14 @@ impl<'a> InternalDocDiff<'a> {
     pub fn into_owned(self) -> InternalDocDiff<'static> {
         InternalDocDiff {
             origin: self.origin,
-            local: self.local,
-            from_checkout: self.from_checkout,
+            by: self.by,
             diff: Cow::Owned((*self.diff).to_owned()),
             new_version: Cow::Owned((*self.new_version).to_owned()),
         }
     }
 
     pub fn can_merge(&self, other: &Self) -> bool {
-        self.origin == other.origin && self.local == other.local
+        self.by == other.by
     }
 }
 

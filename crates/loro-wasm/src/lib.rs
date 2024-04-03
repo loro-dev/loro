@@ -61,6 +61,8 @@ pub struct Loro(Arc<LoroDoc>);
 extern "C" {
     #[wasm_bindgen(typescript_type = "number | bigint | `${number}`")]
     pub type JsIntoPeerID;
+    #[wasm_bindgen(typescript_type = "`${number}`")]
+    pub type JsStrPeerID;
     #[wasm_bindgen(typescript_type = "ContainerID")]
     pub type JsContainerID;
     #[wasm_bindgen(typescript_type = "ContainerID | string")]
@@ -468,8 +470,9 @@ impl Loro {
 
     /// Get peer id in decimal string.
     #[wasm_bindgen(js_name = "peerIdStr", method, getter)]
-    pub fn peer_id_str(&self) -> String {
-        format!("{}", self.0.peer_id())
+    pub fn peer_id_str(&self) -> JsStrPeerID {
+        let v: JsValue = format!("{}", self.0.peer_id()).into();
+        v.into()
     }
 
     /// Set the peer ID of the current writer.
@@ -1106,9 +1109,7 @@ fn call_subscriber(ob: observer::Observer, e: DiffEvent, doc: &Arc<LoroDoc>) {
     // [1]: https://caniuse.com/?search=FinalizationRegistry
     // [2]: https://rustwasm.github.io/wasm-bindgen/reference/weak-references.html
     let event = diff_event_to_js_value(e, doc);
-    if let Err(e) = ob.call1(&event) {
-        console_error!("Error when calling observer: {:#?}", e);
-    }
+    ob.call1(&event).unwrap_throw();
 }
 
 #[allow(unused)]
@@ -1138,13 +1139,7 @@ impl Default for Loro {
 
 fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDoc>) -> JsValue {
     let obj = js_sys::Object::new();
-    Reflect::set(&obj, &"local".into(), &event.event_meta.local.into()).unwrap();
-    Reflect::set(
-        &obj,
-        &"fromCheckout".into(),
-        &event.event_meta.from_checkout.into(),
-    )
-    .unwrap();
+    Reflect::set(&obj, &"by".into(), &event.event_meta.by.to_string().into()).unwrap();
     let origin: &str = &event.event_meta.origin;
     Reflect::set(&obj, &"origin".into(), &JsValue::from_str(origin)).unwrap();
     if let Some(t) = event.current_target.as_ref() {
@@ -2765,7 +2760,7 @@ export interface ImportBlobMetadata {
     partialStartVersionVector: VersionVector;
     /**
      * The version vector of the end of the import.
-     * 
+     *
      * Import blob includes all the ops from `partial_start_vv` to `partial_end_vv`.
      * However, it does not constitute a complete version vector, as it only contains counters
      * from peers included within the import blob.

@@ -37,7 +37,7 @@ async function build() {
   if (profile !== "dev") {
     await Promise.all(
       TARGETS.map(async (target) => {
-        // --snip-rust-panicking-code --snip-rust-fmt-code 
+        // --snip-rust-panicking-code --snip-rust-fmt-code
         const snip = `wasm-snip ./${target}/loro_wasm_bg.wasm -o ./${target}/loro_wasm_bg.wasm`;
         console.log(">", snip);
         await Deno.run({ cmd: snip.split(" "), cwd: LoroWasmDir }).status();
