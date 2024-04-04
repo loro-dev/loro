@@ -31,3 +31,35 @@ test("Expect container type", () => {
   const tree = new LoroTree();
   expectTypeOf(tree.kind()).toMatchTypeOf<"Tree">();
 });
+
+test("doc type and container type", () => {
+  const doc = new Loro<{
+    text: LoroText;
+    map: LoroMap<{
+      name?: string;
+      note?: LoroText;
+      fav?: LoroList<string>;
+      num?: LoroList<number>;
+    }>;
+  }>();
+
+  const map = doc.getMap("map");
+  expectTypeOf(map).toMatchTypeOf<
+    LoroMap<{
+      name?: string;
+      note?: LoroText;
+      fav?: LoroList<string>;
+    }>
+  >();
+  expectTypeOf(map).toMatchTypeOf<LoroMap>();
+  expectTypeOf(map).toMatchTypeOf<LoroMap<{ name?: string }>>();
+  expectTypeOf(map).not.toMatchTypeOf<LoroMap<{ name: number }>>();
+  expectTypeOf(map).not.toMatchTypeOf<LoroMap<{ a: number }>>();
+  expectTypeOf(map.get("name")).toMatchTypeOf<string | undefined>();
+  expectTypeOf(map.get("note")).toMatchTypeOf<LoroText | undefined>();
+  expectTypeOf(map.get("fav")).toMatchTypeOf<LoroList<string> | undefined>();
+  const list = map.setContainer("fav", new LoroList());
+  expectTypeOf(list.toArray()).toMatchTypeOf<string[]>();
+  const numList = map.setContainer("num", new LoroList());
+  expectTypeOf(list.toArray()).toMatchTypeOf<string[]>();
+});

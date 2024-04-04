@@ -13,35 +13,6 @@ import {
   Value,
 } from "loro-wasm";
 
-Loro.prototype.getTypedMap = function (...args) {
-  return this.getMap(...args);
-};
-Loro.prototype.getTypedList = function (...args) {
-  return this.getList(...args);
-};
-LoroList.prototype.getTyped = function (loro, index) {
-  const value = this.get(index);
-  if (typeof value === "string" && isContainerId(value)) {
-    return loro.getContainerById(value);
-  } else {
-    return value;
-  }
-};
-LoroList.prototype.insertTyped = function (...args) {
-  return this.insert(...args);
-};
-LoroMap.prototype.getTyped = function (loro, key) {
-  const value = this.get(key);
-  if (typeof value === "string" && isContainerId(value)) {
-    return loro.getContainerById(value);
-  } else {
-    return value;
-  }
-};
-LoroMap.prototype.setTyped = function (...args) {
-  return this.set(...args);
-};
-
 export type Frontiers = OpId[];
 
 /**
@@ -181,14 +152,10 @@ export function isContainer(value: any): value is Container {
  */
 export function getType<T>(
   value: T,
-): T extends LoroText
-  ? "Text"
-  : T extends LoroMap<any>
-  ? "Map"
-  : T extends LoroTree<any>
-  ? "Tree"
-  : T extends LoroList<any>
-  ? "List"
+): T extends LoroText ? "Text"
+  : T extends LoroMap<any> ? "Map"
+  : T extends LoroTree<any> ? "Tree"
+  : T extends LoroList<any> ? "List"
   : "Json" {
   if (isContainer(value)) {
     return value.kind() as unknown as any;
@@ -202,39 +169,46 @@ declare module "loro-wasm" {
     subscribe(listener: Listener): number;
   }
 
-  interface Loro<T extends Record<string, any> = Record<string, any>> {
-    getTypedMap<Key extends keyof T & string>(
+  interface Loro<
+    T extends Record<string, Container> = Record<string, Container>,
+  > {
+    getMap<Key extends keyof T>(
       name: Key,
-    ): T[Key] extends LoroMap ? T[Key] : never;
-    getTypedList<Key extends keyof T & string>(
+    ): T[Key] extends LoroMap ? T[Key] : LoroMap;
+    getList<Key extends keyof T>(
       name: Key,
-    ): T[Key] extends LoroList ? T[Key] : never;
-    getMap(key: string | ContainerID): LoroMap<T[string]>;
-    getList(key: string | ContainerID): LoroList<T[string]>;
-    getTree(key: string | ContainerID): LoroTree<T[string]>;
+    ): T[Key] extends LoroList ? T[Key] : LoroList;
+    getTree<Key extends keyof T>(
+      name: Key,
+    ): T[Key] extends LoroTree ? T[Key] : LoroTree;
     getText(key: string | ContainerID): LoroText;
   }
 
-  interface LoroList<T extends any[] = any[]> {
+  interface LoroList<T = unknown> {
     new (): LoroList<T>;
-    insertContainer<C extends Container>(pos: number, child: C): C;
-    get(index: number): undefined | Value | Container;
-    getTyped<Key extends keyof T & number>(loro: Loro, index: Key): T[Key];
-    insertTyped<Key extends keyof T & number>(pos: Key, value: T[Key]): void;
-    insert(pos: number, value: Value): void;
+    toArray(): T[];
+    insertContainer<C extends Container>(
+      pos: number,
+      child: C,
+    ): T extends C ? T : C;
+    get(index: number): T;
+    insert(pos: number, value: Exclude<T, Container>): void;
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
     getAttached(): undefined | LoroList<T>;
   }
 
-  interface LoroMap<T extends Record<string, any> = Record<string, any>> {
+  interface LoroMap<
+    T extends Record<string, unknown> = Record<string, unknown>,
+  > {
     new (): LoroMap<T>;
     getOrCreateContainer<C extends Container>(key: string, child: C): C;
-    setContainer<C extends Container>(key: string, child: C): C;
-    get(key: string): undefined | Value | Container;
-    getTyped<Key extends keyof T & string>(txn: Loro, key: Key): T[Key];
-    set(key: string, value: Value): void;
-    setTyped<Key extends keyof T & string>(key: Key, value: T[Key]): void;
+    setContainer<C extends Container, Key extends keyof T>(
+      key: Key,
+      child: C,
+    ): NonNullableType<T[Key]> extends C ? NonNullableType<T[Key]> : C;
+    get<Key extends keyof T>(key: Key): T[Key];
+    set<Key extends keyof T>(key: Key, value: Exclude<T[Key], Container>): void;
     delete(key: string): void;
     subscribe(txn: Loro, listener: Listener): number;
   }
@@ -246,7 +220,9 @@ declare module "loro-wasm" {
     subscribe(txn: Loro, listener: Listener): number;
   }
 
-  interface LoroTree<T extends Record<string, any> = Record<string, any>> {
+  interface LoroTree<
+    T extends Record<string, unknown> = Record<string, unknown>,
+  > {
     new (): LoroTree<T>;
     createNode(parent: TreeID | undefined): LoroTreeNode<T>;
     move(target: TreeID, parent: TreeID | undefined): void;
@@ -256,12 +232,16 @@ declare module "loro-wasm" {
     subscribe(txn: Loro, listener: Listener): number;
   }
 
-  interface LoroTreeNode<T extends Record<string, any> = Record<string, any>> {
+  interface LoroTreeNode<
+    T extends Record<string, unknown> = Record<string, unknown>,
+  > {
     readonly data: LoroMap<T>;
     createNode(): LoroTreeNode<T>;
     setAsRoot(): void;
     moveTo(parent: LoroTreeNode<T>): void;
-    parent(): LoroTreeNode | undefined;
+    parent(): LoroTreeNode<T> | undefined;
     children(): Array<LoroTreeNode<T>>;
   }
 }
+
+type NonNullableType<T> = Exclude<T, null | undefined>;
