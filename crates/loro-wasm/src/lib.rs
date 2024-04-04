@@ -543,7 +543,7 @@ impl Loro {
     /// const doc = new Loro();
     /// const map = doc.getMap("map");
     /// ```
-    #[wasm_bindgen(js_name = "getMap")]
+    #[wasm_bindgen(js_name = "getMap", skip_typescript)]
     pub fn get_map(&self, cid: &JsIntoContainerID) -> JsResult<LoroMap> {
         let map = self
             .0
@@ -566,7 +566,7 @@ impl Loro {
     /// const doc = new Loro();
     /// const list = doc.getList("list");
     /// ```
-    #[wasm_bindgen(js_name = "getList")]
+    #[wasm_bindgen(js_name = "getList", skip_typescript)]
     pub fn get_list(&self, cid: &JsIntoContainerID) -> JsResult<LoroList> {
         let list = self
             .0
@@ -589,7 +589,7 @@ impl Loro {
     /// const doc = new Loro();
     /// const tree = doc.getTree("tree");
     /// ```
-    #[wasm_bindgen(js_name = "getTree")]
+    #[wasm_bindgen(js_name = "getTree", skip_typescript)]
     pub fn get_tree(&self, cid: &JsIntoContainerID) -> JsResult<LoroTree> {
         let tree = self
             .0
@@ -1498,7 +1498,7 @@ impl LoroMap {
     /// map.set("foo", "bar");
     /// map.set("foo", "baz");
     /// ```
-    #[wasm_bindgen(js_name = "set")]
+    #[wasm_bindgen(js_name = "set", skip_typescript)]
     pub fn insert(&mut self, key: &str, value: JsLoroValue) -> JsResult<()> {
         let v: JsValue = value.into();
         self.handler.insert(key, v)?;
@@ -1536,6 +1536,7 @@ impl LoroMap {
     /// map.set("foo", "bar");
     /// const bar = map.get("foo");
     /// ```
+    #[wasm_bindgen(skip_typescript)]
     pub fn get(&self, key: &str) -> JsValueOrContainerOrUndefined {
         let v = self.handler.get_(key);
         (match v {
@@ -1831,6 +1832,7 @@ impl LoroList {
     /// list.insert(2, true);
     /// console.log(list.value);  // [100, "foo", true];
     /// ```
+    #[wasm_bindgen(skip_typescript)]
     pub fn insert(&mut self, index: usize, value: JsLoroValue) -> JsResult<()> {
         let v: JsValue = value.into();
         self.handler.insert(index, v)?;
@@ -1866,6 +1868,7 @@ impl LoroList {
     /// console.log(list.get(0));  // 100
     /// console.log(list.get(1));  // undefined
     /// ```
+    #[wasm_bindgen(skip_typescript)]
     pub fn get(&self, index: usize) -> JsValueOrContainerOrUndefined {
         let Some(v) = self.handler.get_(index) else {
             return JsValue::UNDEFINED.into();
@@ -1900,7 +1903,7 @@ impl LoroList {
     /// list.insertContainer(3, new LoroText());
     /// console.log(list.value);  // [100, "foo", true, LoroText];
     /// ```
-    #[wasm_bindgen(js_name = "toArray", method)]
+    #[wasm_bindgen(js_name = "toArray", method, skip_typescript)]
     pub fn to_array(&mut self) -> Vec<JsValueOrContainer> {
         let mut arr: Vec<JsValueOrContainer> = Vec::with_capacity(self.length());
         self.handler.for_each(|x| {
@@ -2682,8 +2685,41 @@ export type ContainerID =
 export type TreeID = `${number}@${PeerID}`;
 
 interface Loro {
+    /** 
+     * Export updates from the specific version to the current version
+     * 
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     * 
+     *  const doc = new Loro();
+     *  const text = doc.getText("text");
+     *  text.insert(0, "Hello");
+     *  // get all updates of the doc
+     *  const updates = doc.exportFrom();
+     *  const version = doc.oplogVersion();
+     *  text.insert(5, " World");
+     *  // get updates from specific version to the latest version
+     *  const updates2 = doc.exportFrom(version);
+     *  ```
+     */
     exportFrom(version?: VersionVector): Uint8Array;
-    getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
+    /**
+     * 
+     *  Get the container corresponding to the container id
+     * 
+     * 
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     * 
+     *  const doc = new Loro();
+     *  let text = doc.getText("text");
+     *  const textId = text.id;
+     *  text = doc.getContainerById(textId);
+     *  ```
+     */
+    getContainerById(id: ContainerID): Container;
 }
 
 /**
