@@ -21,6 +21,7 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@changesets/changelog-git": "^0.2.0",
     "@changesets/cli": "^2.27.1"
   }
 }

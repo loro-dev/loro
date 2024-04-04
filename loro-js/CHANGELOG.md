@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.14.0
+
+### Minor Changes
+
+- Improved API
+
+  ### 🚀 Features
+
+  - Access value/container by path (#308)
+  - Decode import blob meta (#307)
+
+  ### 🐛 Bug Fixes
+
+  - Decode iter return result by updating columnar to 0.3.4 (#309)
+
+  ### 🚜 Refactor
+
+  - Replace "local" and "fromCheckout" in event with "triggeredBy" (#312)
+  - Add concrete type for each different container (#313)
+  - _(ts)_ Make types better (#315)
+
+  ### 📚 Documentation
+
+  - Refine wasm docs (#304)
+  - Clarify that peer id should be convertible to a u64 (#306)
+
+  ### ⚙️ Miscellaneous Tasks
+
+  - Add coverage report cli (#311)
+
+### Patch Changes
+
+- Updated dependencies
+  - loro-wasm@0.14.0
+
 ## 0.13.1
 
 ### Patch Changes
