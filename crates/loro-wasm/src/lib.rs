@@ -2685,8 +2685,41 @@ export type ContainerID =
 export type TreeID = `${number}@${PeerID}`;
 
 interface Loro {
+    /** 
+     * Export updates from the specific version to the current version
+     * 
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     * 
+     *  const doc = new Loro();
+     *  const text = doc.getText("text");
+     *  text.insert(0, "Hello");
+     *  // get all updates of the doc
+     *  const updates = doc.exportFrom();
+     *  const version = doc.oplogVersion();
+     *  text.insert(5, " World");
+     *  // get updates from specific version to the latest version
+     *  const updates2 = doc.exportFrom(version);
+     *  ```
+     */
     exportFrom(version?: VersionVector): Uint8Array;
-    getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
+    /**
+     * 
+     *  Get the container corresponding to the container id
+     * 
+     * 
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     * 
+     *  const doc = new Loro();
+     *  let text = doc.getText("text");
+     *  const textId = text.id;
+     *  text = doc.getContainerById(textId);
+     *  ```
+     */
+    getContainerById(id: ContainerID): Container;
 }
 
 /**
