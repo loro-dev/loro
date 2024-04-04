@@ -586,6 +586,7 @@ struct TreeInner {
     parent_links: FxHashMap<TreeID, Option<TreeID>>,
 }
 
+// Implementation about tree is fragmented
 impl TreeInner {
     fn new() -> Self {
         TreeInner {
@@ -2126,6 +2127,8 @@ impl TreeHandler {
                 Ok(position) => position,
                 Err(ids) => {
                     for id in ids {
+                        // FIXME: Seems wrong. The items will be reversed. Need tests
+                        // It's also slow not distributed evenly
                         self.mov_with_txn(txn, id, parent, index)?;
                     }
                     self.generate_position_at(parent, index).unwrap()
@@ -2211,6 +2214,7 @@ impl TreeHandler {
                 return Err(LoroTreeError::IndexOutOfBound { len: 0, index }.into());
             }
 
+            // Why do we need this?
             if need_move_out_self_first {
                 self.delete_position(parent, target);
             }

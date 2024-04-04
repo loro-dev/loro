@@ -29,8 +29,10 @@ use super::ContainerState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner, Serialize)]
 pub enum TreeParentId {
     Node(TreeID),
+    // NOTE: Why Unexist + Deleted?
     Unexist,
     Deleted,
+    // TODO: rename to Root
     /// parent is root
     None,
 }
@@ -57,12 +59,14 @@ impl From<Option<TreeID>> for TreeParentId {
 pub struct TreeState {
     idx: ContainerIdx,
     trees: FxHashMap<TreeID, TreeStateNode>,
+    // TODO: PERF BTreeMap can be replaced by a generic_btree::BTree
     children: FxHashMap<TreeParentId, BTreeMap<NodePosition, TreeID>>,
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
 struct NodePosition {
     position: FracIndex,
+    // NOTE: why lamport? you may also use IdLp here
     id: (Lamport, PeerID),
 }
 
@@ -252,6 +256,7 @@ impl TreeState {
                 debug_assert_eq!(index, 0);
                 return Ok(FracIndex::default());
             }
+            // TODO: PERF iterating like this is slow
             let mut positions = children_positions.unwrap().iter();
             let children_num = positions.len();
 
@@ -294,6 +299,7 @@ impl TreeState {
             .then(|| {
                 self.children
                     .get(parent)
+                    // TODO: PERF: Slow
                     .and_then(|x| x.values().position(|x| x == target))
             })
             .flatten()
@@ -486,6 +492,8 @@ impl ContainerState for TreeState {
             index += 1;
             diffs.push(diff);
             if let Some(children) = self.children.get(&TreeParentId::Node(*node)) {
+                // Refactor: you can include the index and parent in the q
+                // The code will be more robust and easy to understand
                 q.extend(children.iter());
             }
         }
@@ -511,6 +519,8 @@ impl ContainerState for TreeState {
                     "meta".to_string(),
                     target.associated_meta_container().into(),
                 );
+                // Why only includes them in test_utils?
+                // It's better to use a separate method to do this
                 #[cfg(feature = "test_utils")]
                 t.insert(
                     "index".to_string(),

@@ -327,6 +327,7 @@ pub const DELETED_TREE_ROOT: TreeID = TreeID {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TreeID {
     pub peer: PeerID,
+    // TODO: can use a NonMax here
     pub counter: Counter,
 }
 
