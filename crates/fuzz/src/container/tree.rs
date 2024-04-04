@@ -174,8 +174,9 @@ impl Actionable for TreeAction {
                     peer: parent.0,
                     counter: parent.1,
                 };
-                if let Err(LoroError::TreeError(_)) = tree.mov_to(target, Some(parent), *index) {
+                if let Err(LoroError::TreeError(e)) = tree.mov_to(target, Some(parent), *index) {
                     // cycle move
+                    tracing::warn!("move error {}", e);
                 }
                 None
             }

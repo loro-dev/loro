@@ -2184,6 +2184,7 @@ impl TreeHandler {
         let position = {
             // check the input is valid
             let same_parent = self.is_parent(target, parent);
+            let mut need_move_out_self_first = false;
             if same_parent {
                 // If the position after moving is same as the current position , do nothing
                 if let Some(current_index) = self.get_index_by_tree_id(&target, parent) {
@@ -2191,11 +2192,14 @@ impl TreeHandler {
                         return Ok(());
                     }
                     // move out first
-                    self.delete_position(parent, target);
+                    need_move_out_self_first = true;
                 }
-            }
+            };
             let children_len = self.children_num(parent);
-            if let Some(children_len) = children_len {
+            if let Some(mut children_len) = children_len {
+                if need_move_out_self_first {
+                    children_len -= 1;
+                }
                 if index > children_len {
                     return Err(LoroTreeError::IndexOutOfBound {
                         len: children_len,
@@ -2205,6 +2209,10 @@ impl TreeHandler {
                 }
             } else if index != 0 {
                 return Err(LoroTreeError::IndexOutOfBound { len: 0, index }.into());
+            }
+
+            if need_move_out_self_first {
+                self.delete_position(parent, target);
             }
 
             match self.generate_position_at(parent, index) {

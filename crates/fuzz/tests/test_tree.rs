@@ -744,3 +744,118 @@ fn fractional_index_same_parent_move() {
         },
     ])
 }
+
+#[test]
+fn move_out_first_and_error() {
+    // so we don't move the position back to the cache
+    test_actions(vec![
+        Handle {
+            site: 247,
+            target: 213,
+            container: 149,
+            action: Generic(GenericAction {
+                value: Container(Tree),
+                bool: true,
+                key: 6,
+                pos: 3272544761136750467,
+                length: 9088016791583588226,
+                prop: 4683743612450781440,
+            }),
+        },
+        Handle {
+            site: 31,
+            target: 31,
+            container: 126,
+            action: Generic(GenericAction {
+                value: Container(Tree),
+                bool: true,
+                key: 3688618971,
+                pos: 3689348814741822426,
+                length: 59537746179638,
+                prop: 3689419196421505024,
+            }),
+        },
+        Handle {
+            site: 43,
+            target: 51,
+            container: 51,
+            action: Generic(GenericAction {
+                value: I32(16834355),
+                bool: false,
+                key: 2432761853,
+                pos: 72092924448703232,
+                length: 15795320375969969920,
+                prop: 15842498006749428187,
+            }),
+        },
+        SyncAll,
+        Handle {
+            site: 51,
+            target: 255,
+            container: 255,
+            action: Generic(GenericAction {
+                value: Container(Text),
+                bool: false,
+                key: 528678912,
+                pos: 18411328161714216735,
+                length: 4107421532293111583,
+                prop: 18446534066988646178,
+            }),
+        },
+        Handle {
+            site: 126,
+            target: 219,
+            container: 219,
+            action: Generic(GenericAction {
+                value: Container(Tree),
+                bool: true,
+                key: 3688618971,
+                pos: 3906366021785826097,
+                length: 908473910,
+                prop: 3725377612834813494,
+            }),
+        },
+        Handle {
+            site: 51,
+            target: 39,
+            container: 51,
+            action: Generic(GenericAction {
+                value: Container(Tree),
+                bool: true,
+                key: 2197852416,
+                pos: 17798226827418927253,
+                length: 4169166897523252013,
+                prop: 15806469054522195746,
+            }),
+        },
+        SyncAll,
+        Handle {
+            site: 164,
+            target: 219,
+            container: 59,
+            action: Generic(GenericAction {
+                value: I32(-610936018),
+                bool: true,
+                key: 2508405723,
+                pos: 17807940169679920091,
+                length: 15817552129580307967,
+                prop: 10778686069027887963,
+            }),
+        },
+        Sync { from: 255, to: 255 },
+        Sync { from: 163, to: 163 },
+        Handle {
+            site: 247,
+            target: 255,
+            container: 255,
+            action: Generic(GenericAction {
+                value: Container(Text),
+                bool: true,
+                key: 777771925,
+                pos: 2486896337669325275,
+                length: 9456393030167035895,
+                prop: 1014351739426,
+            }),
+        },
+    ])
+}
