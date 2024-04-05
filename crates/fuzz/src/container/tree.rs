@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    fmt::Debug,
     ops::{Deref, DerefMut},
     sync::{Arc, Mutex},
 };
@@ -19,16 +20,39 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct TreeAction {
-    target: (u64, i32),
-    action: TreeActionInner,
+    pub target: (u64, i32),
+    pub action: TreeActionInner,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum TreeActionInner {
     Create { index: usize },
     Delete,
     Move { parent: (u64, i32), index: usize },
     Meta { meta: (String, FuzzValue) },
+}
+
+impl Debug for TreeActionInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TreeActionInner::Create { index } => {
+                write!(f, "TreeActionInner::Create{{index:{}}}", index)
+            }
+            TreeActionInner::Delete => write!(f, "TreeActionInner::Delete"),
+            TreeActionInner::Move { parent, index } => {
+                write!(
+                    f,
+                    "TreeActionInner::Move{{parent:{:?}, index:{}}}",
+                    parent, index
+                )
+            }
+            TreeActionInner::Meta { meta } => write!(
+                f,
+                "TreeActionInner::Meta{{meta:(\"{}\".into(),{:?})}}",
+                meta.0, meta.1
+            ),
+        }
+    }
 }
 
 pub struct TreeActor {

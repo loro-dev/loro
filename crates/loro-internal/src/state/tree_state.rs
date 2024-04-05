@@ -131,6 +131,16 @@ impl TreeState {
                 .entry(parent)
                 .or_default()
                 .insert(NodePosition::new(position.clone().unwrap(), id), target);
+        } else {
+            // clean the cache recursively, otherwise the index of event will be calculated incorrectly
+            let mut q = vec![target];
+            while let Some(id) = q.pop() {
+                let parent = TreeParentId::from(Some(id));
+                if let Some(children) = self.children.get(&parent) {
+                    q.extend(children.values().copied());
+                }
+                self.children.remove(&parent);
+            }
         }
 
         self.trees.insert(

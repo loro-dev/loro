@@ -5,7 +5,7 @@ use fxhash::FxHashSet;
 use loro::{ContainerType, Frontiers};
 use tabled::TableIteratorExt;
 
-use crate::array_mut_ref;
+use crate::{actions::ActionWrapper, array_mut_ref};
 
 pub use super::actions::Action;
 use super::actor::Actor;
@@ -74,6 +74,9 @@ impl CRDTFuzzer {
                 container,
                 action,
             } => {
+                if matches!(action, ActionWrapper::Action(_)) {
+                    return;
+                }
                 *site %= max_users;
                 let actor = &mut self.actors[*site as usize];
                 *target %= self.targets.len() as u8;

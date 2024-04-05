@@ -2125,8 +2125,8 @@ impl TreeHandler {
         let position = {
             match self.generate_position_at(parent, index) {
                 Ok(position) => position,
-                Err(ids) => {
-                    for id in ids {
+                Err(mut ids) => {
+                    while let Some(id) = ids.pop() {
                         // FIXME: Seems wrong. The items will be reversed. Need tests
                         // It's also slow not distributed evenly
                         self.mov_with_txn(txn, id, parent, index)?;
@@ -2221,8 +2221,8 @@ impl TreeHandler {
 
             match self.generate_position_at(parent, index) {
                 Ok(position) => position,
-                Err(ids) => {
-                    for id in ids {
+                Err(mut ids) => {
+                    while let Some(id) = ids.pop() {
                         self.mov_with_txn(txn, id, parent, index)?;
                     }
                     self.generate_position_at(parent, index).unwrap()

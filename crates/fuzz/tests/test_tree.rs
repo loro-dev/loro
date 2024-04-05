@@ -1,6 +1,12 @@
 use fuzz::{
-    actions::{ActionWrapper::*, GenericAction},
-    crdt_fuzzer::{test_multi_sites, Action, Action::*, FuzzTarget, FuzzValue::*},
+    actions::{ActionInner, ActionWrapper::*, GenericAction},
+    container::{MapAction, TreeAction, TreeActionInner},
+    crdt_fuzzer::{
+        test_multi_sites,
+        Action::{self, *},
+        FuzzTarget,
+        FuzzValue::*,
+    },
 };
 use loro::ContainerType::*;
 
@@ -857,5 +863,190 @@ fn move_out_first_and_error() {
                 prop: 1014351739426,
             }),
         },
+    ])
+}
+
+#[test]
+fn clean_children_cache_when_delete() {
+    test_actions(vec![
+        Handle {
+            site: 3,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (3, 0),
+                action: TreeActionInner::Create { index: 0 },
+            })),
+        },
+        Handle {
+            site: 3,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (3, 1),
+                action: TreeActionInner::Create { index: 0 },
+            })),
+        },
+        SyncAll,
+        Handle {
+            site: 1,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (3, 0),
+                action: TreeActionInner::Move {
+                    parent: (3, 1),
+                    index: 0,
+                },
+            })),
+        },
+        SyncAll,
+        Handle {
+            site: 3,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (3, 2),
+                action: TreeActionInner::Create { index: 0 },
+            })),
+        },
+        SyncAll,
+        Handle {
+            site: 4,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (3, 2),
+                action: TreeActionInner::Move {
+                    parent: (3, 1),
+                    index: 0,
+                },
+            })),
+        },
+        SyncAll,
+        Handle {
+            site: 1,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (3, 1),
+                action: TreeActionInner::Delete,
+            })),
+        },
+        SyncAll,
+        Handle {
+            site: 1,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (1, 2),
+                action: TreeActionInner::Create { index: 0 },
+            })),
+        },
+        Handle {
+            site: 1,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (1, 2),
+                action: TreeActionInner::Delete,
+            })),
+        },
+        Handle {
+            site: 1,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (1, 4),
+                action: TreeActionInner::Create { index: 0 },
+            })),
+        },
+        Handle {
+            site: 1,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (1, 4),
+                action: TreeActionInner::Delete,
+            })),
+        },
+        Handle {
+            site: 1,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (1, 6),
+                action: TreeActionInner::Create { index: 0 },
+            })),
+        },
+        Checkout { site: 2, to: 3 },
+        Handle {
+            site: 1,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (1, 7),
+                action: TreeActionInner::Create { index: 0 },
+            })),
+        },
+        Handle {
+            site: 2,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (2, 0),
+                action: TreeActionInner::Create { index: 0 },
+            })),
+        },
+        Handle {
+            site: 1,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (1, 7),
+                action: TreeActionInner::Move {
+                    parent: (1, 6),
+                    index: 0,
+                },
+            })),
+        },
+        Handle {
+            site: 2,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (2, 0),
+                action: TreeActionInner::Delete,
+            })),
+        },
+        Handle {
+            site: 2,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (2, 3),
+                action: TreeActionInner::Create { index: 0 },
+            })),
+        },
+        SyncAll,
+        Handle {
+            site: 1,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (2, 2),
+                action: TreeActionInner::Delete,
+            })),
+        },
+        Handle {
+            site: 1,
+            target: 1,
+            container: 0,
+            action: Action(ActionInner::Tree(TreeAction {
+                target: (1, 7),
+                action: TreeActionInner::Delete,
+            })),
+        },
+        Checkout { site: 2, to: 5 },
     ])
 }
