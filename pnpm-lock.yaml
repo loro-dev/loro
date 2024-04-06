@@ -63,6 +63,9 @@ importers:
 
   loro-js:
     dependencies:
+      fast-diff:
+        specifier: ^1.3.0
+        version: 1.3.0
       loro-wasm:
         specifier: workspace:*
         version: link:../crates/loro-wasm
@@ -1941,6 +1944,14 @@ packages:
       iconv-lite: 0.4.24
       tmp: 0.0.33
     dev: true
+
+  /fast-diff@1.1.2:
+    resolution: {integrity: sha512-KaJUt+M9t1qaIteSvjc6P3RbMdXsNhK61GRftR6SNxqmhthcd9MGIi4T+o0jD8LUSpSnSKXE20nLtJ3fOHxQig==}
+    dev: false
+
+  /fast-diff@1.3.0:
+    resolution: {integrity: sha512-VxPP4NqbUjj6MaAOafWeUn2cXWLcCtljklUtZf0Ind4XQ+QPtmA0b18zZy0jIQx+ExRVCR/ZQpBmik5lXshNsw==}
+    dev: false
 
   /fast-glob@3.3.1:
     resolution: {integrity: sha512-kNFPyjhh5cKjrUltxs+wFx+ZkbRaxxmZ+X0ZU31SOsxCEtP9VPgtq2teZw1DebupL5GmDaNQ6yKMMVcM41iqDg==}
@@ -4835,12 +4846,6 @@ packages:
     version: 3.1.3
     dev: true
 
-  registry.npmmirror.com/fast-diff@1.1.2:
-    resolution: {integrity: sha512-KaJUt+M9t1qaIteSvjc6P3RbMdXsNhK61GRftR6SNxqmhthcd9MGIi4T+o0jD8LUSpSnSKXE20nLtJ3fOHxQig==, registry: https://registry.npmjs.org/, tarball: https://registry.npmmirror.com/fast-diff/-/fast-diff-1.1.2.tgz}
-    name: fast-diff
-    version: 1.1.2
-    dev: false
-
   registry.npmmirror.com/fast-glob@3.3.1:
     resolution: {integrity: sha512-kNFPyjhh5cKjrUltxs+wFx+ZkbRaxxmZ+X0ZU31SOsxCEtP9VPgtq2teZw1DebupL5GmDaNQ6yKMMVcM41iqDg==, registry: https://registry.npmjs.org/, tarball: https://registry.npmmirror.com/fast-glob/-/fast-glob-3.3.1.tgz}
     name: fast-glob
@@ -5775,7 +5780,7 @@ packages:
     dependencies:
       deep-equal: registry.npmmirror.com/deep-equal@1.1.1
       extend: registry.npmmirror.com/extend@3.0.2
-      fast-diff: registry.npmmirror.com/fast-diff@1.1.2
+      fast-diff: 1.1.2
     dev: false
 
   registry.npmmirror.com/quill@1.3.7:

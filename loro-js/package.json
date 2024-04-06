@@ -23,6 +23,7 @@
   "homepage": "https://loro.dev",
   "license": "MIT",
   "dependencies": {
+    "fast-diff": "^1.3.0",
     "loro-wasm": "workspace:*"
   },
   "devDependencies": {

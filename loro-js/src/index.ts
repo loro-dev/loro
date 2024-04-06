@@ -12,6 +12,7 @@ import {
   TreeID,
   Value,
 } from "loro-wasm";
+import "./diff";
 
 export type Frontiers = OpId[];
 
@@ -227,7 +228,7 @@ declare module "loro-wasm" {
   }
 
   interface LoroList<T = unknown> {
-    new (): LoroList<T>;
+    new(): LoroList<T>;
     /**
      *  Get elements of the list. If the value is a child container, the corresponding
      *  `Container` will be returned.
@@ -304,7 +305,7 @@ declare module "loro-wasm" {
   interface LoroMap<
     T extends Record<string, unknown> = Record<string, unknown>,
   > {
-    new (): LoroMap<T>;
+    new(): LoroMap<T>;
     /**
      *  Get the value of the key. If the value is a child container, the corresponding
      *  `Container` will be returned.
@@ -379,16 +380,22 @@ declare module "loro-wasm" {
   }
 
   interface LoroText {
-    new (): LoroText;
+    new(): LoroText;
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
+    /**
+     * Update the text to be the target text.
+     *
+     * The diff will be calculated automatically
+     */
+    updateText(newText: string): void;
     subscribe(txn: Loro, listener: Listener): number;
   }
 
   interface LoroTree<
     T extends Record<string, unknown> = Record<string, unknown>,
   > {
-    new (): LoroTree<T>;
+    new(): LoroTree<T>;
     createNode(parent: TreeID | undefined): LoroTreeNode<T>;
     move(target: TreeID, parent: TreeID | undefined): void;
     delete(target: TreeID): void;

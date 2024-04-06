@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Delta, Loro, TextDiff } from "../src";
-import { setDebug } from "loro-wasm";
+import { LoroText, setDebug } from "loro-wasm";
 
 describe("richtext", () => {
   it("mark", () => {
@@ -205,3 +205,37 @@ describe("richtext", () => {
     ]);
   });
 });
+
+describe("update text", () => {
+  function checkUpdate(t: LoroText, s: string) {
+    t.updateText(s);
+    expect(t.toString()).toBe(s)
+  }
+
+  it("update success on prelim", () => {
+    const text = new LoroText();
+    checkUpdate(text, "123");
+    checkUpdate(text, "12345");
+    checkUpdate(text, "0123456");
+    checkUpdate(text, "0103050");
+    checkUpdate(text, "135");
+  })
+
+  it("update success", () => {
+    const doc = new Loro();
+    const text = doc.getText("text");
+    checkUpdate(text, "123");
+    checkUpdate(text, "12345");
+    doc.commit();
+    expect(doc.frontiers()[0].counter).toBe(4);
+    checkUpdate(text, "0123456");
+    doc.commit();
+    expect(doc.frontiers()[0].counter).toBe(6);
+    checkUpdate(text, "0103050");
+    doc.commit();
+    expect(doc.frontiers()[0].counter).toBe(12);
+    checkUpdate(text, "135");
+    doc.commit();
+    expect(doc.frontiers()[0].counter).toBe(16);
+  })
+})
