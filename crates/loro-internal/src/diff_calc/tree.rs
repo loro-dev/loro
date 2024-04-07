@@ -375,7 +375,7 @@ impl TreeCacheForDiff {
                 }
                 self.is_ancestor_of(maybe_ancestor, parent)
             }
-            TreeParentId::Deleted | TreeParentId::None => false,
+            TreeParentId::Deleted | TreeParentId::Root => false,
             TreeParentId::Unexist => unreachable!(),
         }
     }
@@ -395,7 +395,7 @@ impl TreeCacheForDiff {
         match parent {
             TreeParentId::Deleted => true,
             TreeParentId::Node(id) => self.is_parent_deleted(self.get_parent_with_id(id).0),
-            TreeParentId::None => false,
+            TreeParentId::Root => false,
             TreeParentId::Unexist => false,
         }
     }

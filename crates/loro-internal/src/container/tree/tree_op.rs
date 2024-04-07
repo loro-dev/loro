@@ -21,7 +21,6 @@ pub struct TreeOp {
 }
 
 impl TreeOp {
-    // TODO: use `TreeParentId` instead of `Option<TreeID>`
     pub(crate) fn parent_id(&self) -> TreeParentId {
         match self.parent {
             Some(parent) => {
@@ -31,7 +30,7 @@ impl TreeOp {
                     TreeParentId::Node(parent)
                 }
             }
-            None => TreeParentId::None,
+            None => TreeParentId::Root,
         }
     }
 }

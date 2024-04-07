@@ -2279,7 +2279,7 @@ impl TreeHandler {
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
                 match a.parent(target) {
-                    TreeParentId::None => Some(None),
+                    TreeParentId::Root => Some(None),
                     TreeParentId::Node(parent) => Some(Some(parent)),
                     TreeParentId::Deleted | TreeParentId::Unexist => None,
                 }

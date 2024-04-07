@@ -2,11 +2,13 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, IdFull, Lamport, LoroError, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
+    ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
 };
 use rle::HasLength;
 use serde::Serialize;
 use std::collections::{BTreeMap, VecDeque};
+use std::fmt::Debug;
+use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::container::idx::ContainerIdx;
@@ -29,12 +31,11 @@ use super::ContainerState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner, Serialize)]
 pub enum TreeParentId {
     Node(TreeID),
-    // NOTE: Why Unexist + Deleted?
+    // We use `Unexist` as the old parent of a new node created
+    // so we can infer the retreat internal diff is `Uncreate`
     Unexist,
     Deleted,
-    // TODO: rename to Root
-    /// parent is root
-    None,
+    Root,
 }
 
 impl From<Option<TreeID>> for TreeParentId {
@@ -47,8 +48,39 @@ impl From<Option<TreeID>> for TreeParentId {
                     TreeParentId::Node(id)
                 }
             }
-            None => TreeParentId::None,
+            None => TreeParentId::Root,
         }
+    }
+}
+
+#[derive(Clone, Default)]
+struct TreeChildrenCache(FxHashMap<TreeParentId, BTreeMap<NodePosition, TreeID>>);
+
+impl Debug for TreeChildrenCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "TreeChildrenCache {{")?;
+        for (parent, children) in self.0.iter() {
+            writeln!(f, "  {:?}:{{", parent)?;
+            for (position, id) in children.iter() {
+                writeln!(f, "      {:?} -> {:?}", position, id)?;
+            }
+            writeln!(f, "  }}")?;
+        }
+        writeln!(f, "}}")
+    }
+}
+
+impl Deref for TreeChildrenCache {
+    type Target = FxHashMap<TreeParentId, BTreeMap<NodePosition, TreeID>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for TreeChildrenCache {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -60,22 +92,21 @@ pub struct TreeState {
     idx: ContainerIdx,
     trees: FxHashMap<TreeID, TreeStateNode>,
     // TODO: PERF BTreeMap can be replaced by a generic_btree::BTree
-    children: FxHashMap<TreeParentId, BTreeMap<NodePosition, TreeID>>,
+    children: TreeChildrenCache,
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
 struct NodePosition {
     position: FracIndex,
-    // NOTE: why lamport? you may also use IdLp here
-    id: (Lamport, PeerID),
+    // different nodes created by a peer may have the same position
+    // when we merge updates that cause cycles.
+    // for example [::fuzz::test::test_tree::same_peer_have_same_position()]
+    idlp: IdLp,
 }
 
 impl NodePosition {
-    fn new(position: FracIndex, id: IdFull) -> Self {
-        Self {
-            position,
-            id: (id.lamport, id.peer),
-        }
+    fn new(position: FracIndex, idlp: IdLp) -> Self {
+        Self { position, idlp }
     }
 }
 
@@ -92,7 +123,7 @@ impl TreeState {
         Self {
             idx,
             trees: FxHashMap::default(),
-            children: FxHashMap::default(),
+            children: Default::default(),
         }
     }
 
@@ -115,22 +146,16 @@ impl TreeState {
             }
         }
         // move or delete or create children node
-        let old_parent = self
-            .trees
-            .get(&target)
-            .map(|x| x.parent)
-            .unwrap_or(TreeParentId::Unexist);
-
-        // remove old position
-        if let Some(x) = self.children.get_mut(&old_parent) {
-            x.retain(|_, v| v != &target)
+        if let Some(old_parent) = self.trees.get(&target).map(|x| x.parent) {
+            // remove old position
+            self.delete_position(&old_parent, target);
         }
 
         if !parent.is_deleted() {
-            self.children
-                .entry(parent)
-                .or_default()
-                .insert(NodePosition::new(position.clone().unwrap(), id), target);
+            let entry = self.children.entry(parent).or_default();
+            let node_position = NodePosition::new(position.clone().unwrap(), id.idlp());
+            debug_assert!(!entry.contains_key(&node_position));
+            entry.insert(node_position, target);
         } else {
             // clean the cache recursively, otherwise the index of event will be calculated incorrectly
             let mut q = vec![target];
@@ -173,7 +198,7 @@ impl TreeState {
                 }
                 self.is_ancestor_of(maybe_ancestor, parent)
             }
-            TreeParentId::Deleted | TreeParentId::None => false,
+            TreeParentId::Deleted | TreeParentId::Root => false,
             TreeParentId::Unexist => unreachable!(),
         }
     }
@@ -200,7 +225,7 @@ impl TreeState {
         match self.trees.get(target) {
             Some(x) => match x.parent {
                 TreeParentId::Deleted => true,
-                TreeParentId::None => false,
+                TreeParentId::Root => false,
                 TreeParentId::Node(p) => self.is_node_deleted(&p),
                 TreeParentId::Unexist => unreachable!(),
             },
@@ -246,7 +271,11 @@ impl TreeState {
 
     pub(crate) fn delete_position(&mut self, parent: &TreeParentId, target: TreeID) {
         if let Some(x) = self.children.get_mut(parent) {
-            x.retain(|_, v| v != &target);
+            let node = self.trees.get(&target).unwrap();
+            let position = node.position.clone().unwrap();
+            let idlp = node.last_move_op.idlp();
+            let node_position = NodePosition::new(position, idlp);
+            x.remove(&node_position);
         }
     }
 
@@ -338,8 +367,10 @@ impl ContainerState for TreeState {
     ) -> Diff {
         let mut ans = vec![];
         if let InternalDiff::Tree(tree) = &diff {
+            // println!("before {:?}", self.children);
             // assert never cause cycle move
             for diff in tree.diff.iter() {
+                // println!("\ndiff {:?}", diff);
                 let last_move_op = diff.last_effective_move_op_id;
                 let target = diff.target;
                 // create associated metadata container
@@ -390,14 +421,22 @@ impl ContainerState for TreeState {
                         // delete it from state
                         let parent = self.trees.remove(&target);
                         if let Some(parent) = parent {
-                            // TODO: we cannot use NodePosition to delete the cache, because the op_id is not the id when the node is cached
-                            if let Some(x) = self.children.get_mut(&parent.parent) {
-                                x.retain(|_, v| v != &target);
+                            if !parent.parent.is_deleted() {
+                                let node_position = NodePosition::new(
+                                    parent.position.unwrap(),
+                                    parent.last_move_op.idlp(),
+                                );
+                                self.children
+                                    .get_mut(&parent.parent)
+                                    .unwrap()
+                                    .remove(&node_position);
                             }
                         }
+                        // println!("after {:?}", self.children);
                         continue;
                     }
                 };
+                // println!("after {:?}", self.children);
             }
         }
 
@@ -435,9 +474,16 @@ impl ContainerState for TreeState {
                         // delete it from state
                         let parent = self.trees.remove(&target);
                         if let Some(parent) = parent {
-                            self.children.get_mut(&parent.parent).map(|x| {
-                                x.remove(&NodePosition::new(parent.position.unwrap(), last_move_op))
-                            });
+                            if !parent.parent.is_deleted() {
+                                let node_position = NodePosition::new(
+                                    parent.position.unwrap(),
+                                    parent.last_move_op.idlp(),
+                                );
+                                self.children
+                                    .get_mut(&parent.parent)
+                                    .unwrap()
+                                    .remove(&node_position);
+                            }
                         }
                         continue;
                     }
@@ -454,17 +500,7 @@ impl ContainerState for TreeState {
                     parent,
                     position,
                 } = tree;
-                // TODO: use TreeParentId
-                let parent = match parent {
-                    Some(parent) => {
-                        if TreeID::is_deleted_root(parent) {
-                            TreeParentId::Deleted
-                        } else {
-                            TreeParentId::Node(*parent)
-                        }
-                    }
-                    None => TreeParentId::None,
-                };
+                let parent = TreeParentId::from(*parent);
                 self.mov(*target, parent, raw_op.id_full(), position.clone(), true)
             }
             _ => unreachable!(),
@@ -478,13 +514,13 @@ impl ContainerState for TreeState {
         _state: &Weak<Mutex<DocState>>,
     ) -> Diff {
         let mut diffs = vec![];
-        let Some(roots) = self.children.get(&TreeParentId::None) else {
+        let Some(roots) = self.children.get(&TreeParentId::Root) else {
             return Diff::Tree(TreeDiff { diff: vec![] });
         };
 
         let mut q = VecDeque::from_iter(roots.iter());
         let mut index = 0;
-        let mut parent = TreeParentId::None;
+        let mut parent = TreeParentId::Root;
         while let Some((position, node)) = q.pop_front() {
             let node_parent = self.trees.get(node).unwrap().parent;
             if node_parent != parent {
@@ -502,7 +538,7 @@ impl ContainerState for TreeState {
             index += 1;
             diffs.push(diff);
             if let Some(children) = self.children.get(&TreeParentId::Node(*node)) {
-                // Refactor: you can include the index and parent in the q
+                // TODO: Refactor: you can include the index and parent in the q
                 // The code will be more robust and easy to understand
                 q.extend(children.iter());
             }
@@ -529,14 +565,10 @@ impl ContainerState for TreeState {
                     "meta".to_string(),
                     target.associated_meta_container().into(),
                 );
-                // Why only includes them in test_utils?
-                // It's better to use a separate method to do this
-                #[cfg(feature = "test_utils")]
                 t.insert(
                     "index".to_string(),
                     (self.get_index_by_tree_id(&node.parent, target).unwrap() as i64).into(),
                 );
-                #[cfg(feature = "test_utils")]
                 t.insert(
                     "position".to_string(),
                     node.position.clone().unwrap().to_string().into(),
@@ -598,17 +630,7 @@ impl ContainerState for TreeState {
             let target = content.target;
             let parent = content.parent;
             let position = content.position.clone();
-            // TODO: use TreeParentId
-            let parent = match parent {
-                Some(parent) => {
-                    if TreeID::is_deleted_root(&parent) {
-                        TreeParentId::Deleted
-                    } else {
-                        TreeParentId::Node(parent)
-                    }
-                }
-                None => TreeParentId::None,
-            };
+            let parent = TreeParentId::from(parent);
             self.mov(target, parent, op.id_full(), position, false)
                 .unwrap();
         }
