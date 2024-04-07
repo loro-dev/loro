@@ -203,7 +203,7 @@ impl Transaction {
         }
 
         let oplog_lock = oplog.lock().unwrap();
-        state_lock.start_txn(origin, true);
+        state_lock.start_txn(origin, crate::event::EventTriggerKind::Local);
         let arena = state_lock.arena.clone();
         let frontiers = state_lock.frontiers.clone();
         let peer = state_lock.peer;
@@ -300,7 +300,7 @@ impl Transaction {
         state.commit_txn(
             Frontiers::from_id(last_id),
             diff.map(|arr| InternalDocDiff {
-                local: true,
+                by: crate::event::EventTriggerKind::Local,
                 origin: self.origin.clone(),
                 diff: Cow::Owned(
                     arr.into_iter()
@@ -312,7 +312,6 @@ impl Transaction {
                         })
                         .collect(),
                 ),
-                from_checkout: false,
                 new_version: Cow::Borrowed(oplog.frontiers()),
             }),
         );

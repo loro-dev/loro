@@ -129,15 +129,15 @@ describe("sync", () => {
     const b = new Loro();
     let a_version: undefined | VersionVector = undefined;
     let b_version: undefined | VersionVector = undefined;
-    a.subscribe((e: { local: boolean }) => {
-      if (e.local) {
+    a.subscribe((e) => {
+      if (e.by == "local") {
         const exported = a.exportFrom(a_version);
         b.import(exported);
         a_version = a.version();
       }
     });
-    b.subscribe((e: { local: boolean }) => {
-      if (e.local) {
+    b.subscribe((e) => {
+      if (e.by == "local") {
         const exported = b.exportFrom(b_version);
         a.import(exported);
         b_version = b.version();
@@ -209,39 +209,35 @@ describe("wasm", () => {
 describe("type", () => {
   it("test map type", () => {
     const loro = new Loro<{ map: LoroMap<{ name: "he" }> }>();
-    const map = loro.getTypedMap("map");
-    const v = map.getTyped(loro, "name");
+    const map = loro.getMap("map");
+    const v = map.get("name");
     expectTypeOf(v).toEqualTypeOf<"he">();
   });
 
   it("test recursive map type", () => {
     const loro = new Loro<{ map: LoroMap<{ map: LoroMap<{ name: "he" }> }> }>();
-    const map = loro.getTypedMap("map");
+    const map = loro.getMap("map");
     map.setContainer("map", new LoroMap());
 
-    const subMap = map.getTyped(loro, "map");
-    const name = subMap.getTyped(loro, "name");
+    const subMap = map.get("map");
+    const name = subMap.get("name");
     expectTypeOf(name).toEqualTypeOf<"he">();
   });
 
   it("works for list type", () => {
-    const loro = new Loro<{ list: LoroList<[string, number]> }>();
-    const list = loro.getTypedList("list");
-    list.insertTyped(0, "123");
-    list.insertTyped(1, 123);
-    const v0 = list.getTyped(loro, 0);
+    const loro = new Loro<{ list: LoroList<string> }>();
+    const list = loro.getList("list");
+    list.insert(0, "123");
+    const v0 = list.get(0);
     expectTypeOf(v0).toEqualTypeOf<string>();
-    const v1 = list.getTyped(loro, 1);
-    expectTypeOf(v1).toEqualTypeOf<number>();
   });
 
   it("test binary type", () => {
-    // const loro = new Loro<{ list: LoroList<[string, number]> }>();
-    // const list = loro.getTypedList("list");
-    // console.dir((list as any).__proto__);
-    // list.insertTyped(0, new Uint8Array(10));
-    // const v0 = list.getTyped(loro, 0);
-    // expectTypeOf(v0).toEqualTypeOf<Uint8Array>();
+    const loro = new Loro<{ list: LoroList<Uint8Array> }>();
+    const list = loro.getList("list");
+    list.insert(0, new Uint8Array(10));
+    const v0 = list.get(0);
+    expectTypeOf(v0).toEqualTypeOf<Uint8Array>();
   });
 });
 

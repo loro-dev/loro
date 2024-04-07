@@ -318,7 +318,7 @@ impl LoroDoc {
     /// doc.subscribe(
     ///     &text.id(),
     ///     Arc::new(move |event| {
-    ///         assert!(event.local);
+    ///         assert!(event.triggered_by.is_local());
     ///         for event in event.events {
     ///             let delta = event.diff.as_text().unwrap();
     ///             let d = TextDelta::Insert {
