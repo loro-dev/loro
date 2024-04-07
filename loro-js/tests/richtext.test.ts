@@ -237,5 +237,9 @@ describe("update text", () => {
     checkUpdate(text, "135");
     doc.commit();
     expect(doc.frontiers()[0].counter).toBe(16);
+    checkUpdate(text, "测试");
+    doc.commit();
+    expect(doc.frontiers()[0].counter).toBe(21);
+    checkUpdate(text, "测替换");
   })
 })
