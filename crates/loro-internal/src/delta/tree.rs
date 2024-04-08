@@ -1,33 +1,32 @@
+use fractional_index::FractionalIndex;
+use loro_common::{IdFull, TreeID};
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 
-use loro_common::{IdFull, TreeID};
-use serde::Serialize;
+use crate::state::TreeParentId;
 
-use crate::{container::tree::fractional_index::FracIndex, state::TreeParentId};
-
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default)]
 pub struct TreeDiff {
     pub diff: Vec<TreeDiffItem>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct TreeDiffItem {
     pub target: TreeID,
     pub action: TreeExternalDiff,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub enum TreeExternalDiff {
     Create {
         parent: Option<TreeID>,
         index: usize,
-        position: FracIndex,
+        position: FractionalIndex,
     },
     Move {
         parent: Option<TreeID>,
         index: usize,
-        position: FracIndex,
+        position: FractionalIndex,
     },
     Delete,
 }
@@ -75,24 +74,24 @@ pub enum TreeInternalDiff {
     /// First create the node, have not seen it before
     Create {
         parent: TreeParentId,
-        position: FracIndex,
+        position: FractionalIndex,
     },
     /// For retreating, if the node is only created, not move it to `DELETED_ROOT` but delete it directly
     UnCreate,
     /// Move the node to the parent, the node exists
     Move {
         parent: TreeParentId,
-        position: FracIndex,
+        position: FractionalIndex,
     },
     /// move under a parent that is deleted
     Delete {
         parent: TreeParentId,
-        position: Option<FracIndex>,
+        position: Option<FractionalIndex>,
     },
     /// old parent is deleted, new parent is deleted too
     MoveInDelete {
         parent: TreeParentId,
-        position: Option<FracIndex>,
+        position: Option<FractionalIndex>,
     },
 }
 
@@ -108,7 +107,7 @@ impl TreeDeltaItem {
         op_id: IdFull,
         is_new_parent_deleted: bool,
         is_old_parent_deleted: bool,
-        position: Option<FracIndex>,
+        position: Option<FractionalIndex>,
     ) -> Self {
         // TODO: check op id
         let action = if matches!(parent, TreeParentId::Unexist) {

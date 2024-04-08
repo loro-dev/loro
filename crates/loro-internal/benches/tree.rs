@@ -37,7 +37,7 @@ mod tree {
                 for _ in 0..n {
                     let i = rng.gen::<usize>() % size;
                     let j = rng.gen::<usize>() % size;
-                    tree.mov_with_txn(&mut txn, ids[i], ids[j], 0, false)
+                    tree.mov_with_txn(&mut txn, ids[i], ids[j], 0)
                         .unwrap_or_default();
                 }
                 drop(txn)
@@ -62,7 +62,7 @@ mod tree {
                 let i = rng.gen::<usize>() % size;
                 let j = rng.gen::<usize>() % size;
                 if loro
-                    .with_txn(|txn| tree.mov_with_txn(txn, ids[i], ids[j], 0, false))
+                    .with_txn(|txn| tree.mov_with_txn(txn, ids[i], ids[j], 0))
                     .is_ok()
                 {
                     versions.push(loro.oplog_frontiers());
@@ -130,13 +130,13 @@ mod tree {
                     if t % 2 == 0 {
                         let mut txn = doc_a.txn().unwrap();
                         tree_a
-                            .mov_with_txn(&mut txn, ids[i], ids[j], 0, false)
+                            .mov_with_txn(&mut txn, ids[i], ids[j], 0)
                             .unwrap_or_default();
                         doc_b.import(&doc_a.export_from(&doc_b.oplog_vv())).unwrap();
                     } else {
                         let mut txn = doc_b.txn().unwrap();
                         tree_b
-                            .mov_with_txn(&mut txn, ids[i], ids[j], 0, false)
+                            .mov_with_txn(&mut txn, ids[i], ids[j], 0)
                             .unwrap_or_default();
                         doc_a.import(&doc_b.export_from(&doc_a.oplog_vv())).unwrap();
                     }

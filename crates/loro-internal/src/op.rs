@@ -58,7 +58,7 @@ impl OpWithId {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RemoteOp<'a> {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerID,

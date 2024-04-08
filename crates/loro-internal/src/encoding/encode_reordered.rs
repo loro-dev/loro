@@ -195,8 +195,7 @@ pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
     let mut start_timestamp = Timestamp::MAX;
     let mut end_timestamp = Timestamp::MIN;
 
-    for iter in iterators.changes
-    {
+    for iter in iterators.changes {
         let EncodedChange {
             peer_idx,
             len,
@@ -1497,6 +1496,7 @@ struct EncodedStateInfo {
 mod value {
     use std::sync::Arc;
 
+    use fractional_index::FractionalIndex;
     use fxhash::FxHashMap;
     use loro_common::{
         ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue,
@@ -1504,7 +1504,7 @@ mod value {
     };
 
     use super::{encode::ValueRegister, MAX_COLLECTION_SIZE};
-    use crate::container::tree::{fractional_index::FracIndex, tree_op::TreeOp};
+    use crate::container::tree::tree_op::TreeOp;
     use num_traits::{FromPrimitive, ToPrimitive};
 
     #[allow(unused)]
@@ -1567,7 +1567,7 @@ mod value {
                 // TODO: better
                 position: if let Some(p) = self.position {
                     Some(
-                        FracIndex::from_bytes(p.to_vec())
+                        FractionalIndex::from_bytes(p.to_vec())
                             .map_err(|_e| LoroError::DecodeDataCorruptionError)?,
                     )
                 } else {

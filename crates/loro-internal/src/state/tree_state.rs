@@ -1,4 +1,5 @@
 use enum_as_inner::EnumAsInner;
+use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{
@@ -12,7 +13,6 @@ use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::container::idx::ContainerIdx;
-use crate::container::tree::fractional_index::FracIndex;
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder};
 use crate::event::InternalDiff;
@@ -97,7 +97,7 @@ pub struct TreeState {
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
 struct NodePosition {
-    position: FracIndex,
+    position: FractionalIndex,
     // different nodes created by a peer may have the same position
     // when we merge updates that cause cycles.
     // for example [::fuzz::test::test_tree::same_peer_have_same_position()]
@@ -105,7 +105,7 @@ struct NodePosition {
 }
 
 impl NodePosition {
-    fn new(position: FracIndex, idlp: IdLp) -> Self {
+    fn new(position: FractionalIndex, idlp: IdLp) -> Self {
         Self { position, idlp }
     }
 }
@@ -114,7 +114,7 @@ impl NodePosition {
 pub(crate) struct TreeStateNode {
     pub parent: TreeParentId,
     // no position in delete?
-    pub position: Option<FracIndex>,
+    pub position: Option<FractionalIndex>,
     pub last_move_op: IdFull,
 }
 
@@ -132,7 +132,7 @@ impl TreeState {
         target: TreeID,
         parent: TreeParentId,
         id: IdFull,
-        position: Option<FracIndex>,
+        position: Option<FractionalIndex>,
         with_check: bool,
     ) -> Result<(), LoroError> {
         if with_check {
@@ -285,7 +285,7 @@ impl TreeState {
         &mut self,
         parent: &TreeParentId,
         index: usize,
-    ) -> Result<FracIndex, Vec<TreeID>> {
+    ) -> Result<FractionalIndex, Vec<TreeID>> {
         let mut same_position = vec![];
         {
             let mut left = None;
@@ -293,7 +293,7 @@ impl TreeState {
             let children_positions = self.children.get(parent);
             if children_positions.is_none() {
                 debug_assert_eq!(index, 0);
-                return Ok(FracIndex::default());
+                return Ok(FractionalIndex::default());
             }
             // TODO: PERF iterating like this is slow
             let mut positions = children_positions.unwrap().iter();
@@ -320,7 +320,7 @@ impl TreeState {
             }
 
             if same_position.is_empty() {
-                return Ok(FracIndex::new(left, right.map(|x| &x.position)).unwrap());
+                return Ok(FractionalIndex::new(left, right.map(|x| &x.position)).unwrap());
             }
         }
         Err(same_position
@@ -334,6 +334,7 @@ impl TreeState {
         parent: &TreeParentId,
         target: &TreeID,
     ) -> Option<usize> {
+        println!("children {:?}", self.children);
         (!parent.is_deleted())
             .then(|| {
                 self.children

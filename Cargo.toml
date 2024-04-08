@@ -9,6 +9,7 @@ members = [
     "crates/loro-preload",
     "crates/loro-wasm",
     "crates/fuzz",
+    "crates/fractional_index",
 ]
 
 [workspace.dependencies]

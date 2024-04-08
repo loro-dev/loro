@@ -22,7 +22,7 @@ pub mod event;
 
 pub use loro_internal::configure::Configure;
 pub use loro_internal::configure::StyleConfigMap;
-pub use loro_internal::container::{richtext::ExpandType, FracIndex};
+pub use loro_internal::container::richtext::ExpandType;
 pub use loro_internal::container::{ContainerID, ContainerType};
 pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
 pub use loro_internal::event::Index;

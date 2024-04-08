@@ -5,7 +5,7 @@ use crate::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, DeleteSpanWithId, ListOp},
         richtext::{richtext_state::PosType, RichtextState, StyleOp, TextStyleInfoFlag},
-        tree::{fractional_index::FracIndex, tree_op::TreeOp},
+        tree::tree_op::TreeOp,
     },
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
@@ -15,6 +15,7 @@ use crate::{
 };
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
+use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use loro_common::{
     ContainerID, ContainerType, Counter, IdFull, InternalString, LoroError, LoroResult,
@@ -2368,7 +2369,7 @@ impl TreeHandler {
         &self,
         parent: Option<TreeID>,
         index: usize,
-    ) -> Result<FracIndex, Vec<TreeID>> {
+    ) -> Result<FractionalIndex, Vec<TreeID>> {
         match &self.inner {
             MaybeDetached::Detached(_) => {
                 unimplemented!()

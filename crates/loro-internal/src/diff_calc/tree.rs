@@ -1,11 +1,12 @@
 use std::collections::BTreeSet;
 
+use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, HasId, IdFull, IdSpan, Lamport, TreeID, ID};
 
 use crate::{
-    container::{idx::ContainerIdx, tree::fractional_index::FracIndex},
+    container::idx::ContainerIdx,
     dag::DagUtils,
     delta::{TreeDelta, TreeDeltaItem, TreeInternalDiff},
     event::InternalDiff,
@@ -311,7 +312,7 @@ pub struct MoveLamportAndID {
     pub(crate) id: ID,
     pub(crate) target: TreeID,
     pub(crate) parent: TreeParentId,
-    pub(crate) position: Option<FracIndex>,
+    pub(crate) position: Option<FractionalIndex>,
     /// Whether this action is applied in the current version.
     /// If this action will cause a circular reference, then this action will not be applied.
     pub(crate) effected: bool,
@@ -401,7 +402,10 @@ impl TreeCacheForDiff {
     }
 
     /// get the parent of the first effected op and its id
-    fn get_parent_with_id(&self, tree_id: TreeID) -> (TreeParentId, Option<FracIndex>, IdFull) {
+    fn get_parent_with_id(
+        &self,
+        tree_id: TreeID,
+    ) -> (TreeParentId, Option<FractionalIndex>, IdFull) {
         let mut ans = (TreeParentId::Unexist, None, IdFull::NONE_ID);
         if let Some(cache) = self.tree.get(&tree_id) {
             for op in cache.iter().rev() {
@@ -436,7 +440,7 @@ impl TreeCacheForDiff {
     fn get_children_with_id(
         &self,
         parent: TreeParentId,
-    ) -> Vec<(TreeID, Option<FracIndex>, IdFull)> {
+    ) -> Vec<(TreeID, Option<FractionalIndex>, IdFull)> {
         let mut ans = vec![];
         for (tree_id, _) in self.tree.iter() {
             let Some(op) = self.get_last_effective_move(*tree_id) else {

@@ -70,7 +70,6 @@ pub mod map;
 pub mod richtext;
 pub mod tree;
 use idx::ContainerIdx;
-pub use tree::fractional_index::FracIndex;
 
 pub use loro_common::ContainerType;
 

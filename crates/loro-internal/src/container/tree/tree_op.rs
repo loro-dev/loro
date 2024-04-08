@@ -1,8 +1,9 @@
+use fractional_index::FractionalIndex;
 use loro_common::TreeID;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
-use crate::{container::FracIndex, state::TreeParentId};
+use crate::state::TreeParentId;
 
 /// The operation of movable tree.
 ///
@@ -17,7 +18,7 @@ pub struct TreeOp {
     pub(crate) target: TreeID,
     pub(crate) parent: Option<TreeID>,
     // If the op is `delete`, the position is None
-    pub(crate) position: Option<FracIndex>,
+    pub(crate) position: Option<FractionalIndex>,
 }
 
 impl TreeOp {

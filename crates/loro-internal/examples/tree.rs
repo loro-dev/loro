@@ -50,7 +50,7 @@ fn mov() {
     for _ in 0..n {
         let i = rng.gen::<usize>() % size;
         let j = rng.gen::<usize>() % size;
-        tree.mov_with_txn(&mut txn, ids[i], ids[j], 0, false)
+        tree.mov_with_txn(&mut txn, ids[i], ids[j], 0)
             .unwrap_or_default();
     }
     drop(txn);
