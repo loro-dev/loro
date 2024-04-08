@@ -141,33 +141,10 @@ impl DiffCalculator {
                     let vv = &mut vv.borrow_mut();
                     vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
                     let depth = oplog.arena.get_depth(op.container);
-                    let (old_depth, calculator) =
-                        self.calculators.entry(op.container).or_insert_with(|| {
-                            match op.container.get_type() {
-                                crate::ContainerType::Text => (
-                                    depth,
-                                    ContainerDiffCalculator::Richtext(
-                                        RichtextDiffCalculator::default(),
-                                    ),
-                                ),
-                                crate::ContainerType::Map => (
-                                    depth,
-                                    ContainerDiffCalculator::Map(MapDiffCalculator::new(
-                                        op.container,
-                                    )),
-                                ),
-                                crate::ContainerType::List => (
-                                    depth,
-                                    ContainerDiffCalculator::List(ListDiffCalculator::default()),
-                                ),
-                                crate::ContainerType::Tree => (
-                                    depth,
-                                    ContainerDiffCalculator::Tree(TreeDiffCalculator::new(
-                                        op.container,
-                                    )),
-                                ),
-                            }
-                        });
+                    let (old_depth, calculator) = {
+                        let idx = op.container;
+                        self.get_or_create_calc(idx, depth)
+                    };
                     // checkout use the same diff_calculator, the depth of calculator is not updated
                     // That may cause the container to be considered deleted
                     if *old_depth != depth {
@@ -304,6 +281,34 @@ impl DiffCalculator {
             .sorted_by_key(|x| x.0)
             .map(|x| x.1)
             .collect_vec()
+    }
+
+    // TODO: we may remove depth info
+    pub(crate) fn get_or_create_calc(
+        &mut self,
+        idx: ContainerIdx,
+        depth: Option<NonZeroU16>,
+    ) -> &mut (Option<NonZeroU16>, ContainerDiffCalculator) {
+        self.calculators
+            .entry(idx)
+            .or_insert_with(|| match idx.get_type() {
+                crate::ContainerType::Text => (
+                    depth,
+                    ContainerDiffCalculator::Richtext(RichtextDiffCalculator::default()),
+                ),
+                crate::ContainerType::Map => (
+                    depth,
+                    ContainerDiffCalculator::Map(MapDiffCalculator::new(idx)),
+                ),
+                crate::ContainerType::List => (
+                    depth,
+                    ContainerDiffCalculator::List(ListDiffCalculator::default()),
+                ),
+                crate::ContainerType::Tree => (
+                    depth,
+                    ContainerDiffCalculator::Tree(TreeDiffCalculator::new(idx)),
+                ),
+            })
     }
 }
 

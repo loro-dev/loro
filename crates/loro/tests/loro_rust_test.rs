@@ -596,7 +596,7 @@ fn get_stable_positions() {
     doc1.set_peer_id(1).unwrap();
     let text = doc1.get_text("text");
     text.insert(0, "6789").unwrap();
-    let pos_7 = text.get_stable_position_at(1).unwrap();
+    let pos_7 = text.get_stable_position_at(1, Default::default()).unwrap();
     let pos_info = doc1.query_pos(&pos_7).unwrap();
     assert!(pos_info.update.is_none());
     assert_eq!(pos_info.current.pos, 1);
@@ -610,7 +610,7 @@ fn get_stable_positions() {
     doc2.set_peer_id(2).unwrap();
     let text2 = doc2.get_text("text");
     text2.insert(0, "ab").unwrap();
-    let pos_a = text2.get_stable_position_at(0).unwrap();
+    let pos_a = text2.get_stable_position_at(0, Default::default()).unwrap();
     let pos_info = doc2.query_pos(&pos_a).unwrap();
     assert!(pos_info.update.is_none());
     assert_eq!(pos_info.current.pos, 0);
@@ -644,7 +644,7 @@ fn get_stable_position_at_the_end() {
     let doc = LoroDoc::new();
     let text = &doc.get_text("text");
     text.insert(0, "01234").unwrap();
-    let pos = text.get_stable_position_at(5).unwrap();
+    let pos = text.get_stable_position_at(5, Default::default()).unwrap();
     assert_eq!(doc.query_pos(&pos).unwrap().current.pos, 5);
     text.insert(0, "01234").unwrap();
     assert_eq!(doc.query_pos(&pos).unwrap().current.pos, 10);
@@ -658,10 +658,10 @@ fn get_stable_position_at_the_end() {
 fn get_stable_positions_for_list() {
     let doc = LoroDoc::new();
     let list = doc.get_list("list");
-    let pos_start = list.get_stable_position(0).unwrap();
+    let pos_start = list.get_stable_position(0, Default::default()).unwrap();
     list.insert(0, 1).unwrap();
-    let pos_0 = list.get_stable_position(0).unwrap();
-    let pos_end = list.get_stable_position(1).unwrap();
+    let pos_0 = list.get_stable_position(0, Default::default()).unwrap();
+    let pos_end = list.get_stable_position(1, Default::default()).unwrap();
     {
         let result = doc.query_pos(&pos_start).unwrap();
         assert_eq!(result.current.pos, 0);

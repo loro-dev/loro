@@ -1475,7 +1475,7 @@ impl TextHandler {
     }
 
     /// Get the stable position representation for the target pos
-    pub fn get_stable_position(&self, event_index: usize) -> Option<StablePosition> {
+    pub fn get_stable_position(&self, event_index: usize, side: Side) -> Option<StablePosition> {
         match &self.inner {
             MaybeDetached::Detached(_) => None,
             MaybeDetached::Attached(a) => {
@@ -1488,11 +1488,15 @@ impl TextHandler {
                     return Some(StablePosition {
                         id: None,
                         container: self.id(),
-                        side: Side::Left,
+                        side: if side == Side::Middle {
+                            Side::Left
+                        } else {
+                            side
+                        },
                     });
                 }
 
-                if len == event_index {
+                if len <= event_index {
                     return Some(StablePosition {
                         id: None,
                         container: self.id(),
@@ -1504,7 +1508,7 @@ impl TextHandler {
                 Some(StablePosition {
                     id: Some(id),
                     container: self.id(),
-                    side: Side::Middle,
+                    side,
                 })
             }
         }
@@ -1845,7 +1849,7 @@ impl ListHandler {
         }
     }
 
-    pub fn get_stable_position(&self, pos: usize) -> Option<StablePosition> {
+    pub fn get_stable_position(&self, pos: usize, side: Side) -> Option<StablePosition> {
         match &self.inner {
             MaybeDetached::Detached(_) => None,
             MaybeDetached::Attached(a) => {
@@ -1858,11 +1862,15 @@ impl ListHandler {
                     return Some(StablePosition {
                         id: None,
                         container: self.id(),
-                        side: Side::Left,
+                        side: if side == Side::Middle {
+                            Side::Left
+                        } else {
+                            side
+                        },
                     });
                 }
 
-                if len == pos {
+                if len <= pos {
                     return Some(StablePosition {
                         id: None,
                         container: self.id(),
@@ -1874,7 +1882,7 @@ impl ListHandler {
                 Some(StablePosition {
                     id: Some(id.id()),
                     container: self.id(),
-                    side: Side::Middle,
+                    side,
                 })
             }
         }

@@ -8,6 +8,7 @@ use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::stable_pos::CannotFindRelativePosition;
 use loro_internal::stable_pos::PosQueryResult;
+use loro_internal::stable_pos::Side;
 use loro_internal::stable_pos::StablePosition;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
@@ -559,8 +560,8 @@ impl LoroList {
         ))
     }
 
-    pub fn get_stable_position(&self, pos: usize) -> Option<StablePosition> {
-        self.handler.get_stable_position(pos)
+    pub fn get_stable_position(&self, pos: usize, side: Side) -> Option<StablePosition> {
+        self.handler.get_stable_position(pos, side)
     }
 }
 
@@ -896,8 +897,8 @@ impl LoroText {
         self.handler.to_string()
     }
 
-    pub fn get_stable_position_at(&self, pos: usize) -> Option<StablePosition> {
-        self.handler.get_stable_position(pos)
+    pub fn get_stable_position_at(&self, pos: usize, side: Side) -> Option<StablePosition> {
+        self.handler.get_stable_position(pos, side)
     }
 }
 

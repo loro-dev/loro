@@ -138,6 +138,20 @@ impl AppDag {
         }
         Ok(())
     }
+
+    pub(crate) fn find_deps_of_id(&self, id: ID) -> Frontiers {
+        if let Some(nodes) = self.map.get(&id.peer) {
+            if let Some(d) = nodes.get_by_atom_index(id.counter) {
+                if d.offset == 0 {
+                    return d.element.deps.clone();
+                } else {
+                    return ID::new(id.peer, d.element.cnt + d.offset - 1).into();
+                }
+            }
+        }
+
+        Frontiers::default()
+    }
 }
 
 impl std::fmt::Debug for OpLog {

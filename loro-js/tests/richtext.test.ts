@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Delta, Loro, TextDiff } from "../src";
-import { setDebug } from "loro-wasm";
+import { OpId, setDebug } from "loro-wasm";
 
 describe("richtext", () => {
   it("mark", () => {
@@ -203,5 +203,46 @@ describe("richtext", () => {
         insert: ".",
       },
     ]);
+  });
+
+  it("Get and query stable position", () => {
+    const doc = new Loro();
+    const text = doc.getText("text");
+    doc.setPeerId("1");
+    text.insert(0, "123");
+    const pos0 = text.getStablePos(0, 0);
+    expect(pos0?.containerId()).toBe("cid:root-text:Text");
+    // pos0 points to the first character, i.e. the id of '1'
+    expect(pos0?.pos()).toStrictEqual({ peer: "1", counter: 0 } as OpId);
+    {
+      const ans = doc.queryStablePos(pos0!);
+      expect(ans.side).toBe(0);
+      expect(ans.offset).toBe(0);
+      expect(ans.update).toBeUndefined();
+    }
+    text.insert(0, "abc");
+    {
+      const ans = doc.queryStablePos(pos0!);
+      expect(ans.side).toBe(0);
+      expect(ans.offset).toBe(3);
+      expect(ans.update).toBeUndefined();
+    }
+    // If "1" is removed from the text, the stable position should be updated
+    text.delete(3, 1); // remove "1", "abc23"
+    doc.commit();
+    {
+      const ans = doc.queryStablePos(pos0!);
+      expect(ans.side).toBe(-1);
+      expect(ans.offset).toBe(3);
+      expect(ans.update).toBeDefined(); // The update of the stable position should be returned
+      // It points to "2" now so the pos should be { peer: "1", counter: 1 }
+      expect(ans.update?.pos()).toStrictEqual({
+        peer: "1",
+        counter: 1,
+      } as OpId);
+      // Side should be -1 because "1" was at the left side of "2"
+      expect(ans.update!.side()).toBe(-1);
+      expect(ans.update?.containerId()).toBe("cid:root-text:Text");
+    }
   });
 });

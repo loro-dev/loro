@@ -905,7 +905,7 @@ impl LoroDoc {
                 // We know where the target id is when we trace back to the delete_op_id.
                 let delete_op_id = find_last_delete_op(&oplog, id, idx).unwrap();
                 let mut diff_calc = DiffCalculator::new();
-                let before_frontiers: Frontiers = delete_op_id.into();
+                let before_frontiers: Frontiers = oplog.dag.find_deps_of_id(delete_op_id);
                 let before = &oplog.dag.frontiers_to_vv(&before_frontiers).unwrap();
                 // TODO: PERF: it doesn't need to calc the effects here
                 diff_calc.calc_diff_internal(
@@ -916,7 +916,9 @@ impl LoroDoc {
                     Some(&oplog.dag.frontiers),
                     Some(&|target| idx == target),
                 );
-                let diff_calc = diff_calc.get_calc(idx).unwrap();
+                // TODO: remove depth info
+                let depth = self.arena.get_depth(idx);
+                let diff_calc = &mut diff_calc.get_or_create_calc(idx, depth).1;
                 match diff_calc {
                     crate::diff_calc::ContainerDiffCalculator::Richtext(text) => {
                         let c = text.get_id_latest_pos(id).unwrap();
@@ -924,7 +926,7 @@ impl LoroDoc {
                         let handler = self.get_text(&pos.container);
                         let current_pos = handler.convert_entity_index_to_event_index(new_pos);
                         Ok(PosQueryResult {
-                            update: handler.get_stable_position(current_pos),
+                            update: handler.get_stable_position(current_pos, c.side),
                             current: Cursor {
                                 pos: current_pos,
                                 side: c.side,
@@ -936,7 +938,7 @@ impl LoroDoc {
                         let new_pos = c.pos;
                         let handler = self.get_list(&pos.container);
                         Ok(PosQueryResult {
-                            update: handler.get_stable_position(new_pos),
+                            update: handler.get_stable_position(new_pos, c.side),
                             current: Cursor {
                                 pos: new_pos,
                                 side: c.side,

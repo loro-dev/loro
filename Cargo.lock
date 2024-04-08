@@ -906,6 +906,7 @@ dependencies = [
  "loro-rle",
  "serde",
  "serde-wasm-bindgen",
+ "tracing",
  "tracing-wasm",
  "wasm-bindgen",
 ]
