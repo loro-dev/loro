@@ -2124,34 +2124,35 @@ impl TreeHandler {
         let parent: Option<TreeID> = parent.into();
         let tree_id = TreeID::from_id(txn.next_id());
         let position = {
-            match self.generate_position_at(parent, index) {
+            match self.generate_position_at(&tree_id, parent, index) {
                 Ok(position) => position,
-                Err(mut ids) => {
-                    while let Some(id) = ids.pop() {
-                        // FIXME: Seems wrong. The items will be reversed. Need tests
-                        // It's also slow not distributed evenly
-                        self.mov_with_txn(txn, id, parent, index)?;
+                Err(ids) => {
+                    for (i, (id, position)) in ids.into_iter().enumerate() {
+                        if i == 0 {
+                            self.create_with_position(inner, txn, id, parent, index, position)?;
+                            continue;
+                        }
+                        self.mov_with_position(inner, txn, id, parent, index + i, position)?;
                     }
-                    self.generate_position_at(parent, index).unwrap()
+                    return Ok(tree_id);
                 }
             }
-        };
-        let event_hint = TreeDiffItem {
-            target: tree_id,
-            action: TreeExternalDiff::Create {
-                parent,
-                index,
-                position: position.clone(),
-            },
         };
         txn.apply_local_op(
             inner.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
                 target: tree_id,
                 parent,
-                position: Some(position),
+                position: Some(position.clone()),
             }),
-            EventHint::Tree(event_hint),
+            EventHint::Tree(TreeDiffItem {
+                target: tree_id,
+                action: TreeExternalDiff::Create {
+                    parent,
+                    index,
+                    position,
+                },
+            }),
             &inner.state,
         )?;
         Ok(tree_id)
@@ -2184,52 +2185,84 @@ impl TreeHandler {
     ) -> LoroResult<()> {
         let parent = parent.into();
         let inner = self.inner.try_attached_state()?;
+        let mut children_len = self.children_num(parent).unwrap_or(0);
+        let mut already_in_parent = false;
+        // check the input is valid
+        if self.is_parent(target, parent) {
+            // If the position after moving is same as the current position , do nothing
+            if let Some(current_index) = self.get_index_by_tree_id(&target, parent) {
+                if current_index == index {
+                    return Ok(());
+                }
+                // move out first, we cannot delete the position here
+                // If throw error, the tree will be in a inconsistent state
+                children_len -= 1;
+                already_in_parent = true;
+            }
+        };
+        if index > children_len {
+            return Err(LoroTreeError::IndexOutOfBound {
+                len: children_len,
+                index,
+            }
+            .into());
+        }
+        if already_in_parent {
+            self.delete_position(parent, target);
+        }
 
         let position = {
-            // check the input is valid
-            let same_parent = self.is_parent(target, parent);
-            let mut need_move_out_self_first = false;
-            if same_parent {
-                // If the position after moving is same as the current position , do nothing
-                if let Some(current_index) = self.get_index_by_tree_id(&target, parent) {
-                    if current_index == index {
-                        return Ok(());
-                    }
-                    // move out first
-                    need_move_out_self_first = true;
-                }
-            };
-            let children_len = self.children_num(parent);
-            if let Some(mut children_len) = children_len {
-                if need_move_out_self_first {
-                    children_len -= 1;
-                }
-                if index > children_len {
-                    return Err(LoroTreeError::IndexOutOfBound {
-                        len: children_len,
-                        index,
-                    }
-                    .into());
-                }
-            } else if index != 0 {
-                return Err(LoroTreeError::IndexOutOfBound { len: 0, index }.into());
-            }
-
-            // Why do we need this?
-            if need_move_out_self_first {
-                self.delete_position(parent, target);
-            }
-
-            match self.generate_position_at(parent, index) {
+            match self.generate_position_at(&target, parent, index) {
                 Ok(position) => position,
-                Err(mut ids) => {
-                    while let Some(id) = ids.pop() {
-                        self.mov_with_txn(txn, id, parent, index)?;
+                Err(ids) => {
+                    for (i, (id, position)) in ids.into_iter().enumerate() {
+                        self.mov_with_position(inner, txn, id, parent, index + i, position)?;
                     }
-                    self.generate_position_at(parent, index).unwrap()
+                    return Ok(());
                 }
             }
         };
+        self.mov_with_position(inner, txn, target, parent, index, position)
+    }
+
+    fn create_with_position(
+        &self,
+        inner: &BasicHandler,
+        txn: &mut Transaction,
+        tree_id: TreeID,
+        parent: Option<TreeID>,
+        index: usize,
+        position: FractionalIndex,
+    ) -> LoroResult<TreeID> {
+        txn.apply_local_op(
+            inner.container_idx,
+            crate::op::RawOpContent::Tree(TreeOp {
+                target: tree_id,
+                parent,
+                position: Some(position.clone()),
+            }),
+            EventHint::Tree(TreeDiffItem {
+                target: tree_id,
+                action: TreeExternalDiff::Create {
+                    parent,
+                    index,
+                    position,
+                },
+            }),
+            &inner.state,
+        )?;
+        Ok(tree_id)
+    }
+
+    fn mov_with_position(
+        &self,
+        inner: &BasicHandler,
+        txn: &mut Transaction,
+        target: TreeID,
+        parent: Option<TreeID>,
+        index: usize,
+        position: FractionalIndex,
+    ) -> LoroResult<()> {
         txn.apply_local_op(
             inner.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -2242,7 +2275,7 @@ impl TreeHandler {
                 action: TreeExternalDiff::Move {
                     parent,
                     index,
-                    position: position.clone(),
+                    position,
                 },
             }),
             &inner.state,
@@ -2367,16 +2400,17 @@ impl TreeHandler {
 
     fn generate_position_at(
         &self,
+        target: &TreeID,
         parent: Option<TreeID>,
         index: usize,
-    ) -> Result<FractionalIndex, Vec<TreeID>> {
+    ) -> Result<FractionalIndex, Vec<(TreeID, FractionalIndex)>> {
         match &self.inner {
             MaybeDetached::Detached(_) => {
                 unimplemented!()
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state_mut().unwrap();
-                a.generate_position_at(&TreeParentId::from(parent), index)
+                a.generate_position_at(&target, &TreeParentId::from(parent), index)
             }),
         }
     }

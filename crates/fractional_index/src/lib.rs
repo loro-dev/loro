@@ -150,6 +150,34 @@ impl FractionalIndex {
         #[cfg(not(feature = "jitter"))]
         new_between(left, right)
     }
+
+    // TODO: perf
+    pub fn generate_n_evenly(
+        lower: Option<&FractionalIndex>,
+        upper: Option<&FractionalIndex>,
+        n: usize,
+    ) -> Option<Vec<Self>> {
+        if n == 0 {
+            return Some(vec![]);
+        }
+        let mid = n / 2;
+        let mid_ans = Self::new(lower, upper)?;
+        if mid == 0 {
+            return vec![mid_ans].into();
+        }
+        let mut ans = Vec::with_capacity(n);
+        let left = Self::generate_n_evenly(lower, Some(&mid_ans), mid)?;
+        if n - mid - 1 == 0 {
+            ans.extend(left);
+            ans.push(mid_ans);
+            return ans.into();
+        }
+        let right = Self::generate_n_evenly(Some(&mid_ans), upper, n - mid - 1)?;
+        ans.extend(left);
+        ans.push(mid_ans);
+        ans.extend(right);
+        ans.into()
+    }
 }
 
 impl ToString for FractionalIndex {
@@ -173,4 +201,28 @@ pub fn bytes_to_hex(bytes: &[u8]) -> String {
         s.push_str(&byte_to_hex(*byte));
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::FractionalIndex;
+
+    #[test]
+    fn evenly() {
+        let mut len = 0;
+        for ans in FractionalIndex::generate_n_evenly(None, None, 7).unwrap() {
+            println!("{:?}", ans);
+            len += ans.as_bytes().len();
+        }
+        println!("len {}", len);
+
+        let mut ans = FractionalIndex::default();
+        let mut len = 1;
+        for _ in 0..6 {
+            ans = FractionalIndex::new_after(&ans);
+            println!("{:?}", ans);
+            len += ans.as_bytes().len();
+        }
+        println!("len {}", len);
+    }
 }

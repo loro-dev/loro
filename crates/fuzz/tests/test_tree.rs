@@ -1,3 +1,4 @@
+#[allow(unused_imports)]
 use fuzz::{
     actions::{ActionInner, ActionWrapper::*, GenericAction},
     container::{MapAction, TreeAction, TreeActionInner},

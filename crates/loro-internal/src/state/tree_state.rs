@@ -16,6 +16,7 @@ use crate::container::idx::ContainerIdx;
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder};
 use crate::event::InternalDiff;
+use crate::op::Op;
 use crate::txn::Transaction;
 use crate::DocState;
 use crate::{
@@ -263,12 +264,18 @@ impl TreeState {
         self.children.get(parent).map(|x| x.len())
     }
 
+    /// Determine whether the target is the child of the node
+    ///
+    /// O(1)
     pub fn is_parent(&self, parent: &TreeParentId, target: &TreeID) -> bool {
         self.trees
             .get(target)
             .map_or(false, |x| x.parent == *parent)
     }
 
+    /// Delete the position cache of the node
+    ///
+    /// O(1) + Clone FractionalIndex
     pub(crate) fn delete_position(&mut self, parent: &TreeParentId, target: TreeID) {
         if let Some(x) = self.children.get_mut(parent) {
             let node = self.trees.get(&target).unwrap();
@@ -279,16 +286,16 @@ impl TreeState {
         }
     }
 
-    // TODO: correct
-    //
     pub(crate) fn generate_position_at(
         &mut self,
+        target: &TreeID,
         parent: &TreeParentId,
         index: usize,
-    ) -> Result<FractionalIndex, Vec<TreeID>> {
-        let mut same_position = vec![];
+    ) -> Result<FractionalIndex, Vec<(TreeID, FractionalIndex)>> {
+        let mut reset_position = vec![];
+        let mut left = None;
+        let mut next_right = None;
         {
-            let mut left = None;
             let mut right = None;
             let children_positions = self.children.get(parent);
             if children_positions.is_none() {
@@ -300,32 +307,46 @@ impl TreeState {
             let children_num = positions.len();
 
             if index > 0 {
-                left = Some(&positions.nth(index - 1).unwrap().0.position);
+                left = Some(positions.nth(index - 1).unwrap().0.position.clone());
             }
             if index < children_num {
                 let t = positions.next().unwrap();
                 right = Some(t.0);
             }
 
-            if left.is_some() && left == right.map(|x| &x.position) {
+            if left.is_some() && left.as_ref() == right.map(|x| &x.position) {
                 // TODO: the min length between left and right
-                same_position.push(right.unwrap().clone());
+                reset_position.push(right.unwrap().clone());
                 for (p, _) in positions {
                     if p.position == right.unwrap().position {
-                        same_position.push(p.clone());
+                        reset_position.push(p.clone());
                     } else {
+                        next_right = Some(p.position.clone());
                         break;
                     }
                 }
             }
 
-            if same_position.is_empty() {
-                return Ok(FractionalIndex::new(left, right.map(|x| &x.position)).unwrap());
+            if reset_position.is_empty() {
+                return Ok(
+                    FractionalIndex::new(left.as_ref(), right.map(|x| &x.position)).unwrap(),
+                );
             }
         }
-        Err(same_position
+        let positions = FractionalIndex::generate_n_evenly(
+            left.as_ref(),
+            next_right.as_ref(),
+            reset_position.len() + 1,
+        )
+        .unwrap();
+        Err([*target]
             .into_iter()
-            .map(|x| self.children.get_mut(parent).unwrap().remove(&x).unwrap())
+            .chain(
+                reset_position
+                    .into_iter()
+                    .map(|x| self.children.get_mut(parent).unwrap().remove(&x).unwrap()),
+            )
+            .zip(positions.into_iter())
             .collect())
     }
 
@@ -493,7 +514,7 @@ impl ContainerState for TreeState {
         }
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &crate::op::Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
         match &raw_op.content {
             crate::op::RawOpContent::Tree(tree) => {
                 let TreeOp {

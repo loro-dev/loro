@@ -350,6 +350,12 @@ pub mod wasm {
                         js_sys::Reflect::set(&obj, &"parent".into(), &JsValue::from(*parent))
                             .unwrap();
                         js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
+                        js_sys::Reflect::set(
+                            &obj,
+                            &"position".into(),
+                            &position.to_string().into(),
+                        )
+                        .unwrap();
                     }
                     TreeExternalDiff::Delete => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"delete".into()).unwrap();
@@ -363,6 +369,12 @@ pub mod wasm {
                         js_sys::Reflect::set(&obj, &"parent".into(), &JsValue::from(*parent))
                             .unwrap();
                         js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
+                        js_sys::Reflect::set(
+                            &obj,
+                            &"position".into(),
+                            &position.to_string().into(),
+                        )
+                        .unwrap();
                     }
                 }
                 array.push(&obj);

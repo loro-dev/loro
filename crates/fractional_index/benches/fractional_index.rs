@@ -101,6 +101,12 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         );
     }
     group.finish();
+
+    c.bench_function("evenly 10^5", |b| {
+        b.iter(|| {
+            FractionalIndex::generate_n_evenly(None, None, 100000);
+        });
+    });
 }
 
 criterion_group!(benches, criterion_benchmark);
