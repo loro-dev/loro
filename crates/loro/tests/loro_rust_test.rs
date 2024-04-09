@@ -591,7 +591,7 @@ fn get_container_by_str_path() {
 }
 
 #[test]
-fn get_stable_positions() {
+fn get_cursor() {
     let doc1 = LoroDoc::new();
     doc1.set_peer_id(1).unwrap();
     let text = doc1.get_text("text");
@@ -640,7 +640,7 @@ fn get_stable_positions() {
 }
 
 #[test]
-fn get_stable_position_at_the_end() {
+fn get_cursor_at_the_end() {
     let doc = LoroDoc::new();
     let text = &doc.get_text("text");
     text.insert(0, "01234").unwrap();
@@ -654,8 +654,9 @@ fn get_stable_position_at_the_end() {
     assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 5);
 }
 
+
 #[test]
-fn get_stable_positions_for_list() {
+fn get_cursor_for_list() {
     let doc = LoroDoc::new();
     let list = doc.get_list("list");
     let pos_start = list.get_cursor(0, Default::default()).unwrap();
