@@ -195,8 +195,7 @@ pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
     let mut start_timestamp = Timestamp::MAX;
     let mut end_timestamp = Timestamp::MIN;
 
-    for iter in iterators.changes
-    {
+    for iter in iterators.changes {
         let EncodedChange {
             peer_idx,
             len,
@@ -1087,7 +1086,7 @@ mod encode {
         let mut start_counters = Vec::new();
 
         let mut diff_changes: Vec<Cow<'a, Change>> = Vec::new();
-        for change in oplog.iter_changes(&start_vv, self_vv) {
+        for change in oplog.iter_changes_peer_by_peer(&start_vv, self_vv) {
             let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
             if !peer_register.contains(&change.id.peer) {
                 peer_register.register(&change.id.peer);

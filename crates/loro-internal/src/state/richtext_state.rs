@@ -11,13 +11,15 @@ use crate::{
     arena::SharedArena,
     container::{
         idx::ContainerIdx,
+        list::list_op,
         richtext::{
             config::StyleConfigMap,
-            richtext_state::{DrainInfo, EntityRangeInfo, IterRangeItem, PosType},
+            richtext_state::{
+                DrainInfo, EntityRangeInfo, IterRangeItem, PosType, RichtextStateChunk,
+            },
             AnchorType, RichtextState as InnerState, StyleOp, Styles,
         },
     },
-    container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
     delta::{Delta, DeltaItem, StyleMeta, StyleMetaItem},
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
@@ -109,6 +111,34 @@ impl RichtextState {
                 pos
             }
         }
+    }
+
+    pub fn get_index_of_id(&self, id: ID) -> Option<usize> {
+        let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;
+        let mut a;
+        let mut b;
+        match &self.state {
+            LazyLoad::Src(s) => {
+                a = Some(s.elements.iter());
+                iter = &mut *a.as_mut().unwrap();
+            }
+            LazyLoad::Dst(s) => {
+                b = Some(s.iter_chunk());
+                iter = &mut *b.as_mut().unwrap();
+            }
+        }
+
+        let mut index = 0;
+        for elem in iter {
+            let span = elem.get_id_span();
+            if span.contains(id) {
+                return Some(index + (id.counter - span.counter.start) as usize);
+            }
+
+            index += elem.rle_len();
+        }
+
+        None
     }
 }
 
@@ -591,6 +621,14 @@ impl RichtextState {
         }
     }
 
+    pub fn len_event(&mut self) -> usize {
+        if cfg!(feature = "wasm") {
+            self.len_utf16()
+        } else {
+            self.len_unicode()
+        }
+    }
+
     /// Check if the content and style ranges are consistent.
     ///
     /// Panic if inconsistent.
@@ -644,6 +682,19 @@ impl RichtextState {
     #[inline]
     pub fn get_richtext_value(&mut self) -> LoroValue {
         self.state.get_mut().get_richtext_value()
+    }
+
+    #[inline]
+    pub(crate) fn get_stable_position(&mut self, event_index: usize) -> Option<ID> {
+        self.state
+            .get_mut()
+            .get_stable_position_at_event_index(event_index, PosType::Event)
+    }
+
+    pub(crate) fn entity_index_to_event_index(&mut self, entity_index: usize) -> usize {
+        self.state
+            .get_mut()
+            .entity_index_to_event_index(entity_index)
     }
 }
 

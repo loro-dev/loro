@@ -6,6 +6,10 @@ use loro_internal::container::IntoContainerId;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
+use loro_internal::stable_pos::CannotFindRelativePosition;
+use loro_internal::stable_pos::Cursor;
+use loro_internal::stable_pos::PosQueryResult;
+use loro_internal::stable_pos::Side;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 
@@ -369,6 +373,31 @@ impl LoroDoc {
     pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrContainer> {
         self.doc.get_by_str_path(path).map(ValueOrContainer::from)
     }
+
+    /// Get the absolute position of the given cursor.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use loro::{LoroDoc, ToJson};
+    /// let doc = LoroDoc::new();
+    /// let text = &doc.get_text("text");
+    /// text.insert(0, "01234").unwrap();
+    /// let pos = text.get_cursor(5, Default::default()).unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 5);
+    /// text.insert(0, "01234").unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 10);
+    /// text.delete(0, 10).unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 0);
+    /// text.insert(0, "01234").unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 5);
+    /// ```
+    pub fn get_cursor_pos(
+        &self,
+        cursor: &Cursor,
+    ) -> Result<PosQueryResult, CannotFindRelativePosition> {
+        self.doc.query_pos(cursor)
+    }
 }
 
 /// It's used to prevent the user from implementing the trait directly.
@@ -547,6 +576,43 @@ impl LoroList {
         Ok(C::from_handler(
             self.handler.insert_container(pos, child.to_handler())?,
         ))
+    }
+
+    /// Get the cursor at the given position.
+    ///
+    /// Using "index" to denote cursor positions can be unstable, as positions may
+    /// shift with document edits. To reliably represent a position or range within
+    /// a document, it is more effective to leverage the unique ID of each item/character
+    /// in a List CRDT or Text CRDT.
+    ///
+    /// Loro optimizes State metadata by not storing the IDs of deleted elements. This
+    /// approach complicates tracking cursors since they rely on these IDs. The solution
+    /// recalculates position by replaying relevant history to update stable positions
+    /// accurately. To minimize the performance impact of history replay, the system
+    /// updates cursor info to reference only the IDs of currently present elements,
+    /// thereby reducing the need for replay.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use loro::LoroDoc;
+    /// use loro_internal::stable_pos::Side;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let list = doc.get_list("list");
+    /// list.insert(0, 0).unwrap();
+    /// let cursor = list.get_cursor(0, Side::Middle).unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 0);
+    /// list.insert(0, 0).unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 1);
+    /// list.insert(0, 0).unwrap();
+    /// list.insert(0, 0).unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 3);
+    /// list.insert(4, 0).unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 3);
+    /// ```
+    pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
+        self.handler.get_cursor(pos, side)
     }
 }
 
@@ -880,6 +946,40 @@ impl LoroText {
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         self.handler.to_string()
+    }
+
+    /// Get the cursor at the given position.
+    ///
+    /// Using "index" to denote cursor positions can be unstable, as positions may
+    /// shift with document edits. To reliably represent a position or range within
+    /// a document, it is more effective to leverage the unique ID of each item/character
+    /// in a List CRDT or Text CRDT.
+    ///
+    /// Loro optimizes State metadata by not storing the IDs of deleted elements. This
+    /// approach complicates tracking cursors since they rely on these IDs. The solution
+    /// recalculates position by replaying relevant history to update stable positions
+    /// accurately. To minimize the performance impact of history replay, the system
+    /// updates cursor info to reference only the IDs of currently present elements,
+    /// thereby reducing the need for replay.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use loro::{LoroDoc, ToJson};
+    /// let doc = LoroDoc::new();
+    /// let text = &doc.get_text("text");
+    /// text.insert(0, "01234").unwrap();
+    /// let pos = text.get_cursor(5, Default::default()).unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 5);
+    /// text.insert(0, "01234").unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 10);
+    /// text.delete(0, 10).unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 0);
+    /// text.insert(0, "01234").unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 5);
+    /// ```
+    pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
+        self.handler.get_cursor(pos, side)
     }
 }
 

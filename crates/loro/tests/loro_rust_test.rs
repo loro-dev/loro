@@ -589,3 +589,129 @@ fn get_container_by_str_path() {
         "value"
     );
 }
+
+#[test]
+fn get_cursor() {
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1).unwrap();
+    let text = doc1.get_text("text");
+    text.insert(0, "6789").unwrap();
+    let pos_7 = text.get_cursor(1, Default::default()).unwrap();
+    let pos_info = doc1.get_cursor_pos(&pos_7).unwrap();
+    assert!(pos_info.update.is_none());
+    assert_eq!(pos_info.current.pos, 1);
+    text.insert(0, "012345").unwrap();
+    let pos_info = doc1.get_cursor_pos(&pos_7).unwrap();
+    assert!(pos_info.update.is_none());
+    assert_eq!(pos_info.current.pos, 7);
+
+    // test merge
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2).unwrap();
+    let text2 = doc2.get_text("text");
+    text2.insert(0, "ab").unwrap();
+    let pos_a = text2.get_cursor(0, Default::default()).unwrap();
+    let pos_info = doc2.get_cursor_pos(&pos_a).unwrap();
+    assert!(pos_info.update.is_none());
+    assert_eq!(pos_info.current.pos, 0);
+    // text2: 0123456789ab
+    doc2.import(&doc1.export_snapshot()).unwrap();
+    let pos_info = doc2.get_cursor_pos(&pos_a).unwrap();
+    assert!(pos_info.update.is_none());
+    assert_eq!(pos_info.current.pos, 10);
+
+    // test delete
+    // text2: 01234~~56789~~ab
+    // text2: 01234ab
+    //            |___ pos_7
+    text2.delete(5, 5).unwrap(); // pos_7 now is 5
+    let pos_info = doc2.get_cursor_pos(&pos_7).unwrap(); // it should be fine to query from another doc
+    assert_eq!(pos_info.update.as_ref().unwrap().id.unwrap(), ID::new(2, 0));
+    assert_eq!(pos_info.current.pos, 5);
+
+    // rich text
+    //
+    // text2: [01]234ab
+    //              |___ pos_7
+    text2.mark(0..2, "bold", true).unwrap();
+    let pos_info = doc2.get_cursor_pos(&pos_7).unwrap();
+    assert_eq!(pos_info.update.as_ref().unwrap().id.unwrap(), ID::new(2, 0));
+    assert_eq!(pos_info.current.pos, 5); // should not be affected by rich text mark
+}
+
+#[test]
+fn get_cursor_at_the_end() {
+    let doc = LoroDoc::new();
+    let text = &doc.get_text("text");
+    text.insert(0, "01234").unwrap();
+    let pos = text.get_cursor(5, Default::default()).unwrap();
+    assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 5);
+    text.insert(0, "01234").unwrap();
+    assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 10);
+    text.delete(0, 10).unwrap();
+    assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 0);
+    text.insert(0, "01234").unwrap();
+    assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 5);
+}
+
+
+#[test]
+fn get_cursor_for_list() {
+    let doc = LoroDoc::new();
+    let list = doc.get_list("list");
+    let pos_start = list.get_cursor(0, Default::default()).unwrap();
+    list.insert(0, 1).unwrap();
+    let pos_0 = list.get_cursor(0, Default::default()).unwrap();
+    let pos_end = list.get_cursor(1, Default::default()).unwrap();
+    {
+        let result = doc.get_cursor_pos(&pos_start).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_0).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_end).unwrap();
+        assert_eq!(result.current.pos, 1);
+    }
+    list.insert(0, 1).unwrap();
+    {
+        let result = doc.get_cursor_pos(&pos_start).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_0).unwrap();
+        assert_eq!(result.current.pos, 1);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_end).unwrap();
+        assert_eq!(result.current.pos, 2);
+    }
+    list.insert(0, 1).unwrap();
+    {
+        let result = doc.get_cursor_pos(&pos_start).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_0).unwrap();
+        assert_eq!(result.current.pos, 2);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_end).unwrap();
+        assert_eq!(result.current.pos, 3);
+    }
+    list.insert(0, 1).unwrap();
+    {
+        let result = doc.get_cursor_pos(&pos_start).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_0).unwrap();
+        assert_eq!(result.current.pos, 3);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_end).unwrap();
+        assert_eq!(result.current.pos, 4);
+    }
+}

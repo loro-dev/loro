@@ -12,6 +12,7 @@ use loro_internal::{
     },
     id::{Counter, TreeID, ID},
     obs::SubID,
+    stable_pos::{self, Side},
     version::Frontiers,
     ContainerType, DiffEvent, HandlerTrait, LoroDoc, LoroValue,
     VersionVector as InternalVersionVector,
@@ -133,6 +134,10 @@ extern "C" {
     pub type JsListStr;
     #[wasm_bindgen(typescript_type = "ImportBlobMetadata")]
     pub type JsImportBlobMetadata;
+    #[wasm_bindgen(typescript_type = "Side")]
+    pub type JsSide;
+    #[wasm_bindgen(typescript_type = "{ update?: StablePosition, offset: number, side: Side }")]
+    pub type JsStablePosQueryAns;
 }
 
 mod observer {
@@ -181,6 +186,14 @@ fn ids_to_frontiers(ids: Vec<JsID>) -> JsResult<Frontiers> {
     Ok(frontiers)
 }
 
+fn id_to_js(id: &ID) -> JsValue {
+    let obj = Object::new();
+    Reflect::set(&obj, &"peer".into(), &id.peer.to_string().into()).unwrap();
+    Reflect::set(&obj, &"counter".into(), &id.counter.into()).unwrap();
+    let value: JsValue = obj.into_js_result().unwrap();
+    value
+}
+
 fn js_id_to_id(id: JsID) -> Result<ID, JsValue> {
     let peer = js_peer_to_peer(Reflect::get(&id, &"peer".into())?)?;
     let counter = Reflect::get(&id, &"counter".into())?.as_f64().unwrap() as Counter;
@@ -191,10 +204,7 @@ fn js_id_to_id(id: JsID) -> Result<ID, JsValue> {
 fn frontiers_to_ids(frontiers: &Frontiers) -> JsIDs {
     let js_arr = Array::new();
     for id in frontiers.iter() {
-        let obj = Object::new();
-        Reflect::set(&obj, &"peer".into(), &id.peer.to_string().into()).unwrap();
-        Reflect::set(&obj, &"counter".into(), &id.counter.into()).unwrap();
-        let value: JsValue = obj.into_js_result().unwrap();
+        let value = id_to_js(id);
         js_arr.push(&value);
     }
 
@@ -1106,6 +1116,49 @@ impl Loro {
         };
         v.into()
     }
+
+    /// Get the absolute position of the given Cursor
+    ///
+    /// @example
+    /// ```ts
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "123");
+    /// const pos0 = text.getCursor(0, 0);
+    /// {
+    ///    const ans = doc.getCursorPos(pos0!);
+    ///    expect(ans.offset).toBe(0);
+    /// }
+    /// text.insert(0, "1");
+    /// {
+    ///    const ans = doc.getCursorPos(pos0!);
+    ///    expect(ans.offset).toBe(1);
+    /// }
+    /// ```
+    pub fn getCursorPos(&self, stable_pos: &StablePosition) -> JsResult<JsStablePosQueryAns> {
+        let ans = self
+            .0
+            .query_pos(&stable_pos.pos)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+
+        let obj = Object::new();
+        let update = ans.update.map(|u| StablePosition { pos: u });
+        if let Some(update) = update {
+            let update_value: JsValue = update.into();
+            Reflect::set(&obj, &JsValue::from_str("update"), &update_value)?;
+        }
+        Reflect::set(
+            &obj,
+            &JsValue::from_str("offset"),
+            &JsValue::from(ans.current.pos),
+        )?;
+        Reflect::set(
+            &obj,
+            &JsValue::from_str("side"),
+            &JsValue::from(ans.current.side.to_i32()),
+        )?;
+        Ok(JsValue::from(obj).into())
+    }
 }
 
 #[allow(unused)]
@@ -1449,6 +1502,18 @@ impl LoroText {
         } else {
             JsValue::UNDEFINED.into()
         }
+    }
+
+    #[wasm_bindgen(skip_typescript)]
+    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<StablePosition> {
+        let mut side_value = Side::Middle;
+        if side.is_truthy() {
+            let num = side.as_f64().expect("Side must be -1 | 0 | 1");
+            side_value = Side::from_i32(num as i32).expect("Side must be -1 | 0 | 1");
+        }
+        self.handler
+            .get_cursor(pos, side_value)
+            .map(|pos| StablePosition { pos })
     }
 }
 
@@ -2064,6 +2129,18 @@ impl LoroList {
             JsValue::UNDEFINED.into()
         }
     }
+
+    #[wasm_bindgen(skip_typescript)]
+    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<StablePosition> {
+        let mut side_value = Side::Middle;
+        if side.is_truthy() {
+            let num = side.as_f64().expect("Side must be -1 | 0 | 1");
+            side_value = Side::from_i32(num as i32).expect("Side must be -1 | 0 | 1");
+        }
+        self.handler
+            .get_cursor(pos, side_value)
+            .map(|pos| StablePosition { pos })
+    }
 }
 
 impl Default for LoroList {
@@ -2490,6 +2567,49 @@ impl Default for LoroTree {
     }
 }
 
+#[derive(Clone)]
+#[wasm_bindgen]
+pub struct StablePosition {
+    pos: stable_pos::Cursor,
+}
+
+#[wasm_bindgen]
+impl StablePosition {
+    pub fn containerId(&self) -> JsContainerID {
+        let js_value: JsValue = self.pos.container.to_string().into();
+        JsContainerID::from(js_value)
+    }
+
+    pub fn pos(&self) -> Option<JsID> {
+        match self.pos.id {
+            Some(id) => {
+                let value: JsValue = id_to_js(&id);
+                Some(value.into())
+            }
+            None => None,
+        }
+    }
+
+    pub fn side(&self) -> JsSide {
+        JsValue::from(match self.pos.side {
+            stable_pos::Side::Left => -1,
+            stable_pos::Side::Middle => 0,
+            stable_pos::Side::Right => 1,
+        })
+        .into()
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        self.pos.encode()
+    }
+
+    pub fn decode(data: &[u8]) -> JsResult<StablePosition> {
+        let pos =
+            stable_pos::Cursor::decode(data).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(StablePosition { pos })
+    }
+}
+
 fn loro_value_to_js_value_or_container(
     value: ValueOrHandler,
     doc: Option<Arc<LoroDoc>>,
@@ -2685,13 +2805,13 @@ export type ContainerID =
 export type TreeID = `${number}@${PeerID}`;
 
 interface Loro {
-    /** 
+    /**
      * Export updates from the specific version to the current version
-     * 
+     *
      *  @example
      *  ```ts
      *  import { Loro } from "loro-crdt";
-     * 
+     *
      *  const doc = new Loro();
      *  const text = doc.getText("text");
      *  text.insert(0, "Hello");
@@ -2705,14 +2825,14 @@ interface Loro {
      */
     exportFrom(version?: VersionVector): Uint8Array;
     /**
-     * 
+     *
      *  Get the container corresponding to the container id
-     * 
-     * 
+     *
+     *
      *  @example
      *  ```ts
      *  import { Loro } from "loro-crdt";
-     * 
+     *
      *  const doc = new Loro();
      *  let text = doc.getText("text");
      *  const textId = text.id;
@@ -2817,4 +2937,82 @@ export interface ImportBlobMetadata {
     isSnapshot: boolean;
     changeNum: number;
 }
+
+interface LoroText {
+    /**
+     * Get a stable position representing the cursor position.
+     *
+     * When expressing the position of a cursor, using "index" can be unstable
+     * because the cursor's position may change due to other deletions and insertions,
+     * requiring updates with each edit. To stably represent a position or range within
+     * a list structure, we can utilize the ID of each item/character on List CRDT or
+     * Text CRDT for expression.
+     * 
+     * Loro optimizes State metadata by not storing the IDs of deleted elements. This 
+     * approach complicates tracking cursors since they rely on these IDs. The solution 
+     * recalculates position by replaying relevant history to update stable positions 
+     * accurately. To minimize the performance impact of history replay, the system 
+     * updates cursor info to reference only the IDs of currently present elements, 
+     * thereby reducing the need for replay.
+     * 
+     * @example
+     * ```ts
+     * 
+     * const doc = new Loro();
+     * const text = doc.getText("text");
+     * text.insert(0, "123");
+     * const pos0 = text.getCursor(0, 0);
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(0);
+     * }
+     * text.insert(0, "1");
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(1);
+     * }
+     * ```
+     */
+    getCursor(pos: usize, side?: Side): StablePosition | undefined;
+}
+
+interface LoroList {
+    /**
+     * Get a stable position representing the cursor position.
+     *
+     * When expressing the position of a cursor, using "index" can be unstable
+     * because the cursor's position may change due to other deletions and insertions,
+     * requiring updates with each edit. To stably represent a position or range within
+     * a list structure, we can utilize the ID of each item/character on List CRDT or
+     * Text CRDT for expression.
+     * 
+     * Loro optimizes State metadata by not storing the IDs of deleted elements. This 
+     * approach complicates tracking cursors since they rely on these IDs. The solution 
+     * recalculates position by replaying relevant history to update stable positions 
+     * accurately. To minimize the performance impact of history replay, the system 
+     * updates cursor info to reference only the IDs of currently present elements, 
+     * thereby reducing the need for replay.
+     * 
+     * @example
+     * ```ts
+     * 
+     * const doc = new Loro();
+     * const text = doc.getList("list");
+     * text.insert(0, "1");
+     * const pos0 = text.getCursor(0, 0);
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(0);
+     * }
+     * text.insert(0, "1");
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(1);
+     * }
+     * ```
+     */
+    getCursor(pos: usize, side?: Side): StablePosition | undefined;
+}
+
+export type Side = -1 | 0 | 1;
 "#;
