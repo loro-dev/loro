@@ -57,12 +57,12 @@ impl<'a, T: HasLamport> Iterator for PeerChangesIter<'a, T> {
         }
 
         if self.is_forward {
-            let next = self.changes.first().unwrap();
-            self.changes = &self.changes[1..];
+            let (next, rest) = self.changes.split_first().unwrap();
+            self.changes = rest;
             Some(next)
         } else {
-            let next = self.changes.last().unwrap();
-            self.changes = &self.changes[..self.changes.len() - 1];
+            let (next, rest) = self.changes.split_last().unwrap();
+            self.changes = rest;
             Some(next)
         }
     }
