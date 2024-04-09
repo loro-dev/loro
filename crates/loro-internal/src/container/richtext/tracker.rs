@@ -385,7 +385,11 @@ impl Tracker {
 
                 return Some(AbsolutePosition {
                     pos: index,
-                    side: crate::stable_pos::Side::Left,
+                    side: if is_activated {
+                        crate::stable_pos::Side::Middle
+                    } else {
+                        crate::stable_pos::Side::Left
+                    },
                 });
             }
 
