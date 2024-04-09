@@ -205,24 +205,40 @@ describe("richtext", () => {
     ]);
   });
 
-  it("Get and query stable position", () => {
+  it("Cursor example", () => {
+    const doc = new Loro();
+    const text = doc.getText("text");
+    text.insert(0, "123");
+    const pos0 = text.getCursor(0, 0);
+    {
+      const ans = doc.getCursorPos(pos0!);
+      expect(ans.offset).toBe(0);
+    }
+    text.insert(0, "1");
+    {
+      const ans = doc.getCursorPos(pos0!);
+      expect(ans.offset).toBe(1);
+    }
+  });
+
+  it("Get and query cursor", () => {
     const doc = new Loro();
     const text = doc.getText("text");
     doc.setPeerId("1");
     text.insert(0, "123");
-    const pos0 = text.getStablePos(0, 0);
+    const pos0 = text.getCursor(0, 0);
     expect(pos0?.containerId()).toBe("cid:root-text:Text");
     // pos0 points to the first character, i.e. the id of '1'
     expect(pos0?.pos()).toStrictEqual({ peer: "1", counter: 0 } as OpId);
     {
-      const ans = doc.queryStablePos(pos0!);
+      const ans = doc.getCursorPos(pos0!);
       expect(ans.side).toBe(0);
       expect(ans.offset).toBe(0);
       expect(ans.update).toBeUndefined();
     }
     text.insert(0, "abc");
     {
-      const ans = doc.queryStablePos(pos0!);
+      const ans = doc.getCursorPos(pos0!);
       expect(ans.side).toBe(0);
       expect(ans.offset).toBe(3);
       expect(ans.update).toBeUndefined();
@@ -231,7 +247,7 @@ describe("richtext", () => {
     text.delete(3, 1); // remove "1", "abc23"
     doc.commit();
     {
-      const ans = doc.queryStablePos(pos0!);
+      const ans = doc.getCursorPos(pos0!);
       expect(ans.side).toBe(-1);
       expect(ans.offset).toBe(3);
       expect(ans.update).toBeDefined(); // The update of the stable position should be returned

@@ -21,7 +21,7 @@ use crate::{
     handler::ValueOrHandler,
     id::PeerID,
     op::{ListSlice, Op, RawOp, RawOpContent},
-    stable_pos::StablePosition,
+    stable_pos::Cursor,
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
@@ -1083,7 +1083,7 @@ impl DocState {
         }
     }
 
-    pub fn get_relative_position(&mut self, pos: &StablePosition) -> Option<usize> {
+    pub fn get_relative_position(&mut self, pos: &Cursor) -> Option<usize> {
         let idx = self.arena.register_container(&pos.container);
         let state = self.states.get_mut(&idx)?;
         if let Some(id) = pos.id {

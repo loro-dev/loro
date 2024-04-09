@@ -22,7 +22,7 @@ use crate::{
     event::InternalDiff,
     op::{RichOp, SliceRange, SliceRanges},
     span::{HasId, HasLamport},
-    stable_pos::Cursor,
+    stable_pos::AbsolutePosition,
     version::Frontiers,
     InternalString, VersionVector,
 };
@@ -462,7 +462,7 @@ pub(crate) struct ListDiffCalculator {
     tracker: Box<RichtextTracker>,
 }
 impl ListDiffCalculator {
-    pub(crate) fn get_id_latest_pos(&self, id: ID) -> Option<crate::stable_pos::Cursor> {
+    pub(crate) fn get_id_latest_pos(&self, id: ID) -> Option<crate::stable_pos::AbsolutePosition> {
         self.tracker.get_target_id_latest_index_at_new_version(id)
     }
 }
@@ -604,7 +604,7 @@ impl RichtextDiffCalculator {
     /// This should be called after calc_diff
     ///
     /// TODO: Refactor, this can be simplified
-    pub fn get_id_latest_pos(&self, id: ID) -> Option<Cursor> {
+    pub fn get_id_latest_pos(&self, id: ID) -> Option<AbsolutePosition> {
         self.tracker.get_target_id_latest_index_at_new_version(id)
     }
 }

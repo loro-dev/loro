@@ -30,7 +30,7 @@ use crate::{
     id::PeerID,
     op::InnerContent,
     oplog::dag::FrontiersNotIncluded,
-    stable_pos::{CannotFindRelativePosition, Cursor, PosQueryResult, StablePosition},
+    stable_pos::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
     version::Frontiers,
     HandlerTrait, InternalString, LoroError, VersionVector,
 };
@@ -869,15 +869,12 @@ impl LoroDoc {
     }
 
     /// Get position in a seq container
-    pub fn query_pos(
-        &self,
-        pos: &StablePosition,
-    ) -> Result<PosQueryResult, CannotFindRelativePosition> {
+    pub fn query_pos(&self, pos: &Cursor) -> Result<PosQueryResult, CannotFindRelativePosition> {
         let mut state = self.state.lock().unwrap();
         if let Some(ans) = state.get_relative_position(pos) {
             Ok(PosQueryResult {
                 update: None,
-                current: Cursor {
+                current: AbsolutePosition {
                     pos: ans,
                     side: pos.side,
                 },
@@ -926,8 +923,8 @@ impl LoroDoc {
                         let handler = self.get_text(&pos.container);
                         let current_pos = handler.convert_entity_index_to_event_index(new_pos);
                         Ok(PosQueryResult {
-                            update: handler.get_stable_position(current_pos, c.side),
-                            current: Cursor {
+                            update: handler.get_cursor(current_pos, c.side),
+                            current: AbsolutePosition {
                                 pos: current_pos,
                                 side: c.side,
                             },
@@ -938,8 +935,8 @@ impl LoroDoc {
                         let new_pos = c.pos;
                         let handler = self.get_list(&pos.container);
                         Ok(PosQueryResult {
-                            update: handler.get_stable_position(new_pos, c.side),
-                            current: Cursor {
+                            update: handler.get_cursor(new_pos, c.side),
+                            current: AbsolutePosition {
                                 pos: new_pos,
                                 side: c.side,
                             },
@@ -953,12 +950,12 @@ impl LoroDoc {
                     ContainerType::Text => {
                         let text = self.get_text(&pos.container);
                         Ok(PosQueryResult {
-                            update: Some(StablePosition {
+                            update: Some(Cursor {
                                 id: None,
                                 container: text.id(),
                                 side: pos.side,
                             }),
-                            current: Cursor {
+                            current: AbsolutePosition {
                                 pos: text.len_event(),
                                 side: pos.side,
                             },
@@ -967,12 +964,12 @@ impl LoroDoc {
                     ContainerType::List => {
                         let list = self.get_list(&pos.container);
                         Ok(PosQueryResult {
-                            update: Some(StablePosition {
+                            update: Some(Cursor {
                                 id: None,
                                 container: list.id(),
                                 side: pos.side,
                             }),
-                            current: Cursor {
+                            current: AbsolutePosition {
                                 pos: list.len(),
                                 side: pos.side,
                             },

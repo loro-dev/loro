@@ -9,7 +9,7 @@ use crate::{
     },
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
-    stable_pos::{Side, StablePosition},
+    stable_pos::{Cursor, Side},
     state::{ContainerState, State, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
@@ -1475,7 +1475,7 @@ impl TextHandler {
     }
 
     /// Get the stable position representation for the target pos
-    pub fn get_stable_position(&self, event_index: usize, side: Side) -> Option<StablePosition> {
+    pub fn get_cursor(&self, event_index: usize, side: Side) -> Option<Cursor> {
         match &self.inner {
             MaybeDetached::Detached(_) => None,
             MaybeDetached::Attached(a) => {
@@ -1485,7 +1485,7 @@ impl TextHandler {
                 });
 
                 if len == 0 {
-                    return Some(StablePosition {
+                    return Some(Cursor {
                         id: None,
                         container: self.id(),
                         side: if side == Side::Middle {
@@ -1497,7 +1497,7 @@ impl TextHandler {
                 }
 
                 if len <= event_index {
-                    return Some(StablePosition {
+                    return Some(Cursor {
                         id: None,
                         container: self.id(),
                         side: Side::Right,
@@ -1505,7 +1505,7 @@ impl TextHandler {
                 }
 
                 let id = id?;
-                Some(StablePosition {
+                Some(Cursor {
                     id: Some(id),
                     container: self.id(),
                     side,
@@ -1849,7 +1849,7 @@ impl ListHandler {
         }
     }
 
-    pub fn get_stable_position(&self, pos: usize, side: Side) -> Option<StablePosition> {
+    pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
         match &self.inner {
             MaybeDetached::Detached(_) => None,
             MaybeDetached::Attached(a) => {
@@ -1859,7 +1859,7 @@ impl ListHandler {
                 });
 
                 if len == 0 {
-                    return Some(StablePosition {
+                    return Some(Cursor {
                         id: None,
                         container: self.id(),
                         side: if side == Side::Middle {
@@ -1871,7 +1871,7 @@ impl ListHandler {
                 }
 
                 if len <= pos {
-                    return Some(StablePosition {
+                    return Some(Cursor {
                         id: None,
                         container: self.id(),
                         side: Side::Right,
@@ -1879,7 +1879,7 @@ impl ListHandler {
                 }
 
                 let id = id?;
-                Some(StablePosition {
+                Some(Cursor {
                     id: Some(id.id()),
                     container: self.id(),
                     side,

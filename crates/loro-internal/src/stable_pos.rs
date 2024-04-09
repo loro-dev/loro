@@ -2,7 +2,7 @@ use loro_common::{ContainerID, ID};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct StablePosition {
+pub struct Cursor {
     // It's option because it's possible that the given container is empty.
     pub id: Option<ID>,
     pub container: ContainerID,
@@ -37,12 +37,12 @@ impl Side {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PosQueryResult {
-    pub update: Option<StablePosition>,
-    pub current: Cursor,
+    pub update: Option<Cursor>,
+    pub current: AbsolutePosition,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Cursor {
+pub struct AbsolutePosition {
     pub pos: usize,
     /// The target position is at the left, middle, or right of the given pos.
     pub side: Side,
@@ -58,7 +58,7 @@ pub enum CannotFindRelativePosition {
     IdNotFound,
 }
 
-impl StablePosition {
+impl Cursor {
     pub fn new(id: Option<ID>, container: ContainerID, side: Side) -> Self {
         Self {
             id,

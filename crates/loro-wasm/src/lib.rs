@@ -1117,7 +1117,25 @@ impl Loro {
         v.into()
     }
 
-    pub fn queryStablePos(&self, stable_pos: &StablePosition) -> JsResult<JsStablePosQueryAns> {
+    /// Get the absolute position of the given Cursor
+    ///
+    /// @example
+    /// ```ts
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "123");
+    /// const pos0 = text.getCursor(0, 0);
+    /// {
+    ///    const ans = doc.getCursorPos(pos0!);
+    ///    expect(ans.offset).toBe(0);
+    /// }
+    /// text.insert(0, "1");
+    /// {
+    ///    const ans = doc.getCursorPos(pos0!);
+    ///    expect(ans.offset).toBe(1);
+    /// }
+    /// ```
+    pub fn getCursorPos(&self, stable_pos: &StablePosition) -> JsResult<JsStablePosQueryAns> {
         let ans = self
             .0
             .query_pos(&stable_pos.pos)
@@ -1487,14 +1505,14 @@ impl LoroText {
     }
 
     #[wasm_bindgen(skip_typescript)]
-    pub fn getStablePos(&self, pos: usize, side: JsSide) -> Option<StablePosition> {
+    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<StablePosition> {
         let mut side_value = Side::Middle;
         if side.is_truthy() {
             let num = side.as_f64().expect("Side must be -1 | 0 | 1");
             side_value = Side::from_i32(num as i32).expect("Side must be -1 | 0 | 1");
         }
         self.handler
-            .get_stable_position(pos, side_value)
+            .get_cursor(pos, side_value)
             .map(|pos| StablePosition { pos })
     }
 }
@@ -2113,14 +2131,14 @@ impl LoroList {
     }
 
     #[wasm_bindgen(skip_typescript)]
-    pub fn getStablePos(&self, pos: usize, side: JsSide) -> Option<StablePosition> {
+    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<StablePosition> {
         let mut side_value = Side::Middle;
         if side.is_truthy() {
             let num = side.as_f64().expect("Side must be -1 | 0 | 1");
             side_value = Side::from_i32(num as i32).expect("Side must be -1 | 0 | 1");
         }
         self.handler
-            .get_stable_position(pos, side_value)
+            .get_cursor(pos, side_value)
             .map(|pos| StablePosition { pos })
     }
 }
@@ -2552,7 +2570,7 @@ impl Default for LoroTree {
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct StablePosition {
-    pos: stable_pos::StablePosition,
+    pos: stable_pos::Cursor,
 }
 
 #[wasm_bindgen]
@@ -2586,8 +2604,8 @@ impl StablePosition {
     }
 
     pub fn decode(data: &[u8]) -> JsResult<StablePosition> {
-        let pos = stable_pos::StablePosition::decode(data)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let pos =
+            stable_pos::Cursor::decode(data).map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(StablePosition { pos })
     }
 }
@@ -2929,8 +2947,26 @@ interface LoroText {
      * requiring updates with each edit. To stably represent a position or range within
      * a list structure, we can utilize the ID of each item/character on List CRDT or
      * Text CRDT for expression.
+     * 
+     * @example
+     * ```ts
+     * 
+     * const doc = new Loro();
+     * const text = doc.getText("text");
+     * text.insert(0, "123");
+     * const pos0 = text.getCursor(0, 0);
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(0);
+     * }
+     * text.insert(0, "1");
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(1);
+     * }
+     * ```
      */
-    getStablePos(pos: usize, side?: Side): StablePosition | undefined;
+    getCursor(pos: usize, side?: Side): StablePosition | undefined;
 }
 
 interface LoroList {
@@ -2942,8 +2978,26 @@ interface LoroList {
      * requiring updates with each edit. To stably represent a position or range within
      * a list structure, we can utilize the ID of each item/character on List CRDT or
      * Text CRDT for expression.
+     * 
+     * @example
+     * ```ts
+     * 
+     * const doc = new Loro();
+     * const text = doc.getList("list");
+     * text.insert(0, "1");
+     * const pos0 = text.getCursor(0, 0);
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(0);
+     * }
+     * text.insert(0, "1");
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(1);
+     * }
+     * ```
      */
-    getStablePos(pos: usize, side?: Side): StablePosition | undefined;
+    getCursor(pos: usize, side?: Side): StablePosition | undefined;
 }
 
 export type Side = -1 | 0 | 1;

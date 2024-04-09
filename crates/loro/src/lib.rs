@@ -7,9 +7,9 @@ use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::stable_pos::CannotFindRelativePosition;
+use loro_internal::stable_pos::Cursor;
 use loro_internal::stable_pos::PosQueryResult;
 use loro_internal::stable_pos::Side;
-use loro_internal::stable_pos::StablePosition;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 
@@ -374,11 +374,11 @@ impl LoroDoc {
         self.doc.get_by_str_path(path).map(ValueOrContainer::from)
     }
 
-    pub fn query_pos(
+    pub fn get_cursor_pos(
         &self,
-        pos: &StablePosition,
+        cursor: &Cursor,
     ) -> Result<PosQueryResult, CannotFindRelativePosition> {
-        self.doc.query_pos(pos)
+        self.doc.query_pos(cursor)
     }
 }
 
@@ -560,8 +560,8 @@ impl LoroList {
         ))
     }
 
-    pub fn get_stable_position(&self, pos: usize, side: Side) -> Option<StablePosition> {
-        self.handler.get_stable_position(pos, side)
+    pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
+        self.handler.get_cursor(pos, side)
     }
 }
 
@@ -897,8 +897,8 @@ impl LoroText {
         self.handler.to_string()
     }
 
-    pub fn get_stable_position_at(&self, pos: usize, side: Side) -> Option<StablePosition> {
-        self.handler.get_stable_position(pos, side)
+    pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
+        self.handler.get_cursor(pos, side)
     }
 }
 

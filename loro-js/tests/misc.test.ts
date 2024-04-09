@@ -273,24 +273,24 @@ describe("list stable position", () => {
     const loro = new Loro();
     const list = loro.getList("list");
     list.insert(0, "a");
-    const pos0 = list.getStablePos(0);
+    const pos0 = list.getCursor(0);
     list.insert(1, "b");
     {
-      const ans = loro.queryStablePos(pos0!);
+      const ans = loro.getCursorPos(pos0!);
       expect(ans.offset).toEqual(0);
       expect(ans.side).toEqual(0);
       expect(ans.update).toBeUndefined();
     }
     list.insert(0, "c");
     {
-      const ans = loro.queryStablePos(pos0!);
+      const ans = loro.getCursorPos(pos0!);
       expect(ans.offset).toEqual(1);
       expect(ans.side).toEqual(0);
       expect(ans.update).toBeUndefined();
     }
     list.delete(1, 1);
     {
-      const ans = loro.queryStablePos(pos0!);
+      const ans = loro.getCursorPos(pos0!);
       expect(ans.offset).toEqual(1);
       expect(ans.side).toEqual(-1);
       expect(ans.update).toBeDefined();
