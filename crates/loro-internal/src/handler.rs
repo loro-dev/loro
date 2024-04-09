@@ -9,7 +9,7 @@ use crate::{
     },
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
-    state::{ContainerState, State, TreeParentId},
+    state::{ContainerState, GetPositionResult, State, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
 };
@@ -600,12 +600,7 @@ impl TreeInner {
     fn create(&mut self, parent: Option<TreeID>) -> TreeID {
         let id = TreeID::new(PeerID::MAX, self.next_counter);
         self.next_counter += 1;
-        self.map.insert(
-            id,
-            Handler::new_unattached(ContainerType::Map)
-                .into_map()
-                .unwrap(),
-        );
+        self.map.insert(id, MapHandler::new_detached());
         self.parent_links.insert(id, parent);
         id
     }
@@ -2123,39 +2118,21 @@ impl TreeHandler {
         let inner = self.inner.try_attached_state()?;
         let parent: Option<TreeID> = parent.into();
         let tree_id = TreeID::from_id(txn.next_id());
-        let position = {
-            match self.generate_position_at(&tree_id, parent, index) {
-                Ok(position) => position,
-                Err(ids) => {
-                    for (i, (id, position)) in ids.into_iter().enumerate() {
-                        if i == 0 {
-                            self.create_with_position(inner, txn, id, parent, index, position)?;
-                            continue;
-                        }
-                        self.mov_with_position(inner, txn, id, parent, index + i, position)?;
-                    }
-                    return Ok(tree_id);
-                }
+        match self.generate_position_at(&tree_id, parent, index) {
+            GetPositionResult::Ok(position) => {
+                self.create_with_position(inner, txn, tree_id, parent, index, position)
             }
-        };
-        txn.apply_local_op(
-            inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp {
-                target: tree_id,
-                parent,
-                position: Some(position.clone()),
-            }),
-            EventHint::Tree(TreeDiffItem {
-                target: tree_id,
-                action: TreeExternalDiff::Create {
-                    parent,
-                    index,
-                    position,
-                },
-            }),
-            &inner.state,
-        )?;
-        Ok(tree_id)
+            GetPositionResult::Rearrange(ids) => {
+                for (i, (id, position)) in ids.into_iter().enumerate() {
+                    if i == 0 {
+                        self.create_with_position(inner, txn, id, parent, index, position)?;
+                        continue;
+                    }
+                    self.mov_with_position(inner, txn, id, parent, index + i, position)?;
+                }
+                Ok(tree_id)
+            }
+        }
     }
 
     pub fn mov<T: Into<Option<TreeID>>>(
@@ -2211,18 +2188,17 @@ impl TreeHandler {
             self.delete_position(parent, target);
         }
 
-        let position = {
-            match self.generate_position_at(&target, parent, index) {
-                Ok(position) => position,
-                Err(ids) => {
-                    for (i, (id, position)) in ids.into_iter().enumerate() {
-                        self.mov_with_position(inner, txn, id, parent, index + i, position)?;
-                    }
-                    return Ok(());
-                }
+        match self.generate_position_at(&target, parent, index) {
+            GetPositionResult::Ok(position) => {
+                self.mov_with_position(inner, txn, target, parent, index, position)
             }
-        };
-        self.mov_with_position(inner, txn, target, parent, index, position)
+            GetPositionResult::Rearrange(ids) => {
+                for (i, (id, position)) in ids.into_iter().enumerate() {
+                    self.mov_with_position(inner, txn, id, parent, index + i, position)?;
+                }
+                Ok(())
+            }
+        }
     }
 
     fn create_with_position(
@@ -2403,14 +2379,14 @@ impl TreeHandler {
         target: &TreeID,
         parent: Option<TreeID>,
         index: usize,
-    ) -> Result<FractionalIndex, Vec<(TreeID, FractionalIndex)>> {
+    ) -> GetPositionResult {
         match &self.inner {
             MaybeDetached::Detached(_) => {
                 unimplemented!()
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state_mut().unwrap();
-                a.generate_position_at(&target, &TreeParentId::from(parent), index)
+                a.generate_position_at(target, &TreeParentId::from(parent), index)
             }),
         }
     }

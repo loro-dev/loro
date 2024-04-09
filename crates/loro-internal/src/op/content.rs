@@ -2,6 +2,7 @@ use std::any::Any;
 
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
+use serde::{Deserialize, Serialize};
 
 use crate::container::{
     list::list_op::{InnerListOp, ListOp},
@@ -29,6 +30,7 @@ pub enum InnerContent {
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(EnumAsInner, Debug, PartialEq)]
+#[cfg_attr(feature = "wasm", derive(Serialize, Deserialize,))]
 pub enum RawOpContent<'a> {
     Map(MapSet),
     List(ListOp<'a>),

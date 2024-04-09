@@ -2164,7 +2164,7 @@ impl LoroTreeNode {
     /// The objects returned are new js objects each time because they need to cross
     /// the WASM boundary.
     pub fn children(&self) -> Array {
-        let children = self.tree.children(self.id);
+        let children = self.tree.children(Some(self.id));
         let children = children.into_iter().map(|c| {
             let node = LoroTreeNode::from_tree(c, self.tree.clone(), self.doc.clone());
             JsValue::from(node)

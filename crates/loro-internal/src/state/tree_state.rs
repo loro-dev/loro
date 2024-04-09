@@ -291,7 +291,7 @@ impl TreeState {
         target: &TreeID,
         parent: &TreeParentId,
         index: usize,
-    ) -> Result<FractionalIndex, Vec<(TreeID, FractionalIndex)>> {
+    ) -> GetPositionResult {
         let mut reset_position = vec![];
         let mut left = None;
         let mut next_right = None;
@@ -300,7 +300,7 @@ impl TreeState {
             let children_positions = self.children.get(parent);
             if children_positions.is_none() {
                 debug_assert_eq!(index, 0);
-                return Ok(FractionalIndex::default());
+                return GetPositionResult::Ok(FractionalIndex::default());
             }
             // TODO: PERF iterating like this is slow
             let mut positions = children_positions.unwrap().iter();
@@ -328,7 +328,7 @@ impl TreeState {
             }
 
             if reset_position.is_empty() {
-                return Ok(
+                return GetPositionResult::Ok(
                     FractionalIndex::new(left.as_ref(), right.map(|x| &x.position)).unwrap(),
                 );
             }
@@ -339,15 +339,17 @@ impl TreeState {
             reset_position.len() + 1,
         )
         .unwrap();
-        Err([*target]
-            .into_iter()
-            .chain(
-                reset_position
-                    .into_iter()
-                    .map(|x| self.children.get_mut(parent).unwrap().remove(&x).unwrap()),
-            )
-            .zip(positions.into_iter())
-            .collect())
+        GetPositionResult::Rearrange(
+            [*target]
+                .into_iter()
+                .chain(
+                    reset_position
+                        .into_iter()
+                        .map(|x| self.children.get_mut(parent).unwrap().remove(&x).unwrap()),
+                )
+                .zip(positions)
+                .collect(),
+        )
     }
 
     pub(crate) fn get_index_by_tree_id(
@@ -355,7 +357,6 @@ impl TreeState {
         parent: &TreeParentId,
         target: &TreeID,
     ) -> Option<usize> {
-        println!("children {:?}", self.children);
         (!parent.is_deleted())
             .then(|| {
                 self.children
@@ -365,6 +366,11 @@ impl TreeState {
             })
             .flatten()
     }
+}
+
+pub(crate) enum GetPositionResult {
+    Ok(FractionalIndex),
+    Rearrange(Vec<(TreeID, FractionalIndex)>),
 }
 
 impl ContainerState for TreeState {
@@ -514,7 +520,7 @@ impl ContainerState for TreeState {
         }
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
         match &raw_op.content {
             crate::op::RawOpContent::Tree(tree) => {
                 let TreeOp {

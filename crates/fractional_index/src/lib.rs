@@ -51,7 +51,7 @@ fn new_between(left: &[u8], right: &[u8]) -> Option<FractionalIndex> {
     for i in 0..shorter_len {
         if left[i] < right[i] - 1 {
             let mut ans: Vec<u8> = left[0..=i].into();
-            ans[i] += (left[i] + right[i]) / 2;
+            ans[i] += (right[i] - left[i]) / 2;
             return FractionalIndex::from_vec_unterminated(ans).into();
         }
         if left[i] == right[i] - 1 {
