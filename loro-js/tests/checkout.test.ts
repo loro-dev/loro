@@ -1,27 +1,33 @@
 import { describe, expect, it } from "vitest";
-import {
-  Loro,
-} from "../src";
+import { Loro } from "../src";
 
 describe("Checkout", () => {
-  it("simple checkout", () => {
+  it("simple checkout", async () => {
     const doc = new Loro();
     doc.setPeerId(0n);
     const text = doc.getText("text");
     text.insert(0, "H");
     doc.commit();
+    let triggered = false;
+    doc.subscribe((e) => {
+      expect(e.by).not.toBe("import");
+      expect(e.by === "checkout" || e.by === "local").toBeTruthy();
+      triggered = true;
+    });
     const v = doc.frontiers();
     text.insert(1, "i");
     expect(doc.toJson()).toStrictEqual({
-      text: "Hi"
+      text: "Hi",
     });
 
     expect(doc.isDetached()).toBeFalsy();
     doc.checkout([{ peer: "0", counter: 0 }]);
     expect(doc.isDetached()).toBeTruthy();
     expect(doc.toJson()).toStrictEqual({
-      text: "H"
+      text: "H",
     });
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    expect(triggered).toBeTruthy();
   });
 
   it("Chinese char", () => {
@@ -34,19 +40,19 @@ describe("Checkout", () => {
     v[0].counter -= 1;
     doc.checkout(v);
     expect(doc.toJson()).toStrictEqual({
-      text: "你好世"
+      text: "你好世",
     });
     v[0].counter -= 1;
     doc.checkout(v);
     expect(doc.toJson()).toStrictEqual({
-      text: "你好"
+      text: "你好",
     });
     v[0].counter -= 1;
     doc.checkout(v);
     expect(doc.toJson()).toStrictEqual({
-      text: "你"
+      text: "你",
     });
-  })
+  });
 
   it("two clients", () => {
     const doc = new Loro();

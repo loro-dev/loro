@@ -135,7 +135,7 @@ impl Actionable for MovableListAction {
                 let pos = *pos as usize;
                 match value {
                     FuzzValue::Container(c) => {
-                        let container = list.insert_container(pos, *c).unwrap();
+                        let container = list.insert_container(pos, Container::new(*c)).unwrap();
                         Some(container)
                     }
                     FuzzValue::I32(v) => {
@@ -160,7 +160,7 @@ impl Actionable for MovableListAction {
                 let pos = *pos as usize;
                 match value {
                     FuzzValue::Container(c) => {
-                        let container = list.set_container(pos, *c).unwrap();
+                        let container = list.set_container(pos, Container::new(*c)).unwrap();
                         Some(container)
                     }
                     FuzzValue::I32(v) => {

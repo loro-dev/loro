@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.14.1
+
+### Patch Changes
+
+- Supports Cursors
+
+  #### 🚀 Features
+
+  - Cursors (#290)
+
+## 0.14.0
+
+### Minor Changes
+
+- Improved API
+
+  ### 🚀 Features
+
+  - Access value/container by path (#308)
+  - Decode import blob meta (#307)
+
+  ### 🐛 Bug Fixes
+
+  - Decode iter return result by updating columnar to 0.3.4 (#309)
+
+  ### 🚜 Refactor
+
+  - Replace "local" and "fromCheckout" in event with "triggeredBy" (#312)
+  - Add concrete type for each different container (#313)
+  - _(ts)_ Make types better (#315)
+
+  ### 📚 Documentation
+
+  - Refine wasm docs (#304)
+  - Clarify that peer id should be convertible to a u64 (#306)
+
+  ### ⚙️ Miscellaneous Tasks
+
+  - Add coverage report cli (#311)
+
+## 0.13.1
+
+### Patch Changes
+
+- Fix type errors and conversion from js->rust error
+
+## 0.13.0
+
+### Minor Changes
+
+- BREAKING CHANGE: `detached` mode for Containers #300
+
+  Now creating sub-containers is much easier.
+
+  A container can be either attached to a document or detached. When it's detached, its history/state is not persisted. You can attach a container to a document by inserting it into an existing attached container. Once a container is attached, its state, along with all of its descendants's states, will be recreated in the document. After attaching, the container and its descendants will each have their corresponding "attached" version of themselves.
+
+  When a detached container x is attached to a document, you can use `x.getAttached()` to obtain the corresponding attached container.
+
+  When we use const text = new LoroList(), it's not attached to a doc. But we can insert it into a doc by map.insertContainer(”t”, text), where the map is attached. But if we want the operations on the text to be recorded to the doc, we now need to get its attached version. So we can use “let attachedText = text.getAttached()”
+
+## 0.12.0
+
+### Minor Changes
+
+- Add getParent and getOrCreate
+
 ## 0.11.1
 
 ### Patch Changes

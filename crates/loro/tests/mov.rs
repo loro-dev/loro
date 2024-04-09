@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use loro::{LoroDoc, LoroError, ToJson};
+use loro::{LoroDoc, LoroError, LoroList, LoroMovableList, ToJson};
 use serde_json::json;
 use tracing::debug_span;
 
@@ -65,8 +65,8 @@ fn movable_list_event() -> Result<(), LoroError> {
     }));
 
     let list1 = doc1.get_movable_list("list");
-    let _ = list1.insert_container(0, loro_internal::ContainerType::List);
-    let _ = list1.insert_container(1, loro_internal::ContainerType::MovableList);
+    let _ = list1.insert_container(0, LoroList::new());
+    let _ = list1.insert_container(1, LoroMovableList::new());
     doc1.commit();
     Ok(())
 }

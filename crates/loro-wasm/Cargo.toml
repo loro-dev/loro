@@ -2,6 +2,7 @@
 name = "loro-wasm"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -16,6 +17,7 @@ getrandom = { version = "0.2.10", features = ["js"] }
 serde = { version = "1", features = ["derive"] }
 rle = { path = "../rle", package = "loro-rle" }
 tracing-wasm = "0.2.1"
+tracing = { version = "0.1" }
 
 [features]
 default = ["console_error_panic_hook"]

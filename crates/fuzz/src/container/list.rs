@@ -108,7 +108,7 @@ impl Actionable for ListAction {
                 let pos = *pos as usize;
                 match value {
                     FuzzValue::Container(c) => {
-                        let container = list.insert_container(pos, *c).unwrap();
+                        let container = list.insert_container(pos, Container::new(*c)).unwrap();
                         Some(container)
                     }
                     FuzzValue::I32(v) => {

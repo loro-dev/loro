@@ -10,23 +10,30 @@ use std::{
     },
 };
 
-use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
-use tracing::{info_span, instrument, trace, trace_span};
+use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, ID};
+use rle::HasLength;
+use tracing::{info_span, instrument, trace_span};
 
 use crate::{
     arena::SharedArena,
     change::Timestamp,
     configure::Configure,
-    container::{idx::ContainerIdx, richtext::config::StyleConfigMap, IntoContainerId},
+    container::{
+        idx::ContainerIdx, list::list_op::InnerListOp, richtext::config::StyleConfigMap,
+        IntoContainerId,
+    },
     dag::DagUtils,
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    handler::{Handler, MovableListHandler, TextHandler, TreeHandler},
+    event::{str_to_path, EventTriggerKind, Index},
+    handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
+    op::InnerContent,
     oplog::dag::FrontiersNotIncluded,
+    stable_pos::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
     version::Frontiers,
-    InternalString, LoroError, VersionVector,
+    HandlerTrait, InternalString, LoroError, VersionVector,
 };
 
 use super::{
@@ -114,7 +121,7 @@ impl LoroDoc {
     /// Set the interval of mergeable changes, in milliseconds.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
-    /// The defualt value is 1000 seconds.
+    /// The default value is 1000 seconds.
     #[inline]
     pub fn set_change_merge_interval(&self, interval: i64) {
         self.config.set_merge_interval(interval);
@@ -466,13 +473,13 @@ impl LoroDoc {
                 Some(&old_frontiers),
                 oplog.vv(),
                 Some(oplog.dag.get_frontiers()),
+                None,
             );
             let mut state = self.state.lock().unwrap();
             state.apply_diff(InternalDocDiff {
                 origin,
-                local: false,
                 diff: (diff).into(),
-                from_checkout: false,
+                by: EventTriggerKind::Import,
                 new_version: Cow::Owned(oplog.frontiers().clone()),
             });
         } else {
@@ -502,13 +509,13 @@ impl LoroDoc {
                 Some(&old_frontiers),
                 oplog.vv(),
                 Some(oplog.dag.get_frontiers()),
+                None,
             );
             let mut state = self.state.lock().unwrap();
             state.apply_diff(InternalDocDiff {
                 origin: "".into(),
-                local: false,
                 diff: (diff).into(),
-                from_checkout: false,
+                by: EventTriggerKind::Import,
                 new_version: Cow::Owned(oplog.frontiers().clone()),
             });
         }
@@ -557,12 +564,32 @@ impl LoroDoc {
         self.oplog.lock().unwrap().dag.frontiers_to_vv(f).unwrap()
     }
 
+    pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrHandler> {
+        let value: LoroValue = self.state.lock().unwrap().get_value_by_path(path)?;
+        if let LoroValue::Container(c) = value {
+            Some(ValueOrHandler::Handler(Handler::new_attached(
+                c.clone(),
+                self.arena.clone(),
+                self.get_global_txn(),
+                Arc::downgrade(&self.state),
+            )))
+        } else {
+            Some(ValueOrHandler::Value(value))
+        }
+    }
+
+    /// Get the handler by the string path.
+    pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrHandler> {
+        let path = str_to_path(path)?;
+        self.get_by_path(&path)
+    }
+
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.get_global_txn(),
@@ -577,7 +604,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::List);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.get_global_txn(),
@@ -592,7 +619,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> MovableListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::MovableList);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.get_global_txn(),
@@ -607,7 +634,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Map);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.get_global_txn(),
@@ -622,7 +649,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
-        Handler::new(
+        Handler::new_attached(
             id,
             self.arena.clone(),
             self.get_global_txn(),
@@ -636,12 +663,6 @@ impl LoroDoc {
     #[inline]
     pub fn diagnose_size(&self) {
         self.oplog().lock().unwrap().diagnose_size();
-    }
-
-    #[inline]
-    fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {
-        let id = id.into_container_id(&self.arena, c_type);
-        self.arena.register_container(&id)
     }
 
     #[inline]
@@ -764,40 +785,38 @@ impl LoroDoc {
         let from = self.state_frontiers();
         let span = info_span!("checkout", to=?frontiers, ?from);
         let _g = span.enter();
-        {
-            self.commit_then_stop();
-            let oplog = self.oplog.lock().unwrap();
-            let mut state = self.state.lock().unwrap();
-            self.detached.store(true, Release);
-            let mut calc = self.diff_calculator.lock().unwrap();
-            for &f in frontiers.iter() {
-                if !oplog.dag.contains(f) {
-                    return Err(LoroError::InvalidFrontierIdNotFound(f));
-                }
+        self.commit_then_stop();
+        let oplog = self.oplog.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
+        self.detached.store(true, Release);
+        let mut calc = self.diff_calculator.lock().unwrap();
+        for &f in frontiers.iter() {
+            if !oplog.dag.contains(f) {
+                return Err(LoroError::InvalidFrontierIdNotFound(f));
             }
-            let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
-            let Some(after) = &oplog.dag.frontiers_to_vv(frontiers) else {
-                return Err(LoroError::NotFoundError(
-                    format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
-                ));
-            };
-            let diff = calc.calc_diff_internal(
-                &oplog,
-                before,
-                Some(&state.frontiers),
-                after,
-                Some(frontiers),
-            );
-            state.apply_diff(InternalDocDiff {
-                origin: "checkout".into(),
-                local: true,
-                diff: Cow::Owned(diff),
-                from_checkout: true,
-                new_version: Cow::Owned(frontiers.clone()),
-            });
-            drop(state);
-            self.emit_events();
         }
+        let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
+        let Some(after) = &oplog.dag.frontiers_to_vv(frontiers) else {
+            return Err(LoroError::NotFoundError(
+                format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
+            ));
+        };
+        let diff = calc.calc_diff_internal(
+            &oplog,
+            before,
+            Some(&state.frontiers),
+            after,
+            Some(frontiers),
+            None,
+        );
+        state.apply_diff(InternalDocDiff {
+            origin: "checkout".into(),
+            diff: Cow::Owned(diff),
+            by: EventTriggerKind::Checkout,
+            new_version: Cow::Owned(frontiers.clone()),
+        });
+        drop(state);
+        self.emit_events();
         Ok(())
     }
 
@@ -876,6 +895,155 @@ impl LoroDoc {
         let state = self.state.try_lock().unwrap();
         state.log_estimated_size();
     }
+
+    /// Get position in a seq container
+    pub fn query_pos(&self, pos: &Cursor) -> Result<PosQueryResult, CannotFindRelativePosition> {
+        let mut state = self.state.lock().unwrap();
+        if let Some(ans) = state.get_relative_position(pos) {
+            Ok(PosQueryResult {
+                update: None,
+                current: AbsolutePosition {
+                    pos: ans,
+                    side: pos.side,
+                },
+            })
+        } else {
+            // We need to trace back to the version where the relative position is valid.
+            // The optimal way to find that version is to have succ info like Automerge.
+            //
+            // But we don't have that info now, so an alternative way is to trace back
+            // to version with frontiers of `[pos.id]`. But this may be very slow even if
+            // the target is just deleted a few versions ago.
+            //
+            // What we need is to trace back to the latest version that deletes the target
+            // id.
+
+            // commit the txn to make sure we can query the history correctly
+            drop(state);
+            self.commit_then_renew();
+            let oplog = self.oplog().lock().unwrap();
+            if let Some(id) = pos.id {
+                let idx = oplog
+                    .arena
+                    .id_to_idx(&pos.container)
+                    .ok_or(CannotFindRelativePosition::ContainerDeleted)?;
+                // We know where the target id is when we trace back to the delete_op_id.
+                let delete_op_id = find_last_delete_op(&oplog, id, idx).unwrap();
+                let mut diff_calc = DiffCalculator::new();
+                let before_frontiers: Frontiers = oplog.dag.find_deps_of_id(delete_op_id);
+                let before = &oplog.dag.frontiers_to_vv(&before_frontiers).unwrap();
+                // TODO: PERF: it doesn't need to calc the effects here
+                diff_calc.calc_diff_internal(
+                    &oplog,
+                    before,
+                    Some(&before_frontiers),
+                    &oplog.dag.vv,
+                    Some(&oplog.dag.frontiers),
+                    Some(&|target| idx == target),
+                );
+                // TODO: remove depth info
+                let depth = self.arena.get_depth(idx);
+                let diff_calc = &mut diff_calc.get_or_create_calc(idx, depth).1;
+                match diff_calc {
+                    crate::diff_calc::ContainerDiffCalculator::Richtext(text) => {
+                        let c = text.get_id_latest_pos(id).unwrap();
+                        let new_pos = c.pos;
+                        let handler = self.get_text(&pos.container);
+                        let current_pos = handler.convert_entity_index_to_event_index(new_pos);
+                        Ok(PosQueryResult {
+                            update: handler.get_cursor(current_pos, c.side),
+                            current: AbsolutePosition {
+                                pos: current_pos,
+                                side: c.side,
+                            },
+                        })
+                    }
+                    crate::diff_calc::ContainerDiffCalculator::List(list) => {
+                        let c = list.get_id_latest_pos(id).unwrap();
+                        let new_pos = c.pos;
+                        let handler = self.get_list(&pos.container);
+                        Ok(PosQueryResult {
+                            update: handler.get_cursor(new_pos, c.side),
+                            current: AbsolutePosition {
+                                pos: new_pos,
+                                side: c.side,
+                            },
+                        })
+                    }
+                    crate::diff_calc::ContainerDiffCalculator::MovableList(_list) => {
+                        unimplemented!()
+                    }
+                    crate::diff_calc::ContainerDiffCalculator::Tree(_) => unreachable!(),
+                    crate::diff_calc::ContainerDiffCalculator::Map(_) => unreachable!(),
+                }
+            } else {
+                match pos.container.container_type() {
+                    ContainerType::Text => {
+                        let text = self.get_text(&pos.container);
+                        Ok(PosQueryResult {
+                            update: Some(Cursor {
+                                id: None,
+                                container: text.id(),
+                                side: pos.side,
+                            }),
+                            current: AbsolutePosition {
+                                pos: text.len_event(),
+                                side: pos.side,
+                            },
+                        })
+                    }
+                    ContainerType::List => {
+                        let list = self.get_list(&pos.container);
+                        Ok(PosQueryResult {
+                            update: Some(Cursor {
+                                id: None,
+                                container: list.id(),
+                                side: pos.side,
+                            }),
+                            current: AbsolutePosition {
+                                pos: list.len(),
+                                side: pos.side,
+                            },
+                        })
+                    }
+                    ContainerType::MovableList => {
+                        let list = self.get_movable_list(&pos.container);
+                        Ok(PosQueryResult {
+                            update: Some(Cursor {
+                                id: None,
+                                container: list.id(),
+                                side: pos.side,
+                            }),
+                            current: AbsolutePosition {
+                                pos: list.len(),
+                                side: pos.side,
+                            },
+                        })
+                    }
+                    ContainerType::Map | ContainerType::Tree => unreachable!(),
+                }
+            }
+        }
+    }
+}
+
+fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
+    let start_vv = oplog.dag.frontiers_to_vv(&id.into()).unwrap();
+    for change in oplog.iter_changes_causally_rev(&start_vv, &oplog.dag.vv) {
+        for op in change.ops.iter().rev() {
+            if op.container != idx {
+                continue;
+            }
+
+            if let InnerContent::List(InnerListOp::Delete(d)) = &op.content {
+                if d.id_start.to_span(d.atom_len()).contains(id) {
+                    return Some(ID::new(change.peer(), op.counter));
+                }
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

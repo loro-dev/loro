@@ -11,13 +11,14 @@ import isEqual from "is-equal";
 const Delta = Quill.import("delta");
 // setDebug("*");
 
-const EXPAND_CONFIG: { [key in string]: 'before' | 'after' | 'both' | 'none' } = {
-  bold: 'after',
-  italic: 'after',
-  underline: 'after',
-  link: 'none',
-  header: 'none',
-}
+const EXPAND_CONFIG: { [key in string]: "before" | "after" | "both" | "none" } =
+  {
+    bold: "after",
+    italic: "after",
+    underline: "after",
+    link: "none",
+    header: "none",
+  };
 
 export class QuillBinding {
   private richtext: LoroText;
@@ -31,7 +32,7 @@ export class QuillBinding {
       underline: { expand: "after" },
       link: { expand: "none" },
       header: { expand: "none" },
-    })
+    });
     this.quill = quill;
     this.richtext = doc.getText("text");
     this.richtext.subscribe(doc, (event) => {
@@ -122,9 +123,9 @@ export class QuillBinding {
           for (const key of Object.keys(op.attributes)) {
             let value = op.attributes[key];
             if (value == null) {
-              this.richtext.unmark({ start: index, end, }, key)
+              this.richtext.unmark({ start: index, end }, key);
             } else {
-              this.richtext.mark({ start: index, end }, key, value,)
+              this.richtext.mark({ start: index, end }, key, value);
             }
           }
         }
@@ -137,20 +138,20 @@ export class QuillBinding {
             for (const key of Object.keys(op.attributes)) {
               let value = op.attributes[key];
               if (value == null) {
-                this.richtext.unmark({ start: index, end, }, key)
+                this.richtext.unmark({ start: index, end }, key);
               } else {
-                this.richtext.mark({ start: index, end }, key, value)
+                this.richtext.mark({ start: index, end }, key, value);
               }
             }
           }
           index = end;
         } else {
-          throw new Error("Not implemented")
+          throw new Error("Not implemented");
         }
       } else if (op.delete != null) {
         this.richtext.delete(index, op.delete);
       } else {
-        throw new Error("Unreachable")
+        throw new Error("Unreachable");
       }
     }
     this.doc.commit();
@@ -172,7 +173,7 @@ function assertEqual(a: Delta<string>[], b: Delta<string>[]): boolean {
 
 /**
  * Removes the ending '\n's if it has no attributes.
- * 
+ *
  * Extract line-break to a single op
  *
  * Normalize attributes field
@@ -212,7 +213,7 @@ export const normQuillDelta = (delta: Delta<string>[]) => {
     }
   }
 
-  const ans: Delta<string>[] = []
+  const ans: Delta<string>[] = [];
   for (const span of delta) {
     if (span.insert != null && span.insert.includes("\n")) {
       const lines = span.insert.split("\n");
@@ -224,7 +225,7 @@ export const normQuillDelta = (delta: Delta<string>[]) => {
         if (i < lines.length - 1) {
           const attr = { ...span.attributes };
           const v: Delta<string> = { insert: "\n" };
-          for (const style of ['bold', 'link', 'italic', 'underline']) {
+          for (const style of ["bold", "link", "italic", "underline"]) {
             if (attr && attr[style]) {
               delete attr[style];
             }

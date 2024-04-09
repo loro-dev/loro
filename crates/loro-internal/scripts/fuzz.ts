@@ -6,9 +6,10 @@ const validTargets = Array.from(
   Deno.readDirSync(resolve(__dirname, "../fuzz/fuzz_targets")),
 ).map((x) => x.name.replace(/.rs$/, ""));
 
-const targets = Deno.args.length === 0
-  ? validTargets
-  : Deno.args.filter((x) => validTargets.includes(x));
+const targets =
+  Deno.args.length === 0
+    ? validTargets
+    : Deno.args.filter((x) => validTargets.includes(x));
 
 const promises = [];
 for (const target of targets) {

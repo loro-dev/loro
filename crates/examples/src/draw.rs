@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bench_utils::{draw::DrawAction, Action};
-use loro::{ContainerID, ContainerType};
+use loro::{ContainerID, LoroList, LoroMap, LoroText};
 
 use crate::{run_actions_fuzz_in_async_mode, ActorTrait};
 
@@ -41,26 +41,13 @@ impl ActorTrait for DrawActor {
     fn apply_action(&mut self, action: &mut Self::ActionKind) {
         match action {
             DrawAction::CreatePath { points } => {
-                let path = self.paths.insert_container(0, ContainerType::Map).unwrap();
-                let path_map = path.into_map().unwrap();
-                let pos_map = path_map
-                    .insert_container("pos", ContainerType::Map)
-                    .unwrap()
-                    .into_map()
-                    .unwrap();
+                let path_map = self.paths.insert_container(0, LoroMap::new()).unwrap();
+                let pos_map = path_map.insert_container("pos", LoroMap::new()).unwrap();
                 pos_map.insert("x", 0).unwrap();
                 pos_map.insert("y", 0).unwrap();
-                let path = path_map
-                    .insert_container("path", ContainerType::List)
-                    .unwrap()
-                    .into_list()
-                    .unwrap();
+                let path = path_map.insert_container("path", LoroList::new()).unwrap();
                 for p in points {
-                    let map = path
-                        .push_container(ContainerType::Map)
-                        .unwrap()
-                        .into_map()
-                        .unwrap();
+                    let map = path.push_container(LoroMap::new()).unwrap();
                     map.insert("x", p.x).unwrap();
                     map.insert("y", p.y).unwrap();
                 }
@@ -68,29 +55,18 @@ impl ActorTrait for DrawActor {
                 self.id_to_obj.insert(len, path_map.id());
             }
             DrawAction::Text { text, pos, size } => {
-                let text_container = self
-                    .texts
-                    .insert_container(0, ContainerType::Map)
-                    .unwrap()
-                    .into_map()
-                    .unwrap();
+                let text_container = self.texts.insert_container(0, LoroMap::new()).unwrap();
                 let text_inner = text_container
-                    .insert_container("text", ContainerType::Text)
-                    .unwrap()
-                    .into_text()
+                    .insert_container("text", LoroText::new())
                     .unwrap();
                 text_inner.insert(0, text).unwrap();
                 let map = text_container
-                    .insert_container("pos", ContainerType::Map)
-                    .unwrap()
-                    .into_map()
+                    .insert_container("pos", LoroMap::new())
                     .unwrap();
                 map.insert("x", pos.x).unwrap();
                 map.insert("y", pos.y).unwrap();
                 let map = text_container
-                    .insert_container("size", ContainerType::Map)
-                    .unwrap()
-                    .into_map()
+                    .insert_container("size", LoroMap::new())
                     .unwrap();
                 map.insert("x", size.x).unwrap();
                 map.insert("y", size.y).unwrap();
@@ -99,21 +75,12 @@ impl ActorTrait for DrawActor {
                 self.id_to_obj.insert(len, text_container.id());
             }
             DrawAction::CreateRect { pos, .. } => {
-                let rect = self.rects.insert_container(0, ContainerType::Map).unwrap();
-                let rect_map = rect.into_map().unwrap();
-                let pos_map = rect_map
-                    .insert_container("pos", ContainerType::Map)
-                    .unwrap()
-                    .into_map()
-                    .unwrap();
+                let rect_map = self.rects.insert_container(0, LoroMap::new()).unwrap();
+                let pos_map = rect_map.insert_container("pos", LoroMap::new()).unwrap();
                 pos_map.insert("x", pos.x).unwrap();
                 pos_map.insert("y", pos.y).unwrap();
 
-                let size_map = rect_map
-                    .insert_container("size", ContainerType::Map)
-                    .unwrap()
-                    .into_map()
-                    .unwrap();
+                let size_map = rect_map.insert_container("size", LoroMap::new()).unwrap();
                 size_map.insert("width", pos.x).unwrap();
                 size_map.insert("height", pos.y).unwrap();
 

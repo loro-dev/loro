@@ -5,10 +5,14 @@ use loro_internal::{
     change::Lamport,
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
+    encoding::ImportBlobMetadata,
     event::Index,
-    handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrHandler},
+    handler::{
+        Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrHandler,
+    },
     id::{Counter, TreeID, ID},
     obs::SubID,
+    stable_pos::{self, Side},
     version::Frontiers,
     ContainerType, DiffEvent, HandlerTrait, LoroDoc, LoroValue,
     VersionVector as InternalVersionVector,
@@ -19,13 +23,12 @@ use std::{cell::RefCell, cmp::Ordering, panic, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
 mod log;
 
-use crate::convert::handler_to_js_value;
+use crate::convert::{handler_to_js_value, js_to_container};
 
 mod convert;
 
 #[wasm_bindgen(start)]
 fn run() {
-    #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 }
 
@@ -57,8 +60,10 @@ pub struct Loro(Arc<LoroDoc>);
 
 #[wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen(typescript_type = "number | bigint | string")]
+    #[wasm_bindgen(typescript_type = "number | bigint | `${number}`")]
     pub type JsIntoPeerID;
+    #[wasm_bindgen(typescript_type = "`${number}`")]
+    pub type JsStrPeerID;
     #[wasm_bindgen(typescript_type = "ContainerID")]
     pub type JsContainerID;
     #[wasm_bindgen(typescript_type = "ContainerID | string")]
@@ -69,6 +74,8 @@ extern "C" {
     pub type JsOrigin;
     #[wasm_bindgen(typescript_type = "{ peer: PeerID, counter: number }")]
     pub type JsID;
+    #[wasm_bindgen(typescript_type = "{ peer: PeerID, counter: number }[]")]
+    pub type JsIDs;
     #[wasm_bindgen(typescript_type = "{ start: number, end: number }")]
     pub type JsRange;
     #[wasm_bindgen(typescript_type = "number|bool|string|null")]
@@ -89,10 +96,24 @@ extern "C" {
         typescript_type = "Map<PeerID, number> | Uint8Array | VersionVector | undefined | null"
     )]
     pub type JsIntoVersionVector;
+    #[wasm_bindgen(typescript_type = "Container")]
+    pub type JsContainer;
+    #[wasm_bindgen(typescript_type = "Value")]
+    pub type JsLoroValue;
     #[wasm_bindgen(typescript_type = "Value | Container")]
     pub type JsValueOrContainer;
     #[wasm_bindgen(typescript_type = "Value | Container | undefined")]
     pub type JsValueOrContainerOrUndefined;
+    #[wasm_bindgen(typescript_type = "Container | undefined")]
+    pub type JsContainerOrUndefined;
+    #[wasm_bindgen(typescript_type = "LoroText | undefined")]
+    pub type JsLoroTextOrUndefined;
+    #[wasm_bindgen(typescript_type = "LoroMap | undefined")]
+    pub type JsLoroMapOrUndefined;
+    #[wasm_bindgen(typescript_type = "LoroList | undefined")]
+    pub type JsLoroListOrUndefined;
+    #[wasm_bindgen(typescript_type = "LoroTree | undefined")]
+    pub type JsLoroTreeOrUndefined;
     #[wasm_bindgen(typescript_type = "[string, Value | Container]")]
     pub type MapEntry;
     #[wasm_bindgen(typescript_type = "{[key: string]: { expand: 'before'|'after'|'none'|'both' }}")]
@@ -101,6 +122,22 @@ extern "C" {
     pub type JsDelta;
     #[wasm_bindgen(typescript_type = "-1 | 1 | 0 | undefined")]
     pub type JsPartialOrd;
+    #[wasm_bindgen(typescript_type = "'Tree'|'Map'|'List'|'Text'")]
+    pub type JsContainerKind;
+    #[wasm_bindgen(typescript_type = "'Text'")]
+    pub type JsTextStr;
+    #[wasm_bindgen(typescript_type = "'Tree'")]
+    pub type JsTreeStr;
+    #[wasm_bindgen(typescript_type = "'Map'")]
+    pub type JsMapStr;
+    #[wasm_bindgen(typescript_type = "'List'")]
+    pub type JsListStr;
+    #[wasm_bindgen(typescript_type = "ImportBlobMetadata")]
+    pub type JsImportBlobMetadata;
+    #[wasm_bindgen(typescript_type = "Side")]
+    pub type JsSide;
+    #[wasm_bindgen(typescript_type = "{ update?: StablePosition, offset: number, side: Side }")]
+    pub type JsStablePosQueryAns;
 }
 
 mod observer {
@@ -149,28 +186,30 @@ fn ids_to_frontiers(ids: Vec<JsID>) -> JsResult<Frontiers> {
     Ok(frontiers)
 }
 
+fn id_to_js(id: &ID) -> JsValue {
+    let obj = Object::new();
+    Reflect::set(&obj, &"peer".into(), &id.peer.to_string().into()).unwrap();
+    Reflect::set(&obj, &"counter".into(), &id.counter.into()).unwrap();
+    let value: JsValue = obj.into_js_result().unwrap();
+    value
+}
+
 fn js_id_to_id(id: JsID) -> Result<ID, JsValue> {
-    let peer = Reflect::get(&id, &"peer".into())?.as_string().unwrap();
+    let peer = js_peer_to_peer(Reflect::get(&id, &"peer".into())?)?;
     let counter = Reflect::get(&id, &"counter".into())?.as_f64().unwrap() as Counter;
-    let id = ID::new(
-        peer.parse()
-            .map_err(|_e| JsValue::from_str(&format!("cannot parse {} to PeerID", peer)))?,
-        counter,
-    );
+    let id = ID::new(peer, counter);
     Ok(id)
 }
 
-fn frontiers_to_ids(frontiers: &Frontiers) -> Vec<JsID> {
-    let mut ans = Vec::with_capacity(frontiers.len());
+fn frontiers_to_ids(frontiers: &Frontiers) -> JsIDs {
+    let js_arr = Array::new();
     for id in frontiers.iter() {
-        let obj = Object::new();
-        Reflect::set(&obj, &"peer".into(), &id.peer.to_string().into()).unwrap();
-        Reflect::set(&obj, &"counter".into(), &id.counter.into()).unwrap();
-        let value: JsValue = obj.into_js_result().unwrap();
-        ans.push(value.into());
+        let value = id_to_js(id);
+        js_arr.push(&value);
     }
 
-    ans
+    let value: JsValue = js_arr.into();
+    value.into()
 }
 
 fn js_value_to_container_id(
@@ -450,17 +489,20 @@ impl Loro {
 
     /// Get peer id in decimal string.
     #[wasm_bindgen(js_name = "peerIdStr", method, getter)]
-    pub fn peer_id_str(&self) -> String {
-        format!("{}", self.0.peer_id())
+    pub fn peer_id_str(&self) -> JsStrPeerID {
+        let v: JsValue = format!("{}", self.0.peer_id()).into();
+        v.into()
     }
 
     /// Set the peer ID of the current writer.
     ///
+    /// It must be a number, a BigInt, or a decimal string that can be parsed to a unsigned 64-bit integer.
+    ///
     /// Note: use it with caution. You need to make sure there is not chance that two peers
-    /// have the same peer ID.
+    /// have the same peer ID. Otherwise, we cannot ensure the consistency of the document.
     #[wasm_bindgen(js_name = "setPeerId", method)]
     pub fn set_peer_id(&self, peer_id: JsIntoPeerID) -> JsResult<()> {
-        let id = id_value_to_u64(peer_id.into())?;
+        let id = js_peer_to_peer(peer_id.into())?;
         self.0.set_peer_id(id)?;
         Ok(())
     }
@@ -477,7 +519,10 @@ impl Loro {
             .commit_with(origin.map(|x| x.into()), timestamp.map(|x| x as i64), true);
     }
 
-    /// Get a LoroText by container id
+    /// Get a LoroText by container id.
+    ///
+    /// The object returned is a new js object each time because it need to cross
+    /// the WASM boundary.
     ///
     /// @example
     /// ```ts
@@ -493,11 +538,14 @@ impl Loro {
             .get_text(js_value_to_container_id(cid, ContainerType::Text)?);
         Ok(LoroText {
             handler: text,
-            _doc: self.0.clone(),
+            doc: Some(self.0.clone()),
         })
     }
 
     /// Get a LoroMap by container id
+    ///
+    /// The object returned is a new js object each time because it need to cross
+    /// the WASM boundary.
     ///
     /// @example
     /// ```ts
@@ -506,18 +554,21 @@ impl Loro {
     /// const doc = new Loro();
     /// const map = doc.getMap("map");
     /// ```
-    #[wasm_bindgen(js_name = "getMap")]
+    #[wasm_bindgen(js_name = "getMap", skip_typescript)]
     pub fn get_map(&self, cid: &JsIntoContainerID) -> JsResult<LoroMap> {
         let map = self
             .0
             .get_map(js_value_to_container_id(cid, ContainerType::Map)?);
         Ok(LoroMap {
             handler: map,
-            doc: self.0.clone(),
+            doc: Some(self.0.clone()),
         })
     }
 
     /// Get a LoroList by container id
+    ///
+    /// The object returned is a new js object each time because it need to cross
+    /// the WASM boundary.
     ///
     /// @example
     /// ```ts
@@ -526,18 +577,21 @@ impl Loro {
     /// const doc = new Loro();
     /// const list = doc.getList("list");
     /// ```
-    #[wasm_bindgen(js_name = "getList")]
+    #[wasm_bindgen(js_name = "getList", skip_typescript)]
     pub fn get_list(&self, cid: &JsIntoContainerID) -> JsResult<LoroList> {
         let list = self
             .0
             .get_list(js_value_to_container_id(cid, ContainerType::List)?);
         Ok(LoroList {
             handler: list,
-            doc: self.0.clone(),
+            doc: Some(self.0.clone()),
         })
     }
 
     /// Get a LoroTree by container id
+    ///
+    /// The object returned is a new js object each time because it need to cross
+    /// the WASM boundary.
     ///
     /// @example
     /// ```ts
@@ -546,14 +600,14 @@ impl Loro {
     /// const doc = new Loro();
     /// const tree = doc.getTree("tree");
     /// ```
-    #[wasm_bindgen(js_name = "getTree")]
+    #[wasm_bindgen(js_name = "getTree", skip_typescript)]
     pub fn get_tree(&self, cid: &JsIntoContainerID) -> JsResult<LoroTree> {
         let tree = self
             .0
             .get_tree(js_value_to_container_id(cid, ContainerType::Tree)?);
         Ok(LoroTree {
             handler: tree,
-            doc: self.0.clone(),
+            doc: Some(self.0.clone()),
         })
     }
 
@@ -578,7 +632,7 @@ impl Loro {
                 let map = self.0.get_map(container_id);
                 LoroMap {
                     handler: map,
-                    doc: self.0.clone(),
+                    doc: Some(self.0.clone()),
                 }
                 .into()
             }
@@ -586,7 +640,7 @@ impl Loro {
                 let list = self.0.get_list(container_id);
                 LoroList {
                     handler: list,
-                    doc: self.0.clone(),
+                    doc: Some(self.0.clone()),
                 }
                 .into()
             }
@@ -594,7 +648,7 @@ impl Loro {
                 let richtext = self.0.get_text(container_id);
                 LoroText {
                     handler: richtext,
-                    _doc: self.0.clone(),
+                    doc: Some(self.0.clone()),
                 }
                 .into()
             }
@@ -602,7 +656,7 @@ impl Loro {
                 let tree = self.0.get_tree(container_id);
                 LoroTree {
                     handler: tree,
-                    doc: self.0.clone(),
+                    doc: Some(self.0.clone()),
                 }
                 .into()
             }
@@ -632,7 +686,7 @@ impl Loro {
     ///
     /// If you checkout to a specific version, this value will change.
     #[inline]
-    pub fn frontiers(&self) -> Vec<JsID> {
+    pub fn frontiers(&self) -> JsIDs {
         frontiers_to_ids(&self.0.state_frontiers())
     }
 
@@ -640,7 +694,8 @@ impl Loro {
     ///
     /// If you checkout to a specific version, this value will not change.
     #[inline(always)]
-    pub fn oplog_frontiers(&self) -> Vec<JsID> {
+    #[wasm_bindgen(js_name = "oplogFrontiers")]
+    pub fn oplog_frontiers(&self) -> JsIDs {
         frontiers_to_ids(&self.0.oplog_frontiers())
     }
 
@@ -801,9 +856,9 @@ impl Loro {
     /// const doc = new Loro();
     /// const list = doc.getList("list");
     /// list.insert(0, "Hello");
-    /// const text = list.insertContainer(0, "Text");
+    /// const text = list.insertContainer(0, new LoroText());
     /// text.insert(0, "Hello");
-    /// const map = list.insertContainer(1, "Map");
+    /// const map = list.insertContainer(1, new LoroMap());
     /// map.set("foo", "bar");
     /// /*
     /// {"list": ["Hello", {"foo": "bar"}]}
@@ -1038,9 +1093,75 @@ impl Loro {
     /// const frontiers = doc.vvToFrontiers(version);
     /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
-    pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<Vec<JsID>> {
+    pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<JsIDs> {
         let f = self.0.oplog().lock().unwrap().dag().vv_to_frontiers(&vv.0);
         Ok(frontiers_to_ids(&f))
+    }
+
+    /// Get the value or container at the given path
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("key", 1);
+    /// console.log(doc.getByPath("map/key")); // 1
+    /// console.log(doc.getByPath("map"));     // LoroMap
+    /// ```
+    #[wasm_bindgen(js_name = "getByPath")]
+    pub fn get_by_path(&self, path: &str) -> JsValueOrContainerOrUndefined {
+        let ans = self.0.get_by_str_path(path);
+        let v: JsValue = match ans {
+            Some(ValueOrHandler::Handler(h)) => handler_to_js_value(h, Some(self.0.clone())),
+            Some(ValueOrHandler::Value(v)) => v.into(),
+            None => JsValue::UNDEFINED,
+        };
+        v.into()
+    }
+
+    /// Get the absolute position of the given Cursor
+    ///
+    /// @example
+    /// ```ts
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "123");
+    /// const pos0 = text.getCursor(0, 0);
+    /// {
+    ///    const ans = doc.getCursorPos(pos0!);
+    ///    expect(ans.offset).toBe(0);
+    /// }
+    /// text.insert(0, "1");
+    /// {
+    ///    const ans = doc.getCursorPos(pos0!);
+    ///    expect(ans.offset).toBe(1);
+    /// }
+    /// ```
+    pub fn getCursorPos(&self, stable_pos: &StablePosition) -> JsResult<JsStablePosQueryAns> {
+        let ans = self
+            .0
+            .query_pos(&stable_pos.pos)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+
+        let obj = Object::new();
+        let update = ans.update.map(|u| StablePosition { pos: u });
+        if let Some(update) = update {
+            let update_value: JsValue = update.into();
+            Reflect::set(&obj, &JsValue::from_str("update"), &update_value)?;
+        }
+        Reflect::set(
+            &obj,
+            &JsValue::from_str("offset"),
+            &JsValue::from(ans.current.pos),
+        )?;
+        Reflect::set(
+            &obj,
+            &JsValue::from_str("side"),
+            &JsValue::from(ans.current.side.to_i32()),
+        )?;
+        Ok(JsValue::from(obj).into())
     }
 }
 
@@ -1053,9 +1174,7 @@ fn call_subscriber(ob: observer::Observer, e: DiffEvent, doc: &Arc<LoroDoc>) {
     // [1]: https://caniuse.com/?search=FinalizationRegistry
     // [2]: https://rustwasm.github.io/wasm-bindgen/reference/weak-references.html
     let event = diff_event_to_js_value(e, doc);
-    if let Err(e) = ob.call1(&event) {
-        console_error!("Error when calling observer: {:#?}", e);
-    }
+    ob.call1(&event).unwrap_throw();
 }
 
 #[allow(unused)]
@@ -1085,13 +1204,7 @@ impl Default for Loro {
 
 fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDoc>) -> JsValue {
     let obj = js_sys::Object::new();
-    Reflect::set(&obj, &"local".into(), &event.event_meta.local.into()).unwrap();
-    Reflect::set(
-        &obj,
-        &"fromCheckout".into(),
-        &event.event_meta.from_checkout.into(),
-    )
-    .unwrap();
+    Reflect::set(&obj, &"by".into(), &event.event_meta.by.to_string().into()).unwrap();
     let origin: &str = &event.event_meta.origin;
     Reflect::set(&obj, &"origin".into(), &JsValue::from_str(origin)).unwrap();
     if let Some(t) = event.current_target.as_ref() {
@@ -1145,10 +1258,12 @@ fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsValue 
 }
 
 /// The handler of a text or richtext container.
+///
+#[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroText {
     handler: TextHandler,
-    _doc: Arc<LoroDoc>,
+    doc: Option<Arc<LoroDoc>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1159,9 +1274,21 @@ struct MarkRange {
 
 #[wasm_bindgen]
 impl LoroText {
+    /// Create a new detached LoroText.
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            handler: TextHandler::new_detached(),
+            doc: None,
+        }
+    }
+
     /// "Text"
-    pub fn kind(&self) -> JsValue {
-        JsValue::from_str("Text")
+    pub fn kind(&self) -> JsTextStr {
+        JsValue::from_str("Text").into()
     }
 
     /// Insert some string at index.
@@ -1278,7 +1405,7 @@ impl LoroText {
     /// Get the container id of the text.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
-        let value: JsValue = self.handler.id().into();
+        let value: JsValue = (&self.handler.id()).into();
         value.into()
     }
 
@@ -1295,7 +1422,7 @@ impl LoroText {
         let observer = observer::Observer::new(f);
         let doc = loro.0.clone();
         let ans = loro.0.subscribe(
-            self.handler.id(),
+            &self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc);
             }),
@@ -1342,22 +1469,89 @@ impl LoroText {
         self.handler.apply_delta(&delta)?;
         Ok(())
     }
+
+    /// Get the parent container.
+    ///
+    /// - The parent container of the root tree is `undefined`.
+    /// - The object returned is a new js object each time because it need to cross
+    ///   the WASM boundary.
+    pub fn parent(&self) -> JsContainerOrUndefined {
+        if let Some(p) = self.handler.parent() {
+            handler_to_js_value(p, self.doc.clone()).into()
+        } else {
+            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+        }
+    }
+
+    /// Whether the container is attached to a docuemnt.
+    ///
+    /// If it's detached, the operations on the container will not be persisted.
+    #[wasm_bindgen(js_name = "isAttached")]
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    /// Get the attached container associated with this.
+    ///
+    /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
+    #[wasm_bindgen(js_name = "getAttached")]
+    pub fn get_attached(&self) -> JsLoroTextOrUndefined {
+        if self.is_attached() {
+            let value: JsValue = self.clone().into();
+            return value.into();
+        }
+
+        if let Some(h) = self.handler.get_attached() {
+            handler_to_js_value(Handler::Text(h), self.doc.clone()).into()
+        } else {
+            JsValue::UNDEFINED.into()
+        }
+    }
+
+    #[wasm_bindgen(skip_typescript)]
+    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<StablePosition> {
+        let mut side_value = Side::Middle;
+        if side.is_truthy() {
+            let num = side.as_f64().expect("Side must be -1 | 0 | 1");
+            side_value = Side::from_i32(num as i32).expect("Side must be -1 | 0 | 1");
+        }
+        self.handler
+            .get_cursor(pos, side_value)
+            .map(|pos| StablePosition { pos })
+    }
+}
+
+impl Default for LoroText {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// The handler of a map container.
+#[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroMap {
     handler: MapHandler,
-    doc: Arc<LoroDoc>,
+    doc: Option<Arc<LoroDoc>>,
 }
-
-const CONTAINER_TYPE_ERR: &str = "Invalid container type, only supports Text, Map, List, Tree";
 
 #[wasm_bindgen]
 impl LoroMap {
+    /// Create a new detached LoroMap.
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            handler: MapHandler::new_detached(),
+            doc: None,
+        }
+    }
+
     /// "Map"
-    pub fn kind(&self) -> JsValue {
-        JsValue::from_str("Map")
+    pub fn kind(&self) -> JsMapStr {
+        JsValue::from_str("Map").into()
     }
 
     /// Set the key with the value.
@@ -1373,9 +1567,10 @@ impl LoroMap {
     /// map.set("foo", "bar");
     /// map.set("foo", "baz");
     /// ```
-    #[wasm_bindgen(js_name = "set")]
-    pub fn insert(&mut self, key: &str, value: JsValue) -> JsResult<()> {
-        self.handler.insert(key, value)?;
+    #[wasm_bindgen(js_name = "set", skip_typescript)]
+    pub fn insert(&mut self, key: &str, value: JsLoroValue) -> JsResult<()> {
+        let v: JsValue = value.into();
+        self.handler.insert(key, v)?;
         Ok(())
     }
 
@@ -1398,6 +1593,9 @@ impl LoroMap {
     /// Get the value of the key. If the value is a child container, the corresponding
     /// `Container` will be returned.
     ///
+    /// The object/value returned is a new js object/value each time because it need to cross
+    /// the WASM boundary.
+    ///
     /// @example
     /// ```ts
     /// import { Loro } from "loro-crdt";
@@ -1407,6 +1605,7 @@ impl LoroMap {
     /// map.set("foo", "bar");
     /// const bar = map.get("foo");
     /// ```
+    #[wasm_bindgen(skip_typescript)]
     pub fn get(&self, key: &str) -> JsValueOrContainerOrUndefined {
         let v = self.handler.get_(key);
         (match v {
@@ -1415,6 +1614,29 @@ impl LoroMap {
             None => JsValue::UNDEFINED,
         })
         .into()
+    }
+
+    /// Get the value of the key. If the value is a child container, the corresponding
+    /// `Container` will be returned.
+    ///
+    /// The object returned is a new js object each time because it need to cross
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// const bar = map.get("foo");
+    /// ```
+    #[wasm_bindgen(js_name = "getOrCreateContainer", skip_typescript)]
+    pub fn get_or_create_container(&self, key: &str, child: JsContainer) -> JsResult<JsContainer> {
+        let child = convert::js_to_container(child)?;
+        let handler = self
+            .handler
+            .get_or_create_container(key, child.to_handler())?;
+        Ok(handler_to_js_value(handler, self.doc.clone()).into())
     }
 
     /// Get the keys of the map.
@@ -1453,7 +1675,7 @@ impl LoroMap {
     pub fn values(&self) -> Vec<JsValue> {
         let mut ans: Vec<JsValue> = Vec::with_capacity(self.handler.len());
         self.handler.for_each(|_, v| {
-            ans.push(loro_value_to_js_value_or_container(v, &self.doc));
+            ans.push(loro_value_to_js_value_or_container(v, self.doc.clone()));
         });
         ans
     }
@@ -1476,7 +1698,7 @@ impl LoroMap {
         self.handler.for_each(|k, v| {
             let array = Array::new();
             array.push(&k.to_string().into());
-            array.push(&loro_value_to_js_value_or_container(v, &self.doc));
+            array.push(&loro_value_to_js_value_or_container(v, self.doc.clone()));
             let v: JsValue = array.into();
             ans.push(v.into());
         });
@@ -1486,7 +1708,7 @@ impl LoroMap {
     /// The container id of this handler.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
-        let value: JsValue = self.handler.id().into();
+        let value: JsValue = (&self.handler.id()).into();
         value.into()
     }
 
@@ -1500,7 +1722,7 @@ impl LoroMap {
     /// const doc = new Loro();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
-    /// const text = map.setContainer("text", "Text");
+    /// const text = map.setContainer("text", new LoroText());
     /// text.insert(0, "Hello");
     /// console.log(map.getDeepValue());  // {"foo": "bar", "text": "Hello"}
     /// ```
@@ -1518,44 +1740,14 @@ impl LoroMap {
     /// const doc = new Loro();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
-    /// const text = map.setContainer("text", "Text");
-    /// const list = map.setContainer("list", "List");
+    /// const text = map.setContainer("text", new LoroText());
+    /// const list = map.setContainer("list", new LoroText());
     /// ```
-    #[wasm_bindgen(js_name = "setContainer")]
-    pub fn insert_container(&mut self, key: &str, container_type: &str) -> JsResult<JsValue> {
-        let type_ = match container_type {
-            "text" | "Text" => ContainerType::Text,
-            "map" | "Map" => ContainerType::Map,
-            "list" | "List" => ContainerType::List,
-            "tree" | "Tree" => ContainerType::Tree,
-            _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
-        };
-        let c = self.handler.insert_container(key, type_)?;
-
-        let container = match type_ {
-            ContainerType::Map => LoroMap {
-                handler: c.into_map().unwrap(),
-                doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::List => LoroList {
-                handler: c.into_list().unwrap(),
-                doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::Text => LoroText {
-                handler: c.into_text().unwrap(),
-                _doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::Tree => LoroTree {
-                handler: c.into_tree().unwrap(),
-                doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::MovableList => unimplemented!(),
-        };
-        Ok(container)
+    #[wasm_bindgen(js_name = "setContainer", skip_typescript)]
+    pub fn insert_container(&mut self, key: &str, child: JsContainer) -> JsResult<JsContainer> {
+        let child = convert::js_to_container(child)?;
+        let c = self.handler.insert_container(key, child.to_handler())?;
+        Ok(handler_to_js_value(c, self.doc.clone()).into())
     }
 
     /// Subscribe to the changes of the map.
@@ -1580,7 +1772,7 @@ impl LoroMap {
         let observer = observer::Observer::new(f);
         let doc = loro.0.clone();
         let id = loro.0.subscribe(
-            self.handler.id(),
+            &self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc);
             }),
@@ -1624,20 +1816,76 @@ impl LoroMap {
     pub fn size(&self) -> usize {
         self.handler.len()
     }
+
+    /// Get the parent container.
+    ///
+    /// - The parent container of the root tree is `undefined`.
+    /// - The object returned is a new js object each time because it need to cross
+    ///   the WASM boundary.
+    pub fn parent(&self) -> JsContainerOrUndefined {
+        if let Some(p) = self.handler.parent() {
+            handler_to_js_value(p, self.doc.clone()).into()
+        } else {
+            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+        }
+    }
+
+    /// Whether the container is attached to a docuemnt.
+    ///
+    /// If it's detached, the operations on the container will not be persisted.
+    #[wasm_bindgen(js_name = "isAttached")]
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    /// Get the attached container associated with this.
+    ///
+    /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
+    #[wasm_bindgen(js_name = "getAttached")]
+    pub fn get_attached(&self) -> JsLoroMapOrUndefined {
+        if self.is_attached() {
+            let value: JsValue = self.clone().into();
+            return value.into();
+        }
+
+        let Some(h) = self.handler.get_attached() else {
+            return JsValue::UNDEFINED.into();
+        };
+        handler_to_js_value(Handler::Map(h), self.doc.clone()).into()
+    }
+}
+
+impl Default for LoroMap {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// The handler of a list container.
+#[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroList {
     handler: ListHandler,
-    doc: Arc<LoroDoc>,
+    doc: Option<Arc<LoroDoc>>,
 }
 
 #[wasm_bindgen]
 impl LoroList {
+    /// Create a new detached LoroList.
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            handler: ListHandler::new_detached(),
+            doc: None,
+        }
+    }
+
     /// "List"
-    pub fn kind(&self) -> JsValue {
-        JsValue::from_str("List")
+    pub fn kind(&self) -> JsListStr {
+        JsValue::from_str("List").into()
     }
 
     /// Insert a value at index.
@@ -1653,8 +1901,10 @@ impl LoroList {
     /// list.insert(2, true);
     /// console.log(list.value);  // [100, "foo", true];
     /// ```
-    pub fn insert(&mut self, index: usize, value: JsValue) -> JsResult<()> {
-        self.handler.insert(index, value)?;
+    #[wasm_bindgen(skip_typescript)]
+    pub fn insert(&mut self, index: usize, value: JsLoroValue) -> JsResult<()> {
+        let v: JsValue = value.into();
+        self.handler.insert(index, v)?;
         Ok(())
     }
 
@@ -1687,6 +1937,7 @@ impl LoroList {
     /// console.log(list.get(0));  // 100
     /// console.log(list.get(1));  // undefined
     /// ```
+    #[wasm_bindgen(skip_typescript)]
     pub fn get(&self, index: usize) -> JsValueOrContainerOrUndefined {
         let Some(v) = self.handler.get_(index) else {
             return JsValue::UNDEFINED.into();
@@ -1702,7 +1953,7 @@ impl LoroList {
     /// Get the id of this container.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
-        let value: JsValue = self.handler.id().into();
+        let value: JsValue = (&self.handler.id()).into();
         value.into()
     }
 
@@ -1718,10 +1969,10 @@ impl LoroList {
     /// list.insert(0, 100);
     /// list.insert(1, "foo");
     /// list.insert(2, true);
-    /// list.insertContainer(3, "Text");
+    /// list.insertContainer(3, new LoroText());
     /// console.log(list.value);  // [100, "foo", true, LoroText];
     /// ```
-    #[wasm_bindgen(js_name = "toArray", method)]
+    #[wasm_bindgen(js_name = "toArray", method, skip_typescript)]
     pub fn to_array(&mut self) -> Vec<JsValueOrContainer> {
         let mut arr: Vec<JsValueOrContainer> = Vec::with_capacity(self.length());
         self.handler.for_each(|x| {
@@ -1749,7 +2000,7 @@ impl LoroList {
     /// const doc = new Loro();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
-    /// const text = list.insertContainer(1, "Text");
+    /// const text = list.insertContainer(1, new LoroText());
     /// text.insert(0, "Hello");
     /// console.log(list.getDeepValue());  // [100, "Hello"];
     /// ```
@@ -1768,44 +2019,15 @@ impl LoroList {
     /// const doc = new Loro();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
-    /// const text = list.insertContainer(1, "Text");
+    /// const text = list.insertContainer(1, new LoroText());
     /// text.insert(0, "Hello");
     /// console.log(list.getDeepValue());  // [100, "Hello"];
     /// ```
-    #[wasm_bindgen(js_name = "insertContainer")]
-    pub fn insert_container(&mut self, index: usize, container: &str) -> JsResult<JsValue> {
-        let _type = match container {
-            "text" | "Text" => ContainerType::Text,
-            "map" | "Map" => ContainerType::Map,
-            "list" | "List" => ContainerType::List,
-            "tree" | "Tree" => ContainerType::Tree,
-            _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
-        };
-        let c = self.handler.insert_container(index, _type)?;
-        let container = match _type {
-            ContainerType::Map => LoroMap {
-                handler: c.into_map().unwrap(),
-                doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::List => LoroList {
-                handler: c.into_list().unwrap(),
-                doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::Text => LoroText {
-                handler: c.into_text().unwrap(),
-                _doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::Tree => LoroTree {
-                handler: c.into_tree().unwrap(),
-                doc: self.doc.clone(),
-            }
-            .into(),
-            ContainerType::MovableList => unimplemented!(),
-        };
-        Ok(container)
+    #[wasm_bindgen(js_name = "insertContainer", skip_typescript)]
+    pub fn insert_container(&mut self, index: usize, child: JsContainer) -> JsResult<JsContainer> {
+        let child = js_to_container(child)?;
+        let c = self.handler.insert_container(index, child.to_handler())?;
+        Ok(handler_to_js_value(c, self.doc.clone()).into())
     }
 
     /// Subscribe to the changes of the list.
@@ -1828,7 +2050,7 @@ impl LoroList {
         let observer = observer::Observer::new(f);
         let doc = loro.0.clone();
         let ans = loro.0.subscribe(
-            self.handler.id(),
+            &self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc);
             }),
@@ -1873,25 +2095,82 @@ impl LoroList {
     pub fn length(&self) -> usize {
         self.handler.len()
     }
+
+    /// Get the parent container.
+    ///
+    /// - The parent container of the root tree is `undefined`.
+    /// - The object returned is a new js object each time because it need to cross
+    ///   the WASM boundary.
+    pub fn parent(&self) -> JsContainerOrUndefined {
+        if let Some(p) = self.handler.parent() {
+            handler_to_js_value(p, self.doc.clone()).into()
+        } else {
+            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+        }
+    }
+
+    /// Whether the container is attached to a docuemnt.
+    ///
+    /// If it's detached, the operations on the container will not be persisted.
+    #[wasm_bindgen(js_name = "isAttached")]
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    /// Get the attached container associated with this.
+    ///
+    /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
+    #[wasm_bindgen(js_name = "getAttached")]
+    pub fn get_attached(&self) -> JsLoroListOrUndefined {
+        if self.is_attached() {
+            let value: JsValue = self.clone().into();
+            return value.into();
+        }
+
+        if let Some(h) = self.handler.get_attached() {
+            handler_to_js_value(Handler::List(h), self.doc.clone()).into()
+        } else {
+            JsValue::UNDEFINED.into()
+        }
+    }
+
+    #[wasm_bindgen(skip_typescript)]
+    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<StablePosition> {
+        let mut side_value = Side::Middle;
+        if side.is_truthy() {
+            let num = side.as_f64().expect("Side must be -1 | 0 | 1");
+            side_value = Side::from_i32(num as i32).expect("Side must be -1 | 0 | 1");
+        }
+        self.handler
+            .get_cursor(pos, side_value)
+            .map(|pos| StablePosition { pos })
+    }
+}
+
+impl Default for LoroList {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// The handler of a tree(forest) container.
+#[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroTree {
     handler: TreeHandler,
-    doc: Arc<LoroDoc>,
+    doc: Option<Arc<LoroDoc>>,
 }
 
 #[wasm_bindgen]
 pub struct LoroTreeNode {
     id: TreeID,
     tree: TreeHandler,
-    doc: Arc<LoroDoc>,
+    doc: Option<Arc<LoroDoc>>,
 }
 
 #[wasm_bindgen]
 impl LoroTreeNode {
-    fn from_tree(id: TreeID, tree: TreeHandler, doc: Arc<LoroDoc>) -> Self {
+    fn from_tree(id: TreeID, tree: TreeHandler, doc: Option<Arc<LoroDoc>>) -> Self {
         Self { id, tree, doc }
     }
 
@@ -1947,7 +2226,7 @@ impl LoroTreeNode {
     }
 
     /// Get the associated metadata map container of a tree node.
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen(getter, skip_typescript)]
     pub fn data(&self) -> JsResult<LoroMap> {
         let data = self.tree.get_meta(self.id)?;
         let map = LoroMap {
@@ -1958,12 +2237,19 @@ impl LoroTreeNode {
     }
 
     /// Get the parent node of this node.
+    ///
+    /// - The parent container of the root tree is `undefined`.
+    /// - The object returned is a new js object each time because it need to cross
+    ///   the WASM boundary.
     pub fn parent(&self) -> Option<LoroTreeNode> {
-        let parent = self.tree.parent(self.id).flatten();
+        let parent = self.tree.get_node_parent(self.id).flatten();
         parent.map(|p| LoroTreeNode::from_tree(p, self.tree.clone(), self.doc.clone()))
     }
 
     /// Get the children of this node.
+    ///
+    /// The objects returned are new js objects each time because they need to cross
+    /// the WASM boundary.
     pub fn children(&self) -> Array {
         let children = self.tree.children(self.id);
         let children = children.into_iter().map(|c| {
@@ -1976,9 +2262,21 @@ impl LoroTreeNode {
 
 #[wasm_bindgen]
 impl LoroTree {
+    /// Create a new detached LoroTree.
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            handler: TreeHandler::new_detached(),
+            doc: None,
+        }
+    }
+
     /// "Tree"
-    pub fn kind(&self) -> JsValue {
-        JsValue::from_str("Tree")
+    pub fn kind(&self) -> JsTreeStr {
+        JsValue::from_str("Tree").into()
     }
 
     /// Create a new tree node as the child of parent and return an unique tree id.
@@ -2100,7 +2398,7 @@ impl LoroTree {
     /// Get the id of the container.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
-        let value: JsValue = self.handler.id().into();
+        let value: JsValue = (&self.handler.id()).into();
         value.into()
     }
 
@@ -2199,7 +2497,7 @@ impl LoroTree {
         let observer = observer::Observer::new(f);
         let doc = loro.0.clone();
         let ans = loro.0.subscribe(
-            self.handler.id(),
+            &self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc);
             }),
@@ -2227,9 +2525,99 @@ impl LoroTree {
         loro.0.unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
+
+    /// Get the parent container of the tree container.
+    ///
+    /// - The parent container of the root tree is `undefined`.
+    /// - The object returned is a new js object each time because it need to cross
+    ///   the WASM boundary.
+    pub fn parent(&self) -> JsContainerOrUndefined {
+        if let Some(p) = HandlerTrait::parent(&self.handler) {
+            handler_to_js_value(p, self.doc.clone()).into()
+        } else {
+            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+        }
+    }
+
+    /// Whether the container is attached to a docuemnt.
+    ///
+    /// If it's detached, the operations on the container will not be persisted.
+    #[wasm_bindgen(js_name = "isAttached")]
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    /// Get the attached container associated with this.
+    ///
+    /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
+    #[wasm_bindgen(js_name = "getAttached")]
+    pub fn get_attached(&self) -> JsLoroTreeOrUndefined {
+        if self.is_attached() {
+            let value: JsValue = self.clone().into();
+            return value.into();
+        }
+
+        if let Some(h) = self.handler.get_attached() {
+            handler_to_js_value(Handler::Tree(h), self.doc.clone()).into()
+        } else {
+            JsValue::UNDEFINED.into()
+        }
+    }
 }
 
-fn loro_value_to_js_value_or_container(value: ValueOrHandler, doc: &Arc<LoroDoc>) -> JsValue {
+impl Default for LoroTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone)]
+#[wasm_bindgen]
+pub struct StablePosition {
+    pos: stable_pos::Cursor,
+}
+
+#[wasm_bindgen]
+impl StablePosition {
+    pub fn containerId(&self) -> JsContainerID {
+        let js_value: JsValue = self.pos.container.to_string().into();
+        JsContainerID::from(js_value)
+    }
+
+    pub fn pos(&self) -> Option<JsID> {
+        match self.pos.id {
+            Some(id) => {
+                let value: JsValue = id_to_js(&id);
+                Some(value.into())
+            }
+            None => None,
+        }
+    }
+
+    pub fn side(&self) -> JsSide {
+        JsValue::from(match self.pos.side {
+            stable_pos::Side::Left => -1,
+            stable_pos::Side::Middle => 0,
+            stable_pos::Side::Right => 1,
+        })
+        .into()
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        self.pos.encode()
+    }
+
+    pub fn decode(data: &[u8]) -> JsResult<StablePosition> {
+        let pos =
+            stable_pos::Cursor::decode(data).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(StablePosition { pos })
+    }
+}
+
+fn loro_value_to_js_value_or_container(
+    value: ValueOrHandler,
+    doc: Option<Arc<LoroDoc>>,
+) -> JsValue {
     match value {
         ValueOrHandler::Value(v) => {
             let value: JsValue = v.into();
@@ -2311,7 +2699,7 @@ impl VersionVector {
     }
 
     pub fn get(&self, peer_id: JsIntoPeerID) -> JsResult<Option<Counter>> {
-        let id = id_value_to_u64(peer_id.into())?;
+        let id = js_peer_to_peer(peer_id.into())?;
         Ok(self.0.get(&id).copied())
     }
 
@@ -2323,22 +2711,60 @@ impl VersionVector {
         })
     }
 }
-
-fn id_value_to_u64(value: JsValue) -> JsResult<u64> {
+const ID_CONVERT_ERROR: &str = "Invalid peer id. It must be a number, a BigInt, or a decimal string that can be parsed to a unsigned 64-bit integer";
+fn js_peer_to_peer(value: JsValue) -> JsResult<u64> {
     if value.is_bigint() {
         let bigint = js_sys::BigInt::from(value);
-        let v: u64 = bigint.try_into().unwrap_throw();
+        let v: u64 = bigint
+            .try_into()
+            .map_err(|_| JsValue::from_str(ID_CONVERT_ERROR))?;
         Ok(v)
     } else if value.is_string() {
-        let v: u64 = value.as_string().unwrap().parse().unwrap_throw();
+        let v: u64 = value
+            .as_string()
+            .unwrap()
+            .parse()
+            .expect_throw(ID_CONVERT_ERROR);
         Ok(v)
     } else if let Some(v) = value.as_f64() {
         Ok(v as u64)
     } else {
-        Err(JsValue::from_str(
-            "id value must be a string, number or bigint",
-        ))
+        Err(JsValue::from_str(ID_CONVERT_ERROR))
     }
+}
+
+pub enum Container {
+    Text(LoroText),
+    Map(LoroMap),
+    List(LoroList),
+    Tree(LoroTree),
+}
+
+impl Container {
+    fn to_handler(&self) -> Handler {
+        match self {
+            Container::Text(t) => Handler::Text(t.handler.clone()),
+            Container::Map(m) => Handler::Map(m.handler.clone()),
+            Container::List(l) => Handler::List(l.handler.clone()),
+            Container::Tree(t) => Handler::Tree(t.handler.clone()),
+        }
+    }
+}
+
+/// Decode the metadata of the import blob.
+///
+/// This method is useful to get the following metadata of the import blob:
+///
+/// - startVersionVector
+/// - endVersionVector
+/// - startTimestamp
+/// - endTimestamp
+/// - isSnapshot
+/// - changeNum
+#[wasm_bindgen(js_name = "decodeImportBlobMeta")]
+pub fn decode_import_blob_meta(blob: &[u8]) -> JsResult<JsImportBlobMetadata> {
+    let meta: ImportBlobMetadata = LoroDoc::decode_import_blob_meta(blob)?;
+    Ok(meta.into())
 }
 
 #[wasm_bindgen(typescript_custom_section)]
@@ -2360,7 +2786,7 @@ const TYPES: &'static str = r#"
 */
 export type ContainerType = "Text" | "Map" | "List"| "Tree";
 
-export type PeerID = string;
+export type PeerID = `${number}`;
 /**
 * The unique id of each container.
 *
@@ -2375,16 +2801,49 @@ export type PeerID = string;
 */
 export type ContainerID =
   | `cid:root-${string}:${ContainerType}`
-  | `cid:${number}@${string}:${ContainerType}`;
+  | `cid:${number}@${PeerID}:${ContainerType}`;
 
 /**
  * The unique id of each tree node.
  */
-export type TreeID = `${number}@${string}`;
+export type TreeID = `${number}@${PeerID}`;
 
 interface Loro {
+    /**
+     * Export updates from the specific version to the current version
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const text = doc.getText("text");
+     *  text.insert(0, "Hello");
+     *  // get all updates of the doc
+     *  const updates = doc.exportFrom();
+     *  const version = doc.oplogVersion();
+     *  text.insert(5, " World");
+     *  // get updates from specific version to the latest version
+     *  const updates2 = doc.exportFrom(version);
+     *  ```
+     */
     exportFrom(version?: VersionVector): Uint8Array;
-    getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
+    /**
+     *
+     *  Get the container corresponding to the container id
+     *
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  let text = doc.getText("text");
+     *  const textId = text.id;
+     *  text = doc.getContainerById(textId);
+     *  ```
+     */
+    getContainerById(id: ContainerID): Container;
 }
 
 /**
@@ -2457,4 +2916,107 @@ export type Value =
   | Value[];
 
 export type Container = LoroList | LoroMap | LoroText | LoroTree;
+
+export interface ImportBlobMetadata {
+    /**
+     * The version vector of the start of the import.
+     *
+     * Import blob includes all the ops from `partial_start_vv` to `partial_end_vv`.
+     * However, it does not constitute a complete version vector, as it only contains counters
+     * from peers included within the import blob.
+     */
+    partialStartVersionVector: VersionVector;
+    /**
+     * The version vector of the end of the import.
+     *
+     * Import blob includes all the ops from `partial_start_vv` to `partial_end_vv`.
+     * However, it does not constitute a complete version vector, as it only contains counters
+     * from peers included within the import blob.
+     */
+    partialEndVersionVector: VersionVector;
+
+    startFrontiers: OpId[],
+    startTimestamp: number;
+    endTimestamp: number;
+    isSnapshot: boolean;
+    changeNum: number;
+}
+
+interface LoroText {
+    /**
+     * Get a stable position representing the cursor position.
+     *
+     * When expressing the position of a cursor, using "index" can be unstable
+     * because the cursor's position may change due to other deletions and insertions,
+     * requiring updates with each edit. To stably represent a position or range within
+     * a list structure, we can utilize the ID of each item/character on List CRDT or
+     * Text CRDT for expression.
+     *
+     * Loro optimizes State metadata by not storing the IDs of deleted elements. This
+     * approach complicates tracking cursors since they rely on these IDs. The solution
+     * recalculates position by replaying relevant history to update stable positions
+     * accurately. To minimize the performance impact of history replay, the system
+     * updates cursor info to reference only the IDs of currently present elements,
+     * thereby reducing the need for replay.
+     *
+     * @example
+     * ```ts
+     *
+     * const doc = new Loro();
+     * const text = doc.getText("text");
+     * text.insert(0, "123");
+     * const pos0 = text.getCursor(0, 0);
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(0);
+     * }
+     * text.insert(0, "1");
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(1);
+     * }
+     * ```
+     */
+    getCursor(pos: number, side?: Side): StablePosition | undefined;
+}
+
+interface LoroList {
+    /**
+     * Get a stable position representing the cursor position.
+     *
+     * When expressing the position of a cursor, using "index" can be unstable
+     * because the cursor's position may change due to other deletions and insertions,
+     * requiring updates with each edit. To stably represent a position or range within
+     * a list structure, we can utilize the ID of each item/character on List CRDT or
+     * Text CRDT for expression.
+     *
+     * Loro optimizes State metadata by not storing the IDs of deleted elements. This
+     * approach complicates tracking cursors since they rely on these IDs. The solution
+     * recalculates position by replaying relevant history to update stable positions
+     * accurately. To minimize the performance impact of history replay, the system
+     * updates cursor info to reference only the IDs of currently present elements,
+     * thereby reducing the need for replay.
+     *
+     * @example
+     * ```ts
+     *
+     * const doc = new Loro();
+     * const text = doc.getList("list");
+     * text.insert(0, "1");
+     * const pos0 = text.getCursor(0, 0);
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(0);
+     * }
+     * text.insert(0, "1");
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(1);
+     * }
+     * ```
+     */
+    getCursor(pos: number, side?: Side): StablePosition | undefined;
+}
+
+export type Side = -1 | 0 | 1;
 "#;

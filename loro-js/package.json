@@ -1,6 +1,6 @@
 {
   "name": "loro-crdt",
-  "version": "0.11.1",
+  "version": "0.14.1",
   "description": "Loro CRDTs is a high-performance CRDT framework that makes your app state synchronized, collaborative and maintainable effortlessly.",
   "keywords": [
     "crdt",
@@ -16,7 +16,7 @@
   "scripts": {
     "build": "rollup -c",
     "watch": "rollup -c -w",
-    "test": "vitest run",
+    "test": "vitest run && npx tsc --noEmit",
     "prepublish": "pnpm run build"
   },
   "author": "Loro",
@@ -38,6 +38,6 @@
     "typescript": "^5.0.2",
     "vite": "^4.2.1",
     "vite-plugin-wasm": "^3.2.2",
-    "vitest": "^1.0.4"
+    "vitest": "^1.4.0"
   }
 }

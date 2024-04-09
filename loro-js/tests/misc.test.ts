@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  Loro,
-  LoroList,
-  LoroMap,
-  VersionVector,
-} from "../src";
+import { Loro, LoroList, LoroMap, LoroText, VersionVector } from "../src";
 import { expectTypeOf } from "vitest";
 
 function assertEquals(a: any, b: any) {
@@ -134,15 +129,15 @@ describe("sync", () => {
     const b = new Loro();
     let a_version: undefined | VersionVector = undefined;
     let b_version: undefined | VersionVector = undefined;
-    a.subscribe((e: { local: boolean }) => {
-      if (e.local) {
+    a.subscribe((e) => {
+      if (e.by == "local") {
         const exported = a.exportFrom(a_version);
         b.import(exported);
         a_version = a.version();
       }
     });
-    b.subscribe((e: { local: boolean }) => {
-      if (e.local) {
+    b.subscribe((e) => {
+      if (e.by == "local") {
         const exported = b.exportFrom(b_version);
         a.import(exported);
         b_version = b.version();
@@ -188,7 +183,7 @@ describe("wasm", () => {
   b.set("ab", 123);
   loro.commit();
 
-  const bText = b.setContainer("hh", "Text");
+  const bText = b.setContainer("hh", new LoroText());
   loro.commit();
 
   it("map get", () => {
@@ -214,39 +209,35 @@ describe("wasm", () => {
 describe("type", () => {
   it("test map type", () => {
     const loro = new Loro<{ map: LoroMap<{ name: "he" }> }>();
-    const map = loro.getTypedMap("map");
-    const v = map.getTyped(loro, "name");
+    const map = loro.getMap("map");
+    const v = map.get("name");
     expectTypeOf(v).toEqualTypeOf<"he">();
   });
 
   it("test recursive map type", () => {
     const loro = new Loro<{ map: LoroMap<{ map: LoroMap<{ name: "he" }> }> }>();
-    const map = loro.getTypedMap("map");
-    map.setContainer("map", "Map");
+    const map = loro.getMap("map");
+    map.setContainer("map", new LoroMap());
 
-    const subMap = map.getTyped(loro, "map");
-    const name = subMap.getTyped(loro, "name");
+    const subMap = map.get("map");
+    const name = subMap.get("name");
     expectTypeOf(name).toEqualTypeOf<"he">();
   });
 
   it("works for list type", () => {
-    const loro = new Loro<{ list: LoroList<[string, number]> }>();
-    const list = loro.getTypedList("list");
-    list.insertTyped(0, "123");
-    list.insertTyped(1, 123);
-    const v0 = list.getTyped(loro, 0);
+    const loro = new Loro<{ list: LoroList<string> }>();
+    const list = loro.getList("list");
+    list.insert(0, "123");
+    const v0 = list.get(0);
     expectTypeOf(v0).toEqualTypeOf<string>();
-    const v1 = list.getTyped(loro, 1);
-    expectTypeOf(v1).toEqualTypeOf<number>();
   });
 
   it("test binary type", () => {
-    // const loro = new Loro<{ list: LoroList<[string, number]> }>();
-    // const list = loro.getTypedList("list");
-    // console.dir((list as any).__proto__);
-    // list.insertTyped(0, new Uint8Array(10));
-    // const v0 = list.getTyped(loro, 0);
-    // expectTypeOf(v0).toEqualTypeOf<Uint8Array>();
+    const loro = new Loro<{ list: LoroList<Uint8Array> }>();
+    const list = loro.getList("list");
+    list.insert(0, new Uint8Array(10));
+    const v0 = list.get(0);
+    expectTypeOf(v0).toEqualTypeOf<Uint8Array>();
   });
 });
 
@@ -260,7 +251,7 @@ describe("tree", () => {
     assertEquals(child.parent()!.id, root.id);
   });
 
-  it("move",()=>{
+  it("move", () => {
     const root = tree.createNode();
     const child = root.createNode();
     const child2 = root.createNode();
@@ -268,12 +259,42 @@ describe("tree", () => {
     child2.moveTo(child);
     assertEquals(child2.parent()!.id, child.id);
     assertEquals(child.children()[0].id, child2.id);
-  })
+  });
 
   it("meta", () => {
     const root = tree.createNode();
     root.data.set("a", 123);
     assertEquals(root.data.get("a"), 123);
+  });
+});
+
+describe("list stable position", () => {
+  it("basic tests", () => {
+    const loro = new Loro();
+    const list = loro.getList("list");
+    list.insert(0, "a");
+    const pos0 = list.getCursor(0);
+    list.insert(1, "b");
+    {
+      const ans = loro.getCursorPos(pos0!);
+      expect(ans.offset).toEqual(0);
+      expect(ans.side).toEqual(0);
+      expect(ans.update).toBeUndefined();
+    }
+    list.insert(0, "c");
+    {
+      const ans = loro.getCursorPos(pos0!);
+      expect(ans.offset).toEqual(1);
+      expect(ans.side).toEqual(0);
+      expect(ans.update).toBeUndefined();
+    }
+    list.delete(1, 1);
+    {
+      const ans = loro.getCursorPos(pos0!);
+      expect(ans.offset).toEqual(1);
+      expect(ans.side).toEqual(-1);
+      expect(ans.update).toBeDefined();
+    }
   });
 });
 

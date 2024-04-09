@@ -9,7 +9,6 @@ use crate::{
 
 use loro_common::ContainerType;
 pub use loro_common::LoroValue;
-use tracing::{instrument, trace};
 
 // TODO: rename this trait
 pub trait ToJson {

@@ -4,10 +4,10 @@ use fxhash::FxHashMap;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, ID};
 use loro_internal::{
     delta::ResolvedMapValue,
-    event::Diff,
+    event::{Diff, EventTriggerKind},
     handler::{Handler, TextDelta, ValueOrHandler},
     version::Frontiers,
-    ApplyDiff, HandlerTrait, LoroDoc, ToJson,
+    ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson,
 };
 use serde_json::json;
 
@@ -94,7 +94,10 @@ fn mark_with_the_same_key_value_should_be_skipped() {
 fn event_from_checkout() {
     let a = LoroDoc::new_auto_commit();
     let sub_id = a.subscribe_root(Arc::new(|event| {
-        assert!(!event.event_meta.from_checkout);
+        assert!(matches!(
+            event.event_meta.by,
+            EventTriggerKind::Checkout | EventTriggerKind::Local
+        ));
     }));
     a.get_text("text").insert(0, "hello").unwrap();
     a.commit_then_renew();
@@ -105,7 +108,7 @@ fn event_from_checkout() {
     let ran = Arc::new(AtomicBool::new(false));
     let ran_cloned = ran.clone();
     a.subscribe_root(Arc::new(move |event| {
-        assert!(event.event_meta.from_checkout);
+        assert!(event.event_meta.by.is_checkout());
         ran.store(true, std::sync::atomic::Ordering::Relaxed);
     }));
     a.checkout(&version).unwrap();
@@ -132,7 +135,8 @@ fn handler_in_event() {
         assert!(matches!(value, ValueOrHandler::Handler(Handler::Text(_))));
     }));
     let list = doc.get_list("list");
-    list.insert_container(0, ContainerType::Text).unwrap();
+    list.insert_container(0, TextHandler::new_detached())
+        .unwrap();
     doc.commit_then_renew();
 }
 
@@ -156,7 +160,7 @@ fn out_of_bound_test() {
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
     let err = a
         .get_list("list")
-        .insert_container(3, ContainerType::Map)
+        .insert_container(3, MapHandler::new_detached())
         .unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
 }
@@ -168,22 +172,18 @@ fn list() {
     assert_eq!(a.get_list("list").get(0).unwrap(), LoroValue::from("Hello"));
     let map = a
         .get_list("list")
-        .insert_container(1, ContainerType::Map)
-        .unwrap()
-        .into_map()
+        .insert_container(1, MapHandler::new_detached())
         .unwrap();
     map.insert("Hello", LoroValue::from("u")).unwrap();
     let pos = map
-        .insert_container("pos", ContainerType::Map)
-        .unwrap()
-        .into_map()
+        .insert_container("pos", MapHandler::new_detached())
         .unwrap();
     pos.insert("x", 0).unwrap();
     pos.insert("y", 100).unwrap();
 
     let cid = map.id();
     let id = a.get_list("list").get(1);
-    assert_eq!(id.as_ref().unwrap().as_container().unwrap(), cid);
+    assert_eq!(id.as_ref().unwrap().as_container().unwrap(), &cid);
     let map = a.get_map(id.unwrap().into_container().unwrap());
     let new_pos = a.get_map(map.get("pos").unwrap().into_container().unwrap());
     assert_eq!(
@@ -199,7 +199,7 @@ fn list() {
 fn richtext_mark_event() {
     let a = LoroDoc::new_auto_commit();
     a.subscribe(
-        a.get_text("text").id(),
+        &a.get_text("text").id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(
@@ -220,7 +220,7 @@ fn richtext_mark_event() {
     a.commit_then_stop();
     let b = LoroDoc::new_auto_commit();
     b.subscribe(
-        a.get_text("text").id(),
+        &a.get_text("text").id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(
@@ -248,7 +248,7 @@ fn concurrent_richtext_mark_event() {
     c.get_text("text").mark(1, 4, "link", true.into()).unwrap();
     b.merge(&c).unwrap();
     let sub_id = a.subscribe(
-        a.get_text("text").id(),
+        &a.get_text("text").id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(
@@ -266,7 +266,7 @@ fn concurrent_richtext_mark_event() {
     a.unsubscribe(sub_id);
 
     let sub_id = a.subscribe(
-        a.get_text("text").id(),
+        &a.get_text("text").id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(
@@ -290,7 +290,7 @@ fn concurrent_richtext_mark_event() {
     a.merge(&b).unwrap();
     a.unsubscribe(sub_id);
     a.subscribe(
-        a.get_text("text").id(),
+        &a.get_text("text").id(),
         Arc::new(|e| {
             for container_diff in e.events {
                 let delta = container_diff.diff.as_text().unwrap();
@@ -321,7 +321,7 @@ fn insert_richtext_event() {
     a.commit_then_renew();
     let text = a.get_text("text");
     a.subscribe(
-        text.id(),
+        &text.id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
             assert_eq!(
@@ -441,8 +441,9 @@ fn test_checkout() {
     let map = doc_0.get_map("map");
     doc_0
         .with_txn(|txn| {
-            let handler = map.insert_container_with_txn(txn, "text", ContainerType::Text)?;
-            let text = handler.into_text().unwrap();
+            let handler =
+                map.insert_container_with_txn(txn, "text", TextHandler::new_detached())?;
+            let text = handler;
             text.insert_with_txn(txn, 0, "123")
         })
         .unwrap();
@@ -598,14 +599,8 @@ fn a_list_of_map_checkout() {
     let entry = doc.get_map("entry");
     let (list, sub) = doc
         .with_txn(|txn| {
-            let list = entry
-                .insert_container_with_txn(txn, "list", loro_common::ContainerType::List)?
-                .into_list()
-                .unwrap();
-            let sub_map = list
-                .insert_container_with_txn(txn, 0, loro_common::ContainerType::Map)?
-                .into_map()
-                .unwrap();
+            let list = entry.insert_container_with_txn(txn, "list", ListHandler::new_detached())?;
+            let sub_map = list.insert_container_with_txn(txn, 0, MapHandler::new_detached())?;
             sub_map.insert_with_txn(txn, "x", 100.into())?;
             sub_map.insert_with_txn(txn, "y", 1000.into())?;
             Ok((list, sub_map))
@@ -616,8 +611,8 @@ fn a_list_of_map_checkout() {
     doc.with_txn(|txn| {
         list.insert_with_txn(txn, 0, 3.into())?;
         list.push_with_txn(txn, 4.into())?;
-        list.insert_container_with_txn(txn, 2, loro_common::ContainerType::Map)?;
-        list.insert_container_with_txn(txn, 3, loro_common::ContainerType::Map)?;
+        list.insert_container_with_txn(txn, 2, MapHandler::new_detached())?;
+        list.insert_container_with_txn(txn, 3, TextHandler::new_detached())?;
         Ok(())
     })
     .unwrap();

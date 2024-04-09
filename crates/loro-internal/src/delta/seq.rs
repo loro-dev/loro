@@ -1,7 +1,6 @@
 use enum_as_inner::EnumAsInner;
 use serde::Serialize;
 use std::fmt::Debug;
-use tracing::trace;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Delta<Value, Meta = ()> {

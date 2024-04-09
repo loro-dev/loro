@@ -230,6 +230,21 @@ impl FugueSpan {
             _ => DiffStatus::NotChanged,
         }
     }
+
+    pub fn is_activated_in_diff(&self) -> bool {
+        match self.diff_status {
+            Some(d) => d.is_activated(),
+            None => self.status.is_activated(),
+        }
+    }
+
+    pub(crate) fn real_id(&self) -> ID {
+        if let Some(id) = self.real_id {
+            id.to_id()
+        } else {
+            self.id.id()
+        }
+    }
 }
 
 impl Sliceable for FugueSpan {

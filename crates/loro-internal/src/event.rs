@@ -1,5 +1,6 @@
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHasher64;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -32,6 +33,44 @@ pub struct ContainerDiff {
     pub diff: Diff,
 }
 
+///
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EventTriggerKind {
+    /// The event is triggered by a local transaction.
+    Local,
+    /// The event is triggered by importing
+    Import,
+    /// The event is triggered by checkout
+    Checkout,
+}
+
+impl std::fmt::Display for EventTriggerKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EventTriggerKind::Local => write!(f, "local"),
+            EventTriggerKind::Import => write!(f, "import"),
+            EventTriggerKind::Checkout => write!(f, "checkout"),
+        }
+    }
+}
+
+impl EventTriggerKind {
+    #[inline]
+    pub fn is_local(&self) -> bool {
+        matches!(self, EventTriggerKind::Local)
+    }
+
+    #[inline]
+    pub fn is_import(&self) -> bool {
+        matches!(self, EventTriggerKind::Import)
+    }
+
+    #[inline]
+    pub fn is_checkout(&self) -> bool {
+        matches!(self, EventTriggerKind::Checkout)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DiffEvent<'a> {
     /// The receiver of the event.
@@ -51,9 +90,7 @@ pub struct DocDiff {
     pub from: Frontiers,
     pub to: Frontiers,
     pub origin: InternalString,
-    pub local: bool,
-    /// Whether the diff is created from the checkout operation.
-    pub from_checkout: bool,
+    pub by: EventTriggerKind,
     pub diff: Vec<ContainerDiff>,
 }
 
@@ -93,8 +130,7 @@ pub(crate) enum DiffVariant {
 #[derive(Debug, Clone)]
 pub(crate) struct InternalDocDiff<'a> {
     pub(crate) origin: InternalString,
-    pub(crate) local: bool,
-    pub(crate) from_checkout: bool,
+    pub(crate) by: EventTriggerKind,
     /// The values inside this array is in random order
     pub(crate) diff: Cow<'a, [InternalContainerDiff]>,
     pub(crate) new_version: Cow<'a, Frontiers>,
@@ -104,21 +140,20 @@ impl<'a> InternalDocDiff<'a> {
     pub fn into_owned(self) -> InternalDocDiff<'static> {
         InternalDocDiff {
             origin: self.origin,
-            local: self.local,
-            from_checkout: self.from_checkout,
+            by: self.by,
             diff: Cow::Owned((*self.diff).to_owned()),
             new_version: Cow::Owned((*self.new_version).to_owned()),
         }
     }
 
     pub fn can_merge(&self, other: &Self) -> bool {
-        self.origin == other.origin && self.local == other.local
+        self.by == other.by
     }
 }
 
 pub type Path = SmallVec<[Index; 4]>;
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, enum_as_inner::EnumAsInner)]
 pub enum Index {
     Key(InternalString),
     Seq(usize),
@@ -131,6 +166,38 @@ impl std::fmt::Debug for Index {
             Self::Key(arg0) => write!(f, "Index::Key(\"{}\")", arg0),
             Self::Seq(arg0) => write!(f, "Index::Seq({})", arg0),
             Self::Node(arg0) => write!(f, "Index::Node({})", arg0),
+        }
+    }
+}
+
+impl std::fmt::Display for Index {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Index::Key(key) => write!(f, "{}", key),
+            Index::Seq(s) => write!(f, "{}", s),
+            Index::Node(id) => write!(f, "{}@{}", id.peer, id.counter),
+        }
+    }
+}
+
+impl TryFrom<&str> for Index {
+    type Error = &'static str;
+    fn try_from(s: &str) -> Result<Self, &'static str> {
+        if s.is_empty() {
+            return Ok(Index::Key(InternalString::default()));
+        }
+
+        let c = s.chars().next().unwrap();
+        if c.is_ascii_digit() {
+            if let Ok(seq) = s.parse::<usize>() {
+                Ok(Index::Seq(seq))
+            } else if let Ok(id) = s.try_into() {
+                Ok(Index::Node(id))
+            } else {
+                Ok(Index::Key(InternalString::from(s)))
+            }
+        } else {
+            Ok(Index::Key(InternalString::from(s)))
         }
     }
 }
@@ -299,6 +366,14 @@ impl Diff {
             _ => unreachable!(),
         }
     }
+}
+
+pub fn str_to_path(s: &str) -> Option<Vec<Index>> {
+    s.split('/').map(|x| x.try_into()).try_collect().ok()
+}
+
+pub fn path_to_str(path: &[Index]) -> String {
+    path.iter().map(|x| x.to_string()).join("/")
 }
 
 #[cfg(test)]

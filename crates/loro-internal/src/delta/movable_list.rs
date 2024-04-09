@@ -1,4 +1,3 @@
-use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use loro_common::{CompactIdLp, IdFull, IdLp, LoroValue};
 use smallvec::SmallVec;
@@ -45,10 +44,6 @@ pub struct ElementDelta {
 }
 
 impl ElementDelta {
-    pub fn value(&self) -> &LoroValue {
-        &self.value
-    }
-
     pub fn placeholder() -> Self {
         Self {
             pos: IdLp::NONE_ID,

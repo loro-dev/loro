@@ -1,61 +1,46 @@
 export * from "loro-wasm";
-import { Container, Delta, LoroText, LoroTree,LoroTreeNode, OpId, Value, ContainerID, Loro, LoroList, LoroMap, TreeID } from "loro-wasm";
-
-
-Loro.prototype.getTypedMap = function (...args) {
-  return this.getMap(...args);
-};
-Loro.prototype.getTypedList = function (...args) {
-  return this.getList(...args);
-};
-LoroList.prototype.getTyped = function (loro, index) {
-  const value = this.get(index);
-  if (typeof value === "string" && isContainerId(value)) {
-    return loro.getContainerById(value);
-  } else {
-    return value;
-  }
-};
-LoroList.prototype.insertTyped = function (...args) {
-  return this.insert(...args);
-};
-LoroMap.prototype.getTyped = function (loro, key) {
-  const value = this.get(key);
-  if (typeof value === "string" && isContainerId(value)) {
-    return loro.getContainerById(value);
-  } else {
-    return value;
-  }
-};
-LoroMap.prototype.setTyped = function (...args) {
-  return this.set(...args);
-};
+import {
+  Container,
+  ContainerID,
+  Delta,
+  Loro,
+  LoroList,
+  LoroMap,
+  LoroText,
+  LoroTree,
+  OpId,
+  TreeID,
+  Value,
+} from "loro-wasm";
 
 export type Frontiers = OpId[];
 
 /**
  * Represents a path to identify the exact location of an event's target.
  * The path is composed of numbers (e.g., indices of a list container) strings
- * (e.g., keys of a map container) and TreeID (the node of a tree container), 
+ * (e.g., keys of a map container) and TreeID (the node of a tree container),
  * indicating the absolute position of the event's source within a loro document.
  */
-export type Path = (number | string | TreeID )[];
+export type Path = (number | string | TreeID)[];
 
 /**
  * A batch of events that created by a single `import`/`transaction`/`checkout`.
  *
- * @prop local - Indicates whether the event is local.
+ * @prop by - How the event is triggered.
  * @prop origin - (Optional) Provides information about the origin of the event.
  * @prop diff - Contains the differential information related to the event.
  * @prop target - Identifies the container ID of the event's target.
  * @prop path - Specifies the absolute path of the event's emitter, which can be an index of a list container or a key of a map container.
  */
 export interface LoroEventBatch {
-  local: boolean;
   /**
-   * If true, this event was triggered by a checkout.
+   * How the event is triggered.
+   *
+   * - `local`: The event is triggered by a local transaction.
+   * - `import`: The event is triggered by an import operation.
+   * - `checkout`: The event is triggered by a checkout operation.
    */
-  fromCheckout: boolean;
+  by: "local" | "import" | "checkout";
   origin?: string;
   /**
    * The container ID of the current event receiver.
@@ -95,9 +80,10 @@ export type MapDiff = {
   updated: Record<string, Value | Container | undefined>;
 };
 
-export type TreeDiffItem = { target: TreeID; action: "create"; parent: TreeID | undefined }
-   | { target: TreeID; action: "delete" }
-   | { target: TreeID; action: "move"; parent: TreeID | undefined };
+export type TreeDiffItem =
+  | { target: TreeID; action: "create"; parent: TreeID | undefined }
+  | { target: TreeID; action: "delete" }
+  | { target: TreeID; action: "move"; parent: TreeID | undefined };
 
 export type TreeDiff = {
   type: "tree";
@@ -166,17 +152,13 @@ export function isContainer(value: any): value is Container {
  */
 export function getType<T>(
   value: T,
-): T extends LoroText
-  ? "Text"
-  : T extends LoroMap
-  ? "Map"
-  : T extends LoroTree
-  ? "Tree"
-  : T extends LoroList
-  ? "List"
+): T extends LoroText ? "Text"
+  : T extends LoroMap<any> ? "Map"
+  : T extends LoroTree<any> ? "Tree"
+  : T extends LoroList<any> ? "List"
   : "Json" {
   if (isContainer(value)) {
-    return value.kind();
+    return value.kind() as unknown as any;
   }
 
   return "Json" as any;
@@ -187,53 +169,227 @@ declare module "loro-wasm" {
     subscribe(listener: Listener): number;
   }
 
-  interface Loro<T extends Record<string, any> = Record<string, any>> {
-    getTypedMap<Key extends keyof T & string>(
+  interface Loro<
+    T extends Record<string, Container> = Record<string, Container>,
+  > {
+    /**
+     * Get a LoroMap by container id
+     *
+     * The object returned is a new js object each time because it need to cross
+     * the WASM boundary.
+     *
+     * @example
+     * ```ts
+     * import { Loro } from "loro-crdt";
+     *
+     * const doc = new Loro();
+     * const map = doc.getMap("map");
+     * ```
+     */
+    getMap<Key extends keyof T>(
       name: Key,
-    ): T[Key] extends LoroMap ? T[Key] : never;
-    getTypedList<Key extends keyof T & string>(
+    ): T[Key] extends LoroMap ? T[Key] : LoroMap;
+    /**
+     * Get a LoroList by container id
+     *
+     * The object returned is a new js object each time because it need to cross
+     * the WASM boundary.
+     *
+     * @example
+     * ```ts
+     * import { Loro } from "loro-crdt";
+     *
+     * const doc = new Loro();
+     * const list = doc.getList("list");
+     * ```
+     */
+    getList<Key extends keyof T>(
       name: Key,
-    ): T[Key] extends LoroList ? T[Key] : never;
+    ): T[Key] extends LoroList ? T[Key] : LoroList;
+    /**
+     * Get a LoroTree by container id
+     *
+     *  The object returned is a new js object each time because it need to cross
+     *  the WASM boundary.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const tree = doc.getTree("tree");
+     *  ```
+     */
+    getTree<Key extends keyof T>(
+      name: Key,
+    ): T[Key] extends LoroTree ? T[Key] : LoroTree;
+    getText(key: string | ContainerID): LoroText;
   }
 
-  interface LoroList<T extends any[] = any[]> {
-    insertContainer(pos: number, container: "Map"): LoroMap;
-    insertContainer(pos: number, container: "List"): LoroList;
-    insertContainer(pos: number, container: "Text"): LoroText;
-    insertContainer(pos: number, container: "Tree"): LoroTree;
-    insertContainer(pos: number, container: string): never;
-
-    get(index: number): undefined | Value | Container;
-    getTyped<Key extends keyof T & number>(loro: Loro, index: Key): T[Key];
-    insertTyped<Key extends keyof T & number>(pos: Key, value: T[Key]): void;
-    insert(pos: number, value: Value): void;
+  interface LoroList<T = unknown> {
+    new (): LoroList<T>;
+    /**
+     *  Get elements of the list. If the value is a child container, the corresponding
+     *  `Container` will be returned.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getList("list");
+     *  list.insert(0, 100);
+     *  list.insert(1, "foo");
+     *  list.insert(2, true);
+     *  list.insertContainer(3, new LoroText());
+     *  console.log(list.value);  // [100, "foo", true, LoroText];
+     *  ```
+     */
+    toArray(): T[];
+    /**
+     * Insert a container at the index.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getList("list");
+     *  list.insert(0, 100);
+     *  const text = list.insertContainer(1, new LoroText());
+     *  text.insert(0, "Hello");
+     *  console.log(list.getDeepValue());  // [100, "Hello"];
+     *  ```
+     */
+    insertContainer<C extends Container>(
+      pos: number,
+      child: C,
+    ): T extends C ? T : C;
+    /**
+     * Get the value at the index. If the value is a container, the corresponding handler will be returned.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getList("list");
+     *  list.insert(0, 100);
+     *  console.log(list.get(0));  // 100
+     *  console.log(list.get(1));  // undefined
+     *  ```
+     */
+    get(index: number): T;
+    /**
+     *  Insert a value at index.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getList("list");
+     *  list.insert(0, 100);
+     *  list.insert(1, "foo");
+     *  list.insert(2, true);
+     *  console.log(list.value);  // [100, "foo", true];
+     *  ```
+     */
+    insert(pos: number, value: Exclude<T, Container>): void;
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
+    getAttached(): undefined | LoroList<T>;
   }
 
-  interface LoroMap<T extends Record<string, any> = Record<string, any>> {
-    setContainer(key: string, container_type: "Map"): LoroMap;
-    setContainer(key: string, container_type: "List"): LoroList;
-    setContainer(key: string, container_type: "Text"): LoroText;
-    setContainer(key: string, container_type: "Tree"): LoroTree;
-    setContainer(key: string, container_type: string): never;
-
-    get(key: string): undefined | Value | Container;
-    getTyped<Key extends keyof T & string>(txn: Loro, key: Key): T[Key];
-    set(key: string, value: Value): void;
-    setTyped<Key extends keyof T & string>(key: Key, value: T[Key]): void;
+  interface LoroMap<
+    T extends Record<string, unknown> = Record<string, unknown>,
+  > {
+    new (): LoroMap<T>;
+    /**
+     *  Get the value of the key. If the value is a child container, the corresponding
+     *  `Container` will be returned.
+     *
+     *  The object returned is a new js object each time because it need to cross
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const map = doc.getMap("map");
+     *  map.set("foo", "bar");
+     *  const bar = map.get("foo");
+     *  ```
+     */
+    getOrCreateContainer<C extends Container>(key: string, child: C): C;
+    /**
+     * Set the key with a container.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const map = doc.getMap("map");
+     *  map.set("foo", "bar");
+     *  const text = map.setContainer("text", new LoroText());
+     *  const list = map.setContainer("list", new LoroText());
+     *  ```
+     */
+    setContainer<C extends Container, Key extends keyof T>(
+      key: Key,
+      child: C,
+    ): NonNullableType<T[Key]> extends C ? NonNullableType<T[Key]> : C;
+    /**
+     *  Get the value of the key. If the value is a child container, the corresponding
+     *  `Container` will be returned.
+     *
+     *  The object/value returned is a new js object/value each time because it need to cross
+     *  the WASM boundary.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const map = doc.getMap("map");
+     *  map.set("foo", "bar");
+     *  const bar = map.get("foo");
+     *  ```
+     */
+    get<Key extends keyof T>(key: Key): T[Key];
+    /**
+     * Set the key with the value.
+     *
+     *  If the value of the key is exist, the old value will be updated.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const map = doc.getMap("map");
+     *  map.set("foo", "bar");
+     *  map.set("foo", "baz");
+     *  ```
+     */
+    set<Key extends keyof T>(key: Key, value: Exclude<T[Key], Container>): void;
     delete(key: string): void;
     subscribe(txn: Loro, listener: Listener): number;
   }
 
   interface LoroText {
+    new (): LoroText;
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
   }
 
-  interface LoroTree {
-    createNode(parent: TreeID | undefined): LoroTreeNode;
+  interface LoroTree<
+    T extends Record<string, unknown> = Record<string, unknown>,
+  > {
+    new (): LoroTree<T>;
+    createNode(parent: TreeID | undefined): LoroTreeNode<T>;
     move(target: TreeID, parent: TreeID | undefined): void;
     delete(target: TreeID): void;
     has(target: TreeID): boolean;
@@ -241,12 +397,19 @@ declare module "loro-wasm" {
     subscribe(txn: Loro, listener: Listener): number;
   }
 
-  interface LoroTreeNode{
-    readonly data: LoroMap;
-    createNode(): LoroTreeNode;
+  interface LoroTreeNode<
+    T extends Record<string, unknown> = Record<string, unknown>,
+  > {
+    /**
+     * Get the associated metadata map container of a tree node.
+     */
+    readonly data: LoroMap<T>;
+    createNode(): LoroTreeNode<T>;
     setAsRoot(): void;
-    moveTo(parent: LoroTreeNode): void;
-    parent(): LoroTreeNode | undefined;
-    children(): Array<LoroTreeNode>;
+    moveTo(parent: LoroTreeNode<T>): void;
+    parent(): LoroTreeNode<T> | undefined;
+    children(): Array<LoroTreeNode<T>>;
   }
 }
+
+type NonNullableType<T> = Exclude<T, null | undefined>;

@@ -380,28 +380,28 @@ impl Actionable for Vec<Actor> {
 
                 b.map_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(id) {
+                    if !visited.contains(&id) {
                         visited.insert(id.clone());
                         a.map_containers.push(a.loro.txn().unwrap().get_map(id))
                     }
                 });
                 b.list_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(id) {
+                    if !visited.contains(&id) {
                         visited.insert(id.clone());
                         a.list_containers.push(a.loro.txn().unwrap().get_list(id))
                     }
                 });
                 b.text_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(id) {
+                    if !visited.contains(&id) {
                         visited.insert(id.clone());
                         a.text_containers.push(a.loro.txn().unwrap().get_text(id))
                     }
                 });
                 b.tree_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(id) {
+                    if !visited.contains(&id) {
                         visited.insert(id.clone());
                         a.tree_containers.push(a.loro.txn().unwrap().get_tree(id))
                     }
@@ -451,28 +451,28 @@ impl Actionable for Vec<Actor> {
                         .unwrap();
                     b.map_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(id) {
+                        if !visited.contains(&id) {
                             visited.insert(id.clone());
                             a.map_containers.push(a.loro.get_map(id))
                         }
                     });
                     b.list_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(id) {
+                        if !visited.contains(&id) {
                             visited.insert(id.clone());
                             a.list_containers.push(a.loro.get_list(id))
                         }
                     });
                     b.text_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(id) {
+                        if !visited.contains(&id) {
                             visited.insert(id.clone());
                             a.text_containers.push(a.loro.get_text(id))
                         }
                     });
                     b.tree_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(id) {
+                        if !visited.contains(&id) {
                             visited.insert(id.clone());
                             a.tree_containers.push(a.loro.get_tree(id))
                         }

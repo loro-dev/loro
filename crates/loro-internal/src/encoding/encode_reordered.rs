@@ -9,12 +9,12 @@ use loro_common::{
 };
 use num_traits::FromPrimitive;
 use rle::HasLength;
-use serde_columnar::columnar;
+use serde_columnar::{columnar, ColumnarError};
 use tracing::instrument;
 
 use crate::{
     arena::SharedArena,
-    change::{Change, Lamport},
+    change::{Change, Lamport, Timestamp},
     container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
     encoding::{
         encode_reordered::value::{ValueKind, ValueWriter},
@@ -32,6 +32,8 @@ use self::{
     value::ValueReader,
 };
 
+use super::{parse_header_and_body, ImportBlobMetadata};
+
 /// If any section of the document is longer than this, we will not decode it.
 /// It will return an data corruption error instead.
 const MAX_DECODED_SIZE: usize = 1 << 30;
@@ -40,6 +42,24 @@ const MAX_DECODED_SIZE: usize = 1 << 30;
 const MAX_COLLECTION_SIZE: usize = 1 << 28;
 
 pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
+    // skip the ops that current oplog does not have
+    let actual_start_vv: VersionVector = vv
+        .iter()
+        .filter_map(|(&peer, &end_counter)| {
+            if end_counter == 0 {
+                return None;
+            }
+
+            let this_end = oplog.vv().get(&peer).cloned().unwrap_or(0);
+            if this_end <= end_counter {
+                return Some((peer, this_end));
+            }
+
+            Some((peer, end_counter))
+        })
+        .collect();
+
+    let vv = &actual_start_vv;
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
@@ -92,7 +112,8 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     );
 
     let frontiers = oplog
-        .frontiers()
+        .dag
+        .vv_to_frontiers(&actual_start_vv)
         .iter()
         .map(|x| (peer_register.register(&x.peer), x.counter))
         .collect();
@@ -110,7 +131,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             dep_arena,
             &[],
         )),
-        frontiers,
+        start_frontiers: frontiers,
     };
 
     serde_columnar::to_vec(&doc).unwrap()
@@ -147,6 +168,62 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
 
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
     Ok(())
+}
+
+pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
+    let parsed = parse_header_and_body(bytes)?;
+    let is_snapshot = parsed.mode.is_snapshot();
+    let iterators = serde_columnar::iter_from_bytes::<EncodedDoc>(parsed.body)?;
+    let DecodedArenas { peer_ids, .. } = decode_arena(&iterators.arenas)?;
+    let start_vv: VersionVector = iterators
+        .start_counters
+        .iter()
+        .enumerate()
+        .filter_map(|(peer_idx, counter)| {
+            if *counter == 0 {
+                None
+            } else {
+                Some(ID::new(peer_ids.peer_ids[peer_idx], *counter - 1))
+            }
+        })
+        .collect();
+    let frontiers = iterators
+        .start_frontiers
+        .iter()
+        .map(|x| ID::new(peer_ids.peer_ids[x.0], x.1))
+        .collect();
+    let mut end_vv_counters = iterators.start_counters;
+    let mut change_num = 0;
+    let mut start_timestamp = Timestamp::MAX;
+    let mut end_timestamp = Timestamp::MIN;
+
+    for iter in iterators.changes {
+        let EncodedChange {
+            peer_idx,
+            len,
+            timestamp,
+            ..
+        } = iter?;
+        end_vv_counters[peer_idx] += len as Counter;
+        start_timestamp = start_timestamp.min(timestamp);
+        end_timestamp = end_timestamp.max(timestamp);
+        change_num += 1;
+    }
+
+    Ok(ImportBlobMetadata {
+        is_snapshot,
+        start_frontiers: frontiers,
+        partial_start_vv: start_vv,
+        partial_end_vv: VersionVector::from_iter(
+            end_vv_counters
+                .iter()
+                .enumerate()
+                .map(|(peer_idx, counter)| ID::new(peer_ids.peer_ids[peer_idx], *counter - 1)),
+        ),
+        start_timestamp,
+        end_timestamp,
+        change_num,
+    })
 }
 
 fn import_changes_to_oplog(
@@ -195,7 +272,7 @@ fn decode_changes<'a>(
     encoded_changes: IterableEncodedChange<'_>,
     mut counters: Vec<i32>,
     peer_ids: &arena::PeerIdArena,
-    mut deps: impl Iterator<Item = arena::EncodedDep> + 'a,
+    mut deps: impl Iterator<Item = Result<arena::EncodedDep, ColumnarError>> + 'a,
     mut ops_map: std::collections::HashMap<
         u64,
         Vec<Op>,
@@ -203,15 +280,15 @@ fn decode_changes<'a>(
     >,
 ) -> LoroResult<Vec<Change>> {
     let mut changes = Vec::with_capacity(encoded_changes.size_hint().0);
-    for EncodedChange {
-        peer_idx,
-        mut len,
-        timestamp,
-        deps_len,
-        dep_on_self,
-        msg_len: _,
-    } in encoded_changes
-    {
+    for encoded_change in encoded_changes {
+        let EncodedChange {
+            peer_idx,
+            mut len,
+            timestamp,
+            deps_len,
+            dep_on_self,
+            msg_len: _,
+        } = encoded_change?;
         if peer_ids.peer_ids.len() <= peer_idx || counters.len() <= peer_idx {
             return Err(LoroError::DecodeDataCorruptionError);
         }
@@ -237,7 +314,7 @@ fn decode_changes<'a>(
         }
 
         for _ in 0..deps_len {
-            let dep = deps.next().ok_or(LoroError::DecodeDataCorruptionError)?;
+            let dep = deps.next().ok_or(LoroError::DecodeDataCorruptionError)??;
             change
                 .deps
                 .push(ID::new(peer_ids.peer_ids[dep.peer_idx], dep.counter));
@@ -267,8 +344,8 @@ struct ExtractedOps {
 #[allow(clippy::too_many_arguments)]
 fn extract_ops(
     raw_values: &[u8],
-    iter: impl Iterator<Item = EncodedOp>,
-    mut del_iter: impl Iterator<Item = EncodedDeleteStartId>,
+    iter: impl Iterator<Item = Result<EncodedOp, ColumnarError>>,
+    mut del_iter: impl Iterator<Item = Result<EncodedDeleteStartId, ColumnarError>>,
     arena: &SharedArena,
     containers: &ContainerArena,
     keys: &arena::KeyArena,
@@ -283,14 +360,14 @@ fn extract_ops(
         .map(|x| x.as_container_id(&keys.keys, &peer_ids.peer_ids))
         .try_collect()?;
     let mut ops = Vec::new();
-    for EncodedOp {
-        container_index,
-        prop,
-        peer_idx,
-        value_type,
-        counter,
-    } in iter
-    {
+    for op in iter {
+        let EncodedOp {
+            container_index,
+            prop,
+            peer_idx,
+            value_type,
+            counter,
+        } = op?;
         if containers.len() <= container_index as usize
             || peer_ids.peer_ids.len() <= peer_idx as usize
         {
@@ -470,11 +547,6 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         &mut key_register,
     );
 
-    let frontiers = oplog
-        .frontiers()
-        .iter()
-        .map(|x| (peer_register.register(&x.peer), x.counter))
-        .collect();
     let doc = EncodedDoc {
         ops: encoded_ops,
         delete_starts: del_starts,
@@ -489,7 +561,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
             dep_arena,
             &state_bytes,
         )),
-        frontiers,
+        start_frontiers: Vec::new(),
     };
 
     serde_columnar::to_vec(&doc).unwrap()
@@ -653,19 +725,6 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         deps,
         state_blob_arena,
     } = decode_arena(&iter.arenas)?;
-    let frontiers: Frontiers = iter
-        .frontiers
-        .iter()
-        .map(|x| {
-            let peer = peer_ids
-                .peer_ids
-                .get(x.0)
-                .ok_or(LoroError::DecodeDataCorruptionError)?;
-            let ans: Result<ID, LoroError> = Ok(ID::new(*peer, x.1));
-            ans
-        })
-        .try_collect()?;
-
     let ExtractedOps {
         ops_map,
         mut ops,
@@ -691,7 +750,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
 
     decode_snapshot_states(
         &mut state,
-        frontiers,
+        oplog.frontiers().clone(),
         iter.states,
         containers,
         state_blob_arena,
@@ -735,12 +794,12 @@ fn decode_snapshot_states(
 ) -> LoroResult<()> {
     let mut state_blob_index: usize = 0;
     let mut ops_index: usize = 0;
-    for EncodedStateInfo {
-        container_index,
-        mut op_len,
-        state_bytes_len,
-    } in encoded_state_iter
-    {
+    for encoded_state in encoded_state_iter {
+        let EncodedStateInfo {
+            container_index,
+            mut op_len,
+            state_bytes_len,
+        } = encoded_state?;
         if op_len == 0 && state_bytes_len == 0 {
             continue;
         }
@@ -1039,11 +1098,11 @@ mod encode {
         peer_register: &mut ValueRegister<PeerID>,
     ) -> (Vec<i32>, Vec<Cow<'a, Change>>) {
         let self_vv = oplog.vv();
-        let start_vv = vv.trim(&oplog.vv());
+        let start_vv = vv.trim(oplog.vv());
         let mut start_counters = Vec::new();
 
         let mut diff_changes: Vec<Cow<'a, Change>> = Vec::new();
-        for change in oplog.iter_changes(&start_vv, self_vv) {
+        for change in oplog.iter_changes_peer_by_peer(&start_vv, self_vv) {
             let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
             if !peer_register.contains(&change.id.peer) {
                 peer_register.register(&change.id.peer);
@@ -1207,7 +1266,7 @@ mod encode {
 fn decode_op(
     cid: &ContainerID,
     kind: ValueKind,
-    del_iter: &mut impl Iterator<Item = EncodedDeleteStartId>,
+    del_iter: &mut impl Iterator<Item = Result<EncodedDeleteStartId, ColumnarError>>,
     value_reader: &mut ValueReader<'_>,
     arena: &crate::arena::SharedArena,
     prop: i32,
@@ -1230,7 +1289,7 @@ fn decode_op(
                 )
             }
             ValueKind::DeleteSeq => {
-                let del_start = del_iter.next().unwrap();
+                let del_start = del_iter.next().unwrap()?;
                 let peer_idx = del_start.peer_idx;
                 let cnt = del_start.counter;
                 let len = del_start.len;
@@ -1304,7 +1363,7 @@ fn decode_op(
                     )
                 }
                 ValueKind::DeleteSeq => {
-                    let del_start = del_iter.next().unwrap();
+                    let del_start = del_iter.next().unwrap()?;
                     let peer_idx = del_start.peer_idx;
                     let cnt = del_start.counter;
                     let len = del_start.len;
@@ -1350,7 +1409,7 @@ fn decode_op(
                     )
                 }
                 ValueKind::DeleteSeq => {
-                    let del_start = del_iter.next().unwrap();
+                    let del_start = del_iter.next().unwrap()?;
                     let peer_idx = del_start.peer_idx;
                     let cnt = del_start.counter;
                     let len = del_start.len;
@@ -1475,7 +1534,10 @@ struct EncodedDoc<'a> {
     states: Vec<EncodedStateInfo>,
     /// The first counter value for each change of each peer in `changes`
     start_counters: Vec<Counter>,
-    frontiers: Vec<(PeerIdx, Counter)>,
+    /// The frontiers at the start of this encoded delta.
+    ///
+    /// It's empty when the encoding mode is snapshot.
+    start_frontiers: Vec<(PeerIdx, Counter)>,
     #[columnar(borrow)]
     raw_values: Cow<'a, [u8]>,
 
@@ -2362,7 +2424,7 @@ mod arena {
     use crate::InternalString;
     use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, PeerID};
     use serde::{Deserialize, Serialize};
-    use serde_columnar::columnar;
+    use serde_columnar::{columnar, ColumnarError};
 
     use super::{encode::ValueRegister, PeerIdx, MAX_DECODED_SIZE};
 
@@ -2393,7 +2455,7 @@ mod arena {
         pub(super) peer_ids: PeerIdArena,
         pub(super) containers: ContainerArena,
         pub(super) keys: KeyArena,
-        pub deps: Box<dyn Iterator<Item = EncodedDep> + 'a>,
+        pub deps: Box<dyn Iterator<Item = Result<EncodedDep, ColumnarError>> + 'a>,
         pub state_blob_arena: &'a [u8],
     }
 
@@ -2616,7 +2678,9 @@ mod arena {
             serde_columnar::to_vec(&self).unwrap()
         }
 
-        pub fn decode_iter(bytes: &[u8]) -> LoroResult<impl Iterator<Item = EncodedDep> + '_> {
+        pub fn decode_iter(
+            bytes: &[u8],
+        ) -> LoroResult<impl Iterator<Item = Result<EncodedDep, ColumnarError>> + '_> {
             let iter = serde_columnar::iter_from_bytes::<DepsArena>(bytes)?;
             Ok(iter.deps)
         }

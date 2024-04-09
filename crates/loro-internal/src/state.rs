@@ -7,18 +7,19 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
-use tracing::{info, instrument, trace, trace_span};
+use tracing::{info, instrument, trace_span};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
     delta::DeltaItem,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
-    event::{Diff, Index, InternalContainerDiff, InternalDiff},
+    event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
     fx_map,
     handler::ValueOrHandler,
     id::PeerID,
     op::{Op, RawOp},
+    stable_pos::Cursor,
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
@@ -312,7 +313,7 @@ impl DocState {
     }
 
     /// This should be called when DocState is going to apply a transaction / a diff.
-    fn pre_txn(&mut self, next_origin: InternalString, next_local: bool) {
+    fn pre_txn(&mut self, next_origin: InternalString, next_trigger: EventTriggerKind) {
         if !self.is_recording() {
             return;
         }
@@ -321,7 +322,7 @@ impl DocState {
             return;
         };
 
-        if last_diff.origin == next_origin && last_diff.local == next_local {
+        if last_diff.origin == next_origin && last_diff.by == next_trigger {
             return;
         }
 
@@ -362,7 +363,7 @@ impl DocState {
             panic!("apply_diff should not be called in a transaction");
         }
         let is_recording = self.is_recording();
-        self.pre_txn(diff.origin.clone(), diff.local);
+        self.pre_txn(diff.origin.clone(), diff.by);
         let Cow::Owned(mut diffs) = std::mem::take(&mut diff.diff) else {
             unreachable!()
         };
@@ -543,8 +544,8 @@ impl DocState {
         state.apply_local_op(raw_op, op)
     }
 
-    pub(crate) fn start_txn(&mut self, origin: InternalString, local: bool) {
-        self.pre_txn(origin, local);
+    pub(crate) fn start_txn(&mut self, origin: InternalString, trigger: EventTriggerKind) {
+        self.pre_txn(origin, trigger);
         self.in_txn = true;
     }
 
@@ -609,7 +610,7 @@ impl DocState {
         frontiers: Frontiers,
     ) {
         assert!(self.states.is_empty(), "overriding states");
-        self.pre_txn(Default::default(), false);
+        self.pre_txn(Default::default(), EventTriggerKind::Import);
         self.states = states;
         for (idx, state) in self.states.iter() {
             for child_id in state.get_child_containers() {
@@ -633,8 +634,7 @@ impl DocState {
                 .collect();
             self.record_diff(InternalDocDiff {
                 origin: Default::default(),
-                local: false,
-                from_checkout: false,
+                by: EventTriggerKind::Import,
                 diff,
                 new_version: Cow::Borrowed(&frontiers),
             });
@@ -674,6 +674,7 @@ impl DocState {
     }
 
     #[inline(always)]
+    #[allow(unused)]
     pub(crate) fn with_state<F, R>(&mut self, idx: ContainerIdx, f: F) -> R
     where
         F: FnOnce(&State) -> R,
@@ -876,11 +877,11 @@ impl DocState {
             panic!("diffs is empty");
         }
 
+        let triggered_by = diffs[0].by;
+        assert!(diffs.iter().all(|x| x.by == triggered_by));
         let mut containers = FxHashMap::default();
         let to = (*diffs.last().unwrap().new_version).to_owned();
         let origin = diffs[0].origin.clone();
-        let local = diffs[0].local;
-        let from_checkout = diffs[0].from_checkout;
         for diff in diffs {
             #[allow(clippy::unnecessary_to_owned)]
             for container_diff in diff.diff.into_owned() {
@@ -929,8 +930,7 @@ impl DocState {
             from,
             to,
             origin,
-            from_checkout,
-            local,
+            by: triggered_by,
             diff,
         }
     }
@@ -1087,6 +1087,102 @@ impl DocState {
                 State::MovableListState(Box::new(MovableListState::new(idx)))
             }
         }
+    }
+
+    pub fn get_relative_position(&mut self, pos: &Cursor) -> Option<usize> {
+        let idx = self.arena.register_container(&pos.container);
+        let state = self.states.get_mut(&idx)?;
+        if let Some(id) = pos.id {
+            match state {
+                State::ListState(s) => s.get_index_of_id(id),
+                State::RichtextState(s) => s.get_index_of_id(id),
+                State::MovableListState(s) => s.get_index_of_id(id),
+                State::MapState(_) | State::TreeState(_) => {
+                    unreachable!()
+                }
+            }
+        } else {
+            if matches!(pos.side, crate::stable_pos::Side::Left) {
+                return Some(0);
+            }
+
+            match state {
+                State::ListState(s) => Some(s.len()),
+                State::RichtextState(s) => Some(s.len_event()),
+                State::MovableListState(s) => Some(s.len()),
+                State::MapState(_) | State::TreeState(_) => {
+                    unreachable!()
+                }
+            }
+        }
+    }
+
+    pub fn get_value_by_path(&mut self, path: &[Index]) -> Option<LoroValue> {
+        if path.is_empty() {
+            return None;
+        }
+
+        let mut state_idx = {
+            let root_index = path[0].as_key()?;
+            self.arena.get_root_container_idx_by_key(root_index)?
+        };
+
+        if path.len() == 1 {
+            let cid = self.arena.idx_to_id(state_idx)?;
+            return Some(LoroValue::Container(cid));
+        }
+
+        for index in path[..path.len() - 1].iter().skip(1) {
+            let parent_state = self.states.get(&state_idx)?;
+            match parent_state {
+                State::ListState(l) => {
+                    let Some(LoroValue::Container(c)) = l.get(*index.as_seq()?) else {
+                        return None;
+                    };
+                    state_idx = self.arena.register_container(c);
+                }
+                State::MovableListState(l) => {
+                    let Some(LoroValue::Container(c)) = l.get(*index.as_seq()?, IndexType::ForUser)
+                    else {
+                        return None;
+                    };
+                    state_idx = self.arena.register_container(c);
+                }
+                State::MapState(m) => {
+                    let Some(LoroValue::Container(c)) = m.get(index.as_key()?) else {
+                        return None;
+                    };
+                    state_idx = self.arena.register_container(c);
+                }
+                State::RichtextState(_) => return None,
+                State::TreeState(_) => {
+                    let id = index.as_node()?;
+                    let cid = id.associated_meta_container();
+                    state_idx = self.arena.register_container(&cid);
+                }
+            }
+        }
+
+        let parent_state = self.states.get_mut(&state_idx)?;
+        let index = path.last().unwrap();
+        let value: LoroValue = match parent_state {
+            State::ListState(l) => l.get(*index.as_seq()?).cloned()?,
+            State::MovableListState(l) => l.get(*index.as_seq()?, IndexType::ForUser).cloned()?,
+            State::MapState(m) => m.get(index.as_key()?).cloned()?,
+            State::RichtextState(s) => {
+                let s = s.to_string_mut();
+                s.chars()
+                    .nth(*index.as_seq()?)
+                    .map(|c| c.to_string().into())?
+            }
+            State::TreeState(_) => {
+                let id = index.as_node()?;
+                let cid = id.associated_meta_container();
+                cid.into()
+            }
+        };
+
+        Some(value)
     }
 }
 

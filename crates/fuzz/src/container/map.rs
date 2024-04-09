@@ -122,7 +122,7 @@ impl Actionable for MapAction {
                         None
                     }
                     FuzzValue::Container(c) => {
-                        let container = handler.insert_container(key, *c).unwrap();
+                        let container = handler.insert_container(key, Container::new(*c)).unwrap();
                         Some(container)
                     }
                 }

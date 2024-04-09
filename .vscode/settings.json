@@ -67,10 +67,9 @@
   "excalidraw.theme": "dark",
   "deno.enable": false,
   "cortex-debug.variableUseNaturalFormat": true,
-  "[markdown]": {
-    "editor.defaultFormatter": "darkriszty.markdown-table-prettify"
-  },
+  "[markdown]": {},
   "[typescript]": {
     "editor.defaultFormatter": "denoland.vscode-deno"
-  }
+  },
+  "vitest.enable": true
 }

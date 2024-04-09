@@ -413,6 +413,23 @@ impl SharedArena {
             .into_iter()
             .map(move |i| values.get(i).unwrap().clone())
     }
+
+    pub(crate) fn get_root_container_idx_by_key(
+        &self,
+        root_index: &loro_common::InternalString,
+    ) -> Option<ContainerIdx> {
+        let inner = self.inner.container_id_to_idx.lock().unwrap();
+        for t in loro_common::ContainerType::ALL_TYPES.iter() {
+            let cid = ContainerID::Root {
+                name: root_index.clone(),
+                container_type: *t,
+            };
+            if let Some(idx) = inner.get(&cid) {
+                return Some(*idx);
+            }
+        }
+        None
+    }
 }
 
 fn _alloc_str_with_slice(

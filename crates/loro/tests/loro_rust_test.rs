@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, sync::Arc};
 
-use loro::{FrontiersNotIncluded, LoroDoc, LoroError, ToJson};
-use loro_internal::{handler::TextDelta, id::ID, LoroResult};
+use loro::{FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText, ToJson};
+use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
 use serde_json::json;
 use tracing::{trace_span};
 
@@ -44,12 +44,10 @@ fn movable_list() -> Result<(), LoroError> {
 #[test]
 fn list_checkout() -> Result<(), LoroError> {
     let doc = LoroDoc::new();
-    doc.get_list("list")
-        .insert_container(0, loro::ContainerType::Map)?;
+    doc.get_list("list").insert_container(0, LoroMap::new())?;
     doc.commit();
     let f0 = doc.state_frontiers();
-    doc.get_list("list")
-        .insert_container(0, loro::ContainerType::Text)?;
+    doc.get_list("list").insert_container(0, LoroText::new())?;
     doc.commit();
     let f1 = doc.state_frontiers();
     doc.get_list("list").delete(1, 1)?;
@@ -310,10 +308,7 @@ fn map() -> LoroResult<()> {
     map.insert("null", LoroValue::Null)?;
     map.insert("deleted", LoroValue::Null)?;
     map.delete("deleted")?;
-    let text = map
-        .insert_container("text", loro_internal::ContainerType::Text)?
-        .into_text()
-        .unwrap();
+    let text = map.insert_container("text", LoroText::new())?;
     text.insert(0, "Hello world!")?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
@@ -428,7 +423,10 @@ fn subscribe() {
     doc.subscribe(
         &text.id(),
         Arc::new(move |event| {
-            assert!(event.local);
+            assert!(matches!(
+                event.triggered_by,
+                loro_internal::event::EventTriggerKind::Local
+            ));
             for event in event.events {
                 let delta = event.diff.as_text().unwrap();
                 let d = TextDelta::Insert {
@@ -443,4 +441,324 @@ fn subscribe() {
     text.insert(0, "123").unwrap();
     doc.commit();
     assert!(ran.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+#[test]
+fn prelim_support() -> LoroResult<()> {
+    let map = LoroMap::new();
+    map.insert("key", "value")?;
+    let text = LoroText::new();
+    text.insert(0, "123")?;
+    let text = map.insert_container("text", text)?;
+    let doc = LoroDoc::new();
+    let root_map = doc.get_map("map");
+    let map = root_map.insert_container("child_map", map)?;
+    // `map` is now attached to the doc
+    map.insert("1", "223")?; // "223" now presents in the json value of doc
+    let list = map.insert_container("list", LoroList::new())?; // creating subcontainer will be easier
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "map": {
+                "child_map": {
+                    "key": "value",
+                    "1": "223",
+                    "text": "123",
+                    "list": []
+                }
+            }
+        })
+    );
+    assert!(!text.is_attached());
+    assert!(list.is_attached());
+    text.insert(0, "56")?;
+    list.insert(0, 123)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "map": {
+                "child_map": {
+                    "key": "value",
+                    "1": "223",
+                    "text": "123",
+                    "list": [123]
+                }
+            }
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn decode_import_blob_meta() -> LoroResult<()> {
+    let doc_1 = LoroDoc::new();
+    doc_1.set_peer_id(1)?;
+    doc_1.get_text("text").insert(0, "123")?;
+    {
+        let bytes = doc_1.export_from(&Default::default());
+        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        assert!(meta.partial_start_vv.is_empty());
+        assert_eq!(meta.partial_end_vv, vv!(1 => 3));
+        assert_eq!(meta.start_timestamp, 0);
+        assert_eq!(meta.end_timestamp, 0);
+        assert!(!meta.is_snapshot);
+        assert!(meta.start_frontiers.is_empty());
+        assert_eq!(meta.change_num, 1);
+
+        let bytes = doc_1.export_snapshot();
+        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        assert!(meta.partial_start_vv.is_empty());
+        assert_eq!(meta.partial_end_vv, vv!(1 => 3));
+        assert_eq!(meta.start_timestamp, 0);
+        assert_eq!(meta.end_timestamp, 0);
+        assert!(meta.is_snapshot);
+        assert!(meta.start_frontiers.is_empty());
+        assert_eq!(meta.change_num, 1);
+    }
+
+    let doc_2 = LoroDoc::new();
+    doc_2.set_peer_id(2)?;
+    doc_2.import(&doc_1.export_snapshot()).unwrap();
+    doc_2.get_text("text").insert(0, "123")?;
+    doc_2.get_text("text").insert(0, "123")?;
+    {
+        let bytes = doc_2.export_from(&doc_1.oplog_vv());
+        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        assert_eq!(meta.partial_start_vv, vv!());
+        assert_eq!(meta.partial_end_vv, vv!(2 => 6));
+        assert_eq!(meta.start_timestamp, 0);
+        assert_eq!(meta.end_timestamp, 0);
+        assert!(!meta.is_snapshot);
+        assert_eq!(meta.start_frontiers, vec![ID::new(1, 2)].into());
+        assert_eq!(meta.change_num, 1);
+
+        let bytes = doc_2.export_from(&vv!(1 => 1));
+        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        assert_eq!(meta.partial_start_vv, vv!(1 => 1));
+        assert_eq!(meta.partial_end_vv, vv!(1 => 3, 2 => 6));
+        assert_eq!(meta.start_timestamp, 0);
+        assert_eq!(meta.end_timestamp, 0);
+        assert!(!meta.is_snapshot);
+        assert_eq!(meta.start_frontiers, vec![ID::new(1, 0)].into());
+        assert_eq!(meta.change_num, 2);
+
+        let bytes = doc_2.export_snapshot();
+        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        assert_eq!(meta.partial_start_vv, vv!());
+        assert_eq!(meta.partial_end_vv, vv!(1 => 3, 2 => 6));
+        assert_eq!(meta.start_timestamp, 0);
+        assert_eq!(meta.end_timestamp, 0);
+        assert!(meta.is_snapshot);
+        assert!(meta.start_frontiers.is_empty());
+        assert_eq!(meta.change_num, 2);
+    }
+    Ok(())
+}
+
+#[test]
+fn init_example() {
+    // create meta/users/0/new_user/{name: string, bio: Text}
+    let doc = LoroDoc::new();
+    let meta = doc.get_map("meta");
+    let user = meta
+        .get_or_create_container("users", LoroList::new())
+        .unwrap()
+        .insert_container(0, LoroMap::new())
+        .unwrap();
+    user.insert("name", "new_user").unwrap();
+    user.insert_container("bio", LoroText::new()).unwrap();
+}
+
+#[test]
+fn get_container_by_str_path() {
+    let doc = LoroDoc::new();
+    doc.get_map("map")
+        .insert_container("key", LoroList::new())
+        .unwrap()
+        .insert(0, 99)
+        .unwrap();
+    let c = doc.get_by_str_path("map/key").unwrap();
+    assert!(c.as_container().unwrap().is_list());
+    c.into_container()
+        .unwrap()
+        .into_list()
+        .unwrap()
+        .insert(0, 100)
+        .unwrap();
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "map": {
+                "key": [100, 99]
+            }
+        })
+    );
+    let v = doc.get_by_str_path("map/key/1").unwrap();
+    assert_eq!(v.into_value().unwrap().into_i64().unwrap(), 99);
+    let v = doc.get_by_str_path("map/key/0").unwrap();
+    assert_eq!(v.into_value().unwrap().into_i64().unwrap(), 100);
+
+    doc.get_map("map")
+        .insert_container("text", LoroText::new())
+        .unwrap()
+        .insert(0, "123")
+        .unwrap();
+    let v = doc.get_by_str_path("map/text/0").unwrap();
+    assert_eq!(
+        v.into_value().unwrap().into_string().unwrap().to_string(),
+        "1"
+    );
+    let v = doc.get_by_str_path("map/text/1").unwrap();
+    assert_eq!(
+        v.into_value().unwrap().into_string().unwrap().to_string(),
+        "2"
+    );
+    let v = doc.get_by_str_path("map/text/2").unwrap();
+    assert_eq!(
+        v.into_value().unwrap().into_string().unwrap().to_string(),
+        "3"
+    );
+
+    let tree = doc.get_tree("tree");
+    let node = tree.create(None).unwrap();
+    tree.get_meta(node).unwrap().insert("key", "value").unwrap();
+
+    let node_value = doc.get_by_str_path(&format!("tree/{}", node)).unwrap();
+    assert!(node_value.into_container().unwrap().is_map());
+    let node_map = doc.get_by_str_path(&format!("tree/{}/key", node)).unwrap();
+    assert_eq!(
+        node_map
+            .into_value()
+            .unwrap()
+            .into_string()
+            .unwrap()
+            .to_string(),
+        "value"
+    );
+}
+
+#[test]
+fn get_cursor() {
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1).unwrap();
+    let text = doc1.get_text("text");
+    text.insert(0, "6789").unwrap();
+    let pos_7 = text.get_cursor(1, Default::default()).unwrap();
+    let pos_info = doc1.get_cursor_pos(&pos_7).unwrap();
+    assert!(pos_info.update.is_none());
+    assert_eq!(pos_info.current.pos, 1);
+    text.insert(0, "012345").unwrap();
+    let pos_info = doc1.get_cursor_pos(&pos_7).unwrap();
+    assert!(pos_info.update.is_none());
+    assert_eq!(pos_info.current.pos, 7);
+
+    // test merge
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2).unwrap();
+    let text2 = doc2.get_text("text");
+    text2.insert(0, "ab").unwrap();
+    let pos_a = text2.get_cursor(0, Default::default()).unwrap();
+    let pos_info = doc2.get_cursor_pos(&pos_a).unwrap();
+    assert!(pos_info.update.is_none());
+    assert_eq!(pos_info.current.pos, 0);
+    // text2: 0123456789ab
+    doc2.import(&doc1.export_snapshot()).unwrap();
+    let pos_info = doc2.get_cursor_pos(&pos_a).unwrap();
+    assert!(pos_info.update.is_none());
+    assert_eq!(pos_info.current.pos, 10);
+
+    // test delete
+    // text2: 01234~~56789~~ab
+    // text2: 01234ab
+    //            |___ pos_7
+    text2.delete(5, 5).unwrap(); // pos_7 now is 5
+    let pos_info = doc2.get_cursor_pos(&pos_7).unwrap(); // it should be fine to query from another doc
+    assert_eq!(pos_info.update.as_ref().unwrap().id.unwrap(), ID::new(2, 0));
+    assert_eq!(pos_info.current.pos, 5);
+
+    // rich text
+    //
+    // text2: [01]234ab
+    //              |___ pos_7
+    text2.mark(0..2, "bold", true).unwrap();
+    let pos_info = doc2.get_cursor_pos(&pos_7).unwrap();
+    assert_eq!(pos_info.update.as_ref().unwrap().id.unwrap(), ID::new(2, 0));
+    assert_eq!(pos_info.current.pos, 5); // should not be affected by rich text mark
+}
+
+#[test]
+fn get_cursor_at_the_end() {
+    let doc = LoroDoc::new();
+    let text = &doc.get_text("text");
+    text.insert(0, "01234").unwrap();
+    let pos = text.get_cursor(5, Default::default()).unwrap();
+    assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 5);
+    text.insert(0, "01234").unwrap();
+    assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 10);
+    text.delete(0, 10).unwrap();
+    assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 0);
+    text.insert(0, "01234").unwrap();
+    assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 5);
+}
+
+
+#[test]
+fn get_cursor_for_list() {
+    let doc = LoroDoc::new();
+    let list = doc.get_list("list");
+    let pos_start = list.get_cursor(0, Default::default()).unwrap();
+    list.insert(0, 1).unwrap();
+    let pos_0 = list.get_cursor(0, Default::default()).unwrap();
+    let pos_end = list.get_cursor(1, Default::default()).unwrap();
+    {
+        let result = doc.get_cursor_pos(&pos_start).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_0).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_end).unwrap();
+        assert_eq!(result.current.pos, 1);
+    }
+    list.insert(0, 1).unwrap();
+    {
+        let result = doc.get_cursor_pos(&pos_start).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_0).unwrap();
+        assert_eq!(result.current.pos, 1);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_end).unwrap();
+        assert_eq!(result.current.pos, 2);
+    }
+    list.insert(0, 1).unwrap();
+    {
+        let result = doc.get_cursor_pos(&pos_start).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_0).unwrap();
+        assert_eq!(result.current.pos, 2);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_end).unwrap();
+        assert_eq!(result.current.pos, 3);
+    }
+    list.insert(0, 1).unwrap();
+    {
+        let result = doc.get_cursor_pos(&pos_start).unwrap();
+        assert_eq!(result.current.pos, 0);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_0).unwrap();
+        assert_eq!(result.current.pos, 3);
+    }
+    {
+        let result = doc.get_cursor_pos(&pos_end).unwrap();
+        assert_eq!(result.current.pos, 4);
+    }
 }

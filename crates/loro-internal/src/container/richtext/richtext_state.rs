@@ -4,7 +4,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor,
 };
-use loro_common::{IdFull, IdLpSpan, Lamport, LoroValue, ID};
+use loro_common::{Counter, IdFull, IdLpSpan, IdSpan, Lamport, LoroValue, ID};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{
     fmt::{Display, Formatter},
@@ -403,6 +403,22 @@ impl RichtextStateChunk {
                 AnchorType::End => {
                     let id = style.idlp();
                     IdLpSpan::new(id.peer, id.lamport + 1, id.lamport + 2)
+                }
+            },
+        }
+    }
+
+    pub(crate) fn get_id_span(&self) -> IdSpan {
+        match self {
+            RichtextStateChunk::Text(t) => {
+                let id = t.id();
+                IdSpan::new(id.peer, id.counter, id.counter + t.unicode_len() as Counter)
+            }
+            RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
+                AnchorType::Start => style.id().into(),
+                AnchorType::End => {
+                    let id = style.id();
+                    id.to_span(1)
                 }
             },
         }
@@ -1627,6 +1643,10 @@ impl RichtextState {
             return Vec::new();
         }
 
+        if pos == self.len(pos_type) {
+            return Vec::new();
+        }
+
         let mut ans: Vec<EntityRangeInfo> = Vec::new();
         let (start, end) = match pos_type {
             PosType::Bytes => todo!(),
@@ -1855,7 +1875,7 @@ impl RichtextState {
         }
     }
 
-    fn entity_index_to_event_index(&self, index: usize) -> usize {
+    pub fn entity_index_to_event_index(&self, index: usize) -> usize {
         let cursor = self.tree.query::<EntityQuery>(&index).unwrap();
         self.cursor_to_event_index(cursor.cursor)
     }
@@ -2207,6 +2227,34 @@ impl RichtextState {
                 event_len: event_range.len(),
             })
         })
+    }
+
+    pub(crate) fn get_stable_position_at_event_index(
+        &self,
+        pos: usize,
+        kind: PosType,
+    ) -> Option<ID> {
+        let v = &self.get_text_entity_ranges(pos, 1, kind);
+        let a = v.first()?;
+        Some(a.id_start)
+    }
+
+    pub(crate) fn len_event(&self) -> usize {
+        if cfg!(feature = "wasm") {
+            self.len_utf16()
+        } else {
+            self.len_unicode()
+        }
+    }
+
+    fn len(&self, pos_type: PosType) -> usize {
+        match pos_type {
+            PosType::Unicode => self.len_unicode(),
+            PosType::Utf16 => self.len_utf16(),
+            PosType::Entity => self.len_entity(),
+            PosType::Event => self.len_event(),
+            PosType::Bytes => self.len_utf8(),
+        }
     }
 }
 

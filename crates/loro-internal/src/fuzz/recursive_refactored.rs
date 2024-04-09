@@ -344,7 +344,7 @@ trait Actionable {
 impl Actor {
     fn add_new_container(&mut self, _idx: ContainerIdx, id: ContainerID, type_: ContainerType) {
         let txn = self.loro.get_global_txn();
-        let handler = Handler::new(
+        let handler = Handler::new_attached(
             id,
             self.loro.arena().clone(),
             txn,
@@ -460,21 +460,21 @@ impl Actionable for Vec<Actor> {
 
                 b.map_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(id) {
+                    if !visited.contains(&id) {
                         visited.insert(id.clone());
                         a.map_containers.push(a.loro.txn().unwrap().get_map(id))
                     }
                 });
                 b.list_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(id) {
+                    if !visited.contains(&id) {
                         visited.insert(id.clone());
                         a.list_containers.push(a.loro.txn().unwrap().get_list(id))
                     }
                 });
                 b.text_containers.iter().for_each(|x| {
                     let id = x.id();
-                    if !visited.contains(id) {
+                    if !visited.contains(&id) {
                         visited.insert(id.clone());
                         a.text_containers.push(a.loro.txn().unwrap().get_text(id))
                     }
@@ -516,21 +516,21 @@ impl Actionable for Vec<Actor> {
                         .unwrap();
                     b.map_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(id) {
+                        if !visited.contains(&id) {
                             visited.insert(id.clone());
                             a.map_containers.push(a.loro.get_map(id))
                         }
                     });
                     b.list_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(id) {
+                        if !visited.contains(&id) {
                             visited.insert(id.clone());
                             a.list_containers.push(a.loro.get_list(id))
                         }
                     });
                     b.text_containers.iter().for_each(|x| {
                         let id = x.id();
-                        if !visited.contains(id) {
+                        if !visited.contains(&id) {
                             visited.insert(id.clone());
                             a.text_containers.push(a.loro.get_text(id))
                         }
@@ -590,7 +590,11 @@ impl Actionable for Vec<Actor> {
                     }
                     FuzzValue::Container(c) => {
                         let handler = &container
-                            .insert_container_with_txn(&mut txn, &key.to_string(), *c)
+                            .insert_container_with_txn(
+                                &mut txn,
+                                &key.to_string(),
+                                Handler::new_unattached(*c),
+                            )
                             .unwrap();
                         let idx = handler.container_idx();
                         actor.add_new_container(idx, handler.id().clone(), *c);
@@ -632,7 +636,11 @@ impl Actionable for Vec<Actor> {
                     }
                     FuzzValue::Container(c) => {
                         let handler = &container
-                            .insert_container_with_txn(&mut txn, *key as usize, *c)
+                            .insert_container_with_txn(
+                                &mut txn,
+                                *key as usize,
+                                Handler::new_unattached(*c),
+                            )
                             .unwrap();
                         let idx = handler.container_idx();
                         actor.add_new_container(idx, handler.id().clone(), *c);

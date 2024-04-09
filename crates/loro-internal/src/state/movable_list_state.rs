@@ -870,6 +870,18 @@ impl MovableListState {
         self.iter().cloned().collect_vec()
     }
 
+    pub(crate) fn get_index_of_id(&self, id: ID) -> Option<usize> {
+        let mut user_index = 0;
+        for item in self.list().iter() {
+            if item.id.peer == id.peer && item.id.counter == id.counter {
+                return Some(user_index);
+            }
+
+            user_index += if item.pointed_by.is_some() { 1 } else { 0 };
+        }
+        None
+    }
+
     fn get_value_inner(&self) -> Vec<LoroValue> {
         let list = self
             .inner
@@ -1285,11 +1297,13 @@ impl ContainerState for MovableListState {
         let last_set_op_iter = ctx.ops;
         let mut is_first = true;
 
-        for EncodedItem {
-            invisible_list_item,
-            pos_id_eq_elem_id,
-        } in item_iter
-        {
+        for item in item_iter {
+            let EncodedItem {
+                invisible_list_item,
+                pos_id_eq_elem_id,
+                // FIXME: replace with a result return
+            } = item.unwrap();
+
             // the first one don't need to read op, it only needs to read the invisible list items
             if !is_first {
                 let last_set_op = last_set_op_iter.next().unwrap();
@@ -1298,7 +1312,7 @@ impl ContainerState for MovableListState {
                     let pos_id = if pos_id_eq_elem_id {
                         elem_id
                     } else {
-                        let id = item_ids.next().unwrap();
+                        let id = item_ids.next().unwrap().unwrap();
                         IdLp::new(ctx.peers[id.peer_idx], id.lamport)
                     };
                     let pos_o_id = ctx.oplog.idlp_to_id(pos_id).unwrap();
@@ -1348,7 +1362,7 @@ impl ContainerState for MovableListState {
 
             is_first = false;
             for _ in 0..invisible_list_item {
-                let id = item_ids.next().unwrap();
+                let id = item_ids.next().unwrap().unwrap();
                 let pos_id = IdLp::new(ctx.peers[id.peer_idx], id.lamport);
                 let pos_o_id = ctx.oplog.idlp_to_id(pos_id).unwrap();
                 let pos_id_full = IdFull {

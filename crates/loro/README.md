@@ -11,7 +11,7 @@ PS: Version control is forthcoming. Time travel functionality is already accessi
 ## Map/List/Text
 
 ```rust
-use loro::{LoroDoc, ToJson, LoroValue};
+use loro::{LoroDoc, LoroList, LoroText, LoroValue, ToJson};
 use serde_json::json;
 
 let doc = LoroDoc::new();
@@ -21,16 +21,10 @@ map.insert("true", true).unwrap();
 map.insert("null", LoroValue::Null).unwrap();
 map.insert("deleted", LoroValue::Null).unwrap();
 map.delete("deleted").unwrap();
-let list = map
-    .insert_container("list", loro_internal::ContainerType::List).unwrap()
-    .into_list()
-    .unwrap();
-list.insert(0, "List");
-list.insert(1, 9);
-let text = map
-    .insert_container("text", loro_internal::ContainerType::Text).unwrap()
-    .into_text()
-    .unwrap();
+let list = map.insert_container("list", LoroList::new()).unwrap();
+list.insert(0, "List").unwrap();
+list.insert(1, 9).unwrap();
+let text = map.insert_container("text", LoroText::new()).unwrap();
 text.insert(0, "Hello world!").unwrap();
 assert_eq!(
     doc.get_deep_value().to_json_value(),

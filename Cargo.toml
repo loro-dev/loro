@@ -11,9 +11,11 @@ members = [
     "crates/fuzz",
     "crates/dev-utils",
 ]
+resolver = "2"
 
 [workspace.dependencies]
 enum_dispatch = "0.3.11"
 debug-log = { version = "0.3.1", features = [] }
 enum-as-inner = "0.5.1"
 fxhash = "0.2.1"
+serde_columnar = { version = "0.3.4" }

@@ -1,8 +1,7 @@
 {
   "recommendations": [
-    "skellock.just",
     "Gruntfuggly.todo-tree",
     "rust-lang.rust-analyzer",
-    "denoland.vscode-deno"
+    "markis.code-coverage"
   ]
 }
