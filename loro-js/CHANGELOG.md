@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.14.1
+
+### Patch Changes
+
+- Supports Cursors
+
+  #### 🚀 Features
+
+  - Cursors (#290)
+
+- Updated dependencies
+  - loro-wasm@0.14.1
+
 ## 0.14.0
 
 ### Minor Changes
