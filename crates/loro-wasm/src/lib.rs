@@ -2973,7 +2973,7 @@ interface LoroText {
      * }
      * ```
      */
-    getCursor(pos: usize, side?: Side): StablePosition | undefined;
+    getCursor(pos: number, side?: Side): StablePosition | undefined;
 }
 
 interface LoroList {
@@ -3011,7 +3011,7 @@ interface LoroList {
      * }
      * ```
      */
-    getCursor(pos: usize, side?: Side): StablePosition | undefined;
+    getCursor(pos: number, side?: Side): StablePosition | undefined;
 }
 
 export type Side = -1 | 0 | 1;
