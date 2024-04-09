@@ -585,6 +585,13 @@ impl LoroList {
     /// a document, it is more effective to leverage the unique ID of each item/character
     /// in a List CRDT or Text CRDT.
     ///
+    /// Loro optimizes State metadata by not storing the IDs of deleted elements. This
+    /// approach complicates tracking cursors since they rely on these IDs. The solution
+    /// recalculates position by replaying relevant history to update stable positions
+    /// accurately. To minimize the performance impact of history replay, the system
+    /// updates cursor info to reference only the IDs of currently present elements,
+    /// thereby reducing the need for replay.
+    ///
     /// # Example
     ///
     /// ```
@@ -947,6 +954,13 @@ impl LoroText {
     /// shift with document edits. To reliably represent a position or range within
     /// a document, it is more effective to leverage the unique ID of each item/character
     /// in a List CRDT or Text CRDT.
+    ///
+    /// Loro optimizes State metadata by not storing the IDs of deleted elements. This
+    /// approach complicates tracking cursors since they rely on these IDs. The solution
+    /// recalculates position by replaying relevant history to update stable positions
+    /// accurately. To minimize the performance impact of history replay, the system
+    /// updates cursor info to reference only the IDs of currently present elements,
+    /// thereby reducing the need for replay.
     ///
     /// # Example
     ///

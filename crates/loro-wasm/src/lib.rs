@@ -2948,6 +2948,13 @@ interface LoroText {
      * a list structure, we can utilize the ID of each item/character on List CRDT or
      * Text CRDT for expression.
      * 
+     * Loro optimizes State metadata by not storing the IDs of deleted elements. This 
+     * approach complicates tracking cursors since they rely on these IDs. The solution 
+     * recalculates position by replaying relevant history to update stable positions 
+     * accurately. To minimize the performance impact of history replay, the system 
+     * updates cursor info to reference only the IDs of currently present elements, 
+     * thereby reducing the need for replay.
+     * 
      * @example
      * ```ts
      * 
@@ -2978,6 +2985,13 @@ interface LoroList {
      * requiring updates with each edit. To stably represent a position or range within
      * a list structure, we can utilize the ID of each item/character on List CRDT or
      * Text CRDT for expression.
+     * 
+     * Loro optimizes State metadata by not storing the IDs of deleted elements. This 
+     * approach complicates tracking cursors since they rely on these IDs. The solution 
+     * recalculates position by replaying relevant history to update stable positions 
+     * accurately. To minimize the performance impact of history replay, the system 
+     * updates cursor info to reference only the IDs of currently present elements, 
+     * thereby reducing the need for replay.
      * 
      * @example
      * ```ts
