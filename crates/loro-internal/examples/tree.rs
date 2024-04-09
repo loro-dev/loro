@@ -33,27 +33,27 @@ fn checkout() {
 
 #[allow(unused)]
 fn mov() {
-    let loro = LoroDoc::default();
+    let loro = LoroDoc::new_auto_commit();
     let tree = loro.get_tree("tree");
     let mut ids = vec![];
     let size = 10000;
     for _ in 0..size {
-        ids.push(
-            loro.with_txn(|txn| tree.create_with_txn(txn, None, 0))
-                .unwrap(),
-        )
+        ids.push(tree.create(None, 0).unwrap())
     }
     let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
-    let n = 1000000;
+    let n = 100000;
 
-    let mut txn = loro.txn().unwrap();
     for _ in 0..n {
         let i = rng.gen::<usize>() % size;
         let j = rng.gen::<usize>() % size;
-        tree.mov_with_txn(&mut txn, ids[i], ids[j], 0)
-            .unwrap_or_default();
+        let children_num = tree.children_num(Some(ids[j])).unwrap_or(0);
+        tree.mov(ids[i], ids[j], children_num).unwrap_or_default();
     }
-    drop(txn);
+    println!("encode snapshot size {:?}", loro.export_snapshot().len());
+    println!(
+        "encode updates size {:?}",
+        loro.export_from(&Default::default()).len()
+    );
 }
 
 #[allow(unused)]
@@ -69,9 +69,6 @@ fn create() {
 
 fn main() {
     let s = Instant::now();
-    for _ in 0..2 {
-        create();
-    }
-
+    mov();
     println!("{} ms", s.elapsed().as_millis());
 }

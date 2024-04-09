@@ -104,7 +104,7 @@ impl FractionalIndex {
         }
     }
 
-    fn from_vec_unterminated(mut bytes: Vec<u8>) -> Self {
+    pub fn from_vec_unterminated(mut bytes: Vec<u8>) -> Self {
         bytes.push(TERMINATOR);
         FractionalIndex(bytes)
     }
@@ -121,6 +121,11 @@ impl FractionalIndex {
 
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    pub fn as_bytes_without_terminated(&self) -> &[u8] {
+        let (_, ans) = self.0.split_last().unwrap();
+        ans
     }
 
     pub fn new_before(FractionalIndex(bytes): &FractionalIndex) -> Self {

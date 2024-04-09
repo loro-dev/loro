@@ -2,6 +2,7 @@ use std::any::Any;
 
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
+#[cfg(feature = "wasm")]
 use serde::{Deserialize, Serialize};
 
 use crate::container::{
