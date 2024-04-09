@@ -10,6 +10,7 @@ members = [
     "crates/loro-wasm",
     "crates/fuzz",
 ]
+resolver = "2"
 
 [workspace.dependencies]
 enum_dispatch = "0.3.11"

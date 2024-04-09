@@ -785,7 +785,7 @@ checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
 
 [[package]]
 name = "loro"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
@@ -795,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
@@ -812,7 +812,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -863,7 +863,7 @@ dependencies = [
 
 [[package]]
 name = "loro-preload"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "bytes",
  "loro-common",
@@ -873,7 +873,7 @@ dependencies = [
 
 [[package]]
 name = "loro-rle"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "append-only-bytes",
  "arref",
