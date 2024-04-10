@@ -208,7 +208,7 @@ impl NodeChildren {
     fn has_child(&self, node_position: &NodePosition) -> bool {
         match self {
             NodeChildren::Vec(v) => v
-                .binary_search_by(|(target, _)| target.cmp(&node_position))
+                .binary_search_by(|(target, _)| target.cmp(node_position))
                 .is_ok(),
             NodeChildren::BTree(v) => v.has_child(node_position),
         }
@@ -307,7 +307,7 @@ mod btree {
                     generic_btree::PreviousCache::NodeCache(c) => {
                         ans += c.len;
                     }
-                    generic_btree::PreviousCache::PrevSiblingElem(p) => {
+                    generic_btree::PreviousCache::PrevSiblingElem(_) => {
                         ans += 1;
                     }
                     generic_btree::PreviousCache::ThisElemAndOffset { .. } => {}
@@ -367,6 +367,11 @@ mod btree {
             cache: &mut Self::Cache,
             caches: &[generic_btree::Child<Self>],
         ) -> Self::CacheDiff {
+            if caches.is_empty() {
+                *cache = Default::default();
+                return;
+            }
+
             *cache = Cache {
                 range: Some(
                     caches[0].cache.range.as_ref().unwrap().start.clone()

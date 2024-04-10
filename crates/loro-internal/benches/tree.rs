@@ -11,7 +11,7 @@ mod tree {
         b.bench_function("create append 10^4 node", |b| {
             let size = 10000;
             b.iter(|| {
-                let loro = LoroDoc::default();
+                let loro = LoroDoc::new_auto_commit();
                 let tree = loro.get_tree("tree");
                 for _ in 0..size {
                     tree.create(None).unwrap();

@@ -255,9 +255,8 @@ dependencies = [
 
 [[package]]
 name = "generic-btree"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3563af09b8ffaa7cc5541d9e167b90c429d89791e88887739680e1fcb4f69d01"
+version = "0.8.3"
+source = "git+https://github.com/loro-dev/generic-btree#e7423cf357a601d5111500e68c8c913a4e68fef0"
 dependencies = [
  "fxhash",
  "heapless",
@@ -427,6 +426,7 @@ dependencies = [
  "append-only-bytes",
  "arbitrary",
  "arref",
+ "either",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
  "fractional_index",
