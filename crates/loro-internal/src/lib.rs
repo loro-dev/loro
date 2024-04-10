@@ -18,10 +18,10 @@ pub use handler::{
 pub use loro::LoroDoc;
 pub use oplog::OpLog;
 pub use state::DocState;
+pub mod cursor;
 pub mod loro;
 pub mod obs;
 pub mod oplog;
-pub mod stable_pos;
 pub mod txn;
 
 pub mod change;

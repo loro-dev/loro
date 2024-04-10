@@ -3,13 +3,13 @@ use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::change::Timestamp;
 use loro_internal::container::IntoContainerId;
+use loro_internal::cursor::CannotFindRelativePosition;
+use loro_internal::cursor::Cursor;
+use loro_internal::cursor::PosQueryResult;
+use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
-use loro_internal::stable_pos::CannotFindRelativePosition;
-use loro_internal::stable_pos::Cursor;
-use loro_internal::stable_pos::PosQueryResult;
-use loro_internal::stable_pos::Side;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 

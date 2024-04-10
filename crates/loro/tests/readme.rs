@@ -49,7 +49,7 @@ fn readme_basic() {
 #[test]
 fn get_list_cursor_example() {
     use loro::LoroDoc;
-    use loro_internal::stable_pos::Side;
+    use loro_internal::cursor::Side;
 
     let doc = LoroDoc::new();
     let list = doc.get_list("list");

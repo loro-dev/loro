@@ -5,6 +5,7 @@ use loro_internal::{
     change::Lamport,
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
+    cursor::{self, Side},
     encoding::ImportBlobMetadata,
     event::Index,
     handler::{
@@ -12,7 +13,6 @@ use loro_internal::{
     },
     id::{Counter, TreeID, ID},
     obs::SubID,
-    stable_pos::{self, Side},
     version::Frontiers,
     ContainerType, DiffEvent, HandlerTrait, LoroDoc, LoroValue,
     VersionVector as InternalVersionVector,
@@ -136,8 +136,8 @@ extern "C" {
     pub type JsImportBlobMetadata;
     #[wasm_bindgen(typescript_type = "Side")]
     pub type JsSide;
-    #[wasm_bindgen(typescript_type = "{ update?: StablePosition, offset: number, side: Side }")]
-    pub type JsStablePosQueryAns;
+    #[wasm_bindgen(typescript_type = "{ update?: Cursor, offset: number, side: Side }")]
+    pub type JsCursorQueryAns;
 }
 
 mod observer {
@@ -1139,14 +1139,14 @@ impl Loro {
     ///    expect(ans.offset).toBe(1);
     /// }
     /// ```
-    pub fn getCursorPos(&self, stable_pos: &StablePosition) -> JsResult<JsStablePosQueryAns> {
+    pub fn getCursorPos(&self, cursor: &Cursor) -> JsResult<JsCursorQueryAns> {
         let ans = self
             .0
-            .query_pos(&stable_pos.pos)
+            .query_pos(&cursor.pos)
             .map_err(|e| JsError::new(&e.to_string()))?;
 
         let obj = Object::new();
-        let update = ans.update.map(|u| StablePosition { pos: u });
+        let update = ans.update.map(|u| Cursor { pos: u });
         if let Some(update) = update {
             let update_value: JsValue = update.into();
             Reflect::set(&obj, &JsValue::from_str("update"), &update_value)?;
@@ -1509,7 +1509,7 @@ impl LoroText {
     }
 
     #[wasm_bindgen(skip_typescript)]
-    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<StablePosition> {
+    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
         let mut side_value = Side::Middle;
         if side.is_truthy() {
             let num = side.as_f64().expect("Side must be -1 | 0 | 1");
@@ -1517,7 +1517,7 @@ impl LoroText {
         }
         self.handler
             .get_cursor(pos, side_value)
-            .map(|pos| StablePosition { pos })
+            .map(|pos| Cursor { pos })
     }
 }
 
@@ -2135,7 +2135,7 @@ impl LoroList {
     }
 
     #[wasm_bindgen(skip_typescript)]
-    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<StablePosition> {
+    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
         let mut side_value = Side::Middle;
         if side.is_truthy() {
             let num = side.as_f64().expect("Side must be -1 | 0 | 1");
@@ -2143,7 +2143,7 @@ impl LoroList {
         }
         self.handler
             .get_cursor(pos, side_value)
-            .map(|pos| StablePosition { pos })
+            .map(|pos| Cursor { pos })
     }
 }
 
@@ -2573,12 +2573,12 @@ impl Default for LoroTree {
 
 #[derive(Clone)]
 #[wasm_bindgen]
-pub struct StablePosition {
-    pos: stable_pos::Cursor,
+pub struct Cursor {
+    pos: cursor::Cursor,
 }
 
 #[wasm_bindgen]
-impl StablePosition {
+impl Cursor {
     pub fn containerId(&self) -> JsContainerID {
         let js_value: JsValue = self.pos.container.to_string().into();
         JsContainerID::from(js_value)
@@ -2596,9 +2596,9 @@ impl StablePosition {
 
     pub fn side(&self) -> JsSide {
         JsValue::from(match self.pos.side {
-            stable_pos::Side::Left => -1,
-            stable_pos::Side::Middle => 0,
-            stable_pos::Side::Right => 1,
+            cursor::Side::Left => -1,
+            cursor::Side::Middle => 0,
+            cursor::Side::Right => 1,
         })
         .into()
     }
@@ -2607,10 +2607,9 @@ impl StablePosition {
         self.pos.encode()
     }
 
-    pub fn decode(data: &[u8]) -> JsResult<StablePosition> {
-        let pos =
-            stable_pos::Cursor::decode(data).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Ok(StablePosition { pos })
+    pub fn decode(data: &[u8]) -> JsResult<Cursor> {
+        let pos = cursor::Cursor::decode(data).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(Cursor { pos })
     }
 }
 
@@ -2944,7 +2943,7 @@ export interface ImportBlobMetadata {
 
 interface LoroText {
     /**
-     * Get a stable position representing the cursor position.
+     * Get the cursor position at the given pos.
      *
      * When expressing the position of a cursor, using "index" can be unstable
      * because the cursor's position may change due to other deletions and insertions,
@@ -2954,7 +2953,7 @@ interface LoroText {
      *
      * Loro optimizes State metadata by not storing the IDs of deleted elements. This
      * approach complicates tracking cursors since they rely on these IDs. The solution
-     * recalculates position by replaying relevant history to update stable positions
+     * recalculates position by replaying relevant history to update cursors
      * accurately. To minimize the performance impact of history replay, the system
      * updates cursor info to reference only the IDs of currently present elements,
      * thereby reducing the need for replay.
@@ -2977,12 +2976,12 @@ interface LoroText {
      * }
      * ```
      */
-    getCursor(pos: number, side?: Side): StablePosition | undefined;
+    getCursor(pos: number, side?: Side): Cursor | undefined;
 }
 
 interface LoroList {
     /**
-     * Get a stable position representing the cursor position.
+     * Get the cursor position at the given pos.
      *
      * When expressing the position of a cursor, using "index" can be unstable
      * because the cursor's position may change due to other deletions and insertions,
@@ -2992,7 +2991,7 @@ interface LoroList {
      *
      * Loro optimizes State metadata by not storing the IDs of deleted elements. This
      * approach complicates tracking cursors since they rely on these IDs. The solution
-     * recalculates position by replaying relevant history to update stable positions
+     * recalculates position by replaying relevant history to update cursors
      * accurately. To minimize the performance impact of history replay, the system
      * updates cursor info to reference only the IDs of currently present elements,
      * thereby reducing the need for replay.
@@ -3015,7 +3014,7 @@ interface LoroList {
      * }
      * ```
      */
-    getCursor(pos: number, side?: Side): StablePosition | undefined;
+    getCursor(pos: number, side?: Side): Cursor | undefined;
 }
 
 export type Side = -1 | 0 | 1;

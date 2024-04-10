@@ -12,6 +12,7 @@ use tracing::{info, instrument, trace_span};
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
+    cursor::Cursor,
     delta::DeltaItem,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
@@ -19,7 +20,6 @@ use crate::{
     handler::ValueOrHandler,
     id::PeerID,
     op::{Op, RawOp},
-    stable_pos::Cursor,
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
@@ -1102,7 +1102,7 @@ impl DocState {
                 }
             }
         } else {
-            if matches!(pos.side, crate::stable_pos::Side::Left) {
+            if matches!(pos.side, crate::cursor::Side::Left) {
                 return Some(0);
             }
 

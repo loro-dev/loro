@@ -22,6 +22,7 @@ use crate::{
         idx::ContainerIdx, list::list_op::InnerListOp, richtext::config::StyleConfigMap,
         IntoContainerId,
     },
+    cursor::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
     dag::DagUtils,
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
@@ -31,7 +32,6 @@ use crate::{
     id::PeerID,
     op::InnerContent,
     oplog::dag::FrontiersNotIncluded,
-    stable_pos::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
     version::Frontiers,
     HandlerTrait, InternalString, LoroError, VersionVector,
 };
