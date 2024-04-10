@@ -38,7 +38,7 @@ fn mov() {
     let mut ids = vec![];
     let size = 10000;
     for _ in 0..size {
-        ids.push(tree.create(None, 0).unwrap())
+        ids.push(tree.create_at(None, 0).unwrap())
     }
     let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
     let n = 100000;
@@ -47,7 +47,8 @@ fn mov() {
         let i = rng.gen::<usize>() % size;
         let j = rng.gen::<usize>() % size;
         let children_num = tree.children_num(Some(ids[j])).unwrap_or(0);
-        tree.mov(ids[i], ids[j], children_num).unwrap_or_default();
+        tree.move_to(ids[i], ids[j], children_num)
+            .unwrap_or_default();
     }
     println!("encode snapshot size {:?}", loro.export_snapshot().len());
     println!(

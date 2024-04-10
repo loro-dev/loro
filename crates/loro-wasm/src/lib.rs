@@ -20,6 +20,7 @@ use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, cmp::Ordering, panic, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
+use wasm_bindgen_derive::TryFromJsValue;
 mod log;
 
 use crate::convert::{handler_to_js_value, js_to_container};
@@ -79,6 +80,8 @@ extern "C" {
     pub type JsMarkValue;
     #[wasm_bindgen(typescript_type = "TreeID")]
     pub type JsTreeID;
+    #[wasm_bindgen(typescript_type = "LoroTreeNode | undefined")]
+    pub type JsTreeParent;
     #[wasm_bindgen(typescript_type = "Delta<string>[]")]
     pub type JsStringDelta;
     #[wasm_bindgen(typescript_type = "Map<PeerID, number>")]
@@ -2074,11 +2077,24 @@ pub struct LoroTree {
     doc: Option<Arc<LoroDoc>>,
 }
 
+extern crate alloc;
+#[derive(TryFromJsValue)]
 #[wasm_bindgen]
+#[derive(Clone)]
 pub struct LoroTreeNode {
     id: TreeID,
     tree: TreeHandler,
     doc: Option<Arc<LoroDoc>>,
+}
+
+fn parse_js_parent_node(parent: &JsTreeParent) -> JsResult<Option<LoroTreeNode>> {
+    let js_value: &JsValue = parent.as_ref();
+    let parent: Option<LoroTreeNode> = if js_value.is_undefined() {
+        None
+    } else {
+        Some(LoroTreeNode::try_from(js_value)?)
+    };
+    Ok(parent)
 }
 
 #[wasm_bindgen]
@@ -2088,53 +2104,69 @@ impl LoroTreeNode {
     }
 
     /// The TreeID of the node.
-    #[wasm_bindgen(getter)]
-    pub fn id(&self) -> JsTreeID {
+    #[wasm_bindgen(getter, js_name = "treeId")]
+    pub fn tree_id(&self) -> JsTreeID {
         let value: JsValue = self.id.into();
         value.into()
     }
 
-    /// Create a new tree node as the child of this node and return a LoroTreeNode instance.
+    /// Create a new node as the child of the current node and
+    /// return an instance of `LoroTreeNode`.
+    ///
+    /// If the index is not provided, the new node will be appended to the end.
     ///
     /// @example
-    /// ```ts
+    /// ```typescript
     /// import { Loro } from "loro-crdt";
-    /// const doc = new Loro();
-    /// const tree = doc.getTree("tree");
-    /// const root = tree.createNode();
-    /// const node = root.createNode();
+    /// let doc = new Loro();
+    /// let tree = doc.getTree("tree");
+    /// let root = tree.createNode();
+    /// let node = root.createNode();
+    /// let node2 = root.createNode(0);
+    /// //    root
+    /// //    /  \
+    /// // node2 node
     /// ```
     #[wasm_bindgen(js_name = "createNode")]
-    pub fn create_node(&self) -> JsResult<LoroTreeNode> {
-        let id = self.tree.create(Some(self.id))?;
+    pub fn create_node(&self, index: Option<usize>) -> JsResult<LoroTreeNode> {
+        let id = if let Some(index) = index {
+            self.tree.create_at(Some(self.id), index)?
+        } else {
+            self.tree.create(Some(self.id))?
+        };
         let node = LoroTreeNode::from_tree(id, self.tree.clone(), self.doc.clone());
         Ok(node)
     }
 
-    // wasm_bindgen doesn't support Option<&T>, so the move function is split into two functions.
-    // Or we could use https://docs.rs/wasm-bindgen-derive/latest/wasm_bindgen_derive/#optional-arguments
-    /// Move the target tree node to be a root node.
-    #[wasm_bindgen(js_name = "setAsRoot")]
-    pub fn set_as_root(&self) -> JsResult<()> {
-        self.tree.mov(self.id, None)?;
-        Ok(())
-    }
-
-    /// Move the target tree node to be a child of the parent.
-    /// If the parent is undefined, the target will be a root node.
+    /// Move this tree node to be a child of the parent.
+    /// If the parent is undefined, this node will be a root node.
+    ///
+    /// If the index is not provided, the node will be appended to the end.
+    ///
+    /// It's not allowed that the target is an ancestor of the parent.
     ///
     /// @example
     /// ```ts
     /// const doc = new Loro();
     /// const tree = doc.getTree("tree");
-    /// const root = tree.createNode();
-    /// const node = root.createNode();
-    /// const node2 = node.createNode();
-    /// node2.moveTo(root);
+    /// const root = tree.createChildNode();
+    /// const node = root.createChildNode();
+    /// const node2 = node.createChildNode();
+    /// node2.moveTo(undefined, 0);
+    /// // node2   root
+    /// //          |
+    /// //         node
+    ///
     /// ```
     #[wasm_bindgen(js_name = "moveTo")]
-    pub fn move_to(&self, parent: &LoroTreeNode) -> JsResult<()> {
-        self.tree.mov(self.id, parent.id)?;
+    pub fn move_to(&self, parent: &JsTreeParent, index: Option<usize>) -> JsResult<()> {
+        let parent: Option<TreeID> = parse_js_parent_node(parent)?.map(|p| p.id);
+        if let Some(index) = index {
+            self.tree.move_to(self.id, parent, index)?
+        } else {
+            self.tree.mov(self.id, parent)?;
+        }
+
         Ok(())
     }
 
@@ -2151,7 +2183,7 @@ impl LoroTreeNode {
 
     /// Get the parent node of this node.
     ///
-    /// - The parent container of the root tree is `undefined`.
+    /// - The parent of the root node is `undefined`.
     /// - The object returned is a new js object each time because it need to cross
     ///   the WASM boundary.
     pub fn parent(&self) -> Option<LoroTreeNode> {
@@ -2192,8 +2224,10 @@ impl LoroTree {
         JsValue::from_str("Tree").into()
     }
 
-    /// Create a new tree node as the child of parent and return an unique tree id.
+    /// Create a new tree node as the child of parent and return a `LoroTreeNode` instance.
     /// If the parent is undefined, the tree node will be a root node.
+    ///
+    /// If the index is not provided, the new node will be appended to the end.
     ///
     /// @example
     /// ```ts
@@ -2202,31 +2236,23 @@ impl LoroTree {
     /// const doc = new Loro();
     /// const tree = doc.getTree("tree");
     /// const root = tree.createNode();
-    /// const node = root.createNode();
-    /// console.log(tree.value);
-    /// /*
-    /// [
-    ///   {
-    ///     id: '1@45D9F599E6B4209B',
-    ///     parent: '0@45D9F599E6B4209B',
-    ///     meta: 'cid:1@45D9F599E6B4209B:Map'
-    ///   },
-    ///   {
-    ///     id: '0@45D9F599E6B4209B',
-    ///     parent: null,
-    ///     meta: 'cid:0@45D9F599E6B4209B:Map'
-    ///   }
-    /// ]
-    ///  *\/
+    /// const node = tree.createNode(undefined, 0);
+    ///
+    /// //  undefined
+    /// //    /   \
+    /// // node  root
     /// ```
     #[wasm_bindgen(js_name = "createNode")]
-    pub fn create_node(&mut self, parent: Option<JsTreeID>) -> JsResult<LoroTreeNode> {
-        let id = if let Some(p) = parent {
-            let p: JsValue = p.into();
-            let p = TreeID::try_from(p).unwrap();
-            self.handler.create(p)?
+    pub fn create_node(
+        &mut self,
+        parent: &JsTreeParent,
+        index: Option<usize>,
+    ) -> JsResult<LoroTreeNode> {
+        let parent: Option<TreeID> = parse_js_parent_node(parent)?.map(|p| p.id);
+        let id = if let Some(index) = index {
+            self.handler.create_at(parent, index)?
         } else {
-            self.handler.create(None)?
+            self.handler.create(parent)?
         };
         let node = LoroTreeNode::from_tree(id, self.handler.clone(), self.doc.clone());
         Ok(node)
@@ -2245,22 +2271,26 @@ impl LoroTree {
     /// const root = tree.createNode();
     /// const node = root.createNode();
     /// const node2 = node.createNode();
-    /// tree.move(node2.id, root.id);
+    /// tree.move(node2, root);
     /// // Error will be thrown if move operation creates a cycle
-    /// tree.move(root.id, node.id);
+    /// tree.move(root, node);
     /// ```
     #[wasm_bindgen(js_name = "move")]
-    pub fn mov(&mut self, target: JsTreeID, parent: Option<JsTreeID>) -> JsResult<()> {
-        let target: JsValue = target.into();
-        let target = TreeID::try_from(target).unwrap();
-        let parent = if let Some(parent) = parent {
-            let parent: JsValue = parent.into();
-            let parent = TreeID::try_from(parent).unwrap();
-            Some(parent)
+    pub fn mov(
+        &mut self,
+        target: &LoroTreeNode,
+        parent: &JsTreeParent,
+        index: Option<usize>,
+    ) -> JsResult<()> {
+        let target: TreeID = target.id;
+        let parent = parse_js_parent_node(parent)?.map(|x| x.id);
+
+        if let Some(index) = index {
+            self.handler.move_to(target, parent, index)?
         } else {
-            None
+            self.handler.mov(target, parent)?
         };
-        self.handler.mov(target, parent)?;
+
         Ok(())
     }
 
@@ -2274,21 +2304,10 @@ impl LoroTree {
     /// const tree = doc.getTree("tree");
     /// const root = tree.createNode();
     /// const node = root.createNode();
-    /// tree.delete(node.id);
-    /// console.log(tree.value);
-    /// /*
-    /// [
-    ///   {
-    ///     id: '0@40553779E43298C6',
-    ///     parent: null,
-    //     meta: 'cid:0@40553779E43298C6:Map'
-    ///   }
-    /// ]
-    ///  *\/
+    /// tree.delete(node);
     /// ```
-    pub fn delete(&mut self, target: JsTreeID) -> JsResult<()> {
-        let target: JsValue = target.into();
-        self.handler.delete(target.try_into().unwrap())?;
+    pub fn delete(&mut self, target: &LoroTreeNode) -> JsResult<()> {
+        self.handler.delete(target.id)?;
         Ok(())
     }
 
@@ -2309,7 +2328,7 @@ impl LoroTree {
     }
 
     /// Get the id of the container.
-    #[wasm_bindgen(js_name = "id", method, getter)]
+    #[wasm_bindgen(js_name = "id", getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = (&self.handler.id()).into();
         value.into()
@@ -2325,10 +2344,12 @@ impl LoroTree {
     /// Get the flat array of the forest.
     ///
     /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
-    /// but also the metadata, you should use `getDeepValue`.
-    #[wasm_bindgen(js_name = "value", method, getter)]
-    pub fn get_value(&mut self) -> JsValue {
-        self.handler.get_value().into()
+    /// but also the metadata, you should use `toJson()`.
+    #[wasm_bindgen(js_name = "toArray")]
+    pub fn to_array(&mut self) -> JsValue {
+        let nodes = self.nodes();
+        let mut ans = Vec::with_capacity(nodes.len());
+        for node in nodes {}
     }
 
     /// Get the flat array with metadata of the forest.
@@ -2362,17 +2383,14 @@ impl LoroTree {
     /// const root = tree.createNode();
     /// const node = root.createNode();
     /// const node2 = node.createNode();
-    /// console.log(tree.nodes) // [ '1@A5024AE0E00529D2', '2@A5024AE0E00529D2', '0@A5024AE0E00529D2' ]
+    /// console.log(tree.nodes());
     /// ```
-    #[wasm_bindgen(js_name = "nodes", method, getter)]
-    pub fn nodes(&mut self) -> Vec<JsTreeID> {
+    #[wasm_bindgen]
+    pub fn nodes(&mut self) -> Vec<LoroTreeNode> {
         self.handler
             .nodes()
             .into_iter()
-            .map(|n| {
-                let v: JsValue = n.into();
-                v.into()
-            })
+            .map(|n| LoroTreeNode::from_tree(n, self.handler.clone(), self.doc.clone()))
             .collect()
     }
 

@@ -99,6 +99,16 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 });
             },
         );
+
+        group.bench_with_input(
+            BenchmarkId::new("new_evenly", base.pow(i)),
+            &base.pow(i),
+            |b, i| {
+                b.iter(|| {
+                    FractionalIndex::generate_n_evenly(None, None, *i as usize);
+                });
+            },
+        );
     }
     group.finish();
 

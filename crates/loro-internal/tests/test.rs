@@ -857,8 +857,8 @@ fn missing_event_when_checkout() {
 
     let doc2 = LoroDoc::new_auto_commit();
     let tree = doc2.get_tree("tree");
-    let node = tree.create(None, 0).unwrap();
-    let _ = tree.create(None, 0).unwrap();
+    let node = tree.create_at(None, 0).unwrap();
+    let _ = tree.create_at(None, 0).unwrap();
     let meta = tree.get_meta(node).unwrap();
     meta.insert("a", 0).unwrap();
     doc.import(&doc2.export_from(&doc.oplog_vv())).unwrap();

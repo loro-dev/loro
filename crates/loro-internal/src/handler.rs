@@ -9,7 +9,7 @@ use crate::{
     },
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
-    state::{ContainerState, GetPositionResult, State, TreeParentId},
+    state::{ContainerState, FractionalIndexGenResult, State, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
 };
@@ -2097,11 +2097,29 @@ impl TreeHandler {
         )
     }
 
-    pub fn create<T: Into<Option<TreeID>>>(&self, parent: T, index: usize) -> LoroResult<TreeID> {
+    pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
+        let parent = parent.into();
         match &self.inner {
-            MaybeDetached::Detached(t) => {
-                let mut t = t.try_lock().unwrap();
-                Ok(t.value.create(parent.into()))
+            MaybeDetached::Detached(_) => {
+                todo!()
+                //TODO:
+            }
+            MaybeDetached::Attached(a) => {
+                let index = self.children_num(parent).unwrap_or(0);
+                a.with_txn(|txn| self.create_with_txn(txn, parent, index))
+            }
+        }
+    }
+
+    pub fn create_at<T: Into<Option<TreeID>>>(
+        &self,
+        parent: T,
+        index: usize,
+    ) -> LoroResult<TreeID> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                // TODO:
+                todo!()
             }
             MaybeDetached::Attached(a) => {
                 a.with_txn(|txn| self.create_with_txn(txn, parent, index))
@@ -2117,12 +2135,13 @@ impl TreeHandler {
     ) -> LoroResult<TreeID> {
         let inner = self.inner.try_attached_state()?;
         let parent: Option<TreeID> = parent.into();
-        let tree_id = TreeID::from_id(txn.next_id());
-        match self.generate_position_at(&tree_id, parent, index) {
-            GetPositionResult::Ok(position) => {
-                self.create_with_position(inner, txn, tree_id, parent, index, position)
+        let target = TreeID::from_id(txn.next_id());
+
+        match self.generate_position_at(&target, parent, index) {
+            FractionalIndexGenResult::Ok(position) => {
+                self.create_with_position(inner, txn, target, parent, index, position)
             }
-            GetPositionResult::Rearrange(ids) => {
+            FractionalIndexGenResult::Rearrange(ids) => {
                 for (i, (id, position)) in ids.into_iter().enumerate() {
                     if i == 0 {
                         self.create_with_position(inner, txn, id, parent, index, position)?;
@@ -2130,12 +2149,31 @@ impl TreeHandler {
                     }
                     self.mov_with_position(inner, txn, id, parent, index + i, position)?;
                 }
-                Ok(tree_id)
+                Ok(target)
             }
         }
     }
 
-    pub fn mov<T: Into<Option<TreeID>>>(
+    pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
+        let parent = parent.into();
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                // let mut t = t.try_lock().unwrap();
+                // t.value.mov(target, parent.into());
+                // Ok(())
+                todo!()
+            }
+            MaybeDetached::Attached(a) => {
+                let mut index = self.children_num(parent).unwrap_or(0);
+                if self.is_parent(target, parent) {
+                    index -= 1;
+                }
+                a.with_txn(|txn| self.mov_with_txn(txn, target, parent, index))
+            }
+        }
+    }
+
+    pub fn move_to<T: Into<Option<TreeID>>>(
         &self,
         target: TreeID,
         parent: T,
@@ -2189,10 +2227,10 @@ impl TreeHandler {
         }
 
         match self.generate_position_at(&target, parent, index) {
-            GetPositionResult::Ok(position) => {
+            FractionalIndexGenResult::Ok(position) => {
                 self.mov_with_position(inner, txn, target, parent, index, position)
             }
-            GetPositionResult::Rearrange(ids) => {
+            FractionalIndexGenResult::Rearrange(ids) => {
                 for (i, (id, position)) in ids.into_iter().enumerate() {
                     self.mov_with_position(inner, txn, id, parent, index + i, position)?;
                 }
@@ -2306,6 +2344,8 @@ impl TreeHandler {
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
                 a.get_children(&TreeParentId::from(parent))
+                    .unwrap()
+                    .collect()
             }),
         }
     }
@@ -2379,7 +2419,7 @@ impl TreeHandler {
         target: &TreeID,
         parent: Option<TreeID>,
         index: usize,
-    ) -> GetPositionResult {
+    ) -> FractionalIndexGenResult {
         match &self.inner {
             MaybeDetached::Detached(_) => {
                 unimplemented!()

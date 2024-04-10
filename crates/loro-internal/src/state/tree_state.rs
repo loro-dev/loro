@@ -54,8 +54,156 @@ impl From<Option<TreeID>> for TreeParentId {
     }
 }
 
+#[derive(Clone)]
+enum NodeChildren {
+    Vec(Vec<(NodePosition, TreeID)>),
+}
+
+impl Default for NodeChildren {
+    fn default() -> Self {
+        NodeChildren::Vec(vec![])
+    }
+}
+
+impl NodeChildren {
+    fn get_index_by_child_id(&self, target: &TreeID) -> Option<usize> {
+        match self {
+            NodeChildren::Vec(v) => v.iter().position(|(_, id)| id == target),
+        }
+    }
+
+    fn get_fi_at(&self, pos: usize) -> &FractionalIndex {
+        match self {
+            NodeChildren::Vec(v) => &v[pos].0.position,
+        }
+    }
+
+    fn generate_fi_at(&self, pos: usize, target: &TreeID) -> FractionalIndexGenResult {
+        match self {
+            NodeChildren::Vec(v) => {
+                let mut reset_ids = vec![];
+                let mut left = None;
+                let mut next_right = None;
+                {
+                    let mut right = None;
+                    let children_num = v.len();
+
+                    if pos > 0 {
+                        left = Some(&v[pos - 1].0.position);
+                    }
+                    if pos < children_num {
+                        right = Some(&v[pos]);
+                    }
+
+                    // if left and right have the same fractional indexes, we need to scan further to
+                    // find all the ids that need to be reset
+                    if left.is_some() && left == right.map(|x| &x.0.position) {
+                        // TODO: the min length between left and right
+                        reset_ids.push(right.unwrap().1);
+                        for i in (pos + 1)..children_num {
+                            if &v[i].0.position == right.map(|x| &x.0.position).unwrap() {
+                                reset_ids.push(v[i].1);
+                            } else {
+                                next_right = Some(v[i].0.position.clone());
+
+                                break;
+                            }
+                        }
+                    }
+
+                    if reset_ids.is_empty() {
+                        return FractionalIndexGenResult::Ok(
+                            FractionalIndex::new(left, right.map(|x| &x.0.position)).unwrap(),
+                        );
+                    }
+                }
+                let positions = FractionalIndex::generate_n_evenly(
+                    left,
+                    next_right.as_ref(),
+                    reset_ids.len() + 1,
+                )
+                .unwrap();
+                FractionalIndexGenResult::Rearrange(
+                    Some(*target)
+                        .into_iter()
+                        .chain(reset_ids)
+                        .zip(positions)
+                        .collect(),
+                )
+            }
+        }
+    }
+
+    fn get_id_at(&self, pos: usize) -> &TreeID {
+        match self {
+            NodeChildren::Vec(v) => &v[pos].1,
+        }
+    }
+
+    fn delete_child(&mut self, target: &TreeID) {
+        match self {
+            NodeChildren::Vec(v) => {
+                v.retain(|(_, id)| id != target);
+            }
+        }
+    }
+
+    fn upgrade(&mut self) {
+        unimplemented!("Upgrade the vec to a BTreeMap")
+    }
+
+    fn insert_child(&mut self, pos: NodePosition, id: TreeID) {
+        match self {
+            NodeChildren::Vec(v) => {
+                if v.len() >= 16 {
+                    self.upgrade();
+                    return self.insert_child(pos, id);
+                }
+
+                let r = v.binary_search_by(|(target, _)| target.cmp(&pos));
+                match r {
+                    Ok(_) => unreachable!(),
+                    Err(i) => {
+                        v.insert(i, (pos, id));
+                    }
+                }
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            NodeChildren::Vec(v) => v.len(),
+        }
+    }
+
+    fn has_child(&self, node_position: &NodePosition) -> bool {
+        match self {
+            NodeChildren::Vec(v) => v
+                .binary_search_by(|(target, _)| target.cmp(&node_position))
+                .is_ok(),
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &(NodePosition, TreeID)> {
+        match self {
+            NodeChildren::Vec(v) => v.iter(),
+        }
+    }
+}
+
 #[derive(Clone, Default)]
-struct TreeChildrenCache(FxHashMap<TreeParentId, BTreeMap<NodePosition, TreeID>>);
+struct TreeChildrenCache(FxHashMap<TreeParentId, NodeChildren>);
+
+mod btree {
+    use fxhash::FxHashMap;
+    use generic_btree::LeafIndex;
+    use loro_common::{IdLp, ID};
+
+    struct ChildTree {
+        id_to_leaf_index: FxHashMap<ID, LeafIndex>,
+    }
+}
 
 impl Debug for TreeChildrenCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -72,7 +220,7 @@ impl Debug for TreeChildrenCache {
 }
 
 impl Deref for TreeChildrenCache {
-    type Target = FxHashMap<TreeParentId, BTreeMap<NodePosition, TreeID>>;
+    type Target = FxHashMap<TreeParentId, NodeChildren>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -155,15 +303,15 @@ impl TreeState {
         if !parent.is_deleted() {
             let entry = self.children.entry(parent).or_default();
             let node_position = NodePosition::new(position.clone().unwrap(), id.idlp());
-            debug_assert!(!entry.contains_key(&node_position));
-            entry.insert(node_position, target);
+            debug_assert!(!entry.has_child(&node_position));
+            entry.insert_child(node_position, target);
         } else {
             // clean the cache recursively, otherwise the index of event will be calculated incorrectly
             let mut q = vec![target];
             while let Some(id) = q.pop() {
                 let parent = TreeParentId::from(Some(id));
                 if let Some(children) = self.children.get(&parent) {
-                    q.extend(children.values().copied());
+                    q.extend(children.iter().map(|x| x.1));
                 }
                 self.children.remove(&parent);
             }
@@ -252,12 +400,8 @@ impl TreeState {
             .unwrap_or(0)
     }
 
-    pub fn get_children(&self, parent: &TreeParentId) -> Vec<TreeID> {
-        // ans
-        self.children
-            .get(parent)
-            .map(|x| x.values().copied().collect())
-            .unwrap_or_default()
+    pub fn get_children(&self, parent: &TreeParentId) -> Option<impl Iterator<Item = TreeID> + '_> {
+        self.children.get(parent).map(|x| x.iter().map(|x| x.1))
     }
 
     pub fn children_num(&self, parent: &TreeParentId) -> Option<usize> {
@@ -278,11 +422,7 @@ impl TreeState {
     /// O(1) + Clone FractionalIndex
     pub(crate) fn delete_position(&mut self, parent: &TreeParentId, target: TreeID) {
         if let Some(x) = self.children.get_mut(parent) {
-            let node = self.trees.get(&target).unwrap();
-            let position = node.position.clone().unwrap();
-            let idlp = node.last_move_op.idlp();
-            let node_position = NodePosition::new(position, idlp);
-            x.remove(&node_position);
+            x.delete_child(&target);
         }
     }
 
@@ -291,65 +431,11 @@ impl TreeState {
         target: &TreeID,
         parent: &TreeParentId,
         index: usize,
-    ) -> GetPositionResult {
-        let mut reset_position = vec![];
-        let mut left = None;
-        let mut next_right = None;
-        {
-            let mut right = None;
-            let children_positions = self.children.get(parent);
-            if children_positions.is_none() {
-                debug_assert_eq!(index, 0);
-                return GetPositionResult::Ok(FractionalIndex::default());
-            }
-            // TODO: PERF iterating like this is slow
-            let mut positions = children_positions.unwrap().iter();
-            let children_num = positions.len();
-
-            if index > 0 {
-                left = Some(positions.nth(index - 1).unwrap().0.position.clone());
-            }
-            if index < children_num {
-                let t = positions.next().unwrap();
-                right = Some(t.0);
-            }
-
-            if left.is_some() && left.as_ref() == right.map(|x| &x.position) {
-                // TODO: the min length between left and right
-                reset_position.push(right.unwrap().clone());
-                for (p, _) in positions {
-                    if p.position == right.unwrap().position {
-                        reset_position.push(p.clone());
-                    } else {
-                        next_right = Some(p.position.clone());
-                        break;
-                    }
-                }
-            }
-
-            if reset_position.is_empty() {
-                return GetPositionResult::Ok(
-                    FractionalIndex::new(left.as_ref(), right.map(|x| &x.position)).unwrap(),
-                );
-            }
-        }
-        let positions = FractionalIndex::generate_n_evenly(
-            left.as_ref(),
-            next_right.as_ref(),
-            reset_position.len() + 1,
-        )
-        .unwrap();
-        GetPositionResult::Rearrange(
-            [*target]
-                .into_iter()
-                .chain(
-                    reset_position
-                        .into_iter()
-                        .map(|x| self.children.get_mut(parent).unwrap().remove(&x).unwrap()),
-                )
-                .zip(positions)
-                .collect(),
-        )
+    ) -> FractionalIndexGenResult {
+        self.children
+            .entry(*parent)
+            .or_default()
+            .generate_fi_at(index, target)
     }
 
     pub(crate) fn get_index_by_tree_id(
@@ -362,13 +448,13 @@ impl TreeState {
                 self.children
                     .get(parent)
                     // TODO: PERF: Slow
-                    .and_then(|x| x.values().position(|x| x == target))
+                    .and_then(|x| x.get_index_by_child_id(target))
             })
             .flatten()
     }
 }
 
-pub(crate) enum GetPositionResult {
+pub(crate) enum FractionalIndexGenResult {
     Ok(FractionalIndex),
     Rearrange(Vec<(TreeID, FractionalIndex)>),
 }
@@ -457,7 +543,7 @@ impl ContainerState for TreeState {
                                 self.children
                                     .get_mut(&parent.parent)
                                     .unwrap()
-                                    .remove(&node_position);
+                                    .delete_child(&target);
                             }
                         }
                         // println!("after {:?}", self.children);
@@ -503,14 +589,10 @@ impl ContainerState for TreeState {
                         let parent = self.trees.remove(&target);
                         if let Some(parent) = parent {
                             if !parent.parent.is_deleted() {
-                                let node_position = NodePosition::new(
-                                    parent.position.unwrap(),
-                                    parent.last_move_op.idlp(),
-                                );
                                 self.children
                                     .get_mut(&parent.parent)
                                     .unwrap()
-                                    .remove(&node_position);
+                                    .delete_child(&target);
                             }
                         }
                         continue;

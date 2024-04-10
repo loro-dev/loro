@@ -965,7 +965,7 @@ impl LoroTree {
     pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
         let parent = parent.into();
         let index = self.children_num(parent).unwrap_or(0);
-        self.handler.create(parent, index)
+        self.handler.create_at(parent, index)
     }
 
     pub fn create_at<T: Into<Option<TreeID>>>(
@@ -973,7 +973,7 @@ impl LoroTree {
         parent: T,
         index: usize,
     ) -> LoroResult<TreeID> {
-        self.handler.create(parent, index)
+        self.handler.create_at(parent, index)
     }
 
     /// Move the `target` node to be a child of the `parent` node.
@@ -995,7 +995,7 @@ impl LoroTree {
     pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
         let parent = parent.into();
         let index = self.children_num(parent).unwrap_or(0);
-        self.handler.mov(target, parent, index)
+        self.handler.move_to(target, parent, index)
     }
 
     pub fn mov_to<T: Into<Option<TreeID>>>(
@@ -1005,7 +1005,7 @@ impl LoroTree {
         to: usize,
     ) -> LoroResult<()> {
         let parent = parent.into();
-        self.handler.mov(target, parent, to)
+        self.handler.move_to(target, parent, to)
     }
 
     /// Delete a tree node.
