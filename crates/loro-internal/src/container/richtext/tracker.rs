@@ -5,7 +5,7 @@ use generic_btree::{
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength;
 
-use crate::{stable_pos::AbsolutePosition, VersionVector};
+use crate::{cursor::AbsolutePosition, VersionVector};
 
 use self::{crdt_rope::CrdtRope, id_to_cursor::IdToCursor};
 
@@ -386,9 +386,9 @@ impl Tracker {
                 return Some(AbsolutePosition {
                     pos: index,
                     side: if is_activated {
-                        crate::stable_pos::Side::Middle
+                        crate::cursor::Side::Middle
                     } else {
-                        crate::stable_pos::Side::Left
+                        crate::cursor::Side::Left
                     },
                 });
             }

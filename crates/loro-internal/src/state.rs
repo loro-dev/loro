@@ -14,6 +14,7 @@ use crate::{
         idx::ContainerIdx, list::list_op::ListOp, map::MapSet, richtext::config::StyleConfigMap,
         tree::tree_op::TreeOp, ContainerIdRaw,
     },
+    cursor::Cursor,
     delta::DeltaItem,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
@@ -21,7 +22,6 @@ use crate::{
     handler::ValueOrHandler,
     id::PeerID,
     op::{ListSlice, Op, RawOp, RawOpContent},
-    stable_pos::Cursor,
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
@@ -1095,7 +1095,7 @@ impl DocState {
                 }
             }
         } else {
-            if matches!(pos.side, crate::stable_pos::Side::Left) {
+            if matches!(pos.side, crate::cursor::Side::Left) {
                 return Some(0);
             }
 

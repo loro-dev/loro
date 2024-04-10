@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Delta, Loro, TextDiff } from "../src";
-import { OpId, setDebug } from "loro-wasm";
+import { Cursor, OpId, setDebug } from "loro-wasm";
 
 describe("richtext", () => {
   it("mark", () => {
@@ -237,12 +237,18 @@ describe("richtext", () => {
       expect(ans.update).toBeUndefined();
     }
     text.insert(0, "abc");
+    const bytes = pos0!.encode();
+    // Sending pos0 over the network
+    const pos0decoded = Cursor.decode(bytes);
+    const docA = new Loro();
+    docA.import(doc.exportFrom());
     {
-      const ans = doc.getCursorPos(pos0!);
+      const ans = docA.getCursorPos(pos0decoded!);
       expect(ans.side).toBe(0);
       expect(ans.offset).toBe(3);
       expect(ans.update).toBeUndefined();
     }
+
     // If "1" is removed from the text, the stable position should be updated
     text.delete(3, 1); // remove "1", "abc23"
     doc.commit();

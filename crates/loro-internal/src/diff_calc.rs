@@ -18,11 +18,11 @@ use crate::{
             AnchorType, CrdtRopeDelta, RichtextChunk, RichtextChunkValue, RichtextTracker, StyleOp,
         },
     },
+    cursor::AbsolutePosition,
     delta::{Delta, MapDelta, MapValue},
     event::InternalDiff,
     op::{RichOp, SliceRange, SliceRanges},
     span::{HasId, HasLamport},
-    stable_pos::AbsolutePosition,
     version::Frontiers,
     InternalString, VersionVector,
 };
@@ -462,7 +462,7 @@ pub(crate) struct ListDiffCalculator {
     tracker: Box<RichtextTracker>,
 }
 impl ListDiffCalculator {
-    pub(crate) fn get_id_latest_pos(&self, id: ID) -> Option<crate::stable_pos::AbsolutePosition> {
+    pub(crate) fn get_id_latest_pos(&self, id: ID) -> Option<crate::cursor::AbsolutePosition> {
         self.tracker.get_target_id_latest_index_at_new_version(id)
     }
 }
