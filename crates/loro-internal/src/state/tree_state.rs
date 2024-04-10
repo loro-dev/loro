@@ -1,3 +1,4 @@
+use either::Either;
 use enum_as_inner::EnumAsInner;
 use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
@@ -7,7 +8,7 @@ use loro_common::{
 };
 use rle::HasLength;
 use serde::Serialize;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, Weak};
@@ -57,6 +58,7 @@ impl From<Option<TreeID>> for TreeParentId {
 #[derive(Clone)]
 enum NodeChildren {
     Vec(Vec<(NodePosition, TreeID)>),
+    BTree(btree::ChildTree),
 }
 
 impl Default for NodeChildren {
@@ -69,74 +71,84 @@ impl NodeChildren {
     fn get_index_by_child_id(&self, target: &TreeID) -> Option<usize> {
         match self {
             NodeChildren::Vec(v) => v.iter().position(|(_, id)| id == target),
+            NodeChildren::BTree(btree) => btree.id_to_index(target),
         }
     }
 
-    fn get_fi_at(&self, pos: usize) -> &FractionalIndex {
+    fn get_node_position_at(&self, pos: usize) -> &NodePosition {
         match self {
-            NodeChildren::Vec(v) => &v[pos].0.position,
+            NodeChildren::Vec(v) => &v[pos].0,
+            NodeChildren::BTree(btree) => &btree.get_elem_at(pos).unwrap().pos,
+        }
+    }
+
+    fn get_elem_at(&self, pos: usize) -> Option<(&NodePosition, &TreeID)> {
+        match self {
+            NodeChildren::Vec(v) => v.get(pos).map(|(pos, id)| (pos, id)),
+            NodeChildren::BTree(btree) => btree.get_elem_at(pos).map(|x| (x.pos.as_ref(), &x.id)),
         }
     }
 
     fn generate_fi_at(&self, pos: usize, target: &TreeID) -> FractionalIndexGenResult {
-        match self {
-            NodeChildren::Vec(v) => {
-                let mut reset_ids = vec![];
-                let mut left = None;
-                let mut next_right = None;
-                {
-                    let mut right = None;
-                    let children_num = v.len();
+        let mut reset_ids = vec![];
+        let mut left = None;
+        let mut next_right = None;
+        {
+            let mut right = None;
+            let children_num = self.len();
 
-                    if pos > 0 {
-                        left = Some(&v[pos - 1].0.position);
-                    }
-                    if pos < children_num {
-                        right = Some(&v[pos]);
-                    }
+            if pos > 0 {
+                left = Some(self.get_node_position_at(pos - 1));
+            }
+            if pos < children_num {
+                right = self.get_elem_at(pos);
+            }
 
-                    // if left and right have the same fractional indexes, we need to scan further to
-                    // find all the ids that need to be reset
-                    if left.is_some() && left == right.map(|x| &x.0.position) {
-                        // TODO: the min length between left and right
-                        reset_ids.push(right.unwrap().1);
-                        for i in (pos + 1)..children_num {
-                            if &v[i].0.position == right.map(|x| &x.0.position).unwrap() {
-                                reset_ids.push(v[i].1);
-                            } else {
-                                next_right = Some(v[i].0.position.clone());
-
-                                break;
-                            }
+            let left_fi = left.map(|x| &x.position);
+            // if left and right have the same fractional indexes, we need to scan further to
+            // find all the ids that need to be reset
+            if let Some(left_fi) = left_fi {
+                if Some(left_fi) == right.map(|x| &x.0.position) {
+                    // TODO: the min length between left and right
+                    reset_ids.push(*right.unwrap().1);
+                    for i in (pos + 1)..children_num {
+                        let this_position = &self.get_node_position_at(i).position;
+                        if this_position == left_fi {
+                            reset_ids.push(*self.get_elem_at(i).unwrap().1);
+                        } else {
+                            next_right = Some(this_position.clone());
+                            break;
                         }
                     }
-
-                    if reset_ids.is_empty() {
-                        return FractionalIndexGenResult::Ok(
-                            FractionalIndex::new(left, right.map(|x| &x.0.position)).unwrap(),
-                        );
-                    }
                 }
-                let positions = FractionalIndex::generate_n_evenly(
-                    left,
-                    next_right.as_ref(),
-                    reset_ids.len() + 1,
-                )
-                .unwrap();
-                FractionalIndexGenResult::Rearrange(
-                    Some(*target)
-                        .into_iter()
-                        .chain(reset_ids)
-                        .zip(positions)
-                        .collect(),
-                )
+            }
+
+            if reset_ids.is_empty() {
+                return FractionalIndexGenResult::Ok(
+                    FractionalIndex::new(left.map(|x| &x.position), right.map(|x| &x.0.position))
+                        .unwrap(),
+                );
             }
         }
+        let positions = FractionalIndex::generate_n_evenly(
+            left.map(|x| &x.position),
+            next_right.as_ref(),
+            reset_ids.len() + 1,
+        )
+        .unwrap();
+        FractionalIndexGenResult::Rearrange(
+            Some(*target)
+                .into_iter()
+                .chain(reset_ids)
+                .zip(positions)
+                .collect(),
+        )
     }
 
     fn get_id_at(&self, pos: usize) -> &TreeID {
         match self {
             NodeChildren::Vec(v) => &v[pos].1,
+            NodeChildren::BTree(btree) => &btree.get_elem_at(pos).unwrap().id,
         }
     }
 
@@ -145,11 +157,23 @@ impl NodeChildren {
             NodeChildren::Vec(v) => {
                 v.retain(|(_, id)| id != target);
             }
+            NodeChildren::BTree(v) => {
+                v.delete_child(target);
+            }
         }
     }
 
     fn upgrade(&mut self) {
-        unimplemented!("Upgrade the vec to a BTreeMap")
+        match self {
+            NodeChildren::Vec(v) => {
+                let mut btree = btree::ChildTree::new();
+                for (pos, id) in v.drain(..) {
+                    btree.insert_child(pos, id);
+                }
+                *self = NodeChildren::BTree(btree);
+            }
+            NodeChildren::BTree(_) => unreachable!(),
+        }
     }
 
     fn insert_child(&mut self, pos: NodePosition, id: TreeID) {
@@ -168,12 +192,16 @@ impl NodeChildren {
                     }
                 }
             }
+            NodeChildren::BTree(v) => {
+                v.insert_child(pos, id);
+            }
         }
     }
 
     fn len(&self) -> usize {
         match self {
             NodeChildren::Vec(v) => v.len(),
+            NodeChildren::BTree(v) => v.len(),
         }
     }
 
@@ -182,12 +210,14 @@ impl NodeChildren {
             NodeChildren::Vec(v) => v
                 .binary_search_by(|(target, _)| target.cmp(&node_position))
                 .is_ok(),
+            NodeChildren::BTree(v) => v.has_child(node_position),
         }
     }
 
-    fn iter(&self) -> impl Iterator<Item = &(NodePosition, TreeID)> {
+    fn iter(&self) -> impl Iterator<Item = (&NodePosition, &TreeID)> {
         match self {
-            NodeChildren::Vec(v) => v.iter(),
+            NodeChildren::Vec(v) => Either::Left(v.iter().map(|(pos, id)| (pos, id))),
+            NodeChildren::BTree(t) => Either::Right(t.iter()),
         }
     }
 }
@@ -196,12 +226,234 @@ impl NodeChildren {
 struct TreeChildrenCache(FxHashMap<TreeParentId, NodeChildren>);
 
 mod btree {
-    use fxhash::FxHashMap;
-    use generic_btree::LeafIndex;
-    use loro_common::{IdLp, ID};
+    use std::{cmp::Ordering, ops::Range, sync::Arc};
 
-    struct ChildTree {
-        id_to_leaf_index: FxHashMap<ID, LeafIndex>,
+    use fxhash::FxHashMap;
+    use generic_btree::{
+        rle::{HasLength, Mergeable, Sliceable},
+        BTree, BTreeTrait, Cursor, FindResult, LeafIndex, LengthFinder, Query, UseLengthFinder,
+    };
+    use loro_common::TreeID;
+
+    use super::NodePosition;
+
+    struct ChildTreeTrait;
+    #[derive(Debug, Clone)]
+    pub(super) struct ChildTree {
+        tree: BTree<ChildTreeTrait>,
+        id_to_leaf_index: FxHashMap<TreeID, LeafIndex>,
+    }
+
+    impl ChildTree {
+        pub(super) fn new() -> Self {
+            Self {
+                tree: BTree::new(),
+                id_to_leaf_index: FxHashMap::default(),
+            }
+        }
+
+        pub(super) fn insert_child(&mut self, pos: NodePosition, id: TreeID) {
+            let (c, _) = self.tree.insert::<KeyQuery>(
+                &pos,
+                Elem {
+                    pos: Arc::new(pos.clone()),
+                    id,
+                },
+            );
+
+            self.id_to_leaf_index.insert(id, c.leaf);
+        }
+
+        pub(super) fn delete_child(&mut self, id: &TreeID) {
+            if let Some(leaf) = self.id_to_leaf_index.remove(id) {
+                self.tree.remove_leaf(Cursor { leaf, offset: 0 });
+            } else {
+                panic!("The id is not in the tree");
+            }
+        }
+
+        pub(super) fn has_child(&self, pos: &NodePosition) -> bool {
+            match self.tree.query::<KeyQuery>(pos) {
+                Some(r) => r.found,
+                None => false,
+            }
+        }
+
+        pub(super) fn iter(&self) -> impl Iterator<Item = (&NodePosition, &TreeID)> {
+            self.tree.iter().map(|x| (&*x.pos, &x.id))
+        }
+
+        pub(super) fn len(&self) -> usize {
+            self.tree.root_cache().len
+        }
+
+        pub(super) fn get_elem_at(&self, pos: usize) -> Option<&Elem> {
+            let result = self.tree.query::<LengthFinder>(&pos)?;
+            if !result.found {
+                return None;
+            }
+            self.tree.get_elem(result.leaf())
+        }
+
+        pub(super) fn id_to_index(&self, id: &TreeID) -> Option<usize> {
+            let leaf_index = self.id_to_leaf_index.get(id)?;
+            let mut ans = 0;
+            self.tree.visit_previous_caches(
+                Cursor {
+                    leaf: *leaf_index,
+                    offset: 0,
+                },
+                |prev| match prev {
+                    generic_btree::PreviousCache::NodeCache(c) => {
+                        ans += c.len;
+                    }
+                    generic_btree::PreviousCache::PrevSiblingElem(p) => {
+                        ans += 1;
+                    }
+                    generic_btree::PreviousCache::ThisElemAndOffset { .. } => {}
+                },
+            );
+
+            Some(ans)
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub(super) struct Elem {
+        pub(super) pos: Arc<NodePosition>,
+        pub(super) id: TreeID,
+    }
+
+    impl Mergeable for Elem {
+        fn can_merge(&self, rhs: &Self) -> bool {
+            false
+        }
+
+        fn merge_right(&mut self, rhs: &Self) {
+            unreachable!()
+        }
+
+        fn merge_left(&mut self, left: &Self) {
+            unreachable!()
+        }
+    }
+
+    impl HasLength for Elem {
+        fn rle_len(&self) -> usize {
+            1
+        }
+    }
+
+    impl Sliceable for Elem {
+        fn _slice(&self, range: std::ops::Range<usize>) -> Self {
+            assert!(range.len() == 1);
+            self.clone()
+        }
+    }
+
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    struct Cache {
+        range: Option<Range<Arc<NodePosition>>>,
+        len: usize,
+    }
+
+    impl BTreeTrait for ChildTreeTrait {
+        type Elem = Elem;
+        type Cache = Cache;
+        type CacheDiff = ();
+        const USE_DIFF: bool = false;
+
+        fn calc_cache_internal(
+            cache: &mut Self::Cache,
+            caches: &[generic_btree::Child<Self>],
+        ) -> Self::CacheDiff {
+            *cache = Cache {
+                range: Some(
+                    caches[0].cache.range.as_ref().unwrap().start.clone()
+                        ..caches
+                            .last()
+                            .unwrap()
+                            .cache
+                            .range
+                            .as_ref()
+                            .unwrap()
+                            .end
+                            .clone(),
+                ),
+                len: caches.iter().map(|x| x.cache.len).sum(),
+            };
+        }
+
+        fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
+            unreachable!()
+        }
+
+        fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {}
+
+        fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
+            Cache {
+                range: Some(elem.pos.clone()..elem.pos.clone()),
+                len: 1,
+            }
+        }
+
+        fn new_cache_to_diff(cache: &Self::Cache) -> Self::CacheDiff {}
+
+        fn sub_cache(cache_lhs: &Self::Cache, cache_rhs: &Self::Cache) -> Self::CacheDiff {}
+    }
+
+    struct KeyQuery;
+
+    impl Query<ChildTreeTrait> for KeyQuery {
+        type QueryArg = NodePosition;
+
+        #[inline(always)]
+        fn init(_target: &Self::QueryArg) -> Self {
+            KeyQuery
+        }
+
+        #[inline]
+        fn find_node(
+            &mut self,
+            target: &Self::QueryArg,
+            caches: &[generic_btree::Child<ChildTreeTrait>],
+        ) -> FindResult {
+            match caches.binary_search_by(|x| {
+                let range = x.cache.range.as_ref().unwrap();
+                if target < &range.start {
+                    core::cmp::Ordering::Greater
+                } else if target > &range.end {
+                    core::cmp::Ordering::Less
+                } else {
+                    core::cmp::Ordering::Equal
+                }
+            }) {
+                Ok(i) => FindResult::new_found(i, 0),
+                Err(i) => FindResult::new_missing(
+                    i.min(caches.len() - 1),
+                    if i == caches.len() { 1 } else { 0 },
+                ),
+            }
+        }
+
+        #[inline(always)]
+        fn confirm_elem(
+            &mut self,
+            q: &Self::QueryArg,
+            elem: &<ChildTreeTrait as BTreeTrait>::Elem,
+        ) -> (usize, bool) {
+            match q.cmp(&elem.pos) {
+                Ordering::Less => (0, false),
+                Ordering::Equal => (0, true),
+                Ordering::Greater => (1, false),
+            }
+        }
+    }
+
+    impl UseLengthFinder<ChildTreeTrait> for ChildTreeTrait {
+        fn get_len(cache: &<ChildTreeTrait as BTreeTrait>::Cache) -> usize {
+            cache.len
+        }
     }
 }
 
@@ -401,7 +653,7 @@ impl TreeState {
     }
 
     pub fn get_children(&self, parent: &TreeParentId) -> Option<impl Iterator<Item = TreeID> + '_> {
-        self.children.get(parent).map(|x| x.iter().map(|x| x.1))
+        self.children.get(parent).map(|x| x.iter().map(|x| *x.1))
     }
 
     pub fn children_num(&self, parent: &TreeParentId) -> Option<usize> {
