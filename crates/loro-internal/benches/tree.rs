@@ -8,14 +8,13 @@ mod tree {
     pub fn tree_move(c: &mut Criterion) {
         let mut b = c.benchmark_group("movable tree");
         b.sample_size(10);
-        b.bench_function("create 10^4 node", |b| {
+        b.bench_function("create append 10^4 node", |b| {
             let size = 10000;
             b.iter(|| {
                 let loro = LoroDoc::default();
                 let tree = loro.get_tree("tree");
                 for _ in 0..size {
-                    loro.with_txn(|txn| tree.create_with_txn(txn, None, 0))
-                        .unwrap();
+                    tree.create(None).unwrap();
                 }
             })
         });
