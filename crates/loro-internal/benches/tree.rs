@@ -1,49 +1,99 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-#[cfg(feature = "test_utils")]
+
 mod tree {
     use super::*;
+    use criterion::{AxisScale, BenchmarkId, PlotConfiguration};
     use loro_internal::LoroDoc;
     use rand::{rngs::StdRng, Rng};
 
     pub fn tree_move(c: &mut Criterion) {
-        let mut b = c.benchmark_group("movable tree");
-        b.sample_size(10);
-        b.bench_function("create append 10^4 node", |b| {
-            let size = 10000;
-            b.iter(|| {
-                let loro = LoroDoc::new_auto_commit();
-                let tree = loro.get_tree("tree");
-                for _ in 0..size {
-                    tree.create(None).unwrap();
-                }
-            })
-        });
-        b.bench_function("10^3 tree move 10^5", |b| {
-            let loro = LoroDoc::default();
-            let tree = loro.get_tree("tree");
-            let mut ids = vec![];
-            let size = 1000;
-            for _ in 0..size {
-                ids.push(
-                    loro.with_txn(|txn| tree.create_with_txn(txn, None, 0))
-                        .unwrap(),
-                )
-            }
-            let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
-            let n = 100000;
-            b.iter(|| {
-                let mut txn = loro.txn().unwrap();
-                for _ in 0..n {
-                    let i = rng.gen::<usize>() % size;
-                    let j = rng.gen::<usize>() % size;
-                    tree.mov_with_txn(&mut txn, ids[i], ids[j], 0)
-                        .unwrap_or_default();
-                }
-                drop(txn)
-            })
-        });
+        let mut group = c.benchmark_group("movable tree");
+        let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
+        group.plot_config(plot_config);
+        group.sample_size(10);
 
-        b.bench_function("1000 node checkout 10^3", |b| {
+        for i in 3..=6 {
+            let input = 10u64.pow(i);
+            group.bench_with_input(
+                BenchmarkId::new("create node append", input),
+                &input,
+                |b, i| {
+                    b.iter(|| {
+                        let loro = LoroDoc::new_auto_commit();
+                        let tree = loro.get_tree("tree");
+                        for idx in 0..*i {
+                            tree.create_at(None, idx as usize).unwrap();
+                        }
+                    })
+                },
+            );
+
+            group.bench_with_input(
+                BenchmarkId::new("create node front", input),
+                &input,
+                |b, i| {
+                    b.iter(|| {
+                        let loro = LoroDoc::new_auto_commit();
+                        let tree = loro.get_tree("tree");
+                        for _ in 0..*i {
+                            tree.create_at(None, 0).unwrap();
+                        }
+                    })
+                },
+            );
+
+            group.bench_with_input(
+                BenchmarkId::new("move node append", input),
+                &input,
+                |b, i| {
+                    let loro = LoroDoc::new_auto_commit();
+                    let tree = loro.get_tree("tree");
+                    const SIZE: usize = 1000;
+                    let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
+                    let mut ids = vec![];
+                    for _ in 0..SIZE {
+                        let pos = rng.gen::<usize>() % (ids.len() + 1);
+                        ids.push(tree.create_at(None, pos).unwrap());
+                    }
+
+                    b.iter(|| {
+                        for _ in 0..*i {
+                            tree.create_at(None, 0).unwrap();
+                            let i = rng.gen::<usize>() % SIZE;
+                            let j = rng.gen::<usize>() % SIZE;
+                            tree.mov(ids[i], ids[j]).unwrap_or_default();
+                        }
+                    })
+                },
+            );
+
+            group.bench_with_input(
+                BenchmarkId::new("move node front", input),
+                &input,
+                |b, i| {
+                    let loro = LoroDoc::new_auto_commit();
+                    let tree = loro.get_tree("tree");
+                    const SIZE: usize = 1000;
+                    let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
+                    let mut ids = vec![];
+                    for _ in 0..SIZE {
+                        let pos = rng.gen::<usize>() % (ids.len() + 1);
+                        ids.push(tree.create_at(None, pos).unwrap());
+                    }
+
+                    b.iter(|| {
+                        for _ in 0..*i {
+                            tree.create_at(None, 0).unwrap();
+                            let i = rng.gen::<usize>() % SIZE;
+                            let j = rng.gen::<usize>() % SIZE;
+                            tree.move_to(ids[i], ids[j], 0).unwrap_or_default();
+                        }
+                    })
+                },
+            );
+        }
+
+        group.bench_function("1000 node checkout 10^3", |b| {
             let loro = LoroDoc::default();
             let tree = loro.get_tree("tree");
             let mut ids = vec![];
@@ -77,7 +127,7 @@ mod tree {
             })
         });
 
-        b.bench_function("300 deep node random checkout 10^3", |b| {
+        group.bench_function("300 deep node random checkout 10^3", |b| {
             let depth = 300;
             let loro = LoroDoc::default();
             let tree = loro.get_tree("tree");
@@ -105,7 +155,7 @@ mod tree {
             })
         });
 
-        b.bench_function("realtime tree move", |b| {
+        group.bench_function("realtime tree move", |b| {
             let doc_a = LoroDoc::default();
             let doc_b = LoroDoc::default();
             let tree_a = doc_a.get_tree("tree");
@@ -142,13 +192,9 @@ mod tree {
                 }
             })
         });
+        group.finish();
     }
 }
 
-pub fn dumb(_c: &mut Criterion) {}
-
-#[cfg(feature = "test_utils")]
 criterion_group!(benches, tree::tree_move);
-#[cfg(not(feature = "test_utils"))]
-criterion_group!(benches, dumb);
 criterion_main!(benches);

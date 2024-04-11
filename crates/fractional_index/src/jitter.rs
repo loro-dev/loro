@@ -3,8 +3,7 @@ use rand::Rng;
 
 const MAX_JITTER: u8 = 3;
 
-pub(super) fn new_before_jitter(bytes: &[u8]) -> Vec<u8> {
-    let mut rng = rand::thread_rng();
+pub(super) fn new_before_jitter<R: Rng>(bytes: &[u8], rng: &mut R) -> Vec<u8> {
     for i in 0..bytes.len() {
         if bytes[i] > TERMINATOR {
             return bytes[..i].into();
@@ -18,9 +17,7 @@ pub(super) fn new_before_jitter(bytes: &[u8]) -> Vec<u8> {
     unreachable!()
 }
 
-pub(super) fn new_after_jitter(bytes: &[u8]) -> Vec<u8> {
-    let mut rng = rand::thread_rng();
-
+pub(super) fn new_after_jitter<R: Rng>(bytes: &[u8], rng: &mut R) -> Vec<u8> {
     for i in 0..bytes.len() {
         if bytes[i] < TERMINATOR {
             return bytes[0..i].into();
@@ -34,9 +31,12 @@ pub(super) fn new_after_jitter(bytes: &[u8]) -> Vec<u8> {
     unreachable!()
 }
 
-pub(super) fn new_between_jitter(left: &[u8], right: &[u8]) -> Option<FractionalIndex> {
+pub(super) fn new_between_jitter<R: Rng>(
+    left: &[u8],
+    right: &[u8],
+    rng: &mut R,
+) -> Option<FractionalIndex> {
     let shorter_len = left.len().min(right.len()) - 1;
-    let mut rng = rand::thread_rng();
     for i in 0..shorter_len {
         if left[i] < right[i] - 1 {
             let mut ans: Vec<u8> = left[0..=i].into();
@@ -51,7 +51,7 @@ pub(super) fn new_between_jitter(left: &[u8], right: &[u8]) -> Option<Fractional
         }
         if left[i] == right[i] - 1 {
             let (prefix, suffix) = left.split_at(i + 1);
-            let new_suffix = new_after_jitter(suffix);
+            let new_suffix = new_after_jitter(suffix, rng);
             let mut ans = Vec::with_capacity(prefix.len() + new_suffix.len() + 1);
             ans.extend_from_slice(prefix);
             ans.extend_from_slice(&new_suffix);
@@ -68,7 +68,7 @@ pub(super) fn new_between_jitter(left: &[u8], right: &[u8]) -> Option<Fractional
             if prefix.last().unwrap() < &TERMINATOR {
                 return None;
             }
-            let new_suffix = new_before_jitter(suffix);
+            let new_suffix = new_before_jitter(suffix, rng);
             let mut ans = Vec::with_capacity(new_suffix.len() + prefix.len() + 1);
             ans.extend_from_slice(prefix);
             ans.extend_from_slice(&new_suffix);
@@ -80,11 +80,88 @@ pub(super) fn new_between_jitter(left: &[u8], right: &[u8]) -> Option<Fractional
             if prefix.last().unwrap() >= &TERMINATOR {
                 return None;
             }
-            let new_suffix = new_after_jitter(suffix);
+            let new_suffix = new_after_jitter(suffix, rng);
             let mut ans = Vec::with_capacity(new_suffix.len() + prefix.len() + 1);
             ans.extend_from_slice(prefix);
             ans.extend_from_slice(&new_suffix);
             FractionalIndex::from_vec_unterminated(ans).into()
         }
+    }
+}
+
+impl FractionalIndex {
+    pub fn new<R: Rng>(
+        lower: Option<&FractionalIndex>,
+        upper: Option<&FractionalIndex>,
+        rng: &mut R,
+    ) -> Option<Self> {
+        match (lower, upper) {
+            (Some(lower), Some(upper)) => Self::new_between(lower, upper, rng),
+            (Some(lower), None) => Self::new_after(lower, rng).into(),
+            (None, Some(upper)) => Self::new_before(upper, rng).into(),
+            (None, None) => FractionalIndex::default().into(),
+        }
+    }
+
+    pub fn new_before<R: Rng>(FractionalIndex(bytes): &FractionalIndex, rng: &mut R) -> Self {
+        FractionalIndex::from_vec_unterminated(new_before_jitter(bytes, rng))
+    }
+
+    pub fn new_after<R: Rng>(FractionalIndex(bytes): &FractionalIndex, rng: &mut R) -> Self {
+        FractionalIndex::from_vec_unterminated(new_after_jitter(bytes, rng))
+    }
+
+    pub fn new_between<R: Rng>(
+        FractionalIndex(left): &FractionalIndex,
+        FractionalIndex(right): &FractionalIndex,
+        rng: &mut R,
+    ) -> Option<Self> {
+        new_between_jitter(left, right, rng)
+    }
+
+    pub fn generate_n_evenly<R: Rng>(
+        lower: Option<&FractionalIndex>,
+        upper: Option<&FractionalIndex>,
+        n: usize,
+        rng: &mut R,
+    ) -> Option<Vec<Self>> {
+        fn gen(
+            lower: Option<&FractionalIndex>,
+            upper: Option<&FractionalIndex>,
+            n: usize,
+            push: &mut impl FnMut(FractionalIndex),
+            rng: &mut impl Rng,
+        ) {
+            if n == 0 {
+                return;
+            }
+
+            let mid = n / 2;
+            let mid_ans = FractionalIndex::new(lower, upper, rng).unwrap();
+            if n == 1 {
+                push(mid_ans);
+                return;
+            }
+
+            gen(lower, Some(&mid_ans), mid, push, rng);
+            push(mid_ans.clone());
+            if n - mid - 1 == 0 {
+                return;
+            }
+            gen(Some(&mid_ans), upper, n - mid - 1, push, rng);
+        }
+
+        if n == 0 {
+            return Some(Vec::new());
+        }
+
+        match (lower, upper) {
+            (Some(a), Some(b)) if a >= b => return None,
+            _ => {}
+        }
+
+        let mut ans = Vec::with_capacity(n);
+        gen(lower, upper, n, &mut |v| ans.push(v), rng);
+        Some(ans)
     }
 }

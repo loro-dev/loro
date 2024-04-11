@@ -2345,11 +2345,39 @@ impl LoroTree {
     ///
     /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
     /// but also the metadata, you should use `toJson()`.
+    ///
+    // TODO: perf
     #[wasm_bindgen(js_name = "toArray")]
-    pub fn to_array(&mut self) -> JsValue {
-        let nodes = self.nodes();
-        let mut ans = Vec::with_capacity(nodes.len());
-        for node in nodes {}
+    pub fn to_array(&mut self) -> JsResult<Array> {
+        let value = self.handler.get_value().into_list().unwrap();
+        let ans = Array::new();
+        for v in value.as_ref() {
+            let v = v.as_map().unwrap();
+            let id: JsValue = TreeID::try_from(v["id"].as_string().unwrap().as_str())
+                .unwrap()
+                .into();
+            let id: JsTreeID = id.into();
+            let parent = if let LoroValue::String(p) = &v["parent"] {
+                Some(TreeID::try_from(p.as_str())?)
+            } else {
+                None
+            };
+            let parent: JsTreeParent = parent
+                .map(|x| LoroTreeNode::from_tree(x, self.handler.clone(), self.doc.clone()).into())
+                .unwrap_or(JsValue::undefined())
+                .into();
+            let index = v["index"].as_i64().unwrap();
+            let position = v["position"].as_string().unwrap();
+            let map: LoroMap = self.get_node_by_id(id.clone().into()).unwrap().data()?;
+            let obj = Object::new();
+            js_sys::Reflect::set(&obj, &"id".into(), &id)?;
+            js_sys::Reflect::set(&obj, &"parent".into(), &parent)?;
+            js_sys::Reflect::set(&obj, &"index".into(), &JsValue::from(*index))?;
+            js_sys::Reflect::set(&obj, &"position".into(), &JsValue::from_str(position))?;
+            js_sys::Reflect::set(&obj, &"meta".into(), &map.into())?;
+            ans.push(&obj);
+        }
+        Ok(ans)
     }
 
     /// Get the flat array with metadata of the forest.
@@ -2362,8 +2390,6 @@ impl LoroTree {
     /// const tree = doc.getTree("tree");
     /// const root = tree.createNode();
     /// root.data.set("color", "red");
-    /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: 'cid:0@F2462C4159C4C8D1:Map' } ]
-    /// console.log(tree.value);
     /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: { color: 'red' } } ]
     /// console.log(tree.toJson());
     /// ```

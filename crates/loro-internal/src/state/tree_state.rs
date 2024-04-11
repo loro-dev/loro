@@ -6,6 +6,7 @@ use itertools::Itertools;
 use loro_common::{
     ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
 };
+use rand::SeedableRng;
 use rle::HasLength;
 use serde::Serialize;
 use std::collections::VecDeque;
@@ -89,6 +90,7 @@ impl NodeChildren {
         }
     }
 
+    #[cfg(not(feature = "tree_jitter"))]
     fn generate_fi_at(&self, pos: usize, target: &TreeID) -> FractionalIndexGenResult {
         let mut reset_ids = vec![];
         let mut left = None;
@@ -145,10 +147,10 @@ impl NodeChildren {
         )
     }
 
-    fn get_id_at(&self, pos: usize) -> &TreeID {
+    fn get_id_at(&self, pos: usize) -> Option<TreeID> {
         match self {
-            NodeChildren::Vec(v) => &v[pos].1,
-            NodeChildren::BTree(btree) => &btree.get_elem_at(pos).unwrap().id,
+            NodeChildren::Vec(v) => v.get(pos).map(|x| x.1),
+            NodeChildren::BTree(btree) => btree.get_elem_at(pos).map(|x| x.id),
         }
     }
 
@@ -325,15 +327,15 @@ mod btree {
     }
 
     impl Mergeable for Elem {
-        fn can_merge(&self, rhs: &Self) -> bool {
+        fn can_merge(&self, _rhs: &Self) -> bool {
             false
         }
 
-        fn merge_right(&mut self, rhs: &Self) {
+        fn merge_right(&mut self, _rhs: &Self) {
             unreachable!()
         }
 
-        fn merge_left(&mut self, left: &Self) {
+        fn merge_left(&mut self, _left: &Self) {
             unreachable!()
         }
     }
@@ -389,11 +391,11 @@ mod btree {
             };
         }
 
-        fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
+        fn apply_cache_diff(_cache: &mut Self::Cache, _diff: &Self::CacheDiff) {
             unreachable!()
         }
 
-        fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {}
+        fn merge_cache_diff(_diff1: &mut Self::CacheDiff, _diff2: &Self::CacheDiff) {}
 
         fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
             Cache {
@@ -402,9 +404,9 @@ mod btree {
             }
         }
 
-        fn new_cache_to_diff(cache: &Self::Cache) -> Self::CacheDiff {}
+        fn new_cache_to_diff(_cache: &Self::Cache) -> Self::CacheDiff {}
 
-        fn sub_cache(cache_lhs: &Self::Cache, cache_rhs: &Self::Cache) -> Self::CacheDiff {}
+        fn sub_cache(_cache_lhs: &Self::Cache, _cache_rhs: &Self::Cache) -> Self::CacheDiff {}
     }
 
     struct KeyQuery;
@@ -497,8 +499,9 @@ impl DerefMut for TreeChildrenCache {
 pub struct TreeState {
     idx: ContainerIdx,
     trees: FxHashMap<TreeID, TreeStateNode>,
-    // TODO: PERF BTreeMap can be replaced by a generic_btree::BTree
     children: TreeChildrenCache,
+    #[cfg(feature = "tree_jitter")]
+    rng: rand::rngs::StdRng,
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
@@ -519,7 +522,6 @@ impl NodePosition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TreeStateNode {
     pub parent: TreeParentId,
-    // no position in delete?
     pub position: Option<FractionalIndex>,
     pub last_move_op: IdFull,
 }
@@ -530,6 +532,8 @@ impl TreeState {
             idx,
             trees: FxHashMap::default(),
             children: Default::default(),
+            #[cfg(feature = "tree_jitter")]
+            rng: rand::rngs::StdRng::from_entropy(),
         }
     }
 
@@ -675,14 +679,13 @@ impl TreeState {
     }
 
     /// Delete the position cache of the node
-    ///
-    /// O(1) + Clone FractionalIndex
     pub(crate) fn delete_position(&mut self, parent: &TreeParentId, target: TreeID) {
         if let Some(x) = self.children.get_mut(parent) {
             x.delete_child(&target);
         }
     }
 
+    #[cfg(not(feature = "tree_jitter"))]
     pub(crate) fn generate_position_at(
         &mut self,
         target: &TreeID,
@@ -704,9 +707,14 @@ impl TreeState {
             .then(|| {
                 self.children
                     .get(parent)
-                    // TODO: PERF: Slow
                     .and_then(|x| x.get_index_by_child_id(target))
             })
+            .flatten()
+    }
+
+    pub(crate) fn get_id_by_index(&self, parent: &TreeParentId, index: usize) -> Option<TreeID> {
+        (!parent.is_deleted())
+            .then(|| self.children.get(parent).and_then(|x| x.get_id_at(index)))
             .flatten()
     }
 }
@@ -793,10 +801,6 @@ impl ContainerState for TreeState {
                         let parent = self.trees.remove(&target);
                         if let Some(parent) = parent {
                             if !parent.parent.is_deleted() {
-                                let node_position = NodePosition::new(
-                                    parent.position.unwrap(),
-                                    parent.last_move_op.idlp(),
-                                );
                                 self.children
                                     .get_mut(&parent.parent)
                                     .unwrap()
@@ -978,7 +982,6 @@ impl ContainerState for TreeState {
 
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
-        // TODO: better
         for node in self.trees.values() {
             if node.last_move_op == IdFull::NONE_ID {
                 continue;
@@ -1012,5 +1015,95 @@ pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
         let meta = map.get_mut("meta").unwrap();
         let id = meta.as_container().unwrap();
         *meta = state.get_container_deep_value(state.arena.register_container(id));
+    }
+}
+
+#[cfg(feature = "tree_jitter")]
+mod jitter {
+    use super::{FractionalIndexGenResult, NodeChildren, TreeParentId, TreeState};
+    use fractional_index::FractionalIndex;
+    use loro_common::TreeID;
+    use rand::Rng;
+
+    impl NodeChildren {
+        fn generate_fi_at(
+            &self,
+            pos: usize,
+            target: &TreeID,
+            rng: &mut impl Rng,
+        ) -> FractionalIndexGenResult {
+            let mut reset_ids = vec![];
+            let mut left = None;
+            let mut next_right = None;
+            {
+                let mut right = None;
+                let children_num = self.len();
+
+                if pos > 0 {
+                    left = Some(self.get_node_position_at(pos - 1));
+                }
+                if pos < children_num {
+                    right = self.get_elem_at(pos);
+                }
+
+                let left_fi = left.map(|x| &x.position);
+                // if left and right have the same fractional indexes, we need to scan further to
+                // find all the ids that need to be reset
+                if let Some(left_fi) = left_fi {
+                    if Some(left_fi) == right.map(|x| &x.0.position) {
+                        // TODO: the min length between left and right
+                        reset_ids.push(*right.unwrap().1);
+                        for i in (pos + 1)..children_num {
+                            let this_position = &self.get_node_position_at(i).position;
+                            if this_position == left_fi {
+                                reset_ids.push(*self.get_elem_at(i).unwrap().1);
+                            } else {
+                                next_right = Some(this_position.clone());
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if reset_ids.is_empty() {
+                    return FractionalIndexGenResult::Ok(
+                        FractionalIndex::new(
+                            left.map(|x| &x.position),
+                            right.map(|x| &x.0.position),
+                            rng,
+                        )
+                        .unwrap(),
+                    );
+                }
+            }
+            let positions = FractionalIndex::generate_n_evenly(
+                left.map(|x| &x.position),
+                next_right.as_ref(),
+                reset_ids.len() + 1,
+                rng,
+            )
+            .unwrap();
+            FractionalIndexGenResult::Rearrange(
+                Some(*target)
+                    .into_iter()
+                    .chain(reset_ids)
+                    .zip(positions)
+                    .collect(),
+            )
+        }
+    }
+
+    impl TreeState {
+        pub(crate) fn generate_position_at(
+            &mut self,
+            target: &TreeID,
+            parent: &TreeParentId,
+            index: usize,
+        ) -> FractionalIndexGenResult {
+            self.children
+                .entry(*parent)
+                .or_default()
+                .generate_fi_at(index, target, &mut self.rng)
+        }
     }
 }
