@@ -1,10 +1,12 @@
-/// <reference types="vitest" />
+import { configDefaults, defineConfig } from 'vitest/config'
 import wasm from "vite-plugin-wasm";
-import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [wasm()],
-  // test: {
-  //   reporters:['hanging-process']
-  // },
+  test: {
+    exclude: [
+      ...configDefaults.exclude,
+      "deno/*"
+    ]
+  },
 });
