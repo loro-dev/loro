@@ -21,9 +21,12 @@ use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, cmp::Ordering, panic, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
+
+mod awareness;
 mod log;
 
 use crate::convert::{handler_to_js_value, js_to_container};
+pub use awareness::AwarenessWasm;
 
 mod convert;
 
@@ -62,7 +65,7 @@ pub struct Loro(Arc<LoroDoc>);
 extern "C" {
     #[wasm_bindgen(typescript_type = "number | bigint | `${number}`")]
     pub type JsIntoPeerID;
-    #[wasm_bindgen(typescript_type = "`${number}`")]
+    #[wasm_bindgen(typescript_type = "PeerID")]
     pub type JsStrPeerID;
     #[wasm_bindgen(typescript_type = "ContainerID")]
     pub type JsContainerID;
@@ -2953,10 +2956,10 @@ interface LoroText {
      * accurately. To minimize the performance impact of history replay, the system
      * updates cursor info to reference only the IDs of currently present elements,
      * thereby reducing the need for replay.
-     * 
+     *
      * @example
      * ```ts
-     * 
+     *
      * const doc = new Loro();
      * const text = doc.getText("text");
      * text.insert(0, "123");
@@ -2991,10 +2994,10 @@ interface LoroList {
      * accurately. To minimize the performance impact of history replay, the system
      * updates cursor info to reference only the IDs of currently present elements,
      * thereby reducing the need for replay.
-     * 
+     *
      * @example
      * ```ts
-     * 
+     *
      * const doc = new Loro();
      * const text = doc.getList("list");
      * text.insert(0, "1");

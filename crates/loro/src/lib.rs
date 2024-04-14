@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 pub mod event;
 
+pub use loro_internal::awareness;
 pub use loro_internal::configure::Configure;
 pub use loro_internal::configure::StyleConfigMap;
 pub use loro_internal::container::richtext::ExpandType;
