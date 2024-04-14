@@ -26,6 +26,8 @@ jobs:
       - uses: pnpm/action-setup@v2
         with:
           version: 8
+      - name: Install wasm-opt
+        run: npm i wasm-opt -g
       - uses: jetli/wasm-pack-action@v0.4.0
         with:
           # Optional version of wasm-pack to install(eg. 'v0.9.1', 'latest')
