@@ -5,6 +5,12 @@ export type AwarenessListener = (
   origin: "local" | "timeout" | "remote" | string,
 ) => void;
 
+/**
+ * Awareness is a structure that allows to track the ephemeral state of the peers.
+ *
+ * If we don't receive a state update from a peer within the timeout, we will remove their state.
+ * The timeout is in milliseconds. This can be used to handle the off-line state of a peer.
+ */
 export class Awareness<T> {
   inner: AwarenessWasm<T>;
   private peer: PeerID;
@@ -58,6 +64,10 @@ export class Awareness<T> {
 
   encode(peers: PeerID[]): Uint8Array {
     return this.inner.encode(peers);
+  }
+
+  encodeAll(): Uint8Array {
+    return this.inner.encodeAll();
   }
 
   addListener(listener: AwarenessListener) {

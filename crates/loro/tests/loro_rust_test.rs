@@ -1,6 +1,9 @@
 use std::{cmp::Ordering, sync::Arc};
 
-use loro::{FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText, ToJson};
+use loro::{
+    awareness::Awareness, FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText,
+    ToJson,
+};
 use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
 use serde_json::json;
 
@@ -654,7 +657,6 @@ fn get_cursor_at_the_end() {
     assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 5);
 }
 
-
 #[test]
 fn get_cursor_for_list() {
     let doc = LoroDoc::new();
@@ -714,4 +716,23 @@ fn get_cursor_for_list() {
         let result = doc.get_cursor_pos(&pos_end).unwrap();
         assert_eq!(result.current.pos, 4);
     }
+}
+
+#[test]
+fn awareness() {
+    let mut a = Awareness::new(1, 1);
+    a.set_local_state(1);
+    assert_eq!(a.get_local_state(), Some(1.into()));
+    a.set_local_state(2);
+    assert_eq!(a.get_local_state(), Some(2.into()));
+
+    let mut b = Awareness::new(2, 1);
+    let (updated, added) = b.apply(&a.encode_all());
+    assert_eq!(updated.len(), 0);
+    assert_eq!(added, vec![1]);
+    assert_eq!(
+        b.get_all_states().get(&1).map(|x| x.state.clone()),
+        Some(2.into())
+    );
+    assert_eq!(b.get_all_states().get(&2).map(|x| x.state.clone()), None);
 }

@@ -36,6 +36,10 @@ impl AwarenessWasm {
         self.inner.encode(&peer_vec)
     }
 
+    pub fn encodeAll(&self) -> Vec<u8> {
+        self.inner.encode_all()
+    }
+
     pub fn apply(&mut self, encoded_peers_info: Vec<u8>) -> JsResult<JsAwarenessApplyResult> {
         let (updated, added) = self.inner.apply(&encoded_peers_info);
         let ans = Object::new();
@@ -49,7 +53,7 @@ impl AwarenessWasm {
 
     #[wasm_bindgen(skip_typescript)]
     pub fn setLocalState(&mut self, value: JsValue) {
-        self.inner.set_local_state(value.into());
+        self.inner.set_local_state(value);
     }
 
     pub fn peer(&self) -> JsStrPeerID {
