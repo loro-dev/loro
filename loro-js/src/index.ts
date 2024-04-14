@@ -12,6 +12,7 @@ import {
   TreeID,
   Value,
 } from "loro-wasm";
+export { Awareness } from "./awareness";
 
 export type Frontiers = OpId[];
 
@@ -411,13 +412,13 @@ declare module "loro-wasm" {
     children(): Array<LoroTreeNode<T>>;
   }
 
-  interface Awareness<
-    T extends Record<string, unknown> = Record<string, unknown>,
+  interface AwarenessWasm<
+    T = unknown,
   > {
-    getRecord(peer: PeerID): T | undefined;
+    getState(peer: PeerID): T | undefined;
     getTimestamp(peer: PeerID): number | undefined;
-    getAllRecords(): Record<PeerID, T>;
-    setLocalRecord<Key extends keyof T>(key: Key, value: T[Key]): void;
+    getAllStates(): Record<PeerID, T>;
+    setLocalState(value: T): void;
     removeOutdated(): PeerID[];
   }
 }

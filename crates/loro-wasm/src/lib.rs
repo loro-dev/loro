@@ -26,7 +26,7 @@ mod awareness;
 mod log;
 
 use crate::convert::{handler_to_js_value, js_to_container};
-pub use awareness::Awareness;
+pub use awareness::AwarenessWasm;
 
 mod convert;
 

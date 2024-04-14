@@ -13,7 +13,8 @@ pub struct Awareness {
 
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
-    pub record: FxHashMap<String, LoroValue>,
+    pub state: LoroValue,
+    pub counter: i32,
     // This field is generated locally
     pub timestamp: i64,
 }
@@ -21,7 +22,8 @@ pub struct PeerInfo {
 #[derive(Serialize, Deserialize)]
 struct EncodedPeerInfo {
     peer: PeerID,
-    record: FxHashMap<String, LoroValue>,
+    counter: i32,
+    record: LoroValue,
 }
 
 impl Awareness {
@@ -44,7 +46,8 @@ impl Awareness {
 
                 let encoded_peer_info = EncodedPeerInfo {
                     peer: *peer,
-                    record: peer_info.record.clone(),
+                    record: peer_info.state.clone(),
+                    counter: peer_info.counter,
                 };
                 peers_info.push(encoded_peer_info);
             }
@@ -53,33 +56,47 @@ impl Awareness {
         postcard::to_allocvec(&peers_info).unwrap()
     }
 
-    pub fn apply(&mut self, encoded_peers_info: &[u8]) -> Vec<PeerID> {
+    /// Returnes (updated, added)
+    pub fn apply(&mut self, encoded_peers_info: &[u8]) -> (Vec<PeerID>, Vec<PeerID>) {
         let peers_info: Vec<EncodedPeerInfo> = postcard::from_bytes(encoded_peers_info).unwrap();
-        let changed_peers = peers_info
-            .iter()
-            .map(|peer_info| peer_info.peer)
-            .collect::<Vec<_>>();
+        let mut changed_peers = Vec::new();
+        let mut added_peers = Vec::new();
         let now = get_sys_timestamp();
         for peer_info in peers_info {
-            self.peers.insert(
-                peer_info.peer,
-                PeerInfo {
-                    record: peer_info.record,
-                    timestamp: now,
-                },
-            );
+            match self.peers.get(&peer_info.peer) {
+                Some(x) if x.counter >= peer_info.counter || peer_info.peer == self.peer => {
+                    // do nothing
+                }
+                _ => {
+                    let old = self.peers.insert(
+                        peer_info.peer,
+                        PeerInfo {
+                            counter: peer_info.counter,
+                            state: peer_info.record,
+                            timestamp: now,
+                        },
+                    );
+                    if old.is_some() {
+                        changed_peers.push(peer_info.peer);
+                    } else {
+                        added_peers.push(peer_info.peer);
+                    }
+                }
+            }
         }
 
-        changed_peers
+        (changed_peers, added_peers)
     }
 
-    pub fn set_record(&mut self, key: String, value: LoroValue) {
+    pub fn set_local_state(&mut self, value: LoroValue) {
         let peer = self.peers.entry(self.peer).or_insert_with(|| PeerInfo {
-            record: Default::default(),
+            state: Default::default(),
+            counter: 0,
             timestamp: 0,
         });
 
-        peer.record.insert(key, value);
+        peer.state = value;
+        peer.counter += 1;
         peer.timestamp = get_sys_timestamp();
     }
 
@@ -98,7 +115,7 @@ impl Awareness {
         removed
     }
 
-    pub fn get_all_records(&self) -> &FxHashMap<PeerID, PeerInfo> {
+    pub fn get_all_states(&self) -> &FxHashMap<PeerID, PeerInfo> {
         &self.peers
     }
 
