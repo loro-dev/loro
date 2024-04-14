@@ -410,6 +410,16 @@ declare module "loro-wasm" {
     parent(): LoroTreeNode<T> | undefined;
     children(): Array<LoroTreeNode<T>>;
   }
+
+  interface Awareness<
+    T extends Record<string, unknown> = Record<string, unknown>,
+  > {
+    getRecord(peer: PeerID): T | undefined;
+    getTimestamp(peer: PeerID): number | undefined;
+    getAllRecords(): Record<PeerID, T>;
+    setLocalRecord<Key extends keyof T>(key: Key, value: T[Key]): void;
+    removeOutdated(): PeerID[];
+  }
 }
 
 type NonNullableType<T> = Exclude<T, null | undefined>;

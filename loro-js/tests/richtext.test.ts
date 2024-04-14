@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Delta, Loro, TextDiff } from "../src";
-import { Cursor, OpId, setDebug } from "loro-wasm";
+import { Cursor, OpId, PeerID, setDebug } from "loro-wasm";
 
 describe("richtext", () => {
   it("mark", () => {
