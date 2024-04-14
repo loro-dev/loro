@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.3
+
+### Patch Changes
+
+- a1fc2e3: Feat: Awareness (#318)
+
 ## 0.14.2
 
 ### Patch Changes
