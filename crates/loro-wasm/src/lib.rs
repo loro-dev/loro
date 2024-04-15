@@ -2260,6 +2260,20 @@ impl LoroTreeNode {
         Ok(())
     }
 
+    #[wasm_bindgen(js_name = "moveAfter")]
+    pub fn mov_after(&self, target: &JsTreeID) -> JsResult<()> {
+        let target = parse_js_tree_id(target)?;
+        self.tree.mov_after(self.id, target)?;
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = "moveBefore")]
+    pub fn mov_before(&self, target: &JsTreeID) -> JsResult<()> {
+        let target = parse_js_tree_id(target)?;
+        self.tree.mov_before(self.id, target)?;
+        Ok(())
+    }
+
     /// Get the index of the node in the parent's children.
     #[wasm_bindgen]
     pub fn index(&self) -> JsResult<Option<usize>> {

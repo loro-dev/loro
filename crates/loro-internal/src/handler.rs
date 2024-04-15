@@ -2272,6 +2272,42 @@ impl TreeHandler {
         }
     }
 
+    pub fn mov_after(&self, target: TreeID, other: TreeID) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                // let mut t = t.try_lock().unwrap();
+                // t.value.mov(target, parent.into());
+                // Ok(())
+                todo!()
+            }
+            MaybeDetached::Attached(a) => {
+                let parent = self
+                    .get_node_parent(&other)
+                    .ok_or(LoroTreeError::TreeNodeNotExist(other))?;
+                let index = self.get_index_by_tree_id(&other).unwrap();
+                a.with_txn(|txn| self.mov_with_txn(txn, target, parent, index + 1))
+            }
+        }
+    }
+
+    pub fn mov_before(&self, target: TreeID, other: TreeID) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                // let mut t = t.try_lock().unwrap();
+                // t.value.mov(target, parent.into());
+                // Ok(())
+                todo!()
+            }
+            MaybeDetached::Attached(a) => {
+                let parent = self
+                    .get_node_parent(&other)
+                    .ok_or(LoroTreeError::TreeNodeNotExist(other))?;
+                let index = self.get_index_by_tree_id(&other).unwrap();
+                a.with_txn(|txn| self.mov_with_txn(txn, target, parent, index))
+            }
+        }
+    }
+
     pub fn move_to<T: Into<Option<TreeID>>>(
         &self,
         target: TreeID,
