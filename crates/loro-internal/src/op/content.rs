@@ -124,16 +124,6 @@ impl<'a> HasLength for RawOpContent<'a> {
     }
 }
 
-impl<'a> Sliceable for RawOpContent<'a> {
-    fn slice(&self, from: usize, to: usize) -> Self {
-        match self {
-            RawOpContent::Map(x) => RawOpContent::Map(x.slice(from, to)),
-            RawOpContent::List(x) => RawOpContent::List(x.slice(from, to)),
-            RawOpContent::Tree(x) => RawOpContent::Tree(x.slice(from, to)),
-        }
-    }
-}
-
 impl<'a> Mergable for RawOpContent<'a> {
     fn is_mergable(&self, other: &Self, _conf: &()) -> bool
     where
@@ -142,6 +132,7 @@ impl<'a> Mergable for RawOpContent<'a> {
         match (self, other) {
             (RawOpContent::Map(x), RawOpContent::Map(y)) => x.is_mergable(y, &()),
             (RawOpContent::List(x), RawOpContent::List(y)) => x.is_mergable(y, &()),
+            (RawOpContent::Tree(x), RawOpContent::Tree(y)) => x.is_mergable(y, &()),
             _ => false,
         }
     }
