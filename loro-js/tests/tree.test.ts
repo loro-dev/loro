@@ -1,5 +1,5 @@
 import { describe, expect, it} from "vitest";
-import { Loro } from "../src";
+import { Loro, LoroTree, LoroTreeNode } from "../src";
 
 function assertEquals(a: any, b: any) {
   expect(a).toStrictEqual(b);
@@ -76,16 +76,18 @@ describe("loro tree", () => {
   });
 
   it("toArray", ()=>{
-    const root = tree.createNode();
-    tree.createNode(root.id);
-    tree.createNode(root.id);
-    const arr = tree.toArray();
+    const loro2 = new Loro();
+    const tree2 = loro2.getTree("root");
+    const root = tree2.createNode();
+    tree2.createNode(root.id);
+    tree2.createNode(root.id);
+    const arr = tree2.toArray();
     assertEquals(arr.length, 3);
   });
 
   it("subscribe", async () => {
     const root = tree.createNode();
-    const child = tree.createNode(root.id);
+    const child: LoroTreeNode = tree.createNode(root.id);
     let count = 0;
     const sub = tree.subscribe(loro, () => {
       count += 1;
@@ -104,7 +106,7 @@ describe("loro tree", () => {
   });
 
   it("meta", () => {
-    const root = tree.createNode();
+    const root: LoroTreeNode = tree.createNode();
     root.data.set("a", 123);
     assertEquals(root.data.get("a"), 123);
   });

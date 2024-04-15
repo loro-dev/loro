@@ -976,7 +976,6 @@ dependencies = [
  "tracing",
  "tracing-wasm",
  "wasm-bindgen",
- "wasm-bindgen-derive",
 ]
 
 [[package]]
@@ -2006,28 +2005,6 @@ dependencies = [
  "quote 1.0.35",
  "syn 2.0.57",
  "wasm-bindgen-shared",
-]
-
-[[package]]
-name = "wasm-bindgen-derive"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1ab6c8bffb3f89584781211283fb57337d6902faab6eaee38f336977bdf177d"
-dependencies = [
- "js-sys",
- "wasm-bindgen",
- "wasm-bindgen-derive-macro",
-]
-
-[[package]]
-name = "wasm-bindgen-derive-macro"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b87c28b31d27616bc69a891700ef0445d2cbaa0340fdacb145145256d5f5fcbb"
-dependencies = [
- "proc-macro2 1.0.79",
- "quote 1.0.35",
- "syn 1.0.109",
 ]
 
 [[package]]
