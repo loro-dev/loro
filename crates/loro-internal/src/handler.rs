@@ -7,6 +7,7 @@ use crate::{
         richtext::{richtext_state::PosType, RichtextState, StyleOp, TextStyleInfoFlag},
         tree::tree_op::TreeOp,
     },
+    cursor::{Cursor, Side},
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
     state::{ContainerState, FractionalIndexGenResult, State, TreeParentId},
@@ -1474,6 +1475,64 @@ impl TextHandler {
             }
         }
     }
+
+    /// Get the stable position representation for the target pos
+    pub fn get_cursor(&self, event_index: usize, side: Side) -> Option<Cursor> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => {
+                let (id, len) = a.with_state(|s| {
+                    let s = s.as_richtext_state_mut().unwrap();
+                    (s.get_stable_position(event_index), s.len_event())
+                });
+
+                if len == 0 {
+                    return Some(Cursor {
+                        id: None,
+                        container: self.id(),
+                        side: if side == Side::Middle {
+                            Side::Left
+                        } else {
+                            side
+                        },
+                    });
+                }
+
+                if len <= event_index {
+                    return Some(Cursor {
+                        id: None,
+                        container: self.id(),
+                        side: Side::Right,
+                    });
+                }
+
+                let id = id?;
+                Some(Cursor {
+                    id: Some(id),
+                    container: self.id(),
+                    side,
+                })
+            }
+        }
+    }
+
+    pub(crate) fn convert_entity_index_to_event_index(&self, entity_index: usize) -> usize {
+        match &self.inner {
+            MaybeDetached::Detached(s) => s
+                .lock()
+                .unwrap()
+                .value
+                .entity_index_to_event_index(entity_index),
+            MaybeDetached::Attached(a) => {
+                let mut pos = 0;
+                a.with_state(|s| {
+                    let s = s.as_richtext_state_mut().unwrap();
+                    pos = s.entity_index_to_event_index(entity_index);
+                });
+                pos
+            }
+        }
+    }
 }
 
 fn event_len(s: &str) -> usize {
@@ -1788,6 +1847,45 @@ impl ListHandler {
                         }
                     }
                 });
+            }
+        }
+    }
+
+    pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => {
+                let (id, len) = a.with_state(|s| {
+                    let l = s.as_list_state().unwrap();
+                    (l.get_id_at(pos), l.len())
+                });
+
+                if len == 0 {
+                    return Some(Cursor {
+                        id: None,
+                        container: self.id(),
+                        side: if side == Side::Middle {
+                            Side::Left
+                        } else {
+                            side
+                        },
+                    });
+                }
+
+                if len <= pos {
+                    return Some(Cursor {
+                        id: None,
+                        container: self.id(),
+                        side: Side::Right,
+                    });
+                }
+
+                let id = id?;
+                Some(Cursor {
+                    id: Some(id.id()),
+                    container: self.id(),
+                    side,
+                })
             }
         }
     }
@@ -2700,7 +2798,7 @@ mod test {
 
         let loro2 = LoroDoc::new();
         loro2.subscribe_root(Arc::new(|e| {
-            println!("{} {:?} ", e.event_meta.local, e.event_meta.diff)
+            println!("{} {:?} ", e.event_meta.by, e.event_meta.diff)
         }));
         loro2.import(&loro.export_from(&loro2.oplog_vv())).unwrap();
         assert_eq!(loro.get_deep_value(), loro2.get_deep_value());

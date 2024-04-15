@@ -45,3 +45,22 @@ fn readme_basic() {
         })
     );
 }
+
+#[test]
+fn get_list_cursor_example() {
+    use loro::LoroDoc;
+    use loro_internal::cursor::Side;
+
+    let doc = LoroDoc::new();
+    let list = doc.get_list("list");
+    list.insert(0, 0).unwrap();
+    let cursor = list.get_cursor(0, Side::Middle).unwrap();
+    assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 0);
+    list.insert(0, 0).unwrap();
+    assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 1);
+    list.insert(0, 0).unwrap();
+    list.insert(0, 0).unwrap();
+    assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 3);
+    list.insert(4, 0).unwrap();
+    assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 3);
+}

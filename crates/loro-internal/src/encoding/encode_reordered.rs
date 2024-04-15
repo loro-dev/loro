@@ -1110,7 +1110,7 @@ mod encode {
         let mut start_counters = Vec::new();
 
         let mut diff_changes: Vec<Cow<'a, Change>> = Vec::new();
-        for change in oplog.iter_changes(&start_vv, self_vv) {
+        for change in oplog.iter_changes_peer_by_peer(&start_vv, self_vv) {
             let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
             if !peer_register.contains(&change.id.peer) {
                 peer_register.register(&change.id.peer);

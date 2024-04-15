@@ -18,6 +18,7 @@ use crate::{
             AnchorType, CrdtRopeDelta, RichtextChunk, RichtextChunkValue, RichtextTracker, StyleOp,
         },
     },
+    cursor::AbsolutePosition,
     delta::{Delta, MapDelta, MapValue},
     event::InternalDiff,
     op::{RichOp, SliceRange, SliceRanges},
@@ -53,6 +54,10 @@ impl DiffCalculator {
         }
     }
 
+    pub(crate) fn get_calc(&self, container: ContainerIdx) -> Option<&ContainerDiffCalculator> {
+        self.calculators.get(&container).map(|(_, c)| c)
+    }
+
     // PERF: if the causal order is linear, we can skip some of the calculation
     #[allow(unused)]
     pub(crate) fn calc_diff(
@@ -61,7 +66,7 @@ impl DiffCalculator {
         before: &crate::VersionVector,
         after: &crate::VersionVector,
     ) -> Vec<InternalContainerDiff> {
-        self.calc_diff_internal(oplog, before, None, after, None)
+        self.calc_diff_internal(oplog, before, None, after, None, None)
     }
 
     pub(crate) fn calc_diff_internal(
@@ -71,6 +76,7 @@ impl DiffCalculator {
         before_frontiers: Option<&Frontiers>,
         after: &crate::VersionVector,
         after_frontiers: Option<&Frontiers>,
+        container_filter: Option<&dyn Fn(ContainerIdx) -> bool>,
     ) -> Vec<InternalContainerDiff> {
         let s = tracing::span!(tracing::Level::INFO, "DiffCalc");
         let _e = s.enter();
@@ -115,6 +121,12 @@ impl DiffCalculator {
                     .unwrap_or_else(|e| e);
                 let mut visited = FxHashSet::default();
                 for mut op in &change.ops.vec()[iter_start..] {
+                    if let Some(filter) = container_filter {
+                        if !filter(op.container) {
+                            continue;
+                        }
+                    }
+
                     // slice the op if needed
                     let stack_sliced_op;
                     if op.counter < start_counter {
@@ -129,33 +141,10 @@ impl DiffCalculator {
                     let vv = &mut vv.borrow_mut();
                     vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
                     let depth = oplog.arena.get_depth(op.container);
-                    let (old_depth, calculator) =
-                        self.calculators.entry(op.container).or_insert_with(|| {
-                            match op.container.get_type() {
-                                crate::ContainerType::Text => (
-                                    depth,
-                                    ContainerDiffCalculator::Richtext(
-                                        RichtextDiffCalculator::default(),
-                                    ),
-                                ),
-                                crate::ContainerType::Map => (
-                                    depth,
-                                    ContainerDiffCalculator::Map(MapDiffCalculator::new(
-                                        op.container,
-                                    )),
-                                ),
-                                crate::ContainerType::List => (
-                                    depth,
-                                    ContainerDiffCalculator::List(ListDiffCalculator::default()),
-                                ),
-                                crate::ContainerType::Tree => (
-                                    depth,
-                                    ContainerDiffCalculator::Tree(TreeDiffCalculator::new(
-                                        op.container,
-                                    )),
-                                ),
-                            }
-                        });
+                    let (old_depth, calculator) = {
+                        let idx = op.container;
+                        self.get_or_create_calc(idx, depth)
+                    };
                     // checkout use the same diff_calculator, the depth of calculator is not updated
                     // That may cause the container to be considered deleted
                     if *old_depth != depth {
@@ -189,6 +178,12 @@ impl DiffCalculator {
                 let mut set = FxHashSet::default();
                 oplog.for_each_change_within(before, after, |change| {
                     for op in change.ops.iter() {
+                        if let Some(filter) = container_filter {
+                            if !filter(op.container) {
+                                continue;
+                            }
+                        }
+
                         set.insert(op.container);
                     }
                 });
@@ -287,6 +282,34 @@ impl DiffCalculator {
             .map(|x| x.1)
             .collect_vec()
     }
+
+    // TODO: we may remove depth info
+    pub(crate) fn get_or_create_calc(
+        &mut self,
+        idx: ContainerIdx,
+        depth: Option<NonZeroU16>,
+    ) -> &mut (Option<NonZeroU16>, ContainerDiffCalculator) {
+        self.calculators
+            .entry(idx)
+            .or_insert_with(|| match idx.get_type() {
+                crate::ContainerType::Text => (
+                    depth,
+                    ContainerDiffCalculator::Richtext(RichtextDiffCalculator::default()),
+                ),
+                crate::ContainerType::Map => (
+                    depth,
+                    ContainerDiffCalculator::Map(MapDiffCalculator::new(idx)),
+                ),
+                crate::ContainerType::List => (
+                    depth,
+                    ContainerDiffCalculator::List(ListDiffCalculator::default()),
+                ),
+                crate::ContainerType::Tree => (
+                    depth,
+                    ContainerDiffCalculator::Tree(TreeDiffCalculator::new(idx)),
+                ),
+            })
+    }
 }
 
 /// DiffCalculator should track the history first before it can calculate the difference.
@@ -317,7 +340,7 @@ pub(crate) trait DiffCalculatorTrait {
 
 #[enum_dispatch(DiffCalculatorTrait)]
 #[derive(Debug)]
-enum ContainerDiffCalculator {
+pub(crate) enum ContainerDiffCalculator {
     Map(MapDiffCalculator),
     List(ListDiffCalculator),
     Richtext(RichtextDiffCalculator),
@@ -325,7 +348,7 @@ enum ContainerDiffCalculator {
 }
 
 #[derive(Debug)]
-struct MapDiffCalculator {
+pub(crate) struct MapDiffCalculator {
     container_idx: ContainerIdx,
     changed_key: FxHashSet<InternalString>,
 }
@@ -434,9 +457,14 @@ impl PartialOrd for CompactMapValue {
 use rle::{HasLength, Sliceable};
 
 #[derive(Default)]
-struct ListDiffCalculator {
+pub(crate) struct ListDiffCalculator {
     start_vv: VersionVector,
     tracker: Box<RichtextTracker>,
+}
+impl ListDiffCalculator {
+    pub(crate) fn get_id_latest_pos(&self, id: ID) -> Option<crate::cursor::AbsolutePosition> {
+        self.tracker.get_target_id_latest_index_at_new_version(id)
+    }
 }
 
 impl std::fmt::Debug for ListDiffCalculator {
@@ -566,10 +594,19 @@ impl DiffCalculatorTrait for ListDiffCalculator {
 }
 
 #[derive(Debug, Default)]
-struct RichtextDiffCalculator {
+pub(crate) struct RichtextDiffCalculator {
     start_vv: VersionVector,
     tracker: Box<RichtextTracker>,
     styles: Vec<StyleOp>,
+}
+
+impl RichtextDiffCalculator {
+    /// This should be called after calc_diff
+    ///
+    /// TODO: Refactor, this can be simplified
+    pub fn get_id_latest_pos(&self, id: ID) -> Option<AbsolutePosition> {
+        self.tracker.get_target_id_latest_index_at_new_version(id)
+    }
 }
 
 impl DiffCalculatorTrait for RichtextDiffCalculator {

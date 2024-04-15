@@ -11,6 +11,7 @@ members = [
     "crates/fuzz",
     "crates/fractional_index",
 ]
+resolver = "2"
 
 [workspace.dependencies]
 enum_dispatch = "0.3.11"

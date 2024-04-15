@@ -17,6 +17,7 @@ describe("event", () => {
     const loro = new Loro();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
+      expect(event.by).toBe("local");
       lastEvent = event;
     });
     const text = loro.getText("text");
@@ -131,7 +132,6 @@ describe("event", () => {
     const loro = new Loro();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
-      console.log(event);
       lastEvent = event;
     });
     const tree = loro.getTree("tree");
@@ -327,6 +327,50 @@ describe("event", () => {
     doc.commit();
     await new Promise((resolve) => setTimeout(resolve, 1));
     expect(ran).toBeTruthy();
+  });
+
+  it("remote event", async () => {
+    const doc = new Loro();
+    const list = doc.getList("list");
+    list.insert(0, 123);
+    {
+      const doc2 = new Loro();
+      let triggered = false;
+      doc2.subscribe((event) => {
+        expect(event.by).toBe("import");
+        triggered = true;
+      });
+      doc2.import(doc.exportFrom());
+      await oneMs();
+      expect(triggered).toBeTruthy();
+    }
+    {
+      const doc2 = new Loro();
+      let triggered = false;
+      doc2.subscribe((event) => {
+        expect(event.by).toBe("import");
+        triggered = true;
+      });
+      doc2.import(doc.exportSnapshot());
+      await oneMs();
+      expect(triggered).toBeTruthy();
+    }
+  });
+
+  it("checkout event", async () => {
+    const doc = new Loro();
+    const list = doc.getList("list");
+    list.insert(0, 123);
+    doc.commit();
+    let triggered = false;
+    doc.subscribe((e) => {
+      expect(e.by).toBe("checkout");
+      triggered = true;
+    });
+
+    doc.checkout([]);
+    await oneMs();
+    expect(triggered).toBeTruthy();
   });
 });
 

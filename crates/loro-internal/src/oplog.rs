@@ -1,4 +1,5 @@
 pub(crate) mod dag;
+mod iter;
 mod pending_changes;
 
 use std::borrow::Cow;
@@ -26,6 +27,7 @@ use smallvec::SmallVec;
 
 type ClientChanges = FxHashMap<PeerID, Vec<Change>>;
 pub use self::dag::FrontiersNotIncluded;
+use self::iter::MergedChangeIter;
 use self::pending_changes::PendingChanges;
 
 use super::arena::SharedArena;
@@ -135,6 +137,20 @@ impl AppDag {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn find_deps_of_id(&self, id: ID) -> Frontiers {
+        if let Some(nodes) = self.map.get(&id.peer) {
+            if let Some(d) = nodes.get_by_atom_index(id.counter) {
+                if d.offset == 0 {
+                    return d.element.deps.clone();
+                } else {
+                    return ID::new(id.peer, d.element.cnt + d.offset - 1).into();
+                }
+            }
+        }
+
+        Frontiers::default()
     }
 }
 
@@ -823,7 +839,7 @@ impl OpLog {
         }
     }
 
-    pub(crate) fn iter_changes<'a>(
+    pub(crate) fn iter_changes_peer_by_peer<'a>(
         &'a self,
         from: &VersionVector,
         to: &VersionVector,
@@ -839,6 +855,14 @@ impl OpLog {
                 .iter()
                 .take_while(move |x| x.ctr_start() < end_cnt)
         })
+    }
+
+    pub(crate) fn iter_changes_causally_rev<'a>(
+        &'a self,
+        from: &VersionVector,
+        to: &VersionVector,
+    ) -> impl Iterator<Item = &'a Change> + 'a {
+        MergedChangeIter::new_change_iter(self, from, to, false)
     }
 
     pub fn get_timestamp_for_next_txn(&self) -> Timestamp {
