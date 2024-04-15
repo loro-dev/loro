@@ -588,6 +588,7 @@ struct TreeInner {
 }
 
 // Implementation about tree is fragmented
+// TODO: Implement tree operations
 impl TreeInner {
     fn new() -> Self {
         TreeInner {
@@ -610,8 +611,8 @@ impl TreeInner {
         self.parent_links.remove(&id);
     }
 
-    fn get_parent(&self, id: TreeID) -> Option<Option<TreeID>> {
-        self.parent_links.get(&id).cloned()
+    fn get_parent(&self, id: &TreeID) -> Option<Option<TreeID>> {
+        self.parent_links.get(id).cloned()
     }
 
     fn mov(&mut self, target: TreeID, new_parent: Option<TreeID>) {
@@ -2205,7 +2206,7 @@ impl TreeHandler {
         // check the input is valid
         if self.is_parent(target, parent) {
             // If the position after moving is same as the current position , do nothing
-            if let Some(current_index) = self.get_index_by_tree_id(&target, parent) {
+            if let Some(current_index) = self.get_index_by_tree_id(&target) {
                 if current_index == index {
                     return Ok(());
                 }
@@ -2318,7 +2319,7 @@ impl TreeHandler {
     }
 
     /// Get the parent of the node, if the node is deleted or does not exist, return None
-    pub fn get_node_parent(&self, target: TreeID) -> Option<Option<TreeID>> {
+    pub fn get_node_parent(&self, target: &TreeID) -> Option<Option<TreeID>> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.try_lock().unwrap();
@@ -2335,6 +2336,7 @@ impl TreeHandler {
         }
     }
 
+    // TODO: iterator
     pub fn children(&self, parent: Option<TreeID>) -> Vec<TreeID> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
@@ -2372,6 +2374,19 @@ impl TreeHandler {
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
                 a.contains(target)
+            }),
+        }
+    }
+
+    pub fn get_child_at(&self, parent: Option<TreeID>, index: usize) -> Option<TreeID> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                // TODO:
+                todo!()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.get_id_by_index(&TreeParentId::from(parent), index)
             }),
         }
     }
@@ -2431,14 +2446,17 @@ impl TreeHandler {
         }
     }
 
-    fn get_index_by_tree_id(&self, target: &TreeID, parent: Option<TreeID>) -> Option<usize> {
+    /// Get the index of the target node in the parent node
+    ///
+    /// O(logN)
+    pub fn get_index_by_tree_id(&self, target: &TreeID) -> Option<usize> {
         match &self.inner {
             MaybeDetached::Detached(_) => {
                 unimplemented!()
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
-                a.get_index_by_tree_id(&TreeParentId::from(parent), target)
+                a.get_index_by_tree_id(target)
             }),
         }
     }

@@ -246,8 +246,8 @@ declare module "loro-wasm" {
 
   interface LoroTree<T extends Record<string, any> = Record<string, any>> {
     new (): LoroTree<T>;
-    createNode(parent: TreeID | undefined): LoroTreeNode<T>;
-    move(target: TreeID, parent: TreeID | undefined): void;
+    createNode(parent?: TreeID, index?: number ): LoroTreeNode<T>;
+    move(target: TreeID, parent?: TreeID, index?: number): void;
     delete(target: TreeID): void;
     has(target: TreeID): boolean;
     getNodeByID(target: TreeID): LoroTreeNode;
@@ -256,9 +256,8 @@ declare module "loro-wasm" {
 
   interface LoroTreeNode<T extends Record<string, any> = Record<string, any>> {
     readonly data: LoroMap<T>;
-    createNode(): LoroTreeNode<T>;
-    setAsRoot(): void;
-    moveTo(parent: LoroTreeNode<T>): void;
+    createNode(index?: number): LoroTreeNode<T>;
+    moveTo(parent?: TreeID, index?: number): void;
     parent(): LoroTreeNode | undefined;
     children(): Array<LoroTreeNode<T>>;
   }

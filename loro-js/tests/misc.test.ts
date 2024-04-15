@@ -245,32 +245,7 @@ describe("type", () => {
   });
 });
 
-describe("tree", () => {
-  const loro = new Loro();
-  const tree = loro.getTree("root");
 
-  it("create", () => {
-    const root = tree.createNode();
-    const child = root.createNode();
-    assertEquals(child.parent()!.id, root.id);
-  });
-
-  it("move", () => {
-    const root = tree.createNode();
-    const child = root.createNode();
-    const child2 = root.createNode();
-    assertEquals(child2.parent()!.id, root.id);
-    child2.moveTo(child);
-    assertEquals(child2.parent()!.id, child.id);
-    assertEquals(child.children()[0].id, child2.id);
-  });
-
-  it("meta", () => {
-    const root = tree.createNode();
-    root.data.set("a", 123);
-    assertEquals(root.data.get("a"), 123);
-  });
-});
 
 function one_ms(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 1));

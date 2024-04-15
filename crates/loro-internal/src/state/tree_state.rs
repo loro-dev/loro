@@ -85,7 +85,7 @@ impl NodeChildren {
 
     fn get_elem_at(&self, pos: usize) -> Option<(&NodePosition, &TreeID)> {
         match self {
-            NodeChildren::Vec(v) => v.get(pos).map(|(pos, id)| (pos, id)),
+            NodeChildren::Vec(v) => v.get(pos).map(|x| (&x.0, &x.1)),
             NodeChildren::BTree(btree) => btree.get_elem_at(pos).map(|x| (x.pos.as_ref(), &x.id)),
         }
     }
@@ -218,7 +218,7 @@ impl NodeChildren {
 
     fn iter(&self) -> impl Iterator<Item = (&NodePosition, &TreeID)> {
         match self {
-            NodeChildren::Vec(v) => Either::Left(v.iter().map(|(pos, id)| (pos, id))),
+            NodeChildren::Vec(v) => Either::Left(v.iter().map(|x| (&x.0, &x.1))),
             NodeChildren::BTree(t) => Either::Right(t.iter()),
         }
     }
@@ -622,9 +622,9 @@ impl TreeState {
     }
 
     /// Get the parent of the node, if the node is deleted or does not exist, return None
-    pub fn parent(&self, target: TreeID) -> TreeParentId {
+    pub fn parent(&self, target: &TreeID) -> TreeParentId {
         self.trees
-            .get(&target)
+            .get(target)
             .map(|x| x.parent)
             .unwrap_or(TreeParentId::Unexist)
     }
@@ -661,7 +661,10 @@ impl TreeState {
             .unwrap_or(0)
     }
 
-    pub fn get_children(&self, parent: &TreeParentId) -> Option<impl Iterator<Item = TreeID> + '_> {
+    pub fn get_children<'a>(
+        &'a self,
+        parent: &TreeParentId,
+    ) -> Option<impl Iterator<Item = TreeID> + 'a> {
         self.children.get(parent).map(|x| x.iter().map(|x| *x.1))
     }
 
@@ -698,15 +701,12 @@ impl TreeState {
             .generate_fi_at(index, target)
     }
 
-    pub(crate) fn get_index_by_tree_id(
-        &self,
-        parent: &TreeParentId,
-        target: &TreeID,
-    ) -> Option<usize> {
+    pub(crate) fn get_index_by_tree_id(&self, target: &TreeID) -> Option<usize> {
+        let parent = self.parent(target);
         (!parent.is_deleted())
             .then(|| {
                 self.children
-                    .get(parent)
+                    .get(&parent)
                     .and_then(|x| x.get_index_by_child_id(target))
             })
             .flatten()
@@ -757,7 +757,7 @@ impl ContainerState for TreeState {
                     TreeInternalDiff::Create { parent, position } => {
                         self.mov(target, *parent, last_move_op, Some(position.clone()), false)
                             .unwrap();
-                        let index = self.get_index_by_tree_id(parent, &target).unwrap();
+                        let index = self.get_index_by_tree_id(&target).unwrap();
                         ans.push(TreeDiffItem {
                             target,
                             action: TreeExternalDiff::Create {
@@ -770,7 +770,7 @@ impl ContainerState for TreeState {
                     TreeInternalDiff::Move { parent, position } => {
                         self.mov(target, *parent, last_move_op, Some(position.clone()), false)
                             .unwrap();
-                        let index = self.get_index_by_tree_id(parent, &target).unwrap();
+                        let index = self.get_index_by_tree_id(&target).unwrap();
                         ans.push(TreeDiffItem {
                             target,
                             action: TreeExternalDiff::Move {
@@ -938,7 +938,7 @@ impl ContainerState for TreeState {
                 );
                 t.insert(
                     "index".to_string(),
-                    (self.get_index_by_tree_id(&node.parent, target).unwrap() as i64).into(),
+                    (self.get_index_by_tree_id(target).unwrap() as i64).into(),
                 );
                 t.insert(
                     "position".to_string(),
