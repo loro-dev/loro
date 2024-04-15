@@ -2248,8 +2248,8 @@ impl LoroTreeNode {
     /// //         node
     ///
     /// ```
-    #[wasm_bindgen(js_name = "moveTo")]
-    pub fn move_to(&self, parent: &JsParentTreeID, index: Option<usize>) -> JsResult<()> {
+    #[wasm_bindgen(js_name = "move")]
+    pub fn mov(&self, parent: &JsParentTreeID, index: Option<usize>) -> JsResult<()> {
         let parent: Option<TreeID> = parse_js_parent(parent)?;
         if let Some(index) = index {
             self.tree.move_to(self.id, parent, index)?

@@ -93,7 +93,7 @@ describe("loro tree", () => {
       count += 1;
     });
     assertEquals(count, 0);
-    child.moveTo();
+    child.move();
     assertEquals(count, 0);
     loro.commit();
     await one_ms();
@@ -139,10 +139,10 @@ describe("loro tree node", ()=>{
         const child = root.createNode();
         const child2 = root.createNode();
         assertEquals(child2.parent()!.id, root.id);
-        child2.moveTo(child.id);
+        child2.move(child.id);
         assertEquals(child2.parent()!.id, child.id);
         assertEquals(child.children()[0].id, child2.id);
-        expect(()=>child2.moveTo(child.id, 1)).toThrowError();
+        expect(()=>child2.move(child.id, 1)).toThrowError();
     });
 
     it("index", () => {
