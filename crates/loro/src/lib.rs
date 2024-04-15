@@ -1099,6 +1099,21 @@ impl LoroTree {
         self.handler.move_to(target, parent, index)
     }
 
+    /// Move the `target` node to be a child of the `parent` node at the given index.
+    /// If the `parent` is `None`, the `target` node will be a root.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let tree = doc.get_tree("tree");
+    /// let root = tree.create(None).unwrap();
+    /// let root2 = tree.create(None).unwrap();
+    /// // move `root2` to be a child of `root` at index 0.
+    /// tree.mov_to(root2, root, 0).unwrap();
+    /// ```
     pub fn mov_to<T: Into<Option<TreeID>>>(
         &self,
         target: TreeID,
@@ -1107,6 +1122,42 @@ impl LoroTree {
     ) -> LoroResult<()> {
         let parent = parent.into();
         self.handler.move_to(target, parent, to)
+    }
+
+    /// Move the `target` node to be a child after the `after` node with the same parent.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let tree = doc.get_tree("tree");
+    /// let root = tree.create(None).unwrap();
+    /// let root2 = tree.create(None).unwrap();
+    /// // move `root` to be a child after `root2`.
+    /// tree.mov_after(root, root2).unwrap();
+    /// ```
+    pub fn mov_after(&self, target: TreeID, after: TreeID) -> LoroResult<()> {
+        self.handler.mov_after(target, after)
+    }
+
+    /// Move the `target` node to be a child before the `before` node with the same parent.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let tree = doc.get_tree("tree");
+    /// let root = tree.create(None).unwrap();
+    /// let root2 = tree.create(None).unwrap();
+    /// // move `root` to be a child before `root2`.
+    /// tree.mov_before(root, root2).unwrap();
+    /// ```
+    pub fn mov_before(&self, target: TreeID, before: TreeID) -> LoroResult<()> {
+        self.handler.mov_before(target, before)
     }
 
     /// Delete a tree node.
