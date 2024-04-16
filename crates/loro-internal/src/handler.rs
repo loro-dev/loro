@@ -2284,7 +2284,12 @@ impl TreeHandler {
                 let parent = self
                     .get_node_parent(&other)
                     .ok_or(LoroTreeError::TreeNodeNotExist(other))?;
-                let index = self.get_index_by_tree_id(&other).unwrap();
+                let mut index = self.get_index_by_tree_id(&other).unwrap();
+                if self.is_parent(target, parent)
+                    && self.get_index_by_tree_id(&target).unwrap() < index
+                {
+                    index -= 1;
+                }
                 a.with_txn(|txn| self.mov_with_txn(txn, target, parent, index + 1))
             }
         }
@@ -2302,7 +2307,12 @@ impl TreeHandler {
                 let parent = self
                     .get_node_parent(&other)
                     .ok_or(LoroTreeError::TreeNodeNotExist(other))?;
-                let index = self.get_index_by_tree_id(&other).unwrap();
+                let mut index = self.get_index_by_tree_id(&other).unwrap();
+                if self.is_parent(target, parent)
+                    && self.get_index_by_tree_id(&target).unwrap() < index
+                {
+                    index -= 1;
+                }
                 a.with_txn(|txn| self.mov_with_txn(txn, target, parent, index))
             }
         }

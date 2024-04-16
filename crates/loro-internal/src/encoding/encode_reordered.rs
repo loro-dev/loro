@@ -64,7 +64,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let vv = &actual_start_vv;
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
-    let mut position_register: ValueRegister<&[u8]> = ValueRegister::new();
+    let mut position_register = FxHashSet::default();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
     let ExtractedContainer {
         containers,
@@ -91,6 +91,9 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &mut position_register,
         &container_idx2index,
     );
+
+    let positions = position_register.into_iter().sorted_unstable().collect();
+    let mut position_register = ValueRegister::from_existing(positions);
 
     ops.sort_by(move |a, b| {
         a.container_index
@@ -434,7 +437,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     assert_eq!(oplog.frontiers(), &state.frontiers);
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
-    let mut position_register: ValueRegister<&[u8]> = ValueRegister::new();
+    let mut position_register = FxHashSet::default();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
     let ExtractedContainer {
         containers,
@@ -533,6 +536,9 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         &mut position_register,
         &container_idx2index,
     );
+
+    let positions = position_register.into_iter().sorted_unstable().collect();
+    let mut position_register = ValueRegister::from_existing(positions);
 
     let ops: Vec<TempOp> = calc_sorted_ops_for_snapshot(origin_ops, pos_mapping_heap);
 
@@ -858,7 +864,7 @@ fn decode_snapshot_states(
 }
 
 mod encode {
-    use fxhash::FxHashMap;
+    use fxhash::{FxHashMap, FxHashSet};
     use loro_common::{ContainerID, ContainerType, HasId, PeerID, ID};
     use num_traits::ToPrimitive;
     use rle::{HasLength, Sliceable};
@@ -1001,7 +1007,7 @@ mod encode {
         peer_register: &mut ValueRegister<u64>,
         push_op: &mut impl FnMut(TempOp<'a>),
         key_register: &mut ValueRegister<InternalString>,
-        position_register: &mut ValueRegister<&'p [u8]>,
+        position_register: &mut FxHashSet<&'p [u8]>,
         container_idx2index: &FxHashMap<ContainerIdx, usize>,
     ) -> Vec<EncodedChange> {
         let mut changes: Vec<EncodedChange> = Vec::with_capacity(diff_changes.len());
@@ -1143,7 +1149,6 @@ mod encode {
                 let key = register_key.register(&map.key);
                 key as i32
             }
-            // TODO:
             crate::op::InnerContent::Tree(..) => 0,
         }
     }
@@ -1151,7 +1156,7 @@ mod encode {
     fn get_sorting_prop<'p, 'a: 'p>(
         op: &'a Op,
         register_key: &mut ValueRegister<InternalString>,
-        register_position: &mut ValueRegister<&'p [u8]>,
+        register_position: &mut FxHashSet<&'p [u8]>,
     ) -> i32 {
         match &op.content {
             crate::op::InnerContent::List(_) => 0,
@@ -1161,7 +1166,8 @@ mod encode {
             }
             crate::op::InnerContent::Tree(op) => {
                 if let Some(position) = &op.position {
-                    register_position.register(&position.as_bytes()) as i32
+                    register_position.insert(&position.as_bytes());
+                    0
                 } else {
                     -1
                 }
@@ -1624,6 +1630,7 @@ mod value {
                 register_position.register(&bytes)
             } else {
                 debug_assert!(op.parent.is_some_and(|x| TreeID::is_deleted_root(&x)));
+                // placeholder
                 0
             };
 
@@ -2641,7 +2648,6 @@ mod arena {
     #[derive(Clone)]
     #[columnar(vec, ser, de, iterable)]
     pub(super) struct PositionDelta<'a> {
-        // TODO: whether strategy
         #[columnar(strategy = "Rle")]
         common_prefix_length: usize,
         #[columnar(borrow)]
