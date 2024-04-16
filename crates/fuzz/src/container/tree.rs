@@ -26,10 +26,25 @@ pub struct TreeAction {
 
 #[derive(Clone)]
 pub enum TreeActionInner {
-    Create { index: usize },
+    Create {
+        index: usize,
+    },
     Delete,
-    Move { parent: (u64, i32), index: usize },
-    Meta { meta: (String, FuzzValue) },
+    Move {
+        parent: (u64, i32),
+        index: usize,
+    },
+    MoveBefore {
+        target: (u64, i32),
+        before: (u64, i32),
+    },
+    MoveAfter {
+        target: (u64, i32),
+        after: (u64, i32),
+    },
+    Meta {
+        meta: (String, FuzzValue),
+    },
 }
 
 impl Debug for TreeActionInner {
@@ -44,6 +59,20 @@ impl Debug for TreeActionInner {
                     f,
                     "TreeActionInner::Move{{parent:{:?}, index:{}}}",
                     parent, index
+                )
+            }
+            TreeActionInner::MoveBefore { target, before } => {
+                write!(
+                    f,
+                    "TreeActionInner::MoveBefore{{target:{:?}, before:{:?}}}",
+                    target, before
+                )
+            }
+            TreeActionInner::MoveAfter { target, after } => {
+                write!(
+                    f,
+                    "TreeActionInner::MoveAfter{{target:{:?}, after:{:?}}}",
+                    target, after
                 )
             }
             TreeActionInner::Meta { meta } => write!(
@@ -151,6 +180,23 @@ impl Actionable for TreeAction {
                     .unwrap_or(0)
                     + 1;
             }
+            TreeActionInner::MoveBefore {
+                target,
+                before: (p, c),
+            }
+            | TreeActionInner::MoveAfter {
+                target,
+                after: (p, c),
+            } => {
+                let target_index = target.0 as usize % node_num;
+                *target = (nodes[target_index].peer, nodes[target_index].counter);
+                let mut other_idx = *p as usize % node_num;
+                while target_index == other_idx {
+                    other_idx = (other_idx + 1) % node_num;
+                }
+                *p = nodes[other_idx].peer;
+                *c = nodes[other_idx].counter;
+            }
             TreeActionInner::Meta { meta: (_, v) } => {
                 let target_index = target.1 as usize % node_num;
                 *target = (nodes[target_index].peer, nodes[target_index].counter);
@@ -204,6 +250,30 @@ impl Actionable for TreeAction {
                 }
                 None
             }
+            TreeActionInner::MoveBefore { target, before } => {
+                let target = TreeID {
+                    peer: target.0,
+                    counter: target.1,
+                };
+                let before = TreeID {
+                    peer: before.0,
+                    counter: before.1,
+                };
+                tree.mov_before(target, before).unwrap();
+                None
+            }
+            TreeActionInner::MoveAfter { target, after } => {
+                let target = TreeID {
+                    peer: target.0,
+                    counter: target.1,
+                };
+                let after = TreeID {
+                    peer: after.0,
+                    counter: after.1,
+                };
+                tree.mov_after(target, after).unwrap();
+                None
+            }
             TreeActionInner::Meta { meta: (k, v) } => {
                 let meta = tree.get_meta(target).unwrap();
                 match v {
@@ -233,6 +303,14 @@ impl Actionable for TreeAction {
                 parent: (pi, pc),
                 index,
             } => [format!("move to {pc}@{pi} at {index}").into(), target],
+            TreeActionInner::MoveBefore {
+                target: (ti, tc),
+                before: (bi, bc),
+            } => [format!("move {tc}@{ti} before {bc}@{bi}").into(), target],
+            TreeActionInner::MoveAfter {
+                target: (ti, tc),
+                after: (ai, ac),
+            } => [format!("move {tc}@{ti} after {ac}@{ai}").into(), target],
             TreeActionInner::Meta { meta } => [format!("meta\n {:?}", meta).into(), target],
         }
     }
@@ -253,6 +331,14 @@ impl FromGenericAction for TreeAction {
             2 => TreeActionInner::Move { parent, index },
             3 => TreeActionInner::Meta {
                 meta: (action.key.to_string(), action.value),
+            },
+            4 => TreeActionInner::MoveBefore {
+                target,
+                before: parent,
+            },
+            5 => TreeActionInner::MoveAfter {
+                target,
+                after: parent,
             },
             _ => unreachable!(),
         };

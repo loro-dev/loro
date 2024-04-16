@@ -256,7 +256,8 @@ dependencies = [
 [[package]]
 name = "generic-btree"
 version = "0.8.3"
-source = "git+https://github.com/loro-dev/generic-btree#e7423cf357a601d5111500e68c8c913a4e68fef0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "002d5f5354de768aee9a56254bc23693e0227478313fe6798bc810a45ae9942b"
 dependencies = [
  "fxhash",
  "heapless",
@@ -397,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
@@ -406,7 +407,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
@@ -421,7 +422,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -457,7 +458,7 @@ dependencies = [
 
 [[package]]
 name = "loro-preload"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "bytes",
  "loro-common",
@@ -467,7 +468,7 @@ dependencies = [
 
 [[package]]
 name = "loro-rle"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "append-only-bytes",
  "arref",
