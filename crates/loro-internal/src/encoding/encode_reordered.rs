@@ -29,7 +29,9 @@ use crate::{
 };
 
 use self::{
-    arena::{decode_arena, encode_arena, ContainerArena, DecodedArenas},
+    arena::{
+        decode_arena, encode_arena, ContainerArena, DecodedArenas, EncodedTreeID, TreeIDArena,
+    },
     encode::{encode_changes, encode_ops, init_encode, TempOp, ValueRegister},
     value::ValueReader,
 };
@@ -65,6 +67,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
     let mut position_register = FxHashSet::default();
+    let mut tree_id_register: ValueRegister<EncodedTreeID> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
     let ExtractedContainer {
         containers,
@@ -111,6 +114,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &mut cid_register,
         &mut peer_register,
         &mut position_register,
+        &mut tree_id_register,
     );
 
     let container_arena = ContainerArena::from_containers(
@@ -120,6 +124,9 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     );
 
     let position_arena = PositionArena::from_positions(position_register.unwrap_vec());
+    let tree_id_arena = TreeIDArena {
+        tree_ids: tree_id_register.unwrap_vec(),
+    };
 
     let frontiers = oplog
         .dag
@@ -140,6 +147,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             key_register.unwrap_vec(),
             dep_arena,
             position_arena,
+            tree_id_arena,
             &[],
         )),
         start_frontiers: frontiers,
@@ -156,6 +164,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
         keys,
         deps,
         positions,
+        tree_ids,
         state_blob_arena: _,
     } = decode_arena(&iter.arenas)?;
     let ops_map = extract_ops(
@@ -167,6 +176,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
         &keys,
         &peer_ids,
         &positions.parse_to_positions(),
+        &tree_ids.tree_ids,
         false,
     )?
     .ops_map;
@@ -363,6 +373,7 @@ fn extract_ops(
     keys: &arena::KeyArena,
     peer_ids: &arena::PeerIdArena,
     positions: &[Vec<u8>],
+    tree_ids: &[EncodedTreeID],
     should_extract_ops_with_ids: bool,
 ) -> LoroResult<ExtractedOps> {
     let mut value_reader = ValueReader::new(raw_values);
@@ -400,6 +411,7 @@ fn extract_ops(
             keys,
             &peer_ids.peer_ids,
             positions,
+            tree_ids,
             ID::new(peer, counter),
         )?;
 
@@ -437,6 +449,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     assert_eq!(oplog.frontiers(), &state.frontiers);
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
+    let mut tree_id_register: ValueRegister<EncodedTreeID> = ValueRegister::new();
     let mut position_register = FxHashSet::default();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
     let ExtractedContainer {
@@ -550,6 +563,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         &mut cid_register,
         &mut peer_register,
         &mut position_register,
+        &mut tree_id_register,
     );
 
     let container_arena = ContainerArena::from_containers(
@@ -559,6 +573,9 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     );
 
     let position_arena = PositionArena::from_positions(position_register.unwrap_vec());
+    let tree_id_arena = TreeIDArena {
+        tree_ids: tree_id_register.unwrap_vec(),
+    };
 
     let doc = EncodedDoc {
         ops: encoded_ops,
@@ -573,6 +590,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
             key_register.unwrap_vec(),
             dep_arena,
             position_arena,
+            tree_id_arena,
             &state_bytes,
         )),
         start_frontiers: Vec::new(),
@@ -737,6 +755,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         keys,
         deps,
         positions,
+        tree_ids,
         state_blob_arena,
     } = decode_arena(&iter.arenas)?;
     let ExtractedOps {
@@ -752,6 +771,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         &keys,
         &peer_ids,
         &positions.parse_to_positions(),
+        &tree_ids.tree_ids,
         true,
     )?;
 
@@ -967,6 +987,7 @@ mod encode {
         cid_register: &mut ValueRegister<ContainerID>,
         peer_register: &mut ValueRegister<u64>,
         position_register: &mut ValueRegister<&'p [u8]>,
+        tree_id_regitster: &mut ValueRegister<EncodedTreeID>,
     ) -> (Vec<EncodedOp>, Vec<EncodedDeleteStartId>) {
         let mut encoded_ops = Vec::with_capacity(ops.len());
         let mut delete_start = Vec::new();
@@ -986,6 +1007,7 @@ mod encode {
                 cid_register,
                 peer_register,
                 position_register,
+                tree_id_regitster,
             );
 
             let prop = get_op_prop(op, key_register);
@@ -1052,6 +1074,7 @@ mod encode {
     pub(super) use value_register::ValueRegister;
 
     use super::{
+        arena::EncodedTreeID,
         value::{MarkStart, Value, ValueKind},
         EncodedChange, EncodedDeleteStartId, EncodedOp,
     };
@@ -1186,6 +1209,7 @@ mod encode {
         register_cid: &mut ValueRegister<ContainerID>,
         register_peer: &mut ValueRegister<PeerID>,
         register_position: &mut ValueRegister<&'p [u8]>,
+        tree_id_regitster: &mut ValueRegister<EncodedTreeID>,
     ) -> ValueKind {
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
@@ -1247,7 +1271,12 @@ mod encode {
             }
             crate::op::InnerContent::Tree(t) => {
                 assert_eq!(op.container.get_type(), ContainerType::Tree);
-                let op = EncodedTreeMove::from_tree_op(t, register_peer, register_position);
+                let op = EncodedTreeMove::from_tree_op(
+                    t,
+                    register_peer,
+                    register_position,
+                    tree_id_regitster,
+                );
                 value_writer.write(&Value::TreeMove(op), register_key, register_cid);
                 ValueKind::TreeMove
             }
@@ -1267,6 +1296,7 @@ fn decode_op(
     keys: &arena::KeyArena,
     peers: &[u64],
     positions: &[Vec<u8>],
+    tree_ids: &[EncodedTreeID],
     id: ID,
 ) -> LoroResult<crate::op::InnerContent> {
     let content = match cid.container_type() {
@@ -1378,7 +1408,7 @@ fn decode_op(
         ContainerType::Tree => match kind {
             ValueKind::TreeMove => {
                 let op = value_reader.read_tree_move()?;
-                crate::op::InnerContent::Tree(op.as_tree_op(peers, positions)?)
+                crate::op::InnerContent::Tree(op.as_tree_op(peers, positions, tree_ids)?)
             }
             _ => unreachable!(),
         },
@@ -1547,7 +1577,7 @@ mod value {
         PeerID, TreeID, ID,
     };
 
-    use super::{encode::ValueRegister, MAX_COLLECTION_SIZE};
+    use super::{arena::EncodedTreeID, encode::ValueRegister, MAX_COLLECTION_SIZE};
     use crate::container::tree::tree_op::TreeOp;
     use num_traits::{FromPrimitive, ToPrimitive};
 
@@ -1581,24 +1611,28 @@ mod value {
 
     #[derive(Debug)]
     pub struct EncodedTreeMove {
-        pub subject_peer_idx: usize,
-        pub subject_cnt: usize,
+        pub subject_idx: usize,
         pub is_parent_null: bool,
-        pub parent_peer_idx: usize,
-        pub parent_cnt: usize,
+        pub parent_idx: usize,
         pub position: usize,
     }
 
     impl EncodedTreeMove {
-        pub fn as_tree_op(&self, peer_ids: &[u64], positions: &[Vec<u8>]) -> LoroResult<TreeOp> {
+        pub fn as_tree_op(
+            &self,
+            peer_ids: &[u64],
+            positions: &[Vec<u8>],
+            tree_ids: &[EncodedTreeID],
+        ) -> LoroResult<TreeOp> {
             let parent = if self.is_parent_null {
                 None
             } else {
+                let EncodedTreeID { peer_idx, counter } = tree_ids[self.parent_idx];
                 Some(TreeID::new(
                     *(peer_ids
-                        .get(self.parent_peer_idx)
+                        .get(peer_idx)
                         .ok_or(LoroError::DecodeDataCorruptionError)?),
-                    self.parent_cnt as Counter,
+                    counter as Counter,
                 ))
             };
             let position = if parent.is_some_and(|x| TreeID::is_deleted_root(&x)) {
@@ -1607,13 +1641,13 @@ mod value {
                 let bytes = &positions[self.position];
                 Some(FractionalIndex::from_vec_unterminated(bytes.clone()))
             };
-
+            let EncodedTreeID { peer_idx, counter } = tree_ids[self.subject_idx];
             Ok(TreeOp {
                 target: TreeID::new(
                     *(peer_ids
-                        .get(self.subject_peer_idx)
+                        .get(peer_idx)
                         .ok_or(LoroError::DecodeDataCorruptionError)?),
-                    self.subject_cnt as Counter,
+                    counter as Counter,
                 ),
                 parent,
                 position,
@@ -1624,6 +1658,7 @@ mod value {
             op: &'a TreeOp,
             register_peer_id: &mut ValueRegister<PeerID>,
             register_position: &mut ValueRegister<&'p [u8]>,
+            tree_id_regitster: &mut ValueRegister<EncodedTreeID>,
         ) -> Self {
             let position = if let Some(position) = &op.position {
                 let bytes = position.as_bytes_without_terminated();
@@ -1634,12 +1669,22 @@ mod value {
                 0
             };
 
+            let target_idx = tree_id_regitster.register(&EncodedTreeID {
+                peer_idx: register_peer_id.register(&op.target.peer),
+                counter: op.target.counter,
+            });
+
+            let parent_idx = op.parent.map(|x| {
+                tree_id_regitster.register(&EncodedTreeID {
+                    peer_idx: register_peer_id.register(&x.peer),
+                    counter: x.counter,
+                })
+            });
+
             EncodedTreeMove {
-                subject_peer_idx: register_peer_id.register(&op.target.peer),
-                subject_cnt: op.target.counter as usize,
+                subject_idx: target_idx,
                 is_parent_null: op.parent.is_none(),
-                parent_peer_idx: op.parent.map_or(0, |x| register_peer_id.register(&x.peer)),
-                parent_cnt: op.parent.map_or(0, |x| x.counter as usize),
+                parent_idx: parent_idx.unwrap_or(0),
                 position,
             }
         }
@@ -1974,15 +2019,13 @@ mod value {
         }
 
         fn write_tree_move(&mut self, op: &EncodedTreeMove) {
-            self.write_usize(op.subject_peer_idx);
-            self.write_usize(op.subject_cnt);
+            self.write_usize(op.subject_idx);
             self.write_u8(op.is_parent_null as u8);
             self.write_usize(op.position);
             if op.is_parent_null {
                 return;
             }
-            self.write_usize(op.parent_peer_idx);
-            self.write_usize(op.parent_cnt);
+            self.write_usize(op.parent_idx);
         }
 
         pub(crate) fn finish(self) -> Vec<u8> {
@@ -2330,22 +2373,17 @@ mod value {
         }
 
         pub fn read_tree_move(&mut self) -> LoroResult<EncodedTreeMove> {
-            let subject_peer_idx = self.read_usize()?;
-            let subject_cnt = self.read_usize()?;
+            let subject_idx = self.read_usize()?;
             let is_parent_null = self.read_u8()? != 0;
             let position = self.read_usize()?;
-            let mut parent_peer_idx = 0;
-            let mut parent_cnt = 0;
+            let mut parent_idx = 0;
             if !is_parent_null {
-                parent_peer_idx = self.read_usize()?;
-                parent_cnt = self.read_usize()?;
+                parent_idx = self.read_usize()?;
             }
             Ok(EncodedTreeMove {
-                subject_peer_idx,
-                subject_cnt,
+                subject_idx,
                 is_parent_null,
-                parent_peer_idx,
-                parent_cnt,
+                parent_idx,
                 position,
             })
         }
@@ -2356,7 +2394,7 @@ mod arena {
     use std::borrow::Cow;
 
     use crate::InternalString;
-    use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, PeerID};
+    use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, PeerID};
     use rle::Sliceable;
     use serde::{Deserialize, Serialize};
     use serde_columnar::{columnar, ColumnarError};
@@ -2369,6 +2407,7 @@ mod arena {
         keys: Vec<InternalString>,
         deps: DepsArena,
         position_arena: PositionArena,
+        tree_id_arena: TreeIDArena,
         state_blob_arena: &[u8],
     ) -> Vec<u8> {
         let peer_ids = PeerIdArena {
@@ -2382,6 +2421,7 @@ mod arena {
             key_arena: &key_arena.encode(),
             deps_arena: &deps.encode(),
             position_arena: &position_arena.encode(),
+            tree_id_arena: &tree_id_arena.encode(),
             state_blob_arena,
         };
 
@@ -2392,8 +2432,9 @@ mod arena {
         pub(super) peer_ids: PeerIdArena,
         pub(super) containers: ContainerArena,
         pub(super) keys: KeyArena,
-        pub(super) positions: PositionArena<'a>,
         pub deps: Box<dyn Iterator<Item = Result<EncodedDep, ColumnarError>> + 'a>,
+        pub(super) positions: PositionArena<'a>,
+        pub(super) tree_ids: TreeIDArena,
         pub state_blob_arena: &'a [u8],
     }
 
@@ -2403,8 +2444,9 @@ mod arena {
             peer_ids: PeerIdArena::decode(arenas.peer_id_arena)?,
             containers: ContainerArena::decode(arenas.container_arena)?,
             keys: KeyArena::decode(arenas.key_arena)?,
-            positions: PositionArena::decode(arenas.position_arena)?,
             deps: Box::new(DepsArena::decode_iter(arenas.deps_arena)?),
+            positions: PositionArena::decode(arenas.position_arena)?,
+            tree_ids: TreeIDArena::decode(arenas.tree_id_arena)?,
             state_blob_arena: arenas.state_blob_arena,
         })
     }
@@ -2415,6 +2457,7 @@ mod arena {
         key_arena: &'a [u8],
         deps_arena: &'a [u8],
         position_arena: &'a [u8],
+        tree_id_arena: &'a [u8],
         state_blob_arena: &'a [u8],
     }
 
@@ -2426,6 +2469,7 @@ mod arena {
                     + self.key_arena.len()
                     + self.deps_arena.len()
                     + self.position_arena.len()
+                    + self.tree_id_arena.len()
                     + 4 * 4,
             );
 
@@ -2434,6 +2478,7 @@ mod arena {
             write_arena(&mut ans, self.key_arena);
             write_arena(&mut ans, self.deps_arena);
             write_arena(&mut ans, self.position_arena);
+            write_arena(&mut ans, self.tree_id_arena);
             write_arena(&mut ans, self.state_blob_arena);
             ans
         }
@@ -2444,6 +2489,7 @@ mod arena {
             let (key_arena, rest) = read_arena(rest)?;
             let (deps_arena, rest) = read_arena(rest)?;
             let (position_arena, rest) = read_arena(rest)?;
+            let (tree_id_arena, rest) = read_arena(rest)?;
             let (state_blob_arena, _) = read_arena(rest)?;
             Ok(EncodedArenas {
                 peer_id_arena,
@@ -2451,6 +2497,7 @@ mod arena {
                 key_arena,
                 deps_arena,
                 position_arena,
+                tree_id_arena,
                 state_blob_arena,
             })
         }
@@ -2726,6 +2773,32 @@ mod arena {
         }
 
         Ok((reader[..len as usize].as_ref(), &reader[len as usize..]))
+    }
+
+    #[derive(Clone, Hash, PartialEq, Eq, Debug)]
+    #[columnar(vec, ser, de, iterable)]
+    pub struct EncodedTreeID {
+        #[columnar(strategy = "Rle")]
+        pub peer_idx: PeerIdx,
+        #[columnar(strategy = "DeltaRle")]
+        pub counter: Counter,
+    }
+
+    #[derive(Clone)]
+    #[columnar(vec, ser, de)]
+    pub struct TreeIDArena {
+        #[columnar(class = "vec", iter = "EncodedTreeID")]
+        pub(super) tree_ids: Vec<EncodedTreeID>,
+    }
+
+    impl TreeIDArena {
+        pub fn decode(bytes: &[u8]) -> LoroResult<Self> {
+            Ok(serde_columnar::from_bytes(bytes)?)
+        }
+
+        pub fn encode(&self) -> Vec<u8> {
+            serde_columnar::to_vec(&self).unwrap()
+        }
     }
 }
 
