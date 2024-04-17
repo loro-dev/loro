@@ -59,17 +59,22 @@ fn mov() {
 
 #[allow(unused)]
 fn create() {
-    let size = 10000;
+    let size = 100000;
     let loro = LoroDoc::default();
     let tree = loro.get_tree("tree");
     for _ in 0..size {
         loro.with_txn(|txn| tree.create_with_txn(txn, None, 0))
             .unwrap();
     }
+    println!("encode snapshot size {:?}\n", loro.export_snapshot().len());
+    println!(
+        "encode updates size {:?}",
+        loro.export_from(&Default::default()).len()
+    );
 }
 
 fn main() {
     let s = Instant::now();
-    mov();
+    create();
     println!("{} ms", s.elapsed().as_millis());
 }

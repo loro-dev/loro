@@ -105,7 +105,6 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             .then_with(|| a.peer_idx.cmp(&b.peer_idx))
             .then_with(|| a.lamport.cmp(&b.lamport))
     });
-
     let (encoded_ops, del_starts) = encode_ops(
         &ops,
         arena,
@@ -550,10 +549,9 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         &container_idx2index,
     );
 
-    let positions = position_register.into_iter().sorted_unstable().collect();
-    let mut position_register = ValueRegister::from_existing(positions);
-
     let ops: Vec<TempOp> = calc_sorted_ops_for_snapshot(origin_ops, pos_mapping_heap);
+    let positions: Vec<_> = position_register.into_iter().sorted_unstable().collect();
+    let mut position_register = ValueRegister::from_existing(positions);
 
     let (encoded_ops, del_starts) = encode_ops(
         &ops,
@@ -1082,8 +1080,8 @@ mod encode {
         use fxhash::FxHashMap;
 
         pub struct ValueRegister<T> {
-            map_value_to_index: FxHashMap<T, usize>,
-            vec: Vec<T>,
+            pub map_value_to_index: FxHashMap<T, usize>,
+            pub vec: Vec<T>,
         }
 
         impl<T: std::hash::Hash + Clone + PartialEq + Eq> ValueRegister<T> {
@@ -1189,7 +1187,7 @@ mod encode {
             }
             crate::op::InnerContent::Tree(op) => {
                 if let Some(position) = &op.position {
-                    register_position.insert(&position.as_bytes());
+                    register_position.insert(position.as_bytes_without_terminated());
                     0
                 } else {
                     -1
