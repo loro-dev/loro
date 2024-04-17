@@ -1089,7 +1089,7 @@ impl DocState {
         if let Some(id) = pos.id {
             match state {
                 State::ListState(s) => s.get_index_of_id(id),
-                State::RichtextState(s) => s.get_index_of_id(id),
+                State::RichtextState(s) => s.get_event_index_of_id(id),
                 State::MapState(_) | State::TreeState(_) => {
                     unreachable!()
                 }
