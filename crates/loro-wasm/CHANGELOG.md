@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.14.4
+
+### Patch Changes
+
+- 598d97e: ### 🚜 Refactor
+
+  - Refine the TS Type of Awareness
+  - Parse Uint8array to LoroValue::Binary (#320)
+
+  ### 📚 Documentation
+
+  - Update how to publish new npm pkgs
+
 ## 0.14.3
 
 ### Patch Changes
