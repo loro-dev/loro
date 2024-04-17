@@ -534,7 +534,7 @@ impl TreeState {
             trees: FxHashMap::default(),
             children: Default::default(),
             #[cfg(feature = "tree_jitter")]
-            rng: rand::rngs::StdRng::from_entropy(),
+            rng: rand::rngs::StdRng::seed_from_u64(idx.to_index() as u64),
         }
     }
 

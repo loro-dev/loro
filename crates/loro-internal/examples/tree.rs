@@ -75,6 +75,6 @@ fn create() {
 
 fn main() {
     let s = Instant::now();
-    create();
+    mov();
     println!("{} ms", s.elapsed().as_millis());
 }
