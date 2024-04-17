@@ -6,6 +6,8 @@ use itertools::Itertools;
 use loro_common::{
     ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
 };
+#[cfg(feature = "tree_jitter")]
+use rand::SeedableRng;
 use rle::HasLength;
 use serde::Serialize;
 use std::collections::VecDeque;
