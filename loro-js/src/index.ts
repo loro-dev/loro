@@ -413,7 +413,7 @@ declare module "loro-wasm" {
   }
 
   interface AwarenessWasm<
-    T = unknown,
+    T extends Value = Value,
   > {
     getState(peer: PeerID): T | undefined;
     getTimestamp(peer: PeerID): number | undefined;

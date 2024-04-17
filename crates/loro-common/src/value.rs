@@ -429,6 +429,14 @@ pub mod wasm {
                 }
 
                 LoroValue::List(Arc::new(list))
+            } else if js_value.is_instance_of::<Uint8Array>() {
+                let array = js_value.unchecked_into::<Uint8Array>();
+                let mut binary = Vec::new();
+                for i in 0..array.length() {
+                    binary.push(array.get_index(i));
+                }
+
+                LoroValue::Binary(Arc::new(binary))
             } else if js_value.is_object() {
                 let object = js_value.unchecked_into::<Object>();
                 let mut map = FxHashMap::default();
@@ -440,7 +448,7 @@ pub mod wasm {
                     );
                 }
 
-                map.into()
+                LoroValue::Map(Arc::new(map))
             } else {
                 unreachable!()
             }
