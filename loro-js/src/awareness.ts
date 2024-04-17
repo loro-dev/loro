@@ -1,4 +1,4 @@
-import { AwarenessWasm, PeerID } from "loro-wasm";
+import { AwarenessWasm, PeerID, Value } from "loro-wasm";
 
 export type AwarenessListener = (
   arg: { updated: PeerID[]; added: PeerID[]; removed: PeerID[] },
@@ -11,7 +11,7 @@ export type AwarenessListener = (
  * If we don't receive a state update from a peer within the timeout, we will remove their state.
  * The timeout is in milliseconds. This can be used to handle the off-line state of a peer.
  */
-export class Awareness<T> {
+export class Awareness<T extends Value = Value> {
   inner: AwarenessWasm<T>;
   private peer: PeerID;
   private timer: number | undefined;
