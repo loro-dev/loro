@@ -406,7 +406,7 @@ declare module "loro-wasm" {
      */
     readonly data: LoroMap<T>;
     createNode(index?: number): LoroTreeNode<T>;
-    moveTo(parent?: TreeID, index?: number): void;
+    move(parent?: TreeID, index?: number): void;
     parent(): LoroTreeNode | undefined;
     children(): Array<LoroTreeNode<T>>;
   }
