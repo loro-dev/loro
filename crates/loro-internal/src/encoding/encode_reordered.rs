@@ -1080,8 +1080,8 @@ mod encode {
         use fxhash::FxHashMap;
 
         pub struct ValueRegister<T> {
-            pub map_value_to_index: FxHashMap<T, usize>,
-            pub vec: Vec<T>,
+            map_value_to_index: FxHashMap<T, usize>,
+            vec: Vec<T>,
         }
 
         impl<T: std::hash::Hash + Clone + PartialEq + Eq> ValueRegister<T> {
@@ -1115,6 +1115,10 @@ mod encode {
                     self.map_value_to_index.insert(key.clone(), idx);
                     idx
                 }
+            }
+
+            pub fn get(&self, key: &T) -> Option<usize> {
+                self.map_value_to_index.get(key).copied()
             }
 
             pub fn contains(&self, key: &T) -> bool {
@@ -1660,7 +1664,7 @@ mod value {
         ) -> Self {
             let position = if let Some(position) = &op.position {
                 let bytes = position.as_bytes_without_terminated();
-                register_position.register(&bytes)
+                register_position.get(&bytes).unwrap()
             } else {
                 debug_assert!(op.parent.is_some_and(|x| TreeID::is_deleted_root(&x)));
                 // placeholder
