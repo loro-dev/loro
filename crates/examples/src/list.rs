@@ -1,12 +1,14 @@
+use loro::{LoroList, LoroMovableList};
+
 pub trait ListTrait {
     fn insert_num(&mut self, index: usize, value: i32);
     fn delete_num(&mut self, index: usize);
-    fn len(&self) -> usize;
+    fn length(&self) -> usize;
 }
 
 pub fn append_n(list: &mut dyn ListTrait, n: usize) {
     for i in 0..n {
-        list.insert_num(list.len(), i as i32);
+        list.insert_num(list.length(), i as i32);
     }
 }
 
@@ -30,7 +32,7 @@ pub fn random_insert(list: &mut dyn ListTrait, n: usize, mut seed: u64) {
     for i in 0..n {
         let (rand, s) = lcg(seed);
         seed = s;
-        let pos = (rand * list.len() as f64).round() as usize;
+        let pos = (rand * list.length() as f64).round() as usize;
         list.insert_num(pos, i as i32);
     }
 }
@@ -39,7 +41,35 @@ pub fn random_delete(list: &mut dyn ListTrait, n: usize, mut seed: u64) {
     for _ in 0..n {
         let (rand, s) = lcg(seed);
         seed = s;
-        let pos = (rand * list.len() as f64) as usize;
+        let pos = (rand * list.length() as f64) as usize;
         list.delete_num(pos);
+    }
+}
+
+impl ListTrait for LoroList {
+    fn insert_num(&mut self, index: usize, value: i32) {
+        self.insert(index, value).unwrap();
+    }
+
+    fn delete_num(&mut self, index: usize) {
+        self.delete(index, 1).unwrap();
+    }
+
+    fn length(&self) -> usize {
+        self.len()
+    }
+}
+
+impl ListTrait for LoroMovableList {
+    fn insert_num(&mut self, index: usize, value: i32) {
+        self.insert(index, value).unwrap();
+    }
+
+    fn delete_num(&mut self, index: usize) {
+        self.delete(index, 1).unwrap();
+    }
+
+    fn length(&self) -> usize {
+        self.len()
     }
 }
