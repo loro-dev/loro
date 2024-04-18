@@ -267,4 +267,14 @@ describe("richtext", () => {
       expect(ans.update?.containerId()).toBe("cid:root-text:Text");
     }
   });
+
+  it("Styles should not affect cursor pos", () => {
+    const doc = new Loro();
+    const text = doc.getText("text");
+    text.insert(0, "Hello");
+    const pos3 = text.getCursor(3);
+    text.mark({ start: 0, end: 2 }, "bold", true);
+    const ans = doc.getCursorPos(pos3!);
+    expect(ans.offset).toBe(3);
+  });
 });
