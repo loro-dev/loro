@@ -408,7 +408,7 @@ pub mod wasm {
 
     impl From<JsValue> for LoroValue {
         fn from(js_value: JsValue) -> Self {
-            if js_value.is_null() {
+            if js_value.is_null() || js_value.is_undefined() {
                 LoroValue::Null
             } else if js_value.as_bool().is_some() {
                 LoroValue::Bool(js_value.as_bool().unwrap())
@@ -450,7 +450,7 @@ pub mod wasm {
 
                 LoroValue::Map(Arc::new(map))
             } else {
-                unreachable!()
+                panic!("Fail to convert JsValue {:?} to LoroValue ", js_value)
             }
         }
     }
