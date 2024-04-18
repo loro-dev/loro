@@ -975,7 +975,9 @@ impl LoroDoc {
                             },
                         })
                     }
-                    ContainerType::Map | ContainerType::Tree => unreachable!(),
+                    ContainerType::Map | ContainerType::Tree | ContainerType::Unknown(_) => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -986,7 +988,7 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
     let start_vv = oplog.dag.frontiers_to_vv(&id.into()).unwrap();
     for change in oplog.iter_changes_causally_rev(&start_vv, &oplog.dag.vv) {
         for op in change.ops.iter().rev() {
-            if op.container != idx {
+            if op.container.as_idx().unwrap() != &idx {
                 continue;
             }
 

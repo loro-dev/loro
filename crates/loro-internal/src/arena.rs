@@ -250,6 +250,7 @@ impl SharedArena {
         _lamport: Lamport,
         container: ContainerIdx,
     ) -> Op {
+        let container = container.into();
         match content {
             crate::op::RawOpContent::Map(MapSet { key, value }) => Op {
                 counter,

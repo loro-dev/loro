@@ -205,6 +205,7 @@ impl BasicHandler {
                 ContainerType::Text => Handler::Text(TextHandler {
                     inner: handler.into(),
                 }),
+                ContainerType::Unknown(_) => unreachable!(),
             })
         }
     }
@@ -833,6 +834,7 @@ impl Handler {
             ContainerType::Text => Self::Text(TextHandler {
                 inner: handler.into(),
             }),
+            ContainerType::Unknown(_) => unreachable!(),
         }
     }
 
@@ -842,6 +844,7 @@ impl Handler {
             ContainerType::Map => Self::Map(MapHandler::new_detached()),
             ContainerType::List => Self::List(ListHandler::new_detached()),
             ContainerType::Tree => Self::Tree(TreeHandler::new_detached()),
+            ContainerType::Unknown(_) => unreachable!(),
         }
     }
 

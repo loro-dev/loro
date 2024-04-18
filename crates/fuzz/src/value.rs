@@ -25,6 +25,7 @@ impl Value {
             ContainerType::Tree => {
                 Value::Container(ContainerTracker::Tree(TreeTracker(Vec::new())))
             }
+            ContainerType::Unknown => unreachable!(),
         }
     }
 }
@@ -334,6 +335,7 @@ impl ContainerTracker {
                 ContainerType::Tree => {
                     value.as_tree_mut().unwrap().apply_diff(diff);
                 }
+                ContainerType::Unknown => unreachable!(),
             }
         }
     }

@@ -58,6 +58,7 @@ pub mod idx {
                 ContainerType::List => 1,
                 ContainerType::Text => 2,
                 ContainerType::Tree => 3,
+                ContainerType::Unknown(_) => unreachable!(),
             } << 28;
 
             Self(prefix | index)

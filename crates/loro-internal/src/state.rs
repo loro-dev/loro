@@ -474,9 +474,10 @@ impl DocState {
     pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
         // set parent first, `MapContainer` will only be created for TreeID that does not contain
         self.set_container_parent_by_op(raw_op);
-        let state = get_or_create!(self, op.container);
+        let idx = *op.container.as_idx().unwrap();
+        let state = get_or_create!(self, idx);
         if self.in_txn {
-            self.changed_idx_in_txn.insert(op.container);
+            self.changed_idx_in_txn.insert(idx);
         }
         state.apply_local_op(raw_op, op)
     }
@@ -537,6 +538,7 @@ impl DocState {
                 let child_idx = self.arena.register_container(&container_id);
                 self.arena.set_parent(child_idx, Some(container));
             }
+            RawOpContent::Unknown { .. } => unreachable!(),
         }
     }
 
@@ -1080,6 +1082,7 @@ impl DocState {
                 self.config.text_style_config.clone(),
             ))),
             ContainerType::Tree => State::TreeState(Box::new(TreeState::new(idx))),
+            ContainerType::Unknown(_) => unreachable!(),
         }
     }
 

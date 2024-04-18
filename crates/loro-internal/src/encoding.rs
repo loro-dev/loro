@@ -1,4 +1,5 @@
 mod encode_reordered;
+mod forward_encode;
 
 use crate::op::OpWithId;
 use crate::version::Frontiers;

@@ -24,18 +24,22 @@ pub(crate) struct OpGroups {
 impl OpGroups {
     pub(crate) fn insert_by_change(&mut self, change: &Change) {
         for op in change.ops.iter() {
-            if matches!(op.content, InnerContent::List(_)) {
+            if matches!(
+                op.content,
+                InnerContent::List(_) | InnerContent::Unknown { .. }
+            ) {
                 continue;
             }
-            let container_idx = op.container;
+            let container = *op.container.as_idx().unwrap();
             let rich_op = RichOp::new_by_change(change, op);
             let manager = self
                 .groups
-                .entry(container_idx)
+                .entry(container)
                 .or_insert_with(|| match op.content {
                     InnerContent::Map(_) => OpGroup::Map(MapOpGroup::default()),
                     InnerContent::List(_) => unreachable!(),
                     InnerContent::Tree(_) => OpGroup::Tree(TreeOpGroup::default()),
+                    InnerContent::Unknown { .. } => unreachable!(),
                 });
             manager.insert(&rich_op)
         }

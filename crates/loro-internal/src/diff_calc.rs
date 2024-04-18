@@ -21,7 +21,7 @@ use crate::{
     cursor::AbsolutePosition,
     delta::{Delta, MapDelta, MapValue},
     event::InternalDiff,
-    op::{RichOp, SliceRange, SliceRanges},
+    op::{OpContainer, RichOp, SliceRange, SliceRanges},
     span::{HasId, HasLamport},
     version::Frontiers,
     InternalString, VersionVector,
@@ -122,7 +122,11 @@ impl DiffCalculator {
                 let mut visited = FxHashSet::default();
                 for mut op in &change.ops.vec()[iter_start..] {
                     if let Some(filter) = container_filter {
-                        if !filter(op.container) {
+                        if let OpContainer::Idx(idx) = op.container {
+                            if !filter(idx) {
+                                continue;
+                            }
+                        } else {
                             continue;
                         }
                     }
@@ -140,28 +144,26 @@ impl DiffCalculator {
                     }
                     let vv = &mut vv.borrow_mut();
                     vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
-                    let depth = oplog.arena.get_depth(op.container);
-                    let (old_depth, calculator) = {
-                        let idx = op.container;
-                        self.get_or_create_calc(idx, depth)
-                    };
+                    let container_idx = *op.container.as_idx().unwrap();
+                    let depth = oplog.arena.get_depth(container_idx);
+                    let (old_depth, calculator) = self.get_or_create_calc(container_idx, depth);
                     // checkout use the same diff_calculator, the depth of calculator is not updated
                     // That may cause the container to be considered deleted
                     if *old_depth != depth {
                         *old_depth = depth;
                     }
 
-                    if !started_set.contains(&op.container) {
-                        started_set.insert(op.container);
+                    if !started_set.contains(&container_idx) {
+                        started_set.insert(container_idx);
                         calculator.start_tracking(oplog, &lca);
                     }
 
-                    if visited.contains(&op.container) {
+                    if visited.contains(&container_idx) {
                         // don't checkout if we have already checked out this container in this round
                         calculator.apply_change(oplog, RichOp::new_by_change(change, op), None);
                     } else {
                         calculator.apply_change(oplog, RichOp::new_by_change(change, op), Some(vv));
-                        visited.insert(op.container);
+                        visited.insert(container_idx);
                     }
                 }
             }
@@ -179,12 +181,16 @@ impl DiffCalculator {
                 oplog.for_each_change_within(before, after, |change| {
                     for op in change.ops.iter() {
                         if let Some(filter) = container_filter {
-                            if !filter(op.container) {
+                            if let OpContainer::Idx(idx) = op.container {
+                                if !filter(idx) {
+                                    continue;
+                                }
+                            } else {
                                 continue;
                             }
                         }
 
-                        set.insert(op.container);
+                        set.insert(*op.container.as_idx().unwrap());
                     }
                 });
                 Some(set)
@@ -308,6 +314,7 @@ impl DiffCalculator {
                     depth,
                     ContainerDiffCalculator::Tree(TreeDiffCalculator::new(idx)),
                 ),
+                crate::ContainerType::Unknown(_) => unreachable!(),
             })
     }
 }
@@ -515,8 +522,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                 }
                 _ => unreachable!(),
             },
-            crate::op::InnerContent::Map(_) => unreachable!(),
-            crate::op::InnerContent::Tree(_) => unreachable!(),
+            _ => unreachable!(),
         }
     }
 
@@ -686,8 +692,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 }
                 crate::container::list::list_op::InnerListOp::StyleEnd => {}
             },
-            crate::op::InnerContent::Map(_) => unreachable!(),
-            crate::op::InnerContent::Tree(_) => unreachable!(),
+            _ => unreachable!(),
         }
     }
 

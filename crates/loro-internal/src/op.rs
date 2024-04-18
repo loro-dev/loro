@@ -21,8 +21,26 @@ pub use content::*;
 #[derive(Debug, Clone)]
 pub struct Op {
     pub(crate) counter: Counter,
-    pub(crate) container: ContainerIdx,
+    pub(crate) container: OpContainer,
     pub(crate) content: InnerContent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, EnumAsInner)]
+pub enum OpContainer {
+    Idx(ContainerIdx),
+    ID(ContainerID),
+}
+
+impl From<ContainerIdx> for OpContainer {
+    fn from(idx: ContainerIdx) -> Self {
+        OpContainer::Idx(idx)
+    }
+}
+
+impl From<ContainerID> for OpContainer {
+    fn from(id: ContainerID) -> Self {
+        OpContainer::ID(id)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -95,7 +113,7 @@ pub struct RichOp<'a> {
 impl Op {
     #[inline]
     #[allow(unused)]
-    pub(crate) fn new(id: ID, content: InnerContent, container: ContainerIdx) -> Self {
+    pub(crate) fn new(id: ID, content: InnerContent, container: OpContainer) -> Self {
         Op {
             counter: id.counter,
             content,

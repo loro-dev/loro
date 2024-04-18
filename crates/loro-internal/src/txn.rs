@@ -524,6 +524,7 @@ fn change_to_diff(
             }
         }
         'outer: {
+            let idx = *op.container.as_idx().unwrap();
             match hint {
                 EventHint::Mark { start, end, style } => {
                     let mut meta = StyleMeta::default();
@@ -539,7 +540,7 @@ fn change_to_diff(
                         .retain(start as usize)
                         .retain_with_meta((end - start) as usize, meta);
                     ans.push(TxnContainerDiff {
-                        idx: op.container,
+                        idx,
                         diff: Diff::Text(diff),
                     });
                 }
@@ -554,7 +555,7 @@ fn change_to_diff(
                         delta = delta.insert_with_meta(slice.clone(), styles.clone());
                     }
                     ans.push(TxnContainerDiff {
-                        idx: op.container,
+                        idx,
                         diff: Diff::Text(delta),
                     })
                 }
@@ -564,7 +565,7 @@ fn change_to_diff(
                     // we don't need to iter over ops here, because we already
                     // know what the events should be
                 } => ans.push(TxnContainerDiff {
-                    idx: op.container,
+                    idx,
                     diff: Diff::Text(
                         Delta::new()
                             .retain(span.start() as usize)
@@ -580,19 +581,19 @@ fn change_to_diff(
                             .map(|v| ValueOrHandler::from_value(v, arena, txn, state))
                             .collect::<Vec<_>>();
                         ans.push(TxnContainerDiff {
-                            idx: op.container,
+                            idx,
                             diff: Diff::List(Delta::new().retain(*pos).insert(values)),
                         })
                     }
                 }
                 EventHint::DeleteList(s) => {
                     ans.push(TxnContainerDiff {
-                        idx: op.container,
+                        idx,
                         diff: Diff::List(Delta::new().retain(s.start() as usize).delete(s.len())),
                     });
                 }
                 EventHint::Map { key, value } => ans.push(TxnContainerDiff {
-                    idx: op.container,
+                    idx,
                     diff: Diff::Map(ResolvedMapDelta::new().with_entry(
                         key,
                         ResolvedMapValue {
@@ -605,7 +606,7 @@ fn change_to_diff(
                     let mut diff = TreeDiff::default();
                     diff.push(tree_diff);
                     ans.push(TxnContainerDiff {
-                        idx: op.container,
+                        idx,
                         diff: Diff::Tree(diff),
                     });
                 }

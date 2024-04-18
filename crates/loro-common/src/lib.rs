@@ -126,6 +126,7 @@ pub enum ContainerType {
     Map,
     List,
     Tree,
+    Unknown(u8),
 }
 
 impl ContainerType {
@@ -142,6 +143,7 @@ impl ContainerType {
             ContainerType::List => LoroValue::List(Arc::new(Default::default())),
             ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
             ContainerType::Tree => LoroValue::List(Arc::new(Default::default())),
+            ContainerType::Unknown(_) => unreachable!(),
         }
     }
 
@@ -151,6 +153,7 @@ impl ContainerType {
             ContainerType::List => 2,
             ContainerType::Text => 3,
             ContainerType::Tree => 4,
+            ContainerType::Unknown(k) => k,
         }
     }
 
@@ -189,6 +192,7 @@ mod container {
                 ContainerType::List => "List",
                 ContainerType::Text => "Text",
                 ContainerType::Tree => "Tree",
+                ContainerType::Unknown(k) => return f.write_fmt(format_args!("Unknown({})", k)),
             })
         }
     }
@@ -287,6 +291,10 @@ mod container {
                 ContainerID::Root { container_type, .. } => *container_type,
                 ContainerID::Normal { container_type, .. } => *container_type,
             }
+        }
+
+        pub fn is_unknown(&self) -> bool {
+            matches!(self.container_type(), ContainerType::Unknown(_))
         }
     }
 
