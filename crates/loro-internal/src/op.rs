@@ -50,6 +50,13 @@ impl OpContainer {
             OpContainer::ID(id) => id.container_type(),
         }
     }
+
+    pub fn is_unknown(&self) -> bool {
+        match self {
+            OpContainer::Idx(_) => false,
+            OpContainer::ID(id) => id.is_unknown(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

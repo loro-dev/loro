@@ -121,13 +121,14 @@ impl DiffCalculator {
                     .unwrap_or_else(|e| e);
                 let mut visited = FxHashSet::default();
                 for mut op in &change.ops.vec()[iter_start..] {
+                    if op.container.is_unknown() {
+                        continue;
+                    }
                     if let Some(filter) = container_filter {
                         if let OpContainer::Idx(idx) = op.container {
                             if !filter(idx) {
                                 continue;
                             }
-                        } else {
-                            continue;
                         }
                     }
 
