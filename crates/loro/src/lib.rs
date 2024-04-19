@@ -1247,6 +1247,7 @@ impl Container {
             ContainerType::Map => Container::Map(LoroMap::new()),
             ContainerType::Text => Container::Text(LoroText::new()),
             ContainerType::Tree => Container::Tree(LoroTree::new()),
+            ContainerType::Unknown(_) => unreachable!(),
         }
     }
 

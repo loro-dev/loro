@@ -163,6 +163,7 @@ impl Actor {
                     ActionExecutor::TreeActor(TreeActor::new(self.loro.clone())),
                 );
             }
+            ContainerType::Unknown(_) => unreachable!(),
         }
     }
 }

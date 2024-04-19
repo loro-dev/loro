@@ -14,7 +14,7 @@ use serde_columnar::{columnar, ColumnarError};
 use crate::{
     arena::SharedArena,
     change::{Change, Lamport, Timestamp},
-    container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
+    container::{list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
     encoding::{
         encode_reordered::value::{ValueKind, ValueWriter},
         StateSnapshotDecodeContext,
@@ -65,12 +65,12 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let ExtractedContainer {
         containers,
         cid_idx_pairs: _,
-        idx_to_index: container_idx2index,
+        container_to_index: container2index,
     } = extract_containers_in_order(
         &mut diff_changes
             .iter()
             .flat_map(|x| x.ops.iter())
-            .map(|x| x.container),
+            .map(|x| x.container.clone()),
         &oplog.arena,
     );
     let mut cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
@@ -84,7 +84,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &mut peer_register,
         &mut |op| ops.push(op),
         &mut key_register,
-        &container_idx2index,
+        &container2index,
     );
 
     ops.sort_by(move |a, b| {
@@ -375,8 +375,9 @@ fn extract_ops(
         }
         let peer = peer_ids.peer_ids[peer_idx as usize];
         let cid = &containers[container_index as usize];
-        let c_idx = arena.register_container(cid);
+
         let kind = ValueKind::from_u8(value_type).expect("Unknown value type");
+
         let content = decode_op(
             cid,
             kind,
@@ -391,9 +392,16 @@ fn extract_ops(
             ID::new(peer, counter),
         )?;
 
+        let container = if cid.is_unknown() {
+            OpContainer::ID(cid.clone())
+        } else {
+            let c_idx = arena.register_container(cid);
+            OpContainer::Idx(c_idx)
+        };
+
         let op = Op {
             counter,
-            container: c_idx,
+            container,
             content,
         };
 
@@ -429,13 +437,13 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     let ExtractedContainer {
         containers,
         cid_idx_pairs: c_pairs,
-        idx_to_index: container_idx2index,
+        container_to_index: container_idx2index,
     } = extract_containers_in_order(
-        &mut state.iter().map(|x| x.container_idx()).chain(
+        &mut state.iter().map(|x| x.container_idx().into()).chain(
             diff_changes
                 .iter()
                 .flat_map(|x| x.ops.iter())
-                .map(|x| x.container),
+                .map(|x| x.container.clone()),
         ),
         &oplog.arena,
     );
@@ -452,9 +460,19 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
 
     let mut states = Vec::new();
     let mut state_bytes = Vec::new();
-    for (_, c_idx) in c_pairs.iter() {
-        let container_index = *container_idx2index.get(c_idx).unwrap() as u32;
-        let state = match state.get_state(*c_idx) {
+    for (_, container) in c_pairs.iter() {
+        let container_index = *container_idx2index.get(container).unwrap() as u32;
+
+        let OpContainer::Idx(idx) = container else {
+            states.push(EncodedStateInfo {
+                container_index,
+                op_len: 0,
+                state_bytes_len: 0,
+            });
+            continue;
+        };
+
+        let state = match state.get_state(*idx) {
             Some(state) if !state.is_state_empty() => state,
             _ => {
                 states.push(EncodedStateInfo {
@@ -798,7 +816,15 @@ fn decode_snapshot_states(
         }
 
         let container_id = &containers[container_index as usize];
-        let idx = state.arena.register_container(container_id);
+
+        // TODO: maybe can parse unknown container
+        let container = if container_id.is_unknown() {
+            OpContainer::ID(container_id.clone())
+        } else {
+            let idx = state.arena.register_container(container_id);
+            OpContainer::Idx(idx)
+        };
+
         if state_blob_arena.len() < state_blob_index + state_bytes_len as usize {
             return Err(LoroError::DecodeDataCorruptionError);
         }
@@ -813,7 +839,7 @@ fn decode_snapshot_states(
 
         let mut next_ops = ops[ops_index..]
             .iter()
-            .skip_while(|x| x.op.container != idx)
+            .skip_while(|x| x.op.container != container)
             .take_while(|x| {
                 if op_len == 0 {
                     false
@@ -851,7 +877,7 @@ mod encode {
         change::{Change, Lamport},
         container::idx::ContainerIdx,
         encoding::encode_reordered::value::{EncodedTreeMove, ValueWriter},
-        op::Op,
+        op::{Op, OpContainer},
         InternalString,
     };
 
@@ -985,7 +1011,7 @@ mod encode {
         peer_register: &mut ValueRegister<u64>,
         push_op: &mut impl FnMut(TempOp<'a>),
         key_register: &mut ValueRegister<InternalString>,
-        container_idx2index: &FxHashMap<ContainerIdx, usize>,
+        container_idx2index: &FxHashMap<OpContainer, usize>,
     ) -> Vec<EncodedChange> {
         let mut changes: Vec<EncodedChange> = Vec::with_capacity(diff_changes.len());
         for change in diff_changes.iter() {
@@ -1376,8 +1402,8 @@ type PeerIdx = usize;
 
 struct ExtractedContainer {
     containers: Vec<ContainerID>,
-    cid_idx_pairs: Vec<(ContainerID, ContainerIdx)>,
-    idx_to_index: FxHashMap<ContainerIdx, usize>,
+    cid_idx_pairs: Vec<(ContainerID, OpContainer)>,
+    container_to_index: FxHashMap<OpContainer, usize>,
 }
 
 /// Extract containers from oplog changes.
@@ -1401,7 +1427,7 @@ fn extract_containers_in_order(
         } else {
             c.as_id().unwrap().clone()
         };
-        containers.push((id, c));
+        containers.push((id, c.clone()));
     }
 
     containers.sort_unstable_by(|(a, _), (b, _)| {
@@ -1429,13 +1455,13 @@ fn extract_containers_in_order(
     let container_idx2index = containers
         .iter()
         .enumerate()
-        .map(|(i, (_, c))| (*c, i))
+        .map(|(i, (_, c))| (c.clone(), i))
         .collect();
 
     ExtractedContainer {
         containers: containers.iter().map(|x| x.0.clone()).collect(),
         cid_idx_pairs: containers,
-        idx_to_index: container_idx2index,
+        container_to_index: container_idx2index,
     }
 }
 

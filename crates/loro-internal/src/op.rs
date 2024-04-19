@@ -6,7 +6,7 @@ use crate::{
 };
 use crate::{delta::DeltaValue, LoroValue};
 use enum_as_inner::EnumAsInner;
-use loro_common::{CounterSpan, IdFull, IdSpan};
+use loro_common::{ContainerType, CounterSpan, IdFull, IdSpan};
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -40,6 +40,15 @@ impl From<ContainerIdx> for OpContainer {
 impl From<ContainerID> for OpContainer {
     fn from(id: ContainerID) -> Self {
         OpContainer::ID(id)
+    }
+}
+
+impl OpContainer {
+    pub fn get_type(&self) -> ContainerType {
+        match self {
+            OpContainer::Idx(idx) => idx.get_type(),
+            OpContainer::ID(id) => id.container_type(),
+        }
     }
 }
 
@@ -158,7 +167,7 @@ impl Sliceable for Op {
         Op {
             counter: (self.counter + from as Counter),
             content,
-            container: self.container,
+            container: self.container.clone(),
         }
     }
 }

@@ -128,6 +128,7 @@ impl<'a> HasLength for RawOpContent<'a> {
             RawOpContent::Map(x) => x.content_len(),
             RawOpContent::List(x) => x.content_len(),
             RawOpContent::Tree(x) => x.content_len(),
+            RawOpContent::Unknown { op_len, .. } => *op_len,
         }
     }
 }
@@ -138,6 +139,7 @@ impl<'a> Sliceable for RawOpContent<'a> {
             RawOpContent::Map(x) => RawOpContent::Map(x.slice(from, to)),
             RawOpContent::List(x) => RawOpContent::List(x.slice(from, to)),
             RawOpContent::Tree(x) => RawOpContent::Tree(x.slice(from, to)),
+            RawOpContent::Unknown { .. } => unreachable!(),
         }
     }
 }
@@ -171,6 +173,7 @@ impl<'a> Mergable for RawOpContent<'a> {
                 RawOpContent::Tree(y) => x.merge(y, &()),
                 _ => unreachable!(),
             },
+            RawOpContent::Unknown { .. } => unreachable!(),
         }
     }
 }

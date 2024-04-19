@@ -102,8 +102,7 @@ impl ContainerState for MapState {
                 );
                 Ok(())
             }
-            RawOpContent::List(_) => unreachable!(),
-            RawOpContent::Tree(_) => unreachable!(),
+            _ => unreachable!(),
         }
     }
 

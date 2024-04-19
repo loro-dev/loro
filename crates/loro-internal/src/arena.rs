@@ -317,6 +317,11 @@ impl SharedArena {
                 container,
                 content: crate::op::InnerContent::Tree(tree),
             },
+            crate::op::RawOpContent::Unknown { op_len, data } => Op {
+                counter,
+                container,
+                content: crate::op::InnerContent::Unknown { op_len, data },
+            },
         }
     }
 

@@ -27,6 +27,7 @@ impl ActionInner {
             ContainerType::List => Self::List(ListAction::from_generic_action(action)),
             ContainerType::Text => Self::Text(TextAction::from_generic_action(action)),
             ContainerType::Tree => Self::Tree(TreeAction::from_generic_action(action)),
+            ContainerType::Unknown(_) => unreachable!(),
         }
     }
 }
