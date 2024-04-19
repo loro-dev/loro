@@ -1,0 +1,20 @@
+[package]
+name = "delta"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+arrayvec = "0.7.4"
+generic-btree = { version = "0.8.4" }
+tracing = "0.1.40"
+
+[dev-dependencies]
+criterion = { version = "0.4", features = ["html_reports"] }
+rand = { version = "0.8.5" }
+
+
+[[bench]]
+name = "rope"
+harness = false

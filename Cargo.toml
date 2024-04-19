@@ -9,6 +9,7 @@ members = [
     "crates/loro-preload",
     "crates/loro-wasm",
     "crates/fuzz",
+    "crates/delta",
 ]
 resolver = "2"
 

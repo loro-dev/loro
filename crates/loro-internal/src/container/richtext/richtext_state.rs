@@ -1497,7 +1497,7 @@ impl RichtextState {
 
         // Find the start and the end of the range, and entity index of left cursor
         let (left, right, mut entity_index) = if pos == 0 {
-            let left = self.tree.start_cursor();
+            let left = self.tree.start_cursor().unwrap();
             let mut right = left;
             let mut elem = self.tree.get_elem(right.leaf).unwrap();
             let entity_index = 0;
@@ -1537,7 +1537,7 @@ impl RichtextState {
 
             match self.tree.next_elem(q.cursor) {
                 // If next is None, we know the range is empty, return directly
-                None => return (Some(self.tree.end_cursor()), entity_index),
+                None => return (self.tree.end_cursor(), entity_index),
                 Some(x) => {
                     assert_eq!(right.offset, elem.rle_len());
                     right = x;
@@ -1595,7 +1595,7 @@ impl RichtextState {
 
             iter = match self.tree.next_elem(iter) {
                 Some(x) => x,
-                None => self.tree.end_cursor(),
+                None => self.tree.end_cursor().unwrap(),
             };
             entity_index += 1;
         }

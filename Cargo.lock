@@ -57,6 +57,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayvec"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
+
+[[package]]
 name = "arref"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -435,6 +441,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "delta"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "criterion",
+ "generic-btree",
+ "rand",
+ "tracing",
+]
+
+[[package]]
 name = "derive_arbitrary"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -581,9 +598,9 @@ dependencies = [
 
 [[package]]
 name = "generic-btree"
-version = "0.8.2"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3563af09b8ffaa7cc5541d9e167b90c429d89791e88887739680e1fcb4f69d01"
+checksum = "d6fdb589b8442d9b084520eb69ee9266101d94f3d52a24a63a0b7ea157edfd6a"
 dependencies = [
  "fxhash",
  "heapless",
