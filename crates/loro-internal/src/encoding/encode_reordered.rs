@@ -1654,7 +1654,7 @@ mod value {
         MarkStart = 12,
         TreeMove = 13,
         Binary = 14,
-        Unknown = 65536,
+        Unknown = 255,
     }
 
     impl num_traits::FromPrimitive for ValueKind {
@@ -1754,7 +1754,7 @@ mod value {
                 ValueKind::MarkStart => ValueKind::MarkStart as u8,
                 ValueKind::TreeMove => ValueKind::TreeMove as u8,
                 ValueKind::Binary => ValueKind::Binary as u8,
-                ValueKind::Unknown => panic!("Unknown value kind"),
+                ValueKind::Unknown => ValueKind::Unknown as u8,
             })
         }
     }
