@@ -1,7 +1,7 @@
 use append_only_bytes::BytesSlice;
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{
-    rle::{HasLength, Mergeable, Sliceable},
+    rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, Cursor,
 };
 use loro_common::{Counter, IdFull, IdLpSpan, IdSpan, Lamport, LoroValue, ID};
@@ -555,6 +555,21 @@ impl Sliceable for RichtextStateChunk {
     }
 }
 
+impl TryInsert for RichtextStateChunk {
+    fn try_insert(&mut self, pos: usize, elem: Self) -> Result<(), Self>
+    where
+        Self: Sized,
+    {
+        Err(elem)
+    }
+}
+
+impl CanRemove for RichtextStateChunk {
+    fn can_remove(&self) -> bool {
+        self.rle_len() == 0
+    }
+}
+
 pub(crate) fn unicode_to_utf8_index(s: &str, unicode_index: usize) -> Option<usize> {
     let mut current_unicode_index = 0;
     for (byte_index, _) in s.char_indices() {
@@ -716,6 +731,12 @@ impl Sub for PosCache {
             utf16_len: self.utf16_len - rhs.utf16_len,
             entity_len: self.entity_len - rhs.entity_len,
         }
+    }
+}
+
+impl CanRemove for PosCache {
+    fn can_remove(&self) -> bool {
+        self.bytes == 0
     }
 }
 

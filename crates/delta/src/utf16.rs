@@ -1,4 +1,4 @@
-use generic_btree::rle::{HasLength, Mergeable, Sliceable};
+use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
 
 use crate::delta_trait::DeltaValue;
 
@@ -97,6 +97,25 @@ impl<S: AsRef<str> + Sliceable> Sliceable for AsUtf16Index<S> {
         Self {
             s: self.s._slice(start..end),
             utf16_len: range.len(),
+        }
+    }
+}
+
+impl<S: AsRef<str> + Sliceable + TryInsert> TryInsert for AsUtf16Index<S> {
+    fn try_insert(&mut self, pos: usize, elem: Self) -> Result<(), Self>
+    where
+        Self: Sized,
+    {
+        let start = self.convert_utf16_to_utf8(pos);
+        match self.s.try_insert(pos, elem.s) {
+            Ok(()) => {
+                self.utf16_len += elem.utf16_len;
+                Ok(())
+            }
+            Err(e) => Err(Self {
+                s: e,
+                utf16_len: elem.utf16_len,
+            }),
         }
     }
 }

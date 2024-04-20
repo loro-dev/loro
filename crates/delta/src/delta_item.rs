@@ -1,3 +1,5 @@
+use generic_btree::rle::{CanRemove, TryInsert};
+
 use super::*;
 
 impl<V: DeltaValue, Attr> HasLength for DeltaItem<V, Attr> {
@@ -83,6 +85,75 @@ impl<V: DeltaValue, Attr: Clone> Sliceable for DeltaItem<V, Attr> {
                     attr: attr.clone(),
                 }
             }
+        }
+    }
+}
+
+impl<V: DeltaValue, Attr: Clone + PartialEq> TryInsert for DeltaItem<V, Attr> {
+    fn try_insert(&mut self, pos: usize, elem: Self) -> Result<(), Self>
+    where
+        Self: Sized,
+    {
+        match (self, elem) {
+            (DeltaItem::Delete(a), DeltaItem::Delete(b)) => {
+                *a += b;
+                Ok(())
+            }
+            (
+                DeltaItem::Retain { len, attr },
+                DeltaItem::Retain {
+                    len: len_b,
+                    attr: attr_b,
+                },
+            ) => {
+                if attr == &attr_b {
+                    *len += len_b;
+                    Ok(())
+                } else {
+                    Err(DeltaItem::Retain {
+                        len: len_b,
+                        attr: attr_b,
+                    })
+                }
+            }
+            (
+                DeltaItem::Insert {
+                    value: l_value,
+                    attr: l_attr,
+                },
+                DeltaItem::Insert {
+                    value: r_value,
+                    attr: r_attr,
+                },
+            ) => {
+                if l_attr == &r_attr {
+                    match l_value.try_insert(pos, r_value) {
+                        Ok(_) => return Ok(()),
+                        Err(v) => {
+                            return Err(DeltaItem::Insert {
+                                value: v,
+                                attr: l_attr.clone(),
+                            })
+                        }
+                    }
+                }
+
+                Err(DeltaItem::Insert {
+                    value: r_value,
+                    attr: r_attr,
+                })
+            }
+            (_, a) => Err(a),
+        }
+    }
+}
+
+impl<V: DeltaValue, Attr: Clone> CanRemove for DeltaItem<V, Attr> {
+    fn can_remove(&self) -> bool {
+        match self {
+            DeltaItem::Delete(len) => *len == 0,
+            DeltaItem::Retain { len, .. } => *len == 0,
+            DeltaItem::Insert { value, .. } => value.rle_len() == 0,
         }
     }
 }

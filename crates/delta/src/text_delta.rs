@@ -1,6 +1,6 @@
 use crate::{delta_trait::DeltaValue, DeltaItem, DeltaRope};
 use arrayvec::ArrayString;
-use generic_btree::rle::{HasLength, Mergeable, Sliceable};
+use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
 
 #[cfg(test)]
 const MAX_STRING_SIZE: usize = 8;
@@ -73,6 +73,25 @@ impl TextDelta {
     }
 }
 
+impl Chunk {
+    pub fn insert(&mut self, pos: usize, s: &str) -> Result<(), ()> {
+        if self.0.len() + s.len() > MAX_STRING_SIZE {
+            return Err(());
+        }
+
+        assert!(self.0.is_char_boundary(pos));
+        let new_len = self.0.len() + s.len();
+        unsafe {
+            let ptr = self.0.as_mut_ptr().add(pos);
+            ptr.copy_to(ptr.add(s.len()), self.0.len() - pos);
+            ptr.copy_from_nonoverlapping(s.as_ptr(), s.len());
+            self.0.set_len(new_len);
+        }
+
+        Ok(())
+    }
+}
+
 impl HasLength for Chunk {
     fn rle_len(&self) -> usize {
         self.0.len()
@@ -111,6 +130,18 @@ impl Sliceable for Chunk {
         right.push_str(&self.0.as_str()[pos..]);
         self.0.truncate(pos);
         Chunk(right)
+    }
+}
+
+impl TryInsert for Chunk {
+    fn try_insert(&mut self, pos: usize, elem: Self) -> Result<(), Self>
+    where
+        Self: Sized,
+    {
+        match self.insert(pos, elem.0.as_str()) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(elem),
+        }
     }
 }
 

@@ -133,7 +133,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         let pos = self.tree.query::<LengthFinder>(&pos).unwrap();
         // This would crash if values's number is large
         self.tree
-            .insert_many_by_cursor(Some(pos.cursor), values.to_vec());
+            .insert_many_by_cursor(Some(pos.cursor), values.iter().cloned());
     }
 
     fn delete_range(&mut self, range: Range<usize>) {

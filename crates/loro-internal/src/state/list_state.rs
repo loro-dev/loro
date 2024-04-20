@@ -19,7 +19,7 @@ use crate::{
 use fxhash::FxHashMap;
 use generic_btree::{
     iter,
-    rle::{HasLength, Mergeable, Sliceable},
+    rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
 use loro_common::{IdFull, IdLpSpan, LoroResult, ID};
@@ -76,6 +76,18 @@ impl Mergeable for Elem {
 
     fn merge_left(&mut self, _left: &Self) {
         unreachable!()
+    }
+}
+
+impl TryInsert for Elem {
+    fn try_insert(&mut self, _pos: usize, _elem: Self) -> Result<(), Self> {
+        Err(_elem)
+    }
+}
+
+impl CanRemove for Elem {
+    fn can_remove(&self) -> bool {
+        false
     }
 }
 

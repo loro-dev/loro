@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use generic_btree::{
-    rle::{HasLength, Sliceable},
+    rle::{CanRemove, HasLength, Sliceable},
     BTree, BTreeTrait, Cursor, FindResult, LeafIndex, Query, SplittedLeaves,
 };
 use itertools::Itertools;
@@ -467,6 +467,12 @@ pub(super) struct CrdtRopeTrait;
 pub(super) struct Cache {
     pub(super) len: i32,
     pub(super) changed_num: i32,
+}
+
+impl CanRemove for Cache {
+    fn can_remove(&self) -> bool {
+        self.len == 0 && self.changed_num == 0
+    }
 }
 
 impl BTreeTrait for CrdtRopeTrait {

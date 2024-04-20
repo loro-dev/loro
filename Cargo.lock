@@ -598,10 +598,11 @@ dependencies = [
 
 [[package]]
 name = "generic-btree"
-version = "0.8.4"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6fdb589b8442d9b084520eb69ee9266101d94f3d52a24a63a0b7ea157edfd6a"
+checksum = "b0604eee4d5bb3e7d8de9f51e42f869ce1fe68b1ae177ad16ee4bdfcde6e9f8b"
 dependencies = [
+ "arref",
  "fxhash",
  "heapless",
  "itertools 0.11.0",

@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 
-use generic_btree::rle::{HasLength, Mergeable, Sliceable};
+use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
 
-pub trait DeltaValue: HasLength + Sliceable + Mergeable + Debug + Clone {}
+pub trait DeltaValue: HasLength + Sliceable + Mergeable + TryInsert + Debug + Clone {}
 
 pub trait DeltaAttr: Clone + PartialEq + Debug + Default {
     fn merge(&mut self, other: &Self);
