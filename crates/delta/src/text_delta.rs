@@ -37,7 +37,7 @@ impl TextDelta {
         }
 
         if s.len() <= MAX_STRING_SIZE {
-            self.insert(Chunk(ArrayString::from(s).unwrap()), ());
+            self.new_insert(Chunk(ArrayString::from(s).unwrap()), ());
             return self;
         }
 
@@ -49,7 +49,7 @@ impl TextDelta {
             }
 
             let chunk = Chunk(ArrayString::from(&s[split_start..split_end]).unwrap());
-            self.insert(chunk, ());
+            self.new_insert(chunk, ());
             split_start = split_end;
             split_end = (split_end + 128).min(s.len());
         }
@@ -74,7 +74,7 @@ impl TextDelta {
 }
 
 impl Chunk {
-    pub fn insert(&mut self, pos: usize, s: &str) -> Result<(), ()> {
+    pub(crate) fn try_insert(&mut self, pos: usize, s: &str) -> Result<(), ()> {
         if self.0.len() + s.len() > MAX_STRING_SIZE {
             return Err(());
         }
@@ -138,7 +138,7 @@ impl TryInsert for Chunk {
     where
         Self: Sized,
     {
-        match self.insert(pos, elem.0.as_str()) {
+        match self.try_insert(pos, elem.0.as_str()) {
             Ok(_) => Ok(()),
             Err(_) => Err(elem),
         }

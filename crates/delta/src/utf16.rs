@@ -42,6 +42,7 @@ impl<S: AsRef<str>> AsUtf16Index<S> {
         unreachable!();
     }
 
+    #[allow(unused)]
     fn convert_utf8_to_utf16(&self, index: usize) -> usize {
         if index == 0 {
             return 0;
@@ -107,7 +108,7 @@ impl<S: AsRef<str> + Sliceable + TryInsert> TryInsert for AsUtf16Index<S> {
         Self: Sized,
     {
         let start = self.convert_utf16_to_utf8(pos);
-        match self.s.try_insert(pos, elem.s) {
+        match self.s.try_insert(start, elem.s) {
             Ok(()) => {
                 self.utf16_len += elem.utf16_len;
                 Ok(())

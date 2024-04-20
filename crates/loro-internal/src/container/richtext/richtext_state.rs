@@ -556,7 +556,7 @@ impl Sliceable for RichtextStateChunk {
 }
 
 impl TryInsert for RichtextStateChunk {
-    fn try_insert(&mut self, pos: usize, elem: Self) -> Result<(), Self>
+    fn try_insert(&mut self, _pos: usize, elem: Self) -> Result<(), Self>
     where
         Self: Sized,
     {

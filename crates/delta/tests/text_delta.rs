@@ -6,7 +6,7 @@ fn text_delta() {
     text.push_str_insert("123456789");
     assert_eq!(text.try_to_string().unwrap(), "123456789");
     let mut delta = TextDelta::new();
-    delta.push_str_insert("abc").retain(3, ()).delete(3);
+    delta.push_str_insert("abc").new_retain(3, ()).new_delete(3);
     text.compose(&delta);
     assert_eq!(text.try_to_string().unwrap(), "abc123789");
 }

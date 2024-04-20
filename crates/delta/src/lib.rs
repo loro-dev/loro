@@ -8,6 +8,7 @@ use std::fmt::Debug;
 mod delta_item;
 mod delta_rope;
 pub mod delta_trait;
+pub mod iter;
 pub mod text_delta;
 pub mod utf16;
 

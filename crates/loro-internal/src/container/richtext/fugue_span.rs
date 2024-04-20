@@ -298,7 +298,7 @@ impl Mergeable for FugueSpan {
 }
 
 impl TryInsert for FugueSpan {
-    fn try_insert(&mut self, pos: usize, elem: Self) -> Result<(), Self>
+    fn try_insert(&mut self, _pos: usize, elem: Self) -> Result<(), Self>
     where
         Self: Sized,
     {

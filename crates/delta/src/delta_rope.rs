@@ -7,6 +7,8 @@ use crate::{
     DeltaItem, DeltaRope,
 };
 
+use super::iter::Iter;
+
 pub(crate) mod rle_tree;
 
 impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
@@ -50,7 +52,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         self.tree.is_empty()
     }
 
-    pub fn insert(&mut self, v: V, attr: Attr) -> &mut Self {
+    pub fn new_insert(&mut self, v: V, attr: Attr) -> &mut Self {
         let Some(leaf) = self.tree.last_leaf() else {
             self.tree.push(DeltaItem::Insert { value: v, attr });
             return self;
@@ -74,7 +76,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         self
     }
 
-    pub fn retain(&mut self, retain: usize, attr: Attr) -> &mut Self {
+    pub fn new_retain(&mut self, retain: usize, attr: Attr) -> &mut Self {
         let leaf = self.tree.last_leaf().unwrap();
         let mut inserted = false;
         self.tree.update_leaf(leaf, |item| {
@@ -95,7 +97,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         self
     }
 
-    pub fn delete(&mut self, len: usize) -> &mut Self {
+    pub fn new_delete(&mut self, len: usize) -> &mut Self {
         let leaf = self.tree.last_leaf().unwrap();
         let mut inserted = false;
         self.tree.update_leaf(leaf, |item| {
@@ -112,6 +114,18 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         }
 
         self
+    }
+
+    /// Returns an iterator that can iterate over the delta rope with a custom length.
+    ///
+    /// It's more controllable compared to the default iterator.
+    ///
+    /// - Iterating over the delta rope with a custom length.
+    /// - You can peek the next item.
+    ///
+    /// It's useful to implement algorithms related to Delta
+    pub fn iter_with_len(&self) -> Iter<V, Attr> {
+        Iter::new(self)
     }
 }
 
@@ -157,9 +171,9 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
             match item {
                 DeltaItem::Delete(_) => {}
                 DeltaItem::Retain { attr: a, .. } => {
-                    a.merge(attr);
+                    a.compose(attr);
                 }
-                DeltaItem::Insert { attr: a, .. } => a.merge(attr),
+                DeltaItem::Insert { attr: a, .. } => a.compose(attr),
             }
 
             None
