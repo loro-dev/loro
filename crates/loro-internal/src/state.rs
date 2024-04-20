@@ -504,11 +504,13 @@ impl DocState {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &State> {
-        self.states.values()
+        self.states.values().chain(self.unknown_states.values())
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut State> {
-        self.states.values_mut()
+        self.states
+            .values_mut()
+            .chain(self.unknown_states.values_mut())
     }
 
     fn set_container_parent_by_op(&mut self, raw_op: &RawOp) {

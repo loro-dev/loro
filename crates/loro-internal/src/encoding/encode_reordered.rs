@@ -1382,7 +1382,15 @@ fn decode_op(
                 let op = value_reader.read_tree_move()?;
                 crate::op::InnerContent::Tree(op.as_tree_op(peers)?)
             }
-            _ => unreachable!(),
+            ValueKind::Unknown => {
+                let op_len = value_reader.read_i64()?;
+                let _ = value_reader.read_usize()?;
+                let op = value_reader.read_tree_move()?;
+                crate::op::InnerContent::Tree(op.as_tree_op(peers)?)
+            }
+            _ => {
+                unreachable!()
+            }
         },
         ContainerType::Unknown(_) => {
             // TODO: read unknown
@@ -2314,7 +2322,7 @@ mod value {
             Ok(ans)
         }
 
-        fn read_binary(&mut self) -> LoroResult<&'a [u8]> {
+        pub fn read_binary(&mut self) -> LoroResult<&'a [u8]> {
             let len = self.read_usize()?;
             if self.raw.len() < len {
                 return Err(LoroError::DecodeDataCorruptionError);
