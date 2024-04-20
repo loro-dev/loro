@@ -21,7 +21,7 @@ use crate::{
     fx_map,
     handler::ValueOrHandler,
     id::PeerID,
-    op::{ListSlice, Op, RawOp, RawOpContent},
+    op::{ListSlice, Op, OpContainer, RawOp, RawOpContent},
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
@@ -31,11 +31,14 @@ mod list_state;
 mod map_state;
 mod richtext_state;
 mod tree_state;
+mod unknown_state;
 
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
 pub(crate) use tree_state::{get_meta_value, TreeParentId, TreeState};
+
+use self::unknown_state::UnknownState;
 
 use super::{arena::SharedArena, event::InternalDocDiff};
 
@@ -56,6 +59,7 @@ pub struct DocState {
 
     pub(super) frontiers: Frontiers,
     pub(super) states: FxHashMap<ContainerIdx, State>,
+    pub(super) unknown_states: FxHashMap<ContainerID, State>,
     pub(super) arena: SharedArena,
     pub(crate) config: Configure,
     // resolve event stuff
@@ -71,7 +75,13 @@ pub struct DocState {
 
 #[enum_dispatch]
 pub(crate) trait ContainerState: Clone {
+    fn container(&self) -> OpContainer {
+        self.container_idx().into()
+    }
     fn container_idx(&self) -> ContainerIdx;
+    fn is_unknown(&self) -> bool {
+        false
+    }
     fn estimate_size(&self) -> usize;
 
     fn is_state_empty(&self) -> bool;
@@ -207,6 +217,7 @@ pub enum State {
     MapState(Box<MapState>),
     RichtextState(Box<RichtextState>),
     TreeState(Box<TreeState>),
+    UnknownState(Box<UnknownState>),
 }
 
 impl State {
@@ -242,6 +253,7 @@ impl DocState {
                 arena,
                 frontiers: Frontiers::default(),
                 states: FxHashMap::default(),
+                unknown_states: FxHashMap::default(),
                 weak_state: weak.clone(),
                 config,
                 global_txn,
@@ -585,9 +597,13 @@ impl DocState {
         cid: ContainerID,
         decode_ctx: StateSnapshotDecodeContext,
     ) {
-        let idx = self.arena.register_container(&cid);
-        let state = get_or_create!(self, idx);
-        state.import_from_snapshot_ops(decode_ctx);
+        if cid.is_unknown() {
+            let state = self.get_unknown_state_mut(&cid);
+        } else {
+            let idx = self.arena.register_container(&cid);
+            let state = get_or_create!(self, idx);
+            state.import_from_snapshot_ops(decode_ctx);
+        }
     }
 
     pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<InternalDocDiff>) {
@@ -596,6 +612,12 @@ impl DocState {
         if self.is_recording() {
             self.record_diff(diff.unwrap());
         }
+    }
+
+    #[inline]
+    #[allow(unused)]
+    pub(super) fn get_unknown_state_mut(&mut self, id: &ContainerID) -> Option<&mut State> {
+        self.unknown_states.get_mut(id)
     }
 
     #[inline]
@@ -1086,6 +1108,10 @@ impl DocState {
         }
     }
 
+    pub fn create_unknown_state(&self, id: ContainerID) -> State {
+        State::UnknownState(Box::new(UnknownState::new(id)))
+    }
+
     pub fn get_relative_position(&mut self, pos: &Cursor) -> Option<usize> {
         let idx = self.arena.register_container(&pos.container);
         let state = self.states.get_mut(&idx)?;
@@ -1093,7 +1119,7 @@ impl DocState {
             match state {
                 State::ListState(s) => s.get_index_of_id(id),
                 State::RichtextState(s) => s.get_index_of_id(id),
-                State::MapState(_) | State::TreeState(_) => {
+                State::MapState(_) | State::TreeState(_) | State::UnknownState(_) => {
                     unreachable!()
                 }
             }
@@ -1105,7 +1131,7 @@ impl DocState {
             match state {
                 State::ListState(s) => Some(s.len()),
                 State::RichtextState(s) => Some(s.len_event()),
-                State::MapState(_) | State::TreeState(_) => {
+                State::MapState(_) | State::TreeState(_) | State::UnknownState(_) => {
                     unreachable!()
                 }
             }
@@ -1148,6 +1174,7 @@ impl DocState {
                     let cid = id.associated_meta_container();
                     state_idx = self.arena.register_container(&cid);
                 }
+                State::UnknownState(_) => unreachable!(),
             }
         }
 
@@ -1167,6 +1194,7 @@ impl DocState {
                 let cid = id.associated_meta_container();
                 cid.into()
             }
+            State::UnknownState(_) => unreachable!(),
         };
 
         Some(value)

@@ -875,7 +875,6 @@ mod encode {
 
     use crate::{
         change::{Change, Lamport},
-        container::idx::ContainerIdx,
         encoding::encode_reordered::value::{EncodedTreeMove, ValueWriter},
         op::{Op, OpContainer},
         InternalString,
@@ -1250,7 +1249,7 @@ mod encode {
                 let len = value_writer.write_i64(*op_len as i64);
                 (
                     ValueKind::Unknown,
-                    len + value_writer.write(&Value::Binary(&data), register_key, register_cid),
+                    len + value_writer.write(&Value::Binary(data), register_key, register_cid),
                 )
             }
         }
@@ -1385,7 +1384,7 @@ fn decode_op(
             }
             _ => unreachable!(),
         },
-        ContainerType::Unknown(k) => {
+        ContainerType::Unknown(_) => {
             // TODO: read unknown
             let bytes = value_reader.take_bytes(length);
             crate::op::InnerContent::Unknown {
@@ -2691,7 +2690,7 @@ mod test {
         };
 
         let mut writer = ValueWriter::new();
-        let (kind, len) = writer.write_value_content(&v, &mut key_reg, &mut cid_reg);
+        let (kind, _) = writer.write_value_content(&v, &mut key_reg, &mut cid_reg);
 
         let binding = writer.finish();
         let mut reader = ValueReader::new(binding.as_slice());
