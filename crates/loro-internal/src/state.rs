@@ -666,11 +666,13 @@ impl DocState {
     pub(super) fn init_with_states_and_version(
         &mut self,
         states: FxHashMap<ContainerIdx, State>,
+        unknown_states: FxHashMap<ContainerID, State>,
         frontiers: Frontiers,
     ) {
         assert!(self.states.is_empty(), "overriding states");
         self.pre_txn(Default::default(), EventTriggerKind::Import);
         self.states = states;
+        self.unknown_states =  unknown_states;
         for (idx, state) in self.states.iter() {
             for child_id in state.get_child_containers() {
                 let child_idx = self.arena.register_container(&child_id);

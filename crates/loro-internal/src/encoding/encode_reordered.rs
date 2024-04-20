@@ -853,7 +853,8 @@ fn decode_snapshot_states(
     }
 
     let s = take(&mut state.states);
-    state.init_with_states_and_version(s, frontiers);
+    let us = take(&mut state.unknown_states);
+    state.init_with_states_and_version(s, us, frontiers);
     Ok(())
 }
 
