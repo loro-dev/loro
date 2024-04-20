@@ -236,6 +236,10 @@ impl State {
     pub fn new_tree(idx: ContainerIdx) -> Self {
         Self::TreeState(Box::new(TreeState::new(idx)))
     }
+
+    pub fn new_unknown(id: ContainerID) -> Self {
+        Self::UnknownState(Box::new(UnknownState::new(id)))
+    }
 }
 
 impl DocState {
@@ -600,7 +604,12 @@ impl DocState {
         decode_ctx: StateSnapshotDecodeContext,
     ) {
         if cid.is_unknown() {
-            let state = self.get_unknown_state_mut(&cid);
+            if !self.unknown_states.contains_key(&cid) {
+                self.unknown_states
+                    .insert(cid.clone(), State::new_unknown(cid.clone()));
+            }
+            let state = self.get_unknown_state_mut(&cid).unwrap();
+            state.import_from_snapshot_ops(decode_ctx);
         } else {
             let idx = self.arena.register_container(&cid);
             let state = get_or_create!(self, idx);
@@ -634,10 +643,10 @@ impl DocState {
         self.states.get(&idx)
     }
 
-    pub(super) fn get_state_and_unknown(&self, container: &OpContainer) -> Option<&State>{
-        match container{
-            OpContainer::ID(id)=>self.unknown_states.get(id),
-            OpContainer::Idx(idx)=>self.get_state(*idx)
+    pub(super) fn get_state_and_unknown(&self, container: &OpContainer) -> Option<&State> {
+        match container {
+            OpContainer::ID(id) => self.unknown_states.get(id),
+            OpContainer::Idx(idx) => self.get_state(*idx),
         }
     }
 

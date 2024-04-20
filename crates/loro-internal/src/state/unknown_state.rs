@@ -50,7 +50,7 @@ impl ContainerState for UnknownState {
     }
 
     fn is_state_empty(&self) -> bool {
-        unreachable!()
+        self.ops.is_empty() && self.blob.is_empty()
     }
 
     fn apply_diff_and_convert(
