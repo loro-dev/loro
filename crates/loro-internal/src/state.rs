@@ -136,6 +136,10 @@ impl<T: ContainerState> ContainerState for Box<T> {
         self.as_ref().container_idx()
     }
 
+    fn container(&self) -> OpContainer {
+        self.as_ref().container()
+    }
+
     fn estimate_size(&self) -> usize {
         self.as_ref().estimate_size()
     }

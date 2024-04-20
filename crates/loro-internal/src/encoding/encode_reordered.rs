@@ -439,7 +439,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         cid_idx_pairs: c_pairs,
         container_to_index: container_idx2index,
     } = extract_containers_in_order(
-        &mut state.iter().map(|x| x.container_idx().into()).chain(
+        &mut state.iter().map(|x| x.container()).chain(
             diff_changes
                 .iter()
                 .flat_map(|x| x.ops.iter())
