@@ -634,6 +634,13 @@ impl DocState {
         self.states.get(&idx)
     }
 
+    pub(super) fn get_state_and_unknown(&self, container: &OpContainer) -> Option<&State>{
+        match container{
+            OpContainer::ID(id)=>self.unknown_states.get(id),
+            OpContainer::Idx(idx)=>self.get_state(*idx)
+        }
+    }
+
     pub(crate) fn get_value_by_idx(&mut self, container_idx: ContainerIdx) -> LoroValue {
         self.states
             .get_mut(&container_idx)

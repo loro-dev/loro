@@ -463,16 +463,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     for (_, container) in c_pairs.iter() {
         let container_index = *container_idx2index.get(container).unwrap() as u32;
 
-        let OpContainer::Idx(idx) = container else {
-            states.push(EncodedStateInfo {
-                container_index,
-                op_len: 0,
-                state_bytes_len: 0,
-            });
-            continue;
-        };
-
-        let state = match state.get_state(*idx) {
+        let state = match state.get_state_and_unknown(container) {
             Some(state) if !state.is_state_empty() => state,
             _ => {
                 states.push(EncodedStateInfo {
