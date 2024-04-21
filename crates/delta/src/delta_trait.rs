@@ -1,8 +1,6 @@
+use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
 use std::hash::{BuildHasher, Hash};
 use std::{collections::HashMap, fmt::Debug};
-
-use arrayvec::ArrayVec;
-use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
 
 pub trait DeltaValue: HasLength + Sliceable + Mergeable + TryInsert + Debug + Clone {}
 

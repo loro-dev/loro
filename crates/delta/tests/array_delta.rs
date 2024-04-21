@@ -3,6 +3,13 @@ use delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 type TestArrayDelta = DeltaRope<ArrayVec<i32, 10>, ()>;
 
 #[test]
+fn delete_eq() {
+    let a: TestArrayDelta = DeltaRopeBuilder::new().delete(5).build();
+    let b = DeltaRopeBuilder::new().delete(10).build();
+    assert_ne!(a, b);
+}
+
+#[test]
 fn test_delete() {
     let mut a: TestArrayDelta = DeltaRopeBuilder::new()
         .insert(ArrayVec::from([1, 2, 3, 4]), ())
@@ -144,8 +151,8 @@ fn test_cumulative_insert_overflow_handled() {
 
     // Expected behavior: handle overflow by creating new insertions
     let expected: TestArrayDelta = DeltaRopeBuilder::new()
-        .insert(ArrayVec::from([1, 2, 3, 4, 5, 6, 7, 8]), ())
-        .insert(ArrayVec::from([9, 10, 11]), ())
+        .insert(ArrayVec::from([1, 2, 3, 4, 5, 6, 7, 8, 9]), ())
+        .insert(ArrayVec::from([10, 11]), ())
         .build();
     assert_eq!(delta, expected);
 }

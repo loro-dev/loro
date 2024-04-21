@@ -253,7 +253,11 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     }
 
     pub fn push_delete(&mut self, len: usize) -> &mut Self {
-        let leaf = self.tree.last_leaf().unwrap();
+        let Some(leaf) = self.tree.last_leaf() else {
+            self.tree.push(DeltaItem::Delete(len));
+            return self;
+        };
+
         let mut inserted = false;
         self.tree.update_leaf(leaf, |item| {
             if let DeltaItem::Delete(l) = item {
@@ -286,7 +290,52 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
 
 impl<V: DeltaValue + PartialEq, Attr: DeltaAttr + PartialEq> PartialEq for DeltaRope<V, Attr> {
     fn eq(&self, other: &Self) -> bool {
-        self.iter().eq(other.iter())
+        if self.len() != other.len() {
+            return false;
+        }
+
+        let mut a = self.iter_with_len();
+        let mut b = other.iter_with_len();
+        while let (Some(x), Some(y)) = (a.peek(), b.peek()) {
+            let len = x.len().min(y.len());
+            match (x.item, y.item) {
+                (DeltaItem::Delete(_), DeltaItem::Delete(_)) => {
+                    a.next_with(len);
+                    b.next_with(len);
+                }
+                (DeltaItem::Retain { attr, .. }, DeltaItem::Retain { attr: b_attr, .. }) => {
+                    if *attr == *b_attr {
+                        a.next_with(len);
+                        b.next_with(len);
+                    } else {
+                        return false;
+                    }
+                }
+                (
+                    DeltaItem::Insert { value, attr },
+                    DeltaItem::Insert {
+                        value: b_value,
+                        attr: b_attr,
+                    },
+                ) => {
+                    if attr != b_attr {
+                        return false;
+                    }
+
+                    if value.slice(x.start_offset..x.start_offset + len)
+                        != b_value.slice(y.start_offset..y.start_offset + len)
+                    {
+                        return false;
+                    }
+
+                    a.next_with(len);
+                    b.next_with(len);
+                }
+                _ => return false,
+            }
+        }
+
+        a.peek().is_none() && b.peek().is_none()
     }
 }
 

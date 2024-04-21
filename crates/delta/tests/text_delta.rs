@@ -93,3 +93,198 @@ fn rich_text_delta() {
 
     assert_eq!(text, expected);
 }
+
+#[test]
+fn insert_plus_insert() {
+    let mut a: TextDelta = TextDelta::new();
+    a.push_str_insert("A");
+    let mut b = TextDelta::new();
+    b.push_str_insert("B");
+    let expected = {
+        let mut delta = TextDelta::new();
+        delta.push_str_insert("B").push_str_insert("A");
+        delta
+    };
+    a.compose(&b);
+    assert_eq!(a, expected);
+}
+
+#[test]
+fn insert_plus_retain() {
+    let mut a: RichTextDelta = TextDelta::new();
+    a.push_str_insert("A");
+    let mut b: RichTextDelta = TextDelta::new();
+    let mut attrs = HashMap::new();
+    attrs.insert("bold".to_string(), true);
+    attrs.insert("color".to_string(), true);
+    b.push_retain(1, attrs.clone());
+    let expected = {
+        let mut delta = TextDelta::new();
+        delta.push_insert(Chunk::try_from_str("A").unwrap(), attrs);
+        delta
+    };
+    a.compose(&b);
+    assert_eq!(a, expected);
+}
+
+#[test]
+fn insert_plus_delete() {
+    let mut a: TextDelta = TextDelta::new();
+    a.push_str_insert("A");
+    let mut b: TextDelta = TextDelta::new();
+    b.push_delete(1);
+    let expected = TextDelta::new();
+    a.compose(&b);
+    assert_eq!(a, expected);
+}
+
+#[test]
+fn delete_plus_insert() {
+    let mut a: TextDelta = TextDelta::new();
+    a.push_delete(1);
+    let mut b: TextDelta = TextDelta::new();
+    b.push_str_insert("B");
+    let expected = {
+        let mut delta = TextDelta::new();
+        delta.push_str_insert("B").push_delete(1);
+        delta
+    };
+    a.compose(&b);
+    assert_eq!(a, expected);
+}
+
+#[test]
+fn delete_plus_delete() {
+    let mut a: TextDelta = TextDelta::new();
+    a.push_delete(1);
+    let mut b: TextDelta = TextDelta::new();
+    b.push_delete(1);
+    let expected = {
+        let mut delta = TextDelta::new();
+        delta.push_delete(2);
+        delta
+    };
+    a.compose(&b);
+    assert_eq!(a, expected);
+}
+
+#[test]
+fn retain_plus_insert() {
+    let mut a: RichTextDelta = TextDelta::new();
+    let mut attrs = HashMap::new();
+    attrs.insert("color".to_string(), true);
+    a.push_retain(1, attrs.clone());
+    let mut b = TextDelta::new();
+    b.push_str_insert("B");
+    let expected = {
+        let mut delta = TextDelta::new();
+        delta.push_str_insert("B").push_retain(1, attrs);
+        delta
+    };
+    a.compose(&b);
+    assert_eq!(a, expected);
+}
+
+#[test]
+fn retain_plus_retain() {
+    let mut a: RichTextDelta = TextDelta::new();
+    let mut attrs_a = HashMap::new();
+    attrs_a.insert("color".to_string(), true);
+    a.push_retain(1, attrs_a.clone());
+    let mut b = TextDelta::new();
+    let mut attrs_b = HashMap::new();
+    attrs_b.insert("bold".to_string(), true);
+    attrs_b.insert("color".to_string(), true);
+    b.push_retain(1, attrs_b.clone());
+    let expected = {
+        let mut delta = TextDelta::new();
+        delta.push_retain(1, attrs_b);
+        delta
+    };
+    a.compose(&b);
+    assert_eq!(a, expected);
+}
+
+#[test]
+fn retain_plus_delete() {
+    let mut a: RichTextDelta = TextDelta::new();
+    let mut attrs = HashMap::new();
+    attrs.insert("color".to_string(), true);
+    a.push_retain(1, attrs);
+    let mut b = TextDelta::new();
+    b.push_delete(1);
+    let mut expected: RichTextDelta = TextDelta::new();
+    expected.push_delete(1);
+    a.compose(&b);
+    assert_eq!(a, expected);
+}
+
+// Test for inserting in the middle of text
+#[test]
+fn insert_in_middle_of_text() {
+    let mut a: TextDelta = TextDelta::new();
+    a.push_str_insert("Hello");
+    let mut b: TextDelta = TextDelta::new();
+    b.push_retain(3, ()).push_str_insert("X");
+    let mut expected: TextDelta = TextDelta::new();
+    expected.push_str_insert("HelXlo");
+    a.compose(&b);
+    assert_eq!(a, expected);
+}
+
+// Test for insert and delete ordering
+#[test]
+fn insert_and_delete_ordering() {
+    let mut a: TextDelta = TextDelta::new();
+    a.push_str_insert("Hello");
+    let mut insert_first: TextDelta = TextDelta::new();
+    insert_first
+        .push_retain(3, ())
+        .push_str_insert("X")
+        .push_delete(1);
+    let mut delete_first = TextDelta::new();
+    delete_first
+        .push_retain(3, ())
+        .push_delete(1)
+        .push_str_insert("X");
+    let mut expected: TextDelta = TextDelta::new();
+    expected.push_str_insert("HelXo");
+    a.compose(&insert_first);
+    a.compose(&delete_first);
+    assert_eq!(a, expected);
+}
+
+#[test]
+fn retain_start_optimization_split() {
+    let mut a: RichTextDelta = TextDelta::new();
+    let mut attrs_bold = HashMap::new();
+    attrs_bold.insert("bold".to_string(), true);
+
+    a.push_insert(Chunk::try_from_str("A").unwrap(), attrs_bold.clone())
+        .push_str_insert("B")
+        .push_insert(Chunk::try_from_str("C").unwrap(), attrs_bold)
+        .push_retain(5, Default::default())
+        .push_delete(1);
+
+    let mut b: RichTextDelta = TextDelta::new();
+    b.push_retain(4, Default::default()).push_str_insert("D");
+
+    let expected = {
+        let mut delta = TextDelta::new();
+        let mut attrs_bold = HashMap::new();
+        attrs_bold.insert("bold".to_string(), true);
+
+        delta
+            .push_insert(Chunk::try_from_str("A").unwrap(), attrs_bold.clone())
+            .push_str_insert("B")
+            .push_insert(Chunk::try_from_str("C").unwrap(), attrs_bold)
+            .push_retain(1, Default::default())
+            .push_str_insert("D")
+            .push_retain(4, Default::default())
+            .push_delete(1);
+        delta
+    };
+
+    a.compose(&b);
+    assert_eq!(a, expected);
+}

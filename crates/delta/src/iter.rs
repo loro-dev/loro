@@ -64,10 +64,10 @@ impl<'a, V: DeltaValue, Attr: DeltaAttr> Iter<'a, V, Attr> {
 
     pub fn next_with(&mut self, len: usize) {
         self.offset += len;
-        while self.offset > 0 {
+        while self.offset > 0 && self.cursor.is_some() {
             let cursor = self.cursor.unwrap();
             let elem = self.delta.tree.get_elem(cursor).unwrap();
-            let elem_len = elem.rle_len();
+            let elem_len = elem.delta_len();
             if self.offset < elem_len {
                 break;
             }

@@ -599,9 +599,9 @@ dependencies = [
 
 [[package]]
 name = "generic-btree"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1b026d3f41205de780a17adcb5a940efcaef064d4205b675e44c15e3d9683aa"
+checksum = "cacfba3090ed9ff5661305b30396947801c71c39c77763b2922679a22ee23c13"
 dependencies = [
  "arref",
  "fxhash",

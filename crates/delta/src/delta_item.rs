@@ -2,7 +2,19 @@ use generic_btree::rle::{CanRemove, TryInsert};
 
 use super::*;
 
+impl<V: DeltaValue, Attr> DeltaItem<V, Attr> {
+    /// The real length of the item in the delta
+    pub fn delta_len(&self) -> usize {
+        match self {
+            DeltaItem::Delete(len) => *len,
+            DeltaItem::Retain { len, .. } => *len,
+            DeltaItem::Insert { value, .. } => value.rle_len(),
+        }
+    }
+}
+
 impl<V: DeltaValue, Attr> HasLength for DeltaItem<V, Attr> {
+    /// This would treat the len of the Delete as 0
     fn rle_len(&self) -> usize {
         match self {
             DeltaItem::Delete(_) => 0,
