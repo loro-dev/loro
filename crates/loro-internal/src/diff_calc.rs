@@ -539,7 +539,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                 _ => unreachable!(),
             },
             crate::op::InnerContent::Map(_) => unreachable!(),
-            // crate::op::InnerContent::Tree(_) => unreachable!(),
+            crate::op::InnerContent::Tree(_) => unreachable!(),
             crate::op::InnerContent::Unknown { .. } => unreachable!(),
         }
     }
@@ -711,7 +711,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 crate::container::list::list_op::InnerListOp::StyleEnd => {}
             },
             crate::op::InnerContent::Map(_) => unreachable!(),
-            // crate::op::InnerContent::Tree(_) => unreachable!(),
+            crate::op::InnerContent::Tree(_) => unreachable!(),
             crate::op::InnerContent::Unknown { .. } => unreachable!(),
         }
     }
