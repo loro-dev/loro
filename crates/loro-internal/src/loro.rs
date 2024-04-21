@@ -29,7 +29,7 @@ use crate::{
     event::{str_to_path, EventTriggerKind, Index},
     handler::{Handler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
-    op::InnerContent,
+    op::{InnerContent, OpContainer},
     oplog::dag::FrontiersNotIncluded,
     version::Frontiers,
     HandlerTrait, InternalString, LoroError, VersionVector,
@@ -894,6 +894,7 @@ impl LoroDoc {
             drop(state);
             self.commit_then_renew();
             let oplog = self.oplog().lock().unwrap();
+            // TODO: assert pos.id is not unknown
             if let Some(id) = pos.id {
                 let idx = oplog
                     .arena
@@ -915,7 +916,7 @@ impl LoroDoc {
                 );
                 // TODO: remove depth info
                 let depth = self.arena.get_depth(idx);
-                let diff_calc = &mut diff_calc.get_or_create_calc(idx, depth).1;
+                let (_,diff_calc) = &mut diff_calc.get_or_create_calc(&OpContainer::Idx(idx),depth);
                 match diff_calc {
                     crate::diff_calc::ContainerDiffCalculator::Richtext(text) => {
                         let c = text.get_id_latest_pos(id).unwrap();
@@ -944,6 +945,7 @@ impl LoroDoc {
                     }
                     crate::diff_calc::ContainerDiffCalculator::Tree(_) => unreachable!(),
                     crate::diff_calc::ContainerDiffCalculator::Map(_) => unreachable!(),
+                    crate::diff_calc::ContainerDiffCalculator::Unknown(_) => unreachable!(),
                 }
             } else {
                 match pos.container.container_type() {

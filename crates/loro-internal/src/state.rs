@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    num::NonZeroU16,
     sync::{Arc, Mutex, RwLock, Weak},
 };
 
@@ -50,6 +51,17 @@ macro_rules! get_or_create {
         }
 
         $doc_state.states.get_mut(&$idx).unwrap()
+    }};
+}
+
+macro_rules! get_or_create_unknown {
+    ($doc_state: ident, $id: expr) => {{
+        if !$doc_state.unknown_states.contains_key(&$id) {
+            let state = $doc_state.create_unknown_state($id);
+            $doc_state.unknown_states.insert($id.clone(), state);
+        }
+
+        $doc_state.unknown_states.get_mut(&$id).unwrap()
     }};
 }
 
@@ -388,7 +400,12 @@ impl DocState {
         let mut idx2state_diff = FxHashMap::default();
         let mut diffs = if is_recording {
             let mut sub_container_diff_patch = SubContainerDiffPatch {
-                all_idx: inner.iter().map(|d| d.idx).collect(),
+                all_idx: inner
+                    .iter()
+                    .map(|d| &d.container)
+                    .filter(|x| x.as_idx().is_some())
+                    .map(|x| *x.as_idx().unwrap())
+                    .collect(),
                 diff_queue: vec![],
                 mark_bring_back: FxHashSet::default(),
                 arena: self.arena.clone(),
@@ -403,25 +420,29 @@ impl DocState {
             // let mut need_bring_back = FxHashSet::default();
             // let all_idx: FxHashSet<ContainerIdx> = inner.iter().map(|d| d.idx).collect();
             for mut diff in inner {
-                let idx = diff.idx;
-                if sub_container_diff_patch.marked_bring_back(&idx) {
-                    diff.bring_back = true;
-                }
-                if diff.bring_back {
-                    let state = get_or_create!(self, diff.idx);
-                    let state_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
-                    if diff.diff.is_none() && state_diff.is_empty() {
-                        // empty diff, skip it
-                        continue;
+                if let OpContainer::Idx(idx) = diff.container {
+                    if sub_container_diff_patch.marked_bring_back(&idx) {
+                        diff.bring_back = true;
                     }
-                    sub_container_diff_patch.push_diff(diff);
-                    if !state_diff.is_empty() {
-                        sub_container_diff_patch.bring_back_sub_container(
-                            &state_diff,
-                            &mut self.states,
-                            &mut idx2state_diff,
-                        );
-                        idx2state_diff.insert(idx, state_diff);
+                    if diff.bring_back {
+                        let state = get_or_create!(self, idx);
+                        let state_diff =
+                            state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
+                        if diff.diff.is_none() && state_diff.is_empty() {
+                            // empty diff, skip it
+                            continue;
+                        }
+                        sub_container_diff_patch.push_diff(diff);
+                        if !state_diff.is_empty() {
+                            sub_container_diff_patch.bring_back_sub_container(
+                                &state_diff,
+                                &mut self.states,
+                                &mut idx2state_diff,
+                            );
+                            idx2state_diff.insert(idx, state_diff);
+                        }
+                    } else {
+                        sub_container_diff_patch.push_diff(diff);
                     }
                 } else {
                     sub_container_diff_patch.push_diff(diff);
@@ -436,19 +457,27 @@ impl DocState {
             let Some(internal_diff) = std::mem::take(&mut diff.diff) else {
                 // only bring_back
                 if is_recording {
-                    if let Some(state_diff) = idx2state_diff.remove(&diff.idx) {
+                    if let Some(state_diff) = diff
+                        .container
+                        .as_idx()
+                        .map(|x| idx2state_diff.remove(x))
+                        .flatten()
+                    {
                         diff.diff = Some(state_diff.into());
                     };
                 }
                 continue;
             };
-            let idx = diff.idx;
+            let state = if let OpContainer::Idx(idx) = diff.container {
+                if self.in_txn {
+                    self.changed_idx_in_txn.insert(idx);
+                }
+                self.set_parent_by_diff(internal_diff.as_internal().unwrap(), idx);
+                get_or_create!(self, idx)
+            } else {
+                get_or_create_unknown!(self, diff.container.as_id().unwrap().clone())
+            };
 
-            if self.in_txn {
-                self.changed_idx_in_txn.insert(idx);
-            }
-            self.set_parent_by_diff(internal_diff.as_internal().unwrap(), idx);
-            let state = get_or_create!(self, idx);
             if is_recording {
                 // process bring_back before apply
                 let external_diff = if diff.bring_back {
@@ -458,7 +487,12 @@ impl DocState {
                         &self.global_txn,
                         &self.weak_state,
                     );
-                    if let Some(state_diff) = idx2state_diff.remove(&idx) {
+                    if let Some(state_diff) = diff
+                        .container
+                        .as_idx()
+                        .map(|x| idx2state_diff.remove(&x))
+                        .flatten()
+                    {
                         // use `concat`(hierarchical and relative order) rather than `compose`
                         state_diff.concat(external_diff)
                     } else {
@@ -599,6 +633,7 @@ impl DocState {
                 }
             }
             InternalDiff::RichtextRaw(_) => {}
+            InternalDiff::Unknown(_) => {}
         }
     }
 
@@ -608,11 +643,7 @@ impl DocState {
         decode_ctx: StateSnapshotDecodeContext,
     ) {
         if cid.is_unknown() {
-            if !self.unknown_states.contains_key(&cid) {
-                self.unknown_states
-                    .insert(cid.clone(), State::new_unknown(cid.clone()));
-            }
-            let state = self.get_unknown_state_mut(&cid).unwrap();
+            let state = get_or_create_unknown!(self, cid.clone());
             state.import_from_snapshot_ops(decode_ctx);
         } else {
             let idx = self.arena.register_container(&cid);
@@ -629,10 +660,13 @@ impl DocState {
         }
     }
 
-    #[inline]
-    #[allow(unused)]
-    pub(super) fn get_unknown_state_mut(&mut self, id: &ContainerID) -> Option<&mut State> {
-        self.unknown_states.get_mut(id)
+    pub(crate) fn get_create_unknown_state_mut(&mut self, cid: &ContainerID) -> &mut State {
+        if !self.unknown_states.contains_key(&cid) {
+            self.unknown_states
+                .insert(cid.clone(), State::new_unknown(cid.clone()));
+        }
+        let state = get_or_create_unknown!(self, cid.clone());
+        state
     }
 
     #[inline]
@@ -676,7 +710,7 @@ impl DocState {
         assert!(self.states.is_empty(), "overriding states");
         self.pre_txn(Default::default(), EventTriggerKind::Import);
         self.states = states;
-        self.unknown_states =  unknown_states;
+        self.unknown_states = unknown_states;
         for (idx, state) in self.states.iter() {
             for child_id in state.get_child_containers() {
                 let child_idx = self.arena.register_container(&child_id);
@@ -689,7 +723,7 @@ impl DocState {
                 .states
                 .iter_mut()
                 .map(|(&idx, state)| InternalContainerDiff {
-                    idx,
+                    container: OpContainer::Idx(idx),
                     bring_back: false,
                     is_container_deleted: false,
                     diff: Some(
@@ -699,6 +733,7 @@ impl DocState {
                     ),
                 })
                 .collect();
+            // TODO: unknown_states
             self.record_diff(InternalDocDiff {
                 origin: Default::default(),
                 by: EventTriggerKind::Import,
@@ -956,16 +991,27 @@ impl DocState {
                     // omit event form deleted container
                     continue;
                 }
-                let Some((last_container_diff, _)) = containers.get_mut(&container_diff.idx) else {
-                    if let Some(path) = self.get_path(container_diff.idx) {
-                        containers.insert(container_diff.idx, (container_diff.diff.unwrap(), path));
+                let Some((last_container_diff, _)) = containers.get_mut(&container_diff.container)
+                else {
+                    if let OpContainer::Idx(idx) = container_diff.container {
+                        if let Some(path) = self.get_path(idx) {
+                            containers.insert(
+                                container_diff.container,
+                                (container_diff.diff.unwrap(), path),
+                            );
+                        } else {
+                            // if we cannot find the path to the container, the container must be overwritten afterwards.
+                            // So we can ignore the diff from it.
+                            tracing::info!(
+                                "⚠️ WARNING: ignore because cannot find path {:#?} deep_value {:#?}",
+                                &container_diff,
+                                self.get_deep_value_with_id()
+                            );
+                        }
                     } else {
-                        // if we cannot find the path to the container, the container must be overwritten afterwards.
-                        // So we can ignore the diff from it.
-                        tracing::info!(
-                            "⚠️ WARNING: ignore because cannot find path {:#?} deep_value {:#?}",
-                            &container_diff,
-                            self.get_deep_value_with_id()
+                        containers.insert(
+                            container_diff.container,
+                            (container_diff.diff.unwrap(), vec![]),
                         );
                     }
                     continue;
@@ -980,12 +1026,19 @@ impl DocState {
         }
         let mut diff: Vec<_> = containers
             .into_iter()
-            .map(|(idx, (diff, path))| {
-                let id = self.arena.get_container_id(idx).unwrap();
+            .map(|(container, (diff, path))| {
+                let (id, idx, is_unknown) = match container {
+                    OpContainer::ID(id) => (id, ContainerIdx::unknown(), true),
+                    OpContainer::Idx(idx) => {
+                        (self.arena.get_container_id(idx).unwrap(), idx, false)
+                    }
+                };
+
                 ContainerDiff {
                     id,
                     idx,
                     diff: diff.into_external().unwrap(),
+                    is_unknown,
                     path,
                 }
             })
@@ -1275,7 +1328,7 @@ impl SubContainerDiffPatch {
                                         state.to_diff(&self.arena, &self.txn, &self.weak_state);
                                     if !diff.is_empty() {
                                         self.diff_queue.push(InternalContainerDiff {
-                                            idx,
+                                            container: OpContainer::Idx(idx),
                                             bring_back: true,
                                             is_container_deleted: false,
                                             diff: None,
@@ -1299,7 +1352,7 @@ impl SubContainerDiffPatch {
                             let diff = state.to_diff(&self.arena, &self.txn, &self.weak_state);
                             if !diff.is_empty() {
                                 self.diff_queue.push(InternalContainerDiff {
-                                    idx,
+                                    container: OpContainer::Idx(idx),
                                     bring_back: true,
                                     is_container_deleted: false,
                                     diff: None,

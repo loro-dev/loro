@@ -63,6 +63,11 @@ pub mod idx {
 
             Self(prefix | index)
         }
+
+        // TODO: better way
+        pub(crate) fn unknown() -> Self {
+            Self(u32::MAX)
+        }
     }
 }
 

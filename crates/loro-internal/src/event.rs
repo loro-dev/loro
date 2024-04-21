@@ -8,7 +8,7 @@ use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
     delta::{Delta, MapDelta, ResolvedMapDelta, StyleMeta, TreeDelta, TreeDiff},
     handler::ValueOrHandler,
-    op::SliceRanges,
+    op::{OpContainer, OpWithId, SliceRanges},
     utils::string_slice::StringSlice,
     InternalString,
 };
@@ -27,6 +27,7 @@ pub struct ContainerDiff {
     pub id: ContainerID,
     pub path: Vec<(ContainerID, Index)>,
     pub(crate) idx: ContainerIdx,
+    pub is_unknown: bool,
     pub diff: Diff,
 }
 
@@ -103,7 +104,7 @@ impl DocDiff {
 
 #[derive(Debug, Clone)]
 pub(crate) struct InternalContainerDiff {
-    pub(crate) idx: ContainerIdx,
+    pub(crate) container: OpContainer,
     // If true, this event is created by the container which was resurrected by another container
     pub(crate) bring_back: bool,
     pub(crate) is_container_deleted: bool,
@@ -208,6 +209,7 @@ pub(crate) enum InternalDiff {
     RichtextRaw(Delta<RichtextStateChunk>),
     Map(MapDelta),
     Tree(TreeDelta),
+    Unknown(Vec<OpWithId>),
 }
 
 impl From<InternalDiff> for DiffVariant {
@@ -251,6 +253,7 @@ impl InternalDiff {
             InternalDiff::RichtextRaw(t) => t.is_empty(),
             InternalDiff::Map(m) => m.updated.is_empty(),
             InternalDiff::Tree(t) => t.is_empty(),
+            InternalDiff::Unknown(v) => v.is_empty(),
         }
     }
 

@@ -1,6 +1,6 @@
 use std::sync::{Mutex, Weak};
 
-use loro_common::{ContainerID, IdLpSpan, LoroResult, LoroValue};
+use loro_common::{ContainerID, IdLpSpan, LamportSpan, LoroResult, LoroValue};
 use rle::HasLength;
 
 use crate::{
@@ -65,12 +65,20 @@ impl ContainerState for UnknownState {
 
     fn apply_diff(
         &mut self,
-        _diff: InternalDiff,
+        diff: InternalDiff,
         _arena: &SharedArena,
         _txn: &Weak<Mutex<Option<Transaction>>>,
         _state: &Weak<Mutex<DocState>>,
     ) {
-        unreachable!()
+        for op in diff.as_unknown().unwrap().iter() {
+            self.ops.push(IdLpSpan {
+                peer: op.peer,
+                lamport: LamportSpan {
+                    start: op.lamport.unwrap(),
+                    end: op.lamport.unwrap() + op.op.atom_len() as u32,
+                },
+            });
+        }
     }
 
     fn apply_local_op(&mut self, _raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
