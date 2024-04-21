@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 loro = { path = "../loro" }
+loro-internal = { path = "../loro-internal", features = ["test_utils"] }
 arbitrary = "1"
 tabled = "0.10"
 debug-log = { workspace = true }

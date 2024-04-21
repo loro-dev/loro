@@ -561,6 +561,7 @@ dependencies = [
  "enum_dispatch",
  "fxhash",
  "loro",
+ "loro-internal",
  "tabled 0.10.0",
 ]
 
