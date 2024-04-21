@@ -1,3 +1,4 @@
+use delta_rope::rle_tree::DeltaTreeTrait;
 use delta_trait::{DeltaAttr, DeltaValue};
 use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
@@ -5,6 +6,7 @@ use generic_btree::{
 };
 use std::fmt::Debug;
 
+pub mod array_vec;
 mod delta_item;
 mod delta_rope;
 pub mod delta_trait;
@@ -15,11 +17,16 @@ pub mod utf16;
 /// A [DeltaRope] is a rope-like data structure that can be used to represent
 /// a sequence of [DeltaItem]. It has efficient operations for composing other
 /// [DeltaRope]s. It can also be used as a rope, where it only contains insertions.
+#[derive(Debug, Clone)]
 pub struct DeltaRope<V: DeltaValue, Attr: DeltaAttr> {
-    tree: BTree<delta_rope::rle_tree::DeltaTreeTrait<V, Attr>>,
+    tree: BTree<DeltaTreeTrait<V, Attr>>,
 }
 
-#[derive(Debug, Clone)]
+pub struct DeltaRopeBuilder<V: DeltaValue, Attr: DeltaAttr> {
+    items: Vec<DeltaItem<V, Attr>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeltaItem<V, Attr> {
     Delete(usize),
     Retain { len: usize, attr: Attr },

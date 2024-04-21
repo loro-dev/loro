@@ -7,7 +7,7 @@ const MAX_STRING_SIZE: usize = 8;
 #[cfg(not(test))]
 const MAX_STRING_SIZE: usize = 128;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chunk(ArrayString<MAX_STRING_SIZE>);
 pub type TextDelta = DeltaRope<Chunk, ()>;
 
@@ -37,7 +37,7 @@ impl TextDelta {
         }
 
         if s.len() <= MAX_STRING_SIZE {
-            self.new_insert(Chunk(ArrayString::from(s).unwrap()), ());
+            self.push_insert(Chunk(ArrayString::from(s).unwrap()), ());
             return self;
         }
 
@@ -49,7 +49,7 @@ impl TextDelta {
             }
 
             let chunk = Chunk(ArrayString::from(&s[split_start..split_end]).unwrap());
-            self.new_insert(chunk, ());
+            self.push_insert(chunk, ());
             split_start = split_end;
             split_end = (split_end + 128).min(s.len());
         }

@@ -447,6 +447,7 @@ dependencies = [
  "arrayvec",
  "criterion",
  "generic-btree",
+ "heapless 0.8.0",
  "rand",
  "tracing",
 ]
@@ -604,7 +605,7 @@ checksum = "b0604eee4d5bb3e7d8de9f51e42f869ce1fe68b1ae177ad16ee4bdfcde6e9f8b"
 dependencies = [
  "arref",
  "fxhash",
- "heapless",
+ "heapless 0.7.17",
  "itertools 0.11.0",
  "loro-thunderdome",
  "proc-macro2 1.0.79",
@@ -649,6 +650,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -661,10 +671,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdc6457c0eb62c71aac4bc17216026d8410337c4126773b9c5daba343f17964f"
 dependencies = [
  "atomic-polyfill",
- "hash32",
+ "hash32 0.2.1",
  "rustc_version",
  "serde",
  "spin",
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "heapless"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32 0.3.1",
  "stable_deref_trait",
 ]
 
@@ -1200,7 +1220,7 @@ checksum = "a55c51ee6c0db07e68448e336cf8ea4131a620edefebf9893e759b2d793420f8"
 dependencies = [
  "cobs",
  "embedded-io",
- "heapless",
+ "heapless 0.7.17",
  "serde",
 ]
 
