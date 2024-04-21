@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use delta::{
     text_delta::{Chunk, TextDelta},
     DeltaRopeBuilder,
@@ -66,4 +68,28 @@ fn compose_long_delete() {
             .insert(Chunk::try_from_str("34567890").unwrap(), ())
             .build()
     );
+}
+
+type RichTextDelta = TextDelta<HashMap<String, bool>>;
+#[test]
+fn rich_text_delta() {
+    let mut text = RichTextDelta::new();
+    text.push_str_insert("123456789");
+    assert_eq!(text.try_to_string().unwrap(), "123456789");
+    let mut delta = RichTextDelta::new();
+    let mut styles = HashMap::new();
+    styles.insert("bold".to_string(), true);
+    delta
+        .push_str_insert("abc")
+        .push_retain(3, styles.clone())
+        .push_delete(3);
+    text.compose(&delta);
+
+    let mut expected = RichTextDelta::new();
+    expected
+        .push_str_insert("abc")
+        .push_insert(Chunk::try_from_str("123").unwrap(), styles.clone())
+        .push_str_insert("789");
+
+    assert_eq!(text, expected);
 }

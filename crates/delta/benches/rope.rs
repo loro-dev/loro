@@ -18,7 +18,7 @@ fn rope_benchmarks(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             b.iter(|| {
-                let mut rope = TextDelta::new();
+                let mut rope: TextDelta = TextDelta::new();
                 for i in 0..*size {
                     let index = i * 3 / 4;
                     rope.insert_str(index, "n");
@@ -35,7 +35,7 @@ fn rope_benchmarks(c: &mut Criterion) {
             let text = generate_random_text(rng.clone(), *size);
 
             b.iter(|| {
-                let mut rope = TextDelta::new();
+                let mut rope: TextDelta<()> = TextDelta::new();
                 for _ in 0..10 {
                     rope.push_str_insert(&text);
                 }

@@ -1,4 +1,7 @@
-use crate::{delta_trait::DeltaValue, DeltaItem, DeltaRope};
+use crate::{
+    delta_trait::{DeltaAttr, DeltaValue},
+    DeltaItem, DeltaRope,
+};
 use arrayvec::ArrayString;
 use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
 
@@ -9,9 +12,9 @@ const MAX_STRING_SIZE: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chunk(ArrayString<MAX_STRING_SIZE>);
-pub type TextDelta = DeltaRope<Chunk, ()>;
+pub type TextDelta<Attr = ()> = DeltaRope<Chunk, Attr>;
 
-impl TextDelta {
+impl<Attr: DeltaAttr> TextDelta<Attr> {
     pub fn insert_str(&mut self, index: usize, s: &str) {
         if s.is_empty() || index == self.len() {
             self.push_str_insert(s);
@@ -26,7 +29,7 @@ impl TextDelta {
             index,
             &[DeltaItem::Insert {
                 value: Chunk(ArrayString::from(s).unwrap()),
-                attr: (),
+                attr: Attr::default(),
             }],
         );
     }
@@ -37,7 +40,7 @@ impl TextDelta {
         }
 
         if s.len() <= MAX_STRING_SIZE {
-            self.push_insert(Chunk(ArrayString::from(s).unwrap()), ());
+            self.push_insert(Chunk(ArrayString::from(s).unwrap()), Attr::default());
             return self;
         }
 
@@ -49,7 +52,7 @@ impl TextDelta {
             }
 
             let chunk = Chunk(ArrayString::from(&s[split_start..split_end]).unwrap());
-            self.push_insert(chunk, ());
+            self.push_insert(chunk, Attr::default());
             split_start = split_end;
             split_end = (split_end + 128).min(s.len());
         }
