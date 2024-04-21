@@ -10,13 +10,13 @@ pub struct UnknownDiffCalculator {
 }
 
 impl DiffCalculatorTrait for UnknownDiffCalculator {
-    fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector) {}
+    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
 
     fn apply_change(
         &mut self,
-        oplog: &OpLog,
+        _oplog: &OpLog,
         op: crate::op::RichOp,
-        vv: Option<&crate::VersionVector>,
+        _vv: Option<&crate::VersionVector>,
     ) {
         self.ops.push(OpWithId {
             peer: op.peer,
@@ -25,14 +25,14 @@ impl DiffCalculatorTrait for UnknownDiffCalculator {
         })
     }
 
-    fn stop_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector) {}
+    fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
 
     fn calculate_diff(
         &mut self,
-        oplog: &OpLog,
-        from: &crate::VersionVector,
-        to: &crate::VersionVector,
-        on_new_container: impl FnMut(&ContainerID),
+        _oplog: &OpLog,
+        _from: &crate::VersionVector,
+        _to: &crate::VersionVector,
+        _on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
         InternalDiff::Unknown(self.ops.clone())
     }

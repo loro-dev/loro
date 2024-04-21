@@ -1375,7 +1375,7 @@ fn decode_op(
                 crate::op::InnerContent::Tree(op.as_tree_op(peers)?)
             }
             ValueKind::Unknown => {
-                let op_len = value_reader.read_i64()?;
+                let _op_len = value_reader.read_i64()?;
                 let _ = value_reader.read_usize()?;
                 let op = value_reader.read_tree_move()?;
                 crate::op::InnerContent::Tree(op.as_tree_op(peers)?)

@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    num::NonZeroU16,
     sync::{Arc, Mutex, RwLock, Weak},
 };
 
