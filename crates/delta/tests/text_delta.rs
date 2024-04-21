@@ -1,4 +1,7 @@
-use delta::{text_delta::TextDelta, DeltaRopeBuilder};
+use delta::{
+    text_delta::{Chunk, TextDelta},
+    DeltaRopeBuilder,
+};
 
 #[test]
 fn text_delta() {
@@ -41,6 +44,26 @@ fn retain_delete_delta_compose_1() {
             .retain(2, ())
             .delete(5)
             .retain(3, ())
+            .build()
+    );
+}
+
+#[test]
+fn compose_long_delete() {
+    let mut a: TextDelta = TextDelta::new();
+    a.push_retain(5, ());
+    a.push_str_insert("1234567890");
+    a.push_retain(5, ());
+    a.push_delete(1);
+    a.push_str_insert("1234567890");
+    let b: TextDelta = DeltaRopeBuilder::new().retain(2, ()).delete(20).build();
+    a.compose(&b);
+    assert_eq!(
+        a,
+        DeltaRopeBuilder::new()
+            .retain(2, ())
+            .delete(1)
+            .insert(Chunk::try_from_str("34567890").unwrap(), ())
             .build()
     );
 }

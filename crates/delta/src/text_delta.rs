@@ -90,6 +90,10 @@ impl Chunk {
 
         Ok(())
     }
+
+    pub fn try_from_str(s: &str) -> Option<Self> {
+        Some(Chunk(ArrayString::from(s).ok()?))
+    }
 }
 
 impl HasLength for Chunk {

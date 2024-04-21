@@ -68,11 +68,11 @@ impl<V: DeltaValue, Attr: Clone> Sliceable for DeltaItem<V, Attr> {
     fn _slice(&self, range: std::ops::Range<usize>) -> Self {
         match self {
             DeltaItem::Delete(d) => {
-                assert!(range.end < *d);
+                assert!(range.end <= *d);
                 DeltaItem::Delete(range.len())
             }
             DeltaItem::Retain { len, attr } => {
-                assert!(range.end < *len);
+                assert!(range.end <= *len);
                 DeltaItem::Retain {
                     len: range.len(),
                     attr: attr.clone(),

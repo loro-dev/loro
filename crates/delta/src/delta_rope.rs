@@ -60,6 +60,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                     if from.cursor.leaf == to.cursor.leaf {
                         self.tree.update_leaf(from.cursor.leaf, |item| match item {
                             DeltaItem::Delete(l) => {
+                                assert!(!to.found);
                                 *l += len;
                                 (true, None, None)
                             }
@@ -138,15 +139,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                             }
 
                             match item {
-                                DeltaItem::Delete(l) => {
-                                    let diff = Len {
-                                        new_len: 0,
-                                        old_len: left_len as isize,
-                                    };
-                                    *l += left_len;
-                                    left_len = 0;
-                                    Some(diff)
-                                }
+                                DeltaItem::Delete(_) => None,
                                 DeltaItem::Retain { len, .. } => {
                                     let diff = if left_len > *len { *len } else { left_len };
                                     *len -= diff;
@@ -179,7 +172,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                         });
 
                         if left_len > 0 {
-                            self.tree.push(DeltaItem::Delete(left_len));
+                            self.insert_value(index, &[DeltaItem::Delete(left_len)]);
                         }
                     }
                 }
@@ -235,7 +228,11 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     }
 
     pub fn push_retain(&mut self, retain: usize, attr: Attr) -> &mut Self {
-        let leaf = self.tree.last_leaf().unwrap();
+        let Some(leaf) = self.tree.last_leaf() else {
+            self.tree.push(DeltaItem::Retain { len: retain, attr });
+            return self;
+        };
+
         let mut inserted = false;
         self.tree.update_leaf(leaf, |item| {
             if let DeltaItem::Retain { len, attr: a } = item {

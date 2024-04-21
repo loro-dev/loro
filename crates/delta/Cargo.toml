@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 arrayvec = "0.7.4"
-generic-btree = { version = "0.9.0" }
+generic-btree = { version = "0.10.0" }
 heapless = "0.8.0"
 tracing = "0.1.40"
 
