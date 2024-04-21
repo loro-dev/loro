@@ -459,8 +459,7 @@ impl DocState {
                     if let Some(state_diff) = diff
                         .container
                         .as_idx()
-                        .map(|x| idx2state_diff.remove(x))
-                        .flatten()
+                        .and_then(|x| idx2state_diff.remove(x))
                     {
                         diff.diff = Some(state_diff.into());
                     };
@@ -489,8 +488,7 @@ impl DocState {
                     if let Some(state_diff) = diff
                         .container
                         .as_idx()
-                        .map(|x| idx2state_diff.remove(&x))
-                        .flatten()
+                        .and_then(|x| idx2state_diff.remove(x))
                     {
                         // use `concat`(hierarchical and relative order) rather than `compose`
                         state_diff.concat(external_diff)
@@ -657,15 +655,6 @@ impl DocState {
         if self.is_recording() {
             self.record_diff(diff.unwrap());
         }
-    }
-
-    pub(crate) fn get_create_unknown_state_mut(&mut self, cid: &ContainerID) -> &mut State {
-        if !self.unknown_states.contains_key(&cid) {
-            self.unknown_states
-                .insert(cid.clone(), State::new_unknown(cid.clone()));
-        }
-        let state = get_or_create_unknown!(self, cid.clone());
-        state
     }
 
     #[inline]
