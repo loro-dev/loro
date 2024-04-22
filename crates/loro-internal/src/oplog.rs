@@ -627,8 +627,9 @@ impl OpLog {
                 }))
             }
             crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(*tree)),
-            crate::op::InnerContent::Unknown { op_len, data } => {
+            crate::op::InnerContent::Unknown { kind, op_len, data } => {
                 contents.push(RawOpContent::Unknown {
+                    kind: *kind,
                     op_len: *op_len,
                     data: data.clone(),
                 })

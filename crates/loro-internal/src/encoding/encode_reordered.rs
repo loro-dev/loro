@@ -7,6 +7,7 @@ use loro_common::{
     ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp,
     InternalString, LoroError, LoroResult, PeerID, ID,
 };
+use num::ToPrimitive;
 use num_traits::FromPrimitive;
 use rle::HasLength;
 use serde_columnar::{columnar, ColumnarError};
@@ -1237,10 +1238,10 @@ mod encode {
                     value_writer.write(&Value::TreeMove(op), register_key, register_cid),
                 )
             }
-            crate::op::InnerContent::Unknown { op_len, data } => {
+            crate::op::InnerContent::Unknown { kind, op_len, data } => {
                 let len = value_writer.write_i64(*op_len as i64);
                 (
-                    ValueKind::Unknown,
+                    ValueKind::Unknown(*kind),
                     len + value_writer.write(&Value::Binary(data), register_key, register_cid),
                 )
             }
@@ -1252,7 +1253,7 @@ mod encode {
 #[inline]
 fn decode_op(
     cid: &ContainerID,
-    kind: ValueKind,
+    mut kind: ValueKind,
     length: usize,
     op_len: usize,
     del_iter: &mut impl Iterator<Item = Result<EncodedDeleteStartId, ColumnarError>>,
@@ -1263,6 +1264,13 @@ fn decode_op(
     peers: &[u64],
     id: ID,
 ) -> LoroResult<crate::op::InnerContent> {
+    if let ValueKind::Unknown(k) = kind {
+        let _op_len = value_reader.read_i64()?;
+        let _ = value_reader.read_usize()?;
+        println!("unknown kind: {}", k);
+        kind = ValueKind::from_u8(k).unwrap();
+    }
+
     let content = match cid.container_type() {
         ContainerType::Text => match kind {
             ValueKind::Str => {
@@ -1374,12 +1382,12 @@ fn decode_op(
                 let op = value_reader.read_tree_move()?;
                 crate::op::InnerContent::Tree(op.as_tree_op(peers)?)
             }
-            ValueKind::Unknown => {
-                let _op_len = value_reader.read_i64()?;
-                let _ = value_reader.read_usize()?;
-                let op = value_reader.read_tree_move()?;
-                crate::op::InnerContent::Tree(op.as_tree_op(peers)?)
-            }
+            // ValueKind::Unknown => {
+            //     let _op_len = value_reader.read_i64()?;
+            //     let _ = value_reader.read_usize()?;
+            //     let op = value_reader.read_tree_move()?;
+            //     crate::op::InnerContent::Tree(op.as_tree_op(peers)?)
+            // }
             _ => {
                 unreachable!()
             }
@@ -1388,6 +1396,7 @@ fn decode_op(
             // TODO: read unknown
             let bytes = value_reader.take_bytes(length);
             crate::op::InnerContent::Unknown {
+                kind: kind.to_u8().unwrap(),
                 op_len,
                 data: bytes.to_vec(),
             }
@@ -1639,60 +1648,52 @@ mod value {
 
     #[derive(Debug)]
     pub enum ValueKind {
-        Null = 0,
-        True = 1,
-        False = 2,
-        DeleteOnce = 3,
-        I64 = 4,
-        ContainerType = 5,
-        F64 = 6,
-        Str = 7,
-        DeleteSeq = 8,
-        DeltaInt = 9,
-        Array = 10,
-        Map = 11,
-        MarkStart = 12,
-        TreeMove = 13,
-        Binary = 14,
-        Unknown = 255,
+        Null,
+        True,
+        False,
+        DeleteOnce,
+        I64,
+        ContainerType,
+        F64,
+        Str,
+        DeleteSeq,
+        DeltaInt,
+        Array,
+        Map,
+        MarkStart,
+        TreeMove,
+        Binary,
+        Unknown(u8),
     }
 
     impl num_traits::FromPrimitive for ValueKind {
         #[allow(trivial_numeric_casts)]
         #[inline]
         fn from_u8(n: u8) -> Option<Self> {
-            if n == ValueKind::Null as u8 {
-                Some(ValueKind::Null)
-            } else if n == ValueKind::True as u8 {
-                Some(ValueKind::True)
-            } else if n == ValueKind::False as u8 {
-                Some(ValueKind::False)
-            } else if n == ValueKind::DeleteOnce as u8 {
-                Some(ValueKind::DeleteOnce)
-            } else if n == ValueKind::I64 as u8 {
-                Some(ValueKind::I64)
-            } else if n == ValueKind::ContainerType as u8 {
-                Some(ValueKind::ContainerType)
-            } else if n == ValueKind::F64 as u8 {
-                Some(ValueKind::F64)
-            } else if n == ValueKind::Str as u8 {
-                Some(ValueKind::Str)
-            } else if n == ValueKind::DeleteSeq as u8 {
-                Some(ValueKind::DeleteSeq)
-            } else if n == ValueKind::DeltaInt as u8 {
-                Some(ValueKind::DeltaInt)
-            } else if n == ValueKind::Array as u8 {
-                Some(ValueKind::Array)
-            } else if n == ValueKind::Map as u8 {
-                Some(ValueKind::Map)
-            } else if n == ValueKind::MarkStart as u8 {
-                Some(ValueKind::MarkStart)
-            } else if n == ValueKind::TreeMove as u8 {
-                Some(ValueKind::TreeMove)
-            } else if n == ValueKind::Binary as u8 {
-                Some(ValueKind::Binary)
-            } else {
-                Some(ValueKind::Unknown)
+            match n {
+                0 => Some(ValueKind::Null),
+                1 => Some(ValueKind::True),
+                2 => Some(ValueKind::False),
+                3 => Some(ValueKind::DeleteOnce),
+                4 => Some(ValueKind::I64),
+                5 => Some(ValueKind::ContainerType),
+                6 => Some(ValueKind::F64),
+                7 => Some(ValueKind::Str),
+                8 => Some(ValueKind::DeleteSeq),
+                9 => Some(ValueKind::DeltaInt),
+                10 => Some(ValueKind::Array),
+                11 => Some(ValueKind::Map),
+                12 => Some(ValueKind::MarkStart),
+                13 => Some(ValueKind::TreeMove),
+                14 => Some(ValueKind::Binary),
+                _ => {
+                    let kind = n & 0x7F;
+                    if kind == n {
+                        Some(ValueKind::Unknown(kind))
+                    } else {
+                        Self::from_u8(kind)
+                    }
+                }
             }
         }
 
@@ -1712,22 +1713,22 @@ mod value {
         #[allow(trivial_numeric_casts)]
         fn to_i64(&self) -> Option<i64> {
             Some(match *self {
-                ValueKind::Null => ValueKind::Null as i64,
-                ValueKind::True => ValueKind::True as i64,
-                ValueKind::False => ValueKind::False as i64,
-                ValueKind::DeleteOnce => ValueKind::DeleteOnce as i64,
-                ValueKind::I64 => ValueKind::I64 as i64,
-                ValueKind::ContainerType => ValueKind::ContainerType as i64,
-                ValueKind::F64 => ValueKind::F64 as i64,
-                ValueKind::Str => ValueKind::Str as i64,
-                ValueKind::DeleteSeq => ValueKind::DeleteSeq as i64,
-                ValueKind::DeltaInt => ValueKind::DeltaInt as i64,
-                ValueKind::Array => ValueKind::Array as i64,
-                ValueKind::Map => ValueKind::Map as i64,
-                ValueKind::MarkStart => ValueKind::MarkStart as i64,
-                ValueKind::TreeMove => ValueKind::TreeMove as i64,
-                ValueKind::Binary => ValueKind::Binary as i64,
-                ValueKind::Unknown => ValueKind::Unknown as i64,
+                ValueKind::Null => 0,
+                ValueKind::True => 1,
+                ValueKind::False => 2,
+                ValueKind::DeleteOnce => 3,
+                ValueKind::I64 => 4,
+                ValueKind::ContainerType => 5,
+                ValueKind::F64 => 6,
+                ValueKind::Str => 7,
+                ValueKind::DeleteSeq => 8,
+                ValueKind::DeltaInt => 9,
+                ValueKind::Array => 10,
+                ValueKind::Map => 11,
+                ValueKind::MarkStart => 12,
+                ValueKind::TreeMove => 13,
+                ValueKind::Binary => 14,
+                ValueKind::Unknown(n) => (n | 0x80) as i64,
             })
         }
         #[inline]
@@ -1739,22 +1740,22 @@ mod value {
         #[allow(trivial_numeric_casts)]
         fn to_u8(&self) -> Option<u8> {
             Some(match *self {
-                ValueKind::Null => ValueKind::Null as u8,
-                ValueKind::True => ValueKind::True as u8,
-                ValueKind::False => ValueKind::False as u8,
-                ValueKind::DeleteOnce => ValueKind::DeleteOnce as u8,
-                ValueKind::I64 => ValueKind::I64 as u8,
-                ValueKind::ContainerType => ValueKind::ContainerType as u8,
-                ValueKind::F64 => ValueKind::F64 as u8,
-                ValueKind::Str => ValueKind::Str as u8,
-                ValueKind::DeleteSeq => ValueKind::DeleteSeq as u8,
-                ValueKind::DeltaInt => ValueKind::DeltaInt as u8,
-                ValueKind::Array => ValueKind::Array as u8,
-                ValueKind::Map => ValueKind::Map as u8,
-                ValueKind::MarkStart => ValueKind::MarkStart as u8,
-                ValueKind::TreeMove => ValueKind::TreeMove as u8,
-                ValueKind::Binary => ValueKind::Binary as u8,
-                ValueKind::Unknown => ValueKind::Unknown as u8,
+                ValueKind::Null => 0,
+                ValueKind::True => 1,
+                ValueKind::False => 2,
+                ValueKind::DeleteOnce => 3,
+                ValueKind::I64 => 4,
+                ValueKind::ContainerType => 5,
+                ValueKind::F64 => 6,
+                ValueKind::Str => 7,
+                ValueKind::DeleteSeq => 8,
+                ValueKind::DeltaInt => 9,
+                ValueKind::Array => 10,
+                ValueKind::Map => 11,
+                ValueKind::MarkStart => 12,
+                ValueKind::TreeMove => 13,
+                ValueKind::Binary => 14,
+                ValueKind::Unknown(n) => n | 0x80,
             })
         }
     }
@@ -1777,7 +1778,7 @@ mod value {
                 Value::MarkStart { .. } => ValueKind::MarkStart,
                 Value::TreeMove(_) => ValueKind::TreeMove,
                 Value::Binary(_) => ValueKind::Binary,
-                Value::Unknown { .. } => ValueKind::Unknown,
+                Value::Unknown { kind, .. } => ValueKind::Unknown(*kind),
             }
         }
     }

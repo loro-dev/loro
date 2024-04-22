@@ -26,7 +26,11 @@ pub enum InnerContent {
     List(InnerListOp),
     Map(MapSet),
     Tree(TreeOp),
-    Unknown { op_len: usize, data: Vec<u8> },
+    Unknown {
+        kind: u8,
+        op_len: usize,
+        data: Vec<u8>,
+    },
 }
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
@@ -35,7 +39,11 @@ pub enum RawOpContent<'a> {
     Map(MapSet),
     List(ListOp<'a>),
     Tree(TreeOp),
-    Unknown { op_len: usize, data: Vec<u8> },
+    Unknown {
+        kind: u8,
+        op_len: usize,
+        data: Vec<u8>,
+    },
 }
 
 impl<'a> Clone for RawOpContent<'a> {
@@ -44,7 +52,8 @@ impl<'a> Clone for RawOpContent<'a> {
             Self::Map(arg0) => Self::Map(arg0.clone()),
             Self::List(arg0) => Self::List(arg0.clone()),
             Self::Tree(arg0) => Self::Tree(*arg0),
-            Self::Unknown { op_len, data } => Self::Unknown {
+            Self::Unknown { kind, op_len, data } => Self::Unknown {
+                kind: *kind,
                 op_len: *op_len,
                 data: data.clone(),
             },
@@ -78,7 +87,8 @@ impl<'a> RawOpContent<'a> {
                 ListOp::StyleEnd => RawOpContent::List(ListOp::StyleEnd),
             },
             Self::Tree(arg0) => RawOpContent::Tree(*arg0),
-            Self::Unknown { op_len, data } => RawOpContent::Unknown {
+            Self::Unknown { kind, op_len, data } => RawOpContent::Unknown {
+                kind: *kind,
                 op_len: *op_len,
                 data: data.clone(),
             },
@@ -184,10 +194,7 @@ impl HasLength for InnerContent {
             InnerContent::List(list) => list.atom_len(),
             InnerContent::Map(_) => 1,
             InnerContent::Tree(_) => 1,
-            InnerContent::Unknown {
-                op_len: len,
-                data: _,
-            } => *len,
+            InnerContent::Unknown { op_len: len, .. } => *len,
         }
     }
 }
