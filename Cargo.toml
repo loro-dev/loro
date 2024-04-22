@@ -6,7 +6,6 @@ members = [
     "crates/rle",
     "crates/loro-common",
     "crates/loro-internal",
-    "crates/loro-preload",
     "crates/loro-wasm",
     "crates/fuzz",
 ]

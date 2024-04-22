@@ -66,12 +66,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
-name = "bytes"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2bd12c1caf447e69cd4528f47f94d203fd2582878ecb9e9465484c4148a8223"
-
-[[package]]
 name = "cc"
 version = "1.0.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -217,6 +211,7 @@ dependencies = [
  "enum_dispatch",
  "fxhash",
  "loro",
+ "loro-internal",
  "tabled",
 ]
 
@@ -360,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
@@ -369,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
@@ -384,7 +379,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -398,7 +393,6 @@ dependencies = [
  "itertools",
  "leb128",
  "loro-common",
- "loro-preload",
  "loro-rle",
  "md5",
  "num",
@@ -417,18 +411,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-preload"
-version = "0.2.0"
-dependencies = [
- "bytes",
- "loro-common",
- "serde",
- "serde_columnar",
-]
-
-[[package]]
 name = "loro-rle"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -755,9 +739,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a41a9a14c8a221abb13091da4d1075699999e6a12213283c452680a70376efd0"
+checksum = "a5d54dd7e7a1ec134c842f8a3bdb5a1fc662d002682e0457f976f3046cf9ccf8"
 dependencies = [
  "itertools",
  "postcard",
@@ -768,9 +752,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar_derive"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0f77bad2a9b92970e7e1f8004fac293328ac9a05f92f751ae293644d764ede4"
+checksum = "3e5eaacabbc55a397ffbb1ee32523f40f86fdefea8a8d9db19630d8b7c00edd1"
 dependencies = [
  "darling",
  "proc-macro2",
