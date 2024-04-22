@@ -221,6 +221,9 @@ pub type ListDiffInsertItem = ArrayVec<ValueOrHandler, 8>;
 pub type ListDiffItem = DeltaItem<ListDiffInsertItem, ()>;
 pub type ListDiff = DeltaRope<ListDiffInsertItem, ()>;
 
+pub type TextDiffItem = DeltaItem<StringSlice, StyleMeta>;
+pub type TextDiff = DeltaRope<StringSlice, StyleMeta>;
+
 /// Diff is the diff between two versions of a container.
 /// It's used to describe the change of a container and the events.
 ///
@@ -238,7 +241,7 @@ pub enum Diff {
     // don't have peer and lamport info
     /// - When feature `wasm` is enabled, it should use utf16 indexes.
     /// - When feature `wasm` is disabled, it should use unicode indexes.
-    Text(Delta<StringSlice, StyleMeta>),
+    Text(TextDiff),
     Map(ResolvedMapDelta),
     Tree(TreeDiff),
 }
@@ -283,7 +286,10 @@ impl Diff {
                 a.compose(&b);
                 Ok(Diff::List(a))
             }
-            (Diff::Text(a), Diff::Text(b)) => Ok(Diff::Text(a.compose(b))),
+            (Diff::Text(mut a), Diff::Text(b)) => {
+                a.compose(&b);
+                Ok(Diff::Text(a))
+            }
             (Diff::Map(a), Diff::Map(b)) => Ok(Diff::Map(a.compose(b))),
 
             (Diff::Tree(a), Diff::Tree(b)) => Ok(Diff::Tree(a.compose(b))),
@@ -306,7 +312,10 @@ impl Diff {
                 a.compose(&b);
                 Diff::List(a)
             }
-            (Diff::Text(a), Diff::Text(b)) => Diff::Text(a.compose(b)),
+            (Diff::Text(mut a), Diff::Text(b)) => {
+                a.compose(&b);
+                Diff::Text(a)
+            }
             (Diff::Map(a), Diff::Map(b)) => {
                 let mut a = a;
                 for (k, v) in b.updated {

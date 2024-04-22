@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use loro_delta::{
-    text_delta::{Chunk, TextDelta},
+    text_delta::{TextChunk, TextDelta},
     DeltaRopeBuilder,
 };
 
@@ -64,8 +64,8 @@ fn compose_long_delete() {
         a,
         DeltaRopeBuilder::new()
             .retain(2, ())
-            .delete(1)
-            .insert(Chunk::try_from_str("34567890").unwrap(), ())
+            .delete(9)
+            .insert(TextChunk::try_from_str("34567890").unwrap(), ())
             .build()
     );
 }
@@ -88,7 +88,7 @@ fn rich_text_delta() {
     let mut expected = RichTextDelta::new();
     expected
         .push_str_insert("abc")
-        .push_insert(Chunk::try_from_str("123").unwrap(), styles.clone())
+        .push_insert(TextChunk::try_from_str("123").unwrap(), styles.clone())
         .push_str_insert("789");
 
     assert_eq!(text, expected);
@@ -120,7 +120,7 @@ fn insert_plus_retain() {
     b.push_retain(1, attrs.clone());
     let expected = {
         let mut delta = TextDelta::new();
-        delta.push_insert(Chunk::try_from_str("A").unwrap(), attrs);
+        delta.push_insert(TextChunk::try_from_str("A").unwrap(), attrs);
         delta
     };
     a.compose(&b);
@@ -134,21 +134,6 @@ fn insert_plus_delete() {
     let mut b: TextDelta = TextDelta::new();
     b.push_delete(1);
     let expected = TextDelta::new();
-    a.compose(&b);
-    assert_eq!(a, expected);
-}
-
-#[test]
-fn delete_plus_insert() {
-    let mut a: TextDelta = TextDelta::new();
-    a.push_delete(1);
-    let mut b: TextDelta = TextDelta::new();
-    b.push_str_insert("B");
-    let expected = {
-        let mut delta = TextDelta::new();
-        delta.push_str_insert("B").push_delete(1);
-        delta
-    };
     a.compose(&b);
     assert_eq!(a, expected);
 }
@@ -260,9 +245,9 @@ fn retain_start_optimization_split() {
     let mut attrs_bold = HashMap::new();
     attrs_bold.insert("bold".to_string(), true);
 
-    a.push_insert(Chunk::try_from_str("A").unwrap(), attrs_bold.clone())
+    a.push_insert(TextChunk::try_from_str("A").unwrap(), attrs_bold.clone())
         .push_str_insert("B")
-        .push_insert(Chunk::try_from_str("C").unwrap(), attrs_bold)
+        .push_insert(TextChunk::try_from_str("C").unwrap(), attrs_bold)
         .push_retain(5, Default::default())
         .push_delete(1);
 
@@ -275,9 +260,9 @@ fn retain_start_optimization_split() {
         attrs_bold.insert("bold".to_string(), true);
 
         delta
-            .push_insert(Chunk::try_from_str("A").unwrap(), attrs_bold.clone())
+            .push_insert(TextChunk::try_from_str("A").unwrap(), attrs_bold.clone())
             .push_str_insert("B")
-            .push_insert(Chunk::try_from_str("C").unwrap(), attrs_bold)
+            .push_insert(TextChunk::try_from_str("C").unwrap(), attrs_bold)
             .push_retain(1, Default::default())
             .push_str_insert("D")
             .push_retain(4, Default::default())

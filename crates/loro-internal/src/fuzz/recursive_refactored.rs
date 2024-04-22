@@ -115,16 +115,10 @@ impl Actor {
                             let mut index = 0;
                             for item in delta.iter() {
                                 match item {
-                                    DeltaItem::Retain {
-                                        retain: len,
-                                        attributes: _,
-                                    } => {
+                                    loro_delta::DeltaItem::Retain { len, attr } => {
                                         index += len;
                                     }
-                                    DeltaItem::Insert {
-                                        insert: value,
-                                        attributes: _,
-                                    } => {
+                                    loro_delta::DeltaItem::Insert { value, attr } => {
                                         let utf8_index = if cfg!(feature = "wasm") {
                                             let ans = utf16_to_utf8_index(&text, index).unwrap();
                                             index += value.len_utf16();
@@ -136,7 +130,7 @@ impl Actor {
                                         };
                                         text.insert_str(utf8_index, value.as_str());
                                     }
-                                    DeltaItem::Delete { delete: len, .. } => {
+                                    loro_delta::DeltaItem::Delete(len) => {
                                         let utf8_index = if cfg!(feature = "wasm") {
                                             utf16_to_utf8_index(&text, index).unwrap()
                                         } else {
@@ -742,6 +736,12 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
         &**value_a.as_list().unwrap(),
         &*a_actor.list_tracker.lock().unwrap(),
     );
+}
+
+fn check_sync_with_tracker(actor: &mut Actor) {
+    let a_doc = &mut actor.loro;
+    let a_result = a_doc.get_state_deep_value();
+    assert_value_eq(&a_result, &actor.value_tracker.lock().unwrap());
 }
 
 fn check_synced(sites: &mut [Actor]) {

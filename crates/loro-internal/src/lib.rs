@@ -56,5 +56,7 @@ pub(crate) use loro_common::InternalString;
 
 pub use container::ContainerType;
 pub use loro_common::{loro_value, to_value};
+#[cfg(feature = "wasm")]
+pub use value::wasm;
 pub use value::{ApplyDiff, LoroValue, ToJson};
 pub use version::VersionVector;

@@ -2,7 +2,7 @@ use std::{fmt::Debug, ops::Range};
 
 use generic_btree::{
     rle::{Mergeable, Sliceable},
-    LengthFinder,
+    Cursor, LengthFinder,
 };
 
 use crate::{
@@ -24,17 +24,23 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     }
 
     pub fn compose(&mut self, other: &Self) {
+        // TODO: Need to implement a slow mode that is guaranteed to be correct, then we can fuzz on it
+        if self.is_empty() {
+            *self = other.clone();
+            return;
+        }
+
         let mut index = 0;
 
-        let mut push_other = false;
+        let mut push_rest = false;
         for item in other.iter() {
-            if index > self.len() {
+            if index >= self.len() {
                 self.push_retain(index - self.len(), Attr::default());
-                push_other = true;
+                push_rest = true;
             }
 
-            if push_other {
-                self.tree.push(item.clone());
+            if push_rest {
+                self.push(item.clone());
                 continue;
             }
 
@@ -44,17 +50,21 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                     index += value.rle_len();
                 }
                 DeltaItem::Retain { len, attr } => {
+                    if self.len() < index + len {
+                        self.push_retain(index + len - self.len(), Default::default());
+                    }
                     if !attr.attr_is_empty() {
                         self.update_range(index..index + len, attr);
                     }
                     index += len;
                 }
                 DeltaItem::Delete(len) => {
-                    let range = index..index + len;
-                    if range.start == range.end || self.is_empty() {
-                        return;
+                    if *len == 0 {
+                        continue;
                     }
 
+                    assert!(index < self.len());
+                    let range = index..(index + len).min(self.len());
                     let from = self.tree.query::<LengthFinder>(&range.start).unwrap();
                     let to = self.tree.query::<LengthFinder>(&range.end).unwrap();
                     if from.cursor.leaf == to.cursor.leaf {
@@ -141,12 +151,13 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                             match item {
                                 DeltaItem::Delete(_) => None,
                                 DeltaItem::Retain { len, .. } => {
-                                    let diff = if left_len > *len { *len } else { left_len };
-                                    *len -= diff;
-                                    left_len -= diff;
+                                    assert!(*len <= left_len);
+                                    left_len -= *len;
+                                    let diff = -(*len as isize);
+                                    *item = DeltaItem::Delete(*len);
                                     Some(Len {
-                                        new_len: -(diff as isize),
-                                        old_len: -(diff as isize),
+                                        new_len: diff,
+                                        old_len: diff,
                                     })
                                 }
                                 DeltaItem::Insert { value, .. } => {
@@ -305,6 +316,23 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     /// It's useful to implement algorithms related to Delta
     pub fn iter_with_len(&self) -> Iter<V, Attr> {
         Iter::new(self)
+    }
+
+    pub fn chop(&mut self) {
+        let mut last_leaf = self.tree.last_leaf();
+        while let Some(last_leaf_idx) = last_leaf {
+            let elem = self.tree.get_elem(last_leaf_idx).unwrap();
+            match elem {
+                DeltaItem::Retain { len: _, attr } if attr.attr_is_empty() => {
+                    self.tree.remove_leaf(Cursor {
+                        leaf: last_leaf_idx,
+                        offset: 0,
+                    });
+                    last_leaf = self.tree.last_leaf();
+                }
+                _ => return,
+            }
+        }
     }
 }
 

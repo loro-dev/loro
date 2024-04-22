@@ -9,6 +9,7 @@ use crate::{
     },
     cursor::{Cursor, Side},
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
+    event::TextDiffItem,
     op::ListSlice,
     state::{ContainerState, State, TreeParentId},
     txn::EventHint,
@@ -348,6 +349,22 @@ pub enum TextDelta {
     Delete {
         delete: usize,
     },
+}
+
+impl From<&TextDiffItem> for TextDelta {
+    fn from(value: &TextDiffItem) -> Self {
+        match value {
+            loro_delta::DeltaItem::Retain { len, attr } => TextDelta::Retain {
+                retain: *len,
+                attributes: attr.to_option_map(),
+            },
+            loro_delta::DeltaItem::Insert { value, attr } => TextDelta::Insert {
+                insert: value.to_string(),
+                attributes: attr.to_option_map(),
+            },
+            loro_delta::DeltaItem::Delete(delete) => TextDelta::Delete { delete: *delete },
+        }
+    }
 }
 
 impl From<&DeltaItem<StringSlice, StyleMeta>> for TextDelta {

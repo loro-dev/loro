@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     delta::{Delta, DeltaItem, Meta, StyleMeta, TreeValue},
-    event::{Diff, Index, Path},
+    event::{Diff, Index, Path, TextDiff, TextDiffItem},
     handler::ValueOrHandler,
     utils::string_slice::StringSlice,
 };
@@ -117,6 +117,82 @@ impl ToJson for DeltaItem<StringSlice, StyleMeta> {
     }
 }
 
+impl ToJson for TextDiffItem {
+    fn to_json_value(&self) -> serde_json::Value {
+        match self {
+            loro_delta::DeltaItem::Retain { len, attr } => {
+                let mut map = serde_json::Map::new();
+                map.insert("retain".into(), serde_json::to_value(len).unwrap());
+                if !attr.is_empty() {
+                    map.insert("attributes".into(), attr.to_json_value());
+                }
+                serde_json::Value::Object(map)
+            }
+            loro_delta::DeltaItem::Insert { value, attr } => {
+                let mut map = serde_json::Map::new();
+                map.insert("insert".into(), serde_json::to_value(value).unwrap());
+                if !attr.is_empty() {
+                    map.insert("attributes".into(), attr.to_json_value());
+                }
+                serde_json::Value::Object(map)
+            }
+            loro_delta::DeltaItem::Delete(len) => {
+                let mut map = serde_json::Map::new();
+                map.insert("delete".into(), serde_json::to_value(len).unwrap());
+                serde_json::Value::Object(map)
+            }
+        }
+    }
+
+    fn from_json(s: &str) -> Self {
+        let map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(s).unwrap();
+        if map.contains_key("retain") {
+            let len = map["retain"].as_u64().unwrap();
+            let meta = if let Some(meta) = map.get("attributes") {
+                StyleMeta::from_json(meta.to_string().as_str())
+            } else {
+                StyleMeta::default()
+            };
+            TextDiffItem::Retain {
+                len: len as usize,
+                attr: meta,
+            }
+        } else if map.contains_key("insert") {
+            let value = map["insert"].as_str().unwrap().to_string().into();
+            let meta = if let Some(meta) = map.get("attributes") {
+                StyleMeta::from_json(meta.to_string().as_str())
+            } else {
+                StyleMeta::default()
+            };
+            TextDiffItem::Insert { value, attr: meta }
+        } else if map.contains_key("delete") {
+            let len = map["delete"].as_u64().unwrap();
+            TextDiffItem::Delete(len as usize)
+        } else {
+            panic!("Invalid delta item: {}", s);
+        }
+    }
+}
+
+impl ToJson for TextDiff {
+    fn to_json_value(&self) -> serde_json::Value {
+        let mut vec = Vec::new();
+        for item in self.iter() {
+            vec.push(item.to_json_value());
+        }
+        serde_json::Value::Array(vec)
+    }
+
+    fn from_json(s: &str) -> Self {
+        let vec: Vec<serde_json::Value> = serde_json::from_str(s).unwrap();
+        let mut ans = TextDiff::new();
+        for item in vec.into_iter() {
+            ans.push(TextDiffItem::from_json(item.to_string().as_str()));
+        }
+        ans
+    }
+}
+
 impl ToJson for Delta<StringSlice, StyleMeta> {
     fn to_json_value(&self) -> serde_json::Value {
         let mut vec = Vec::new();
@@ -159,15 +235,15 @@ impl ApplyDiff for LoroValue {
                     let mut index = 0;
                     for delta_item in delta.iter() {
                         match delta_item {
-                            DeltaItem::Retain { retain: len, .. } => {
+                            loro_delta::DeltaItem::Retain { len, attr } => {
                                 index += len;
                             }
-                            DeltaItem::Insert { insert: value, .. } => {
+                            loro_delta::DeltaItem::Insert { value, attr } => {
                                 s.insert_str(index, value.as_str());
                                 index += value.len_bytes();
                             }
-                            DeltaItem::Delete { delete: len, .. } => {
-                                s.drain(index..index + len);
+                            loro_delta::DeltaItem::Delete(l) => {
+                                s.drain(index..index + l);
                             }
                         }
                     }
@@ -319,7 +395,7 @@ pub mod wasm {
 
     use crate::{
         delta::{Delta, DeltaItem, Meta, StyleMeta, TreeDiff, TreeExternalDiff},
-        event::Index,
+        event::{Index, TextDiff, TextDiffItem},
         utils::string_slice::StringSlice,
     };
 
@@ -387,7 +463,7 @@ pub mod wasm {
                         js_sys::Reflect::set(
                             &obj,
                             &JsValue::from_str("attributes"),
-                            &JsValue::from(meta),
+                            &JsValue::from(&meta),
                         )
                         .unwrap();
                     }
@@ -406,7 +482,7 @@ pub mod wasm {
                         js_sys::Reflect::set(
                             &obj,
                             &JsValue::from_str("attributes"),
-                            &JsValue::from(meta),
+                            &JsValue::from(&meta),
                         )
                         .unwrap();
                     }
@@ -428,8 +504,68 @@ pub mod wasm {
         }
     }
 
-    impl From<StyleMeta> for JsValue {
-        fn from(value: StyleMeta) -> Self {
+    pub fn text_diff_to_js_value(diff: &TextDiff) -> JsValue {
+        let arr = Array::new();
+        for (i, v) in diff.iter().enumerate() {
+            arr.set(i as u32, text_diff_item_to_js_value(v));
+        }
+
+        arr.into_js_result().unwrap()
+    }
+
+    fn text_diff_item_to_js_value(value: &TextDiffItem) -> JsValue {
+        match value {
+            loro_delta::DeltaItem::Retain { len, attr } => {
+                let obj = Object::new();
+                js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_str("retain"),
+                    &JsValue::from_f64(*len as f64),
+                )
+                .unwrap();
+                if !attr.is_empty() {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("attributes"),
+                        &JsValue::from(attr),
+                    )
+                    .unwrap();
+                }
+                obj.into_js_result().unwrap()
+            }
+            loro_delta::DeltaItem::Insert { value, attr } => {
+                let obj = Object::new();
+                js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_str("insert"),
+                    &JsValue::from_str(value.as_str()),
+                )
+                .unwrap();
+                if !attr.is_empty() {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("attributes"),
+                        &JsValue::from(attr),
+                    )
+                    .unwrap();
+                }
+                obj.into_js_result().unwrap()
+            }
+            loro_delta::DeltaItem::Delete(len) => {
+                let obj = Object::new();
+                js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_str("delete"),
+                    &JsValue::from_f64(*len as f64),
+                )
+                .unwrap();
+                obj.into_js_result().unwrap()
+            }
+        }
+    }
+
+    impl From<&StyleMeta> for JsValue {
+        fn from(value: &StyleMeta) -> Self {
             // TODO: refactor: should we extract the common code of ToJson and ToJsValue
             let obj = Object::new();
             for (key, style) in value.iter() {

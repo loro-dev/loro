@@ -742,6 +742,7 @@ impl CanRemove for PosCache {
 
 pub(crate) struct RichtextTreeTrait;
 
+#[derive(Debug)]
 pub(crate) struct EntityRangeInfo {
     pub id_start: ID,
     pub entity_start: usize,

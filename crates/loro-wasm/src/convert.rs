@@ -88,7 +88,7 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("list"))
                 .unwrap();
             // set diff as array
-            let arr = Array::new_with_length(list.len() as u32);
+            let arr = Array::new();
             for (i, v) in list.iter().enumerate() {
                 arr.set(i as u32, delta_item_to_js(v.clone(), doc));
             }
@@ -104,7 +104,12 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("text"))
                 .unwrap();
             // set diff as array
-            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &JsValue::from(text)).unwrap();
+            js_sys::Reflect::set(
+                &obj,
+                &JsValue::from_str("diff"),
+                &loro_internal::wasm::text_diff_to_js_value(text),
+            )
+            .unwrap();
         }
         Diff::Map(map) => {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("map"))

@@ -11,8 +11,8 @@ const MAX_STRING_SIZE: usize = 8;
 const MAX_STRING_SIZE: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Chunk(ArrayString<MAX_STRING_SIZE>);
-pub type TextDelta<Attr = ()> = DeltaRope<Chunk, Attr>;
+pub struct TextChunk(ArrayString<MAX_STRING_SIZE>);
+pub type TextDelta<Attr = ()> = DeltaRope<TextChunk, Attr>;
 
 impl<Attr: DeltaAttr> TextDelta<Attr> {
     pub fn insert_str(&mut self, index: usize, s: &str) {
@@ -28,19 +28,23 @@ impl<Attr: DeltaAttr> TextDelta<Attr> {
         self.insert_values(
             index,
             [DeltaItem::Insert {
-                value: Chunk(ArrayString::from(s).unwrap()),
+                value: TextChunk(ArrayString::from(s).unwrap()),
                 attr: Attr::default(),
             }],
         );
     }
 
     pub fn push_str_insert(&mut self, s: &str) -> &mut Self {
+        self.push_str_insert_with_attr(s, Default::default())
+    }
+
+    pub fn push_str_insert_with_attr(&mut self, s: &str, attr: Attr) -> &mut Self {
         if s.is_empty() {
             return self;
         }
 
         if s.len() <= MAX_STRING_SIZE {
-            self.push_insert(Chunk(ArrayString::from(s).unwrap()), Attr::default());
+            self.push_insert(TextChunk(ArrayString::from(s).unwrap()), attr);
             return self;
         }
 
@@ -51,8 +55,8 @@ impl<Attr: DeltaAttr> TextDelta<Attr> {
                 split_end -= 1;
             }
 
-            let chunk = Chunk(ArrayString::from(&s[split_start..split_end]).unwrap());
-            self.push_insert(chunk, Attr::default());
+            let chunk = TextChunk(ArrayString::from(&s[split_start..split_end]).unwrap());
+            self.push_insert(chunk, attr.clone());
             split_start = split_end;
             split_end = (split_end + 128).min(s.len());
         }
@@ -76,7 +80,7 @@ impl<Attr: DeltaAttr> TextDelta<Attr> {
     }
 }
 
-impl Chunk {
+impl TextChunk {
     pub(crate) fn try_insert(&mut self, pos: usize, s: &str) -> Result<(), ()> {
         if self.0.len() + s.len() > MAX_STRING_SIZE {
             return Err(());
@@ -95,17 +99,17 @@ impl Chunk {
     }
 
     pub fn try_from_str(s: &str) -> Option<Self> {
-        Some(Chunk(ArrayString::from(s).ok()?))
+        Some(TextChunk(ArrayString::from(s).ok()?))
     }
 }
 
-impl HasLength for Chunk {
+impl HasLength for TextChunk {
     fn rle_len(&self) -> usize {
         self.0.len()
     }
 }
 
-impl Mergeable for Chunk {
+impl Mergeable for TextChunk {
     fn can_merge(&self, rhs: &Self) -> bool {
         MAX_STRING_SIZE >= self.0.len() + rhs.0.len()
     }
@@ -125,22 +129,22 @@ impl Mergeable for Chunk {
     }
 }
 
-impl Sliceable for Chunk {
+impl Sliceable for TextChunk {
     fn _slice(&self, range: std::ops::Range<usize>) -> Self {
         let mut new = ArrayString::new();
         new.push_str(&self.0.as_str()[range]);
-        Chunk(new)
+        TextChunk(new)
     }
 
     fn split(&mut self, pos: usize) -> Self {
         let mut right = ArrayString::new();
         right.push_str(&self.0.as_str()[pos..]);
         self.0.truncate(pos);
-        Chunk(right)
+        TextChunk(right)
     }
 }
 
-impl TryInsert for Chunk {
+impl TryInsert for TextChunk {
     fn try_insert(&mut self, pos: usize, elem: Self) -> Result<(), Self>
     where
         Self: Sized,
@@ -152,4 +156,4 @@ impl TryInsert for Chunk {
     }
 }
 
-impl DeltaValue for Chunk {}
+impl DeltaValue for TextChunk {}

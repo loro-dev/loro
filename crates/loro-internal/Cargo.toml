@@ -37,17 +37,14 @@ append-only-bytes = { version = "0.1.12", features = ["u32_range"] }
 itertools = "0.11.0"
 enum_dispatch = { workspace = true }
 im = "15.1.0"
-generic-btree = { version = "0.10.1" }
+generic-btree = { version = "0.10.2" }
 getrandom = "0.2.10"
 once_cell = "1.18.0"
 leb128 = "0.2.5"
 num-traits = "0.2"
 num-derive = "0.3"
 md5 = "0.7.0"
-tracing = { version = "0.1", features = [
-    "max_level_debug",
-    "release_max_level_warn",
-] }
+tracing = { version = "0.1", features = ["release_max_level_warn"] }
 
 [dev-dependencies]
 miniz_oxide = "0.7.1"
