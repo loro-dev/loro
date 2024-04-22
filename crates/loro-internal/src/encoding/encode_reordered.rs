@@ -1663,6 +1663,7 @@ mod value {
         MarkStart,
         TreeMove,
         Binary,
+        // > 128
         Unknown(u8),
     }
 
@@ -1670,6 +1671,7 @@ mod value {
         #[allow(trivial_numeric_casts)]
         #[inline]
         fn from_u8(n: u8) -> Option<Self> {
+            let n = n & 0x7F;
             match n {
                 0 => Some(ValueKind::Null),
                 1 => Some(ValueKind::True),
@@ -1686,14 +1688,7 @@ mod value {
                 12 => Some(ValueKind::MarkStart),
                 13 => Some(ValueKind::TreeMove),
                 14 => Some(ValueKind::Binary),
-                _ => {
-                    let kind = n & 0x7F;
-                    if kind == n {
-                        Some(ValueKind::Unknown(kind))
-                    } else {
-                        Self::from_u8(kind)
-                    }
-                }
+                _ => Some(ValueKind::Unknown(n | 0x80)),
             }
         }
 
@@ -1728,7 +1723,7 @@ mod value {
                 ValueKind::MarkStart => 12,
                 ValueKind::TreeMove => 13,
                 ValueKind::Binary => 14,
-                ValueKind::Unknown(n) => (n | 0x80) as i64,
+                ValueKind::Unknown(n) => n as i64,
             })
         }
         #[inline]
@@ -1755,7 +1750,7 @@ mod value {
                 ValueKind::MarkStart => 12,
                 ValueKind::TreeMove => 13,
                 ValueKind::Binary => 14,
-                ValueKind::Unknown(n) => n | 0x80,
+                ValueKind::Unknown(n) => n,
             })
         }
     }
