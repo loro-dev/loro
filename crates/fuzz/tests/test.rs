@@ -327,6 +327,151 @@ fn tree_get_child_index() {
 }
 
 #[test]
+fn delta_err() {
+    test_multi_sites(
+        5,
+        vec![
+            FuzzTarget::Map,
+            FuzzTarget::List,
+            FuzzTarget::Tree,
+            FuzzTarget::Text,
+        ],
+        &mut [
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(758724921),
+                    bool: false,
+                    key: 57,
+                    pos: 6655295504416505856,
+                    length: 4123474264100363356,
+                    prop: 4123389851770370361,
+                }),
+            },
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(960051513),
+                    bool: true,
+                    key: 960051513,
+                    pos: 4123389851770370361,
+                    length: 4123389851770370361,
+                    prop: 4123389847475403263,
+                }),
+            },
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(960051513),
+                    bool: true,
+                    key: 14649,
+                    pos: 6655194349346750464,
+                    length: 4144999408248577116,
+                    prop: 4123389851770370361,
+                }),
+            },
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(960051513),
+                    bool: true,
+                    key: 960051513,
+                    pos: 4123389851770370361,
+                    length: 4123389851770370361,
+                    prop: 4123388752258793273,
+                }),
+            },
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(960051554),
+                    bool: true,
+                    key: 960051513,
+                    pos: 4123389851770370361,
+                    length: 4123389851770370361,
+                    prop: 4123108376806635833,
+                }),
+            },
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(960051513),
+                    bool: true,
+                    key: 960051513,
+                    pos: 0,
+                    length: 18374733605602352220,
+                    prop: 4123389851770370437,
+                }),
+            },
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(960061952),
+                    bool: true,
+                    key: 960051513,
+                    pos: 4123389851770370361,
+                    length: 4123389851770370361,
+                    prop: 4123389855092259129,
+                }),
+            },
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(960051513),
+                    bool: true,
+                    key: 960051513,
+                    pos: 4179111962746552121,
+                    length: 3098478742654093369,
+                    prop: 4123389851783332611,
+                }),
+            },
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(960051513),
+                    bool: true,
+                    key: 960051513,
+                    pos: 3472301697646803343,
+                    length: 18446743009517764400,
+                    prop: 4123607322237534209,
+                }),
+            },
+            Handle {
+                site: 255,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn list_delete_change_to_diff_assert() {
     test_multi_sites(
         5,

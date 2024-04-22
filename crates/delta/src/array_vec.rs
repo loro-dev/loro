@@ -3,6 +3,7 @@ use std::ops::{Deref, DerefMut};
 
 use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
 use heapless::Vec;
+use tracing::trace;
 
 use crate::delta_trait::{DeltaAttr, DeltaValue};
 use crate::{DeltaRope, DeltaRopeBuilder};
@@ -38,13 +39,14 @@ impl<V, const C: usize> ArrayVec<V, C> {
         std::iter::from_fn(move || {
             let mut v = iter.next();
             while let Some(iv) = v {
+                if new.vec.push(iv).is_err() {
+                    unreachable!()
+                }
+
                 if new.vec.is_full() {
                     break;
                 }
 
-                if new.vec.push(iv).is_err() {
-                    unreachable!()
-                }
                 v = iter.next();
             }
 
@@ -74,6 +76,7 @@ impl<V: Debug + Clone, const C: usize, Attr: DeltaAttr> DeltaRope<ArrayVec<V, C>
                 attr: Default::default(),
             }),
         );
+
         rope
     }
 }

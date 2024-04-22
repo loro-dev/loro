@@ -18,6 +18,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayvec"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
+
+[[package]]
 name = "arref"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -239,12 +245,13 @@ dependencies = [
 
 [[package]]
 name = "generic-btree"
-version = "0.8.2"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3563af09b8ffaa7cc5541d9e167b90c429d89791e88887739680e1fcb4f69d01"
+checksum = "a37228ca04c3a6294efe79086912232d515e9f7f535aa7155856487567d88468"
 dependencies = [
+ "arref",
  "fxhash",
- "heapless",
+ "heapless 0.7.17",
  "itertools",
  "loro-thunderdome",
  "proc-macro2",
@@ -271,16 +278,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "heapless"
 version = "0.7.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdc6457c0eb62c71aac4bc17216026d8410337c4126773b9c5daba343f17964f"
 dependencies = [
  "atomic-polyfill",
- "hash32",
+ "hash32 0.2.1",
  "rustc_version",
  "serde",
  "spin",
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "heapless"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32 0.3.1",
  "stable_deref_trait",
 ]
 
@@ -360,16 +386,17 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
+ "loro-delta",
  "loro-internal",
 ]
 
 [[package]]
 name = "loro-common"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
@@ -383,8 +410,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-delta"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "enum-as-inner 0.5.1",
+ "generic-btree",
+ "heapless 0.8.0",
+ "tracing",
+]
+
+[[package]]
 name = "loro-internal"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -398,6 +436,7 @@ dependencies = [
  "itertools",
  "leb128",
  "loro-common",
+ "loro-delta",
  "loro-preload",
  "loro-rle",
  "md5",
@@ -418,7 +457,7 @@ dependencies = [
 
 [[package]]
 name = "loro-preload"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "bytes",
  "loro-common",
@@ -428,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "loro-rle"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -611,7 +650,7 @@ checksum = "a55c51ee6c0db07e68448e336cf8ea4131a620edefebf9893e759b2d793420f8"
 dependencies = [
  "cobs",
  "embedded-io",
- "heapless",
+ "heapless 0.7.17",
  "serde",
 ]
 
@@ -755,9 +794,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a41a9a14c8a221abb13091da4d1075699999e6a12213283c452680a70376efd0"
+checksum = "a5d54dd7e7a1ec134c842f8a3bdb5a1fc662d002682e0457f976f3046cf9ccf8"
 dependencies = [
  "itertools",
  "postcard",
@@ -768,9 +807,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar_derive"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0f77bad2a9b92970e7e1f8004fac293328ac9a05f92f751ae293644d764ede4"
+checksum = "3e5eaacabbc55a397ffbb1ee32523f40f86fdefea8a8d9db19630d8b7c00edd1"
 dependencies = [
  "darling",
  "proc-macro2",

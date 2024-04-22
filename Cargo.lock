@@ -568,12 +568,17 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "arbtest",
+ "color-backtrace 0.6.1",
+ "ctor 0.2.7",
  "debug-log",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
  "fxhash",
  "loro",
+ "rand",
  "tabled 0.10.0",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
