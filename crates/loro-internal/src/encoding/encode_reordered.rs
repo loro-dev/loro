@@ -377,11 +377,11 @@ fn extract_ops(
         let peer = peer_ids.peer_ids[peer_idx as usize];
         let cid = &containers[container_index as usize];
 
-        let kind = ValueKind::from_u8(value_type).expect("Unknown value type");
+        // let kind = ValueKind::from_u8(value_type).expect("Unknown value type");
 
         let content = decode_op(
             cid,
-            kind,
+            value_type,
             length,
             op_len,
             &mut del_iter,
@@ -981,7 +981,6 @@ mod encode {
                 cid_register,
                 peer_register,
             );
-            println!("value_type: {:?}", value_type);
             let prop = get_op_prop(&op, key_register);
             encoded_ops.push(EncodedOp {
                 container_index,
@@ -1254,7 +1253,7 @@ mod encode {
 #[inline]
 fn decode_op(
     cid: &ContainerID,
-    mut kind: ValueKind,
+    kind: u8,
     length: usize,
     op_len: usize,
     del_iter: &mut impl Iterator<Item = Result<EncodedDeleteStartId, ColumnarError>>,
@@ -1265,14 +1264,13 @@ fn decode_op(
     peers: &[u64],
     id: ID,
 ) -> LoroResult<crate::op::InnerContent> {
-    if let ValueKind::Unknown(k) = kind {
-        let new_kind = ValueKind::from_u8(k).unwrap();
-        if new_kind != kind {
-            kind = new_kind;
-            let _op_len = value_reader.read_i64()?;
-            let _ = value_reader.read_usize()?;
-        }
+    let parsed_kind = ValueKind::from_u8(kind).unwrap();
+    if kind > 128 && !matches!(parsed_kind, ValueKind::Unknown(_)) {
+        let _op_len = value_reader.read_i64()?;
+        let _ = value_reader.read_usize()?;
     }
+
+    let kind = parsed_kind;
 
     let content = match cid.container_type() {
         ContainerType::Text => match kind {
@@ -1597,7 +1595,7 @@ mod value {
         Map(FxHashMap<InternalString, Value<'a>>),
         Binary(&'a [u8]),
         MarkStart(MarkStart),
-        // TreeMove(EncodedTreeMove),
+        TreeMove(EncodedTreeMove),
         Unknown { kind: u8, data: &'a [u8] },
     }
 
@@ -1664,7 +1662,7 @@ mod value {
         Array,
         Map,
         MarkStart,
-        // TreeMove,
+        TreeMove,
         Binary,
         // > 128
         Unknown(u8),
@@ -1689,7 +1687,7 @@ mod value {
                 10 => Some(ValueKind::Array),
                 11 => Some(ValueKind::Map),
                 12 => Some(ValueKind::MarkStart),
-                // 13 => Some(ValueKind::TreeMove),
+                13 => Some(ValueKind::TreeMove),
                 14 => Some(ValueKind::Binary),
                 _ => Some(ValueKind::Unknown(n | 0x80)),
             }
@@ -1724,7 +1722,7 @@ mod value {
                 ValueKind::Array => 10,
                 ValueKind::Map => 11,
                 ValueKind::MarkStart => 12,
-                // ValueKind::TreeMove => 13,
+                ValueKind::TreeMove => 13,
                 ValueKind::Binary => 14,
                 ValueKind::Unknown(n) => n as i64,
             })
@@ -1751,7 +1749,7 @@ mod value {
                 ValueKind::Array => 10,
                 ValueKind::Map => 11,
                 ValueKind::MarkStart => 12,
-                // ValueKind::TreeMove => 13,
+                ValueKind::TreeMove => 13,
                 ValueKind::Binary => 14,
                 ValueKind::Unknown(n) => n,
             })
@@ -1774,7 +1772,7 @@ mod value {
                 Value::Array(_) => ValueKind::Array,
                 Value::Map(_) => ValueKind::Map,
                 Value::MarkStart { .. } => ValueKind::MarkStart,
-                // Value::TreeMove(_) => ValueKind::TreeMove,
+                Value::TreeMove(_) => ValueKind::TreeMove,
                 Value::Binary(_) => ValueKind::Binary,
                 Value::Unknown { kind, .. } => ValueKind::Unknown(*kind),
             }
@@ -1876,7 +1874,7 @@ mod value {
                 Value::Array(value) => self.write_array(value, register_key, register_cid),
                 Value::Map(value) => self.write_map(value, register_key, register_cid),
                 Value::MarkStart(value) => self.write_mark(value, register_key, register_cid),
-                // Value::TreeMove(op) => self.write_tree_move(op),
+                Value::TreeMove(op) => self.write_tree_move(op),
                 Value::Binary(value) => self.write_binary(value),
                 Value::ContainerIdx(value) => self.write_usize(*value),
                 Value::Unknown { kind: _, data } => self.write_binary(data),
