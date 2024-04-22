@@ -1,5 +1,6 @@
+mod arena;
 mod encode_reordered;
-mod forward_encode;
+mod value;
 
 use crate::op::OpWithId;
 use crate::version::Frontiers;
