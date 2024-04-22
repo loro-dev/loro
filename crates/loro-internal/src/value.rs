@@ -183,17 +183,17 @@ impl ApplyDiff for LoroValue {
                         let mut index = 0;
                         for delta_item in delta.iter() {
                             match delta_item {
-                                DeltaItem::Retain { retain: len, .. } => {
+                                loro_delta::DeltaItem::Retain { len, .. } => {
                                     index += len;
                                 }
-                                DeltaItem::Insert { insert: value, .. } => {
+                                loro_delta::DeltaItem::Insert { value, .. } => {
                                     value.iter().for_each(|v| {
                                         let value = unresolved_to_collection(v);
                                         seq.insert(index, value);
                                         index += 1;
                                     });
                                 }
-                                DeltaItem::Delete { delete: len, .. } => {
+                                loro_delta::DeltaItem::Delete(len) => {
                                     seq.drain(index..index + len);
                                 }
                             }

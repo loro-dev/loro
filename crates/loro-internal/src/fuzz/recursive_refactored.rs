@@ -207,17 +207,14 @@ impl Actor {
                         let mut index = 0;
                         for item in delta.iter() {
                             match item {
-                                DeltaItem::Retain {
-                                    retain: len,
-                                    attributes: _,
-                                } => {
+                                loro_delta::DeltaItem::Delete(len) => {
+                                    list.drain(index..index + *len);
+                                }
+                                loro_delta::DeltaItem::Retain { len, attr } => {
                                     index += len;
                                 }
-                                DeltaItem::Insert {
-                                    insert: value,
-                                    attributes: _,
-                                } => {
-                                    for v in value {
+                                loro_delta::DeltaItem::Insert { value, attr } => {
+                                    for v in value.iter() {
                                         let value = match v {
                                             ValueOrHandler::Handler(c) => {
                                                 let id =
@@ -229,9 +226,6 @@ impl Actor {
                                         list.insert(index, value);
                                         index += 1;
                                     }
-                                }
-                                DeltaItem::Delete { delete: len, .. } => {
-                                    list.drain(index..index + *len);
                                 }
                             }
                         }

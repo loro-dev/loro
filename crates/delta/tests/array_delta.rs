@@ -1,4 +1,4 @@
-use delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
+use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 
 type TestArrayDelta = DeltaRope<ArrayVec<i32, 10>, ()>;
 

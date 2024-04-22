@@ -4,15 +4,20 @@ use std::ops::{Deref, DerefMut};
 use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
 use heapless::Vec;
 
-use crate::delta_trait::DeltaValue;
+use crate::delta_trait::{DeltaAttr, DeltaValue};
+use crate::{DeltaRope, DeltaRopeBuilder};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct ArrayVec<V, const C: usize> {
     vec: Vec<V, C>,
 }
 
 impl<V, const C: usize> ArrayVec<V, C> {
+    pub fn new() -> Self {
+        Self { vec: Vec::new() }
+    }
+
     pub fn insert_many(&mut self, pos: usize, values: Self) -> Result<(), Self> {
         if C < self.len() + values.len() {
             return Err(values);
@@ -26,6 +31,66 @@ impl<V, const C: usize> ArrayVec<V, C> {
         }
 
         Ok(())
+    }
+
+    pub fn from_many(mut iter: impl Iterator<Item = V>) -> impl Iterator<Item = Self> {
+        let mut new = Self::new();
+        std::iter::from_fn(move || {
+            let mut v = iter.next();
+            while let Some(iv) = v {
+                if new.vec.is_full() {
+                    break;
+                }
+
+                if new.vec.push(iv).is_err() {
+                    unreachable!()
+                }
+                v = iter.next();
+            }
+
+            if new.len() == 0 {
+                return None;
+            }
+
+            Some(std::mem::take(&mut new))
+        })
+    }
+
+    // The type system doesn't allow us to use unexported types in trait's associated types
+    // So we don't impl the trait for this
+    #[allow(clippy::should_implement_trait)]
+    pub fn into_iter(self) -> impl Iterator<Item = V> {
+        self.vec.into_iter()
+    }
+}
+
+impl<V: Debug + Clone, const C: usize, Attr: DeltaAttr> DeltaRope<ArrayVec<V, C>, Attr> {
+    pub fn from_many(iter: impl Iterator<Item = V>) -> Self {
+        let mut rope = DeltaRope::new();
+        rope.insert_values(
+            0,
+            ArrayVec::from_many(iter).map(|x| crate::DeltaItem::Insert {
+                value: x,
+                attr: Default::default(),
+            }),
+        );
+        rope
+    }
+}
+
+impl<V: Debug + Clone, Attr: DeltaAttr, const C: usize> DeltaRopeBuilder<ArrayVec<V, C>, Attr> {
+    pub fn insert_many(mut self, value_iter: impl IntoIterator<Item = V>, attr: Attr) -> Self {
+        let iter = ArrayVec::from_many(value_iter.into_iter());
+        for value in iter {
+            self = self.insert(value, attr.clone());
+        }
+        self
+    }
+}
+
+impl<V, const C: usize> Default for ArrayVec<V, C> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

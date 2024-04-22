@@ -7,9 +7,8 @@ use super::ContainerState;
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, ContainerID},
-    delta::Delta,
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
-    event::{Diff, Index, InternalDiff},
+    event::{Diff, Index, InternalDiff, ListDiff},
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp, RawOpContent},
     txn::Transaction,
@@ -23,6 +22,7 @@ use generic_btree::{
     BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
 use loro_common::{IdFull, IdLpSpan, LoroResult, ID};
+use loro_delta::array_vec::ArrayVec;
 
 #[derive(Debug)]
 pub struct ListState {
@@ -343,13 +343,13 @@ impl ContainerState for ListState {
         let InternalDiff::ListRaw(delta) = diff else {
             unreachable!()
         };
-        let mut ans: Delta<_> = Delta::default();
+        let mut ans: ListDiff = ListDiff::default();
         let mut index = 0;
         for span in delta.iter() {
             match span {
                 crate::delta::DeltaItem::Retain { retain: len, .. } => {
                     index += len;
-                    ans = ans.retain(*len);
+                    ans.push_retain(*len, ());
                 }
                 crate::delta::DeltaItem::Insert { insert: value, .. } => {
                     let mut arr = Vec::new();
@@ -359,18 +359,19 @@ impl ContainerState for ListState {
                             arr.push(value);
                         }
                     }
-                    ans = ans.insert(
+                    for arr in ArrayVec::from_many(
                         arr.iter()
-                            .map(|v| ValueOrHandler::from_value(v.clone(), arena, txn, state))
-                            .collect::<Vec<_>>(),
-                    );
+                            .map(|v| ValueOrHandler::from_value(v.clone(), arena, txn, state)),
+                    ) {
+                        ans.push_insert(arr, ());
+                    }
                     let len = arr.len();
                     self.insert_batch(index, arr, value.id);
                     index += len;
                 }
                 crate::delta::DeltaItem::Delete { delete: len, .. } => {
                     self.delete_range(index..index + len);
-                    ans = ans.delete(*len);
+                    ans.push_delete(*len);
                 }
             }
         }
@@ -450,14 +451,11 @@ impl ContainerState for ListState {
         txn: &Weak<Mutex<Option<Transaction>>>,
         state: &Weak<Mutex<DocState>>,
     ) -> Diff {
-        Diff::List(
-            Delta::new().insert(
-                self.to_vec()
-                    .into_iter()
-                    .map(|v| ValueOrHandler::from_value(v, arena, txn, state))
-                    .collect::<Vec<_>>(),
-            ),
-        )
+        Diff::List(ListDiff::from_many(
+            self.to_vec()
+                .into_iter()
+                .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+        ))
     }
 
     fn get_value(&mut self) -> LoroValue {

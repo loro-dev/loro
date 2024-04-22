@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use delta::text_delta::TextDelta;
+use loro_delta::text_delta::TextDelta;
 use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 
 fn generate_random_text(mut rng: StdRng, text_len: usize) -> String {

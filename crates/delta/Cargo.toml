@@ -1,5 +1,5 @@
 [package]
-name = "delta"
+name = "loro-delta"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,6 +10,7 @@ arrayvec = "0.7.4"
 generic-btree = { version = "0.10.1" }
 heapless = "0.8.0"
 tracing = "0.1.40"
+enum-as-inner = "0.5.1"
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["html_reports"] }

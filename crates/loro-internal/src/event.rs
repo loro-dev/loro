@@ -1,6 +1,7 @@
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHasher64;
 use itertools::Itertools;
+use loro_delta::{array_vec::ArrayVec, DeltaItem, DeltaRope};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -216,6 +217,10 @@ impl From<InternalDiff> for DiffVariant {
     }
 }
 
+pub type ListDiffInsertItem = ArrayVec<ValueOrHandler, 8>;
+pub type ListDiffItem = DeltaItem<ListDiffInsertItem, ()>;
+pub type ListDiff = DeltaRope<ListDiffInsertItem, ()>;
+
 /// Diff is the diff between two versions of a container.
 /// It's used to describe the change of a container and the events.
 ///
@@ -228,7 +233,7 @@ impl From<InternalDiff> for DiffVariant {
 #[non_exhaustive]
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum Diff {
-    List(Delta<Vec<ValueOrHandler>>),
+    List(ListDiff),
     // TODO: refactor, doesn't make much sense to use `StyleMeta` here, because sometime style
     // don't have peer and lamport info
     /// - When feature `wasm` is enabled, it should use utf16 indexes.
@@ -271,10 +276,13 @@ impl InternalDiff {
 }
 
 impl Diff {
-    pub(crate) fn compose(self, diff: Diff) -> Result<Self, Self> {
+    pub(crate) fn compose(mut self, diff: Diff) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {
-            (Diff::List(a), Diff::List(b)) => Ok(Diff::List(a.compose(b))),
+            (Diff::List(mut a), Diff::List(b)) => {
+                a.compose(&b);
+                Ok(Diff::List(a))
+            }
             (Diff::Text(a), Diff::Text(b)) => Ok(Diff::Text(a.compose(b))),
             (Diff::Map(a), Diff::Map(b)) => Ok(Diff::Map(a.compose(b))),
 
@@ -294,7 +302,10 @@ impl Diff {
 
     pub(crate) fn concat(self, diff: Diff) -> Diff {
         match (self, diff) {
-            (Diff::List(a), Diff::List(b)) => Diff::List(a.compose(b)),
+            (Diff::List(mut a), Diff::List(b)) => {
+                a.compose(&b);
+                Diff::List(a)
+            }
             (Diff::Text(a), Diff::Text(b)) => Diff::Text(a.compose(b)),
             (Diff::Map(a), Diff::Map(b)) => {
                 let mut a = a;

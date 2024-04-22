@@ -25,9 +25,9 @@ impl<Attr: DeltaAttr> TextDelta<Attr> {
             unimplemented!();
         }
 
-        self.insert_value(
+        self.insert_values(
             index,
-            &[DeltaItem::Insert {
+            [DeltaItem::Insert {
                 value: Chunk(ArrayString::from(s).unwrap()),
                 attr: Attr::default(),
             }],

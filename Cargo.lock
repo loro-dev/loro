@@ -441,18 +441,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "delta"
-version = "0.1.0"
-dependencies = [
- "arrayvec",
- "criterion",
- "generic-btree",
- "heapless 0.8.0",
- "rand",
- "tracing",
-]
-
-[[package]]
 name = "derive_arbitrary"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -827,6 +815,7 @@ version = "0.4.0"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
+ "loro-delta",
  "loro-internal",
  "serde_json",
 ]
@@ -846,6 +835,19 @@ dependencies = [
  "string_cache",
  "thiserror",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "loro-delta"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "criterion",
+ "enum-as-inner 0.5.1",
+ "generic-btree",
+ "heapless 0.8.0",
+ "rand",
+ "tracing",
 ]
 
 [[package]]
@@ -872,6 +874,7 @@ dependencies = [
  "js-sys",
  "leb128",
  "loro-common",
+ "loro-delta",
  "loro-preload",
  "loro-rle",
  "md5",

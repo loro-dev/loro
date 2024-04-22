@@ -119,6 +119,7 @@ fn event_from_checkout() {
 fn handler_in_event() {
     let doc = LoroDoc::new_auto_commit();
     doc.subscribe_root(Arc::new(|e| {
+        dbg!(&e);
         let value = e.events[0]
             .diff
             .as_list()

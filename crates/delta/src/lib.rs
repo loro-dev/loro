@@ -1,5 +1,6 @@
 use delta_rope::rle_tree::DeltaTreeTrait;
 use delta_trait::{DeltaAttr, DeltaValue};
+use enum_as_inner::EnumAsInner;
 use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree,
@@ -26,9 +27,9 @@ pub struct DeltaRopeBuilder<V: DeltaValue, Attr: DeltaAttr> {
     items: Vec<DeltaItem<V, Attr>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, EnumAsInner)]
 pub enum DeltaItem<V, Attr> {
-    Delete(usize),
     Retain { len: usize, attr: Attr },
     Insert { value: V, attr: Attr },
+    Delete(usize),
 }

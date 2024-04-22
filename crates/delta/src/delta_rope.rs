@@ -40,7 +40,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
 
             match item {
                 item @ DeltaItem::Insert { value, .. } => {
-                    self.insert_value(index, &[item.clone()]);
+                    self.insert_values(index, [item.clone()]);
                     index += value.rle_len();
                 }
                 DeltaItem::Retain { len, attr } => {
@@ -172,7 +172,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                         });
 
                         if left_len > 0 {
-                            self.insert_value(index, &[DeltaItem::Delete(left_len)]);
+                            self.insert_values(index, [DeltaItem::Delete(left_len)]);
                         }
                     }
                 }
@@ -204,6 +204,10 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     }
 
     pub fn push_insert(&mut self, v: V, attr: Attr) -> &mut Self {
+        if v.rle_len() == 0 {
+            return self;
+        }
+
         let Some(leaf) = self.tree.last_leaf() else {
             self.tree.push(DeltaItem::Insert { value: v, attr });
             return self;
@@ -228,6 +232,10 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     }
 
     pub fn push_retain(&mut self, retain: usize, attr: Attr) -> &mut Self {
+        if retain == 0 {
+            return self;
+        }
+
         let Some(leaf) = self.tree.last_leaf() else {
             self.tree.push(DeltaItem::Retain { len: retain, attr });
             return self;
@@ -253,6 +261,10 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     }
 
     pub fn push_delete(&mut self, len: usize) -> &mut Self {
+        if len == 0 {
+            return self;
+        }
+
         let Some(leaf) = self.tree.last_leaf() else {
             self.tree.push(DeltaItem::Delete(len));
             return self;
@@ -273,6 +285,14 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         }
 
         self
+    }
+
+    pub fn push(&mut self, item: DeltaItem<V, Attr>) -> &mut Self {
+        match item {
+            DeltaItem::Insert { value, attr } => self.push_insert(value, attr),
+            DeltaItem::Retain { len, attr } => self.push_retain(len, attr),
+            DeltaItem::Delete(len) => self.push_delete(len),
+        }
     }
 
     /// Returns an iterator that can iterate over the delta rope with a custom length.
@@ -346,7 +366,11 @@ impl<V: DeltaValue + Debug, Attr: DeltaAttr + Debug> Default for DeltaRope<V, At
 }
 
 impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
-    pub(crate) fn insert_value(&mut self, pos: usize, values: &[DeltaItem<V, Attr>]) {
+    pub(crate) fn insert_values(
+        &mut self,
+        pos: usize,
+        values: impl IntoIterator<Item = DeltaItem<V, Attr>>,
+    ) {
         if self.is_empty() {
             for value in values {
                 self.tree.push(value.clone());
@@ -357,17 +381,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         let pos = self.tree.query::<LengthFinder>(&pos).unwrap();
         // This would crash if values's number is large
         self.tree
-            .insert_many_by_cursor(Some(pos.cursor), values.iter().cloned());
-    }
-
-    fn delete_range(&mut self, range: Range<usize>) {
-        if range.start == range.end || self.is_empty() {
-            return;
-        }
-
-        let from = self.tree.query::<LengthFinder>(&range.start).unwrap();
-        let to = self.tree.query::<LengthFinder>(&range.end).unwrap();
-        self.tree.drain(from..to);
+            .insert_many_by_cursor(Some(pos.cursor), values.into_iter());
     }
 
     fn update_range(&mut self, range: Range<usize>, attr: &Attr) {
@@ -397,6 +411,10 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRopeBuilder<V, Attr> {
     }
 
     pub fn insert(mut self, v: V, attr: Attr) -> Self {
+        if v.rle_len() == 0 {
+            return self;
+        }
+
         if let Some(DeltaItem::Insert { value, attr: a }) = self.items.last_mut() {
             if value.can_merge(&v) && a == &attr {
                 value.merge_right(&v);
@@ -409,6 +427,10 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRopeBuilder<V, Attr> {
     }
 
     pub fn retain(mut self, retain: usize, attr: Attr) -> Self {
+        if retain == 0 {
+            return self;
+        }
+
         if let Some(DeltaItem::Retain { len, attr: a }) = self.items.last_mut() {
             if *a == attr {
                 *len += retain;
@@ -421,6 +443,10 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRopeBuilder<V, Attr> {
     }
 
     pub fn delete(mut self, len: usize) -> Self {
+        if len == 0 {
+            return self;
+        }
+
         if let Some(DeltaItem::Delete(l)) = self.items.last_mut() {
             *l += len;
             return self;

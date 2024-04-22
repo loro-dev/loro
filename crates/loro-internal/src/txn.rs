@@ -8,6 +8,7 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, IdLp, LoroResult};
+use loro_delta::DeltaRopeBuilder;
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
 
@@ -577,18 +578,27 @@ fn change_to_diff(
                         let values = arena
                             .get_values(range.to_range())
                             .into_iter()
-                            .map(|v| ValueOrHandler::from_value(v, arena, txn, state))
-                            .collect::<Vec<_>>();
+                            .map(|v| ValueOrHandler::from_value(v, arena, txn, state));
                         ans.push(TxnContainerDiff {
                             idx: op.container,
-                            diff: Diff::List(Delta::new().retain(*pos).insert(values)),
+                            diff: Diff::List(
+                                DeltaRopeBuilder::new()
+                                    .retain(*pos, ())
+                                    .insert_many(values, ())
+                                    .build(),
+                            ),
                         })
                     }
                 }
                 EventHint::DeleteList(s) => {
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: Diff::List(Delta::new().retain(s.start() as usize).delete(s.len())),
+                        diff: Diff::List(
+                            DeltaRopeBuilder::new()
+                                .retain(s.start() as usize, ())
+                                .delete(s.len())
+                                .build(),
+                        ),
                     });
                 }
                 EventHint::Map { key, value } => ans.push(TxnContainerDiff {

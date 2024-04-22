@@ -77,17 +77,17 @@ impl<'a> From<&'a DiffInner> for Diff<'a> {
                 let list = l
                     .iter()
                     .map(|d| match d {
-                        DeltaItem::Insert { insert, .. } => ListDiffItem::Insert {
-                            insert: insert
+                        delta::DeltaItem::Insert { value, .. } => ListDiffItem::Insert {
+                            insert: value
                                 .iter()
                                 .map(|v| ValueOrContainer::from(v.clone()))
                                 .collect(),
                         },
-                        DeltaItem::Delete { delete, .. } => {
-                            ListDiffItem::Delete { delete: *delete }
+                        delta::DeltaItem::Retain { len, .. } => {
+                            ListDiffItem::Retain { retain: *len }
                         }
-                        DeltaItem::Retain { retain, .. } => {
-                            ListDiffItem::Retain { retain: *retain }
+                        delta::DeltaItem::Delete(delete) => {
+                            ListDiffItem::Delete { delete: *delete }
                         }
                     })
                     .collect();

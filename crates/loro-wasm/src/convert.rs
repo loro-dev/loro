@@ -5,7 +5,7 @@ use loro_internal::delta::{DeltaItem, ResolvedMapDelta};
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::event::Diff;
 use loro_internal::handler::{Handler, ValueOrHandler};
-use loro_internal::{LoroDoc, LoroValue};
+use loro_internal::{ListDiffItem, LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
 use crate::{
@@ -124,10 +124,10 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
     obj.into_js_result().unwrap()
 }
 
-fn delta_item_to_js(item: DeltaItem<Vec<ValueOrHandler>, ()>, doc: &Arc<LoroDoc>) -> JsValue {
+fn delta_item_to_js(item: ListDiffItem, doc: &Arc<LoroDoc>) -> JsValue {
     let obj = Object::new();
     match item {
-        DeltaItem::Retain { retain: len, .. } => {
+        loro_internal::loro_delta::DeltaItem::Retain { len, attr } => {
             js_sys::Reflect::set(
                 &obj,
                 &JsValue::from_str("retain"),
@@ -135,7 +135,7 @@ fn delta_item_to_js(item: DeltaItem<Vec<ValueOrHandler>, ()>, doc: &Arc<LoroDoc>
             )
             .unwrap();
         }
-        DeltaItem::Insert { insert: value, .. } => {
+        loro_internal::loro_delta::DeltaItem::Insert { value, attr } => {
             let arr = Array::new_with_length(value.len() as u32);
             for (i, v) in value.into_iter().enumerate() {
                 let value = match v {
@@ -152,7 +152,7 @@ fn delta_item_to_js(item: DeltaItem<Vec<ValueOrHandler>, ()>, doc: &Arc<LoroDoc>
             )
             .unwrap();
         }
-        DeltaItem::Delete { delete: len, .. } => {
+        loro_internal::loro_delta::DeltaItem::Delete(len) => {
             js_sys::Reflect::set(
                 &obj,
                 &JsValue::from_str("delete"),

@@ -1,4 +1,4 @@
-use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
+use generic_btree::rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert};
 use std::hash::{BuildHasher, Hash};
 use std::{collections::HashMap, fmt::Debug};
 

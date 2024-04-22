@@ -9,7 +9,7 @@
 pub mod arena;
 pub mod diff_calc;
 pub mod handler;
-pub use event::{ContainerDiff, DiffEvent, DocDiff};
+pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem, ListDiffItem};
 pub use fxhash::FxHashMap;
 pub use handler::{BasicHandler, HandlerTrait, ListHandler, MapHandler, TextHandler, TreeHandler};
 pub use loro::LoroDoc;
@@ -41,6 +41,7 @@ mod utils;
 pub use utils::string_slice::StringSlice;
 
 pub mod delta;
+pub use loro_delta;
 pub mod event;
 
 pub use error::{LoroError, LoroResult};

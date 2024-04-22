@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use delta::{
+use loro_delta::{
     text_delta::{Chunk, TextDelta},
     DeltaRopeBuilder,
 };
