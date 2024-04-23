@@ -3,7 +3,6 @@ use std::ops::{Deref, DerefMut};
 
 use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
 use heapless::Vec;
-use tracing::trace;
 
 use crate::delta_trait::{DeltaAttr, DeltaValue};
 use crate::{DeltaRope, DeltaRopeBuilder};
@@ -24,6 +23,7 @@ impl<V, const C: usize> ArrayVec<V, C> {
             return Err(values);
         }
 
+        // SAFETY: We have the ownership of the values
         unsafe {
             let ptr_start = self.vec.as_mut_ptr().add(pos);
             ptr_start.copy_to(ptr_start.add(values.len()), self.len() - pos);
@@ -31,6 +31,9 @@ impl<V, const C: usize> ArrayVec<V, C> {
             self.vec.set_len(self.len() + values.len());
         }
 
+        // This will not cause memory leak because the vec is on the stack
+        // And we already take the ownership of the elements inside the vec
+        std::mem::forget(values.vec);
         Ok(())
     }
 
@@ -171,7 +174,17 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
     use super::*;
+
+    #[test]
+    fn test_insert() {
+        let mut array_vec: ArrayVec<Arc<i32>, 8> =
+            ArrayVec::from([Arc::new(1), Arc::new(2), Arc::new(3)]);
+        let b = ArrayVec::from([Arc::new(1), Arc::new(2), Arc::new(3)]);
+        array_vec.insert_many(1, b).unwrap();
+    }
 
     #[test]
     fn test_slice() {
