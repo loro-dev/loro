@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp::Ordering, mem::take, sync::Arc};
+use std::{borrow::Cow, cmp::Ordering, mem::take};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
@@ -15,7 +15,7 @@ use crate::{
     change::{Change, Lamport, Timestamp},
     container::{list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
     encoding::StateSnapshotDecodeContext,
-    op::{self, Op, OpContainer, OpWithId, SliceRange},
+    op::{Op, OpContainer, OpWithId, SliceRange},
     state::ContainerState,
     version::Frontiers,
     DocState, LoroDoc, OpLog, VersionVector,
@@ -58,7 +58,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
 
     let vv = &actual_start_vv;
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
-    let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
+    let key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
     let ExtractedContainer {
         containers,
@@ -71,7 +71,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             .map(|x| x.container.clone()),
         &oplog.arena,
     );
-    let mut cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
+    let cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
 
     let mut registers = EncodedRegisters {
         peer: peer_register,
@@ -85,10 +85,9 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let changes = encode_changes(
         &diff_changes,
         &mut dep_arena,
-        &mut peer_register,
         &mut |op| ops.push(op),
-        &mut key_register,
         &container2index,
+        &mut registers,
     );
 
     ops.sort_by(move |a, b| {
@@ -100,6 +99,12 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     });
 
     let (encoded_ops, del_starts) = encode_ops(ops, arena, &mut value_writer, &mut registers);
+
+    let EncodedRegisters {
+        peer: mut peer_register,
+        container: cid_register,
+        key: mut key_register,
+    } = registers;
 
     let container_arena = ContainerArena::from_containers(
         cid_register.unwrap_vec(),
@@ -148,10 +153,9 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
 
     let DecodedArenas {
         peer_ids,
-        containers,
-        keys,
         deps,
         state_blob_arena: _,
+        ..
     } = arenas;
 
     let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
@@ -377,11 +381,9 @@ fn extract_ops(
             value,
             op_len,
             &mut del_iter,
-            &mut value_reader,
             shared_arena,
             arenas,
             prop,
-            ID::new(peer, counter),
         )?;
 
         let container = if cid.is_unknown() {
@@ -424,7 +426,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     assert!(!state.is_in_txn());
     assert_eq!(oplog.frontiers(), &state.frontiers);
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
-    let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
+    let key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
     let ExtractedContainer {
         containers,
@@ -439,7 +441,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         ),
         &oplog.arena,
     );
-    let mut cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
+    let cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
     let mut dep_arena = DepsArena::default();
     let mut value_writer = ValueWriter::new();
     let mut registers = EncodedRegisters {
@@ -487,7 +489,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
             encoder_by_op: &mut |op| {
                 origin_ops.push(TempOp {
                     op: Cow::Owned(op.op),
-                    peer_idx: peer_register.register(&op.peer) as u32,
+                    peer_idx: registers.peer.register(&op.peer) as u32,
                     peer_id: op.peer,
                     container_index,
                     prop_that_used_for_sort: -1,
@@ -520,18 +522,23 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     let changes = encode_changes(
         &diff_changes,
         &mut dep_arena,
-        &mut peer_register,
         &mut |op| {
             origin_ops.push(op);
         },
-        &mut key_register,
         &container_idx2index,
+        &mut registers,
     );
 
     let ops: Vec<TempOp> = calc_sorted_ops_for_snapshot(origin_ops, pos_mapping_heap);
 
     let (encoded_ops, del_starts) =
         encode_ops(ops, &oplog.arena, &mut value_writer, &mut registers);
+
+    let EncodedRegisters {
+        peer: mut peer_register,
+        container: cid_register,
+        key: mut key_register,
+    } = registers;
 
     let container_arena = ContainerArena::from_containers(
         cid_register.unwrap_vec(),
@@ -848,9 +855,7 @@ fn decode_snapshot_states(
 
 mod encode {
     use fxhash::FxHashMap;
-    use loro_common::{ContainerID, ContainerType, HasId, PeerID, ID};
-    use num::FromPrimitive;
-    use num_traits::ToPrimitive;
+    use loro_common::{ContainerType, HasId, PeerID, ID};
     use rle::{HasLength, Sliceable};
     use std::borrow::Cow;
 
@@ -859,7 +864,6 @@ mod encode {
         change::{Change, Lamport},
         encoding::value::{EncodedTreeMove, FutureValue, MarkStart, Value, ValueKind, ValueWriter},
         op::{Op, OpContainer},
-        InternalString,
     };
 
     #[derive(Debug, Clone)]
@@ -959,7 +963,7 @@ mod encode {
         } in ops
         {
             let value_type = encode_op(&op, arena, &mut delete_start, value_writer, registers);
-            let prop = get_op_prop(&op, &mut registers.key);
+            let prop = get_op_prop(&op, registers);
             encoded_ops.push(EncodedOp {
                 container_index,
                 peer_idx,
@@ -976,10 +980,9 @@ mod encode {
     pub(super) fn encode_changes<'a>(
         diff_changes: &'a [Cow<'a, Change>],
         dep_arena: &mut super::DepsArena,
-        peer_register: &mut ValueRegister<u64>,
         push_op: &mut impl FnMut(TempOp<'a>),
-        key_register: &mut ValueRegister<InternalString>,
         container_idx2index: &FxHashMap<OpContainer, usize>,
+        registers: &mut EncodedRegisters,
     ) -> Vec<EncodedChange> {
         let mut changes: Vec<EncodedChange> = Vec::with_capacity(diff_changes.len());
         for change in diff_changes.iter() {
@@ -990,11 +993,11 @@ mod encode {
                     dep_on_self = true;
                 } else {
                     deps_len += 1;
-                    dep_arena.push(peer_register.register(&dep.peer), dep.counter);
+                    dep_arena.push(registers.peer.register(&dep.peer), dep.counter);
                 }
             }
 
-            let peer_idx = peer_register.register(&change.id.peer);
+            let peer_idx = registers.peer.register(&change.id.peer);
             changes.push(EncodedChange {
                 dep_on_self,
                 deps_len,
@@ -1009,7 +1012,7 @@ mod encode {
                 push_op(TempOp {
                     op: Cow::Borrowed(op),
                     lamport,
-                    prop_that_used_for_sort: get_sorting_prop(op, key_register),
+                    prop_that_used_for_sort: get_sorting_prop(op, registers),
                     peer_idx: peer_idx as u32,
                     peer_id: change.id.peer,
                     container_index: container_idx2index[&op.container] as u32,
@@ -1029,6 +1032,12 @@ mod encode {
         pub struct ValueRegister<T> {
             map_value_to_index: FxHashMap<T, usize>,
             vec: Vec<T>,
+        }
+
+        impl<T: std::hash::Hash + Clone + PartialEq + Eq> Default for ValueRegister<T> {
+            fn default() -> Self {
+                Self::new()
+            }
         }
 
         impl<T: std::hash::Hash + Clone + PartialEq + Eq> ValueRegister<T> {
@@ -1102,7 +1111,7 @@ mod encode {
         (start_counters, diff_changes)
     }
 
-    fn get_op_prop(op: &Op, register_key: &mut ValueRegister<InternalString>) -> i32 {
+    fn get_op_prop(op: &Op, registers: &mut EncodedRegisters) -> i32 {
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
                 crate::container::list::list_op::InnerListOp::Insert { pos, .. } => *pos as i32,
@@ -1114,19 +1123,20 @@ mod encode {
                 crate::container::list::list_op::InnerListOp::StyleEnd => 0,
             },
             crate::op::InnerContent::Map(map) => {
-                let key = register_key.register(&map.key);
+                let key = registers.key.register(&map.key);
                 key as i32
             }
+            // The future should not use register to encode prop
             crate::op::InnerContent::Tree(..) => 0,
             crate::op::InnerContent::Unknown { .. } => 0,
         }
     }
 
-    fn get_sorting_prop(op: &Op, register_key: &mut ValueRegister<InternalString>) -> i32 {
+    fn get_sorting_prop(op: &Op, registers: &mut EncodedRegisters) -> i32 {
         match &op.content {
             crate::op::InnerContent::List(_) => 0,
             crate::op::InnerContent::Map(map) => {
-                let key = register_key.register(&map.key);
+                let key = registers.key.register(&map.key);
                 key as i32
             }
             crate::op::InnerContent::Tree(..) => 0,
@@ -1183,7 +1193,7 @@ mod encode {
             crate::op::InnerContent::Map(map) => {
                 assert_eq!(op.container.get_type(), ContainerType::Map);
                 match &map.value {
-                    Some(v) => Value::LoroValue(v),
+                    Some(v) => Value::LoroValue(v.clone()),
                     None => Value::DeleteOnce,
                 }
             }
@@ -1210,11 +1220,9 @@ fn decode_op(
     value: Value<'_>,
     op_len: usize,
     del_iter: &mut impl Iterator<Item = Result<EncodedDeleteStartId, ColumnarError>>,
-    value_reader: &mut ValueReader<'_>,
     shared_arena: &SharedArena,
     arenas: &DecodedArenas<'_>,
     prop: i32,
-    id: ID,
 ) -> LoroResult<crate::op::InnerContent> {
     let content = match cid.container_type() {
         ContainerType::Text => match value {
@@ -1490,436 +1498,10 @@ struct EncodedStateInfo {
     state_bytes_len: u32,
 }
 
-// mod value {
-//     use std::sync::Arc;
-
-//     use fxhash::FxHashMap;
-//     use loro_common::{
-//         ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue,
-//         PeerID, TreeID, ID,
-//     };
-
-//     use super::{encode::ValueRegister, EncodedRegisters, MAX_COLLECTION_SIZE};
-//     use crate::container::tree::tree_op::TreeOp;
-//     use num_traits::{FromPrimitive, ToPrimitive};
-
-//     #[allow(unused)]
-//     #[non_exhaustive]
-//     pub enum Value<'a> {
-//         Null,
-//         True,
-//         False,
-//         DeleteOnce,
-//         ContainerIdx(usize),
-//         I64(i64),
-//         F64(f64),
-//         Str(&'a str),
-//         DeleteSeq,
-//         DeltaInt(i32),
-//         Array(Vec<Value<'a>>),
-//         Map(FxHashMap<InternalString, Value<'a>>),
-//         Binary(&'a [u8]),
-//         MarkStart(MarkStart),
-//         TreeMove(EncodedTreeMove),
-//         Unknown { kind: u8, data: &'a [u8] },
-//     }
-
-//     pub struct MarkStart {
-//         pub len: u32,
-//         pub key_idx: u32,
-//         pub value: LoroValue,
-//         pub info: u8,
-//     }
-
-//     pub struct EncodedTreeMove {
-//         pub subject_peer_idx: usize,
-//         pub subject_cnt: usize,
-//         pub is_parent_null: bool,
-//         pub parent_peer_idx: usize,
-//         pub parent_cnt: usize,
-//     }
-
-//     impl EncodedTreeMove {
-//         pub fn as_tree_op(&self, peer_ids: &[u64]) -> LoroResult<TreeOp> {
-//             Ok(TreeOp {
-//                 target: TreeID::new(
-//                     *(peer_ids
-//                         .get(self.subject_peer_idx)
-//                         .ok_or(LoroError::DecodeDataCorruptionError)?),
-//                     self.subject_cnt as Counter,
-//                 ),
-//                 parent: if self.is_parent_null {
-//                     None
-//                 } else {
-//                     Some(TreeID::new(
-//                         *(peer_ids
-//                             .get(self.parent_peer_idx)
-//                             .ok_or(LoroError::DecodeDataCorruptionError)?),
-//                         self.parent_cnt as Counter,
-//                     ))
-//                 },
-//             })
-//         }
-
-//         pub fn from_tree_op(op: &TreeOp, register_peer_id: &mut ValueRegister<PeerID>) -> Self {
-//             EncodedTreeMove {
-//                 subject_peer_idx: register_peer_id.register(&op.target.peer),
-//                 subject_cnt: op.target.counter as usize,
-//                 is_parent_null: op.parent.is_none(),
-//                 parent_peer_idx: op.parent.map_or(0, |x| register_peer_id.register(&x.peer)),
-//                 parent_cnt: op.parent.map_or(0, |x| x.counter as usize),
-//             }
-//         }
-//     }
-
-//     #[derive(Debug, PartialEq)]
-//     pub enum ValueKind {
-//         Null,
-//         True,
-//         False,
-//         DeleteOnce,
-//         I64,
-//         ContainerType,
-//         F64,
-//         Str,
-//         DeleteSeq,
-//         DeltaInt,
-//         Array,
-//         Map,
-//         MarkStart,
-//         TreeMove,
-//         Binary,
-//         // > 128
-//         Unknown(u8),
-//     }
-
-//     impl num_traits::FromPrimitive for ValueKind {
-//         #[allow(trivial_numeric_casts)]
-//         #[inline]
-//         fn from_u8(n: u8) -> Option<Self> {
-//             let n = n & 0x7F;
-//             match n {
-//                 0 => Some(ValueKind::Null),
-//                 1 => Some(ValueKind::True),
-//                 2 => Some(ValueKind::False),
-//                 3 => Some(ValueKind::DeleteOnce),
-//                 4 => Some(ValueKind::I64),
-//                 5 => Some(ValueKind::ContainerType),
-//                 6 => Some(ValueKind::F64),
-//                 7 => Some(ValueKind::Str),
-//                 8 => Some(ValueKind::DeleteSeq),
-//                 9 => Some(ValueKind::DeltaInt),
-//                 10 => Some(ValueKind::Array),
-//                 11 => Some(ValueKind::Map),
-//                 12 => Some(ValueKind::MarkStart),
-//                 13 => Some(ValueKind::TreeMove),
-//                 14 => Some(ValueKind::Binary),
-//                 _ => Some(ValueKind::Unknown(n | 0x80)),
-//             }
-//         }
-
-//         #[inline]
-//         fn from_u64(n: u64) -> Option<Self> {
-//             Self::from_u8(n as u8)
-//         }
-
-//         #[inline]
-//         fn from_i64(n: i64) -> Option<Self> {
-//             Self::from_u8(n as u8)
-//         }
-//     }
-
-//     impl num_traits::ToPrimitive for ValueKind {
-//         #[inline]
-//         #[allow(trivial_numeric_casts)]
-//         fn to_i64(&self) -> Option<i64> {
-//             Some(match *self {
-//                 ValueKind::Null => 0,
-//                 ValueKind::True => 1,
-//                 ValueKind::False => 2,
-//                 ValueKind::DeleteOnce => 3,
-//                 ValueKind::I64 => 4,
-//                 ValueKind::ContainerType => 5,
-//                 ValueKind::F64 => 6,
-//                 ValueKind::Str => 7,
-//                 ValueKind::DeleteSeq => 8,
-//                 ValueKind::DeltaInt => 9,
-//                 ValueKind::Array => 10,
-//                 ValueKind::Map => 11,
-//                 ValueKind::MarkStart => 12,
-//                 ValueKind::TreeMove => 13,
-//                 ValueKind::Binary => 14,
-//                 ValueKind::Unknown(n) => n as i64,
-//             })
-//         }
-//         #[inline]
-//         fn to_u64(&self) -> Option<u64> {
-//             self.to_i64().map(|x| x as u64)
-//         }
-
-//         #[inline]
-//         #[allow(trivial_numeric_casts)]
-//         fn to_u8(&self) -> Option<u8> {
-//             Some(match *self {
-//                 ValueKind::Null => 0,
-//                 ValueKind::True => 1,
-//                 ValueKind::False => 2,
-//                 ValueKind::DeleteOnce => 3,
-//                 ValueKind::I64 => 4,
-//                 ValueKind::ContainerType => 5,
-//                 ValueKind::F64 => 6,
-//                 ValueKind::Str => 7,
-//                 ValueKind::DeleteSeq => 8,
-//                 ValueKind::DeltaInt => 9,
-//                 ValueKind::Array => 10,
-//                 ValueKind::Map => 11,
-//                 ValueKind::MarkStart => 12,
-//                 ValueKind::TreeMove => 13,
-//                 ValueKind::Binary => 14,
-//                 ValueKind::Unknown(n) => n,
-//             })
-//         }
-//     }
-
-//     impl<'a> Value<'a> {
-//         pub fn kind(&self) -> ValueKind {
-//             match self {
-//                 Value::Null => ValueKind::Null,
-//                 Value::True => ValueKind::True,
-//                 Value::False => ValueKind::False,
-//                 Value::DeleteOnce => ValueKind::DeleteOnce,
-//                 Value::I64(_) => ValueKind::I64,
-//                 Value::ContainerIdx(_) => ValueKind::ContainerType,
-//                 Value::F64(_) => ValueKind::F64,
-//                 Value::Str(_) => ValueKind::Str,
-//                 Value::DeleteSeq { .. } => ValueKind::DeleteSeq,
-//                 Value::DeltaInt(_) => ValueKind::DeltaInt,
-//                 Value::Array(_) => ValueKind::Array,
-//                 Value::Map(_) => ValueKind::Map,
-//                 Value::MarkStart { .. } => ValueKind::MarkStart,
-//                 Value::TreeMove(_) => ValueKind::TreeMove,
-//                 Value::Binary(_) => ValueKind::Binary,
-//                 Value::Unknown { kind, .. } => ValueKind::Unknown(*kind),
-//             }
-//         }
-//     }
-
-//     fn get_loro_value_kind(value: &LoroValue) -> ValueKind {
-//         match value {
-//             LoroValue::Null => ValueKind::Null,
-//             LoroValue::Bool(true) => ValueKind::True,
-//             LoroValue::Bool(false) => ValueKind::False,
-//             LoroValue::I64(_) => ValueKind::I64,
-//             LoroValue::Double(_) => ValueKind::F64,
-//             LoroValue::String(_) => ValueKind::Str,
-//             LoroValue::List(_) => ValueKind::Array,
-//             LoroValue::Map(_) => ValueKind::Map,
-//             LoroValue::Binary(_) => ValueKind::Binary,
-//             LoroValue::Container(_) => ValueKind::ContainerType,
-//         }
-//     }
-
-//     pub struct ValueWriter {
-//         buffer: Vec<u8>,
-//     }
-
-//     impl ValueWriter {
-//         pub fn new() -> Self {
-//             ValueWriter { buffer: Vec::new() }
-//         }
-
-//         pub fn write_value_type_and_content(
-//             &mut self,
-//             value: &LoroValue,
-//             registers: &mut EncodedRegisters,
-//         ) -> (ValueKind, usize) {
-//             let len = self.write_u8(get_loro_value_kind(value).to_u8().unwrap());
-//             let (kind, l) = self.write_value_content(value, registers);
-//             (kind, len + l)
-//         }
-
-//         pub fn write_value_content(
-//             &mut self,
-//             value: &LoroValue,
-//             registers: &mut EncodedRegisters,
-//         ) -> (ValueKind, usize) {
-//             match value {
-//                 LoroValue::Null => (ValueKind::Null, 0),
-//                 LoroValue::Bool(true) => (ValueKind::True, 0),
-//                 LoroValue::Bool(false) => (ValueKind::False, 0),
-//                 LoroValue::I64(value) => (ValueKind::I64, self.write_i64(*value)),
-//                 LoroValue::Double(value) => (ValueKind::F64, self.write_f64(*value)),
-//                 LoroValue::String(value) => (ValueKind::Str, self.write_str(value)),
-//                 LoroValue::List(value) => {
-//                     let mut len = self.write_usize(value.len());
-//                     for value in value.iter() {
-//                         let (_, l) = self.write_value_type_and_content(value, registers);
-//                         len += l;
-//                     }
-//                     (ValueKind::Array, len)
-//                 }
-//                 LoroValue::Map(value) => {
-//                     let mut len = self.write_usize(value.len());
-//                     for (key, value) in value.iter() {
-//                         let key_idx = registers.key.register(&key.as_str().into());
-//                         len += self.write_usize(key_idx);
-//                         let (_, l) = self.write_value_type_and_content(value, registers);
-//                         len += l;
-//                     }
-//                     (ValueKind::Map, len)
-//                 }
-//                 LoroValue::Binary(value) => (ValueKind::Binary, self.write_binary(value)),
-//                 LoroValue::Container(c) => (
-//                     ValueKind::ContainerType,
-//                     self.write_u8(c.container_type().to_u8()),
-//                 ),
-//             }
-//         }
-
-//         pub fn write(
-//             &mut self,
-//             value: &Value,
-//             register_key: &mut ValueRegister<InternalString>,
-//             register_cid: &mut ValueRegister<ContainerID>,
-//         ) -> usize {
-//             match value {
-//                 Value::Null => 0,
-//                 Value::True => 0,
-//                 Value::False => 0,
-//                 Value::DeleteOnce => 0,
-//                 Value::I64(value) => self.write_i64(*value),
-//                 Value::F64(value) => self.write_f64(*value),
-//                 Value::Str(value) => self.write_str(value),
-//                 Value::DeleteSeq => 0,
-//                 Value::DeltaInt(value) => self.write_i32(*value),
-//                 Value::Array(value) => self.write_array(value, register_key, register_cid),
-//                 Value::Map(value) => self.write_map(value, register_key, register_cid),
-//                 Value::MarkStart(value) => self.write_mark(value, register_key, register_cid),
-//                 Value::TreeMove(op) => self.write_tree_move(op),
-//                 Value::Binary(value) => self.write_binary(value),
-//                 Value::ContainerIdx(value) => self.write_usize(*value),
-//                 Value::Unknown { kind: _, data } => self.write_binary(data),
-//             }
-//         }
-
-//         pub fn write_i64(&mut self, value: i64) -> usize {
-//             let len = self.buffer.len();
-//             leb128::write::signed(&mut self.buffer, value).unwrap();
-//             self.buffer.len() - len
-//         }
-
-//         fn write_i32(&mut self, value: i32) -> usize {
-//             let len = self.buffer.len();
-//             leb128::write::signed(&mut self.buffer, value as i64).unwrap();
-//             self.buffer.len() - len
-//         }
-
-//         fn write_usize(&mut self, value: usize) -> usize {
-//             let len = self.buffer.len();
-//             leb128::write::unsigned(&mut self.buffer, value as u64).unwrap();
-//             self.buffer.len() - len
-//         }
-
-//         fn write_f64(&mut self, value: f64) -> usize {
-//             let len = self.buffer.len();
-//             self.buffer.extend_from_slice(&value.to_be_bytes());
-//             self.buffer.len() - len
-//         }
-
-//         fn write_str(&mut self, value: &str) -> usize {
-//             let len = self.buffer.len();
-//             self.write_usize(value.len());
-//             self.buffer.extend_from_slice(value.as_bytes());
-//             self.buffer.len() - len
-//         }
-
-//         fn write_u8(&mut self, value: u8) -> usize {
-//             let len = self.buffer.len();
-//             self.buffer.push(value);
-//             self.buffer.len() - len
-//         }
-
-//         pub fn write_kind(&mut self, kind: ValueKind) -> usize {
-//             let len = self.buffer.len();
-//             self.write_u8(kind.to_u8().unwrap());
-//             self.buffer.len() - len
-//         }
-
-//         fn write_array(
-//             &mut self,
-//             value: &[Value],
-//             register_key: &mut ValueRegister<InternalString>,
-//             register_cid: &mut ValueRegister<ContainerID>,
-//         ) -> usize {
-//             let len = self.buffer.len();
-//             self.write_usize(value.len());
-//             for value in value {
-//                 self.write_kind(value.kind());
-//                 self.write(value, register_key, register_cid);
-//             }
-//             self.buffer.len() - len
-//         }
-
-//         fn write_map(
-//             &mut self,
-//             value: &FxHashMap<InternalString, Value>,
-//             register_key: &mut ValueRegister<InternalString>,
-//             register_cid: &mut ValueRegister<ContainerID>,
-//         ) -> usize {
-//             let len = self.buffer.len();
-//             self.write_usize(value.len());
-//             for (key, value) in value {
-//                 let key_idx = register_key.register(key);
-//                 self.write_usize(key_idx);
-//                 self.write_kind(value.kind());
-//                 self.write(value, register_key, register_cid);
-//             }
-//             self.buffer.len() - len
-//         }
-
-//         fn write_binary(&mut self, value: &[u8]) -> usize {
-//             let len = self.buffer.len();
-//             self.write_usize(value.len());
-//             self.buffer.extend_from_slice(value);
-//             self.buffer.len() - len
-//         }
-
-//         fn write_mark(
-//             &mut self,
-//             mark: &MarkStart,
-//             register_key: &mut ValueRegister<InternalString>,
-//             register_cid: &mut ValueRegister<ContainerID>,
-//         ) -> usize {
-//             let len = self.buffer.len();
-//             self.write_u8(mark.info);
-//             self.write_usize(mark.len as usize);
-//             self.write_usize(mark.key_idx as usize);
-//             self.write_value_type_and_content(&mark.value, register_key, register_cid);
-//             self.buffer.len() - len
-//         }
-
-//         fn write_tree_move(&mut self, op: &EncodedTreeMove) -> usize {
-//             let len = self.buffer.len();
-//             self.write_usize(op.subject_peer_idx);
-//             self.write_usize(op.subject_cnt);
-//             self.write_u8(op.is_parent_null as u8);
-//             if op.is_parent_null {
-//                 return self.buffer.len() - len;
-//             }
-
-//             self.write_usize(op.parent_peer_idx);
-//             self.write_usize(op.parent_cnt);
-//             self.buffer.len() - len
-//         }
-
-//         pub(crate) fn finish(self) -> Vec<u8> {
-//             self.buffer
-//         }
-//     }
-// }
-
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
     use loro_common::LoroValue;
 
     use crate::fx_map;
@@ -1928,22 +1510,27 @@ mod test {
 
     fn test_loro_value_read_write(v: impl Into<LoroValue>, container_id: Option<ContainerID>) {
         let v = v.into();
-        let mut key_reg: ValueRegister<InternalString> = ValueRegister::new();
-        let mut cid_reg: ValueRegister<ContainerID> = ValueRegister::new();
         let id = match &container_id {
             Some(ContainerID::Root { .. }) => ID::new(u64::MAX, 0),
             Some(ContainerID::Normal { peer, counter, .. }) => ID::new(*peer, *counter),
             None => ID::new(u64::MAX, 0),
         };
 
+        let mut registers = EncodedRegisters {
+            key: ValueRegister::new(),
+            container: ValueRegister::new(),
+            peer: ValueRegister::new(),
+        };
+
         let mut writer = ValueWriter::new();
-        let (kind, _) = writer.write_value_content(&v, &mut key_reg, &mut cid_reg);
+        let (kind, _) = writer.write_value_content(&v, &mut registers);
 
         let binding = writer.finish();
         let mut reader = ValueReader::new(binding.as_slice());
-        let keys = &key_reg.unwrap_vec();
 
-        let ans = reader.read_value_content(kind, keys, id).unwrap();
+        let ans = reader
+            .read_value_content(kind, &registers.key.unwrap_vec(), id)
+            .unwrap();
         assert_eq!(v, ans)
     }
 

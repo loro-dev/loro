@@ -11,32 +11,32 @@ use crate::{container::tree::tree_op::TreeOp, encoding::encode_reordered::MAX_CO
 
 use super::arena::{DecodedArenas, EncodedRegisters};
 
-const BASIC_VALUE_KIND_LEN: usize = 14;
-
 #[derive(Debug)]
 pub enum ValueKind {
-    Null,          // 0
-    True,          // 1
-    False,         // 2
-    I64,           // 3
-    F64,           // 4
-    Str,           // 5
-    Binary,        // 6
-    ContainerType, // 7
-    DeleteOnce,    // 8
-    DeleteSeq,     // 9
-    DeltaInt,      // 10
-    Array,         // 11
-    Map,           // 12
-    MarkStart,     // 13
+    Null,           // 0
+    True,           // 1
+    False,          // 2
+    I64,            // 3
+    F64,            // 4
+    Str,            // 5
+    Binary,         // 6
+    ContainerType,  // 7
+    DeleteOnce,     // 8
+    DeleteSeq,      // 9
+    DeltaInt,       // 10
+    Array,          // 11
+    Map,            // 12
+    LoroValue,      // 13
+    LoroValueArray, // 14
+    MarkStart,      // 15
 
     Future(FutureValueKind),
 }
 
 #[derive(Debug)]
 pub enum FutureValueKind {
-    TreeMove, // 0b10000014
-    // start from 15
+    TreeMove, // 0b10000016
+    // start from 16
     Unknown(u8),
 }
 
@@ -56,16 +56,18 @@ impl ValueKind {
             ValueKind::DeltaInt => 10,
             ValueKind::Array => 11,
             ValueKind::Map => 12,
-            ValueKind::MarkStart => 13,
+            ValueKind::LoroValue => 13,
+            ValueKind::LoroValueArray => 14,
+            ValueKind::MarkStart => 15,
             ValueKind::Future(future_value_kind) => match future_value_kind {
-                FutureValueKind::TreeMove => 14 | 0x80,
+                FutureValueKind::TreeMove => 16 | 0x80,
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
             },
         }
     }
 
     pub(super) fn from_u8(mut kind: u8) -> Self {
-        kind = kind & 0x7F;
+        kind &= 0x7F;
         match kind {
             0 => ValueKind::Null,
             1 => ValueKind::True,
@@ -80,8 +82,10 @@ impl ValueKind {
             10 => ValueKind::DeltaInt,
             11 => ValueKind::Array,
             12 => ValueKind::Map,
-            13 => ValueKind::MarkStart,
-            14 => ValueKind::Future(FutureValueKind::TreeMove),
+            13 => ValueKind::LoroValue,
+            14 => ValueKind::LoroValueArray,
+            15 => ValueKind::MarkStart,
+            16 => ValueKind::Future(FutureValueKind::TreeMove),
             _ => ValueKind::Future(FutureValueKind::Unknown(kind)),
         }
     }
@@ -102,7 +106,8 @@ pub enum Value<'a> {
     DeltaInt(i32),
     Array(Vec<Value<'a>>),
     LoroValueArray(Vec<LoroValue>),
-    LoroValue(&'a LoroValue),
+    #[allow(clippy::enum_variant_names)]
+    LoroValue(LoroValue),
     Map(FxHashMap<InternalString, Value<'a>>),
     MarkStart(MarkStart<'a>),
     Future {
@@ -132,22 +137,24 @@ impl<'a> Value<'a> {
             Value::DeltaInt(_) => ValueKind::DeltaInt,
             Value::Array(_) => ValueKind::Array,
             Value::Map(_) => ValueKind::Map,
+            Value::LoroValue(_) => ValueKind::LoroValue,
+            Value::LoroValueArray(_) => ValueKind::LoroValueArray,
             Value::MarkStart { .. } => ValueKind::MarkStart,
             Value::Binary(_) => ValueKind::Binary,
             Value::Future {
-                bytes_length,
+                bytes_length: _,
                 value,
             } => match value {
-                FutureValue::TreeMove(tree) => ValueKind::Future(FutureValueKind::TreeMove),
-                FutureValue::Unknown { kind, data } => {
+                FutureValue::TreeMove(..) => ValueKind::Future(FutureValueKind::TreeMove),
+                FutureValue::Unknown { kind, data: _ } => {
                     ValueKind::Future(FutureValueKind::Unknown(*kind))
                 }
             },
         }
     }
-    fn decode_without_arena(
+    fn decode_without_arena<'r: 'a>(
         future_kind: FutureValueKind,
-        value_reader: &mut ValueReader,
+        value_reader: &'r mut ValueReader,
     ) -> LoroResult<Self> {
         let bytes_length = value_reader.read_usize()?;
         let value = match future_kind {
@@ -163,10 +170,10 @@ impl<'a> Value<'a> {
         })
     }
 
-    pub(super) fn decode(
+    pub(super) fn decode<'r: 'a>(
         kind: ValueKind,
-        value_reader: &mut ValueReader,
-        arenas: &DecodedArenas<'a>,
+        value_reader: &'r mut ValueReader,
+        arenas: &'a DecodedArenas<'a>,
         id: ID,
     ) -> LoroResult<Self> {
         Ok(match kind {
@@ -181,7 +188,7 @@ impl<'a> Value<'a> {
             ValueKind::DeleteOnce => Value::DeleteOnce,
             ValueKind::DeleteSeq => Value::DeleteSeq,
             ValueKind::DeltaInt => Value::DeltaInt(value_reader.read_i32()?),
-            ValueKind::Array => {
+            ValueKind::LoroValueArray => {
                 let len = value_reader.read_usize()?;
                 let mut ans = Vec::with_capacity(len);
                 for _ in 0..len {
@@ -191,6 +198,10 @@ impl<'a> Value<'a> {
                 }
                 Value::LoroValueArray(ans)
             }
+            ValueKind::LoroValue => {
+                Value::LoroValue(value_reader.read_value_type_and_content(&arenas.keys, id)?)
+            }
+            ValueKind::Array => unimplemented!(),
             ValueKind::Map => unimplemented!(),
             ValueKind::MarkStart => {
                 Value::MarkStart(value_reader.read_mark(&arenas.keys.keys, id)?)
@@ -199,6 +210,21 @@ impl<'a> Value<'a> {
                 Self::decode_without_arena(future_kind, value_reader)?
             }
         })
+    }
+
+    fn encode_without_registers(value: FutureValue, value_writer: &mut ValueWriter) -> ValueKind {
+        match value {
+            FutureValue::TreeMove(tree) => {
+                let bytes = write_tree_move(&tree);
+                // value_writer.write_usize(bytes.len());
+                value_writer.write_binary(&bytes);
+                ValueKind::Future(FutureValueKind::TreeMove)
+            }
+            FutureValue::Unknown { kind, data } => {
+                value_writer.write_binary(data);
+                ValueKind::Future(FutureValueKind::Unknown(kind))
+            }
+        }
     }
 
     pub(super) fn encode(
@@ -241,7 +267,11 @@ impl<'a> Value<'a> {
                 for value in arr {
                     value_writer.write_value_type_and_content(&value, registers);
                 }
-                ValueKind::Array
+                ValueKind::LoroValueArray
+            }
+            Value::LoroValue(x) => {
+                value_writer.write_value_type_and_content(&x, registers);
+                ValueKind::LoroValue
             }
             Value::Array(x) => {
                 value_writer.write_array(x, registers);
@@ -255,6 +285,10 @@ impl<'a> Value<'a> {
                 value_writer.write_mark(x, registers);
                 ValueKind::MarkStart
             }
+            Value::Future {
+                bytes_length: _,
+                value,
+            } => Self::encode_without_registers(value, value_writer),
         }
     }
 }
@@ -444,7 +478,7 @@ impl<'a> ValueReader<'a> {
                     ValueKind::F64 => LoroValue::Double(self.read_f64()?),
                     ValueKind::Str => LoroValue::String(Arc::new(self.read_str()?.to_owned())),
                     ValueKind::DeltaInt => LoroValue::I64(self.read_i64()?),
-                    ValueKind::Array => {
+                    ValueKind::LoroValueArray => {
                         let len = self.read_usize()?;
                         if len > MAX_COLLECTION_SIZE {
                             return Err(LoroError::DecodeDataCorruptionError);
@@ -628,7 +662,11 @@ impl<'a> ValueReader<'a> {
         Ok(ans)
     }
 
-    pub fn read_mark(&mut self, keys: &[InternalString], id: ID) -> LoroResult<MarkStart> {
+    pub fn read_mark<'s: 'm, 'm>(
+        &mut self,
+        keys: &'s [InternalString],
+        id: ID,
+    ) -> LoroResult<MarkStart<'m>> {
         let info = self.read_u8()?;
         let len = self.read_usize()?;
         let key_idx = self.read_usize()?;
@@ -680,7 +718,7 @@ impl ValueWriter {
         value: &LoroValue,
         registers: &mut EncodedRegisters,
     ) -> (ValueKind, usize) {
-        let len = self.write_u8(get_loro_value_kind(&value).to_u8());
+        let len = self.write_u8(get_loro_value_kind(value).to_u8());
         let (kind, l) = self.write_value_content(value, registers);
         (kind, len + l)
     }
@@ -696,7 +734,7 @@ impl ValueWriter {
             LoroValue::Bool(false) => (ValueKind::False, 0),
             LoroValue::I64(value) => (ValueKind::I64, self.write_i64(*value)),
             LoroValue::Double(value) => (ValueKind::F64, self.write_f64(*value)),
-            LoroValue::String(value) => (ValueKind::Str, self.write_str(&value)),
+            LoroValue::String(value) => (ValueKind::Str, self.write_str(value)),
             LoroValue::List(value) => {
                 let mut len = self.write_usize(value.len());
                 for value in value.iter() {
@@ -715,7 +753,7 @@ impl ValueWriter {
                 }
                 (ValueKind::Map, len)
             }
-            LoroValue::Binary(value) => (ValueKind::Binary, self.write_binary(&value)),
+            LoroValue::Binary(value) => (ValueKind::Binary, self.write_binary(value)),
             LoroValue::Container(c) => (
                 ValueKind::ContainerType,
                 self.write_u8(c.container_type().to_u8()),
@@ -815,23 +853,23 @@ impl ValueWriter {
         self.buffer.len() - len
     }
 
-    fn write_tree_move(&mut self, op: &EncodedTreeMove) -> usize {
-        let len = self.buffer.len();
-        self.write_u64(op.subject_peer);
-        self.write_i32(op.subject_cnt);
-        self.write_u8(op.is_parent_null as u8);
-        if op.is_parent_null {
-            return self.buffer.len() - len;
-        }
-
-        self.write_u64(op.parent_peer);
-        self.write_i32(op.parent_cnt);
-        self.buffer.len() - len
-    }
-
     pub(crate) fn finish(self) -> Vec<u8> {
         self.buffer
     }
+}
+
+fn write_tree_move(op: &EncodedTreeMove) -> Vec<u8> {
+    let mut writer = ValueWriter::new();
+    writer.write_u64(op.subject_peer);
+    writer.write_i32(op.subject_cnt);
+    writer.write_u8(op.is_parent_null as u8);
+    if op.is_parent_null {
+        return writer.finish();
+    }
+
+    writer.write_u64(op.parent_peer);
+    writer.write_i32(op.parent_cnt);
+    writer.finish()
 }
 
 fn get_loro_value_kind(value: &LoroValue) -> ValueKind {
@@ -842,7 +880,7 @@ fn get_loro_value_kind(value: &LoroValue) -> ValueKind {
         LoroValue::I64(_) => ValueKind::I64,
         LoroValue::Double(_) => ValueKind::F64,
         LoroValue::String(_) => ValueKind::Str,
-        LoroValue::List(_) => ValueKind::Array,
+        LoroValue::List(_) => ValueKind::LoroValueArray,
         LoroValue::Map(_) => ValueKind::Map,
         LoroValue::Binary(_) => ValueKind::Binary,
         LoroValue::Container(_) => ValueKind::ContainerType,
