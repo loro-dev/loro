@@ -820,6 +820,7 @@ version = "0.4.0"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
+ "generic-btree",
  "loro-delta",
  "loro-internal",
  "serde_json",
@@ -847,12 +848,15 @@ name = "loro-delta"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
+ "color-backtrace 0.6.1",
  "criterion",
+ "ctor 0.2.7",
  "enum-as-inner 0.5.1",
  "generic-btree",
  "heapless 0.8.0",
  "rand",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

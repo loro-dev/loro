@@ -23,9 +23,10 @@ impl<Attr: DeltaAttr> TextDelta<Attr> {
 
         self.insert_values(
             index,
-            TextChunk::from_long_str(s).map(|chunk| DeltaItem::Insert {
+            TextChunk::from_long_str(s).map(|chunk| DeltaItem::Replace {
                 value: chunk,
                 attr: Default::default(),
+                delete: 0,
             }),
         );
     }
@@ -64,9 +65,8 @@ impl<Attr: DeltaAttr> TextDelta<Attr> {
         let mut ans = String::with_capacity(self.len());
         for item in self.iter() {
             match item {
-                crate::DeltaItem::Delete(_) => return None,
                 crate::DeltaItem::Retain { .. } => return None,
-                crate::DeltaItem::Insert { value, .. } => {
+                crate::DeltaItem::Replace { value, .. } => {
                     ans.push_str(&value.0);
                 }
             }

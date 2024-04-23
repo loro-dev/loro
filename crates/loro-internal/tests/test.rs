@@ -127,7 +127,7 @@ fn handler_in_event() {
             .iter()
             .next()
             .unwrap()
-            .as_insert()
+            .as_replace()
             .unwrap()
             .0
             .iter()

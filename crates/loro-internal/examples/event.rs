@@ -15,7 +15,7 @@ fn main() {
             match &container_diff.diff {
                 Diff::List(list) => {
                     for item in list.iter() {
-                        if let loro_delta::DeltaItem::Insert { value, .. } = item {
+                        if let loro_delta::DeltaItem::Replace { value, .. } = item {
                             for v in value.iter() {
                                 match v {
                                     ValueOrHandler::Handler(h) => {

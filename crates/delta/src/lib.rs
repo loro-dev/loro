@@ -29,7 +29,20 @@ pub struct DeltaRopeBuilder<V: DeltaValue, Attr: DeltaAttr> {
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumAsInner)]
 pub enum DeltaItem<V, Attr> {
-    Retain { len: usize, attr: Attr },
-    Insert { value: V, attr: Attr },
-    Delete(usize),
+    Retain {
+        len: usize,
+        attr: Attr,
+    },
+    /// This is the combined of a delete and an insert.
+    ///
+    /// They are two separate operations in the original Quill Delta format.
+    /// But the order of two neighboring delete and insert operations can be
+    /// swapped without changing the result. So Quill requires that the insert
+    /// always comes before the delete. So it creates room for invalid deltas
+    /// by the type system. Using Replace is a way to avoid this.
+    Replace {
+        value: V,
+        attr: Attr,
+        delete: usize,
+    },
 }

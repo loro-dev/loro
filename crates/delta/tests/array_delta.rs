@@ -1,6 +1,24 @@
 use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
+use tracing_subscriber::fmt::format::FmtSpan;
 
 type TestArrayDelta = DeltaRope<ArrayVec<i32, 10>, ()>;
+
+#[ctor::ctor]
+fn init_color_backtrace() {
+    color_backtrace::install();
+    use tracing_subscriber::{prelude::*, registry::Registry};
+    if option_env!("DEBUG").is_some() {
+        tracing::subscriber::set_global_default(
+            Registry::default().with(
+                tracing_subscriber::fmt::Layer::default()
+                    .with_file(true)
+                    .with_line_number(true)
+                    .with_span_events(FmtSpan::ACTIVE),
+            ),
+        )
+        .unwrap();
+    }
+}
 
 #[test]
 fn delete_eq() {
@@ -147,6 +165,11 @@ fn test_cumulative_insert_overflow_handled() {
         .insert(ArrayVec::from([9, 10, 11]), ())
         .build();
     delta.compose(&op1);
+    let expected: TestArrayDelta = DeltaRopeBuilder::new()
+        .insert(ArrayVec::from([1, 2, 3, 4, 5, 6, 7, 8]), ())
+        .build();
+    assert_eq!(delta, expected);
+
     delta.compose(&op2); // Expect it to handle overflow gracefully
 
     // Expected behavior: handle overflow by creating new insertions

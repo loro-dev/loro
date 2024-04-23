@@ -95,17 +95,17 @@ impl<V: DeltaValue + Debug, Attr: DeltaAttr + Debug> BTreeTrait for DeltaTreeTra
 
     fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
         match elem {
-            DeltaItem::Delete(d) => Len {
-                new_len: 0,
-                old_len: *d as isize,
-            },
             DeltaItem::Retain { len, attr } => Len {
                 new_len: *len as isize,
                 old_len: *len as isize,
             },
-            DeltaItem::Insert { value, attr } => Len {
+            DeltaItem::Replace {
+                value,
+                attr,
+                delete,
+            } => Len {
                 new_len: value.rle_len() as isize,
-                old_len: 0,
+                old_len: *delete as isize,
             },
         }
     }

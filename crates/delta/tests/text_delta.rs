@@ -81,8 +81,7 @@ fn compose_long_delete() {
         a,
         DeltaRopeBuilder::new()
             .retain(2, ())
-            .delete(9)
-            .insert(TextChunk::try_from_str("34567890").unwrap(), ())
+            .replace(TextChunk::try_from_str("34567890").unwrap(), (), 9)
             .build()
     );
 }

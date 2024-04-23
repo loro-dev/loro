@@ -1,9 +1,7 @@
 use std::{fmt::Debug, ops::Range};
 
-use generic_btree::{
-    rle::{Mergeable, Sliceable},
-    Cursor, LengthFinder,
-};
+use generic_btree::{rle::Sliceable, Cursor, LengthFinder};
+use tracing::trace;
 
 use crate::{
     delta_trait::{DeltaAttr, DeltaValue},
@@ -45,10 +43,6 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
             }
 
             match item {
-                item @ DeltaItem::Insert { value, .. } => {
-                    self.insert_values(index, [item.clone()]);
-                    index += value.rle_len();
-                }
                 DeltaItem::Retain { len, attr } => {
                     if self.len() < index + len {
                         self.push_retain(index + len - self.len(), Default::default());
@@ -58,134 +52,200 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                     }
                     index += len;
                 }
-                DeltaItem::Delete(len) => {
-                    if *len == 0 {
-                        continue;
-                    }
+                DeltaItem::Replace {
+                    value: this_value,
+                    attr: this_attr,
+                    delete,
+                } => {
+                    let mut should_insert = this_value.rle_len() > 0;
+                    let mut left_del_len = *delete;
+                    if *delete > 0 {
+                        assert!(index < self.len());
+                        let range = index..(index + left_del_len).min(self.len());
+                        let from = self.tree.query::<LengthFinder>(&range.start).unwrap();
+                        let to = self.tree.query::<LengthFinder>(&range.end).unwrap();
+                        if from.cursor.leaf == to.cursor.leaf {
+                            should_insert = false;
+                            self.tree.update_leaf(from.cursor.leaf, |item| match item {
+                                DeltaItem::Retain {
+                                    len: retain_len,
+                                    attr,
+                                } => {
+                                    let start = from.cursor.offset;
+                                    let end = to.cursor.offset;
+                                    let (l, r) = match (start == 0, end >= *retain_len) {
+                                        (true, true) => {
+                                            *item = DeltaItem::Replace {
+                                                delete: left_del_len,
+                                                value: this_value.clone(),
+                                                attr: this_attr.clone(),
+                                            };
+                                            (None, None)
+                                        }
+                                        (true, false) => {
+                                            let right = item.slice(end..);
+                                            *item = DeltaItem::Replace {
+                                                delete: left_del_len,
+                                                value: this_value.clone(),
+                                                attr: this_attr.clone(),
+                                            };
+                                            (Some(right), None)
+                                        }
+                                        (false, true) => {
+                                            *retain_len -= *delete;
+                                            (
+                                                Some(DeltaItem::Replace {
+                                                    value: this_value.clone(),
+                                                    attr: this_attr.clone(),
+                                                    delete: left_del_len,
+                                                }),
+                                                None,
+                                            )
+                                        }
+                                        (false, false) => {
+                                            let right = DeltaItem::Retain {
+                                                len: *retain_len - end,
+                                                attr: attr.clone(),
+                                            };
+                                            *retain_len = start;
+                                            (
+                                                Some(DeltaItem::Replace {
+                                                    value: this_value.clone(),
+                                                    attr: this_attr.clone(),
+                                                    delete: left_del_len,
+                                                }),
+                                                Some(right),
+                                            )
+                                        }
+                                    };
 
-                    assert!(index < self.len());
-                    let range = index..(index + len).min(self.len());
-                    let from = self.tree.query::<LengthFinder>(&range.start).unwrap();
-                    let to = self.tree.query::<LengthFinder>(&range.end).unwrap();
-                    if from.cursor.leaf == to.cursor.leaf {
-                        self.tree.update_leaf(from.cursor.leaf, |item| match item {
-                            DeltaItem::Delete(l) => {
-                                assert!(!to.found);
-                                *l += len;
-                                (true, None, None)
-                            }
-                            DeltaItem::Retain {
-                                len: retain_len,
-                                attr,
-                            } => {
-                                let start = from.cursor.offset;
-                                let end = to.cursor.offset;
-                                let (l, r) = match (start == 0, end == *retain_len) {
-                                    (true, true) => {
-                                        *item = DeltaItem::Delete(*retain_len);
-                                        (None, None)
+                                    left_del_len = 0;
+                                    (true, l, r)
+                                }
+                                DeltaItem::Replace {
+                                    value,
+                                    attr,
+                                    delete,
+                                } => {
+                                    let start = from.cursor.offset;
+                                    let end = to.cursor.offset;
+                                    let value_len = value.rle_len();
+                                    {
+                                        left_del_len =
+                                            left_del_len.saturating_sub(value_len.min(end) - start);
+                                        *delete += left_del_len;
+                                        left_del_len = 0;
                                     }
-                                    (true, false) => {
-                                        let right = item.slice(end..);
-                                        *item = DeltaItem::Delete(end);
-                                        (Some(right), None)
-                                    }
-                                    (false, true) => {
-                                        *retain_len -= *len;
-                                        (Some(DeltaItem::Delete(*len)), None)
-                                    }
-                                    (false, false) => {
-                                        let right = DeltaItem::Retain {
-                                            len: *retain_len - end,
-                                            attr: attr.clone(),
-                                        };
-                                        *retain_len = start;
-                                        (Some(DeltaItem::Delete(*len)), Some(right))
-                                    }
-                                };
 
-                                (true, l, r)
-                            }
-                            DeltaItem::Insert { value, attr } => {
-                                let start = from.cursor.offset;
-                                let end = to.cursor.offset;
-                                let new = match (start == 0, end == value.rle_len()) {
-                                    (true, true) => {
-                                        *item = DeltaItem::Delete(0);
-                                        None
-                                    }
-                                    (true, false) => {
-                                        value.slice_(end..);
-                                        None
-                                    }
-                                    (false, true) => {
-                                        value.slice_(..start);
-                                        None
-                                    }
-                                    (false, false) => {
-                                        let right = value.slice(end..);
-                                        value.slice_(..start);
-                                        let right = DeltaItem::Insert {
-                                            value: right,
-                                            attr: attr.clone(),
-                                        };
-                                        if item.can_merge(&right) {
-                                            item.merge_right(&right);
-                                            None
+                                    let mut right = value.split(start);
+                                    right.slice_(value_len.min(end) - start..);
+                                    trace!("value={:#?}, right={:#?}", &value, &right);
+                                    if this_value.rle_len() > 0 {
+                                        if attr != this_attr || !value.can_merge(this_value) {
+                                            let right = if right.rle_len() > 0 {
+                                                Some(DeltaItem::Replace {
+                                                    value: right,
+                                                    attr: attr.clone(),
+                                                    delete: 0,
+                                                })
+                                            } else {
+                                                None
+                                            };
+
+                                            return (
+                                                true,
+                                                Some(DeltaItem::Replace {
+                                                    value: this_value.clone(),
+                                                    attr: this_attr.clone(),
+                                                    delete: 0,
+                                                }),
+                                                right,
+                                            );
                                         } else {
-                                            Some(right)
+                                            value.merge_right(this_value);
                                         }
                                     }
-                                };
 
-                                (true, new, None)
-                            }
-                        });
-                    } else {
-                        let mut left_len = *len;
-                        self.tree.update(from.cursor..to.cursor, &mut |item| {
-                            if left_len == 0 {
-                                return None;
-                            }
-
-                            match item {
-                                DeltaItem::Delete(_) => None,
-                                DeltaItem::Retain { len, .. } => {
-                                    assert!(*len <= left_len);
-                                    left_len -= *len;
-                                    let diff = -(*len as isize);
-                                    *item = DeltaItem::Delete(*len);
-                                    Some(Len {
-                                        new_len: diff,
-                                        old_len: diff,
-                                    })
-                                }
-                                DeltaItem::Insert { value, .. } => {
-                                    if left_len > value.rle_len() {
-                                        let diff = value.rle_len() as isize;
-                                        left_len -= value.rle_len();
-                                        *item = DeltaItem::Delete(0);
-                                        Some(Len {
-                                            new_len: -diff,
-                                            old_len: 0,
-                                        })
+                                    if value.can_merge(&right) {
+                                        value.merge_right(&right);
+                                        (true, None, None)
                                     } else {
-                                        let diff = left_len as isize;
-                                        value.slice_(left_len..);
-                                        left_len = 0;
-                                        Some(Len {
-                                            new_len: -diff,
-                                            old_len: 0,
-                                        })
+                                        let right = if right.rle_len() > 0 {
+                                            Some(DeltaItem::Replace {
+                                                value: right,
+                                                attr: attr.clone(),
+                                                delete: 0,
+                                            })
+                                        } else {
+                                            None
+                                        };
+                                        (true, right, None)
                                     }
                                 }
-                            }
-                        });
+                            });
+                        } else {
+                            self.tree.update(from.cursor..to.cursor, &mut |item| {
+                                if left_del_len == 0 {
+                                    return None;
+                                }
 
-                        if left_len > 0 {
-                            self.insert_values(index, [DeltaItem::Delete(left_len)]);
+                                match item {
+                                    DeltaItem::Retain { len, .. } => {
+                                        assert!(*len <= left_del_len);
+                                        left_del_len -= *len;
+                                        let diff = -(*len as isize);
+                                        *item = DeltaItem::Replace {
+                                            delete: *len,
+                                            value: Default::default(),
+                                            attr: Default::default(),
+                                        };
+                                        Some(Len {
+                                            new_len: diff,
+                                            old_len: diff,
+                                        })
+                                    }
+                                    DeltaItem::Replace { value, delete, .. } => {
+                                        if left_del_len >= value.rle_len() {
+                                            let diff = value.rle_len() as isize;
+                                            left_del_len -= value.rle_len();
+                                            left_del_len += *delete;
+                                            *item = DeltaItem::Retain {
+                                                len: 0,
+                                                attr: Default::default(),
+                                            };
+                                            Some(Len {
+                                                new_len: -diff,
+                                                old_len: 0,
+                                            })
+                                        } else {
+                                            unreachable!()
+                                        }
+                                    }
+                                }
+                            });
                         }
                     }
+
+                    if left_del_len > 0 || should_insert {
+                        self.insert_values(
+                            index,
+                            [DeltaItem::Replace {
+                                value: if should_insert {
+                                    this_value.clone()
+                                } else {
+                                    Default::default()
+                                },
+                                attr: if should_insert {
+                                    this_attr.clone()
+                                } else {
+                                    Default::default()
+                                },
+                                delete: left_del_len,
+                            }],
+                        );
+                    }
+
+                    index += this_value.rle_len();
                 }
             }
         }
@@ -220,12 +280,21 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         }
 
         let Some(leaf) = self.tree.last_leaf() else {
-            self.tree.push(DeltaItem::Insert { value: v, attr });
+            self.tree.push(DeltaItem::Replace {
+                value: v,
+                attr,
+                delete: 0,
+            });
             return self;
         };
         let mut inserted = false;
         self.tree.update_leaf(leaf, |item| {
-            if let DeltaItem::Insert { value, attr: a } = item {
+            if let DeltaItem::Replace {
+                value,
+                attr: a,
+                delete,
+            } = item
+            {
                 if value.can_merge(&v) && a == &attr {
                     value.merge_right(&v);
                     inserted = true;
@@ -236,7 +305,11 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         });
 
         if !inserted {
-            self.tree.push(DeltaItem::Insert { value: v, attr });
+            self.tree.push(DeltaItem::Replace {
+                value: v,
+                attr,
+                delete: 0,
+            });
         }
 
         self
@@ -271,20 +344,72 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         self
     }
 
+    pub fn push_replace(&mut self, value: V, attr: Attr, delete: usize) -> &mut Self {
+        if value.rle_len() == 0 && delete == 0 {
+            return self;
+        }
+
+        let Some(leaf) = self.tree.last_leaf() else {
+            self.tree.push(DeltaItem::Replace {
+                value,
+                attr,
+                delete,
+            });
+            return self;
+        };
+
+        let mut inserted = false;
+        self.tree.update_leaf(leaf, |item| {
+            if let DeltaItem::Replace {
+                value: v,
+                attr: a,
+                delete: d,
+            } = item
+            {
+                if a == &attr && v.can_merge(&value) {
+                    v.merge_right(&value);
+                    *d += delete;
+                    inserted = true;
+                    return (true, None, None);
+                }
+            }
+            (false, None, None)
+        });
+
+        if !inserted {
+            self.tree.push(DeltaItem::Replace {
+                value,
+                attr,
+                delete,
+            });
+        }
+
+        self
+    }
+
     pub fn push_delete(&mut self, len: usize) -> &mut Self {
         if len == 0 {
             return self;
         }
 
         let Some(leaf) = self.tree.last_leaf() else {
-            self.tree.push(DeltaItem::Delete(len));
+            self.tree.push(DeltaItem::Replace {
+                value: Default::default(),
+                attr: Default::default(),
+                delete: len,
+            });
             return self;
         };
 
         let mut inserted = false;
         self.tree.update_leaf(leaf, |item| {
-            if let DeltaItem::Delete(l) = item {
-                *l += len;
+            if let DeltaItem::Replace {
+                value,
+                attr,
+                delete,
+            } = item
+            {
+                *delete += len;
                 inserted = true;
                 return (true, None, None);
             }
@@ -292,7 +417,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         });
 
         if !inserted {
-            self.tree.push(DeltaItem::Delete(len));
+            self.tree.push(DeltaItem::new_delete(len));
         }
 
         self
@@ -300,9 +425,12 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
 
     pub fn push(&mut self, item: DeltaItem<V, Attr>) -> &mut Self {
         match item {
-            DeltaItem::Insert { value, attr } => self.push_insert(value, attr),
             DeltaItem::Retain { len, attr } => self.push_retain(len, attr),
-            DeltaItem::Delete(len) => self.push_delete(len),
+            DeltaItem::Replace {
+                value,
+                attr,
+                delete,
+            } => self.push_replace(value, attr, delete),
         }
     }
 
@@ -345,39 +473,55 @@ impl<V: DeltaValue + PartialEq, Attr: DeltaAttr + PartialEq> PartialEq for Delta
         let mut a = self.iter_with_len();
         let mut b = other.iter_with_len();
         while let (Some(x), Some(y)) = (a.peek(), b.peek()) {
-            let len = x.len().min(y.len());
-            match (x.item, y.item) {
-                (DeltaItem::Delete(_), DeltaItem::Delete(_)) => {
-                    a.next_with(len);
-                    b.next_with(len);
+            trace!("x={:#?} y={:#?}", &x, &y);
+            let len = x.delta_len().min(y.delta_len());
+            match (x, y) {
+                (
+                    DeltaItem::Replace {
+                        value: va,
+                        attr: attr_a,
+                        delete: d_a,
+                    },
+                    DeltaItem::Replace {
+                        value: vb,
+                        attr: attr_b,
+                        delete: d_b,
+                    },
+                ) => {
+                    if attr_a != attr_b {
+                        return false;
+                    }
+
+                    let va_empty = va.rle_len() == 0;
+                    let vb_empty = vb.rle_len() == 0;
+                    if vb_empty || va_empty {
+                        // both deletions
+                        let min_del_len = (*d_a).min(*d_b);
+                        if min_del_len == 0 {
+                            return false;
+                        }
+
+                        a.next_with_del(min_del_len).unwrap();
+                        b.next_with_del(min_del_len).unwrap();
+                    } else {
+                        let len = (va.rle_len()).min(vb.rle_len());
+                        let va_slice = va.slice(..len);
+                        let vb_slice = vb.slice(..len);
+                        if va_slice != vb_slice {
+                            return false;
+                        }
+
+                        a.next_with(len).unwrap();
+                        b.next_with(len).unwrap();
+                    }
                 }
                 (DeltaItem::Retain { attr, .. }, DeltaItem::Retain { attr: b_attr, .. }) => {
                     if *attr == *b_attr {
-                        a.next_with(len);
-                        b.next_with(len);
+                        a.next_with(len).unwrap();
+                        b.next_with(len).unwrap();
                     } else {
                         return false;
                     }
-                }
-                (
-                    DeltaItem::Insert { value, attr },
-                    DeltaItem::Insert {
-                        value: b_value,
-                        attr: b_attr,
-                    },
-                ) => {
-                    if attr != b_attr {
-                        return false;
-                    }
-
-                    if value.slice(x.start_offset..x.start_offset + len)
-                        != b_value.slice(y.start_offset..y.start_offset + len)
-                    {
-                        return false;
-                    }
-
-                    a.next_with(len);
-                    b.next_with(len);
                 }
                 _ => return false,
             }
@@ -421,11 +565,10 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         let to = self.tree.query::<LengthFinder>(&range.end).unwrap();
         self.tree.update(from.cursor..to.cursor, &mut |item| {
             match item {
-                DeltaItem::Delete(_) => {}
                 DeltaItem::Retain { attr: a, .. } => {
                     a.compose(attr);
                 }
-                DeltaItem::Insert { attr: a, .. } => a.compose(attr),
+                DeltaItem::Replace { attr: a, .. } => a.compose(attr),
             }
 
             None
@@ -443,14 +586,18 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRopeBuilder<V, Attr> {
             return self;
         }
 
-        if let Some(DeltaItem::Insert { value, attr: a }) = self.items.last_mut() {
+        if let Some(DeltaItem::Replace { value, attr: a, .. }) = self.items.last_mut() {
             if value.can_merge(&v) && a == &attr {
                 value.merge_right(&v);
                 return self;
             }
         }
 
-        self.items.push(DeltaItem::Insert { value: v, attr });
+        self.items.push(DeltaItem::Replace {
+            value: v,
+            attr,
+            delete: 0,
+        });
         self
     }
 
@@ -475,12 +622,38 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRopeBuilder<V, Attr> {
             return self;
         }
 
-        if let Some(DeltaItem::Delete(l)) = self.items.last_mut() {
-            *l += len;
+        if let Some(DeltaItem::Replace { delete, .. }) = self.items.last_mut() {
+            *delete += len;
             return self;
         }
 
-        self.items.push(DeltaItem::Delete(len));
+        self.items.push(DeltaItem::new_delete(len));
+        self
+    }
+
+    pub fn replace(mut self, value: V, attr: Attr, delete: usize) -> Self {
+        if delete == 0 && value.rle_len() == 0 {
+            return self;
+        }
+
+        if let Some(DeltaItem::Replace {
+            value: last_value,
+            attr: last_attr,
+            delete: last_delete,
+        }) = self.items.last_mut()
+        {
+            if last_value.can_merge(&value) && &attr == last_attr {
+                last_value.merge_right(&value);
+                *last_delete += delete;
+                return self;
+            }
+        }
+
+        self.items.push(DeltaItem::Replace {
+            value,
+            attr,
+            delete,
+        });
         self
     }
 

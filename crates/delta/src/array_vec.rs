@@ -74,9 +74,10 @@ impl<V: Debug + Clone, const C: usize, Attr: DeltaAttr> DeltaRope<ArrayVec<V, C>
         let mut rope = DeltaRope::new();
         rope.insert_values(
             0,
-            ArrayVec::from_many(iter).map(|x| crate::DeltaItem::Insert {
+            ArrayVec::from_many(iter).map(|x| crate::DeltaItem::Replace {
                 value: x,
                 attr: Default::default(),
+                delete: 0,
             }),
         );
 

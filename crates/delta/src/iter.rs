@@ -1,4 +1,7 @@
-use generic_btree::{rle::HasLength, Cursor, LeafIndex};
+use generic_btree::{
+    rle::{HasLength, Sliceable},
+    Cursor, LeafIndex,
+};
 
 use crate::{
     delta_trait::{DeltaAttr, DeltaValue},
@@ -8,89 +11,108 @@ use crate::{
 pub struct Iter<'a, V: DeltaValue, Attr: DeltaAttr> {
     delta: &'a DeltaRope<V, Attr>,
     cursor: Option<LeafIndex>,
-    offset: usize,
-}
-
-pub struct SlicedDeltaItem<'a, V: DeltaValue, Attr: DeltaAttr> {
-    pub item: &'a DeltaItem<V, Attr>,
-    pub start_offset: usize,
-}
-
-impl<'a, V: DeltaValue, Attr: DeltaAttr> SlicedDeltaItem<'a, V, Attr> {
-    pub fn len(&self) -> usize {
-        match self.item {
-            DeltaItem::Delete(len) => *len - self.start_offset,
-            DeltaItem::Retain { len, .. } => *len - self.start_offset,
-            DeltaItem::Insert { value, .. } => value.rle_len() - self.start_offset,
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn to_delta(&self) -> DeltaItem<V, Attr> {
-        match self.item {
-            DeltaItem::Delete(_) => DeltaItem::Delete(self.len()),
-            DeltaItem::Retain { attr, .. } => DeltaItem::Retain {
-                len: self.len(),
-                attr: attr.clone(),
-            },
-            DeltaItem::Insert { value, attr } => DeltaItem::Insert {
-                value: value.slice(self.start_offset..),
-                attr: attr.clone(),
-            },
-        }
-    }
+    current: Option<DeltaItem<V, Attr>>,
 }
 
 impl<'a, V: DeltaValue, Attr: DeltaAttr> Iter<'a, V, Attr> {
     pub fn new(delta: &'a DeltaRope<V, Attr>) -> Self {
+        let leaf = delta.tree.first_leaf();
+        let mut current = None;
+        if let Some(leaf) = leaf {
+            current = delta.tree.get_elem(leaf).cloned();
+        }
+
         Self {
             delta,
-            cursor: delta.tree.first_leaf(),
-            offset: 0,
+            cursor: leaf,
+            current,
         }
     }
 
-    pub fn peek(&self) -> Option<SlicedDeltaItem<V, Attr>> {
-        self.cursor.and_then(|cursor| {
-            self.delta.tree.get_elem(cursor).map(|x| SlicedDeltaItem {
-                item: x,
-                start_offset: self.offset,
-            })
-        })
+    pub fn peek(&self) -> Option<&'_ DeltaItem<V, Attr>> {
+        self.current.as_ref()
     }
 
-    pub fn next_with(&mut self, len: usize) {
-        self.offset += len;
-        while self.offset > 0 && self.cursor.is_some() {
-            let cursor = self.cursor.unwrap();
-            let elem = self.delta.tree.get_elem(cursor).unwrap();
-            let elem_len = elem.delta_len();
-            if self.offset < elem_len {
-                break;
+    pub fn next_with(&mut self, mut len: usize) -> Result<(), usize> {
+        while len > 0 {
+            let Some(current) = self.current.as_mut() else {
+                return Err(len);
+            };
+
+            if len >= current.delta_len() {
+                len -= current.delta_len();
+                self.cursor = self
+                    .delta
+                    .tree
+                    .next_elem(Cursor {
+                        leaf: self.cursor.unwrap(),
+                        offset: 0,
+                    })
+                    .map(|x| x.leaf);
+                if let Some(leaf) = self.cursor {
+                    self.current = self.delta.tree.get_elem(leaf).cloned();
+                } else {
+                    self.current = None;
+                }
+            } else {
+                match current {
+                    DeltaItem::Retain { len: retain, attr } => {
+                        *retain -= len;
+                    }
+                    DeltaItem::Replace {
+                        value,
+                        attr,
+                        delete,
+                    } => {
+                        if value.rle_len() > 0 {
+                            value.slice_(len..);
+                        } else {
+                            *delete -= len;
+                        }
+                    }
+                }
+                len = 0;
             }
-            self.offset -= elem_len;
-            self.cursor = self
-                .delta
-                .tree
-                .next_elem(Cursor {
-                    leaf: cursor,
-                    offset: 0,
-                })
-                .map(|x| x.leaf);
+        }
+
+        Ok(())
+    }
+
+    /// Consume next `len` deletions in the current item
+    pub(crate) fn next_with_del(&mut self, mut len: usize) -> Result<(), usize> {
+        let Some(current) = self.current.as_mut() else {
+            return Err(len);
+        };
+
+        match current {
+            DeltaItem::Retain { .. } => return Err(len),
+            DeltaItem::Replace { delete, .. } => {
+                if *delete >= len {
+                    *delete -= len;
+                    len = 0;
+                } else {
+                    len -= *delete;
+                    *delete = 0;
+                }
+            }
+        }
+
+        if current.delta_len() == 0 {
+            self.next();
+        }
+
+        if len > 0 {
+            Err(len)
+        } else {
+            Ok(())
         }
     }
 }
 
 impl<'a, V: DeltaValue, Attr: DeltaAttr> Iterator for Iter<'a, V, Attr> {
-    type Item = (&'a DeltaItem<V, Attr>, usize);
+    type Item = DeltaItem<V, Attr>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let old_cursor = self.cursor?;
-        let old_offset = self.offset;
-        self.offset = 0;
         self.cursor = self
             .delta
             .tree
@@ -99,9 +121,12 @@ impl<'a, V: DeltaValue, Attr: DeltaAttr> Iterator for Iter<'a, V, Attr> {
                 offset: 0,
             })
             .map(|x| x.leaf);
-        self.delta
-            .tree
-            .get_elem(old_cursor)
-            .map(|x| (x, old_offset))
+        let old_current = std::mem::take(&mut self.current);
+        if let Some(c) = self.cursor {
+            self.current = self.delta.tree.get_elem(c).cloned();
+        } else {
+            self.current = None;
+        }
+        old_current
     }
 }

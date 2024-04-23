@@ -214,9 +214,9 @@ impl TryInsert for StringSlice {
             Variant::Owned(s) => {
                 if s.capacity() >= s.len() + elem.len_bytes() {
                     let pos = if cfg!(feature = "wasm") {
-                        utf16_to_utf8_index(self.as_str(), pos).unwrap()
+                        utf16_to_utf8_index(s.as_str(), pos).unwrap()
                     } else {
-                        unicode_to_utf8_index(self.as_str(), pos).unwrap()
+                        unicode_to_utf8_index(s.as_str(), pos).unwrap()
                     };
                     s.insert_str(pos, elem.as_str());
                     Ok(())
@@ -314,8 +314,15 @@ impl Sliceable for StringSlice {
     }
 }
 
-impl loro_delta::delta_trait::DeltaValue for StringSlice {}
+impl Default for StringSlice {
+    fn default() -> Self {
+        StringSlice {
+            bytes: Variant::Owned(String::with_capacity(32)),
+        }
+    }
+}
 
+impl loro_delta::delta_trait::DeltaValue for StringSlice {}
 pub fn unicode_range_to_byte_range(s: &str, start: usize, end: usize) -> (usize, usize) {
     debug_assert!(start <= end);
     let start_unicode_index = start;

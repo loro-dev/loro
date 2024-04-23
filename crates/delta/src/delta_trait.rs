@@ -2,7 +2,10 @@ use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
 use std::hash::{BuildHasher, Hash};
 use std::{collections::HashMap, fmt::Debug};
 
-pub trait DeltaValue: HasLength + Sliceable + Mergeable + TryInsert + Debug + Clone {}
+pub trait DeltaValue:
+    HasLength + Sliceable + Mergeable + TryInsert + Debug + Clone + Default
+{
+}
 
 pub trait DeltaAttr: Clone + PartialEq + Debug + Default {
     fn compose(&mut self, other: &Self);
