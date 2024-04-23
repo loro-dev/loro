@@ -12,7 +12,7 @@ use crate::{
     change::{Change, Lamport},
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},
     diff_calc::tree::TreeCacheForDiff,
-    op::{InnerContent, RichOp},
+    op::{FutureInnerContent, InnerContent, RichOp},
     VersionVector,
 };
 
@@ -26,7 +26,7 @@ impl OpGroups {
         for op in change.ops.iter() {
             if matches!(
                 op.content,
-                InnerContent::List(_) | InnerContent::Unknown { .. }
+                InnerContent::List(_) | InnerContent::Future(FutureInnerContent::Unknown { .. })
             ) {
                 continue;
             }
@@ -35,11 +35,13 @@ impl OpGroups {
             let manager = self
                 .groups
                 .entry(container)
-                .or_insert_with(|| match op.content {
+                .or_insert_with(|| match &op.content {
                     InnerContent::Map(_) => OpGroup::Map(MapOpGroup::default()),
                     InnerContent::List(_) => unreachable!(),
                     InnerContent::Tree(_) => OpGroup::Tree(TreeOpGroup::default()),
-                    InnerContent::Unknown { .. } => unreachable!(),
+                    InnerContent::Future(f) => match f {
+                        FutureInnerContent::Unknown { .. } => unreachable!(),
+                    },
                 });
             manager.insert(&rich_op)
         }

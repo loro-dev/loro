@@ -21,7 +21,7 @@ use crate::{
     fx_map,
     handler::ValueOrHandler,
     id::PeerID,
-    op::{ListSlice, Op, OpContainer, RawOp, RawOpContent},
+    op::{FutureRawOpContent, ListSlice, Op, OpContainer, RawOp, RawOpContent},
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
@@ -591,7 +591,9 @@ impl DocState {
                 let child_idx = self.arena.register_container(&container_id);
                 self.arena.set_parent(child_idx, Some(container));
             }
-            RawOpContent::Unknown { .. } => unreachable!(),
+            RawOpContent::Future(f) => match f {
+                FutureRawOpContent::Unknown { .. } => unreachable!(),
+            },
         }
     }
 

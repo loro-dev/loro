@@ -29,14 +29,14 @@ pub enum ValueKind {
     LoroValue,      // 13
     LoroValueArray, // 14
     MarkStart,      // 15
+    TreeMove,       // 16
 
     Future(FutureValueKind),
 }
 
 #[derive(Debug)]
 pub enum FutureValueKind {
-    TreeMove, // 0b10000016
-    // start from 16
+    // start from 17
     Unknown(u8),
 }
 
@@ -59,8 +59,8 @@ impl ValueKind {
             ValueKind::LoroValue => 13,
             ValueKind::LoroValueArray => 14,
             ValueKind::MarkStart => 15,
+            ValueKind::TreeMove => 16,
             ValueKind::Future(future_value_kind) => match future_value_kind {
-                FutureValueKind::TreeMove => 16 | 0x80,
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
             },
         }
@@ -85,7 +85,7 @@ impl ValueKind {
             13 => ValueKind::LoroValue,
             14 => ValueKind::LoroValueArray,
             15 => ValueKind::MarkStart,
-            16 => ValueKind::Future(FutureValueKind::TreeMove),
+            16 => ValueKind::TreeMove,
             _ => ValueKind::Future(FutureValueKind::Unknown(kind)),
         }
     }
@@ -110,14 +110,11 @@ pub enum Value<'a> {
     LoroValue(LoroValue),
     Map(FxHashMap<InternalString, Value<'a>>),
     MarkStart(MarkStart<'a>),
-    Future {
-        bytes_length: usize,
-        value: FutureValue<'a>,
-    },
+    TreeMove(EncodedTreeMove),
+    Future(FutureValue<'a>),
 }
 
 pub enum FutureValue<'a> {
-    TreeMove(EncodedTreeMove),
     // The future value cannot depend on the arena for encoding.
     Unknown { kind: u8, data: &'a [u8] },
 }
@@ -141,11 +138,8 @@ impl<'a> Value<'a> {
             Value::LoroValueArray(_) => ValueKind::LoroValueArray,
             Value::MarkStart { .. } => ValueKind::MarkStart,
             Value::Binary(_) => ValueKind::Binary,
-            Value::Future {
-                bytes_length: _,
-                value,
-            } => match value {
-                FutureValue::TreeMove(..) => ValueKind::Future(FutureValueKind::TreeMove),
+            Value::TreeMove(..) => ValueKind::TreeMove,
+            Value::Future(value) => match value {
                 FutureValue::Unknown { kind, data: _ } => {
                     ValueKind::Future(FutureValueKind::Unknown(*kind))
                 }
@@ -158,16 +152,24 @@ impl<'a> Value<'a> {
     ) -> LoroResult<Self> {
         let bytes_length = value_reader.read_usize()?;
         let value = match future_kind {
-            FutureValueKind::TreeMove => FutureValue::TreeMove(value_reader.read_tree_move()?),
             FutureValueKind::Unknown(kind) => FutureValue::Unknown {
                 kind,
                 data: value_reader.take_bytes(bytes_length),
             },
         };
-        Ok(Value::Future {
-            bytes_length,
-            value,
-        })
+        Ok(Value::Future(value))
+    }
+
+    pub(super) fn decode_as_unknown<'r: 'a>(
+        kind: ValueKind,
+        bytes_len: usize,
+        value_reader: &'r mut ValueReader,
+    ) -> LoroResult<Self> {
+        let value = FutureValue::Unknown {
+            kind: kind.to_u8(),
+            data: value_reader.take_bytes(bytes_len),
+        };
+        Ok(Value::Future(value))
     }
 
     pub(super) fn decode<'r: 'a>(
@@ -206,24 +208,22 @@ impl<'a> Value<'a> {
             ValueKind::MarkStart => {
                 Value::MarkStart(value_reader.read_mark(&arenas.keys.keys, id)?)
             }
+            ValueKind::TreeMove => Value::TreeMove(value_reader.read_tree_move()?),
             ValueKind::Future(future_kind) => {
                 Self::decode_without_arena(future_kind, value_reader)?
             }
         })
     }
 
-    fn encode_without_registers(value: FutureValue, value_writer: &mut ValueWriter) -> ValueKind {
+    fn encode_without_registers(
+        value: FutureValue,
+        value_writer: &mut ValueWriter,
+    ) -> (FutureValueKind, usize) {
         match value {
-            FutureValue::TreeMove(tree) => {
-                let bytes = write_tree_move(&tree);
-                // value_writer.write_usize(bytes.len());
-                value_writer.write_binary(&bytes);
-                ValueKind::Future(FutureValueKind::TreeMove)
-            }
-            FutureValue::Unknown { kind, data } => {
-                value_writer.write_binary(data);
-                ValueKind::Future(FutureValueKind::Unknown(kind))
-            }
+            FutureValue::Unknown { kind, data } => (
+                FutureValueKind::Unknown(kind),
+                value_writer.write_binary(data),
+            ),
         }
     }
 
@@ -231,67 +231,57 @@ impl<'a> Value<'a> {
         self,
         value_writer: &mut ValueWriter,
         registers: &mut EncodedRegisters,
-    ) -> ValueKind {
+    ) -> (ValueKind, usize) {
         match self {
-            Value::Null => ValueKind::Null,
-            Value::True => ValueKind::True,
-            Value::False => ValueKind::False,
-            Value::I64(x) => {
-                value_writer.write_i64(x);
-                ValueKind::I64
-            }
-            Value::F64(x) => {
-                value_writer.write_f64(x);
-                ValueKind::F64
-            }
-            Value::Str(x) => {
-                value_writer.write_str(x);
-                ValueKind::Str
-            }
-            Value::Binary(x) => {
-                value_writer.write_binary(x);
-                ValueKind::Binary
-            }
-            Value::ContainerIdx(x) => {
-                value_writer.write_usize(x);
-                ValueKind::ContainerType
-            }
-            Value::DeleteOnce => ValueKind::DeleteOnce,
-            Value::DeleteSeq => ValueKind::DeleteSeq,
-            Value::DeltaInt(x) => {
-                value_writer.write_i32(x);
-                ValueKind::DeltaInt
-            }
+            Value::Null => (ValueKind::Null, 0),
+            Value::True => (ValueKind::True, 0),
+            Value::False => (ValueKind::False, 0),
+            Value::I64(x) => (ValueKind::I64, value_writer.write_i64(x)),
+            Value::F64(x) => (ValueKind::F64, value_writer.write_f64(x)),
+            Value::Str(x) => (ValueKind::Str, value_writer.write_str(x)),
+            Value::Binary(x) => (ValueKind::Binary, value_writer.write_binary(x)),
+            Value::ContainerIdx(x) => (ValueKind::ContainerType, value_writer.write_usize(x)),
+            Value::DeleteOnce => (ValueKind::DeleteOnce, 0),
+            Value::DeleteSeq => (ValueKind::DeleteSeq, 0),
+            Value::DeltaInt(x) => (ValueKind::DeltaInt, value_writer.write_i32(x)),
             Value::LoroValueArray(arr) => {
-                value_writer.write_usize(arr.len());
+                let mut l = value_writer.write_usize(arr.len());
                 for value in arr {
-                    value_writer.write_value_type_and_content(&value, registers);
+                    l += value_writer.write_value_type_and_content(&value, registers);
                 }
-                ValueKind::LoroValueArray
+                (ValueKind::LoroValueArray, l)
             }
-            Value::LoroValue(x) => {
-                value_writer.write_value_type_and_content(&x, registers);
-                ValueKind::LoroValue
+            Value::LoroValue(x) => (
+                ValueKind::LoroValue,
+                value_writer.write_value_type_and_content(&x, registers),
+            ),
+            Value::Array(x) => (ValueKind::Array, value_writer.write_array(x, registers)),
+            Value::Map(x) => (ValueKind::Map, value_writer.write_map(x, registers)),
+            Value::MarkStart(x) => (ValueKind::MarkStart, value_writer.write_mark(x, registers)),
+            Value::TreeMove(tree) => (ValueKind::TreeMove, value_writer.write_tree_move(&tree)),
+            Value::Future(value) => {
+                let (k, i) = Self::encode_without_registers(value, value_writer);
+                (ValueKind::Future(k), i)
             }
-            Value::Array(x) => {
-                value_writer.write_array(x, registers);
-                ValueKind::Array
-            }
-            Value::Map(x) => {
-                value_writer.write_map(x, registers);
-                ValueKind::Map
-            }
-            Value::MarkStart(x) => {
-                value_writer.write_mark(x, registers);
-                ValueKind::MarkStart
-            }
-            Value::Future {
-                bytes_length: _,
-                value,
-            } => Self::encode_without_registers(value, value_writer),
         }
     }
 }
+
+// pub trait EncodeValue {
+//     fn encode(&self, value_writer: &mut ValueWriter, registers: &mut EncodedRegisters)
+//         -> ValueKind;
+//     fn encode_maybe_unknown(&self, value_writer: &mut ValueWriter) -> (ValueKind, usize);
+//     fn decode<'a>(
+//         kind: ValueKind,
+//         value_reader: &mut ValueReader,
+//         arenas: &'a DecodedArenas<'a>,
+//         id: ID,
+//     ) -> Self;
+//     fn decode_as_unknown<'a>(
+//         kind: ValueKind,
+//         value_reader: &mut ValueReader,
+//     ) -> (Self, FutureValueKind);
+// }
 
 pub struct MarkStart<'a> {
     pub len: u32,
@@ -717,10 +707,10 @@ impl ValueWriter {
         &mut self,
         value: &LoroValue,
         registers: &mut EncodedRegisters,
-    ) -> (ValueKind, usize) {
+    ) -> usize {
         let len = self.write_u8(get_loro_value_kind(value).to_u8());
-        let (kind, l) = self.write_value_content(value, registers);
-        (kind, len + l)
+        let (_, l) = self.write_value_content(value, registers);
+        len + l
     }
 
     pub fn write_value_content(
@@ -738,7 +728,7 @@ impl ValueWriter {
             LoroValue::List(value) => {
                 let mut len = self.write_usize(value.len());
                 for value in value.iter() {
-                    let (_, l) = self.write_value_type_and_content(value, registers);
+                    let l = self.write_value_type_and_content(value, registers);
                     len += l;
                 }
                 (ValueKind::Array, len)
@@ -748,7 +738,7 @@ impl ValueWriter {
                 for (key, value) in value.iter() {
                     let key_idx = registers.key.register(&key.as_str().into());
                     len += self.write_usize(key_idx);
-                    let (_, l) = self.write_value_type_and_content(value, registers);
+                    let l = self.write_value_type_and_content(value, registers);
                     len += l;
                 }
                 (ValueKind::Map, len)
@@ -851,6 +841,19 @@ impl ValueWriter {
         self.write_usize(key_idx);
         self.write_value_type_and_content(&mark.value, registers);
         self.buffer.len() - len
+    }
+
+    fn write_tree_move(&mut self, op: &EncodedTreeMove) -> usize {
+        let mut l = self.write_u64(op.subject_peer);
+        l += self.write_i32(op.subject_cnt);
+        l += self.write_u8(op.is_parent_null as u8);
+        if op.is_parent_null {
+            return l;
+        }
+
+        l += self.write_u64(op.parent_peer);
+        l += self.write_i32(op.parent_cnt);
+        l
     }
 
     pub(crate) fn finish(self) -> Vec<u8> {

@@ -16,7 +16,7 @@ use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::group::OpGroups;
 use crate::id::{Counter, PeerID, ID};
-use crate::op::{ListSlice, OpContainer, RawOpContent, RemoteOp, RichOp};
+use crate::op::{FutureInnerContent, ListSlice, OpContainer, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
@@ -627,13 +627,15 @@ impl OpLog {
                 }))
             }
             crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(*tree)),
-            crate::op::InnerContent::Unknown { kind, op_len, data } => {
-                contents.push(RawOpContent::Unknown {
-                    kind: *kind,
-                    op_len: *op_len,
-                    data: data.clone(),
-                })
-            }
+            crate::op::InnerContent::Future(f) => match f {
+                FutureInnerContent::Unknown { kind, op_len, data } => contents.push(
+                    RawOpContent::Future(crate::op::FutureRawOpContent::Unknown {
+                        kind: *kind,
+                        op_len: *op_len,
+                        data: data.to_vec(),
+                    }),
+                ),
+            },
         };
 
         let mut ans = SmallVec::with_capacity(contents.len());

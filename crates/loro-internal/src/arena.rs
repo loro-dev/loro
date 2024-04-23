@@ -317,10 +317,18 @@ impl SharedArena {
                 container,
                 content: crate::op::InnerContent::Tree(tree),
             },
-            crate::op::RawOpContent::Unknown { kind, op_len, data } => Op {
-                counter,
-                container,
-                content: crate::op::InnerContent::Unknown { kind, op_len, data },
+            crate::op::RawOpContent::Future(f) => match f {
+                crate::op::FutureRawOpContent::Unknown { kind, op_len, data } => Op {
+                    counter,
+                    container,
+                    content: crate::op::InnerContent::Future(
+                        crate::op::FutureInnerContent::Unknown {
+                            kind,
+                            op_len,
+                            data: data.to_vec(),
+                        },
+                    ),
+                },
             },
         }
     }

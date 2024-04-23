@@ -15,7 +15,7 @@ use crate::{
     change::{Change, Lamport, Timestamp},
     container::{list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
     encoding::StateSnapshotDecodeContext,
-    op::{Op, OpContainer, OpWithId, SliceRange},
+    op::{FutureInnerContent, Op, OpContainer, OpWithId, SliceRange},
     state::ContainerState,
     version::Frontiers,
     DocState, LoroDoc, OpLog, VersionVector,
@@ -365,6 +365,7 @@ fn extract_ops(
             value_type,
             counter,
             op_len,
+            value_bytes_len,
         } = op?;
         if containers.len() <= container_index as usize
             || arenas.peer_ids.len() <= peer_idx as usize
@@ -373,9 +374,13 @@ fn extract_ops(
         }
         let peer = arenas.peer_ids[peer_idx as usize];
         let cid = &containers[container_index as usize];
-
         let kind = ValueKind::from_u8(value_type);
-        let value = Value::decode(kind, &mut value_reader, arenas, ID::new(peer, counter))?;
+        let value = if cid.is_unknown() {
+            Value::decode_as_unknown(kind, value_bytes_len, &mut value_reader)?
+        } else {
+            Value::decode(kind, &mut value_reader, arenas, ID::new(peer, counter))?
+        };
+
         let content = decode_op(
             cid,
             value,
@@ -863,7 +868,7 @@ mod encode {
         arena::SharedArena,
         change::{Change, Lamport},
         encoding::value::{EncodedTreeMove, FutureValue, MarkStart, Value, ValueKind, ValueWriter},
-        op::{Op, OpContainer},
+        op::{FutureInnerContent, Op, OpContainer},
     };
 
     #[derive(Debug, Clone)]
@@ -962,7 +967,8 @@ mod encode {
             ..
         } in ops
         {
-            let value_type = encode_op(&op, arena, &mut delete_start, value_writer, registers);
+            let (value_type, value_bytes_len) =
+                encode_op(&op, arena, &mut delete_start, value_writer, registers);
             let prop = get_op_prop(&op, registers);
             encoded_ops.push(EncodedOp {
                 container_index,
@@ -971,6 +977,7 @@ mod encode {
                 prop,
                 value_type: value_type.to_u8(),
                 op_len: op.atom_len(),
+                value_bytes_len,
             });
         }
 
@@ -1111,6 +1118,12 @@ mod encode {
         (start_counters, diff_changes)
     }
 
+    fn get_future_op_prop(op: &FutureInnerContent) -> i32 {
+        match &op {
+            FutureInnerContent::Unknown { .. } => 0,
+        }
+    }
+
     fn get_op_prop(op: &Op, registers: &mut EncodedRegisters) -> i32 {
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
@@ -1126,9 +1139,9 @@ mod encode {
                 let key = registers.key.register(&map.key);
                 key as i32
             }
+            crate::op::InnerContent::Tree(_) => 0,
             // The future should not use register to encode prop
-            crate::op::InnerContent::Tree(..) => 0,
-            crate::op::InnerContent::Unknown { .. } => 0,
+            crate::op::InnerContent::Future(f) => get_future_op_prop(f),
         }
     }
 
@@ -1140,7 +1153,9 @@ mod encode {
                 key as i32
             }
             crate::op::InnerContent::Tree(..) => 0,
-            crate::op::InnerContent::Unknown { .. } => 0,
+            crate::op::InnerContent::Future(f) => match f {
+                FutureInnerContent::Unknown { .. } => 0,
+            },
         }
     }
 
@@ -1151,7 +1166,7 @@ mod encode {
         delete_start: &mut Vec<EncodedDeleteStartId>,
         value_writer: &mut ValueWriter,
         registers: &mut EncodedRegisters,
-    ) -> ValueKind {
+    ) -> (ValueKind, usize) {
         let value = match &op.content {
             crate::op::InnerContent::List(list) => match list {
                 crate::container::list::list_op::InnerListOp::Insert { slice, .. } => {
@@ -1199,17 +1214,21 @@ mod encode {
             }
             crate::op::InnerContent::Tree(t) => {
                 assert_eq!(op.container.get_type(), ContainerType::Tree);
-                Value::Future {
-                    bytes_length: 0,
-                    value: FutureValue::TreeMove(EncodedTreeMove::from_op(t)),
-                }
+                Value::TreeMove(EncodedTreeMove::from_op(t))
             }
-            crate::op::InnerContent::Unknown { kind, data, .. } => Value::Future {
-                bytes_length: data.len(),
-                value: FutureValue::Unknown { kind: *kind, data },
+            crate::op::InnerContent::Future(f) => match f {
+                FutureInnerContent::Unknown {
+                    kind,
+                    op_len: _,
+                    data,
+                } => Value::Future(FutureValue::Unknown { kind: *kind, data }),
             },
         };
-        value.encode(value_writer, registers)
+        let (k, mut i) = value.encode(value_writer, registers);
+        if op.content.as_future().is_none() {
+            i = 0;
+        }
+        (k, i)
     }
 }
 
@@ -1315,28 +1334,23 @@ fn decode_op(
             }
         }
         ContainerType::Tree => match value {
-            Value::Future {
-                bytes_length: _,
-                value: FutureValue::TreeMove(op),
-            } => crate::op::InnerContent::Tree(op.as_tree_op()),
+            Value::TreeMove(op) => crate::op::InnerContent::Tree(op.as_tree_op()),
             _ => {
                 unreachable!()
             }
         },
-        ContainerType::Unknown(_) => {
-            // TODO: read unknown
-            match value {
-                Value::Future {
-                    bytes_length: _,
-                    value: FutureValue::Unknown { kind, data },
-                } => crate::op::InnerContent::Unknown {
-                    kind,
-                    op_len,
-                    data: data.to_vec(),
-                },
-                _ => unreachable!(),
-            }
-        }
+        ContainerType::Unknown(_) => match value {
+            Value::Future(f) => match f {
+                FutureValue::Unknown { kind, data } => {
+                    crate::op::InnerContent::Future(FutureInnerContent::Unknown {
+                        kind,
+                        op_len,
+                        data: data.to_vec(),
+                    })
+                }
+            },
+            _ => unreachable!(),
+        },
     };
 
     Ok(content)
@@ -1457,6 +1471,8 @@ struct EncodedOp {
     counter: i32,
     #[columnar(strategy = "Rle")]
     op_len: usize,
+    #[columnar(strategy = "Rle")]
+    value_bytes_len: usize,
 }
 
 #[columnar(vec, ser, de, iterable)]
