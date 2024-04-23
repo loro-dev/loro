@@ -7,6 +7,7 @@ use crate::{
     utils::string_slice::StringSlice,
 };
 
+use generic_btree::rle::HasLength;
 use loro_common::ContainerType;
 pub use loro_common::LoroValue;
 
@@ -117,60 +118,82 @@ impl ToJson for DeltaItem<StringSlice, StyleMeta> {
     }
 }
 
-impl ToJson for TextDiffItem {
-    fn to_json_value(&self) -> serde_json::Value {
-        match self {
-            loro_delta::DeltaItem::Retain { len, attr } => {
-                let mut map = serde_json::Map::new();
-                map.insert("retain".into(), serde_json::to_value(len).unwrap());
-                if !attr.is_empty() {
-                    map.insert("attributes".into(), attr.to_json_value());
-                }
-                serde_json::Value::Object(map)
+fn diff_item_to_json_value(item: &TextDiffItem) -> (serde_json::Value, Option<serde_json::Value>) {
+    match item {
+        loro_delta::DeltaItem::Retain { len, attr } => {
+            let mut map = serde_json::Map::new();
+            map.insert("retain".into(), serde_json::to_value(len).unwrap());
+            if !attr.is_empty() {
+                map.insert("attributes".into(), attr.to_json_value());
             }
-            loro_delta::DeltaItem::Insert { value, attr } => {
+            (serde_json::Value::Object(map), None)
+        }
+        loro_delta::DeltaItem::Replace {
+            value,
+            attr,
+            delete,
+        } => {
+            let mut a = None;
+            let mut b = None;
+            if value.rle_len() > 0 {
                 let mut map = serde_json::Map::new();
                 map.insert("insert".into(), serde_json::to_value(value).unwrap());
                 if !attr.is_empty() {
                     map.insert("attributes".into(), attr.to_json_value());
                 }
-                serde_json::Value::Object(map)
+                a = Some(serde_json::Value::Object(map));
             }
-            loro_delta::DeltaItem::Delete(len) => {
+            if *delete > 0 {
                 let mut map = serde_json::Map::new();
-                map.insert("delete".into(), serde_json::to_value(len).unwrap());
-                serde_json::Value::Object(map)
+                map.insert("delete".into(), serde_json::to_value(delete).unwrap());
+                b = Some(serde_json::Value::Object(map));
             }
+
+            if a.is_none() {
+                a = std::mem::take(&mut b);
+                if a.is_none() {
+                    let mut map = serde_json::Map::new();
+                    map.insert("retain".into(), serde_json::to_value(0).unwrap());
+                    a = Some(serde_json::Value::Object(map));
+                }
+            }
+            (a.unwrap(), b)
         }
     }
+}
 
-    fn from_json(s: &str) -> Self {
-        let map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(s).unwrap();
-        if map.contains_key("retain") {
-            let len = map["retain"].as_u64().unwrap();
-            let meta = if let Some(meta) = map.get("attributes") {
-                StyleMeta::from_json(meta.to_string().as_str())
-            } else {
-                StyleMeta::default()
-            };
-            TextDiffItem::Retain {
-                len: len as usize,
-                attr: meta,
-            }
-        } else if map.contains_key("insert") {
-            let value = map["insert"].as_str().unwrap().to_string().into();
-            let meta = if let Some(meta) = map.get("attributes") {
-                StyleMeta::from_json(meta.to_string().as_str())
-            } else {
-                StyleMeta::default()
-            };
-            TextDiffItem::Insert { value, attr: meta }
-        } else if map.contains_key("delete") {
-            let len = map["delete"].as_u64().unwrap();
-            TextDiffItem::Delete(len as usize)
+fn diff_item_from_json(v: serde_json::Value) -> TextDiffItem {
+    let serde_json::Value::Object(map) = v else {
+        panic!("Invalid delta item: {:?}", v);
+    };
+    if map.contains_key("retain") {
+        let len = map["retain"].as_u64().unwrap();
+        let meta = if let Some(meta) = map.get("attributes") {
+            StyleMeta::from_json(meta.to_string().as_str())
         } else {
-            panic!("Invalid delta item: {}", s);
+            StyleMeta::default()
+        };
+        TextDiffItem::Retain {
+            len: len as usize,
+            attr: meta,
         }
+    } else if map.contains_key("insert") {
+        let value = map["insert"].as_str().unwrap().to_string().into();
+        let meta = if let Some(meta) = map.get("attributes") {
+            StyleMeta::from_json(meta.to_string().as_str())
+        } else {
+            StyleMeta::default()
+        };
+        TextDiffItem::Replace {
+            value,
+            attr: meta,
+            delete: 0,
+        }
+    } else if map.contains_key("delete") {
+        let len = map["delete"].as_u64().unwrap();
+        TextDiffItem::new_delete(len as usize)
+    } else {
+        panic!("Invalid delta item: {:?}", map);
     }
 }
 
@@ -178,7 +201,11 @@ impl ToJson for TextDiff {
     fn to_json_value(&self) -> serde_json::Value {
         let mut vec = Vec::new();
         for item in self.iter() {
-            vec.push(item.to_json_value());
+            let (a, b) = diff_item_to_json_value(item);
+            vec.push(a);
+            if let Some(b) = b {
+                vec.push(b);
+            }
         }
         serde_json::Value::Array(vec)
     }
@@ -187,7 +214,7 @@ impl ToJson for TextDiff {
         let vec: Vec<serde_json::Value> = serde_json::from_str(s).unwrap();
         let mut ans = TextDiff::new();
         for item in vec.into_iter() {
-            ans.push(TextDiffItem::from_json(item.to_string().as_str()));
+            ans.push(diff_item_from_json(item));
         }
         ans
     }
@@ -238,12 +265,13 @@ impl ApplyDiff for LoroValue {
                             loro_delta::DeltaItem::Retain { len, attr } => {
                                 index += len;
                             }
-                            loro_delta::DeltaItem::Insert { value, attr } => {
-                                s.insert_str(index, value.as_str());
+                            loro_delta::DeltaItem::Replace {
+                                value,
+                                attr,
+                                delete,
+                            } => {
+                                s.replace_range(index..index + *delete, value.as_str());
                                 index += value.len_bytes();
-                            }
-                            loro_delta::DeltaItem::Delete(l) => {
-                                s.drain(index..index + l);
                             }
                         }
                     }
@@ -262,15 +290,15 @@ impl ApplyDiff for LoroValue {
                                 loro_delta::DeltaItem::Retain { len, .. } => {
                                     index += len;
                                 }
-                                loro_delta::DeltaItem::Insert { value, .. } => {
-                                    value.iter().for_each(|v| {
-                                        let value = unresolved_to_collection(v);
-                                        seq.insert(index, value);
-                                        index += 1;
-                                    });
-                                }
-                                loro_delta::DeltaItem::Delete(len) => {
-                                    seq.drain(index..index + len);
+                                loro_delta::DeltaItem::Replace {
+                                    value,
+                                    attr,
+                                    delete,
+                                } => {
+                                    let value_iter =
+                                        value.iter().map(|v| unresolved_to_collection(v));
+                                    seq.splice(index..index + *delete, value_iter);
+                                    index += value.len();
                                 }
                             }
                         }
@@ -390,6 +418,7 @@ pub(crate) fn unresolved_to_collection(v: &ValueOrHandler) -> LoroValue {
 #[cfg(feature = "wasm")]
 pub mod wasm {
 
+    use generic_btree::rle::HasLength;
     use js_sys::{Array, Object};
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
@@ -506,14 +535,21 @@ pub mod wasm {
 
     pub fn text_diff_to_js_value(diff: &TextDiff) -> JsValue {
         let arr = Array::new();
-        for (i, v) in diff.iter().enumerate() {
-            arr.set(i as u32, text_diff_item_to_js_value(v));
+        let mut i = 0;
+        for v in diff.iter() {
+            let (a, b) = text_diff_item_to_js_value(v);
+            arr.set(i as u32, a);
+            i += 1;
+            if let Some(b) = b {
+                arr.set(i as u32, b);
+                i += 1;
+            }
         }
 
         arr.into_js_result().unwrap()
     }
 
-    fn text_diff_item_to_js_value(value: &TextDiffItem) -> JsValue {
+    fn text_diff_item_to_js_value(value: &TextDiffItem) -> (JsValue, Option<JsValue>) {
         match value {
             loro_delta::DeltaItem::Retain { len, attr } => {
                 let obj = Object::new();
@@ -531,35 +567,50 @@ pub mod wasm {
                     )
                     .unwrap();
                 }
-                obj.into_js_result().unwrap()
+                (obj.into_js_result().unwrap(), None)
             }
-            loro_delta::DeltaItem::Insert { value, attr } => {
-                let obj = Object::new();
-                js_sys::Reflect::set(
-                    &obj,
-                    &JsValue::from_str("insert"),
-                    &JsValue::from_str(value.as_str()),
-                )
-                .unwrap();
-                if !attr.is_empty() {
+            loro_delta::DeltaItem::Replace {
+                value,
+                attr,
+                delete,
+            } => {
+                let mut a = None;
+                let mut b = None;
+                if value.rle_len() > 0 {
+                    let obj = Object::new();
                     js_sys::Reflect::set(
                         &obj,
-                        &JsValue::from_str("attributes"),
-                        &JsValue::from(attr),
+                        &JsValue::from_str("insert"),
+                        &JsValue::from_str(value.as_str()),
                     )
                     .unwrap();
+                    if !attr.is_empty() {
+                        js_sys::Reflect::set(
+                            &obj,
+                            &JsValue::from_str("attributes"),
+                            &JsValue::from(attr),
+                        )
+                        .unwrap();
+                    }
+                    a = Some(obj.into_js_result().unwrap());
                 }
-                obj.into_js_result().unwrap()
-            }
-            loro_delta::DeltaItem::Delete(len) => {
-                let obj = Object::new();
-                js_sys::Reflect::set(
-                    &obj,
-                    &JsValue::from_str("delete"),
-                    &JsValue::from_f64(*len as f64),
-                )
-                .unwrap();
-                obj.into_js_result().unwrap()
+
+                if *delete > 0 {
+                    let obj = Object::new();
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("delete"),
+                        &JsValue::from_f64(*delete as f64),
+                    )
+                    .unwrap();
+                    b = Some(obj.into_js_result().unwrap());
+                }
+
+                if a.is_none() {
+                    a = std::mem::take(&mut b);
+                }
+
+                (a.unwrap(), b)
             }
         }
     }

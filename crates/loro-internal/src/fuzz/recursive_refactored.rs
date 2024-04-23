@@ -118,7 +118,22 @@ impl Actor {
                                     loro_delta::DeltaItem::Retain { len, attr } => {
                                         index += len;
                                     }
-                                    loro_delta::DeltaItem::Insert { value, attr } => {
+                                    loro_delta::DeltaItem::Replace {
+                                        value,
+                                        attr,
+                                        delete,
+                                    } => {
+                                        let utf8_end = if *delete > 0 {
+                                            if cfg!(feature = "wasm") {
+                                                utf16_to_utf8_index(&text, index + *delete).unwrap()
+                                            } else {
+                                                unicode_to_utf8_index(&text, index + *delete)
+                                                    .unwrap()
+                                            }
+                                        } else {
+                                            0
+                                        };
+
                                         let utf8_index = if cfg!(feature = "wasm") {
                                             let ans = utf16_to_utf8_index(&text, index).unwrap();
                                             index += value.len_utf16();
@@ -128,21 +143,12 @@ impl Actor {
                                             index += value.len_unicode();
                                             ans
                                         };
-                                        text.insert_str(utf8_index, value.as_str());
-                                    }
-                                    loro_delta::DeltaItem::Delete(len) => {
-                                        let utf8_index = if cfg!(feature = "wasm") {
-                                            utf16_to_utf8_index(&text, index).unwrap()
-                                        } else {
-                                            unicode_to_utf8_index(&text, index).unwrap()
-                                        };
 
-                                        let utf8_end = if cfg!(feature = "wasm") {
-                                            utf16_to_utf8_index(&text, index + *len).unwrap()
-                                        } else {
-                                            unicode_to_utf8_index(&text, index + *len).unwrap()
-                                        };
-                                        text.drain(utf8_index..utf8_end);
+                                        if *delete > 0 {
+                                            text.drain(utf8_index..utf8_end);
+                                        }
+
+                                        text.insert_str(utf8_index, value.as_str());
                                     }
                                 }
                             }
@@ -201,13 +207,12 @@ impl Actor {
                         let mut index = 0;
                         for item in delta.iter() {
                             match item {
-                                loro_delta::DeltaItem::Delete(len) => {
-                                    list.drain(index..index + *len);
-                                }
-                                loro_delta::DeltaItem::Retain { len, attr } => {
-                                    index += len;
-                                }
-                                loro_delta::DeltaItem::Insert { value, attr } => {
+                                loro_delta::DeltaItem::Replace {
+                                    value,
+                                    attr,
+                                    delete,
+                                } => {
+                                    list.drain(index..index + *delete);
                                     for v in value.iter() {
                                         let value = match v {
                                             ValueOrHandler::Handler(c) => {
@@ -220,6 +225,9 @@ impl Actor {
                                         list.insert(index, value);
                                         index += 1;
                                     }
+                                }
+                                loro_delta::DeltaItem::Retain { len, attr } => {
+                                    index += len;
                                 }
                             }
                         }

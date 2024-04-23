@@ -121,4 +121,13 @@ impl<S: AsRef<str> + Sliceable + TryInsert> TryInsert for AsUtf16Index<S> {
     }
 }
 
+impl<S: AsRef<str> + DeltaValue> Default for AsUtf16Index<S> {
+    fn default() -> Self {
+        Self {
+            s: S::default(),
+            utf16_len: 0,
+        }
+    }
+}
+
 impl<S: AsRef<str> + DeltaValue> DeltaValue for AsUtf16Index<S> {}

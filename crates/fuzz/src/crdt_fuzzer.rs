@@ -5,7 +5,6 @@ use fxhash::FxHashSet;
 use loro::{ContainerType, Frontiers};
 use tabled::TableIteratorExt;
 use tracing::info_span;
-use tracing_subscriber::fmt::format::FmtSpan;
 
 use crate::array_mut_ref;
 

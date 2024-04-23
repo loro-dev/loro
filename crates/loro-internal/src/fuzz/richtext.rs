@@ -88,7 +88,7 @@ impl Actor {
                         let mut txn = text_doc.txn().unwrap();
                         let text_h = text_doc.get_text("text");
                         // println!("diff {:?}", text_diff);
-                        let text_deltas = text_diff.iter().map(TextDelta::from).collect::<Vec<_>>();
+                        let text_deltas = TextDelta::from_text_diff(text_diff.iter());
                         // println!(
                         //     "\n{} before {:?}",
                         //     text_doc.peer_id(),

@@ -74,24 +74,29 @@ impl<'a> From<&'a DiffInner> for Diff<'a> {
     fn from(value: &'a DiffInner) -> Self {
         match value {
             DiffInner::List(l) => {
-                let list = l
-                    .iter()
-                    .map(|d| match d {
-                        delta::DeltaItem::Insert { value, .. } => ListDiffItem::Insert {
-                            insert: value
-                                .iter()
-                                .map(|v| ValueOrContainer::from(v.clone()))
-                                .collect(),
-                        },
+                let mut ans = Vec::new();
+                for item in l.iter() {
+                    match item {
                         delta::DeltaItem::Retain { len, .. } => {
-                            ListDiffItem::Retain { retain: *len }
+                            ans.push(ListDiffItem::Retain { retain: *len });
                         }
-                        delta::DeltaItem::Delete(delete) => {
-                            ListDiffItem::Delete { delete: *delete }
+                        delta::DeltaItem::Replace { value, delete, .. } => {
+                            if value.len() > 0 {
+                                ans.push(ListDiffItem::Insert {
+                                    insert: value
+                                        .iter()
+                                        .map(|v| ValueOrContainer::from(v.clone()))
+                                        .collect(),
+                                });
+                            }
+                            if *delete > 0 {
+                                ans.push(ListDiffItem::Delete { delete: *delete });
+                            }
                         }
-                    })
-                    .collect();
-                Diff::List(list)
+                    }
+                }
+
+                Diff::List(ans)
             }
             DiffInner::Map(m) => Diff::Map(MapDelta {
                 updated: m
@@ -101,7 +106,7 @@ impl<'a> From<&'a DiffInner> for Diff<'a> {
                     .collect(),
             }),
             DiffInner::Text(t) => {
-                let text = t.iter().map(TextDelta::from).collect();
+                let text = TextDelta::from_text_diff(t.iter());
                 Diff::Text(text)
             }
             DiffInner::Tree(t) => Diff::Tree(t),

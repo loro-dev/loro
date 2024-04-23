@@ -583,7 +583,6 @@ fn list_delete_change_to_diff_assert() {
         ],
     )
 }
-
 #[test]
 fn delta_err_2() {
     test_multi_sites(
@@ -1010,6 +1009,89 @@ fn delta_err_2() {
                     value: I32(-16777216),
                     bool: true,
                     key: 45,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn delta_err_3() {
+    test_multi_sites(
+        5,
+        vec![
+            FuzzTarget::Map,
+            FuzzTarget::List,
+            FuzzTarget::Tree,
+            FuzzTarget::Text,
+        ],
+        &mut [
+            Handle {
+                site: 0,
+                target: 0,
+                container: 11,
+                action: Generic(GenericAction {
+                    value: I32(-65475),
+                    bool: true,
+                    key: 67108863,
+                    pos: 72057594037871521,
+                    length: 217020518514230020,
+                    prop: 280883327347844581,
+                }),
+            },
+            Sync { from: 163, to: 215 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(257),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 7936,
+                    prop: 18446743017316026880,
+                }),
+            },
+            Handle {
+                site: 133,
+                target: 0,
+                container: 199,
+                action: Generic(GenericAction {
+                    value: Container(Tree),
+                    bool: false,
+                    key: 2717908991,
+                    pos: 2155061665,
+                    length: 18446463698227810304,
+                    prop: 9476562641788076031,
+                }),
+            },
+            Sync { from: 255, to: 255 },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Tree),
+                    bool: true,
+                    key: 791643507,
+                    pos: 18446744073709551568,
+                    length: 2965947086361162589,
+                    prop: 18446744070104864675,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 199,
+                action: Generic(GenericAction {
+                    value: I32(-1547197533),
+                    bool: true,
+                    key: 4294912471,
                     pos: 0,
                     length: 0,
                     prop: 0,

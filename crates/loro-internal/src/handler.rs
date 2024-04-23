@@ -18,6 +18,7 @@ use crate::{
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
+use generic_btree::rle::HasLength;
 use loro_common::{
     ContainerID, ContainerType, Counter, IdFull, InternalString, LoroError, LoroResult,
     LoroTreeError, LoroValue, PeerID, TreeID, ID,
@@ -351,19 +352,36 @@ pub enum TextDelta {
     },
 }
 
-impl From<&TextDiffItem> for TextDelta {
-    fn from(value: &TextDiffItem) -> Self {
-        match value {
-            loro_delta::DeltaItem::Retain { len, attr } => TextDelta::Retain {
-                retain: *len,
-                attributes: attr.to_option_map(),
-            },
-            loro_delta::DeltaItem::Insert { value, attr } => TextDelta::Insert {
-                insert: value.to_string(),
-                attributes: attr.to_option_map(),
-            },
-            loro_delta::DeltaItem::Delete(delete) => TextDelta::Delete { delete: *delete },
+impl TextDelta {
+    pub fn from_text_diff<'a>(diff: impl Iterator<Item = &'a TextDiffItem>) -> Vec<TextDelta> {
+        let mut ans = Vec::with_capacity(diff.size_hint().0);
+        for iter in diff {
+            match iter {
+                loro_delta::DeltaItem::Retain { len, attr } => {
+                    ans.push(TextDelta::Retain {
+                        retain: *len,
+                        attributes: attr.to_option_map(),
+                    });
+                }
+                loro_delta::DeltaItem::Replace {
+                    value,
+                    attr,
+                    delete,
+                } => {
+                    if value.rle_len() > 0 {
+                        ans.push(TextDelta::Insert {
+                            insert: value.to_string(),
+                            attributes: attr.to_option_map(),
+                        });
+                    }
+                    if *delete > 0 {
+                        ans.push(TextDelta::Delete { delete: *delete });
+                    }
+                }
+            }
         }
+
+        ans
     }
 }
 

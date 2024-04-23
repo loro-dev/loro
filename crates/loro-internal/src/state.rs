@@ -1204,9 +1204,10 @@ impl SubContainerDiffPatch {
         match state_diff {
             Diff::List(list) => {
                 for delta in list.iter() {
-                    if let loro_delta::DeltaItem::Insert {
+                    if let loro_delta::DeltaItem::Replace {
                         value: values,
                         attr,
+                        ..
                     } = delta
                     {
                         for v in values.iter() {
