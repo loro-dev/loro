@@ -450,3 +450,44 @@ fn random_fuzz_1s_5sites_1() {
 fn random_fuzz_1s_5sites_2() {
     arbtest::builder().budget_ms(1000).run(|u| prop(u, 5));
 }
+
+#[test]
+fn test_unknown() {
+    test_multi_sites(
+        5,
+        vec![
+            FuzzTarget::Map,
+            FuzzTarget::List,
+            FuzzTarget::Tree,
+            FuzzTarget::Text,
+        ],
+        &mut [
+            Handle {
+                site: 34,
+                target: 115,
+                container: 4,
+                action: Generic(GenericAction {
+                    value: I32(62063364),
+                    bool: false,
+                    key: 771987715,
+                    pos: 217020518514230019,
+                    length: 217234923281646339,
+                    prop: 6234107865851074949,
+                }),
+            },
+            Handle {
+                site: 3,
+                target: 3,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}

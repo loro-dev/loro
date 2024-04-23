@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use bench_utils::TextAction;
 use loro_internal::LoroDoc;
 
@@ -37,8 +39,15 @@ fn main() {
         txn.commit().unwrap();
     }
 
+    let start = Instant::now();
     let snapshot = loro.export_snapshot();
+    println!("Snapshot time {}ms", start.elapsed().as_millis());
     let output = miniz_oxide::deflate::compress_to_vec(&snapshot, 6);
+    println!(
+        "Snapshot+compression time {}ms",
+        start.elapsed().as_millis()
+    );
+
     println!(
         "snapshot size {} after compression {}",
         snapshot.len(),

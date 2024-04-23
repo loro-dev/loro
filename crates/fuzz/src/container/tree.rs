@@ -93,7 +93,7 @@ impl Actionable for TreeAction {
 
         match action {
             TreeActionInner::Create => {
-                let id = tree.next_tree_id();
+                let id = tree.__internal__next_tree_id();
                 *target = (id.peer, id.counter);
             }
             TreeActionInner::Delete => {

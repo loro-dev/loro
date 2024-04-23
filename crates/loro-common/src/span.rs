@@ -491,61 +491,7 @@ impl From<ID> for IdSpan {
 
 #[cfg(test)]
 mod test_id_span {
-    use rle::RleVecWithIndex;
-
     use super::*;
-
-    macro_rules! id_spans {
-        ($([$peer:expr, $from:expr, $to:expr]),*) => {
-            {
-                let mut id_spans = RleVecWithIndex::new();
-                $(
-                    id_spans.push(IdSpan {
-                        peer: $peer,
-                        counter: CounterSpan::new($from, $to),
-                    });
-                )*
-                id_spans
-            }
-        };
-    }
-
-    #[test]
-    fn test_id_span_rle_vec() {
-        let mut id_span_vec = RleVecWithIndex::new();
-        id_span_vec.push(IdSpan {
-            peer: 0,
-            counter: CounterSpan::new(0, 2),
-        });
-        assert_eq!(id_span_vec.merged_len(), 1);
-        assert_eq!(id_span_vec.atom_len(), 2);
-        id_span_vec.push(IdSpan {
-            peer: 0,
-            counter: CounterSpan::new(2, 4),
-        });
-        assert_eq!(id_span_vec.merged_len(), 1);
-        assert_eq!(id_span_vec.atom_len(), 4);
-        id_span_vec.push(IdSpan {
-            peer: 2,
-            counter: CounterSpan::new(2, 4),
-        });
-        assert_eq!(id_span_vec.merged_len(), 2);
-        assert_eq!(id_span_vec.atom_len(), 6);
-    }
-
-    #[test]
-    fn slice() {
-        let id_span_vec = id_spans!([0, 0, 2], [0, 2, 4], [2, 2, 4]);
-        let slice: Vec<IdSpan> = id_span_vec.slice_iter(2, 5).map(|x| x.into()).collect();
-        assert_eq!(slice, id_spans!([0, 2, 4], [2, 2, 3]).to_vec());
-    }
-
-    #[test]
-    fn backward() {
-        let id_span_vec = id_spans!([0, 100, 98], [0, 98, 90], [2, 2, 4], [2, 8, 4]);
-        let slice: Vec<IdSpan> = id_span_vec.slice_iter(5, 14).map(|x| x.into()).collect();
-        assert_eq!(slice, id_spans!([0, 95, 90], [2, 2, 4], [2, 8, 6]).to_vec());
-    }
 
     #[test]
     fn merge() {

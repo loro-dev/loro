@@ -140,6 +140,47 @@ impl RichtextState {
 
         None
     }
+
+    pub fn get_event_index_of_id(&self, id: ID) -> Option<usize> {
+        let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;
+        let mut a;
+        let mut b;
+        match &self.state {
+            LazyLoad::Src(s) => {
+                a = Some(s.elements.iter());
+                iter = &mut *a.as_mut().unwrap();
+            }
+            LazyLoad::Dst(s) => {
+                b = Some(s.iter_chunk());
+                iter = &mut *b.as_mut().unwrap();
+            }
+        }
+
+        let mut index = 0;
+        for elem in iter {
+            let span = elem.get_id_span();
+            if span.contains(id) {
+                match elem {
+                    RichtextStateChunk::Text(t) => {
+                        let event_offset = t.convert_unicode_offset_to_event_offset(
+                            (id.counter - span.counter.start) as usize,
+                        );
+                        return Some(index + event_offset);
+                    }
+                    RichtextStateChunk::Style { .. } => {
+                        return Some(index);
+                    }
+                }
+            }
+
+            index += match elem {
+                RichtextStateChunk::Text(t) => t.event_len() as usize,
+                RichtextStateChunk::Style { .. } => 0,
+            };
+        }
+
+        None
+    }
 }
 
 impl Clone for RichtextState {
