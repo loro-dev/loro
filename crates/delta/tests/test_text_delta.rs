@@ -4,6 +4,24 @@ use loro_delta::{
     text_delta::{TextChunk, TextDelta},
     DeltaRopeBuilder,
 };
+use tracing_subscriber::fmt::format::FmtSpan;
+
+#[ctor::ctor]
+fn init_color_backtrace() {
+    color_backtrace::install();
+    use tracing_subscriber::{prelude::*, registry::Registry};
+    if option_env!("DEBUG").is_some() {
+        tracing::subscriber::set_global_default(
+            Registry::default().with(
+                tracing_subscriber::fmt::Layer::default()
+                    .with_file(true)
+                    .with_line_number(true)
+                    .with_span_events(FmtSpan::ACTIVE),
+            ),
+        )
+        .unwrap();
+    }
+}
 
 #[test]
 fn text_delta() {

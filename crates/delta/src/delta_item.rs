@@ -1,8 +1,7 @@
+use super::*;
 use generic_btree::rle::{CanRemove, TryInsert};
 
-use super::*;
-
-impl<V: DeltaValue, Attr: DeltaAttr> DeltaItem<V, Attr> {
+impl<V: DeltaValue, Attr> DeltaItem<V, Attr> {
     /// The real length of the item in the delta
     pub fn delta_len(&self) -> usize {
         match self {
@@ -15,11 +14,10 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaItem<V, Attr> {
         }
     }
 
-    pub fn new_delete(len: usize) -> Self {
-        DeltaItem::Replace {
-            value: Default::default(),
-            attr: Default::default(),
-            delete: len,
+    pub fn data_len(&self) -> usize {
+        match self {
+            DeltaItem::Retain { len, .. } => *len,
+            DeltaItem::Replace { value, .. } => value.rle_len(),
         }
     }
 
@@ -32,13 +30,20 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaItem<V, Attr> {
     }
 }
 
+impl<V: DeltaValue, Attr: Default> DeltaItem<V, Attr> {
+    pub fn new_delete(len: usize) -> Self {
+        DeltaItem::Replace {
+            value: Default::default(),
+            attr: Default::default(),
+            delete: len,
+        }
+    }
+}
+
 impl<V: DeltaValue, Attr> HasLength for DeltaItem<V, Attr> {
     /// This would treat the len of the Delete as 0
     fn rle_len(&self) -> usize {
-        match self {
-            DeltaItem::Retain { len, .. } => *len,
-            DeltaItem::Replace { value, delete, .. } => value.rle_len(),
-        }
+        self.delta_len()
     }
 }
 
@@ -113,8 +118,9 @@ impl<V: Mergeable, Attr: PartialEq> Mergeable for DeltaItem<V, Attr> {
     }
 }
 
-impl<V: DeltaValue, Attr: Clone> Sliceable for DeltaItem<V, Attr> {
+impl<V: DeltaValue, Attr: Clone + Default + Debug> Sliceable for DeltaItem<V, Attr> {
     fn _slice(&self, range: std::ops::Range<usize>) -> Self {
+        assert!(range.end <= self.rle_len());
         match self {
             DeltaItem::Retain { len, attr } => {
                 assert!(range.end <= *len);
@@ -128,11 +134,26 @@ impl<V: DeltaValue, Attr: Clone> Sliceable for DeltaItem<V, Attr> {
                 attr,
                 delete,
             } => {
-                let value = value._slice(range.clone());
-                DeltaItem::Replace {
-                    value,
-                    attr: attr.clone(),
-                    delete: *delete,
+                if range.end <= value.rle_len() {
+                    let value = value._slice(range.clone());
+                    DeltaItem::Replace {
+                        value,
+                        attr: attr.clone(),
+                        delete: 0,
+                    }
+                } else if range.start >= value.rle_len() {
+                    debug_assert!(range.end <= delete + value.rle_len());
+                    debug_assert!(range.len() <= *delete);
+                    DeltaItem::new_delete(range.len())
+                } else {
+                    let delete_len = range.end - value.rle_len();
+                    debug_assert!(delete_len <= *delete);
+                    let value = value._slice(range.start..value.rle_len());
+                    DeltaItem::Replace {
+                        delete: delete_len,
+                        value,
+                        attr: attr.clone(),
+                    }
                 }
             }
         }
@@ -174,9 +195,17 @@ impl<V: DeltaValue, Attr: Clone + PartialEq> TryInsert for DeltaItem<V, Attr> {
                     delete: r_delete,
                 },
             ) => {
+                if l_value.rle_len() == 0 && r_value.rle_len() == 0 {
+                    *l_delete += r_delete;
+                    return Ok(());
+                }
+
                 if l_attr == &r_attr {
                     match l_value.try_insert(pos, r_value) {
-                        Ok(_) => return Ok(()),
+                        Ok(_) => {
+                            *l_delete += r_delete;
+                            return Ok(());
+                        }
                         Err(v) => {
                             return Err(DeltaItem::Replace {
                                 value: v,

@@ -14,7 +14,7 @@ keywords = ["crdt", "local-first"]
 
 [dependencies]
 loro-internal = { path = "../loro-internal", version = "0.4.0" }
-generic-btree = "0.10"
+generic-btree = { version = "0.10.3" }
 enum-as-inner = "0.6.0"
 either = "1.9.0"
 delta = { path = "../delta", package = "loro-delta" }

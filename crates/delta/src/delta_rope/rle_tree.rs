@@ -4,7 +4,10 @@ use std::{
     ops::{Add, AddAssign, Sub},
 };
 
-use generic_btree::{rle::CanRemove, BTreeTrait, UseLengthFinder};
+use generic_btree::{
+    rle::{CanRemove, HasLength},
+    ArenaIndex, BTreeTrait, Child, FindResult, Query, UseLengthFinder,
+};
 
 use crate::{
     delta_trait::{DeltaAttr, DeltaValue},
@@ -13,13 +16,15 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct Len {
-    pub new_len: isize,
-    pub old_len: isize,
+    /// The length of insertions + retains
+    pub data_len: isize,
+    /// The length of deletions + retains + insertions
+    pub delta_len: isize,
 }
 
 impl CanRemove for Len {
     fn can_remove(&self) -> bool {
-        self.new_len == 0 && self.old_len == 0
+        self.data_len == 0 && self.delta_len == 0
     }
 }
 
@@ -28,16 +33,16 @@ impl Add for Len {
 
     fn add(self, rhs: Self) -> Self {
         Self {
-            new_len: self.new_len + rhs.new_len,
-            old_len: self.old_len + rhs.old_len,
+            data_len: self.data_len + rhs.data_len,
+            delta_len: self.delta_len + rhs.delta_len,
         }
     }
 }
 
 impl AddAssign for Len {
     fn add_assign(&mut self, rhs: Self) {
-        self.new_len += rhs.new_len;
-        self.old_len += rhs.old_len;
+        self.data_len += rhs.data_len;
+        self.delta_len += rhs.delta_len;
     }
 }
 
@@ -46,8 +51,8 @@ impl Sub for Len {
 
     fn sub(self, rhs: Self) -> Self {
         Self {
-            new_len: self.new_len - rhs.new_len,
-            old_len: self.old_len - rhs.old_len,
+            data_len: self.data_len - rhs.data_len,
+            delta_len: self.delta_len - rhs.delta_len,
         }
     }
 }
@@ -56,8 +61,8 @@ impl Sum for Len {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(
             Self {
-                new_len: 0,
-                old_len: 0,
+                data_len: 0,
+                delta_len: 0,
             },
             |acc, x| acc + x,
         )
@@ -96,16 +101,16 @@ impl<V: DeltaValue + Debug, Attr: DeltaAttr + Debug> BTreeTrait for DeltaTreeTra
     fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
         match elem {
             DeltaItem::Retain { len, attr } => Len {
-                new_len: *len as isize,
-                old_len: *len as isize,
+                data_len: *len as isize,
+                delta_len: *len as isize,
             },
             DeltaItem::Replace {
                 value,
                 attr,
                 delete,
             } => Len {
-                new_len: value.rle_len() as isize,
-                old_len: *delete as isize,
+                data_len: value.rle_len() as isize,
+                delta_len: *delete as isize + value.rle_len() as isize,
             },
         }
     }
@@ -119,10 +124,79 @@ impl<V: DeltaValue + Debug, Attr: DeltaAttr + Debug> BTreeTrait for DeltaTreeTra
     }
 }
 
-impl<V: DeltaValue + Debug, Attr: DeltaAttr + Debug> UseLengthFinder<DeltaTreeTrait<V, Attr>>
-    for DeltaTreeTrait<V, Attr>
+/// A generic length finder
+pub struct LengthFinder {
+    pub left: usize,
+    pub slot: u8,
+    pub parent: Option<ArenaIndex>,
+}
+
+impl LengthFinder {
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self {
+            left: 0,
+            slot: 0,
+            parent: None,
+        }
+    }
+}
+
+impl Default for LengthFinder {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<V: DeltaValue + Debug, Attr: DeltaAttr + Debug> Query<DeltaTreeTrait<V, Attr>>
+    for LengthFinder
 {
-    fn get_len(cache: &<DeltaTreeTrait<V, Attr> as BTreeTrait>::Cache) -> usize {
-        cache.new_len as usize
+    type QueryArg = usize;
+
+    #[inline(always)]
+    fn init(target: &Self::QueryArg) -> Self {
+        Self {
+            left: *target,
+            slot: 0,
+            parent: None,
+        }
+    }
+
+    #[inline(always)]
+    fn find_node(
+        &mut self,
+        _: &Self::QueryArg,
+        child_caches: &[Child<DeltaTreeTrait<V, Attr>>],
+    ) -> FindResult {
+        let mut last_left = self.left;
+        let is_internal = matches!(child_caches.first().unwrap().arena, ArenaIndex::Internal(_));
+        for (i, cache) in child_caches.iter().enumerate() {
+            let len = cache.cache.data_len as usize;
+            if self.left >= len {
+                last_left = self.left;
+                self.left -= len;
+            } else {
+                if is_internal {
+                    self.parent = Some(cache.arena);
+                } else {
+                    self.slot = i as u8;
+                }
+                return FindResult::new_found(i, self.left);
+            }
+        }
+
+        self.left = last_left;
+        if is_internal {
+            self.parent = Some(child_caches.last().unwrap().arena);
+        } else {
+            self.slot = child_caches.len() as u8 - 1;
+        }
+        FindResult::new_missing(child_caches.len() - 1, last_left)
+    }
+
+    #[inline(always)]
+    fn confirm_elem(&mut self, _: &Self::QueryArg, elem: &DeltaItem<V, Attr>) -> (usize, bool) {
+        (self.left, self.left < elem.data_len())
     }
 }

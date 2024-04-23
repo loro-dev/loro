@@ -1,9 +1,9 @@
 use std::{fmt::Debug, ops::Range};
 
-use generic_btree::{rle::Sliceable, Cursor, LengthFinder};
-use tracing::trace;
+use generic_btree::{rle::Sliceable, Cursor};
 
 use crate::{
+    delta_rope::rle_tree::LengthFinder,
     delta_trait::{DeltaAttr, DeltaValue},
     DeltaItem, DeltaRope, DeltaRopeBuilder,
 };
@@ -139,7 +139,6 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
 
                                     let mut right = value.split(start);
                                     right.slice_(value_len.min(end) - start..);
-                                    trace!("value={:#?}, right={:#?}", &value, &right);
                                     if this_value.rle_len() > 0 {
                                         if attr != this_attr || !value.can_merge(this_value) {
                                             let right = if right.rle_len() > 0 {
@@ -200,22 +199,19 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                                             attr: Default::default(),
                                         };
                                         Some(Len {
-                                            new_len: diff,
-                                            old_len: diff,
+                                            data_len: diff,
+                                            delta_len: 0,
                                         })
                                     }
-                                    DeltaItem::Replace { value, delete, .. } => {
+                                    DeltaItem::Replace { value, attr, .. } => {
                                         if left_del_len >= value.rle_len() {
                                             let diff = value.rle_len() as isize;
                                             left_del_len -= value.rle_len();
-                                            left_del_len += *delete;
-                                            *item = DeltaItem::Retain {
-                                                len: 0,
-                                                attr: Default::default(),
-                                            };
+                                            *value = Default::default();
+                                            *attr = Default::default();
                                             Some(Len {
-                                                new_len: -diff,
-                                                old_len: 0,
+                                                data_len: -diff,
+                                                delta_len: -diff,
                                             })
                                         } else {
                                             unreachable!()
@@ -262,12 +258,12 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
 
     /// Returns the length of the delta rope (insertions + retains).
     pub fn len(&self) -> usize {
-        self.tree.root_cache().new_len as usize
+        self.tree.root_cache().data_len as usize
     }
 
     /// Returns the length of the delta rope (deletions + retains).
     pub fn old_len(&self) -> usize {
-        self.tree.root_cache().old_len as usize
+        self.tree.root_cache().delta_len as usize
     }
 
     pub fn is_empty(&self) -> bool {
@@ -473,7 +469,6 @@ impl<V: DeltaValue + PartialEq, Attr: DeltaAttr + PartialEq> PartialEq for Delta
         let mut a = self.iter_with_len();
         let mut b = other.iter_with_len();
         while let (Some(x), Some(y)) = (a.peek(), b.peek()) {
-            trace!("x={:#?} y={:#?}", &x, &y);
             let len = x.delta_len().min(y.delta_len());
             match (x, y) {
                 (

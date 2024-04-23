@@ -353,7 +353,7 @@ pub enum TextDelta {
 }
 
 impl TextDelta {
-    pub fn from_text_diff<'a>(mut diff: impl Iterator<Item = &'a TextDiffItem>) -> Vec<TextDelta> {
+    pub fn from_text_diff<'a>(diff: impl Iterator<Item = &'a TextDiffItem>) -> Vec<TextDelta> {
         let mut ans = Vec::with_capacity(diff.size_hint().0);
         for iter in diff {
             match iter {
