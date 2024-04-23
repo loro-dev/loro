@@ -237,20 +237,3 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
     fuzzer.check_tracker();
     fuzzer.check_history();
 }
-
-#[ctor::ctor]
-fn init_color_backtrace() {
-    color_backtrace::install();
-    use tracing_subscriber::{prelude::*, registry::Registry};
-    if option_env!("DEBUG").is_some() {
-        tracing::subscriber::set_global_default(
-            Registry::default().with(
-                tracing_subscriber::fmt::Layer::default()
-                    .with_file(true)
-                    .with_line_number(true)
-                    .with_span_events(FmtSpan::ACTIVE),
-            ),
-        )
-        .unwrap();
-    }
-}

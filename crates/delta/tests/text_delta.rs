@@ -28,6 +28,23 @@ fn delete_delta_compose() {
 }
 
 #[test]
+fn insert_long() {
+    let mut a: TextDelta = TextDelta::new();
+    a.push_str_insert("1234567890");
+    a.insert_str(3, &"abc".repeat(10));
+    assert_eq!(
+        a,
+        DeltaRopeBuilder::new()
+            .insert(TextChunk::try_from_str("123abc").unwrap(), ())
+            .insert(TextChunk::try_from_str("abcabcabc").unwrap(), ())
+            .insert(TextChunk::try_from_str("abcabcabc").unwrap(), ())
+            .insert(TextChunk::try_from_str("abcabcabc").unwrap(), ())
+            .insert(TextChunk::try_from_str("4567890").unwrap(), ())
+            .build()
+    );
+}
+
+#[test]
 fn retain_delete_delta_compose() {
     let mut a: TextDelta = DeltaRopeBuilder::new().retain(5, ()).build();
     let b: TextDelta = DeltaRopeBuilder::new().delete(5).build();

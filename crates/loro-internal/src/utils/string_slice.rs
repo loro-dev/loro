@@ -209,11 +209,22 @@ impl TryInsert for StringSlice {
     where
         Self: Sized,
     {
-        // let pos = if cfg!(feature = "wasm") {
-        //     utf16_to_utf8_index(self.as_str(), pos).unwrap()
-        // } else {
-        //     unicode_to_utf8_index(self.as_str(), pos).unwrap()
-        // };
+        match &mut self.bytes {
+            Variant::BytesSlice(_) => Err(elem),
+            Variant::Owned(s) => {
+                if s.capacity() >= s.len() + elem.len_bytes() {
+                    let pos = if cfg!(feature = "wasm") {
+                        utf16_to_utf8_index(self.as_str(), pos).unwrap()
+                    } else {
+                        unicode_to_utf8_index(self.as_str(), pos).unwrap()
+                    };
+                    s.insert_str(pos, elem.as_str());
+                    Ok(())
+                } else {
+                    Err(elem)
+                }
+            }
+        }
 
         // match (&mut self.bytes, &elem.bytes) {
         //     (Variant::Owned(a), Variant::Owned(b))
@@ -225,7 +236,6 @@ impl TryInsert for StringSlice {
         //     }
         //     _ => Err(elem),
         // }
-        Err(elem)
     }
 }
 

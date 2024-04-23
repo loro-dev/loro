@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use loro_internal::{
-    delta::DeltaItem,
     event::Diff,
     handler::{Handler, ValueOrHandler},
     ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,

@@ -10,7 +10,7 @@ const MAX_STRING_SIZE: usize = 8;
 #[cfg(not(test))]
 const MAX_STRING_SIZE: usize = 128;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TextChunk(ArrayString<MAX_STRING_SIZE>);
 pub type TextDelta<Attr = ()> = DeltaRope<TextChunk, Attr>;
 
@@ -21,16 +21,12 @@ impl<Attr: DeltaAttr> TextDelta<Attr> {
             return;
         }
 
-        if s.len() > MAX_STRING_SIZE {
-            unimplemented!();
-        }
-
         self.insert_values(
             index,
-            [DeltaItem::Insert {
-                value: TextChunk(ArrayString::from(s).unwrap()),
-                attr: Attr::default(),
-            }],
+            TextChunk::from_long_str(s).map(|chunk| DeltaItem::Insert {
+                value: chunk,
+                attr: Default::default(),
+            }),
         );
     }
 
@@ -100,6 +96,26 @@ impl TextChunk {
 
     pub fn try_from_str(s: &str) -> Option<Self> {
         Some(TextChunk(ArrayString::from(s).ok()?))
+    }
+
+    pub fn from_long_str(s: &str) -> impl Iterator<Item = Self> + '_ {
+        let mut text_iter = s.chars();
+        std::iter::from_fn(move || {
+            let mut chunk = Self::default();
+            for c in text_iter.by_ref() {
+                let mut bytes = [0, 0, 0, 0];
+                chunk.0.push_str(c.encode_utf8(&mut bytes));
+                if chunk.0.is_full() {
+                    break;
+                }
+            }
+
+            if chunk.0.is_empty() {
+                return None;
+            }
+
+            Some(chunk)
+        })
     }
 }
 

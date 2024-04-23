@@ -279,7 +279,7 @@ impl InternalDiff {
 }
 
 impl Diff {
-    pub(crate) fn compose(mut self, diff: Diff) -> Result<Self, Self> {
+    pub(crate) fn compose(self, diff: Diff) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {
             (Diff::List(mut a), Diff::List(b)) => {
