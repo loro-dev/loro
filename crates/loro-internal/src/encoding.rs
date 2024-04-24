@@ -1,6 +1,7 @@
 mod arena;
 mod encode_reordered;
 mod value;
+pub(crate) use value::OwnedValue;
 
 use crate::op::OpWithId;
 use crate::version::Frontiers;

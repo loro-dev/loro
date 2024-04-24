@@ -375,11 +375,7 @@ fn extract_ops(
         let peer = arenas.peer_ids[peer_idx as usize];
         let cid = &containers[container_index as usize];
         let kind = ValueKind::from_u8(value_type);
-        let value = if cid.is_unknown() {
-            Value::decode_as_unknown(kind, value_bytes_len, &mut value_reader)?
-        } else {
-            Value::decode(kind, &mut value_reader, arenas, ID::new(peer, counter))?
-        };
+        let value = Value::decode(kind, &mut value_reader, arenas, ID::new(peer, counter))?;
 
         let content = decode_op(
             cid,
@@ -1199,7 +1195,7 @@ mod encode {
                     info,
                 } => Value::MarkStart(MarkStart {
                     len: end - start,
-                    key,
+                    key: key.clone(),
                     value: value.clone(),
                     info: info.to_byte(),
                 }),
@@ -1217,11 +1213,9 @@ mod encode {
                 Value::TreeMove(EncodedTreeMove::from_op(t))
             }
             crate::op::InnerContent::Future(f) => match f {
-                FutureInnerContent::Unknown {
-                    kind,
-                    op_len: _,
-                    data,
-                } => Value::Future(FutureValue::Unknown { kind: *kind, data }),
+                FutureInnerContent::Unknown { op_len: _, value } => {
+                    Value::from_owned(value.clone())
+                }
             },
         };
         let (k, mut i) = value.encode(value_writer, registers);
@@ -1339,18 +1333,10 @@ fn decode_op(
                 unreachable!()
             }
         },
-        ContainerType::Unknown(_) => match value {
-            Value::Future(f) => match f {
-                FutureValue::Unknown { kind, data } => {
-                    crate::op::InnerContent::Future(FutureInnerContent::Unknown {
-                        kind,
-                        op_len,
-                        data: data.to_vec(),
-                    })
-                }
-            },
-            _ => unreachable!(),
-        },
+        ContainerType::Unknown(_) => crate::op::InnerContent::Future(FutureInnerContent::Unknown {
+            op_len,
+            value: value.to_owned(),
+        }),
     };
 
     Ok(content)

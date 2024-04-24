@@ -4,10 +4,13 @@ use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
-use crate::container::{
-    list::list_op::{InnerListOp, ListOp},
-    map::MapSet,
-    tree::tree_op::TreeOp,
+use crate::{
+    container::{
+        list::list_op::{InnerListOp, ListOp},
+        map::MapSet,
+        tree::tree_op::TreeOp,
+    },
+    encoding::OwnedValue,
 };
 
 /// @deprecated
@@ -26,16 +29,13 @@ pub enum InnerContent {
     List(InnerListOp),
     Map(MapSet),
     Tree(TreeOp),
+    // The future content should not use any encoded arena context.
     Future(FutureInnerContent),
 }
 
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum FutureInnerContent {
-    Unknown {
-        kind: u8,
-        op_len: usize,
-        data: Vec<u8>,
-    },
+    Unknown { op_len: usize, value: OwnedValue },
 }
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
@@ -50,11 +50,7 @@ pub enum RawOpContent<'a> {
 
 #[derive(EnumAsInner, Debug, PartialEq, Serialize, Deserialize)]
 pub enum FutureRawOpContent {
-    Unknown {
-        kind: u8,
-        op_len: usize,
-        data: Vec<u8>,
-    },
+    Unknown { op_len: usize, value: OwnedValue },
 }
 
 impl<'a> Clone for RawOpContent<'a> {
@@ -64,10 +60,9 @@ impl<'a> Clone for RawOpContent<'a> {
             Self::List(arg0) => Self::List(arg0.clone()),
             Self::Tree(arg0) => Self::Tree(*arg0),
             Self::Future(f) => Self::Future(match f {
-                FutureRawOpContent::Unknown { kind, op_len, data } => FutureRawOpContent::Unknown {
-                    kind: *kind,
+                FutureRawOpContent::Unknown { op_len, value } => FutureRawOpContent::Unknown {
                     op_len: *op_len,
-                    data: data.clone(),
+                    value: value.clone(),
                 },
             }),
         }
@@ -101,10 +96,9 @@ impl<'a> RawOpContent<'a> {
             },
             Self::Tree(arg0) => RawOpContent::Tree(*arg0),
             Self::Future(f) => RawOpContent::Future(match f {
-                FutureRawOpContent::Unknown { kind, op_len, data } => FutureRawOpContent::Unknown {
-                    kind: *kind,
+                FutureRawOpContent::Unknown { op_len, value } => FutureRawOpContent::Unknown {
                     op_len: *op_len,
-                    data: data.clone(),
+                    value: value.clone(),
                 },
             }),
         }

@@ -6,6 +6,7 @@ use loro_common::{
     ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue, PeerID,
     TreeID, ID,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{container::tree::tree_op::TreeOp, encoding::encode_reordered::MAX_COLLECTION_SIZE};
 
@@ -109,7 +110,7 @@ pub enum Value<'a> {
     #[allow(clippy::enum_variant_names)]
     LoroValue(LoroValue),
     Map(FxHashMap<InternalString, Value<'a>>),
-    MarkStart(MarkStart<'a>),
+    MarkStart(MarkStart),
     TreeMove(EncodedTreeMove),
     Future(FutureValue<'a>),
 }
@@ -117,6 +118,34 @@ pub enum Value<'a> {
 pub enum FutureValue<'a> {
     // The future value cannot depend on the arena for encoding.
     Unknown { kind: u8, data: &'a [u8] },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum OwnedFutureValue {
+    // The future value cannot depend on the arena for encoding.
+    Unknown { kind: u8, data: Vec<u8> },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum OwnedValue {
+    Null,
+    True,
+    False,
+    I64(i64),
+    F64(f64),
+    Str(String),
+    Binary(Vec<u8>),
+    ContainerIdx(usize),
+    DeleteOnce,
+    DeleteSeq,
+    DeltaInt(i32),
+    Array(Vec<OwnedValue>),
+    LoroValueArray(Vec<LoroValue>),
+    LoroValue(LoroValue),
+    Map(FxHashMap<InternalString, OwnedValue>),
+    MarkStart(MarkStart),
+    TreeMove(EncodedTreeMove),
+    Future(OwnedFutureValue),
 }
 
 impl<'a> Value<'a> {
@@ -146,6 +175,73 @@ impl<'a> Value<'a> {
             },
         }
     }
+
+    pub fn from_owned(owned_value: OwnedValue) -> Self {
+        match owned_value {
+            OwnedValue::Null => Value::Null,
+            OwnedValue::True => Value::True,
+            OwnedValue::False => Value::False,
+            OwnedValue::DeleteOnce => Value::DeleteOnce,
+            OwnedValue::I64(x) => Value::I64(x),
+            OwnedValue::ContainerIdx(x) => Value::ContainerIdx(x),
+            OwnedValue::F64(x) => Value::F64(x),
+            OwnedValue::Str(x) => Value::Str(x.as_str()),
+            OwnedValue::DeleteSeq => Value::DeleteSeq,
+            OwnedValue::DeltaInt(x) => Value::DeltaInt(x),
+            OwnedValue::Array(x) => {
+                Value::Array(x.into_iter().map(|x| Value::from_owned(x)).collect())
+            }
+            OwnedValue::Map(x) => Value::Map(
+                x.into_iter()
+                    .map(|(k, v)| (k, Value::from_owned(v)))
+                    .collect(),
+            ),
+            OwnedValue::LoroValue(x) => Value::LoroValue(x),
+            OwnedValue::LoroValueArray(x) => Value::LoroValueArray(x),
+            OwnedValue::MarkStart(x) => Value::MarkStart(x),
+            OwnedValue::Binary(x) => Value::Binary(x.as_slice()),
+            OwnedValue::TreeMove(x) => Value::TreeMove(x),
+            OwnedValue::Future(value) => match value {
+                OwnedFutureValue::Unknown { kind, data } => Value::Future(FutureValue::Unknown {
+                    kind,
+                    data: data.as_slice(),
+                }),
+            },
+        }
+    }
+
+    pub fn to_owned(self) -> OwnedValue {
+        match self {
+            Value::Null => OwnedValue::Null,
+            Value::True => OwnedValue::True,
+            Value::False => OwnedValue::False,
+            Value::DeleteOnce => OwnedValue::DeleteOnce,
+            Value::I64(x) => OwnedValue::I64(x),
+            Value::ContainerIdx(x) => OwnedValue::ContainerIdx(x),
+            Value::F64(x) => OwnedValue::F64(x),
+            Value::Str(x) => OwnedValue::Str(x.to_owned()),
+            Value::DeleteSeq => OwnedValue::DeleteSeq,
+            Value::DeltaInt(x) => OwnedValue::DeltaInt(x),
+            Value::Array(x) => OwnedValue::Array(x.into_iter().map(|x| x.to_owned()).collect()),
+            Value::Map(x) => {
+                OwnedValue::Map(x.into_iter().map(|(k, v)| (k, v.to_owned())).collect())
+            }
+            Value::LoroValue(x) => OwnedValue::LoroValue(x),
+            Value::LoroValueArray(x) => OwnedValue::LoroValueArray(x),
+            Value::MarkStart(x) => OwnedValue::MarkStart(x),
+            Value::Binary(x) => OwnedValue::Binary(x.to_owned()),
+            Value::TreeMove(x) => OwnedValue::TreeMove(x),
+            Value::Future(value) => match value {
+                FutureValue::Unknown { kind, data } => {
+                    OwnedValue::Future(OwnedFutureValue::Unknown {
+                        kind,
+                        data: data.to_owned(),
+                    })
+                }
+            },
+        }
+    }
+
     fn decode_without_arena<'r: 'a>(
         future_kind: FutureValueKind,
         value_reader: &'r mut ValueReader,
@@ -160,17 +256,17 @@ impl<'a> Value<'a> {
         Ok(Value::Future(value))
     }
 
-    pub(super) fn decode_as_unknown<'r: 'a>(
-        kind: ValueKind,
-        bytes_len: usize,
-        value_reader: &'r mut ValueReader,
-    ) -> LoroResult<Self> {
-        let value = FutureValue::Unknown {
-            kind: kind.to_u8(),
-            data: value_reader.take_bytes(bytes_len),
-        };
-        Ok(Value::Future(value))
-    }
+    // pub(super) fn decode_as_unknown<'r: 'a>(
+    //     kind: ValueKind,
+    //     bytes_len: usize,
+    //     value_reader: &'r mut ValueReader,
+    // ) -> LoroResult<Self> {
+    //     let value = FutureValue::Unknown {
+    //         kind: kind.to_u8(),
+    //         data: value_reader.take_bytes(bytes_len),
+    //     };
+    //     Ok(Value::Future(value))
+    // }
 
     pub(super) fn decode<'r: 'a>(
         kind: ValueKind,
@@ -283,12 +379,15 @@ impl<'a> Value<'a> {
 //     ) -> (Self, FutureValueKind);
 // }
 
-pub struct MarkStart<'a> {
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MarkStart {
     pub len: u32,
-    pub key: &'a InternalString,
+    pub key: InternalString,
     pub value: LoroValue,
     pub info: u8,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 
 pub struct EncodedTreeMove {
     pub subject_peer: PeerID,
@@ -656,7 +755,7 @@ impl<'a> ValueReader<'a> {
         &mut self,
         keys: &'s [InternalString],
         id: ID,
-    ) -> LoroResult<MarkStart<'m>> {
+    ) -> LoroResult<MarkStart> {
         let info = self.read_u8()?;
         let len = self.read_usize()?;
         let key_idx = self.read_usize()?;
@@ -665,7 +764,8 @@ impl<'a> ValueReader<'a> {
             len: len as u32,
             key: keys
                 .get(key_idx)
-                .ok_or(LoroError::DecodeDataCorruptionError)?,
+                .ok_or(LoroError::DecodeDataCorruptionError)?
+                .clone(),
             value,
             info,
         })
@@ -834,7 +934,7 @@ impl ValueWriter {
     }
 
     fn write_mark(&mut self, mark: MarkStart, registers: &mut EncodedRegisters) -> usize {
-        let key_idx = registers.key.register(mark.key);
+        let key_idx = registers.key.register(&mark.key);
         let len = self.buffer.len();
         self.write_u8(mark.info);
         self.write_usize(mark.len as usize);
