@@ -890,7 +890,7 @@ fn empty_event() {
 }
 
 #[test]
-fn reorder_list_element() -> LoroResult<()> {
+fn insert_attach_container() -> LoroResult<()> {
     let doc = LoroDoc::new_auto_commit();
     let list = doc.get_list("list");
     list.insert_container(0, MapHandler::new_detached())?
@@ -899,28 +899,37 @@ fn reorder_list_element() -> LoroResult<()> {
         .insert("key", 2)?;
     let elem = list.insert_container(2, MapHandler::new_detached())?;
     elem.insert("key", 3)?;
-    list.insert_container(0, elem)?;
+    let new_map = list.insert_container(0, elem)?;
+    assert_eq!(new_map.get_value().to_json_value(), json!({"key": 3}));
     list.delete(3, 1)?;
 
     let elem = list.insert_container(0, TextHandler::new_detached())?;
     elem.insert(0, "abc")?;
     elem.mark(0, 2, "bold", true.into())?;
-    list.insert_container(0, elem)?;
+    let new_text = list.insert_container(0, elem)?;
+    assert_eq!(
+        new_text.get_richtext_value().to_json_value(),
+        json!([{"insert":"ab", "attributes": {"bold": true}}, {"insert":"c"}])
+    );
 
     let elem = list.insert_container(0, ListHandler::new_detached())?;
     elem.insert(0, "list")?;
-    list.insert_container(0, elem)?;
+    let new_list = list.insert_container(0, elem)?;
+    new_list.insert(0, "new_list")?;
+    assert_eq!(
+        new_list.get_value().to_json_value(),
+        json!(["new_list", "list"])
+    );
 
     // let elem = list.insert_container(2, TreeHandler::new_detached())?;
     // let p = elem.create(None)?;
     // elem.create(p)?;
     // list.insert_container(0, elem)?;
 
-    println!("{}", doc.get_deep_value().to_json_value());
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
-            "list": [["list"], ["list"],"abc", "abc", {"key": 3}, {"key": 1}, {"key": 2}]
+            "list": [["new_list", "list"], ["list"],"abc", "abc", {"key": 3}, {"key": 1}, {"key": 2}]
         })
     );
     Ok(())
