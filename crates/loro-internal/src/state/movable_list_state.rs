@@ -916,6 +916,11 @@ impl MovableListState {
             .collect();
         list
     }
+
+    pub(crate) fn get_list_item_id_at(&self, pos: usize) -> Option<IdFull> {
+        let item = self.inner.get_list_item_at(pos, IndexType::ForUser);
+        item.map(|x| x.id)
+    }
 }
 
 impl ContainerState for MovableListState {

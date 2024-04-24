@@ -208,6 +208,23 @@ declare module "loro-wasm" {
       name: Key,
     ): T[Key] extends LoroList ? T[Key] : LoroList;
     /**
+     * Get a LoroMovableList by container id
+     *
+     * The object returned is a new js object each time because it need to cross
+     * the WASM boundary.
+     *
+     * @example
+     * ```ts
+     * import { Loro } from "loro-crdt";
+     *
+     * const doc = new Loro();
+     * const list = doc.getList("list");
+     * ```
+     */
+    getMovableList<Key extends (keyof T) | ContainerID>(
+      name: Key,
+    ): T[Key] extends LoroMovableList ? T[Key] : LoroMovableList;
+    /**
      * Get a LoroTree by container id
      *
      *  The object returned is a new js object each time because it need to cross
@@ -300,6 +317,81 @@ declare module "loro-wasm" {
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
     getAttached(): undefined | LoroList<T>;
+  }
+
+  interface LoroMovableList<T = unknown> {
+    new (): LoroMovableList<T>;
+    /**
+     *  Get elements of the list. If the value is a child container, the corresponding
+     *  `Container` will be returned.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getMovableList("list");
+     *  list.insert(0, 100);
+     *  list.insert(1, "foo");
+     *  list.insert(2, true);
+     *  list.insertContainer(3, new LoroText());
+     *  console.log(list.value);  // [100, "foo", true, LoroText];
+     *  ```
+     */
+    toArray(): T[];
+    /**
+     * Insert a container at the index.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getList("list");
+     *  list.insert(0, 100);
+     *  const text = list.insertContainer(1, new LoroText());
+     *  text.insert(0, "Hello");
+     *  console.log(list.getDeepValue());  // [100, "Hello"];
+     *  ```
+     */
+    insertContainer<C extends Container>(
+      pos: number,
+      child: C,
+    ): T extends C ? T : C;
+    /**
+     * Get the value at the index. If the value is a container, the corresponding handler will be returned.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getList("list");
+     *  list.insert(0, 100);
+     *  console.log(list.get(0));  // 100
+     *  console.log(list.get(1));  // undefined
+     *  ```
+     */
+    get(index: number): T;
+    /**
+     *  Insert a value at index.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getList("list");
+     *  list.insert(0, 100);
+     *  list.insert(1, "foo");
+     *  list.insert(2, true);
+     *  console.log(list.value);  // [100, "foo", true];
+     *  ```
+     */
+    insert(pos: number, value: Exclude<T, Container>): void;
+    delete(pos: number, len: number): void;
+    subscribe(txn: Loro, listener: Listener): number;
+    getAttached(): undefined | LoroMovableList<T>;
   }
 
   interface LoroMap<

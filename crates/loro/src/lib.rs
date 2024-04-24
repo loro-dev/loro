@@ -1335,6 +1335,10 @@ impl LoroMovableList {
             self.handler.log_internal_state()
         )
     }
+
+    pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
+        self.handler.get_cursor(pos, side)
+    }
 }
 
 impl Default for LoroMovableList {

@@ -965,8 +965,18 @@ impl LoroDoc {
                             },
                         })
                     }
-                    crate::diff_calc::ContainerDiffCalculator::MovableList(_list) => {
-                        unimplemented!()
+                    crate::diff_calc::ContainerDiffCalculator::MovableList(list) => {
+                        let c = list.get_id_latest_pos(id).unwrap();
+                        let new_pos = c.pos;
+                        let handler = self.get_movable_list(&pos.container);
+                        let new_pos = handler.op_pos_to_user_pos(new_pos);
+                        Ok(PosQueryResult {
+                            update: handler.get_cursor(new_pos, c.side),
+                            current: AbsolutePosition {
+                                pos: new_pos,
+                                side: c.side,
+                            },
+                        })
                     }
                     crate::diff_calc::ContainerDiffCalculator::Tree(_) => unreachable!(),
                     crate::diff_calc::ContainerDiffCalculator::Map(_) => unreachable!(),

@@ -2569,6 +2569,61 @@ impl MovableListHandler {
             inner: MaybeDetached::new_detached(Default::default()),
         }
     }
+
+    pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(inner) => {
+                let (id, len) = inner.with_state(|s| {
+                    let l = s.as_movable_list_state().unwrap();
+                    (l.get_list_item_id_at(pos), l.len())
+                });
+
+                if len == 0 {
+                    return Some(Cursor {
+                        id: None,
+                        container: self.id(),
+                        side: if side == Side::Middle {
+                            Side::Left
+                        } else {
+                            side
+                        },
+                    });
+                }
+
+                if len <= pos {
+                    return Some(Cursor {
+                        id: None,
+                        container: self.id(),
+                        side: Side::Right,
+                    });
+                }
+
+                let id = id?;
+                Some(Cursor {
+                    id: Some(id.id()),
+                    container: self.id(),
+                    side,
+                })
+            }
+        }
+    }
+
+    pub(crate) fn op_pos_to_user_pos(&self, new_pos: usize) -> usize {
+        match &self.inner {
+            MaybeDetached::Detached(_) => new_pos,
+            MaybeDetached::Attached(inner) => {
+                let mut pos = new_pos;
+                inner.with_state(|s| {
+                    let l = s.as_movable_list_state().unwrap();
+                    pos = l
+                        .convert_index(new_pos, IndexType::ForOp, IndexType::ForUser)
+                        .unwrap_or(l.len());
+                });
+                pos
+            }
+        }
+    }
 }
 
 impl MapHandler {

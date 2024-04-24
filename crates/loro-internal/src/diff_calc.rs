@@ -446,9 +446,18 @@ pub(crate) struct ListDiffCalculator {
     start_vv: VersionVector,
     tracker: Box<RichtextTracker>,
 }
+
 impl ListDiffCalculator {
     pub(crate) fn get_id_latest_pos(&self, id: ID) -> Option<crate::cursor::AbsolutePosition> {
         self.tracker.get_target_id_latest_index_at_new_version(id)
+    }
+}
+
+impl MovableListDiffCalculator {
+    pub(crate) fn get_id_latest_pos(&self, id: ID) -> Option<crate::cursor::AbsolutePosition> {
+        self.list
+            .tracker
+            .get_target_id_latest_index_at_new_version(id)
     }
 }
 
