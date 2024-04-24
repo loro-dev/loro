@@ -2001,7 +2001,7 @@ impl LoroList {
     #[wasm_bindgen(js_name = "toArray", method, skip_typescript)]
     pub fn to_array(&mut self) -> Vec<JsValueOrContainer> {
         let mut arr: Vec<JsValueOrContainer> = Vec::with_capacity(self.length());
-        self.handler.for_each(|x| {
+        self.handler.for_each(|(_, x)| {
             arr.push(match x {
                 ValueOrHandler::Value(v) => {
                     let v: JsValue = v.into();
