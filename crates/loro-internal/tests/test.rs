@@ -7,7 +7,7 @@ use loro_internal::{
     event::{Diff, EventTriggerKind},
     handler::{Handler, TextDelta, ValueOrHandler},
     version::Frontiers,
-    ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson,
+    ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
 };
 use serde_json::json;
 
@@ -901,11 +901,26 @@ fn reorder_list_element() -> LoroResult<()> {
     elem.insert("key", 3)?;
     list.insert_container(0, elem)?;
     list.delete(3, 1)?;
+
+    let elem = list.insert_container(0, TextHandler::new_detached())?;
+    elem.insert(0, "abc")?;
+    elem.mark(0, 2, "bold", true.into())?;
+    list.insert_container(0, elem)?;
+
+    let elem = list.insert_container(0, ListHandler::new_detached())?;
+    elem.insert(0, "list")?;
+    list.insert_container(0, elem)?;
+
+    // let elem = list.insert_container(2, TreeHandler::new_detached())?;
+    // let p = elem.create(None)?;
+    // elem.create(p)?;
+    // list.insert_container(0, elem)?;
+
     println!("{}", doc.get_deep_value().to_json_value());
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
-            "list": [{"key": 3}, {"key": 1}, {"key": 2}]
+            "list": [["list"], ["list"],"abc", "abc", {"key": 3}, {"key": 1}, {"key": 2}]
         })
     );
     Ok(())
