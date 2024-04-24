@@ -543,7 +543,7 @@ impl LoroList {
 
     pub fn for_each<I>(&self, f: I)
     where
-        I: FnMut(ValueOrHandler),
+        I: FnMut((usize, ValueOrHandler)),
     {
         self.handler.for_each(f)
     }
