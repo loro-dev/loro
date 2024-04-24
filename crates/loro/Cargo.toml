@@ -23,4 +23,3 @@ delta = { path = "../delta", package = "loro-delta" }
 serde_json = "1.0.87"
 
 [features]
-test_utils = ["loro-internal/test_utils"]

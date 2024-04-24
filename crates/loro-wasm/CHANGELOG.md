@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.14.5
+
+### Patch Changes
+
+- 73e3ba5: Bug Fix
+
+  #### 🐛 Bug Fixes
+
+  - _(js)_ Allow convert from undefined to LoroValue (#323)
+
+  #### 🚜 Refactor
+
+  - Refine ts type (#322)
+
 ## 0.14.4
 
 ### Patch Changes

@@ -15,7 +15,6 @@ keywords = ["crdt", "local-first"]
 [dependencies]
 loro-delta = { path = "../delta", package = "loro-delta" }
 rle = { path = "../rle", version = "0.4.0", package = "loro-rle" }
-loro-preload = { path = "../loro-preload", version = "0.4.0" }
 loro-common = { path = "../loro-common", version = "0.4.0" }
 smallvec = { version = "1.8.0", features = ["serde"] }
 postcard = "1"
