@@ -746,6 +746,7 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     );
 }
 
+#[allow(unused)]
 fn check_sync_with_tracker(actor: &mut Actor) {
     let a_doc = &mut actor.loro;
     let a_result = a_doc.get_state_deep_value();
@@ -853,7 +854,6 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     let s = tracing::span!(tracing::Level::INFO, "check synced");
     let _e = s.enter();
     check_synced(&mut sites);
-
     check_history(&mut sites[1]);
 }
 

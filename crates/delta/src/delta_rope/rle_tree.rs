@@ -4,10 +4,7 @@ use std::{
     ops::{Add, AddAssign, Sub},
 };
 
-use generic_btree::{
-    rle::{CanRemove, HasLength},
-    ArenaIndex, BTreeTrait, Child, FindResult, Query,
-};
+use generic_btree::{rle::CanRemove, ArenaIndex, BTreeTrait, Child, FindResult, Query};
 
 use crate::{
     delta_trait::{DeltaAttr, DeltaValue},

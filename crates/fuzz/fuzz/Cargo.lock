@@ -219,8 +219,8 @@ dependencies = [
  "enum_dispatch",
  "fxhash",
  "loro",
- "rand",
  "loro-internal",
+ "rand",
  "tabled",
  "tracing",
 ]
@@ -244,7 +244,9 @@ dependencies = [
 
 [[package]]
 name = "generic-btree"
-version = "0.10.3"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6f48456155f3a6d10b31a8510ebba3b3d38b01275fa17db8eb4033c1cf55846"
 dependencies = [
  "arref",
  "fxhash",

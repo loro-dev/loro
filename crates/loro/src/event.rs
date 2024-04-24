@@ -1,6 +1,6 @@
 use enum_as_inner::EnumAsInner;
 use loro_internal::container::ContainerID;
-use loro_internal::delta::{TreeDiff};
+use loro_internal::delta::TreeDiff;
 use loro_internal::event::EventTriggerKind;
 use loro_internal::handler::{TextDelta, ValueOrHandler};
 use loro_internal::FxHashMap;

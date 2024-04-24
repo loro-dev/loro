@@ -1,7 +1,4 @@
-use generic_btree::{
-    rle::{HasLength, Sliceable},
-    Cursor, LeafIndex,
-};
+use generic_btree::{Cursor, LeafIndex};
 
 use crate::{
     delta_trait::{DeltaAttr, DeltaValue},
@@ -56,7 +53,10 @@ impl<'a, V: DeltaValue, Attr: DeltaAttr> Iter<'a, V, Attr> {
                 }
             } else {
                 match current {
-                    DeltaItem::Retain { len: retain, attr: _ } => {
+                    DeltaItem::Retain {
+                        len: retain,
+                        attr: _,
+                    } => {
                         *retain -= len;
                     }
                     DeltaItem::Replace {

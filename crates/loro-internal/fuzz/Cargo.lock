@@ -72,12 +72,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
 
 [[package]]
-name = "bytes"
-version = "1.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89b2fd2a0dcf38d7971e2194b6b6eebab45ae01067456a7fd93d5547a61b70be"
-
-[[package]]
 name = "cc"
 version = "1.0.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -400,7 +394,6 @@ dependencies = [
  "leb128",
  "loro-common",
  "loro-delta",
- "loro-preload",
  "loro-rle",
  "md5",
  "num",
@@ -424,16 +417,6 @@ version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
  "loro-internal",
-]
-
-[[package]]
-name = "loro-preload"
-version = "0.4.0"
-dependencies = [
- "bytes",
- "loro-common",
- "serde",
- "serde_columnar",
 ]
 
 [[package]]

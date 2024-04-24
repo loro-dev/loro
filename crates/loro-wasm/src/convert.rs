@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
-use loro_internal::delta::{ResolvedMapDelta};
+use loro_internal::delta::ResolvedMapDelta;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::event::Diff;
 use loro_internal::handler::{Handler, ValueOrHandler};
