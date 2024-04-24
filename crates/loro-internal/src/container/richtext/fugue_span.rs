@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use generic_btree::rle::{HasLength, Mergeable, Sliceable};
+use generic_btree::rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert};
 use loro_common::{CompactId, Counter, HasId, IdFull, IdSpan, Lamport, ID};
 use serde::{Deserialize, Serialize};
 
@@ -294,6 +294,21 @@ impl Mergeable for FugueSpan {
         self.real_id = left.real_id;
         self.origin_left = left.origin_left;
         self.content.merge_left(&left.content);
+    }
+}
+
+impl TryInsert for FugueSpan {
+    fn try_insert(&mut self, _pos: usize, elem: Self) -> Result<(), Self>
+    where
+        Self: Sized,
+    {
+        Err(elem)
+    }
+}
+
+impl CanRemove for FugueSpan {
+    fn can_remove(&self) -> bool {
+        self.content.len() == 0
     }
 }
 

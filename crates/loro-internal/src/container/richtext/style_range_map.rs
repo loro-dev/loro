@@ -10,7 +10,7 @@ use std::{
 
 use fxhash::FxHashMap;
 use generic_btree::{
-    rle::{HasLength, Mergeable, Sliceable},
+    rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, ElemSlice, LengthFinder, UseLengthFinder,
 };
 
@@ -482,6 +482,26 @@ impl Sliceable for Elem {
             styles: self.styles.clone(),
             len,
         }
+    }
+}
+
+impl TryInsert for Elem {
+    fn try_insert(&mut self, _pos: usize, elem: Self) -> Result<(), Self>
+    where
+        Self: Sized,
+    {
+        if self.styles == elem.styles {
+            self.len += elem.len;
+            Ok(())
+        } else {
+            Err(elem)
+        }
+    }
+}
+
+impl CanRemove for Elem {
+    fn can_remove(&self) -> bool {
+        self.len == 0
     }
 }
 

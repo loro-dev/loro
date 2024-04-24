@@ -4,6 +4,7 @@ use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
 use loro::{ContainerType, Frontiers};
 use tabled::TableIteratorExt;
+use tracing::info_span;
 
 use crate::array_mut_ref;
 
@@ -135,25 +136,29 @@ impl CRDTFuzzer {
     fn check_equal(&mut self) {
         for i in 0..self.site_num() - 1 {
             for j in i + 1..self.site_num() {
-                debug_log::group!("checking {} with {}", i, j);
+                let s = info_span!("checking", "{} with {}", i, j);
+                let _g = s.enter();
                 let (a, b) = array_mut_ref!(&mut self.actors, [i, j]);
                 let a_doc = &mut a.loro;
                 let b_doc = &mut b.loro;
                 a_doc.attach();
                 b_doc.attach();
                 if (i + j) % 2 == 0 {
-                    debug_log::group!("Updates {} to {}", j, i);
-                    a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
+                    info_span!("Update", "from" = j, "to" = i).in_scope(|| {
+                        a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
+                    });
 
-                    debug_log::group!("Updates {} to {}", i, j);
-                    b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
+                    info_span!("Update", "from" = i, "to" = j).in_scope(|| {
+                        b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
+                    });
                 } else {
-                    debug_log::group!("Snapshot {} to {}", j, i);
-                    a_doc.import(&b_doc.export_snapshot()).unwrap();
-
-                    debug_log::group!("Snapshot {} to {}", i, j);
-                    let s = a_doc.export_snapshot();
-                    b_doc.import(&s).unwrap();
+                    info_span!("Snapshot", "from" = j, "to" = i).in_scope(|| {
+                        a_doc.import(&b_doc.export_snapshot()).unwrap();
+                    });
+                    info_span!("Snapshot", "from" = i, "to" = j).in_scope(|| {
+                        let s = a_doc.export_snapshot();
+                        b_doc.import(&s).unwrap();
+                    });
                 }
                 a.check_eq(b);
                 a.record_history();

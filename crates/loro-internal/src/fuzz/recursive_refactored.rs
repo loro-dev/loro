@@ -115,16 +115,25 @@ impl Actor {
                             let mut index = 0;
                             for item in delta.iter() {
                                 match item {
-                                    DeltaItem::Retain {
-                                        retain: len,
-                                        attributes: _,
-                                    } => {
+                                    loro_delta::DeltaItem::Retain { len, attr: _ } => {
                                         index += len;
                                     }
-                                    DeltaItem::Insert {
-                                        insert: value,
-                                        attributes: _,
+                                    loro_delta::DeltaItem::Replace {
+                                        value,
+                                        attr: _,
+                                        delete,
                                     } => {
+                                        let utf8_end = if *delete > 0 {
+                                            if cfg!(feature = "wasm") {
+                                                utf16_to_utf8_index(&text, index + *delete).unwrap()
+                                            } else {
+                                                unicode_to_utf8_index(&text, index + *delete)
+                                                    .unwrap()
+                                            }
+                                        } else {
+                                            0
+                                        };
+
                                         let utf8_index = if cfg!(feature = "wasm") {
                                             let ans = utf16_to_utf8_index(&text, index).unwrap();
                                             index += value.len_utf16();
@@ -134,21 +143,12 @@ impl Actor {
                                             index += value.len_unicode();
                                             ans
                                         };
-                                        text.insert_str(utf8_index, value.as_str());
-                                    }
-                                    DeltaItem::Delete { delete: len, .. } => {
-                                        let utf8_index = if cfg!(feature = "wasm") {
-                                            utf16_to_utf8_index(&text, index).unwrap()
-                                        } else {
-                                            unicode_to_utf8_index(&text, index).unwrap()
-                                        };
 
-                                        let utf8_end = if cfg!(feature = "wasm") {
-                                            utf16_to_utf8_index(&text, index + *len).unwrap()
-                                        } else {
-                                            unicode_to_utf8_index(&text, index + *len).unwrap()
-                                        };
-                                        text.drain(utf8_index..utf8_end);
+                                        if *delete > 0 {
+                                            text.drain(utf8_index..utf8_end);
+                                        }
+
+                                        text.insert_str(utf8_index, value.as_str());
                                     }
                                 }
                             }
@@ -207,17 +207,13 @@ impl Actor {
                         let mut index = 0;
                         for item in delta.iter() {
                             match item {
-                                DeltaItem::Retain {
-                                    retain: len,
-                                    attributes: _,
+                                loro_delta::DeltaItem::Replace {
+                                    value,
+                                    attr: _,
+                                    delete,
                                 } => {
-                                    index += len;
-                                }
-                                DeltaItem::Insert {
-                                    insert: value,
-                                    attributes: _,
-                                } => {
-                                    for v in value {
+                                    list.drain(index..index + *delete);
+                                    for v in value.iter() {
                                         let value = match v {
                                             ValueOrHandler::Handler(c) => {
                                                 let id =
@@ -230,8 +226,8 @@ impl Actor {
                                         index += 1;
                                     }
                                 }
-                                DeltaItem::Delete { delete: len, .. } => {
-                                    list.drain(index..index + *len);
+                                loro_delta::DeltaItem::Retain { len, attr: _ } => {
+                                    index += len;
                                 }
                             }
                         }
@@ -750,6 +746,13 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     );
 }
 
+#[allow(unused)]
+fn check_sync_with_tracker(actor: &mut Actor) {
+    let a_doc = &mut actor.loro;
+    let a_result = a_doc.get_state_deep_value();
+    assert_value_eq(&a_result, &actor.value_tracker.lock().unwrap());
+}
+
 fn check_synced(sites: &mut [Actor]) {
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
@@ -851,7 +854,6 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     let s = tracing::span!(tracing::Level::INFO, "check synced");
     let _e = s.enter();
     check_synced(&mut sites);
-
     check_history(&mut sites[1]);
 }
 

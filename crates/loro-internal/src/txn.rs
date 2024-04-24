@@ -8,6 +8,7 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, IdLp, LoroResult};
+use loro_delta::DeltaRopeBuilder;
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
 
@@ -20,15 +21,15 @@ use crate::{
         IntoContainerId,
     },
     delta::{
-        Delta, ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem,
+        ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem,
     },
-    event::Diff,
+    event::{Diff, TextDiff},
     handler::{Handler, ValueOrHandler},
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
     version::Frontiers,
-    InternalString, LoroError, LoroValue,
+    InternalString, LoroError, LoroValue, StringSlice,
 };
 
 use super::{
@@ -535,23 +536,26 @@ fn change_to_diff(
                             value: style.data,
                         },
                     );
-                    let diff = Delta::new()
-                        .retain(start as usize)
-                        .retain_with_meta((end - start) as usize, meta);
+                    let diff: TextDiff = DeltaRopeBuilder::new()
+                        .retain(start as usize, Default::default())
+                        .retain((end - start) as usize, meta)
+                        .build();
                     ans.push(TxnContainerDiff {
                         idx: op.container,
                         diff: Diff::Text(diff),
                     });
                 }
                 EventHint::InsertText { styles, pos, .. } => {
-                    let mut delta = Delta::new().retain(pos as usize);
+                    let mut delta: TextDiff = DeltaRopeBuilder::new()
+                        .retain(pos as usize, Default::default())
+                        .build();
                     for op in ops.iter() {
                         let InnerListOp::InsertText { slice, .. } = op.content.as_list().unwrap()
                         else {
                             unreachable!()
                         };
 
-                        delta = delta.insert_with_meta(slice.clone(), styles.clone());
+                        delta.push_insert(StringSlice::new(slice.clone()), styles.clone());
                     }
                     ans.push(TxnContainerDiff {
                         idx: op.container,
@@ -566,9 +570,10 @@ fn change_to_diff(
                 } => ans.push(TxnContainerDiff {
                     idx: op.container,
                     diff: Diff::Text(
-                        Delta::new()
-                            .retain(span.start() as usize)
-                            .delete(span.len()),
+                        DeltaRopeBuilder::new()
+                            .retain(span.start() as usize, Default::default())
+                            .delete(span.len())
+                            .build(),
                     ),
                 }),
                 EventHint::InsertList { .. } => {
@@ -577,18 +582,27 @@ fn change_to_diff(
                         let values = arena
                             .get_values(range.to_range())
                             .into_iter()
-                            .map(|v| ValueOrHandler::from_value(v, arena, txn, state))
-                            .collect::<Vec<_>>();
+                            .map(|v| ValueOrHandler::from_value(v, arena, txn, state));
                         ans.push(TxnContainerDiff {
                             idx: op.container,
-                            diff: Diff::List(Delta::new().retain(*pos).insert(values)),
+                            diff: Diff::List(
+                                DeltaRopeBuilder::new()
+                                    .retain(*pos, ())
+                                    .insert_many(values, ())
+                                    .build(),
+                            ),
                         })
                     }
                 }
                 EventHint::DeleteList(s) => {
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: Diff::List(Delta::new().retain(s.start() as usize).delete(s.len())),
+                        diff: Diff::List(
+                            DeltaRopeBuilder::new()
+                                .retain(s.start() as usize, ())
+                                .delete(s.len())
+                                .build(),
+                        ),
                     });
                 }
                 EventHint::Map { key, value } => ans.push(TxnContainerDiff {
