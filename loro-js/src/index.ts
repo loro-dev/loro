@@ -315,7 +315,7 @@ declare module "loro-wasm" {
      */
     insert(pos: number, value: Exclude<T, Container>): void;
     delete(pos: number, len: number): void;
-    subscribe(txn: Loro, listener: Listener): number;
+    subscribe(listener: Listener): number;
     getAttached(): undefined | LoroList<T>;
   }
 
@@ -390,7 +390,7 @@ declare module "loro-wasm" {
      */
     insert(pos: number, value: Exclude<T, Container>): void;
     delete(pos: number, len: number): void;
-    subscribe(txn: Loro, listener: Listener): number;
+    subscribe(listener: Listener): number;
     getAttached(): undefined | LoroMovableList<T>;
   }
 
@@ -468,14 +468,14 @@ declare module "loro-wasm" {
      */
     set<Key extends keyof T>(key: Key, value: Exclude<T[Key], Container>): void;
     delete(key: string): void;
-    subscribe(txn: Loro, listener: Listener): number;
+    subscribe(listener: Listener): number;
   }
 
   interface LoroText {
     new (): LoroText;
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
-    subscribe(txn: Loro, listener: Listener): number;
+    subscribe(listener: Listener): number;
   }
 
   interface LoroTree<
@@ -487,7 +487,7 @@ declare module "loro-wasm" {
     delete(target: TreeID): void;
     has(target: TreeID): boolean;
     getNodeByID(target: TreeID): LoroTreeNode;
-    subscribe(txn: Loro, listener: Listener): number;
+    subscribe(listener: Listener): number;
   }
 
   interface LoroTreeNode<

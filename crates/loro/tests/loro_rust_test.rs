@@ -6,11 +6,38 @@ use loro::{
 };
 use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
 use serde_json::json;
-use tracing::{trace_span};
+use tracing::trace_span;
 
 #[ctor::ctor]
 fn init() {
     dev_utils::setup_test_log();
+}
+
+#[test]
+fn insert_an_inserted_movable_handler() -> Result<(), LoroError> {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("list");
+    list.insert(0, 1)?;
+    list.insert(1, 2)?;
+    list.insert(2, 3)?;
+    list.insert(3, 4)?;
+    list.insert(4, 5)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({"list": [1, 2, 3, 4, 5]})
+    );
+    let list2 = doc.get_list("list2");
+    let list3 = list2.insert_container(0, list)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({"list": [1, 2, 3, 4, 5], "list2": [[1, 2, 3, 4, 5]]})
+    );
+    list3.insert(0, 10)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({"list": [1, 2, 3, 4, 5], "list2": [[10, 1, 2, 3, 4, 5]]})
+    );
+    Ok(())
 }
 
 #[test]

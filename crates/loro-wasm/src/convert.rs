@@ -288,6 +288,6 @@ pub(crate) fn handler_to_js_value(handler: Handler, doc: Option<Arc<LoroDoc>>) -
         Handler::Map(m) => LoroMap { handler: m, doc }.into(),
         Handler::List(l) => LoroList { handler: l, doc }.into(),
         Handler::Tree(t) => LoroTree { handler: t, doc }.into(),
-        Handler::MovableList(_) => unimplemented!(),
+        Handler::MovableList(m) => LoroMovableList { handler: m, doc }.into(),
     }
 }

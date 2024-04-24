@@ -1444,13 +1444,17 @@ impl LoroText {
     /// Subscribe to the changes of the text.
     ///
     /// returns a subscription id, which can be used to unsubscribe.
-    pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let doc = loro.0.clone();
-        let ans = loro.0.subscribe(
+        let doc = self
+            .doc
+            .clone()
+            .ok_or_else(|| JsError::new("Document is not attached"))?;
+        let doc_clone = doc.clone();
+        let ans = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc);
+                call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
 
@@ -1794,13 +1798,17 @@ impl LoroMap {
     /// map.set("foo", "bar");
     /// doc.commit();
     /// ```
-    pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let doc = loro.0.clone();
-        let id = loro.0.subscribe(
+        let doc = self
+            .doc
+            .clone()
+            .ok_or_else(|| JsError::new("Document is not attached"))?;
+        let doc_clone = doc.clone();
+        let id = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc);
+                call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
 
@@ -2072,13 +2080,17 @@ impl LoroList {
     /// list.insert(0, 100);
     /// doc.commit();
     /// ```
-    pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let doc = loro.0.clone();
-        let ans = loro.0.subscribe(
+        let doc = self
+            .doc
+            .clone()
+            .ok_or_else(|| JsError::new("Document is not attached"))?;
+        let doc_clone = doc.clone();
+        let ans = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc);
+                call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
         Ok(ans.into_u32())
@@ -2386,13 +2398,17 @@ impl LoroMovableList {
     /// list.insert(0, 100);
     /// doc.commit();
     /// ```
-    pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let doc = loro.0.clone();
-        let ans = loro.0.subscribe(
+        let loro = self
+            .doc
+            .as_ref()
+            .ok_or_else(|| JsError::new("Document is not attached"))?;
+        let doc_clone = loro.clone();
+        let ans = loro.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc);
+                call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
         Ok(ans.into_u32())
@@ -2872,13 +2888,17 @@ impl LoroTree {
     /// const node = root.createNode();
     /// doc.commit();
     /// ```
-    pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let doc = loro.0.clone();
-        let ans = loro.0.subscribe(
+        let doc = self
+            .doc
+            .clone()
+            .ok_or_else(|| JsError::new("Document is not attached"))?;
+        let doc_clone = doc.clone();
+        let ans = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc);
+                call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
         Ok(ans.into_u32())

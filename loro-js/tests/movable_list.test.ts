@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Delta, Loro, TextDiff } from "../src";
+import { Delta, ListDiff, Loro, TextDiff } from "../src";
 import {
   Cursor,
   LoroList,
@@ -117,5 +117,74 @@ describe("movable list", () => {
     list.move(0, 2);
     // change on list should not affect blist
     expect(blist.toJson()).toEqual([["b", "a", "c"]]);
+  });
+
+  it("length should be correct when there are concurrent move", () => {
+    const docA = new Loro();
+    const list = docA.getMovableList("list");
+    list.push("a");
+    list.push("b");
+    list.push("c");
+    const docB = new Loro();
+    const listB = docB.getMovableList("list");
+    docB.import(docA.exportFrom());
+    listB.move(0, 1);
+    list.move(0, 1);
+    docB.import(docA.exportFrom());
+    expect(listB.toJson()).toEqual(["b", "a", "c"]);
+    expect(listB.length).toBe(3);
+  });
+
+  it("concurrent set the one with larger peer id win", () => {
+    const docA = new Loro();
+    docA.setPeerId(0);
+    const listA = docA.getMovableList("list");
+    listA.push("a");
+    listA.push("b");
+    listA.push("c");
+    const docB = new Loro();
+    docB.setPeerId(1);
+    const listB = docB.getMovableList("list");
+    docB.import(docA.exportFrom());
+    listA.set(1, "fromA");
+    listB.set(1, "fromB");
+    docB.import(docA.exportFrom());
+    docA.import(docB.exportFrom());
+    expect(listA.toJson()).toEqual(["a", "fromB", "c"]);
+    expect(listA.length).toBe(3);
+    expect(listB.toJson()).toEqual(["a", "fromB", "c"]);
+    expect(listB.length).toBe(3);
+  });
+
+  it("can be subscribe", async () => {
+    const doc = new Loro();
+    const list = doc.getMovableList("list");
+    list.push("a");
+    list.push("b");
+    list.push("c");
+    let called = false;
+    const id = list.subscribe((event) => {
+      expect(event.by).toBe("local");
+      for (const e of event.events) {
+        expect(e.target).toBe(list.id);
+        if (e.diff.type === "list") {
+          expect(e.diff).toStrictEqual(
+            {
+              "type": "list",
+              "diff": [{ insert: ["a", "b", "c"] }],
+            } as ListDiff,
+          );
+        } else {
+          throw new Error("unknown diff type");
+        }
+      }
+
+      called = true;
+    });
+    await new Promise((r) => setTimeout(r, 1));
+    expect(called).toBeFalsy();
+    doc.commit();
+    await new Promise((r) => setTimeout(r, 1));
+    expect(called).toBeTruthy();
   });
 });

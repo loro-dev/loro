@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   Delta,
   getType,
@@ -147,7 +147,7 @@ describe("event", () => {
       const loro = new Loro();
       const text = loro.getText("text");
       let ran = 0;
-      const sub = text.subscribe(loro, (event) => {
+      const sub = text.subscribe((event) => {
         if (!ran) {
           expect((event.events[0].diff as any).diff).toStrictEqual([
             { insert: "123" },
@@ -182,7 +182,7 @@ describe("event", () => {
       const loro = new Loro();
       const map = loro.getMap("map");
       let times = 0;
-      const sub = map.subscribe(loro, (event) => {
+      const sub = map.subscribe((event) => {
         times += 1;
       });
 
@@ -211,7 +211,7 @@ describe("event", () => {
       const loro = new Loro();
       const list = loro.getList("list");
       let times = 0;
-      const sub = list.subscribe(loro, (_) => {
+      const sub = list.subscribe((event) => {
         times += 1;
       });
 
@@ -239,7 +239,7 @@ describe("event", () => {
       const loro = new Loro();
       const text = loro.getText("text");
       let string = "";
-      text.subscribe(loro, (event) => {
+      text.subscribe((event) => {
         for (const containerDiff of event.events) {
           const diff = containerDiff.diff;
           expect(diff.type).toBe("text");

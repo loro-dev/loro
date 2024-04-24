@@ -619,7 +619,21 @@ impl HandlerTrait for MovableListHandler {
                 l.attached = list.attached_handler().cloned();
                 Ok(list)
             }
-            MaybeDetached::Attached(_a) => unreachable!(),
+            MaybeDetached::Attached(a) => {
+                let new_inner = create_handler(a, self_id);
+                let ans = new_inner.into_movable_list().unwrap();
+
+                for (i, v) in self.get_value().into_list().unwrap().iter().enumerate() {
+                    if let LoroValue::Container(id) = v {
+                        ans.insert_container_with_txn(txn, i, create_handler(a, id.clone()))
+                            .unwrap();
+                    } else {
+                        ans.insert_with_txn(txn, i, v.clone()).unwrap();
+                    }
+                }
+
+                Ok(ans)
+            }
         }
     }
 
