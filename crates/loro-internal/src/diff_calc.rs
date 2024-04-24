@@ -57,6 +57,7 @@ impl DiffCalculator {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn get_calc(&self, container: ContainerIdx) -> Option<&ContainerDiffCalculator> {
         self.calculators.get(&container).map(|(_, c)| c)
     }

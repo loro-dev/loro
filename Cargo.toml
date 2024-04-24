@@ -6,10 +6,10 @@ members = [
     "crates/rle",
     "crates/loro-common",
     "crates/loro-internal",
-    "crates/loro-preload",
     "crates/loro-wasm",
     "crates/fuzz",
     "crates/dev-utils",
+    "crates/delta",
 ]
 resolver = "2"
 

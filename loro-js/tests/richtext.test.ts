@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Delta, Loro, TextDiff } from "../src";
-import { Cursor, OpId, setDebug } from "loro-wasm";
+import { Cursor, OpId, PeerID, setDebug } from "loro-wasm";
 
 describe("richtext", () => {
   it("mark", () => {
@@ -266,5 +266,15 @@ describe("richtext", () => {
       expect(ans.update!.side()).toBe(-1);
       expect(ans.update?.containerId()).toBe("cid:root-text:Text");
     }
+  });
+
+  it("Styles should not affect cursor pos", () => {
+    const doc = new Loro();
+    const text = doc.getText("text");
+    text.insert(0, "Hello");
+    const pos3 = text.getCursor(3);
+    text.mark({ start: 0, end: 2 }, "bold", true);
+    const ans = doc.getCursorPos(pos3!);
+    expect(ans.offset).toBe(3);
   });
 });

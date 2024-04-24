@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
 use tracing::{debug, instrument, trace_span, warn};
@@ -10,14 +11,14 @@ use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue,
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, list::list_op::ListOp},
-    delta::{Delta, DeltaItem},
+    delta::DeltaItem,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff, ListDeltaMeta},
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp},
     state::movable_list_state::inner::PushElemInfo,
     txn::Transaction,
-    ApplyDiff, DocState,
+    ApplyDiff, DocState, ListDiff,
 };
 
 use self::{
@@ -67,7 +68,7 @@ mod list_item_tree {
     };
 
     use generic_btree::{
-        rle::{HasLength, Mergeable, Sliceable},
+        rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
         BTreeTrait,
     };
 
@@ -99,6 +100,21 @@ mod list_item_tree {
         fn _slice(&self, range: std::ops::Range<usize>) -> Self {
             assert_eq!(range.len(), 1);
             self.clone()
+        }
+    }
+
+    impl CanRemove for ListItem {
+        fn can_remove(&self) -> bool {
+            false
+        }
+    }
+
+    impl TryInsert for ListItem {
+        fn try_insert(&mut self, pos: usize, elem: Self) -> Result<(), Self>
+        where
+            Self: Sized,
+        {
+            Err(elem)
         }
     }
 
@@ -143,6 +159,12 @@ mod list_item_tree {
     impl Sum for Cache {
         fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
             iter.fold(Self::default(), |acc, x| acc + x)
+        }
+    }
+
+    impl CanRemove for Cache {
+        fn can_remove(&self) -> bool {
+            self.include_dead_len == 0
         }
     }
 
@@ -936,7 +958,7 @@ impl ContainerState for MovableListState {
         let _e = s.enter();
         debug!("InternalDiff for Movable {:#?}", &diff);
 
-        let mut event: Delta<Vec<ValueOrHandler>, ListDeltaMeta> = Delta::new();
+        let mut event: ListDiff = DeltaRope::new();
         let mut maybe_moved: FxHashMap<CompactIdLp, (usize, LoroValue)> = FxHashMap::default();
 
         {
@@ -961,10 +983,11 @@ impl ContainerState for MovableListState {
                         let user_index_end = self
                             .convert_index(index + delete, IndexType::ForOp, IndexType::ForUser)
                             .unwrap();
-                        event = event.compose(
-                            Delta::new()
-                                .retain(user_index)
-                                .delete(user_index_end - user_index),
+                        event.compose(
+                            &DeltaRopeBuilder::new()
+                                .retain(user_index, Default::default())
+                                .delete(user_index_end - user_index)
+                                .build(),
                         );
                         self.inner.list_drain(index..index + delete, |id, elem| {
                             maybe_moved.insert(id, (user_index, elem.value.clone()));
@@ -1029,11 +1052,17 @@ impl ContainerState for MovableListState {
                             self.inner.update_value(elem_id, value.clone(), value_id);
                             let index = self.get_index_of_elem(elem_id);
                             if let Some(index) = index {
-                                event = event.compose(
-                                    Delta::new().retain(index).delete(1).insert_with_meta(
-                                        vec![ValueOrHandler::from_value(value, arena, txn, state)],
-                                        ListDeltaMeta { from_move: false },
-                                    ),
+                                event.compose(
+                                    &DeltaRopeBuilder::new()
+                                        .retain(index, Default::default())
+                                        .delete(1)
+                                        .insert(
+                                            ArrayVec::from([ValueOrHandler::from_value(
+                                                value, arena, txn, state,
+                                            )]),
+                                            ListDeltaMeta { from_move: false },
+                                        )
+                                        .build(),
                                 )
                             }
                         }
@@ -1053,17 +1082,27 @@ impl ContainerState for MovableListState {
                                 } else {
                                     false
                                 };
-                                let new_delta = Delta::new().retain(new_index).insert_with_meta(
-                                    vec![ValueOrHandler::from_value(new_value, arena, txn, state)],
-                                    ListDeltaMeta {
-                                        from_move: (result.delete.is_some() && !value_updated)
-                                            || from_delete,
-                                    },
-                                );
-                                event = event.compose(new_delta);
+                                let new_delta: ListDiff = DeltaRopeBuilder::new()
+                                    .retain(new_index, Default::default())
+                                    .insert(
+                                        ArrayVec::from([ValueOrHandler::from_value(
+                                            new_value, arena, txn, state,
+                                        )]),
+                                        ListDeltaMeta {
+                                            from_move: (result.delete.is_some() && !value_updated)
+                                                || from_delete,
+                                        },
+                                    )
+                                    .build();
+                                event.compose(&new_delta);
                             }
                             if let Some(del_index) = result.delete {
-                                event = event.compose(Delta::new().retain(del_index).delete(1));
+                                event.compose(
+                                    &DeltaRopeBuilder::new()
+                                        .retain(del_index, Default::default())
+                                        .delete(1)
+                                        .build(),
+                                );
                             }
                             if !result.activate_new_list_item {
                                 // not matched list item found, remove directly
@@ -1085,16 +1124,28 @@ impl ContainerState for MovableListState {
                             } else {
                                 false
                             };
-                            event = event.compose(Delta::new().retain(index).insert_with_meta(
-                                vec![ValueOrHandler::from_value(value, arena, txn, state)],
-                                ListDeltaMeta {
-                                    from_move: (result.delete.is_some() && !value_updated)
-                                        || from_delete,
-                                },
-                            ))
+                            event.compose(
+                                &DeltaRopeBuilder::new()
+                                    .retain(index, Default::default())
+                                    .insert(
+                                        ArrayVec::from([ValueOrHandler::from_value(
+                                            value, arena, txn, state,
+                                        )]),
+                                        ListDeltaMeta {
+                                            from_move: (result.delete.is_some() && !value_updated)
+                                                || from_delete,
+                                        },
+                                    )
+                                    .build(),
+                            )
                         }
                         if let Some(index) = result.delete {
-                            event = event.compose(Delta::new().retain(index).delete(1));
+                            event.compose(
+                                &DeltaRopeBuilder::new()
+                                    .retain(index, Default::default())
+                                    .delete(1)
+                                    .build(),
+                            );
                         }
                         if !result.activate_new_list_item {
                             // not matched list item found, remove directly
@@ -1120,6 +1171,7 @@ impl ContainerState for MovableListState {
             self.inner.check_consistency();
             let start_value = start_value.unwrap();
             let mut end_value = start_value.clone();
+            debug!("start_value = {:#?} \nevent = {:#?}", &start_value, &event);
             end_value.apply_diff_shallow(&[Diff::List(event.clone())]);
             let cur_value = self.get_value();
             assert_eq!(
@@ -1209,12 +1261,14 @@ impl ContainerState for MovableListState {
         state: &Weak<Mutex<DocState>>,
     ) -> Diff {
         Diff::List(
-            Delta::new().insert(
-                self.to_vec()
-                    .into_iter()
-                    .map(|v| ValueOrHandler::from_value(v, arena, txn, state))
-                    .collect::<Vec<_>>(),
-            ),
+            DeltaRopeBuilder::new()
+                .insert_many(
+                    self.to_vec()
+                        .into_iter()
+                        .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+                    Default::default(),
+                )
+                .build(),
         )
     }
 

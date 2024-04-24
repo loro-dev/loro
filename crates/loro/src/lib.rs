@@ -26,6 +26,7 @@ use tracing::info;
 
 pub mod event;
 
+pub use loro_internal::awareness;
 pub use loro_internal::configure::Configure;
 pub use loro_internal::configure::StyleConfigMap;
 pub use loro_internal::container::richtext::ExpandType;
@@ -625,7 +626,7 @@ impl LoroList {
     ///
     /// ```
     /// use loro::LoroDoc;
-    /// use loro_internal::stable_pos::Side;
+    /// use loro_internal::cursor::Side;
     ///
     /// let doc = LoroDoc::new();
     /// let list = doc.get_list("list");
@@ -1188,9 +1189,11 @@ impl LoroTree {
         self.handler.get_deep_value()
     }
 
-    #[cfg(feature = "test_utils")]
-    pub fn next_tree_id(&self) -> TreeID {
-        self.handler.next_tree_id()
+    // This method is used for testing only.
+    #[doc(hidden)]
+    #[allow(non_snake_case)]
+    pub fn __internal__next_tree_id(&self) -> TreeID {
+        self.handler.__internal__next_tree_id()
     }
 }
 

@@ -9,7 +9,7 @@
 pub mod arena;
 pub mod diff_calc;
 pub mod handler;
-pub use event::{ContainerDiff, DiffEvent, DocDiff};
+pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem, ListDiffItem};
 pub use fxhash::FxHashMap;
 pub use handler::{
     BasicHandler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextHandler,
@@ -18,6 +18,7 @@ pub use handler::{
 pub use loro::LoroDoc;
 pub use oplog::OpLog;
 pub use state::DocState;
+pub mod awareness;
 pub mod cursor;
 pub mod loro;
 pub mod obs;
@@ -44,6 +45,7 @@ mod utils;
 pub use utils::string_slice::StringSlice;
 
 pub mod delta;
+pub use loro_delta;
 pub mod event;
 
 pub use error::{LoroError, LoroResult};
@@ -58,5 +60,7 @@ pub(crate) use loro_common::InternalString;
 
 pub use container::ContainerType;
 pub use loro_common::{loro_value, to_value};
+#[cfg(feature = "wasm")]
+pub use value::wasm;
 pub use value::{ApplyDiff, LoroValue, ToJson};
 pub use version::VersionVector;

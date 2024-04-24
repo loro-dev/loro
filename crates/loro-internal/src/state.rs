@@ -7,19 +7,22 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
+use loro_delta::DeltaItem;
 use tracing::{info, instrument, trace_span};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
-    container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
+    container::{
+        idx::ContainerIdx, list::list_op::ListOp, map::MapSet, richtext::config::StyleConfigMap,
+        tree::tree_op::TreeOp, ContainerIdRaw,
+    },
     cursor::Cursor,
-    delta::DeltaItem,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
     fx_map,
     handler::ValueOrHandler,
     id::PeerID,
-    op::{Op, RawOp},
+    op::{ListSlice, Op, RawOp, RawOpContent},
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
@@ -1033,8 +1036,6 @@ impl DocState {
                 get_entries_for_state(arena, state)
             })
             .collect();
-        tracing::trace!("self_id_to_states: {:#?}", self_id_to_states);
-        tracing::trace!("other_id_to_states: {:#?}", other_id_to_states);
 
         for (id, (idx, this_value)) in self_id_to_states {
             let (_, other_value) = match other_id_to_states.remove(&id) {
@@ -1095,7 +1096,7 @@ impl DocState {
         if let Some(id) = pos.id {
             match state {
                 State::ListState(s) => s.get_index_of_id(id),
-                State::RichtextState(s) => s.get_index_of_id(id),
+                State::RichtextState(s) => s.get_event_index_of_id(id),
                 State::MovableListState(s) => s.get_index_of_id(id),
                 State::MapState(_) | State::TreeState(_) => {
                     unreachable!()
@@ -1190,16 +1191,17 @@ fn trigger_on_new_container(state_diff: &Diff, mut listener: impl FnMut(Containe
     match state_diff {
         Diff::List(list) => {
             for delta in list.iter() {
-                if let DeltaItem::Insert {
-                    insert: _,
-                    attributes,
+                if let DeltaItem::Replace {
+                    value,
+                    attr,
+                    delete,
                 } = delta
                 {
-                    if attributes.from_move {
+                    if attr.from_move {
                         continue;
                     }
 
-                    for v in delta.as_insert().unwrap().0.iter() {
+                    for v in value.iter() {
                         if let ValueOrHandler::Handler(h) = v {
                             let idx = h.container_idx();
                             listener(idx);

@@ -1,7 +1,7 @@
 use append_only_bytes::BytesSlice;
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{
-    rle::{HasLength, Mergeable, Sliceable},
+    rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, Cursor,
 };
 use loro_common::{Counter, IdFull, IdLpSpan, IdSpan, Lamport, LoroValue, ID};
@@ -553,6 +553,21 @@ impl Sliceable for RichtextStateChunk {
     }
 }
 
+impl TryInsert for RichtextStateChunk {
+    fn try_insert(&mut self, _pos: usize, elem: Self) -> Result<(), Self>
+    where
+        Self: Sized,
+    {
+        Err(elem)
+    }
+}
+
+impl CanRemove for RichtextStateChunk {
+    fn can_remove(&self) -> bool {
+        self.rle_len() == 0
+    }
+}
+
 pub(crate) fn unicode_to_utf8_index(s: &str, unicode_index: usize) -> Option<usize> {
     let mut current_unicode_index = 0;
     for (byte_index, _) in s.char_indices() {
@@ -717,8 +732,15 @@ impl Sub for PosCache {
     }
 }
 
+impl CanRemove for PosCache {
+    fn can_remove(&self) -> bool {
+        self.bytes == 0
+    }
+}
+
 pub(crate) struct RichtextTreeTrait;
 
+#[derive(Debug)]
 pub(crate) struct EntityRangeInfo {
     pub id_start: ID,
     pub entity_start: usize,
@@ -1497,7 +1519,7 @@ impl RichtextState {
 
         // Find the start and the end of the range, and entity index of left cursor
         let (left, right, mut entity_index) = if pos == 0 {
-            let left = self.tree.start_cursor();
+            let left = self.tree.start_cursor().unwrap();
             let mut right = left;
             let mut elem = self.tree.get_elem(right.leaf).unwrap();
             let entity_index = 0;
@@ -1537,7 +1559,7 @@ impl RichtextState {
 
             match self.tree.next_elem(q.cursor) {
                 // If next is None, we know the range is empty, return directly
-                None => return (Some(self.tree.end_cursor()), entity_index),
+                None => return (self.tree.end_cursor(), entity_index),
                 Some(x) => {
                     assert_eq!(right.offset, elem.rle_len());
                     right = x;
@@ -1595,7 +1617,7 @@ impl RichtextState {
 
             iter = match self.tree.next_elem(iter) {
                 Some(x) => x,
-                None => self.tree.end_cursor(),
+                None => self.tree.end_cursor().unwrap(),
             };
             entity_index += 1;
         }

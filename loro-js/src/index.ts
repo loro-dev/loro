@@ -12,6 +12,7 @@ import {
   TreeID,
   Value,
 } from "loro-wasm";
+export { Awareness } from "./awareness";
 
 export type Frontiers = OpId[];
 
@@ -186,7 +187,7 @@ declare module "loro-wasm" {
      * const map = doc.getMap("map");
      * ```
      */
-    getMap<Key extends keyof T>(
+    getMap<Key extends (keyof T) | ContainerID>(
       name: Key,
     ): T[Key] extends LoroMap ? T[Key] : LoroMap;
     /**
@@ -203,7 +204,7 @@ declare module "loro-wasm" {
      * const list = doc.getList("list");
      * ```
      */
-    getList<Key extends keyof T>(
+    getList<Key extends (keyof T) | ContainerID>(
       name: Key,
     ): T[Key] extends LoroList ? T[Key] : LoroList;
     /**
@@ -220,7 +221,7 @@ declare module "loro-wasm" {
      *  const tree = doc.getTree("tree");
      *  ```
      */
-    getTree<Key extends keyof T>(
+    getTree<Key extends (keyof T) | ContainerID>(
       name: Key,
     ): T[Key] extends LoroTree ? T[Key] : LoroTree;
     getText(key: string | ContainerID): LoroText;
@@ -409,6 +410,16 @@ declare module "loro-wasm" {
     moveTo(parent: LoroTreeNode<T>): void;
     parent(): LoroTreeNode<T> | undefined;
     children(): Array<LoroTreeNode<T>>;
+  }
+
+  interface AwarenessWasm<
+    T extends Value = Value,
+  > {
+    getState(peer: PeerID): T | undefined;
+    getTimestamp(peer: PeerID): number | undefined;
+    getAllStates(): Record<PeerID, T>;
+    setLocalState(value: T): void;
+    removeOutdated(): PeerID[];
   }
 }
 

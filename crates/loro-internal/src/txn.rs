@@ -8,6 +8,7 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, IdLp, LoroResult};
+use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
 
@@ -19,16 +20,14 @@ use crate::{
         richtext::Style,
         IntoContainerId,
     },
-    delta::{
-        Delta, ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem,
-    },
-    event::{Diff, ListDeltaMeta},
+    delta::{ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem},
+    event::{Diff, ListDeltaMeta, TextDiff},
     handler::{Handler, ValueOrHandler},
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
     version::Frontiers,
-    InternalString, LoroError, LoroValue,
+    InternalString, LoroError, LoroValue, StringSlice,
 };
 
 use super::{
@@ -551,23 +550,26 @@ fn change_to_diff(
                         value: style.data,
                     },
                 );
-                let diff = Delta::new()
-                    .retain(start as usize)
-                    .retain_with_meta((end - start) as usize, meta);
+                let diff = DeltaRopeBuilder::new()
+                    .retain(start as usize, Default::default())
+                    .retain((end - start) as usize, meta)
+                    .build();
                 ans.push(TxnContainerDiff {
                     idx: op.container,
                     diff: Diff::Text(diff),
                 });
             }
             EventHint::InsertText { styles, pos, .. } => {
-                let mut delta = Delta::new().retain(pos as usize);
+                let mut delta: TextDiff = DeltaRopeBuilder::new()
+                    .retain(pos as usize, Default::default())
+                    .build();
                 for op in ops.iter() {
                     let InnerListOp::InsertText { slice, .. } = op.content.as_list().unwrap()
                     else {
                         unreachable!()
                     };
 
-                    delta = delta.insert_with_meta(slice.clone(), styles.clone());
+                    delta.push_insert(slice.clone().into(), styles.clone());
                 }
                 ans.push(TxnContainerDiff {
                     idx: op.container,
@@ -582,9 +584,10 @@ fn change_to_diff(
             } => ans.push(TxnContainerDiff {
                 idx: op.container,
                 diff: Diff::Text(
-                    Delta::new()
-                        .retain(span.start() as usize)
-                        .delete(span.len()),
+                    DeltaRopeBuilder::new()
+                        .retain(span.start() as usize, Default::default())
+                        .delete(span.len())
+                        .build(),
                 ),
             }),
             EventHint::InsertList { pos, .. } => {
@@ -595,18 +598,27 @@ fn change_to_diff(
                     let values = arena
                         .get_values(range.to_range())
                         .into_iter()
-                        .map(|v| ValueOrHandler::from_value(v, arena, txn, state))
-                        .collect::<Vec<_>>();
+                        .map(|v| ValueOrHandler::from_value(v, arena, txn, state));
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: Diff::List(Delta::new().retain(pos).insert(values)),
+                        diff: Diff::List(
+                            DeltaRopeBuilder::new()
+                                .retain(pos, Default::default())
+                                .insert_many(values, Default::default())
+                                .build(),
+                        ),
                     })
                 }
             }
             EventHint::DeleteList(s) => {
                 ans.push(TxnContainerDiff {
                     idx: op.container,
-                    diff: Diff::List(Delta::new().retain(s.start() as usize).delete(s.len())),
+                    diff: Diff::List(
+                        DeltaRopeBuilder::new()
+                            .retain(s.start() as usize, Default::default())
+                            .delete(s.len())
+                            .build(),
+                    ),
                 });
             }
             EventHint::Map { key, value } => ans.push(TxnContainerDiff {
@@ -628,24 +640,38 @@ fn change_to_diff(
                 });
             }
             EventHint::Move { from, to, value } => {
+                let mut a = DeltaRopeBuilder::new()
+                    .retain(from as usize, Default::default())
+                    .delete(1)
+                    .build();
+                a.compose(
+                    &DeltaRopeBuilder::new()
+                        .retain(to as usize, Default::default())
+                        .insert(
+                            ArrayVec::from([ValueOrHandler::from_value(value, arena, txn, state)]),
+                            ListDeltaMeta { from_move: true },
+                        )
+                        .build(),
+                );
                 ans.push(TxnContainerDiff {
                     idx: op.container,
-                    diff: Diff::List(Delta::new().retain(from as usize).delete(1).compose(
-                        Delta::new().retain(to as usize).insert_with_meta(
-                            vec![ValueOrHandler::from_value(value, arena, txn, state)],
-                            ListDeltaMeta { from_move: true },
-                        ),
-                    )),
+                    diff: Diff::List(a),
                 });
             }
             EventHint::SetList { index, value } => {
                 ans.push(TxnContainerDiff {
                     idx: op.container,
                     diff: Diff::List(
-                        Delta::new()
-                            .retain(index)
+                        DeltaRopeBuilder::new()
+                            .retain(index, Default::default())
                             .delete(1)
-                            .insert(vec![ValueOrHandler::from_value(value, arena, txn, state)]),
+                            .insert(
+                                ArrayVec::from([ValueOrHandler::from_value(
+                                    value, arena, txn, state,
+                                )]),
+                                Default::default(),
+                            )
+                            .build(),
                     ),
                 });
             }

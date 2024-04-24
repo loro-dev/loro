@@ -100,8 +100,8 @@ impl Actor {
     }
 
     pub fn check_tracker(&self) {
-        info_span!("CheckTracker", peer = self.peer).in_scope(|| {
-            let loro = &self.loro;
+        let loro = &self.loro;
+        info_span!("Check tracker", "peer = {}", loro.peer_id()).in_scope(|| {
             let tracker = self.tracker.lock().unwrap();
             let loro_value = loro.get_deep_value();
             let tracker_value = tracker.to_value();

@@ -9,6 +9,7 @@ use crate::{
     },
     cursor::{Cursor, Side},
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
+    event::TextDiffItem,
     op::ListSlice,
     state::{ContainerState, IndexType, State, TreeParentId},
     txn::EventHint,
@@ -17,6 +18,7 @@ use crate::{
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
+use generic_btree::rle::HasLength;
 use loro_common::{
     ContainerID, ContainerType, Counter, IdFull, InternalString, LoroError, LoroResult,
     LoroTreeError, LoroValue, PeerID, TreeID, ID,
@@ -352,6 +354,39 @@ pub enum TextDelta {
     Delete {
         delete: usize,
     },
+}
+
+impl TextDelta {
+    pub fn from_text_diff<'a>(diff: impl Iterator<Item = &'a TextDiffItem>) -> Vec<TextDelta> {
+        let mut ans = Vec::with_capacity(diff.size_hint().0);
+        for iter in diff {
+            match iter {
+                loro_delta::DeltaItem::Retain { len, attr } => {
+                    ans.push(TextDelta::Retain {
+                        retain: *len,
+                        attributes: attr.to_option_map(),
+                    });
+                }
+                loro_delta::DeltaItem::Replace {
+                    value,
+                    attr,
+                    delete,
+                } => {
+                    if value.rle_len() > 0 {
+                        ans.push(TextDelta::Insert {
+                            insert: value.to_string(),
+                            attributes: attr.to_option_map(),
+                        });
+                    }
+                    if *delete > 0 {
+                        ans.push(TextDelta::Delete { delete: *delete });
+                    }
+                }
+            }
+        }
+
+        ans
+    }
 }
 
 impl From<&DeltaItem<StringSlice, StyleMeta>> for TextDelta {
@@ -1539,11 +1574,6 @@ impl TextHandler {
         txn: &mut Transaction,
         delta: &[TextDelta],
     ) -> LoroResult<()> {
-        trace!(
-            "apply_delta_with_txn {:#?}, self.len={}",
-            delta,
-            self.len_event()
-        );
         let mut index = 0;
         let mut marks = Vec::new();
         for d in delta {
@@ -2987,8 +3017,8 @@ impl TreeHandler {
         }
     }
 
-    #[cfg(feature = "test_utils")]
-    pub fn next_tree_id(&self) -> TreeID {
+    #[allow(non_snake_case)]
+    pub fn __internal__next_tree_id(&self) -> TreeID {
         match &self.inner {
             MaybeDetached::Detached(d) => {
                 let d = d.try_lock().unwrap();

@@ -555,7 +555,6 @@ impl Tracker {
         // TODO: PERF this can be sped up from O(n) to O(log(n)) but I'm not sure if it's worth it
         let mut index = 0;
         for span in self.rope.tree.iter() {
-            tracing::trace!("Span {:?}", span);
             let is_activated = span.is_activated_in_diff();
             let span_id = span.real_id();
             let id_span = span_id.to_span(span.rle_len());

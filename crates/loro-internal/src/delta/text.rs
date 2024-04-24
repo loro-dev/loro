@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use fxhash::FxHashMap;
 use loro_common::{InternalString, LoroValue, PeerID};
+use loro_delta::delta_trait::DeltaAttr;
 use serde::{Deserialize, Serialize};
 
 use crate::change::Lamport;
@@ -151,5 +152,24 @@ impl ToJson for StyleMeta {
 
     fn from_json(_: &str) -> Self {
         unreachable!()
+    }
+}
+
+impl DeltaAttr for StyleMeta {
+    fn compose(&mut self, other: &Self) {
+        for (key, value) in other.map.iter() {
+            match self.map.get_mut(key) {
+                Some(old_value) => {
+                    old_value.try_replace(value);
+                }
+                None => {
+                    self.map.insert(key.clone(), value.clone());
+                }
+            }
+        }
+    }
+
+    fn attr_is_empty(&self) -> bool {
+        self.is_empty()
     }
 }

@@ -842,11 +842,6 @@ impl LoroDoc {
         &self.arena
     }
 
-    #[cfg(feature = "test_utils")]
-    pub(crate) fn weak_state(&self) -> Weak<Mutex<DocState>> {
-        Arc::downgrade(&self.state)
-    }
-
     #[inline]
     pub fn len_ops(&self) -> usize {
         let oplog = self.oplog.lock().unwrap();

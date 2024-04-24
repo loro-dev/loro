@@ -1,6 +1,7 @@
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHasher64;
 use itertools::Itertools;
+use loro_delta::{array_vec::ArrayVec, delta_trait::DeltaAttr, DeltaItem, DeltaRope};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -271,6 +272,23 @@ impl Meta for ListDeltaMeta {
     fn merge(&mut self, _other: &Self) {}
 }
 
+impl DeltaAttr for ListDeltaMeta {
+    fn compose(&mut self, other: &Self) {
+        self.from_move = self.from_move || other.from_move;
+    }
+
+    fn attr_is_empty(&self) -> bool {
+        self.from_move == false
+    }
+}
+
+pub type ListDiffInsertItem = ArrayVec<ValueOrHandler, 8>;
+pub type ListDiffItem = DeltaItem<ListDiffInsertItem, ListDeltaMeta>;
+pub type ListDiff = DeltaRope<ListDiffInsertItem, ListDeltaMeta>;
+
+pub type TextDiffItem = DeltaItem<StringSlice, StyleMeta>;
+pub type TextDiff = DeltaRope<StringSlice, StyleMeta>;
+
 /// Diff is the diff between two versions of a container.
 /// It's used to describe the change of a container and the events.
 ///
@@ -283,12 +301,12 @@ impl Meta for ListDeltaMeta {
 #[non_exhaustive]
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum Diff {
-    List(Delta<Vec<ValueOrHandler>, ListDeltaMeta>),
+    List(ListDiff),
     // TODO: refactor, doesn't make much sense to use `StyleMeta` here, because sometime style
     // don't have peer and lamport info
     /// - When feature `wasm` is enabled, it should use utf16 indexes.
     /// - When feature `wasm` is disabled, it should use unicode indexes.
-    Text(Delta<StringSlice, StyleMeta>),
+    Text(TextDiff),
     Map(ResolvedMapDelta),
     Tree(TreeDiff),
 }
@@ -330,8 +348,14 @@ impl Diff {
     pub(crate) fn compose(self, diff: Diff) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {
-            (Diff::List(a), Diff::List(b)) => Ok(Diff::List(a.compose(b))),
-            (Diff::Text(a), Diff::Text(b)) => Ok(Diff::Text(a.compose(b))),
+            (Diff::List(mut a), Diff::List(b)) => {
+                a.compose(&b);
+                Ok(Diff::List(a))
+            }
+            (Diff::Text(mut a), Diff::Text(b)) => {
+                a.compose(&b);
+                Ok(Diff::Text(a))
+            }
             (Diff::Map(a), Diff::Map(b)) => Ok(Diff::Map(a.compose(b))),
 
             (Diff::Tree(a), Diff::Tree(b)) => Ok(Diff::Tree(a.compose(b))),
@@ -352,8 +376,14 @@ impl Diff {
     #[allow(unused)]
     pub(crate) fn concat(self, diff: Diff) -> Diff {
         match (self, diff) {
-            (Diff::List(a), Diff::List(b)) => Diff::List(a.compose(b)),
-            (Diff::Text(a), Diff::Text(b)) => Diff::Text(a.compose(b)),
+            (Diff::List(mut a), Diff::List(b)) => {
+                a.compose(&b);
+                Diff::List(a)
+            }
+            (Diff::Text(mut a), Diff::Text(b)) => {
+                a.compose(&b);
+                Diff::Text(a)
+            }
             (Diff::Map(a), Diff::Map(b)) => {
                 let mut a = a;
                 for (k, v) in b.updated {

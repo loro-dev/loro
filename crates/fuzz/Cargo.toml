@@ -7,8 +7,9 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-loro = { path = "../loro", features = ["test_utils"] }
 tracing = "0.1"
+loro = { path = "../loro" }
+loro-internal = { path = "../loro-internal", features = ["test_utils"] }
 arbitrary = "1"
 tabled = "0.10"
 fxhash = { workspace = true }
@@ -20,3 +21,5 @@ rand = "0.8.5"
 ctor = "0.2"
 arbtest = "^0.2.0"
 dev-utils = { path = "../dev-utils" }
+tracing-subscriber = "0.3.18"
+color-backtrace = "0.6.1"
