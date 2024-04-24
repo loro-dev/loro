@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.14.6
+
+### Patch Changes
+
+- 24cf9b9: Bug Fix
+
+  #### 🐛 Bug Fixes
+
+  - Attached container can be inserted to `Map` or `List` (#331)
+
 ## 0.14.5
 
 ### Patch Changes
