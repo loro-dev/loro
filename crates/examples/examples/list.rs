@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use examples::list::{append_n, prepend_n, random_delete, random_insert};
+use examples::list::{append_n, prepend_n, random_delete, random_insert, random_move, random_set};
 use loro::{LoroDoc, ToJson};
 use tabled::{settings::Style, Table, Tabled};
 
@@ -106,6 +106,42 @@ pub fn main() {
             for i in 0..1000 {
                 random_insert(&mut list_a, 100, i);
                 random_insert(&mut list_b, 100, i);
+                doc_a.import(&doc_b.export_from(&doc_a.oplog_vv())).unwrap();
+                doc_b.import(&doc_a.export_from(&doc_b.oplog_vv())).unwrap();
+            }
+
+            doc_a
+        }),
+        run("[Movable List] Collab Set x 100_000", || {
+            let doc_a = LoroDoc::new();
+            let mut list_a = doc_a.get_movable_list("list");
+            let doc_b = LoroDoc::new();
+            let mut list_b = doc_b.get_movable_list("list");
+            random_insert(&mut list_a, 1000, 0);
+            random_insert(&mut list_b, 1000, 0);
+            doc_a.import(&doc_b.export_from(&doc_a.oplog_vv())).unwrap();
+            doc_b.import(&doc_a.export_from(&doc_b.oplog_vv())).unwrap();
+            for i in 0..1000 {
+                random_set(&mut list_a, 100, i);
+                random_set(&mut list_b, 100, i);
+                doc_a.import(&doc_b.export_from(&doc_a.oplog_vv())).unwrap();
+                doc_b.import(&doc_a.export_from(&doc_b.oplog_vv())).unwrap();
+            }
+
+            doc_a
+        }),
+        run("[Movable List] Collab Move x 100_000", || {
+            let doc_a = LoroDoc::new();
+            let mut list_a = doc_a.get_movable_list("list");
+            let doc_b = LoroDoc::new();
+            let mut list_b = doc_b.get_movable_list("list");
+            random_insert(&mut list_a, 1000, 0);
+            random_insert(&mut list_b, 1000, 0);
+            doc_a.import(&doc_b.export_from(&doc_a.oplog_vv())).unwrap();
+            doc_b.import(&doc_a.export_from(&doc_b.oplog_vv())).unwrap();
+            for i in 0..1000 {
+                random_move(&mut list_a, 100, i);
+                random_move(&mut list_b, 100, i);
                 doc_a.import(&doc_b.export_from(&doc_a.oplog_vv())).unwrap();
                 doc_b.import(&doc_a.export_from(&doc_b.oplog_vv())).unwrap();
             }

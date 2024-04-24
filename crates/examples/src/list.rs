@@ -4,6 +4,8 @@ pub trait ListTrait {
     fn insert_num(&mut self, index: usize, value: i32);
     fn delete_num(&mut self, index: usize);
     fn length(&self) -> usize;
+    fn set_num(&mut self, index: usize, value: i32);
+    fn move_num(&mut self, a: usize, b: usize);
 }
 
 pub fn append_n(list: &mut dyn ListTrait, n: usize) {
@@ -46,6 +48,27 @@ pub fn random_delete(list: &mut dyn ListTrait, n: usize, mut seed: u64) {
     }
 }
 
+pub fn random_set(list: &mut dyn ListTrait, n: usize, mut seed: u64) {
+    for _ in 0..n {
+        let (rand, s) = lcg(seed);
+        seed = s;
+        let pos = (rand * list.length() as f64) as usize;
+        list.set_num(pos, 0);
+    }
+}
+
+pub fn random_move(list: &mut dyn ListTrait, n: usize, mut seed: u64) {
+    for _ in 0..n {
+        let (rand, s) = lcg(seed);
+        seed = s;
+        let pos_a = (rand * list.length() as f64) as usize;
+        let (rand, s) = lcg(seed);
+        seed = s;
+        let pos_b = (rand * list.length() as f64) as usize;
+        list.move_num(pos_a, pos_b);
+    }
+}
+
 impl ListTrait for LoroList {
     fn insert_num(&mut self, index: usize, value: i32) {
         self.insert(index, value).unwrap();
@@ -57,6 +80,14 @@ impl ListTrait for LoroList {
 
     fn length(&self) -> usize {
         self.len()
+    }
+
+    fn set_num(&mut self, _: usize, _: i32) {
+        unreachable!()
+    }
+
+    fn move_num(&mut self, _: usize, _: usize) {
+        unreachable!()
     }
 }
 
@@ -71,5 +102,13 @@ impl ListTrait for LoroMovableList {
 
     fn length(&self) -> usize {
         self.len()
+    }
+
+    fn set_num(&mut self, index: usize, value: i32) {
+        self.set(index, value).unwrap();
+    }
+
+    fn move_num(&mut self, a: usize, b: usize) {
+        self.mov(a, b).unwrap();
     }
 }
