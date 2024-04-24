@@ -888,3 +888,25 @@ fn empty_event() {
     doc.import(&doc.export_snapshot()).unwrap();
     assert!(!fire.load(std::sync::atomic::Ordering::Relaxed));
 }
+
+#[test]
+fn reorder_list_element() -> LoroResult<()> {
+    let doc = LoroDoc::new_auto_commit();
+    let list = doc.get_list("list");
+    list.insert_container(0, MapHandler::new_detached())?
+        .insert("key", 1)?;
+    list.insert_container(1, MapHandler::new_detached())?
+        .insert("key", 2)?;
+    let elem = list.insert_container(2, MapHandler::new_detached())?;
+    elem.insert("key", 3)?;
+    list.insert_container(0, elem)?;
+    list.delete(3, 1)?;
+    println!("{}", doc.get_deep_value().to_json_value());
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [{"key": 3}, {"key": 1}, {"key": 2}]
+        })
+    );
+    Ok(())
+}
