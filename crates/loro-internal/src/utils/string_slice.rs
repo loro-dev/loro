@@ -242,7 +242,7 @@ impl TryInsert for StringSlice {
 impl Mergeable for StringSlice {
     fn can_merge(&self, rhs: &Self) -> bool {
         match (&self.bytes, &rhs.bytes) {
-            (Variant::BytesSlice(a), Variant::BytesSlice(b)) => a.can_merge(&b),
+            (Variant::BytesSlice(a), Variant::BytesSlice(b)) => a.can_merge(b),
             (Variant::Owned(a), Variant::Owned(b)) => a.len() + b.len() <= a.capacity(),
             _ => false,
         }
@@ -250,7 +250,7 @@ impl Mergeable for StringSlice {
 
     fn merge_right(&mut self, rhs: &Self) {
         match (&mut self.bytes, &rhs.bytes) {
-            (Variant::BytesSlice(a), Variant::BytesSlice(b)) => a.merge(&b, &()),
+            (Variant::BytesSlice(a), Variant::BytesSlice(b)) => a.merge(b, &()),
             (Variant::Owned(a), Variant::Owned(b)) => a.push_str(b.as_str()),
             _ => {}
         }

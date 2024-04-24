@@ -21,7 +21,7 @@ use crate::{
         IntoContainerId,
     },
     delta::{
-        Delta, ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem,
+        ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem,
     },
     event::{Diff, TextDiff},
     handler::{Handler, ValueOrHandler},

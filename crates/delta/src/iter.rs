@@ -56,12 +56,12 @@ impl<'a, V: DeltaValue, Attr: DeltaAttr> Iter<'a, V, Attr> {
                 }
             } else {
                 match current {
-                    DeltaItem::Retain { len: retain, attr } => {
+                    DeltaItem::Retain { len: retain, attr: _ } => {
                         *retain -= len;
                     }
                     DeltaItem::Replace {
                         value,
-                        attr,
+                        attr: _,
                         delete,
                     } => {
                         if value.rle_len() > 0 {

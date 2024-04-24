@@ -115,12 +115,12 @@ impl Actor {
                             let mut index = 0;
                             for item in delta.iter() {
                                 match item {
-                                    loro_delta::DeltaItem::Retain { len, attr } => {
+                                    loro_delta::DeltaItem::Retain { len, attr: _ } => {
                                         index += len;
                                     }
                                     loro_delta::DeltaItem::Replace {
                                         value,
-                                        attr,
+                                        attr: _,
                                         delete,
                                     } => {
                                         let utf8_end = if *delete > 0 {
@@ -209,7 +209,7 @@ impl Actor {
                             match item {
                                 loro_delta::DeltaItem::Replace {
                                     value,
-                                    attr,
+                                    attr: _,
                                     delete,
                                 } => {
                                     list.drain(index..index + *delete);
@@ -226,7 +226,7 @@ impl Actor {
                                         index += 1;
                                     }
                                 }
-                                loro_delta::DeltaItem::Retain { len, attr } => {
+                                loro_delta::DeltaItem::Retain { len, attr: _ } => {
                                     index += len;
                                 }
                             }

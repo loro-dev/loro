@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
-use loro_internal::delta::{DeltaItem, ResolvedMapDelta};
+use loro_internal::delta::{ResolvedMapDelta};
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::event::Diff;
 use loro_internal::handler::{Handler, ValueOrHandler};
@@ -138,7 +138,7 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
 
 fn delta_item_to_js(item: ListDiffItem, doc: &Arc<LoroDoc>) -> (JsValue, Option<JsValue>) {
     match item {
-        loro_internal::loro_delta::DeltaItem::Retain { len, attr } => {
+        loro_internal::loro_delta::DeltaItem::Retain { len, attr: _ } => {
             let obj = Object::new();
             js_sys::Reflect::set(
                 &obj,
@@ -150,7 +150,7 @@ fn delta_item_to_js(item: ListDiffItem, doc: &Arc<LoroDoc>) -> (JsValue, Option<
         }
         loro_internal::loro_delta::DeltaItem::Replace {
             value,
-            attr,
+            attr: _,
             delete,
         } => {
             let mut a = None;

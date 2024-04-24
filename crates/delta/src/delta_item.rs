@@ -8,7 +8,7 @@ impl<V: DeltaValue, Attr> DeltaItem<V, Attr> {
             DeltaItem::Retain { len, .. } => *len,
             DeltaItem::Replace {
                 value,
-                attr,
+                attr: _,
                 delete,
             } => value.rle_len() + delete,
         }
@@ -57,12 +57,12 @@ impl<V: Mergeable, Attr: PartialEq> Mergeable for DeltaItem<V, Attr> {
                 DeltaItem::Replace {
                     value: value1,
                     attr: attr1,
-                    delete: del1,
+                    delete: _del1,
                 },
                 DeltaItem::Replace {
                     value: value2,
                     attr: attr2,
-                    delete: del2,
+                    delete: _del2,
                 },
             ) => value1.can_merge(value2) && attr1 == attr2,
             _ => false,
@@ -233,7 +233,7 @@ impl<V: DeltaValue, Attr: Clone> CanRemove for DeltaItem<V, Attr> {
             DeltaItem::Retain { len, .. } => *len == 0,
             DeltaItem::Replace {
                 value,
-                attr,
+                attr: _,
                 delete,
             } => value.rle_len() == 0 && *delete == 0,
         }

@@ -288,7 +288,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
             if let DeltaItem::Replace {
                 value,
                 attr: a,
-                delete,
+                delete: _,
             } = item
             {
                 if value.can_merge(&v) && a == &attr {
@@ -400,8 +400,8 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         let mut inserted = false;
         self.tree.update_leaf(leaf, |item| {
             if let DeltaItem::Replace {
-                value,
-                attr,
+                value: _,
+                attr: _,
                 delete,
             } = item
             {

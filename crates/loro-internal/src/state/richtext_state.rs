@@ -21,7 +21,7 @@ use crate::{
             AnchorType, RichtextState as InnerState, StyleOp, Styles,
         },
     },
-    delta::{Delta, StyleMeta, StyleMetaItem},
+    delta::{StyleMeta, StyleMetaItem},
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff, TextDiff},
     op::{Op, RawOp},

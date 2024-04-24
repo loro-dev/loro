@@ -262,12 +262,12 @@ impl ApplyDiff for LoroValue {
                     let mut index = 0;
                     for delta_item in delta.iter() {
                         match delta_item {
-                            loro_delta::DeltaItem::Retain { len, attr } => {
+                            loro_delta::DeltaItem::Retain { len, attr: _ } => {
                                 index += len;
                             }
                             loro_delta::DeltaItem::Replace {
                                 value,
-                                attr,
+                                attr: _,
                                 delete,
                             } => {
                                 s.replace_range(index..index + *delete, value.as_str());
@@ -292,11 +292,11 @@ impl ApplyDiff for LoroValue {
                                 }
                                 loro_delta::DeltaItem::Replace {
                                     value,
-                                    attr,
+                                    attr: _,
                                     delete,
                                 } => {
                                     let value_iter =
-                                        value.iter().map(|v| unresolved_to_collection(v));
+                                        value.iter().map(unresolved_to_collection);
                                     seq.splice(index..index + *delete, value_iter);
                                     index += value.len();
                                 }

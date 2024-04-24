@@ -6,7 +6,7 @@ use std::{
 
 use generic_btree::{
     rle::{CanRemove, HasLength},
-    ArenaIndex, BTreeTrait, Child, FindResult, Query, UseLengthFinder,
+    ArenaIndex, BTreeTrait, Child, FindResult, Query,
 };
 
 use crate::{
@@ -100,13 +100,13 @@ impl<V: DeltaValue + Debug, Attr: DeltaAttr + Debug> BTreeTrait for DeltaTreeTra
 
     fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
         match elem {
-            DeltaItem::Retain { len, attr } => Len {
+            DeltaItem::Retain { len, attr: _ } => Len {
                 data_len: *len as isize,
                 delta_len: *len as isize,
             },
             DeltaItem::Replace {
                 value,
-                attr,
+                attr: _,
                 delete,
             } => Len {
                 data_len: value.rle_len() as isize,

@@ -1206,7 +1206,7 @@ impl SubContainerDiffPatch {
                 for delta in list.iter() {
                     if let loro_delta::DeltaItem::Replace {
                         value: values,
-                        attr,
+                        attr: _,
                         ..
                     } = delta
                     {

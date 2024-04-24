@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use loro::{Container, ContainerID, ContainerType, LoroDoc, LoroList};
-use tracing::{debug, debug_span, trace_span};
+use tracing::{debug_span};
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
