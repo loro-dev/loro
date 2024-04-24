@@ -1,3 +1,5 @@
+use std::ops::RangeBounds;
+
 use super::*;
 use generic_btree::rle::{CanRemove, TryInsert};
 
@@ -118,7 +120,7 @@ impl<V: Mergeable, Attr: PartialEq> Mergeable for DeltaItem<V, Attr> {
     }
 }
 
-impl<V: DeltaValue, Attr: Clone + Default + Debug> Sliceable for DeltaItem<V, Attr> {
+impl<V: DeltaValue, Attr: DeltaAttr> Sliceable for DeltaItem<V, Attr> {
     fn _slice(&self, range: std::ops::Range<usize>) -> Self {
         assert!(range.end <= self.rle_len());
         match self {
@@ -154,6 +156,119 @@ impl<V: DeltaValue, Attr: Clone + Default + Debug> Sliceable for DeltaItem<V, At
                         value,
                         attr: attr.clone(),
                     }
+                }
+            }
+        }
+    }
+
+    /// slice in-place
+    #[inline(always)]
+    fn slice_(&mut self, range: impl RangeBounds<usize>) {
+        *self = self.slice(range);
+    }
+
+    #[must_use]
+    fn split(&mut self, pos: usize) -> Self {
+        match self {
+            DeltaItem::Retain { len, attr } => {
+                let right_len = *len - pos;
+                *len = pos;
+                DeltaItem::Retain {
+                    len: right_len,
+                    attr: attr.clone(),
+                }
+            }
+            DeltaItem::Replace {
+                value,
+                attr,
+                delete,
+            } => {
+                if pos < value.rle_len() {
+                    let right = value.split(pos);
+                    let right_delete = *delete;
+                    *delete = 0;
+                    DeltaItem::Replace {
+                        value: right,
+                        attr: attr.clone(),
+                        delete: right_delete,
+                    }
+                } else {
+                    let right_len = value.rle_len() + *delete - pos;
+                    let right = DeltaItem::new_delete(right_len);
+                    *delete -= right_len;
+                    right
+                }
+            }
+        }
+    }
+
+    /// Update the slice in the given range.
+    /// This method may split `self` into two or three parts.
+    /// If so, it will make `self` the leftmost part and return the next split parts.
+    ///
+    /// # Example
+    ///
+    /// If `self.rle_len() == 10`, `self.update(1..5)` will split self into three parts and update the middle part.
+    /// It returns the middle and the right part.
+    fn update_with_split(
+        &mut self,
+        range: impl RangeBounds<usize>,
+        f: impl FnOnce(&mut Self),
+    ) -> (Option<Self>, Option<Self>) {
+        let start = match range.start_bound() {
+            std::ops::Bound::Included(x) => *x,
+            std::ops::Bound::Excluded(x) => x + 1,
+            std::ops::Bound::Unbounded => 0,
+        };
+
+        let end = match range.end_bound() {
+            std::ops::Bound::Included(x) => x + 1,
+            std::ops::Bound::Excluded(x) => *x,
+            std::ops::Bound::Unbounded => self.rle_len(),
+        };
+
+        match (start == 0, end == self.rle_len()) {
+            (true, true) => {
+                f(self);
+                (None, None)
+            }
+            (true, false) => {
+                let right = self.split(end);
+                f(self);
+                if self.can_merge(&right) {
+                    self.merge_right(&right);
+                    (None, None)
+                } else {
+                    (Some(right), None)
+                }
+            }
+            (false, true) => {
+                let mut right = self.split(start);
+                f(&mut right);
+                if self.can_merge(&right) {
+                    self.merge_right(&right);
+                    (None, None)
+                } else {
+                    (Some(right), None)
+                }
+            }
+            (false, false) => {
+                let right = self.split(end);
+                let mut middle = self.split(start);
+                f(&mut middle);
+                if middle.can_merge(&right) {
+                    middle.merge_right(&right);
+                    if self.can_merge(&middle) {
+                        self.merge_right(&middle);
+                        (None, None)
+                    } else {
+                        (Some(middle), None)
+                    }
+                } else if self.can_merge(&middle) {
+                    self.merge_right(&middle);
+                    (Some(right), None)
+                } else {
+                    (Some(middle), Some(right))
                 }
             }
         }

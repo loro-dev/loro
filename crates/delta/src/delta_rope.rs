@@ -326,7 +326,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
             .insert_many_by_cursor(Some(pos.cursor), values.into_iter());
     }
 
-    fn update_range(&mut self, range: Range<usize>, attr: &Attr) {
+    fn update_attr_in_range(&mut self, range: Range<usize>, attr: &Attr) {
         if range.start == range.end || self.is_empty() {
             return;
         }

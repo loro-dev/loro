@@ -1,3 +1,5 @@
+use generic_btree::rle::HasLength;
+
 use super::*;
 
 struct DeltaReplace<'a, V, Attr> {
@@ -34,7 +36,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                         self.push_retain(index + len - self.len(), Default::default());
                     }
                     if !attr.attr_is_empty() {
-                        self.update_range(index..index + len, attr);
+                        self.update_attr_in_range(index..index + len, attr);
                     }
                     index += len;
                 }
@@ -73,13 +75,9 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
             let from = self.tree.query::<LengthFinder>(&range.start).unwrap();
             let to = self.tree.query::<LengthFinder>(&range.end).unwrap();
             if from.cursor.leaf == to.cursor.leaf {
-                self._replace_on_single_leaf(
-                    &mut should_insert,
-                    from,
-                    to,
-                    &mut left_del_len,
-                    delta_replace_item,
-                );
+                self._replace_on_single_leaf(from, to, left_del_len, delta_replace_item);
+                should_insert = false;
+                left_del_len = 0;
             } else {
                 self._replace_batch_leaves(from, to, &mut left_del_len);
             }
@@ -155,17 +153,15 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
 
     fn _replace_on_single_leaf(
         &mut self,
-        should_insert: &mut bool,
         from: generic_btree::QueryResult,
         to: generic_btree::QueryResult,
-        left_del_len: &mut usize,
+        left_del_len: usize,
         DeltaReplace {
             value: this_value,
             attr: this_attr,
             delete: _,
         }: DeltaReplace<V, Attr>,
     ) {
-        *should_insert = false;
         self.tree.update_leaf(from.cursor.leaf, |item| match item {
             DeltaItem::Retain {
                 len: retain_len, ..
@@ -175,75 +171,41 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                 debug_assert!(end <= *retain_len);
                 let (l, r) = item.update_with_split(start..end, |item| {
                     *item = DeltaItem::Replace {
-                        delete: *left_del_len,
+                        delete: left_del_len,
                         value: this_value.clone(),
                         attr: this_attr.clone(),
                     };
                 });
 
-                *left_del_len = 0;
                 (true, l, r)
             }
-            DeltaItem::Replace {
-                value,
-                attr,
-                delete,
-            } => {
+            DeltaItem::Replace { value, delete, .. } => {
                 let start = from.cursor.offset;
                 let end = to.cursor.offset;
                 let value_len = value.rle_len();
+                let value_start = start.min(value_len);
+                let value_end = value_len.min(end);
                 {
                     // We need to remove the part of value that is between start and end.
                     // If the range is out of the bounds of the value, we record extra deletions
                     // on the `delete` field of this item.
-                    *left_del_len = left_del_len.saturating_sub(value_len.min(end) - start);
-                    *delete += *left_del_len;
-                    *left_del_len = 0;
+                    let left = left_del_len.saturating_sub(value_end - value_start);
+                    *delete += left;
                 }
 
-                let mut right = value.split(start);
-                right.slice_(value_len.min(end) - start..);
-                if this_value.rle_len() > 0 {
-                    if attr != this_attr || !value.can_merge(this_value) {
-                        let right = if right.rle_len() > 0 {
-                            Some(DeltaItem::Replace {
-                                value: right,
-                                attr: attr.clone(),
-                                delete: 0,
-                            })
-                        } else {
-                            None
-                        };
-
-                        return (
-                            true,
-                            Some(DeltaItem::Replace {
-                                value: this_value.clone(),
-                                attr: this_attr.clone(),
-                                delete: 0,
-                            }),
-                            right,
-                        );
-                    } else {
-                        value.merge_right(this_value);
-                    }
+                if value_start == value_end {
+                    return (true, None, None);
                 }
 
-                if value.can_merge(&right) {
-                    value.merge_right(&right);
-                    (true, None, None)
-                } else {
-                    let right = if right.rle_len() > 0 {
-                        Some(DeltaItem::Replace {
-                            value: right,
-                            attr: attr.clone(),
-                            delete: 0,
-                        })
-                    } else {
-                        None
+                let (l, r) = item.update_with_split(value_start..value_end, |item| {
+                    *item = DeltaItem::Replace {
+                        value: this_value.clone(),
+                        attr: this_attr.clone(),
+                        delete: 0,
                     };
-                    (true, right, None)
-                }
+                });
+
+                (true, l, r)
             }
         });
     }
