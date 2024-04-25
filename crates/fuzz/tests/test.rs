@@ -23,18 +23,6 @@ fn init_color_backtrace() {
     }
 }
 
-#[ctor::ctor]
-fn init_color_backtrace() {
-    color_backtrace::install();
-    use tracing_subscriber::{prelude::*, registry::Registry};
-    if option_env!("DEBUG").is_some() {
-        tracing::subscriber::set_global_default(
-            Registry::default().with(tracing_subscriber::fmt::Layer::default()),
-        )
-        .unwrap();
-    }
-}
-
 fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
     let xs = u.arbitrary::<Vec<Action>>()?;
     if let Err(e) = std::panic::catch_unwind(|| {
