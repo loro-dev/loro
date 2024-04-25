@@ -733,21 +733,22 @@ impl HandlerTrait for TreeHandler {
                 let new_inner = create_handler(a, self_id);
                 let ans = new_inner.into_tree().unwrap();
                 let mut mapping = FxHashMap::default();
-                for (t, p) in self
-                    .nodes()
-                    .into_iter()
-                    .map(|t| (t, self.get_node_parent(t).unwrap()))
-                {
-                    if let Some(p) = p {
-                        if !ans.contains(p) {
-                            let new_p = ans.create_with_txn(txn, None)?;
+                for v in self.get_value().into_list().unwrap().iter() {
+                    let node = v.as_map().unwrap();
+                    let target = node.get("id").unwrap().as_string().unwrap();
+                    let parent = node.get("parent").unwrap();
+                    let index = *node.get("index").unwrap().as_i64().unwrap() as usize;
+
+                    if let LoroValue::String(p) = parent {
+                        if !ans.contains(TreeID::from_id(ID::try_from(p.as_str()).unwrap())) {
+                            let new_p = ans.create_with_txn(txn, None, index)?;
                             mapping.insert(p, new_p);
-                            let new_t = ans.create_with_txn(txn, new_p)?;
-                            mapping.insert(t, new_t);
+                            let new_t = ans.create_with_txn(txn, new_p, index)?;
+                            mapping.insert(&target, new_t);
                         }
                     } else {
-                        let new_t = ans.create_with_txn(txn, None)?;
-                        mapping.insert(t, new_t);
+                        let new_t = ans.create_with_txn(txn, None, index)?;
+                        mapping.insert(&target, new_t);
                     }
                 }
 

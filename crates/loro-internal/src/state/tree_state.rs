@@ -233,7 +233,7 @@ mod btree {
 
     use fxhash::FxHashMap;
     use generic_btree::{
-        rle::{HasLength, Mergeable, Sliceable},
+        rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
         BTree, BTreeTrait, Cursor, FindResult, LeafIndex, LengthFinder, Query, UseLengthFinder,
     };
     use loro_common::TreeID;
@@ -351,6 +351,21 @@ mod btree {
         fn _slice(&self, range: std::ops::Range<usize>) -> Self {
             assert!(range.len() == 1);
             self.clone()
+        }
+    }
+
+    impl CanRemove for Elem {
+        fn can_remove(&self) -> bool {
+            false
+        }
+    }
+
+    impl TryInsert for Elem {
+        fn try_insert(&mut self, pos: usize, elem: Self) -> Result<(), Self>
+        where
+            Self: Sized,
+        {
+            Err(elem)
         }
     }
 
