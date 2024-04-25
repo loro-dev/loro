@@ -27,7 +27,7 @@ use crate::{
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
     version::Frontiers,
-    InternalString, LoroError, LoroValue, StringSlice,
+    InternalString, LoroError, LoroValue,
 };
 
 use super::{

@@ -264,12 +264,12 @@ impl ApplyDiff for LoroValue {
                     let mut index = 0;
                     for delta_item in delta.iter() {
                         match delta_item {
-                            loro_delta::DeltaItem::Retain { len, attr } => {
+                            loro_delta::DeltaItem::Retain { len, attr: _ } => {
                                 index += len;
                             }
                             loro_delta::DeltaItem::Replace {
                                 value,
-                                attr,
+                                attr: _,
                                 delete,
                             } => {
                                 let (start, end) = if cfg!(feature = "wasm") {
@@ -301,12 +301,12 @@ impl ApplyDiff for LoroValue {
                         let mut index = 0;
                         for delta_item in delta.iter() {
                             match delta_item {
-                                loro_delta::DeltaItem::Retain { len, attr } => {
+                                loro_delta::DeltaItem::Retain { len, attr: _ } => {
                                     index += len;
                                 }
                                 loro_delta::DeltaItem::Replace {
                                     value,
-                                    attr,
+                                    attr: _,
                                     delete,
                                 } => {
                                     let len = value.len();

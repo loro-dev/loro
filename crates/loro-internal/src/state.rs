@@ -13,8 +13,7 @@ use tracing::{info, instrument, trace_span};
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
     container::{
-        idx::ContainerIdx, list::list_op::ListOp, map::MapSet, richtext::config::StyleConfigMap,
-        tree::tree_op::TreeOp, ContainerIdRaw,
+        idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw,
     },
     cursor::Cursor,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
@@ -22,7 +21,7 @@ use crate::{
     fx_map,
     handler::ValueOrHandler,
     id::PeerID,
-    op::{ListSlice, Op, RawOp, RawOpContent},
+    op::{Op, RawOp},
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
@@ -1194,7 +1193,7 @@ fn trigger_on_new_container(state_diff: &Diff, mut listener: impl FnMut(Containe
                 if let DeltaItem::Replace {
                     value,
                     attr,
-                    delete,
+                    delete: _,
                 } = delta
                 {
                     if attr.from_move {

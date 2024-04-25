@@ -7,7 +7,7 @@ use loro_internal::{
     event::{Diff, EventTriggerKind},
     handler::{Handler, TextDelta, ValueOrHandler},
     version::Frontiers,
-    ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
+    ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson,
 };
 use serde_json::json;
 

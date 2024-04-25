@@ -278,7 +278,7 @@ impl DeltaAttr for ListDeltaMeta {
     }
 
     fn attr_is_empty(&self) -> bool {
-        self.from_move == false
+        !self.from_move
     }
 }
 

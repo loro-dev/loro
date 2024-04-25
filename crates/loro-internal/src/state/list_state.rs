@@ -7,7 +7,6 @@ use super::ContainerState;
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, list::list_op::ListOp, ContainerID},
-    delta::Delta,
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff, ListDiff},
     handler::ValueOrHandler,

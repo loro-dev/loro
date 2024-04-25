@@ -30,7 +30,7 @@ use std::{
     ops::Deref,
     sync::{Arc, Mutex, Weak},
 };
-use tracing::{info, instrument, trace};
+use tracing::{info, instrument};
 
 const INSERT_CONTAINER_VALUE_ARG_ERROR: &str =
     "Cannot insert a LoroValue::Container directly. To create child container, use insert_container";

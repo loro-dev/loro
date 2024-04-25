@@ -3,7 +3,7 @@ use fuzz::{
     crdt_fuzzer::{test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
 };
 use loro::ContainerType::*;
-use tracing_subscriber::fmt::format::FmtSpan;
+
 
 #[ctor::ctor]
 fn init() {
