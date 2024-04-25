@@ -2539,10 +2539,18 @@ impl LoroMovableList {
     ///
     /// But if you use `delete` + `insert` to simulate the set operation, they may create redundant operations
     /// and the final result will be `[1, 100, 200, 3]` or `[1, 200, 100, 3]`.
+    #[wasm_bindgen(skip_typescript)]
     pub fn set(&self, pos: usize, value: JsLoroValue) -> JsResult<()> {
         let v: JsValue = value.into();
         self.handler.set(pos, v)?;
         Ok(())
+    }
+
+    #[wasm_bindgen(skip_typescript)]
+    pub fn setContainer(&self, pos: usize, child: JsContainer) -> JsResult<JsContainer> {
+        let child = js_to_container(child)?;
+        let c = self.handler.set_container(pos, child.to_handler())?;
+        Ok(handler_to_js_value(c, self.doc.clone()).into())
     }
 
     pub fn push(&self, value: JsLoroValue) -> JsResult<()> {

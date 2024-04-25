@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   Delta,
   ListDiff,
@@ -6,6 +6,7 @@ import {
   LoroList,
   LoroMap,
   LoroMovableList,
+  LoroText,
   TextDiff,
 } from "../src";
 
@@ -200,5 +201,19 @@ describe("movable list", () => {
     const doc = new Loro<
       { list: LoroMovableList<LoroMap<{ name: string }>> }
     >();
+    const list = doc.getMovableList("list");
+    const map = list.insertContainer(0, new LoroMap());
+    expectTypeOf(map).toMatchTypeOf<LoroMap<{ name: string }>>();
+    map.set("name", "Alice");
+    expect(list.toJson()).toStrictEqual([{ name: "Alice" }]);
+  });
+
+  it("set container", () => {
+    const doc = new Loro();
+    const list = doc.getMovableList("list");
+    list.insert(0, 100);
+    const text = list.setContainer(0, new LoroText());
+    text.insert(0, "Hello");
+    expect(list.toJson()).toStrictEqual(["Hello"]);
   });
 });

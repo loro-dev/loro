@@ -269,14 +269,14 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { Loro, LoroText } from "loro-crdt";
      *
      *  const doc = new Loro();
      *  const list = doc.getList("list");
      *  list.insert(0, 100);
      *  const text = list.insertContainer(1, new LoroText());
      *  text.insert(0, "Hello");
-     *  console.log(list.getDeepValue());  // [100, "Hello"];
+     *  console.log(list.toJson());  // [100, "Hello"];
      *  ```
      */
     insertContainer<C extends Container>(
@@ -327,7 +327,7 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { Loro, LoroText } from "loro-crdt";
      *
      *  const doc = new Loro();
      *  const list = doc.getMovableList("list");
@@ -347,11 +347,11 @@ declare module "loro-wasm" {
      *  import { Loro } from "loro-crdt";
      *
      *  const doc = new Loro();
-     *  const list = doc.getList("list");
+     *  const list = doc.getMovableList("list");
      *  list.insert(0, 100);
      *  const text = list.insertContainer(1, new LoroText());
      *  text.insert(0, "Hello");
-     *  console.log(list.getDeepValue());  // [100, "Hello"];
+     *  console.log(list.toJson());  // [100, "Hello"];
      *  ```
      */
     insertContainer<C extends Container>(
@@ -366,7 +366,7 @@ declare module "loro-wasm" {
      *  import { Loro } from "loro-crdt";
      *
      *  const doc = new Loro();
-     *  const list = doc.getList("list");
+     *  const list = doc.getMoableList("list");
      *  list.insert(0, 100);
      *  console.log(list.get(0));  // 100
      *  console.log(list.get(1));  // undefined
@@ -381,7 +381,7 @@ declare module "loro-wasm" {
      *  import { Loro } from "loro-crdt";
      *
      *  const doc = new Loro();
-     *  const list = doc.getList("list");
+     *  const list = doc.getMovableList("list");
      *  list.insert(0, 100);
      *  list.insert(1, "foo");
      *  list.insert(2, true);
@@ -392,6 +392,50 @@ declare module "loro-wasm" {
     delete(pos: number, len: number): void;
     subscribe(listener: Listener): number;
     getAttached(): undefined | LoroMovableList<T>;
+    /**
+     *  Set the value at the given position.
+     *
+     *  It's different from `delete` + `insert` that it will replace the value at the position.
+     *
+     *  For example, if you have a list `[1, 2, 3]`, and you call `set(1, 100)`, the list will be `[1, 100, 3]`.
+     *  If concurrently someone call `set(1, 200)`, the list will be `[1, 200, 3]` or `[1, 100, 3]`.
+     *
+     *  But if you use `delete` + `insert` to simulate the set operation, they may create redundant operations
+     *  and the final result will be `[1, 100, 200, 3]` or `[1, 200, 100, 3]`.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getList("list");
+     *  list.insert(0, 100);
+     *  list.insert(1, "foo");
+     *  list.insert(2, true);
+     *  list.set(1, "bar");
+     *  console.log(list.value);  // [100, "bar", true];
+     *  ```
+     */
+    set(pos: number, value: Exclude<T, Container>): void;
+    /**
+     * Set a container at the index.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getMovableList("list");
+     *  list.insert(0, 100);
+     *  const text = list.setContainer(0, new LoroText());
+     *  text.insert(0, "Hello");
+     *  console.log(list.toJson());  // ["Hello"];
+     *  ```
+     */
+    setContainer<C extends Container>(
+      pos: number,
+      child: C,
+    ): T extends C ? T : C;
   }
 
   interface LoroMap<
