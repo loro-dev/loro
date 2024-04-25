@@ -233,12 +233,6 @@ impl ApplyDiff for MovableListTracker {
     }
 
     fn apply_diff(&mut self, diff: Diff) {
-        debug!(
-            "diff={:#?} self={:#?} tracker.id={}",
-            &diff,
-            &self,
-            self.id()
-        );
         let diff = diff.as_list().unwrap();
         let mut index = 0;
         let mut maybe_from_move = FxHashMap::default();
@@ -443,7 +437,6 @@ impl TreeNode {
 
 impl ContainerTracker {
     pub fn apply_diff(&mut self, diff: DiffEvent) {
-        debug!("Receive diff: {:#?} \nself: {:#?}", diff, &self);
         for diff in diff.events {
             let path = diff.path;
             let mut value: &mut ContainerTracker = self;

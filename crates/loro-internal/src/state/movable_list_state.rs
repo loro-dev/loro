@@ -961,7 +961,6 @@ impl ContainerState for MovableListState {
         let id = arena.idx_to_id(self.idx).unwrap();
         let s = trace_span!("ListState", "ListState.id = {:?}", id);
         let _e = s.enter();
-        debug!("InternalDiff for Movable {:#?}", &diff);
 
         let mut event: ListDiff = DeltaRope::new();
         let mut maybe_moved: FxHashMap<CompactIdLp, (usize, LoroValue)> = FxHashMap::default();
@@ -1176,7 +1175,6 @@ impl ContainerState for MovableListState {
             self.inner.check_consistency();
             let start_value = start_value.unwrap();
             let mut end_value = start_value.clone();
-            debug!("start_value = {:#?} \nevent = {:#?}", &start_value, &event);
             end_value.apply_diff_shallow(&[Diff::List(event.clone())]);
             let cur_value = self.get_value();
             assert_eq!(
@@ -1186,10 +1184,6 @@ impl ContainerState for MovableListState {
             );
         }
 
-        debug!(
-            "MovableListState::apply_diff_and_convert: ans={:#?}",
-            &event
-        );
         Diff::List(event)
     }
 

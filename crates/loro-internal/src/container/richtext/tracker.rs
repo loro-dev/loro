@@ -589,7 +589,6 @@ impl Tracker {
         // tracing::info!("Init: {:#?}, ", &self);
         self._checkout(from, false);
         self._checkout(to, true);
-        debug!("Calculating Diff: {:#?}", &self);
         // self.id_to_cursor.diagnose();
 
         self.rope.get_diff()
