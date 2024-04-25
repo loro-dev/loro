@@ -171,7 +171,7 @@ describe("event", () => {
 
       // unsubscribe
       const oldRan = ran;
-      text.unsubscribe(loro, sub);
+      text.unsubscribe(sub);
       text.insert(0, "789");
       loro.commit();
       await oneMs();

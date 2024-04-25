@@ -927,7 +927,7 @@ impl Loro {
             .into_u32()
     }
 
-    /// Unsubscribe by the subscription
+    /// Unsubscribe by the subscription id.
     ///
     /// @example
     /// ```ts
@@ -1461,9 +1461,12 @@ impl LoroText {
         Ok(ans.into_u32())
     }
 
-    /// Unsubscribe by the subscription.
-    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
-        loro.0.unsubscribe(SubID::from_u32(subscription));
+    /// Unsubscribe by the subscription id.
+    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
+        self.doc
+            .as_ref()
+            .ok_or_else(|| JsError::new("Document is not attached"))?
+            .unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
 
@@ -1828,10 +1831,13 @@ impl LoroMap {
     /// });
     /// map.set("foo", "bar");
     /// doc.commit();
-    /// map.unsubscribe(doc, subscription);
+    /// map.unsubscribe(subscription);
     /// ```
-    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
-        loro.0.unsubscribe(SubID::from_u32(subscription));
+    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
+        self.doc
+            .as_ref()
+            .ok_or_else(|| JsError::new("Document is not attached"))?
+            .unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
 
@@ -2066,7 +2072,7 @@ impl LoroList {
 
     /// Subscribe to the changes of the list.
     ///
-    /// returns a subscription id, which can be used to unsubscribe.
+    /// Returns a subscription id, which can be used to unsubscribe.
     ///
     /// @example
     /// ```ts
@@ -2096,7 +2102,7 @@ impl LoroList {
         Ok(ans.into_u32())
     }
 
-    /// Unsubscribe by the subscription.
+    /// Unsubscribe by the subscription id.
     ///
     /// @example
     /// ```ts
@@ -2109,10 +2115,13 @@ impl LoroList {
     /// });
     /// list.insert(0, 100);
     /// doc.commit();
-    /// list.unsubscribe(doc, subscription);
+    /// list.unsubscribe(subscription);
     /// ```
-    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
-        loro.0.unsubscribe(SubID::from_u32(subscription));
+    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
+        self.doc
+            .as_ref()
+            .ok_or_else(|| JsError::new("Document is not attached"))?
+            .unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
 
@@ -2384,7 +2393,7 @@ impl LoroMovableList {
 
     /// Subscribe to the changes of the list.
     ///
-    /// returns a subscription id, which can be used to unsubscribe.
+    /// Returns a subscription id, which can be used to unsubscribe.
     ///
     /// @example
     /// ```ts
@@ -2414,7 +2423,7 @@ impl LoroMovableList {
         Ok(ans.into_u32())
     }
 
-    /// Unsubscribe by the subscription.
+    /// Unsubscribe by the subscription id.
     ///
     /// @example
     /// ```ts
@@ -2427,10 +2436,13 @@ impl LoroMovableList {
     /// });
     /// list.insert(0, 100);
     /// doc.commit();
-    /// list.unsubscribe(doc, subscription);
+    /// list.unsubscribe(subscription);
     /// ```
-    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
-        loro.0.unsubscribe(SubID::from_u32(subscription));
+    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
+        self.doc
+            .as_ref()
+            .ok_or_else(|| JsError::new("Document is not attached"))?
+            .unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
 
@@ -2860,7 +2872,7 @@ impl LoroTree {
 
     /// Subscribe to the changes of the tree.
     ///
-    /// returns a subscription id, which can be used to unsubscribe.
+    /// Returns a subscription id, which can be used to unsubscribe.
     ///
     /// Trees have three types of events: `create`, `delete`, and `move`.
     /// - `create`: Creates a new node with its `target` TreeID. If `parent` is undefined,
@@ -2904,7 +2916,7 @@ impl LoroTree {
         Ok(ans.into_u32())
     }
 
-    /// Unsubscribe by the subscription.
+    /// Unsubscribe by the subscription id.
     ///
     /// @example
     /// ```ts
@@ -2918,10 +2930,13 @@ impl LoroTree {
     /// const root = tree.createNode();
     /// const node = root.createNode();
     /// doc.commit();
-    /// tree.unsubscribe(doc, subscription);
+    /// tree.unsubscribe(subscription);
     /// ```
-    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
-        loro.0.unsubscribe(SubID::from_u32(subscription));
+    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
+        self.doc
+            .as_ref()
+            .ok_or_else(|| JsError::new("Document is not attached"))?
+            .unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
 

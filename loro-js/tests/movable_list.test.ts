@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { Delta, ListDiff, Loro, TextDiff } from "../src";
 import {
-  Cursor,
+  Delta,
+  ListDiff,
+  Loro,
   LoroList,
+  LoroMap,
   LoroMovableList,
-  OpId,
-  PeerID,
-  setDebug,
-} from "loro-wasm";
+  TextDiff,
+} from "../src";
 
 describe("movable list", () => {
   it("should work like list", () => {
@@ -163,6 +163,7 @@ describe("movable list", () => {
     list.push("b");
     list.push("c");
     let called = false;
+    let calledTimes = 0;
     const id = list.subscribe((event) => {
       expect(event.by).toBe("local");
       for (const e of event.events) {
@@ -180,11 +181,24 @@ describe("movable list", () => {
       }
 
       called = true;
+      calledTimes += 1;
     });
     await new Promise((r) => setTimeout(r, 1));
     expect(called).toBeFalsy();
     doc.commit();
     await new Promise((r) => setTimeout(r, 1));
     expect(called).toBeTruthy();
+    expect(calledTimes).toBe(1);
+    list.unsubscribe(id);
+    list.push("d");
+    doc.commit();
+    await new Promise((r) => setTimeout(r, 1));
+    expect(calledTimes).toBe(1);
+  });
+
+  it("has the right type", () => {
+    const doc = new Loro<
+      { list: LoroMovableList<LoroMap<{ name: string }>> }
+    >();
   });
 });
