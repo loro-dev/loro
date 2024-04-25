@@ -176,41 +176,39 @@ impl<'a> Value<'a> {
         }
     }
 
-    pub fn from_owned(owned_value: OwnedValue) -> Self {
+    pub fn from_owned(owned_value: &'a OwnedValue) -> Self {
         match owned_value {
             OwnedValue::Null => Value::Null,
             OwnedValue::True => Value::True,
             OwnedValue::False => Value::False,
             OwnedValue::DeleteOnce => Value::DeleteOnce,
-            OwnedValue::I64(x) => Value::I64(x),
-            OwnedValue::ContainerIdx(x) => Value::ContainerIdx(x),
-            OwnedValue::F64(x) => Value::F64(x),
+            OwnedValue::I64(x) => Value::I64(*x),
+            OwnedValue::ContainerIdx(x) => Value::ContainerIdx(*x),
+            OwnedValue::F64(x) => Value::F64(*x),
             OwnedValue::Str(x) => Value::Str(x.as_str()),
             OwnedValue::DeleteSeq => Value::DeleteSeq,
-            OwnedValue::DeltaInt(x) => Value::DeltaInt(x),
-            OwnedValue::Array(x) => {
-                Value::Array(x.into_iter().map(|x| Value::from_owned(x)).collect())
-            }
+            OwnedValue::DeltaInt(x) => Value::DeltaInt(*x),
+            OwnedValue::Array(x) => Value::Array(x.iter().map(Value::from_owned).collect()),
             OwnedValue::Map(x) => Value::Map(
-                x.into_iter()
-                    .map(|(k, v)| (k, Value::from_owned(v)))
+                x.iter()
+                    .map(|(k, v)| (k.clone(), Value::from_owned(v)))
                     .collect(),
             ),
-            OwnedValue::LoroValue(x) => Value::LoroValue(x),
-            OwnedValue::LoroValueArray(x) => Value::LoroValueArray(x),
-            OwnedValue::MarkStart(x) => Value::MarkStart(x),
+            OwnedValue::LoroValue(x) => Value::LoroValue(x.clone()),
+            OwnedValue::LoroValueArray(x) => Value::LoroValueArray(x.clone()),
+            OwnedValue::MarkStart(x) => Value::MarkStart(x.clone()),
             OwnedValue::Binary(x) => Value::Binary(x.as_slice()),
-            OwnedValue::TreeMove(x) => Value::TreeMove(x),
+            OwnedValue::TreeMove(x) => Value::TreeMove(x.clone()),
             OwnedValue::Future(value) => match value {
                 OwnedFutureValue::Unknown { kind, data } => Value::Future(FutureValue::Unknown {
-                    kind,
+                    kind: *kind,
                     data: data.as_slice(),
                 }),
             },
         }
     }
 
-    pub fn to_owned(self) -> OwnedValue {
+    pub fn into_owned(self) -> OwnedValue {
         match self {
             Value::Null => OwnedValue::Null,
             Value::True => OwnedValue::True,
@@ -222,9 +220,9 @@ impl<'a> Value<'a> {
             Value::Str(x) => OwnedValue::Str(x.to_owned()),
             Value::DeleteSeq => OwnedValue::DeleteSeq,
             Value::DeltaInt(x) => OwnedValue::DeltaInt(x),
-            Value::Array(x) => OwnedValue::Array(x.into_iter().map(|x| x.to_owned()).collect()),
+            Value::Array(x) => OwnedValue::Array(x.into_iter().map(|x| x.into_owned()).collect()),
             Value::Map(x) => {
-                OwnedValue::Map(x.into_iter().map(|(k, v)| (k, v.to_owned())).collect())
+                OwnedValue::Map(x.into_iter().map(|(k, v)| (k, v.into_owned())).collect())
             }
             Value::LoroValue(x) => OwnedValue::LoroValue(x),
             Value::LoroValueArray(x) => OwnedValue::LoroValueArray(x),

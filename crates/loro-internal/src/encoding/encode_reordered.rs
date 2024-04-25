@@ -1213,9 +1213,7 @@ mod encode {
                 Value::TreeMove(EncodedTreeMove::from_op(t))
             }
             crate::op::InnerContent::Future(f) => match f {
-                FutureInnerContent::Unknown { op_len: _, value } => {
-                    Value::from_owned(value.clone())
-                }
+                FutureInnerContent::Unknown { op_len: _, value } => Value::from_owned(value),
             },
         };
         let (k, mut i) = value.encode(value_writer, registers);
@@ -1335,7 +1333,7 @@ fn decode_op(
         },
         ContainerType::Unknown(_) => crate::op::InnerContent::Future(FutureInnerContent::Unknown {
             op_len,
-            value: value.to_owned(),
+            value: value.into_owned(),
         }),
     };
 

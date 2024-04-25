@@ -628,11 +628,10 @@ impl OpLog {
             }
             crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(*tree)),
             crate::op::InnerContent::Future(f) => match f {
-                FutureInnerContent::Unknown { kind, op_len, data } => contents.push(
+                FutureInnerContent::Unknown { op_len, value } => contents.push(
                     RawOpContent::Future(crate::op::FutureRawOpContent::Unknown {
-                        kind: *kind,
                         op_len: *op_len,
-                        data: data.to_vec(),
+                        value: value.clone(),
                     }),
                 ),
             },
