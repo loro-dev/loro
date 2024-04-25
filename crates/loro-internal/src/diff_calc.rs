@@ -548,7 +548,6 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                     }
                     RichtextChunkValue::StyleAnchor { .. } => unreachable!(),
                     RichtextChunkValue::Unknown(len) => {
-                        // assert not unknown id
                         delta = handle_unknown(id, oplog, len, &mut on_new_container, delta);
                     }
                     RichtextChunkValue::MoveAnchor => {
@@ -561,6 +560,9 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             }
         }
 
+        /// Handle span with unknown content when calculating diff
+        ///
+        /// We can lookup the content of the span by the id in the oplog
         fn handle_unknown(
             id: ID,
             oplog: &OpLog,
@@ -568,6 +570,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             on_new_container: &mut dyn FnMut(&ContainerID),
             mut delta: Delta<SliceRanges>,
         ) -> Delta<SliceRanges> {
+            // assert not unknown id
             assert_ne!(id.peer, PeerID::MAX);
             let mut acc_len = 0;
             for rich_op in oplog.iter_ops(IdSpan::new(
@@ -1016,7 +1019,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     on_new_container(c);
                 }
                 *change = ElementDelta {
-                    pos: pos.value,
+                    pos: pos.idlp(),
                     value: value.value.clone(),
                     value_id: IdLp::new(value.peer, value.lamport),
                     pos_updated: true,
@@ -1025,8 +1028,8 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             } else {
                 // TODO: PERF: can be filtered based on the list_diff and whether the pos/value are updated
                 *change = ElementDelta {
-                    pos: pos.value,
-                    pos_updated: old_pos.unwrap().value != pos.value,
+                    pos: pos.idlp(),
+                    pos_updated: old_pos.unwrap().idlp() != pos.idlp(),
                     value: value.value.clone(),
                     value_updated: old_value.unwrap().value != value.value,
                     value_id: IdLp::new(value.peer, value.lamport),

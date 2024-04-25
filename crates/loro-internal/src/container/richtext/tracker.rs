@@ -6,7 +6,7 @@ use generic_btree::{
 };
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength as _;
-use tracing::{debug, instrument};
+use tracing::instrument;
 
 use crate::{cursor::AbsolutePosition, VersionVector};
 
@@ -254,10 +254,10 @@ impl Tracker {
         //
         // > `id_to_cursor` only stores the mappings from **fake** insert id to the leaf index.
         // > **Fake** means the id may be a temporary placeholder, created with UNKNOWN_PEER_ID.
-        let mut cur_delete_id = None;
+        let mut fake_delete_id = None;
         let split = self.rope.delete(deleted_id, from_pos, 1, false, &mut |s| {
             debug_assert_eq!(s.rle_len(), 1);
-            cur_delete_id = Some(s.id.id());
+            fake_delete_id = Some(s.id.id());
         });
 
         for s in split {
@@ -289,7 +289,7 @@ impl Tracker {
 
         self.id_to_cursor.insert(
             op_id.id(),
-            id_to_cursor::Cursor::new_move(result.leaf, cur_delete_id.unwrap()),
+            id_to_cursor::Cursor::new_move(result.leaf, fake_delete_id.unwrap()),
         );
 
         let end_id = op_id.inc(1);

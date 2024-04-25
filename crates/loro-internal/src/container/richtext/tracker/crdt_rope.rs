@@ -226,6 +226,10 @@ impl CrdtRope {
         }
     }
 
+    /// Delete the span at `pos` with `len`.
+    ///
+    /// The `start_id` is used to mark the real_id in the [FugueSpan].
+    ///
     /// - If reversed is true, the deletion will be done in reversed order.
     ///   But the start_id always refers to the first delete op's id.
     /// - If reversed is true, the returned `SplittedLeaves` will be in reversed order.

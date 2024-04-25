@@ -8,7 +8,6 @@ use loro::{
     ContainerType, Index, LoroDoc, LoroText, LoroValue, TreeExternalDiff, TreeID, ValueOrContainer,
 };
 use loro::{ContainerID, ID};
-use tracing::debug;
 
 #[derive(Debug, EnumAsInner)]
 pub enum Value {

@@ -34,7 +34,6 @@ impl OpGroups {
     }
 
     pub(crate) fn insert_by_change(&mut self, change: &Change) {
-        // tracing::
         for op in change.ops.iter() {
             if matches!(
                 op.container.get_type(),
@@ -121,6 +120,10 @@ impl<T> GroupedMapOpInfo<T> {
     pub(crate) fn id(&self) -> ID {
         ID::new(self.peer, self.counter)
     }
+
+    pub(crate) fn idlp(&self) -> IdLp {
+        IdLp::new(self.peer, self.lamport)
+    }
 }
 
 impl<T> PartialEq for GroupedMapOpInfo<T> {
@@ -147,7 +150,7 @@ impl<T> Ord for GroupedMapOpInfo<T> {
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct MapOpGroup {
-    ops: FxHashMap<InternalString, BTreeSet<GroupedMapOpInfo>>,
+    ops: FxHashMap<InternalString, SmallSet<GroupedMapOpInfo>>,
 }
 
 impl MapOpGroup {
@@ -242,10 +245,47 @@ pub(crate) struct MovableListOpGroup {
     pos_to_elem: FxHashMap<IdLp, IdLp>,
 }
 
-#[derive(Debug, Default, Clone)]
-pub(crate) struct MovableListTarget {
-    poses: BTreeSet<GroupedMapOpInfo<IdLp>>,
+#[derive(Debug, Clone)]
+enum MovableListTarget {
+    One { value: LoroValue, counter: Counter },
+    Multiple(Box<MultipleInner>),
+}
+
+#[derive(Debug, Clone)]
+struct MultipleInner {
+    poses: BTreeSet<GroupedMapOpInfo<()>>,
     values: BTreeSet<GroupedMapOpInfo<LoroValue>>,
+}
+
+impl MovableListTarget {
+    fn upgrade(&mut self, key_idlp: IdLp) -> &mut MultipleInner {
+        match self {
+            MovableListTarget::One { value, counter } => {
+                let mut inner = MultipleInner {
+                    poses: BTreeSet::default(),
+                    values: BTreeSet::default(),
+                };
+                inner.poses.insert(GroupedMapOpInfo {
+                    value: (),
+                    counter: *counter,
+                    lamport: key_idlp.lamport,
+                    peer: key_idlp.peer,
+                });
+                inner.values.insert(GroupedMapOpInfo {
+                    value: value.clone(),
+                    counter: *counter,
+                    lamport: key_idlp.lamport,
+                    peer: key_idlp.peer,
+                });
+                *self = MovableListTarget::Multiple(Box::new(inner));
+                match self {
+                    MovableListTarget::Multiple(a) => a,
+                    _ => unreachable!(),
+                }
+            }
+            MovableListTarget::Multiple(a) => a,
+        }
+    }
 }
 
 impl OpGroupTrait for MovableListOpGroup {
@@ -255,7 +295,11 @@ impl OpGroupTrait for MovableListOpGroup {
             InnerContent::List(list) => match list {
                 crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
                     let full_id = op.id_full();
-                    let mapping = self.elem_mappings.entry(*elem_id).or_default();
+                    let mapping = self
+                        .elem_mappings
+                        .get_mut(elem_id)
+                        .unwrap()
+                        .upgrade(*elem_id);
                     mapping.values.insert(GroupedMapOpInfo {
                         value: value.clone(),
                         counter: full_id.counter,
@@ -267,26 +311,24 @@ impl OpGroupTrait for MovableListOpGroup {
                     for (i, v) in self.arena.iter_value_slice(slice.to_range()).enumerate() {
                         let id = start_id.inc(i as i32);
                         let full_id = op.id_full().inc(i as i32);
-                        let mapping = self.elem_mappings.entry(id).or_default();
-                        mapping.poses.insert(GroupedMapOpInfo {
-                            value: full_id.idlp(),
-                            counter: full_id.counter,
-                            lamport: full_id.lamport,
-                            peer: full_id.peer,
-                        });
-                        mapping.values.insert(GroupedMapOpInfo {
-                            value: v,
-                            counter: full_id.counter,
-                            lamport: full_id.lamport,
-                            peer: full_id.peer,
-                        });
+                        self.elem_mappings.insert(
+                            id,
+                            MovableListTarget::One {
+                                value: v,
+                                counter: full_id.counter,
+                            },
+                        );
                     }
                 }
                 crate::container::list::list_op::InnerListOp::Move { from_id, .. } => {
                     let full_id = op.id_full();
-                    let mapping = self.elem_mappings.entry(*from_id).or_default();
+                    let mapping = self
+                        .elem_mappings
+                        .get_mut(from_id)
+                        .unwrap()
+                        .upgrade(*from_id);
                     mapping.poses.insert(GroupedMapOpInfo {
-                        value: full_id.idlp(),
+                        value: (),
                         counter: full_id.counter,
                         lamport: full_id.lamport,
                         peer: full_id.peer,
@@ -317,17 +359,28 @@ impl MovableListOpGroup {
         }
     }
 
-    pub(crate) fn last_pos(
-        &self,
-        key: &IdLp,
-        vv: &VersionVector,
-    ) -> Option<&GroupedMapOpInfo<IdLp>> {
-        let ans = self.elem_mappings.get(key).and_then(|set| {
-            set.poses
+    pub(crate) fn last_pos(&self, key: &IdLp, vv: &VersionVector) -> Option<GroupedMapOpInfo<()>> {
+        let ans = self.elem_mappings.get(key).and_then(|set| match set {
+            MovableListTarget::One { value: _, counter } => {
+                if vv.get(&key.peer).copied().unwrap_or(0) > *counter {
+                    Some(GroupedMapOpInfo {
+                        value: (),
+                        counter: *counter,
+                        lamport: key.lamport,
+                        peer: key.peer,
+                    })
+                } else {
+                    None
+                }
+            }
+            MovableListTarget::Multiple(m) => m
+                .poses
                 .iter()
                 .rev()
                 .find(|op| vv.get(&op.peer).copied().unwrap_or(0) > op.counter)
+                .cloned(),
         });
+
         ans
     }
 
@@ -335,16 +388,116 @@ impl MovableListOpGroup {
         &self,
         key: &IdLp,
         vv: &VersionVector,
-    ) -> Option<&GroupedMapOpInfo<LoroValue>> {
-        self.elem_mappings.get(key).and_then(|set| {
-            set.values
+    ) -> Option<GroupedMapOpInfo<LoroValue>> {
+        self.elem_mappings.get(key).and_then(|set| match set {
+            MovableListTarget::One { value, counter } => {
+                if vv.get(&key.peer).copied().unwrap_or(0) > *counter {
+                    Some(GroupedMapOpInfo {
+                        value: value.clone(),
+                        counter: *counter,
+                        lamport: key.lamport,
+                        peer: key.peer,
+                    })
+                } else {
+                    None
+                }
+            }
+            MovableListTarget::Multiple(m) => m
+                .values
                 .iter()
                 .rev()
                 .find(|op| vv.get(&op.peer).copied().unwrap_or(0) > op.counter)
+                .cloned(),
         })
     }
 
     pub(crate) fn get_elem_from_pos(&self, pos: IdLp) -> IdLp {
         self.pos_to_elem.get(&pos).cloned().unwrap_or(pos)
+    }
+}
+
+#[derive(Default, Clone, Debug)]
+enum SmallSet<T> {
+    #[default]
+    Empty,
+    One(T),
+    Many(BTreeSet<T>),
+}
+
+struct SmallSetIter<'a, T> {
+    set: &'a SmallSet<T>,
+    one_itered: bool,
+    iter: Option<std::collections::btree_set::Iter<'a, T>>,
+}
+
+impl<T: Ord> SmallSet<T> {
+    fn insert(&mut self, new_value: T) {
+        match self {
+            SmallSet::Empty => *self = SmallSet::One(new_value),
+            SmallSet::One(v) => {
+                if v != &new_value {
+                    let mut set = BTreeSet::new();
+                    let SmallSet::One(v) = std::mem::take(self) else {
+                        unreachable!()
+                    };
+                    set.insert(v);
+                    set.insert(new_value);
+                    *self = SmallSet::Many(set);
+                }
+            }
+            SmallSet::Many(set) => {
+                set.insert(new_value);
+            }
+        }
+    }
+
+    fn iter(&self) -> SmallSetIter<T> {
+        SmallSetIter {
+            set: self,
+            one_itered: false,
+            iter: match self {
+                SmallSet::Empty => None,
+                SmallSet::One(_) => None,
+                SmallSet::Many(set) => Some(set.iter()),
+            },
+        }
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for SmallSetIter<'a, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        match self.iter {
+            Some(ref mut iter) => iter.next_back(),
+            None => {
+                if self.one_itered {
+                    None
+                } else {
+                    self.one_itered = true;
+                    match self.set {
+                        SmallSet::One(v) => Some(v),
+                        _ => None,
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'a, T> Iterator for SmallSetIter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.set {
+            SmallSet::Empty => None,
+            SmallSet::One(v) => {
+                if self.one_itered {
+                    None
+                } else {
+                    self.one_itered = true;
+                    Some(v)
+                }
+            }
+            SmallSet::Many(_) => self.iter.as_mut().unwrap().next(),
+        }
     }
 }

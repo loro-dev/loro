@@ -863,26 +863,29 @@ impl LoroDoc {
     ///
     /// Panic when it's not consistent
     pub fn check_state_diff_calc_consistency_slow(&self) {
-        static IS_CHECKING: AtomicBool = AtomicBool::new(false);
-        if IS_CHECKING.load(std::sync::atomic::Ordering::Acquire) {
-            return;
-        }
+        #[cfg(any(test, debug_assertions))]
+        {
+            static IS_CHECKING: AtomicBool = AtomicBool::new(false);
+            if IS_CHECKING.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
 
-        IS_CHECKING.store(true, std::sync::atomic::Ordering::Release);
-        let peer_id = self.peer_id();
-        let s = trace_span!("CheckStateDiffCalcConsistencySlow", ?peer_id);
-        let _g = s.enter();
-        self.commit_then_stop();
-        let bytes = self.export_from(&Default::default());
-        let doc = Self::new();
-        doc.detach();
-        doc.import(&bytes).unwrap();
-        doc.checkout(&self.state_frontiers()).unwrap();
-        let mut calculated_state = doc.app_state().try_lock().unwrap();
-        let mut current_state = self.app_state().try_lock().unwrap();
-        current_state.check_is_the_same(&mut calculated_state);
-        self.renew_txn_if_auto_commit();
-        IS_CHECKING.store(false, std::sync::atomic::Ordering::Release);
+            IS_CHECKING.store(true, std::sync::atomic::Ordering::Release);
+            let peer_id = self.peer_id();
+            let s = trace_span!("CheckStateDiffCalcConsistencySlow", ?peer_id);
+            let _g = s.enter();
+            self.commit_then_stop();
+            let bytes = self.export_from(&Default::default());
+            let doc = Self::new();
+            doc.detach();
+            doc.import(&bytes).unwrap();
+            doc.checkout(&self.state_frontiers()).unwrap();
+            let mut calculated_state = doc.app_state().try_lock().unwrap();
+            let mut current_state = self.app_state().try_lock().unwrap();
+            current_state.check_is_the_same(&mut calculated_state);
+            self.renew_txn_if_auto_commit();
+            IS_CHECKING.store(false, std::sync::atomic::Ordering::Release);
+        }
     }
 
     #[inline]

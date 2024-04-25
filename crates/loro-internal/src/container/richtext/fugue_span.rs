@@ -25,14 +25,21 @@ pub(crate) enum RichtextChunkKind {
     Text,
     StyleAnchor,
     Unknown,
+    /// Move anchor is a special anchor that is used to mark the FugueSpan created
+    /// by a move operation.
     MoveAnchor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RichtextChunkValue {
     Text(Range<u32>),
-    StyleAnchor { id: u32, anchor_type: AnchorType },
+    StyleAnchor {
+        id: u32,
+        anchor_type: AnchorType,
+    },
     Unknown(u32),
+    /// Move anchor is a special anchor that is used to mark the FugueSpan created
+    /// by a move operation.
     MoveAnchor,
 }
 

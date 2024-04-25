@@ -2,7 +2,7 @@ use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{debug, instrument, trace_span, warn};
+use tracing::{instrument, trace_span, warn};
 
 use fxhash::FxHashMap;
 use generic_btree::BTree;
