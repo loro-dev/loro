@@ -543,7 +543,7 @@ impl LoroList {
 
     pub fn for_each<I>(&self, f: I)
     where
-        I: FnMut(ValueOrHandler),
+        I: FnMut((usize, ValueOrHandler)),
     {
         self.handler.for_each(f)
     }
@@ -1241,9 +1241,11 @@ impl LoroTree {
         self.handler.get_deep_value()
     }
 
-    #[cfg(feature = "test_utils")]
-    pub fn next_tree_id(&self) -> TreeID {
-        self.handler.next_tree_id()
+    // This method is used for testing only.
+    #[doc(hidden)]
+    #[allow(non_snake_case)]
+    pub fn __internal__next_tree_id(&self) -> TreeID {
+        self.handler.__internal__next_tree_id()
     }
 }
 

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { Awareness, AwarenessWasm, setDebug } from "../src/index";
+import {
+  Awareness,
+  AwarenessWasm,
+  Cursor,
+  PeerID,
+  setDebug,
+} from "../src/index";
 import { AwarenessListener } from "../src/awareness";
 
 describe("Awareness", () => {
@@ -103,5 +109,20 @@ describe("Awareness", () => {
     expect(b.peers()).toStrictEqual(["1"]);
     b.setLocalState(2);
     expect(b.peers()).toStrictEqual(["1", "2"]);
+  });
+
+  it("encode binary", () => {
+    const a = new AwarenessWasm("1", 10);
+    const b = new AwarenessWasm("2", 10);
+    a.setLocalState({
+      a: Uint8Array.from([1, 2, 3, 4]),
+      b: Uint8Array.from([5, 6, 7, 8]),
+    });
+    const bytes = a.encodeAll();
+    b.apply(bytes);
+    expect(b.getState("1")).toEqual({
+      a: Uint8Array.from([1, 2, 3, 4]),
+      b: Uint8Array.from([5, 6, 7, 8]),
+    });
   });
 });

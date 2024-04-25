@@ -63,6 +63,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayvec"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
+
+[[package]]
 name = "arref"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -186,12 +192,6 @@ name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
-
-[[package]]
-name = "bytes"
-version = "1.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "514de17de45fdb8dc022b1a7975556c53c86f9f0aa5f534b98977b171857c2c9"
 
 [[package]]
 name = "cast"
@@ -599,16 +599,17 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "arbtest",
- "color-backtrace 0.5.1",
- "ctor 0.1.26",
+ "color-backtrace 0.6.1",
+ "ctor 0.2.7",
  "debug-log",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
  "fxhash",
  "loro",
+ "loro-internal",
+ "rand",
  "tabled 0.10.0",
  "tracing",
- "tracing-chrome",
  "tracing-subscriber",
 ]
 
@@ -623,12 +624,13 @@ dependencies = [
 
 [[package]]
 name = "generic-btree"
-version = "0.8.3"
+version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "002d5f5354de768aee9a56254bc23693e0227478313fe6798bc810a45ae9942b"
+checksum = "e6f48456155f3a6d10b31a8510ebba3b3d38b01275fa17db8eb4033c1cf55846"
 dependencies = [
+ "arref",
  "fxhash",
- "heapless",
+ "heapless 0.7.17",
  "itertools 0.11.0",
  "loro-thunderdome",
  "proc-macro2 1.0.79",
@@ -673,16 +675,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
+name = "hashbrown"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
+
+[[package]]
 name = "heapless"
 version = "0.7.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdc6457c0eb62c71aac4bc17216026d8410337c4126773b9c5daba343f17964f"
 dependencies = [
  "atomic-polyfill",
- "hash32",
+ "hash32 0.2.1",
  "rustc_version",
  "serde",
  "spin",
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "heapless"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32 0.3.1",
  "stable_deref_trait",
 ]
 
@@ -854,6 +881,8 @@ version = "0.4.0"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
+ "generic-btree",
+ "loro-delta",
  "loro-internal",
  "serde_json",
 ]
@@ -873,6 +902,22 @@ dependencies = [
  "string_cache",
  "thiserror",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "loro-delta"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "color-backtrace 0.6.1",
+ "criterion",
+ "ctor 0.2.7",
+ "enum-as-inner 0.5.1",
+ "generic-btree",
+ "heapless 0.8.0",
+ "rand",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -901,7 +946,7 @@ dependencies = [
  "js-sys",
  "leb128",
  "loro-common",
- "loro-preload",
+ "loro-delta",
  "loro-rle",
  "md5",
  "miniz_oxide",
@@ -926,16 +971,6 @@ dependencies = [
  "tracing-subscriber",
  "wasm-bindgen",
  "zstd",
-]
-
-[[package]]
-name = "loro-preload"
-version = "0.4.0"
-dependencies = [
- "bytes",
- "loro-common",
- "serde",
- "serde_columnar",
 ]
 
 [[package]]
@@ -1243,7 +1278,7 @@ checksum = "a55c51ee6c0db07e68448e336cf8ea4131a620edefebf9893e759b2d793420f8"
 dependencies = [
  "cobs",
  "embedded-io",
- "heapless",
+ "heapless 0.7.17",
  "serde",
 ]
 

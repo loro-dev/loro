@@ -158,7 +158,7 @@ impl Actionable for TreeAction {
 
         match action {
             TreeActionInner::Create { index } => {
-                let id = tree.next_tree_id();
+                let id = tree.__internal__next_tree_id();
                 let len = tree.children_num(None).unwrap_or(0);
                 *index %= len + 1;
                 *target = (id.peer, id.counter);

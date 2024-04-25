@@ -1,6 +1,8 @@
 use std::{fmt::Debug, ops::Deref};
 
 use append_only_bytes::BytesSlice;
+use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
+use rle::Mergable;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
@@ -192,6 +194,135 @@ impl DeltaValue for StringSlice {
     }
 }
 
+impl HasLength for StringSlice {
+    fn rle_len(&self) -> usize {
+        if cfg!(feature = "wasm") {
+            count_utf16_len(self.bytes())
+        } else {
+            count_unicode_chars(self.bytes())
+        }
+    }
+}
+
+impl TryInsert for StringSlice {
+    fn try_insert(&mut self, pos: usize, elem: Self) -> Result<(), Self>
+    where
+        Self: Sized,
+    {
+        match &mut self.bytes {
+            Variant::BytesSlice(_) => Err(elem),
+            Variant::Owned(s) => {
+                if s.capacity() >= s.len() + elem.len_bytes() {
+                    let pos = if cfg!(feature = "wasm") {
+                        utf16_to_utf8_index(s.as_str(), pos).unwrap()
+                    } else {
+                        unicode_to_utf8_index(s.as_str(), pos).unwrap()
+                    };
+                    s.insert_str(pos, elem.as_str());
+                    Ok(())
+                } else {
+                    Err(elem)
+                }
+            }
+        }
+
+        // match (&mut self.bytes, &elem.bytes) {
+        //     (Variant::Owned(a), Variant::Owned(b))
+        //         // TODO: Extract magic num
+        //         if a.capacity() >= a.len() + b.len() && a.capacity() < 128 =>
+        //     {
+        //         a.insert_str(pos, b.as_str());
+        //         Ok(())
+        //     }
+        //     _ => Err(elem),
+        // }
+    }
+}
+
+impl Mergeable for StringSlice {
+    fn can_merge(&self, rhs: &Self) -> bool {
+        match (&self.bytes, &rhs.bytes) {
+            (Variant::BytesSlice(a), Variant::BytesSlice(b)) => a.can_merge(b),
+            (Variant::Owned(a), Variant::Owned(b)) => a.len() + b.len() <= a.capacity(),
+            _ => false,
+        }
+    }
+
+    fn merge_right(&mut self, rhs: &Self) {
+        match (&mut self.bytes, &rhs.bytes) {
+            (Variant::BytesSlice(a), Variant::BytesSlice(b)) => a.merge(b, &()),
+            (Variant::Owned(a), Variant::Owned(b)) => a.push_str(b.as_str()),
+            _ => {}
+        }
+    }
+
+    fn merge_left(&mut self, left: &Self) {
+        match (&mut self.bytes, &left.bytes) {
+            (Variant::BytesSlice(a), Variant::BytesSlice(b)) => {
+                let mut new = b.clone();
+                new.merge(a, &());
+                *a = new;
+            }
+            (Variant::Owned(a), Variant::Owned(b)) => {
+                a.insert_str(0, b.as_str());
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Sliceable for StringSlice {
+    fn _slice(&self, range: std::ops::Range<usize>) -> Self {
+        let range = if cfg!(feature = "wasm") {
+            let start = utf16_to_utf8_index(self.as_str(), range.start).unwrap();
+            let end = utf16_to_utf8_index(self.as_str(), range.end).unwrap();
+            start..end
+        } else {
+            let start = unicode_to_utf8_index(self.as_str(), range.start).unwrap();
+            let end = unicode_to_utf8_index(self.as_str(), range.end).unwrap();
+            start..end
+        };
+
+        let bytes = match &self.bytes {
+            Variant::BytesSlice(s) => Variant::BytesSlice(s.slice_clone(range)),
+            Variant::Owned(s) => Variant::Owned(s[range].to_string()),
+        };
+
+        Self { bytes }
+    }
+
+    fn split(&mut self, pos: usize) -> Self {
+        let pos = if cfg!(feature = "wasm") {
+            utf16_to_utf8_index(self.as_str(), pos).unwrap()
+        } else {
+            unicode_to_utf8_index(self.as_str(), pos).unwrap()
+        };
+
+        let bytes = match &mut self.bytes {
+            Variant::BytesSlice(s) => {
+                let other = s.slice_clone(pos..);
+                s.slice_(..pos);
+                Variant::BytesSlice(other)
+            }
+            Variant::Owned(s) => {
+                let other = s.split_off(pos);
+                Variant::Owned(other)
+            }
+        };
+
+        Self { bytes }
+    }
+}
+
+impl Default for StringSlice {
+    fn default() -> Self {
+        StringSlice {
+            bytes: Variant::Owned(String::with_capacity(32)),
+        }
+    }
+}
+
+impl loro_delta::delta_trait::DeltaValue for StringSlice {}
 pub fn unicode_range_to_byte_range(s: &str, start: usize, end: usize) -> (usize, usize) {
     debug_assert!(start <= end);
     let start_unicode_index = start;

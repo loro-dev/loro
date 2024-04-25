@@ -9,6 +9,7 @@ use crate::{
     },
     cursor::{Cursor, Side},
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
+    event::TextDiffItem,
     op::ListSlice,
     state::{ContainerState, FractionalIndexGenResult, State, TreeParentId},
     txn::EventHint,
@@ -18,6 +19,7 @@ use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
 use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
+use generic_btree::rle::HasLength;
 use loro_common::{
     ContainerID, ContainerType, Counter, IdFull, InternalString, LoroError, LoroResult,
     LoroTreeError, LoroValue, PeerID, TreeID, ID,
@@ -273,7 +275,14 @@ impl HandlerTrait for TextHandler {
                 t.attached = text.attached_handler().cloned();
                 Ok(text)
             }
-            MaybeDetached::Attached(_a) => unreachable!(),
+            MaybeDetached::Attached(a) => {
+                let new_inner = create_handler(a, self_id);
+                let ans = new_inner.into_text().unwrap();
+
+                let delta = self.get_delta();
+                ans.apply_delta_with_txn(txn, &delta).unwrap();
+                Ok(ans)
+            }
         }
     }
 
@@ -349,6 +358,39 @@ pub enum TextDelta {
     Delete {
         delete: usize,
     },
+}
+
+impl TextDelta {
+    pub fn from_text_diff<'a>(diff: impl Iterator<Item = &'a TextDiffItem>) -> Vec<TextDelta> {
+        let mut ans = Vec::with_capacity(diff.size_hint().0);
+        for iter in diff {
+            match iter {
+                loro_delta::DeltaItem::Retain { len, attr } => {
+                    ans.push(TextDelta::Retain {
+                        retain: *len,
+                        attributes: attr.to_option_map(),
+                    });
+                }
+                loro_delta::DeltaItem::Replace {
+                    value,
+                    attr,
+                    delete,
+                } => {
+                    if value.rle_len() > 0 {
+                        ans.push(TextDelta::Insert {
+                            insert: value.to_string(),
+                            attributes: attr.to_option_map(),
+                        });
+                    }
+                    if *delete > 0 {
+                        ans.push(TextDelta::Delete { delete: *delete });
+                    }
+                }
+            }
+        }
+
+        ans
+    }
 }
 
 impl From<&DeltaItem<StringSlice, StyleMeta>> for TextDelta {
@@ -447,7 +489,21 @@ impl HandlerTrait for MapHandler {
                 m.attached = map.attached_handler().cloned();
                 Ok(map)
             }
-            MaybeDetached::Attached(_a) => unreachable!(),
+            MaybeDetached::Attached(a) => {
+                let new_inner = create_handler(a, self_id);
+                let ans = new_inner.into_map().unwrap();
+
+                for (k, v) in self.get_value().into_map().unwrap().iter() {
+                    if let LoroValue::Container(id) = v {
+                        ans.insert_container_with_txn(txn, k, create_handler(a, id.clone()))
+                            .unwrap();
+                    } else {
+                        ans.insert_with_txn(txn, k, v.clone()).unwrap();
+                    }
+                }
+
+                Ok(ans)
+            }
         }
     }
 
@@ -554,7 +610,21 @@ impl HandlerTrait for ListHandler {
                 l.attached = list.attached_handler().cloned();
                 Ok(list)
             }
-            MaybeDetached::Attached(_a) => unreachable!(),
+            MaybeDetached::Attached(a) => {
+                let new_inner = create_handler(a, self_id);
+                let ans = new_inner.into_list().unwrap();
+
+                for (i, v) in self.get_value().into_list().unwrap().iter().enumerate() {
+                    if let LoroValue::Container(id) = v {
+                        ans.insert_container_with_txn(txn, i, create_handler(a, id.clone()))
+                            .unwrap();
+                    } else {
+                        ans.insert_with_txn(txn, i, v.clone()).unwrap();
+                    }
+                }
+
+                Ok(ans)
+            }
         }
     }
 
@@ -643,7 +713,7 @@ impl HandlerTrait for TreeHandler {
 
     fn attach(
         &self,
-        _txn: &mut Transaction,
+        txn: &mut Transaction,
         parent: &BasicHandler,
         self_id: ContainerID,
     ) -> LoroResult<Self> {
@@ -659,7 +729,30 @@ impl HandlerTrait for TreeHandler {
                     unimplemented!("attach detached tree");
                 }
             }
-            MaybeDetached::Attached(_a) => unreachable!(),
+            MaybeDetached::Attached(a) => {
+                let new_inner = create_handler(a, self_id);
+                let ans = new_inner.into_tree().unwrap();
+                let mut mapping = FxHashMap::default();
+                for (t, p) in self
+                    .nodes()
+                    .into_iter()
+                    .map(|t| (t, self.get_node_parent(t).unwrap()))
+                {
+                    if let Some(p) = p {
+                        if !ans.contains(p) {
+                            let new_p = ans.create_with_txn(txn, None)?;
+                            mapping.insert(p, new_p);
+                            let new_t = ans.create_with_txn(txn, new_p)?;
+                            mapping.insert(t, new_t);
+                        }
+                    } else {
+                        let new_t = ans.create_with_txn(txn, None)?;
+                        mapping.insert(t, new_t);
+                    }
+                }
+
+                Ok(ans)
+            }
         }
     }
 
@@ -1533,6 +1626,14 @@ impl TextHandler {
             }
         }
     }
+
+    fn get_delta(&self) -> Vec<TextDelta> {
+        self.with_state(|state| {
+            let state = state.as_richtext_state_mut().unwrap();
+            Ok(state.get_delta())
+        })
+        .unwrap()
+    }
 }
 
 fn event_len(s: &str) -> usize {
@@ -1824,25 +1925,25 @@ impl ListHandler {
 
     pub fn for_each<I>(&self, mut f: I)
     where
-        I: FnMut(ValueOrHandler),
+        I: FnMut((usize, ValueOrHandler)),
     {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let l = l.try_lock().unwrap();
-                for v in l.value.iter() {
-                    f(v.clone())
+                for (i, v) in l.value.iter().enumerate() {
+                    f((i, v.clone()))
                 }
             }
             MaybeDetached::Attached(inner) => {
                 inner.with_state(|state| {
                     let a = state.as_list_state().unwrap();
-                    for v in a.iter() {
+                    for (i, v) in a.iter().enumerate() {
                         match v {
                             LoroValue::Container(c) => {
-                                f(ValueOrHandler::Handler(create_handler(inner, c.clone())));
+                                f((i, ValueOrHandler::Handler(create_handler(inner, c.clone()))));
                             }
                             value => {
-                                f(ValueOrHandler::Value(value.clone()));
+                                f((i, ValueOrHandler::Value(value.clone())));
                             }
                         }
                     }
@@ -2560,8 +2661,8 @@ impl TreeHandler {
         }
     }
 
-    #[cfg(feature = "test_utils")]
-    pub fn next_tree_id(&self) -> TreeID {
+    #[allow(non_snake_case)]
+    pub fn __internal__next_tree_id(&self) -> TreeID {
         match &self.inner {
             MaybeDetached::Detached(d) => {
                 let d = d.try_lock().unwrap();

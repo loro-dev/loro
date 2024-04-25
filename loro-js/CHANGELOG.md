@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.14.6
+
+### Patch Changes
+
+- 24cf9b9: Bug Fix
+
+  #### 🐛 Bug Fixes
+
+  - Attached container can be inserted to `Map` or `List` (#331)
+
+- Updated dependencies [24cf9b9]
+  - loro-wasm@0.14.6
+
+## 0.14.5
+
+### Patch Changes
+
+- 73e3ba5: Bug Fix
+
+  #### 🐛 Bug Fixes
+
+  - _(js)_ Allow convert from undefined to LoroValue (#323)
+
+  #### 🚜 Refactor
+
+  - Refine ts type (#322)
+
+- Updated dependencies [73e3ba5]
+  - loro-wasm@0.14.5
+
+## 0.14.4
+
+### Patch Changes
+
+- 598d97e: ### 🚜 Refactor
+
+  - Refine the TS Type of Awareness
+  - Parse Uint8array to LoroValue::Binary (#320)
+
+  ### 📚 Documentation
+
+  - Update how to publish new npm pkgs
+
+- Updated dependencies [598d97e]
+  - loro-wasm@0.14.4
+
 ## 0.14.3
 
 ### Patch Changes

@@ -1089,7 +1089,7 @@ impl DocState {
         if let Some(id) = pos.id {
             match state {
                 State::ListState(s) => s.get_index_of_id(id),
-                State::RichtextState(s) => s.get_index_of_id(id),
+                State::RichtextState(s) => s.get_event_index_of_id(id),
                 State::MapState(_) | State::TreeState(_) => {
                     unreachable!()
                 }
@@ -1204,8 +1204,13 @@ impl SubContainerDiffPatch {
         match state_diff {
             Diff::List(list) => {
                 for delta in list.iter() {
-                    if delta.is_insert() {
-                        for v in delta.as_insert().unwrap().0.iter() {
+                    if let loro_delta::DeltaItem::Replace {
+                        value: values,
+                        attr: _,
+                        ..
+                    } = delta
+                    {
+                        for v in values.iter() {
                             if matches!(v, ValueOrHandler::Handler(_)) {
                                 let idx = v.as_handler().unwrap().container_idx();
                                 if self.all_idx.contains(&idx) {

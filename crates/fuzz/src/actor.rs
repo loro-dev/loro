@@ -4,6 +4,7 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
 use loro::{Container, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, ID};
+use tracing::info_span;
 
 use crate::{
     container::{ListActor, TextActor, TreeActor},
@@ -83,11 +84,13 @@ impl Actor {
 
     pub fn check_tracker(&self) {
         let loro = &self.loro;
-        let tracker = self.tracker.lock().unwrap();
-        let loro_value = loro.get_deep_value();
-        let tracker_value = tracker.to_value();
-        assert_value_eq(&loro_value, &tracker_value);
-        self.targets.values().for_each(|t| t.check_tracker());
+        info_span!("Check tracker", "peer = {}", loro.peer_id()).in_scope(|| {
+            let tracker = self.tracker.lock().unwrap();
+            let loro_value = loro.get_deep_value();
+            let tracker_value = tracker.to_value();
+            assert_value_eq(&loro_value, &tracker_value);
+            self.targets.values().for_each(|t| t.check_tracker());
+        })
     }
 
     pub fn check_eq(&self, other: &Actor) {

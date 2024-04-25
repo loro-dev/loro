@@ -1,6 +1,6 @@
 use enum_as_inner::EnumAsInner;
 use loro_internal::container::ContainerID;
-use loro_internal::delta::{DeltaItem, TreeDiff};
+use loro_internal::delta::TreeDiff;
 use loro_internal::event::EventTriggerKind;
 use loro_internal::handler::{TextDelta, ValueOrHandler};
 use loro_internal::FxHashMap;
@@ -74,24 +74,29 @@ impl<'a> From<&'a DiffInner> for Diff<'a> {
     fn from(value: &'a DiffInner) -> Self {
         match value {
             DiffInner::List(l) => {
-                let list = l
-                    .iter()
-                    .map(|d| match d {
-                        DeltaItem::Insert { insert, .. } => ListDiffItem::Insert {
-                            insert: insert
-                                .iter()
-                                .map(|v| ValueOrContainer::from(v.clone()))
-                                .collect(),
-                        },
-                        DeltaItem::Delete { delete, .. } => {
-                            ListDiffItem::Delete { delete: *delete }
+                let mut ans = Vec::new();
+                for item in l.iter() {
+                    match item {
+                        delta::DeltaItem::Retain { len, .. } => {
+                            ans.push(ListDiffItem::Retain { retain: *len });
                         }
-                        DeltaItem::Retain { retain, .. } => {
-                            ListDiffItem::Retain { retain: *retain }
+                        delta::DeltaItem::Replace { value, delete, .. } => {
+                            if value.len() > 0 {
+                                ans.push(ListDiffItem::Insert {
+                                    insert: value
+                                        .iter()
+                                        .map(|v| ValueOrContainer::from(v.clone()))
+                                        .collect(),
+                                });
+                            }
+                            if *delete > 0 {
+                                ans.push(ListDiffItem::Delete { delete: *delete });
+                            }
                         }
-                    })
-                    .collect();
-                Diff::List(list)
+                    }
+                }
+
+                Diff::List(ans)
             }
             DiffInner::Map(m) => Diff::Map(MapDelta {
                 updated: m
@@ -101,7 +106,7 @@ impl<'a> From<&'a DiffInner> for Diff<'a> {
                     .collect(),
             }),
             DiffInner::Text(t) => {
-                let text = t.iter().map(TextDelta::from).collect();
+                let text = TextDelta::from_text_diff(t.iter());
                 Diff::Text(text)
             }
             DiffInner::Tree(t) => Diff::Tree(t),
