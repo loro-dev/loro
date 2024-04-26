@@ -313,8 +313,9 @@ declare module "loro-wasm" {
      *  console.log(list.value);  // [100, "foo", true];
      *  ```
      */
-    insert(pos: number, value: Exclude<T, Container>): void;
+    insert<V extends T>(pos: number, value: Exclude<V, Container>): void;
     delete(pos: number, len: number): void;
+    push<V extends T>(value: Exclude<V, Container>): void;
     subscribe(listener: Listener): number;
     getAttached(): undefined | LoroList<T>;
   }
@@ -388,8 +389,9 @@ declare module "loro-wasm" {
      *  console.log(list.value);  // [100, "foo", true];
      *  ```
      */
-    insert(pos: number, value: Exclude<T, Container>): void;
+    insert<V extends T>(pos: number, value: Exclude<V, Container>): void;
     delete(pos: number, len: number): void;
+    push<V extends T>(value: Exclude<V, Container>): void;
     subscribe(listener: Listener): number;
     getAttached(): undefined | LoroMovableList<T>;
     /**
@@ -416,7 +418,7 @@ declare module "loro-wasm" {
      *  console.log(list.value);  // [100, "bar", true];
      *  ```
      */
-    set(pos: number, value: Exclude<T, Container>): void;
+    set<V extends T>(pos: number, value: Exclude<V, Container>): void;
     /**
      * Set a container at the index.
      *
@@ -510,7 +512,10 @@ declare module "loro-wasm" {
      *  map.set("foo", "baz");
      *  ```
      */
-    set<Key extends keyof T>(key: Key, value: Exclude<T[Key], Container>): void;
+    set<Key extends keyof T, V extends T[Key]>(
+      key: Key,
+      value: Exclude<V, Container>,
+    ): void;
     delete(key: string): void;
     subscribe(listener: Listener): number;
   }

@@ -2193,6 +2193,7 @@ impl LoroList {
             .map(|pos| Cursor { pos })
     }
 
+    #[wasm_bindgen(skip_typescript)]
     pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
         let v: JsValue = value.into();
         self.handler.push(v.into())?;
@@ -2553,6 +2554,7 @@ impl LoroMovableList {
         Ok(handler_to_js_value(c, self.doc.clone()).into())
     }
 
+    #[wasm_bindgen(skip_typescript)]
     pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
         let v: JsValue = value.into();
         self.handler.push(v.into())?;
