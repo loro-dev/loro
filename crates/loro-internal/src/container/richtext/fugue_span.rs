@@ -25,19 +25,29 @@ pub(crate) enum RichtextChunkKind {
     Text,
     StyleAnchor,
     Unknown,
+    /// Move anchor is a special anchor that is used to mark the FugueSpan created
+    /// by a move operation.
+    MoveAnchor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RichtextChunkValue {
     Text(Range<u32>),
-    StyleAnchor { id: u32, anchor_type: AnchorType },
+    StyleAnchor {
+        id: u32,
+        anchor_type: AnchorType,
+    },
     Unknown(u32),
+    /// Move anchor is a special anchor that is used to mark the FugueSpan created
+    /// by a move operation.
+    MoveAnchor,
 }
 
 impl RichtextChunk {
     pub(crate) const UNKNOWN: u32 = u32::MAX;
     pub(crate) const START_STYLE_ANCHOR: u32 = u32::MAX - 1;
     pub(crate) const END_STYLE_ANCHOR: u32 = u32::MAX - 2;
+    pub(crate) const MOVE_ANCHOR: u32 = u32::MAX - 3;
 
     #[inline]
     pub fn new_text(range: Range<u32>) -> Self {
@@ -70,11 +80,20 @@ impl RichtextChunk {
     }
 
     #[inline]
+    pub fn new_move() -> Self {
+        Self {
+            start: Self::MOVE_ANCHOR,
+            end: Self::MOVE_ANCHOR,
+        }
+    }
+
+    #[inline]
     pub(crate) fn kind(&self) -> RichtextChunkKind {
         match self.start {
             Self::START_STYLE_ANCHOR => RichtextChunkKind::StyleAnchor,
             Self::END_STYLE_ANCHOR => RichtextChunkKind::StyleAnchor,
             Self::UNKNOWN => RichtextChunkKind::Unknown,
+            Self::MOVE_ANCHOR => RichtextChunkKind::MoveAnchor,
             _ => RichtextChunkKind::Text,
         }
     }
@@ -83,7 +102,7 @@ impl RichtextChunk {
     pub fn len(&self) -> usize {
         match self.start {
             Self::UNKNOWN => self.end as usize,
-            Self::START_STYLE_ANCHOR | Self::END_STYLE_ANCHOR => 1,
+            Self::START_STYLE_ANCHOR | Self::END_STYLE_ANCHOR | Self::MOVE_ANCHOR => 1,
             _ => (self.end - self.start) as usize,
         }
     }
@@ -100,6 +119,7 @@ impl RichtextChunk {
                 id: self.end,
                 anchor_type: AnchorType::End,
             },
+            Self::MOVE_ANCHOR => RichtextChunkValue::MoveAnchor,
             _ => RichtextChunkValue::Text(self.start..self.end),
         }
     }
@@ -153,7 +173,7 @@ impl Sliceable for RichtextChunk {
                     end: self.start + range.end as u32,
                 }
             }
-            RichtextChunkKind::StyleAnchor => {
+            RichtextChunkKind::StyleAnchor | RichtextChunkKind::MoveAnchor => {
                 assert_eq!(range.len(), 1);
                 *self
             }

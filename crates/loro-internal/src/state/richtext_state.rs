@@ -549,7 +549,9 @@ impl ContainerState for RichtextState {
                         }),
                     );
                 }
+                list_op::InnerListOp::Set { .. } => {}
                 list_op::InnerListOp::StyleEnd => {}
+                list_op::InnerListOp::Move { .. } => unreachable!(),
             },
             _ => unreachable!(),
         }

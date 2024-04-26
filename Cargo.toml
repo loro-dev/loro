@@ -8,6 +8,7 @@ members = [
     "crates/loro-internal",
     "crates/loro-wasm",
     "crates/fuzz",
+    "crates/dev-utils",
     "crates/delta",
 ]
 resolver = "2"

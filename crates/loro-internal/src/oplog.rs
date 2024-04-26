@@ -16,12 +16,12 @@ use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::group::OpGroups;
 use crate::id::{Counter, PeerID, ID};
-use crate::op::{ListSlice, RawOpContent, RemoteOp, RichOp};
+use crate::op::{ListSlice, Op, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use fxhash::FxHashMap;
-use loro_common::{HasCounter, HasId, IdSpan};
+use loro_common::{HasCounter, HasId, IdLp, IdSpan};
 use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
 
@@ -83,7 +83,7 @@ impl Clone for OpLog {
     fn clone(&self) -> Self {
         Self {
             dag: self.dag.clone(),
-            arena: Default::default(),
+            arena: self.arena.clone(),
             changes: self.changes.clone(),
             op_groups: self.op_groups.clone(),
             next_lamport: self.next_lamport,
@@ -171,11 +171,12 @@ pub(crate) struct EnsureChangeDepsAreAtTheEnd;
 impl OpLog {
     #[inline]
     pub(crate) fn new() -> Self {
+        let arena = SharedArena::new();
         Self {
             dag: AppDag::default(),
-            arena: Default::default(),
+            op_groups: OpGroups::new(arena.clone()),
             changes: ClientChanges::default(),
-            op_groups: OpGroups::default(),
+            arena,
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
@@ -239,9 +240,10 @@ impl OpLog {
         &self.changes
     }
 
-    /// This is the only place to update the `OpLog.changes`
+    /// This is the **only** place to update the `OpLog.changes`
     pub(crate) fn insert_new_change(&mut self, mut change: Change, _: EnsureChangeDepsAreAtTheEnd) {
         self.op_groups.insert_by_change(&change);
+        self.register_container_and_parent_link(&change);
         let entry = self.changes.entry(change.id.peer).or_default();
         match entry.last_mut() {
             Some(last) => {
@@ -567,7 +569,7 @@ impl OpLog {
                             pos: *pos,
                         }));
                     }
-                    loro_common::ContainerType::List => {
+                    loro_common::ContainerType::List | loro_common::ContainerType::MovableList => {
                         contents.push(RawOpContent::List(list_op::ListOp::Insert {
                             slice: ListSlice::RawData(Cow::Owned(
                                 self.arena
@@ -595,6 +597,7 @@ impl OpLog {
                         }));
                     }
                     loro_common::ContainerType::List
+                    | loro_common::ContainerType::MovableList
                     | loro_common::ContainerType::Map
                     | loro_common::ContainerType::Tree => {
                         unreachable!()
@@ -618,6 +621,19 @@ impl OpLog {
                 })),
                 list_op::InnerListOp::StyleEnd => {
                     contents.push(RawOpContent::List(list_op::ListOp::StyleEnd))
+                }
+                list_op::InnerListOp::Move { from, from_id, to } => {
+                    contents.push(RawOpContent::List(list_op::ListOp::Move {
+                        from: *from,
+                        elem_id: *from_id,
+                        to: *to,
+                    }))
+                }
+                list_op::InnerListOp::Set { elem_id, value } => {
+                    contents.push(RawOpContent::List(list_op::ListOp::Set {
+                        elem_id: *elem_id,
+                        value: value.clone(),
+                    }))
                 }
             },
             crate::op::InnerContent::Map(map) => {
@@ -875,17 +891,17 @@ impl OpLog {
 
     pub(crate) fn idlp_to_id(&self, id: loro_common::IdLp) -> Option<ID> {
         if let Some(peer_changes) = self.changes.get(&id.peer) {
-            let r = peer_changes.binary_search_by(|c| {
+            let ans = peer_changes.binary_search_by(|c| {
                 if c.lamport > id.lamport {
                     Ordering::Greater
-                } else if c.lamport + c.atom_len() as Lamport <= id.lamport {
+                } else if (c.lamport + c.atom_len() as Lamport) <= id.lamport {
                     Ordering::Less
                 } else {
                     Ordering::Equal
                 }
             });
 
-            match r {
+            match ans {
                 Ok(index) => {
                     let change = &peer_changes[index];
                     let counter = (id.lamport - change.lamport) as Counter + change.id.counter;
@@ -896,6 +912,19 @@ impl OpLog {
         } else {
             None
         }
+    }
+
+    #[allow(unused)]
+    pub(crate) fn id_to_idlp(&self, id_start: ID) -> IdLp {
+        let change = self.get_change_at(id_start).unwrap();
+        let lamport = change.lamport + (id_start.counter - change.id.counter) as Lamport;
+        let peer = id_start.peer;
+        loro_common::IdLp { peer, lamport }
+    }
+
+    pub(crate) fn get_op(&self, id: ID) -> Option<&Op> {
+        let change = self.get_change_at(id)?;
+        change.ops.get_by_atom_index(id.counter).map(|x| x.element)
     }
 }
 

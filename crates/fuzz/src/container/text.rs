@@ -33,10 +33,13 @@ pub struct TextActor {
 
 impl TextActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker = MapTracker::empty();
+        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
         tracker.insert(
             "text".to_string(),
-            Value::empty_container(ContainerType::Text),
+            Value::empty_container(
+                ContainerType::Text,
+                ContainerID::new_root("text", ContainerType::Text),
+            ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let text = tracker.clone();

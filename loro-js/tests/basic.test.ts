@@ -103,7 +103,6 @@ describe("list", () => {
     const map = list.insertContainer(0, new LoroMap());
     map.set("key", "value");
     const v = list.get(0) as LoroMap;
-    console.log(v);
     expect(v instanceof LoroMap).toBeTruthy();
     expect(v.toJson()).toStrictEqual({ key: "value" });
   });
@@ -189,7 +188,6 @@ describe("import", () => {
     docB.importUpdateBatch([updateA]);
     docB.getText("text").insert(0, "hello");
     docB.commit();
-    console.log(docB.exportFrom());
   });
 });
 
@@ -453,7 +451,6 @@ it("get elem by path", () => {
   map.set("key", 1);
   expect(doc.getByPath("map/key")).toBe(1);
   const map1 = doc.getByPath("map") as LoroMap;
-  console.log(map1);
   expect(getType(map1)).toBe("Map");
   map1.set("key1", 1);
   expect(doc.getByPath("map/key1")).toBe(1);

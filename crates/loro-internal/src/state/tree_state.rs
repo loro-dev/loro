@@ -232,7 +232,7 @@ impl ContainerState for TreeState {
         txn: &Weak<Mutex<Option<Transaction>>>,
         state: &Weak<Mutex<DocState>>,
     ) {
-        self.apply_diff_and_convert(diff, arena, txn, state);
+        let _ = self.apply_diff_and_convert(diff, arena, txn, state);
     }
 
     fn apply_local_op(&mut self, raw_op: &RawOp, _op: &crate::op::Op) -> LoroResult<()> {

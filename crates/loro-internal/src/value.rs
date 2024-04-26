@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
+    container::richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
     delta::{Delta, DeltaItem, Meta, StyleMeta, TreeValue},
     event::{Diff, Index, Path, TextDiff, TextDiffItem},
     handler::ValueOrHandler,
@@ -248,11 +249,113 @@ enum TypeHint {
 }
 
 pub trait ApplyDiff {
+    fn apply_diff_shallow(&mut self, diff: &[Diff]);
     fn apply_diff(&mut self, diff: &[Diff]);
     fn apply(&mut self, path: &Path, diff: &[Diff]);
 }
 
 impl ApplyDiff for LoroValue {
+    fn apply_diff_shallow(&mut self, diff: &[Diff]) {
+        match self {
+            LoroValue::String(value) => {
+                let mut s = value.to_string();
+                for item in diff.iter() {
+                    let delta = item.as_text().unwrap();
+                    let mut index = 0;
+                    for delta_item in delta.iter() {
+                        match delta_item {
+                            loro_delta::DeltaItem::Retain { len, attr: _ } => {
+                                index += len;
+                            }
+                            loro_delta::DeltaItem::Replace {
+                                value,
+                                attr: _,
+                                delete,
+                            } => {
+                                let (start, end) = if cfg!(feature = "wasm") {
+                                    (
+                                        utf16_to_utf8_index(&s, index).unwrap(),
+                                        utf16_to_utf8_index(&s, index + *delete).unwrap(),
+                                    )
+                                } else {
+                                    (
+                                        // FIXME: maybe by default we shuold use utf8
+                                        unicode_to_utf8_index(&s, index).unwrap(),
+                                        unicode_to_utf8_index(&s, index + *delete).unwrap(),
+                                    )
+                                };
+                                s.replace_range(start..end, value.as_str());
+                                index += value.len_bytes();
+                            }
+                        }
+                    }
+                }
+                *value = Arc::new(s);
+            }
+            LoroValue::List(seq) => {
+                let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
+                if !is_tree {
+                    let seq = Arc::make_mut(seq);
+                    for item in diff.iter() {
+                        let delta = item.as_list().unwrap();
+                        let mut index = 0;
+                        for delta_item in delta.iter() {
+                            match delta_item {
+                                loro_delta::DeltaItem::Retain { len, attr: _ } => {
+                                    index += len;
+                                }
+                                loro_delta::DeltaItem::Replace {
+                                    value,
+                                    attr: _,
+                                    delete,
+                                } => {
+                                    let len = value.len();
+                                    seq.splice(
+                                        index..index + delete,
+                                        value.iter().map(|x| x.to_value()),
+                                    );
+                                    index += len;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let seq = Arc::make_mut(seq);
+                    for item in diff.iter() {
+                        match item {
+                            Diff::Tree(tree) => {
+                                let mut v = TreeValue(seq);
+                                v.apply_diff(tree);
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+            LoroValue::Map(map) => {
+                for item in diff.iter() {
+                    match item {
+                        Diff::Map(diff) => {
+                            let map = Arc::make_mut(map);
+                            for (key, value) in diff.updated.iter() {
+                                match &value.value {
+                                    Some(value) => {
+                                        map.insert(key.to_string(), value.to_value());
+                                    }
+                                    None => {
+                                        map.remove(&key.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
     fn apply_diff(&mut self, diff: &[Diff]) {
         match self {
             LoroValue::String(value) => {
@@ -295,8 +398,7 @@ impl ApplyDiff for LoroValue {
                                     attr: _,
                                     delete,
                                 } => {
-                                    let value_iter =
-                                        value.iter().map(unresolved_to_collection);
+                                    let value_iter = value.iter().map(unresolved_to_collection);
                                     seq.splice(index..index + *delete, value_iter);
                                     index += value.len();
                                 }

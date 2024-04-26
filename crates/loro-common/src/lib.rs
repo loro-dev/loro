@@ -3,7 +3,7 @@ use std::{fmt::Display, sync::Arc};
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
 
-use nonmax::NonMaxI32;
+use nonmax::{NonMaxI32, NonMaxU32};
 use serde::{Deserialize, Serialize};
 mod error;
 mod id;
@@ -83,6 +83,47 @@ pub struct IdLp {
     pub peer: PeerID,
 }
 
+impl IdLp {
+    pub fn compact(self) -> CompactIdLp {
+        CompactIdLp::new(self.peer, self.lamport)
+    }
+}
+
+/// It's the unique ID of an Op represented by [PeerID] and [Counter].
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct CompactIdLp {
+    pub peer: PeerID,
+    pub lamport: NonMaxU32,
+}
+
+impl CompactIdLp {
+    pub fn new(peer: PeerID, lamport: Lamport) -> Self {
+        Self {
+            peer,
+            lamport: NonMaxU32::new(lamport).unwrap(),
+        }
+    }
+
+    pub fn to_id(&self) -> IdLp {
+        IdLp {
+            peer: self.peer,
+            lamport: self.lamport.get(),
+        }
+    }
+}
+
+impl TryFrom<IdLp> for CompactIdLp {
+    type Error = IdLp;
+
+    fn try_from(id: IdLp) -> Result<Self, IdLp> {
+        if id.lamport == u32::MAX {
+            return Err(id);
+        }
+
+        Ok(Self::new(id.peer, id.lamport))
+    }
+}
+
 /// It's the unique ID of an Op represented by [PeerID], [Lamport] clock and [Counter].
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct IdFull {
@@ -102,7 +143,7 @@ pub struct IdFull {
 /// - Normal Container: `<counter>@<client>:<type>`
 ///
 /// Note: It will be encoded into binary format, so the order of its fields should not be changed.
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize, Deserialize, EnumAsInner)]
+#[derive(Hash, PartialEq, Eq, Clone, Serialize, Deserialize, EnumAsInner)]
 pub enum ContainerID {
     /// Root container does not need an op to create. It can be created implicitly.
     Root {
@@ -116,6 +157,26 @@ pub enum ContainerID {
     },
 }
 
+impl std::fmt::Debug for ContainerID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Root {
+                name,
+                container_type,
+            } => {
+                write!(f, "Root(\"{}\" {:?})", &name, container_type)
+            }
+            Self::Normal {
+                peer,
+                counter,
+                container_type,
+            } => {
+                write!(f, "Normal({:?} {}@{})", container_type, counter, peer,)
+            }
+        }
+    }
+}
+
 // TODO: add non_exausted
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(
@@ -125,6 +186,7 @@ pub enum ContainerType {
     Text,
     Map,
     List,
+    MovableList,
     Tree,
 }
 
@@ -142,6 +204,7 @@ impl ContainerType {
             ContainerType::List => LoroValue::List(Arc::new(Default::default())),
             ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
             ContainerType::Tree => LoroValue::List(Arc::new(Default::default())),
+            ContainerType::MovableList => LoroValue::List(Arc::new(Default::default())),
         }
     }
 
@@ -151,6 +214,7 @@ impl ContainerType {
             ContainerType::List => 2,
             ContainerType::Text => 3,
             ContainerType::Tree => 4,
+            ContainerType::MovableList => 5,
         }
     }
 
@@ -160,6 +224,7 @@ impl ContainerType {
             2 => ContainerType::List,
             3 => ContainerType::Text,
             4 => ContainerType::Tree,
+            5 => ContainerType::MovableList,
             _ => unreachable!(),
         }
     }
@@ -170,6 +235,7 @@ impl ContainerType {
             2 => Ok(ContainerType::List),
             3 => Ok(ContainerType::Text),
             4 => Ok(ContainerType::Tree),
+            5 => Ok(ContainerType::MovableList),
             _ => Err(LoroError::DecodeError(
                 format!("Unknown container type {v}").into_boxed_str(),
             )),
@@ -187,6 +253,7 @@ mod container {
             f.write_str(match self {
                 ContainerType::Map => "Map",
                 ContainerType::List => "List",
+                ContainerType::MovableList => "MovableList",
                 ContainerType::Text => "Text",
                 ContainerType::Tree => "Tree",
             })
@@ -299,6 +366,7 @@ mod container {
                 "List" | "list" => Ok(ContainerType::List),
                 "Text" | "text" => Ok(ContainerType::Text),
                 "Tree" | "tree" => Ok(ContainerType::Tree),
+                "MovableList" | "movableList" => Ok(ContainerType::MovableList),
                 _ => Err(LoroError::DecodeError(
                     format!("Unknown container type \"{}\". The valid options are Map|List|Text|Tree|MovableList.", value).into(),
                 )),

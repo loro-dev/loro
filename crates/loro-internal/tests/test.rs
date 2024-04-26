@@ -7,7 +7,7 @@ use loro_internal::{
     event::{Diff, EventTriggerKind},
     handler::{Handler, TextDelta, ValueOrHandler},
     version::Frontiers,
-    ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
+    ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson,
 };
 use serde_json::json;
 
@@ -823,6 +823,11 @@ fn state_may_deadlock_when_import() {
         doc2.get_map("map").insert("foo", 123).unwrap();
         doc.import(&doc.export_snapshot()).unwrap();
     })
+}
+
+#[ctor::ctor]
+fn init() {
+    dev_utils::setup_test_log();
 }
 
 #[test]

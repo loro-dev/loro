@@ -226,6 +226,10 @@ impl CrdtRope {
         }
     }
 
+    /// Delete the span at `pos` with `len`.
+    ///
+    /// The `start_id` is used to mark the real_id in the [FugueSpan].
+    ///
     /// - If reversed is true, the deletion will be done in reversed order.
     ///   But the start_id always refers to the first delete op's id.
     /// - If reversed is true, the returned `SplittedLeaves` will be in reversed order.
@@ -329,12 +333,10 @@ impl CrdtRope {
             for u in group {
                 debug_assert_eq!(u.id_span.peer, elem.id.peer);
                 let start = (u.id_span.ctr_start() - elem.id.counter).max(0);
-                let end = u.id_span.ctr_end() - elem.id.counter;
-                tree_update_info.push((
-                    leaf,
-                    (start as usize).min(elem.rle_len())..(end as usize).min(elem.rle_len()),
-                    u,
-                ))
+                let end = (u.id_span.ctr_end() - elem.id.counter).max(0);
+                let len = elem.rle_len();
+
+                tree_update_info.push((leaf, (start as usize).min(len)..(end as usize).min(len), u))
             }
         }
 

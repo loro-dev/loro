@@ -6,6 +6,70 @@ use loro::{
 };
 use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
 use serde_json::json;
+use tracing::trace_span;
+
+#[ctor::ctor]
+fn init() {
+    dev_utils::setup_test_log();
+}
+
+#[test]
+fn insert_an_inserted_movable_handler() -> Result<(), LoroError> {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("list");
+    list.insert(0, 1)?;
+    list.insert(1, 2)?;
+    list.insert(2, 3)?;
+    list.insert(3, 4)?;
+    list.insert(4, 5)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({"list": [1, 2, 3, 4, 5]})
+    );
+    let list2 = doc.get_list("list2");
+    let list3 = list2.insert_container(0, list)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({"list": [1, 2, 3, 4, 5], "list2": [[1, 2, 3, 4, 5]]})
+    );
+    list3.insert(0, 10)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({"list": [1, 2, 3, 4, 5], "list2": [[10, 1, 2, 3, 4, 5]]})
+    );
+    Ok(())
+}
+
+#[test]
+fn movable_list() -> Result<(), LoroError> {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("list");
+    list.insert(0, 1)?;
+    list.insert(0, 2)?;
+    list.insert(0, 3)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [3, 2, 1]
+        })
+    );
+    list.mov(0, 2)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [2, 1, 3]
+        })
+    );
+    list.mov(0, 1)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [1, 2, 3]
+        })
+    );
+
+    Ok(())
+}
 
 #[test]
 fn list_checkout() -> Result<(), LoroError> {
@@ -210,8 +274,18 @@ fn travel_back_should_remove_styles() {
     doc.commit();
     let f2 = doc.state_frontiers();
     assert_eq!(text.to_delta(), text2.to_delta());
-    doc.checkout(&f1).unwrap(); // checkout to the middle of the start anchor op and the end anchor op
+    trace_span!("CheckoutToMiddle").in_scope(|| {
+        doc.checkout(&f1).unwrap(); // checkout to the middle of the start anchor op and the end anchor op
+    });
     doc.checkout(&f).unwrap();
+    assert_eq!(
+        text.to_delta().as_list().unwrap().len(),
+        1,
+        "should remove the bold style but got {:?}",
+        text.to_delta()
+    );
+    assert_eq!(doc.state_frontiers(), f);
+    doc.check_state_correctness_slow();
     assert_eq!(text.to_delta(), text2.to_delta());
     doc.checkout(&f2).unwrap();
     assert_eq!(text.to_delta(), text2.to_delta());

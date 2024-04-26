@@ -292,7 +292,7 @@ impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
         if next_op.is_none() {
             return DeltaItem::Retain {
                 retain: other.length(),
-                attributes: other.meta().clone(),
+                attributes: M::empty(),
             };
         }
         let op = next_op.unwrap();
@@ -623,6 +623,16 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
         }
 
         self
+    }
+
+    pub fn insert_len(&self) -> usize {
+        self.vec
+            .iter()
+            .map(|x| match x {
+                DeltaItem::Insert { insert, .. } => insert.length(),
+                _ => 0,
+            })
+            .sum()
     }
 }
 

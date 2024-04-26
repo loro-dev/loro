@@ -26,3 +26,9 @@ name = "all"
 path = "fuzz_targets/all.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "mov"
+path = "fuzz_targets/mov.rs"
+test = false
+doc = false

@@ -37,7 +37,7 @@ describe("richtext", () => {
     const doc = new Loro();
     const text = doc.getText("text");
     let triggered = false;
-    text.subscribe(doc, (e) => {
+    text.subscribe((e) => {
       for (const event of e.events) {
         if (event.diff.type == "text") {
           expect(event.diff.diff).toStrictEqual([
@@ -66,7 +66,7 @@ describe("richtext", () => {
     const doc = new Loro();
     const text = doc.getText("text");
     let called = false;
-    text.subscribe(doc, (event) => {
+    text.subscribe((event) => {
       if (event.events[0].diff.type == "text") {
         called = true;
         expect(event.events[0].diff.diff).toStrictEqual([
@@ -128,7 +128,7 @@ describe("richtext", () => {
       bold: { expand: "after" },
     });
     const text2 = doc2.getText("text");
-    text1.subscribe(doc1, (event) => {
+    text1.subscribe((event) => {
       for (const containerDiff of event.events) {
         const e = containerDiff.diff as TextDiff;
         text2.applyDelta(e.diff);

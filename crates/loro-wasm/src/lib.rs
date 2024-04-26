@@ -14,7 +14,7 @@ use loro_internal::{
     id::{Counter, TreeID, ID},
     obs::SubID,
     version::Frontiers,
-    ContainerType, DiffEvent, HandlerTrait, LoroDoc, LoroValue,
+    ContainerType, DiffEvent, HandlerTrait, LoroDoc, LoroValue, MovableListHandler,
     VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
@@ -283,7 +283,8 @@ impl Loro {
     }
 
     /// If two continuous local changes are within the interval, they will be merged into one change.
-    /// The defualt value is 1000 seconds
+    ///
+    /// The defualt value is 1_000_000, the default unit is miliseconds.
     #[wasm_bindgen(js_name = "setChangeMergeInterval")]
     pub fn set_change_merge_interval(&self, interval: f64) {
         self.0.set_change_merge_interval(interval as i64);
@@ -590,6 +591,29 @@ impl Loro {
         })
     }
 
+    /// Get a LoroMovableList by container id
+    ///
+    /// The object returned is a new js object each time because it need to cross
+    /// the WASM boundary.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getMovableList("list");
+    /// ```
+    #[wasm_bindgen(skip_typescript)]
+    pub fn getMovableList(&self, cid: &JsIntoContainerID) -> JsResult<LoroMovableList> {
+        let list = self
+            .0
+            .get_movable_list(js_value_to_container_id(cid, ContainerType::MovableList)?);
+        Ok(LoroMovableList {
+            handler: list,
+            doc: Some(self.0.clone()),
+        })
+    }
+
     /// Get a LoroTree by container id
     ///
     /// The object returned is a new js object each time because it need to cross
@@ -661,6 +685,9 @@ impl Loro {
                     doc: Some(self.0.clone()),
                 }
                 .into()
+            }
+            ContainerType::MovableList => {
+                unimplemented!()
             }
         })
     }
@@ -900,7 +927,7 @@ impl Loro {
             .into_u32()
     }
 
-    /// Unsubscribe by the subscription
+    /// Unsubscribe by the subscription id.
     ///
     /// @example
     /// ```ts
@@ -1417,22 +1444,29 @@ impl LoroText {
     /// Subscribe to the changes of the text.
     ///
     /// returns a subscription id, which can be used to unsubscribe.
-    pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let doc = loro.0.clone();
-        let ans = loro.0.subscribe(
+        let doc = self
+            .doc
+            .clone()
+            .ok_or_else(|| JsError::new("Document is not attached"))?;
+        let doc_clone = doc.clone();
+        let ans = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc);
+                call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
 
         Ok(ans.into_u32())
     }
 
-    /// Unsubscribe by the subscription.
-    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
-        loro.0.unsubscribe(SubID::from_u32(subscription));
+    /// Unsubscribe by the subscription id.
+    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
+        self.doc
+            .as_ref()
+            .ok_or_else(|| JsError::new("Document is not attached"))?
+            .unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
 
@@ -1767,13 +1801,17 @@ impl LoroMap {
     /// map.set("foo", "bar");
     /// doc.commit();
     /// ```
-    pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let doc = loro.0.clone();
-        let id = loro.0.subscribe(
+        let doc = self
+            .doc
+            .clone()
+            .ok_or_else(|| JsError::new("Document is not attached"))?;
+        let doc_clone = doc.clone();
+        let id = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc);
+                call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
 
@@ -1793,10 +1831,13 @@ impl LoroMap {
     /// });
     /// map.set("foo", "bar");
     /// doc.commit();
-    /// map.unsubscribe(doc, subscription);
+    /// map.unsubscribe(subscription);
     /// ```
-    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
-        loro.0.unsubscribe(SubID::from_u32(subscription));
+    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
+        self.doc
+            .as_ref()
+            .ok_or_else(|| JsError::new("Document is not attached"))?
+            .unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
 
@@ -2031,7 +2072,7 @@ impl LoroList {
 
     /// Subscribe to the changes of the list.
     ///
-    /// returns a subscription id, which can be used to unsubscribe.
+    /// Returns a subscription id, which can be used to unsubscribe.
     ///
     /// @example
     /// ```ts
@@ -2045,19 +2086,23 @@ impl LoroList {
     /// list.insert(0, 100);
     /// doc.commit();
     /// ```
-    pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let doc = loro.0.clone();
-        let ans = loro.0.subscribe(
+        let doc = self
+            .doc
+            .clone()
+            .ok_or_else(|| JsError::new("Document is not attached"))?;
+        let doc_clone = doc.clone();
+        let ans = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc);
+                call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
         Ok(ans.into_u32())
     }
 
-    /// Unsubscribe by the subscription.
+    /// Unsubscribe by the subscription id.
     ///
     /// @example
     /// ```ts
@@ -2070,10 +2115,13 @@ impl LoroList {
     /// });
     /// list.insert(0, 100);
     /// doc.commit();
-    /// list.unsubscribe(doc, subscription);
+    /// list.unsubscribe(subscription);
     /// ```
-    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
-        loro.0.unsubscribe(SubID::from_u32(subscription));
+    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
+        self.doc
+            .as_ref()
+            .ok_or_else(|| JsError::new("Document is not attached"))?
+            .unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
 
@@ -2144,11 +2192,379 @@ impl LoroList {
             .get_cursor(pos, side_value)
             .map(|pos| Cursor { pos })
     }
+
+    pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
+        let v: JsValue = value.into();
+        self.handler.push(v.into())?;
+        Ok(())
+    }
+
+    pub fn pop(&self) -> JsResult<Option<JsLoroValue>> {
+        let v = self.handler.pop()?;
+        if let Some(v) = v {
+            let v: JsValue = v.into();
+            Ok(Some(v.into()))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 impl Default for LoroList {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The handler of a list container.
+#[derive(Clone)]
+#[wasm_bindgen]
+pub struct LoroMovableList {
+    handler: MovableListHandler,
+    doc: Option<Arc<LoroDoc>>,
+}
+
+impl Default for LoroMovableList {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[wasm_bindgen]
+impl LoroMovableList {
+    /// Create a new detached LoroList.
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            handler: MovableListHandler::new_detached(),
+            doc: None,
+        }
+    }
+
+    /// "List"
+    pub fn kind(&self) -> JsListStr {
+        JsValue::from_str("MovableList").into()
+    }
+
+    /// Insert a value at index.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// list.insert(1, "foo");
+    /// list.insert(2, true);
+    /// console.log(list.value);  // [100, "foo", true];
+    /// ```
+    #[wasm_bindgen(skip_typescript)]
+    pub fn insert(&mut self, index: usize, value: JsLoroValue) -> JsResult<()> {
+        let v: JsValue = value.into();
+        self.handler.insert(index, v)?;
+        Ok(())
+    }
+
+    /// Delete elements from index to index + len.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// list.delete(0, 1);
+    /// console.log(list.value);  // []
+    /// ```
+    pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
+        self.handler.delete(index, len)?;
+        Ok(())
+    }
+
+    /// Get the value at the index. If the value is a container, the corresponding handler will be returned.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// console.log(list.get(0));  // 100
+    /// console.log(list.get(1));  // undefined
+    /// ```
+    #[wasm_bindgen(skip_typescript)]
+    pub fn get(&self, index: usize) -> JsValueOrContainerOrUndefined {
+        let Some(v) = self.handler.get_(index) else {
+            return JsValue::UNDEFINED.into();
+        };
+
+        (match v {
+            ValueOrHandler::Value(v) => v.into(),
+            ValueOrHandler::Handler(h) => handler_to_js_value(h, self.doc.clone()),
+        })
+        .into()
+    }
+
+    /// Get the id of this container.
+    #[wasm_bindgen(js_name = "id", method, getter)]
+    pub fn id(&self) -> JsContainerID {
+        let value: JsValue = (&self.handler.id()).into();
+        value.into()
+    }
+
+    /// Get elements of the list. If the value is a child container, the corresponding
+    /// `Container` will be returned.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// list.insert(1, "foo");
+    /// list.insert(2, true);
+    /// list.insertContainer(3, new LoroText());
+    /// console.log(list.value);  // [100, "foo", true, LoroText];
+    /// ```
+    #[wasm_bindgen(js_name = "toArray", method, skip_typescript)]
+    pub fn to_array(&mut self) -> Vec<JsValueOrContainer> {
+        let mut arr: Vec<JsValueOrContainer> = Vec::with_capacity(self.length());
+        self.handler.for_each(|x| {
+            arr.push(match x {
+                ValueOrHandler::Value(v) => {
+                    let v: JsValue = v.into();
+                    v.into()
+                }
+                ValueOrHandler::Handler(h) => {
+                    let v: JsValue = handler_to_js_value(h, self.doc.clone());
+                    v.into()
+                }
+            });
+        });
+        arr
+    }
+
+    /// Get elements of the list. If the type of a element is a container, it will be
+    /// resolved recursively.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// const text = list.insertContainer(1, new LoroText());
+    /// text.insert(0, "Hello");
+    /// console.log(list.getDeepValue());  // [100, "Hello"];
+    /// ```
+    #[wasm_bindgen(js_name = "toJson")]
+    pub fn to_json(&self) -> JsValue {
+        let value = self.handler.get_deep_value();
+        value.into()
+    }
+
+    /// Insert a container at the index.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// const text = list.insertContainer(1, new LoroText());
+    /// text.insert(0, "Hello");
+    /// console.log(list.getDeepValue());  // [100, "Hello"];
+    /// ```
+    #[wasm_bindgen(js_name = "insertContainer", skip_typescript)]
+    pub fn insert_container(&mut self, index: usize, child: JsContainer) -> JsResult<JsContainer> {
+        let child = js_to_container(child)?;
+        let c = self.handler.insert_container(index, child.to_handler())?;
+        Ok(handler_to_js_value(c, self.doc.clone()).into())
+    }
+
+    /// Subscribe to the changes of the list.
+    ///
+    /// Returns a subscription id, which can be used to unsubscribe.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.subscribe((event)=>{
+    ///     console.log(event);
+    /// });
+    /// list.insert(0, 100);
+    /// doc.commit();
+    /// ```
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
+        let observer = observer::Observer::new(f);
+        let loro = self
+            .doc
+            .as_ref()
+            .ok_or_else(|| JsError::new("Document is not attached"))?;
+        let doc_clone = loro.clone();
+        let ans = loro.subscribe(
+            &self.handler.id(),
+            Arc::new(move |e| {
+                call_after_micro_task(observer.clone(), e, &doc_clone);
+            }),
+        );
+        Ok(ans.into_u32())
+    }
+
+    /// Unsubscribe by the subscription id.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// const subscription = list.subscribe((event)=>{
+    ///     console.log(event);
+    /// });
+    /// list.insert(0, 100);
+    /// doc.commit();
+    /// list.unsubscribe(subscription);
+    /// ```
+    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
+        self.doc
+            .as_ref()
+            .ok_or_else(|| JsError::new("Document is not attached"))?
+            .unsubscribe(SubID::from_u32(subscription));
+        Ok(())
+    }
+
+    /// Get the length of list.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// list.insert(1, "foo");
+    /// list.insert(2, true);
+    /// console.log(list.length);  // 3
+    /// ```
+    #[wasm_bindgen(js_name = "length", method, getter)]
+    pub fn length(&self) -> usize {
+        self.handler.len()
+    }
+
+    /// Get the parent container.
+    ///
+    /// - The parent container of the root tree is `undefined`.
+    /// - The object returned is a new js object each time because it need to cross
+    ///   the WASM boundary.
+    pub fn parent(&self) -> JsContainerOrUndefined {
+        if let Some(p) = self.handler.parent() {
+            handler_to_js_value(p, self.doc.clone()).into()
+        } else {
+            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+        }
+    }
+
+    /// Whether the container is attached to a docuemnt.
+    ///
+    /// If it's detached, the operations on the container will not be persisted.
+    #[wasm_bindgen(js_name = "isAttached")]
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    /// Get the attached container associated with this.
+    ///
+    /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
+    #[wasm_bindgen(js_name = "getAttached")]
+    pub fn get_attached(&self) -> JsLoroListOrUndefined {
+        if self.is_attached() {
+            let value: JsValue = self.clone().into();
+            return value.into();
+        }
+
+        if let Some(h) = self.handler.get_attached() {
+            handler_to_js_value(Handler::MovableList(h), self.doc.clone()).into()
+        } else {
+            JsValue::UNDEFINED.into()
+        }
+    }
+
+    #[wasm_bindgen(skip_typescript)]
+    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
+        let mut side_value = Side::Middle;
+        if side.is_truthy() {
+            let num = side.as_f64().expect("Side must be -1 | 0 | 1");
+            side_value = Side::from_i32(num as i32).expect("Side must be -1 | 0 | 1");
+        }
+        self.handler
+            .get_cursor(pos, side_value)
+            .map(|pos| Cursor { pos })
+    }
+
+    /// Move the element from `from` to `to`.
+    ///
+    /// The new position of the element will be `to`.
+    /// Move the element from `from` to `to`.
+    ///
+    /// The new position of the element will be `to`. This method is optimized to prevent redundant
+    /// operations that might occur with a naive remove and insert approach. Specifically, it avoids
+    /// creating surplus values in the list, unlike a delete followed by an insert, which can lead to
+    /// additional values in cases of concurrent edits. This ensures more efficient and accurate
+    /// operations in a MovableList.
+    #[wasm_bindgen(js_name = "move")]
+    pub fn mov(&self, from: usize, to: usize) -> JsResult<()> {
+        self.handler.mov(from, to)?;
+        Ok(())
+    }
+
+    /// Set the value at the given position.
+    ///
+    /// It's different from `delete` + `insert` that it will replace the value at the position.
+    ///
+    /// For example, if you have a list `[1, 2, 3]`, and you call `set(1, 100)`, the list will be `[1, 100, 3]`.
+    /// If concurrently someone call `set(1, 200)`, the list will be `[1, 200, 3]` or `[1, 100, 3]`.
+    ///
+    /// But if you use `delete` + `insert` to simulate the set operation, they may create redundant operations
+    /// and the final result will be `[1, 100, 200, 3]` or `[1, 200, 100, 3]`.
+    #[wasm_bindgen(skip_typescript)]
+    pub fn set(&self, pos: usize, value: JsLoroValue) -> JsResult<()> {
+        let v: JsValue = value.into();
+        self.handler.set(pos, v)?;
+        Ok(())
+    }
+
+    #[wasm_bindgen(skip_typescript)]
+    pub fn setContainer(&self, pos: usize, child: JsContainer) -> JsResult<JsContainer> {
+        let child = js_to_container(child)?;
+        let c = self.handler.set_container(pos, child.to_handler())?;
+        Ok(handler_to_js_value(c, self.doc.clone()).into())
+    }
+
+    pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
+        let v: JsValue = value.into();
+        self.handler.push(v.into())?;
+        Ok(())
+    }
+
+    pub fn pop(&self) -> JsResult<Option<JsLoroValue>> {
+        let v = self.handler.pop()?;
+        Ok(v.map(|v| {
+            let v: JsValue = v.into();
+            v.into()
+        }))
     }
 }
 
@@ -2464,7 +2880,7 @@ impl LoroTree {
 
     /// Subscribe to the changes of the tree.
     ///
-    /// returns a subscription id, which can be used to unsubscribe.
+    /// Returns a subscription id, which can be used to unsubscribe.
     ///
     /// Trees have three types of events: `create`, `delete`, and `move`.
     /// - `create`: Creates a new node with its `target` TreeID. If `parent` is undefined,
@@ -2492,19 +2908,23 @@ impl LoroTree {
     /// const node = root.createNode();
     /// doc.commit();
     /// ```
-    pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let doc = loro.0.clone();
-        let ans = loro.0.subscribe(
+        let doc = self
+            .doc
+            .clone()
+            .ok_or_else(|| JsError::new("Document is not attached"))?;
+        let doc_clone = doc.clone();
+        let ans = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc);
+                call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
         Ok(ans.into_u32())
     }
 
-    /// Unsubscribe by the subscription.
+    /// Unsubscribe by the subscription id.
     ///
     /// @example
     /// ```ts
@@ -2518,10 +2938,13 @@ impl LoroTree {
     /// const root = tree.createNode();
     /// const node = root.createNode();
     /// doc.commit();
-    /// tree.unsubscribe(doc, subscription);
+    /// tree.unsubscribe(subscription);
     /// ```
-    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
-        loro.0.unsubscribe(SubID::from_u32(subscription));
+    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
+        self.doc
+            .as_ref()
+            .ok_or_else(|| JsError::new("Document is not attached"))?
+            .unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
 
@@ -2736,6 +3159,7 @@ pub enum Container {
     Map(LoroMap),
     List(LoroList),
     Tree(LoroTree),
+    MovableList(LoroMovableList),
 }
 
 impl Container {
@@ -2745,6 +3169,7 @@ impl Container {
             Container::Map(m) => Handler::Map(m.handler.clone()),
             Container::List(l) => Handler::List(l.handler.clone()),
             Container::Tree(t) => Handler::Tree(t.handler.clone()),
+            Container::MovableList(l) => Handler::MovableList(l.handler.clone()),
         }
     }
 }
@@ -2782,7 +3207,7 @@ const TYPES: &'static str = r#"
 * const text = list.insertContainer(1, containerType);
 * ```
 */
-export type ContainerType = "Text" | "Map" | "List"| "Tree";
+export type ContainerType = "Text" | "Map" | "List"| "Tree" | "MovableList";
 
 export type PeerID = `${number}`;
 /**
@@ -2913,7 +3338,7 @@ export type Value =
   | Uint8Array
   | Value[];
 
-export type Container = LoroList | LoroMap | LoroText | LoroTree;
+export type Container = LoroList | LoroMap | LoroText | LoroTree | LoroMovableList;
 
 export interface ImportBlobMetadata {
     /**
@@ -3000,6 +3425,44 @@ interface LoroList {
      *
      * const doc = new Loro();
      * const text = doc.getList("list");
+     * text.insert(0, "1");
+     * const pos0 = text.getCursor(0, 0);
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(0);
+     * }
+     * text.insert(0, "1");
+     * {
+     *   const ans = doc.getCursorPos(pos0!);
+     *   expect(ans.offset).toBe(1);
+     * }
+     * ```
+     */
+    getCursor(pos: number, side?: Side): Cursor | undefined;
+}
+
+interface LoroMovableList {
+    /**
+     * Get the cursor position at the given pos.
+     *
+     * When expressing the position of a cursor, using "index" can be unstable
+     * because the cursor's position may change due to other deletions and insertions,
+     * requiring updates with each edit. To stably represent a position or range within
+     * a list structure, we can utilize the ID of each item/character on List CRDT or
+     * Text CRDT for expression.
+     *
+     * Loro optimizes State metadata by not storing the IDs of deleted elements. This
+     * approach complicates tracking cursors since they rely on these IDs. The solution
+     * recalculates position by replaying relevant history to update cursors
+     * accurately. To minimize the performance impact of history replay, the system
+     * updates cursor info to reference only the IDs of currently present elements,
+     * thereby reducing the need for replay.
+     *
+     * @example
+     * ```ts
+     *
+     * const doc = new Loro();
+     * const text = doc.getMovableList("text");
      * text.insert(0, "1");
      * const pos0 = text.getCursor(0, 0);
      * {

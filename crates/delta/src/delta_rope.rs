@@ -442,3 +442,9 @@ impl<V: DeltaValue, Attr: DeltaAttr> Default for DeltaRopeBuilder<V, Attr> {
         Self::new()
     }
 }
+
+impl<V: DeltaValue, Attr: DeltaAttr> Debug for DeltaRope<V, Attr> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}

@@ -256,7 +256,14 @@ impl<V: DeltaValue, Attr: DeltaAttr> Sliceable for DeltaItem<V, Attr> {
                 let right = self.split(end);
                 let mut middle = self.split(start);
                 f(&mut middle);
-                if middle.can_merge(&right) {
+                if middle.can_remove() {
+                    if self.can_merge(&right) {
+                        self.merge_right(&right);
+                        (None, None)
+                    } else {
+                        (Some(right), None)
+                    }
+                } else if middle.can_merge(&right) {
                     middle.merge_right(&right);
                     if self.can_merge(&middle) {
                         self.merge_right(&middle);
@@ -275,7 +282,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> Sliceable for DeltaItem<V, Attr> {
     }
 }
 
-impl<V: DeltaValue, Attr: Clone + PartialEq> TryInsert for DeltaItem<V, Attr> {
+impl<V: DeltaValue, Attr: Clone + PartialEq + Debug> TryInsert for DeltaItem<V, Attr> {
     fn try_insert(&mut self, pos: usize, elem: Self) -> Result<(), Self>
     where
         Self: Sized,
@@ -321,11 +328,11 @@ impl<V: DeltaValue, Attr: Clone + PartialEq> TryInsert for DeltaItem<V, Attr> {
                             *l_delete += r_delete;
                             return Ok(());
                         }
-                        Err(v) => {
+                        Err(r_value) => {
                             return Err(DeltaItem::Replace {
-                                value: v,
-                                attr: l_attr.clone(),
-                                delete: *l_delete + r_delete,
+                                value: r_value,
+                                attr: r_attr,
+                                delete: r_delete,
                             })
                         }
                     }
