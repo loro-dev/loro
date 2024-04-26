@@ -365,7 +365,6 @@ fn extract_ops(
             value_type,
             counter,
             op_len,
-            value_bytes_len,
         } = op?;
         if containers.len() <= container_index as usize
             || arenas.peer_ids.len() <= peer_idx as usize
@@ -963,8 +962,7 @@ mod encode {
             ..
         } in ops
         {
-            let (value_type, value_bytes_len) =
-                encode_op(&op, arena, &mut delete_start, value_writer, registers);
+            let value_type = encode_op(&op, arena, &mut delete_start, value_writer, registers);
             let prop = get_op_prop(&op, registers);
             encoded_ops.push(EncodedOp {
                 container_index,
@@ -973,7 +971,6 @@ mod encode {
                 prop,
                 value_type: value_type.to_u8(),
                 op_len: op.atom_len(),
-                value_bytes_len,
             });
         }
 
@@ -1162,7 +1159,7 @@ mod encode {
         delete_start: &mut Vec<EncodedDeleteStartId>,
         value_writer: &mut ValueWriter,
         registers: &mut EncodedRegisters,
-    ) -> (ValueKind, usize) {
+    ) -> ValueKind {
         let value = match &op.content {
             crate::op::InnerContent::List(list) => match list {
                 crate::container::list::list_op::InnerListOp::Insert { slice, .. } => {
@@ -1217,10 +1214,7 @@ mod encode {
             },
         };
         let (k, mut i) = value.encode(value_writer, registers);
-        if op.content.as_future().is_none() {
-            i = 0;
-        }
-        (k, i)
+        k
     }
 }
 
@@ -1455,8 +1449,6 @@ struct EncodedOp {
     counter: i32,
     #[columnar(strategy = "Rle")]
     op_len: usize,
-    #[columnar(strategy = "Rle")]
-    value_bytes_len: usize,
 }
 
 #[columnar(vec, ser, de, iterable)]
