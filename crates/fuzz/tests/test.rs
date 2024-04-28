@@ -4,7 +4,6 @@ use fuzz::{
 };
 use loro::ContainerType::*;
 
-
 #[ctor::ctor]
 fn init() {
     dev_utils::setup_test_log();
@@ -5140,6 +5139,166 @@ fn test_movable_list_25() {
                     pos: 8346507721238538027,
                     length: 0,
                     prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn test_tree_delete_nested() {
+    test_multi_sites(
+        5,
+        vec![
+            FuzzTarget::Map,
+            FuzzTarget::List,
+            FuzzTarget::Text,
+            FuzzTarget::Tree,
+            FuzzTarget::MovableList,
+        ],
+        &mut [
+            Handle {
+                site: 49,
+                target: 53,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: true,
+                    key: 960051513,
+                    pos: 4123389851770370361,
+                    length: 4123390026907529521,
+                    prop: 4123389851767159097,
+                }),
+            },
+            Handle {
+                site: 8,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(968243513),
+                    bool: true,
+                    key: 960051513,
+                    pos: 18446529914715322681,
+                    length: 18432897712502263502,
+                    prop: 4123389851781761081,
+                }),
+            },
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(-1),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 4179058995052806143,
+                    length: 4123389851770370361,
+                    prop: 4123389851770370361,
+                }),
+            },
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: true,
+                    key: 3472883517,
+                    pos: 18446744072884244174,
+                    length: 281474976710655,
+                    prop: 18446496683593302016,
+                }),
+            },
+            Handle {
+                site: 35,
+                target: 35,
+                container: 35,
+                action: Generic(GenericAction {
+                    value: I32(589505315),
+                    bool: true,
+                    key: 589505315,
+                    pos: 2531906049332683555,
+                    length: 2531906049332683555,
+                    prop: 2531906049332683555,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 61,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(960051513),
+                    bool: true,
+                    key: 3684665,
+                    pos: 4109597577911548258,
+                    length: 13058531512473434622,
+                    prop: 4123390386434848181,
+                }),
+            },
+            Handle {
+                site: 61,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(960051513),
+                    bool: true,
+                    key: 3684665,
+                    pos: 592567745925167458,
+                    length: 3904956473749929529,
+                    prop: 592567743911911936,
+                }),
+            },
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(960075065),
+                    bool: true,
+                    key: 960051513,
+                    pos: 4123389851770370486,
+                    length: 14915921129292511545,
+                    prop: 18446689986361085646,
+                }),
+            },
+            Handle {
+                site: 61,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(960051513),
+                    bool: true,
+                    key: 3684665,
+                    pos: 4109597577911548258,
+                    length: 15825516631767550,
+                    prop: 16647618940511009122,
+                }),
+            },
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(-1254540999),
+                    bool: true,
+                    key: 3048584629,
+                    pos: 4123389851770370361,
+                    length: 4123389851770370361,
+                    prop: 13093570749027399993,
+                }),
+            },
+            Handle {
+                site: 57,
+                target: 57,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: true,
+                    key: 960051513,
+                    pos: 4123389850948286777,
+                    length: 4123389851770370356,
+                    prop: 18446743862421043513,
                 }),
             },
         ],

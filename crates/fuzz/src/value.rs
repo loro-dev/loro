@@ -361,7 +361,15 @@ impl ApplyDiff for TreeTracker {
                     self.push(node);
                 }
                 TreeExternalDiff::Delete => {
-                    self.retain(|node| node.id != target && node.parent != Some(target));
+                    let mut s = vec![target];
+                    while let Some(target) = s.pop() {
+                        self.retain(|node| node.id != target);
+                        let children = self
+                            .iter()
+                            .filter(|node| node.parent == Some(target))
+                            .map(|x| x.id);
+                        s.extend(children);
+                    }
                 }
                 TreeExternalDiff::Move(parent) => {
                     let node = self.iter_mut().find(|node| node.id == target).unwrap();
