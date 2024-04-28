@@ -744,7 +744,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         op.lamport = oplog.get_lamport_at(op.id());
     }
 
-    decode_snapshot_states(
+    let future_id = decode_snapshot_states(
         &mut state,
         oplog.frontiers().clone(),
         iter.states,
@@ -754,6 +754,9 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         &oplog,
     )
     .unwrap();
+
+    // TODO: diff calc
+
     assert!(pending_changes.is_empty());
     // we cannot assert this because frontiers of oplog is not updated yet when batch_importing
     // assert_eq!(&state.frontiers, oplog.frontiers());

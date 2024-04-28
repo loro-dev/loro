@@ -35,7 +35,7 @@ pub enum InnerContent {
 
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum FutureInnerContent {
-    Unknown { op_len: usize, value: OwnedValue },
+    Unknown { op_len: usize, prop: i32, value: OwnedValue },
 }
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
