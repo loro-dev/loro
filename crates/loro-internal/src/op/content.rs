@@ -35,7 +35,7 @@ pub enum InnerContent {
 
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum FutureInnerContent {
-    Unknown { op_len: usize, prop: i32, value: OwnedValue },
+    Unknown { prop: i32, value: OwnedValue },
 }
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
@@ -50,7 +50,7 @@ pub enum RawOpContent<'a> {
 
 #[derive(EnumAsInner, Debug, PartialEq, Serialize, Deserialize)]
 pub enum FutureRawOpContent {
-    Unknown { op_len: usize, value: OwnedValue },
+    Unknown { prop: i32, value: OwnedValue },
 }
 
 impl<'a> Clone for RawOpContent<'a> {
@@ -60,8 +60,8 @@ impl<'a> Clone for RawOpContent<'a> {
             Self::List(arg0) => Self::List(arg0.clone()),
             Self::Tree(arg0) => Self::Tree(*arg0),
             Self::Future(f) => Self::Future(match f {
-                FutureRawOpContent::Unknown { op_len, value } => FutureRawOpContent::Unknown {
-                    op_len: *op_len,
+                FutureRawOpContent::Unknown { prop, value } => FutureRawOpContent::Unknown {
+                    prop: *prop,
                     value: value.clone(),
                 },
             }),
@@ -96,8 +96,8 @@ impl<'a> RawOpContent<'a> {
             },
             Self::Tree(arg0) => RawOpContent::Tree(*arg0),
             Self::Future(f) => RawOpContent::Future(match f {
-                FutureRawOpContent::Unknown { op_len, value } => FutureRawOpContent::Unknown {
-                    op_len: *op_len,
+                FutureRawOpContent::Unknown { prop, value } => FutureRawOpContent::Unknown {
+                    prop: *prop,
                     value: value.clone(),
                 },
             }),
@@ -148,7 +148,7 @@ impl<'a> HasLength for RawOpContent<'a> {
             RawOpContent::List(x) => x.content_len(),
             RawOpContent::Tree(x) => x.content_len(),
             RawOpContent::Future(f) => match f {
-                FutureRawOpContent::Unknown { op_len, .. } => *op_len,
+                FutureRawOpContent::Unknown { .. } => 1,
             },
         }
     }
@@ -210,7 +210,7 @@ impl HasLength for InnerContent {
             InnerContent::Map(_) => 1,
             InnerContent::Tree(_) => 1,
             InnerContent::Future(f) => match f {
-                FutureInnerContent::Unknown { op_len, .. } => *op_len,
+                FutureInnerContent::Unknown { .. } => 1,
             },
         }
     }

@@ -6,7 +6,7 @@ use crate::{
 };
 use crate::{delta::DeltaValue, LoroValue};
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerType, CounterSpan, IdFull, IdSpan};
+use loro_common::{CounterSpan, IdFull, IdSpan};
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -21,42 +21,8 @@ pub use content::*;
 #[derive(Debug, Clone)]
 pub struct Op {
     pub(crate) counter: Counter,
-    pub(crate) container: OpContainer,
+    pub(crate) container: ContainerIdx,
     pub(crate) content: InnerContent,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, EnumAsInner)]
-pub enum OpContainer {
-    Idx(ContainerIdx),
-    ID(ContainerID),
-}
-
-impl From<ContainerIdx> for OpContainer {
-    fn from(idx: ContainerIdx) -> Self {
-        OpContainer::Idx(idx)
-    }
-}
-
-impl From<ContainerID> for OpContainer {
-    fn from(id: ContainerID) -> Self {
-        OpContainer::ID(id)
-    }
-}
-
-impl OpContainer {
-    pub fn get_type(&self) -> ContainerType {
-        match self {
-            OpContainer::Idx(idx) => idx.get_type(),
-            OpContainer::ID(id) => id.container_type(),
-        }
-    }
-
-    pub fn is_unknown(&self) -> bool {
-        match self {
-            OpContainer::Idx(_) => false,
-            OpContainer::ID(id) => id.is_unknown(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -129,7 +95,7 @@ pub struct RichOp<'a> {
 impl Op {
     #[inline]
     #[allow(unused)]
-    pub(crate) fn new(id: ID, content: InnerContent, container: OpContainer) -> Self {
+    pub(crate) fn new(id: ID, content: InnerContent, container: ContainerIdx) -> Self {
         Op {
             counter: id.counter,
             content,

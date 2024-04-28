@@ -318,11 +318,11 @@ impl SharedArena {
                 content: crate::op::InnerContent::Tree(tree),
             },
             crate::op::RawOpContent::Future(f) => match f {
-                crate::op::FutureRawOpContent::Unknown { op_len, value } => Op {
+                crate::op::FutureRawOpContent::Unknown { prop, value } => Op {
                     counter,
                     container,
                     content: crate::op::InnerContent::Future(
-                        crate::op::FutureInnerContent::Unknown { op_len, value },
+                        crate::op::FutureInnerContent::Unknown { prop, value },
                     ),
                 },
             },

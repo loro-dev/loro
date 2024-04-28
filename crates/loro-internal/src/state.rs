@@ -16,15 +16,16 @@ use crate::{
     },
     cursor::Cursor,
     delta::DeltaItem,
+    diff_calc::DiffCalculator,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
     fx_map,
     handler::ValueOrHandler,
     id::PeerID,
-    op::{FutureRawOpContent, ListSlice, Op, OpContainer, RawOp, RawOpContent},
+    op::{FutureRawOpContent, ListSlice, Op, RawOp, RawOpContent},
     txn::Transaction,
     version::Frontiers,
-    ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue,
+    ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue, OpLog,
 };
 
 mod list_state;
@@ -53,24 +54,12 @@ macro_rules! get_or_create {
     }};
 }
 
-macro_rules! get_or_create_unknown {
-    ($doc_state: ident, $id: expr) => {{
-        if !$doc_state.unknown_states.contains_key(&$id) {
-            let state = $doc_state.create_unknown_state($id);
-            $doc_state.unknown_states.insert($id.clone(), state);
-        }
-
-        $doc_state.unknown_states.get_mut(&$id).unwrap()
-    }};
-}
-
 #[derive(Clone)]
 pub struct DocState {
     pub(super) peer: PeerID,
 
     pub(super) frontiers: Frontiers,
     pub(super) states: FxHashMap<ContainerIdx, State>,
-    pub(super) unknown_states: FxHashMap<ContainerID, State>,
     pub(super) arena: SharedArena,
     pub(crate) config: Configure,
     // resolve event stuff
@@ -86,9 +75,6 @@ pub struct DocState {
 
 #[enum_dispatch]
 pub(crate) trait ContainerState: Clone {
-    fn container(&self) -> OpContainer {
-        self.container_idx().into()
-    }
     fn container_idx(&self) -> ContainerIdx;
     fn is_unknown(&self) -> bool {
         false
@@ -145,10 +131,6 @@ pub(crate) trait ContainerState: Clone {
 impl<T: ContainerState> ContainerState for Box<T> {
     fn container_idx(&self) -> ContainerIdx {
         self.as_ref().container_idx()
-    }
-
-    fn container(&self) -> OpContainer {
-        self.as_ref().container()
     }
 
     fn estimate_size(&self) -> usize {
@@ -252,8 +234,8 @@ impl State {
         Self::TreeState(Box::new(TreeState::new(idx)))
     }
 
-    pub fn new_unknown(id: ContainerID) -> Self {
-        Self::UnknownState(Box::new(UnknownState::new(id)))
+    pub fn new_unknown(idx: ContainerIdx) -> Self {
+        Self::UnknownState(Box::new(UnknownState::new(idx)))
     }
 }
 
@@ -272,7 +254,6 @@ impl DocState {
                 arena,
                 frontiers: Frontiers::default(),
                 states: FxHashMap::default(),
-                unknown_states: FxHashMap::default(),
                 weak_state: weak.clone(),
                 config,
                 global_txn,
@@ -399,12 +380,7 @@ impl DocState {
         let mut idx2state_diff = FxHashMap::default();
         let mut diffs = if is_recording {
             let mut sub_container_diff_patch = SubContainerDiffPatch {
-                all_idx: inner
-                    .iter()
-                    .map(|d| &d.container)
-                    .filter(|x| x.as_idx().is_some())
-                    .map(|x| *x.as_idx().unwrap())
-                    .collect(),
+                all_idx: inner.iter().map(|d| d.idx).collect(),
                 diff_queue: vec![],
                 mark_bring_back: FxHashSet::default(),
                 arena: self.arena.clone(),
@@ -419,29 +395,25 @@ impl DocState {
             // let mut need_bring_back = FxHashSet::default();
             // let all_idx: FxHashSet<ContainerIdx> = inner.iter().map(|d| d.idx).collect();
             for mut diff in inner {
-                if let OpContainer::Idx(idx) = diff.container {
-                    if sub_container_diff_patch.marked_bring_back(&idx) {
-                        diff.bring_back = true;
+                let idx = diff.idx;
+                if sub_container_diff_patch.marked_bring_back(&idx) {
+                    diff.bring_back = true;
+                }
+                if diff.bring_back {
+                    let state = get_or_create!(self, idx);
+                    let state_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
+                    if diff.diff.is_none() && state_diff.is_empty() {
+                        // empty diff, skip it
+                        continue;
                     }
-                    if diff.bring_back {
-                        let state = get_or_create!(self, idx);
-                        let state_diff =
-                            state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
-                        if diff.diff.is_none() && state_diff.is_empty() {
-                            // empty diff, skip it
-                            continue;
-                        }
-                        sub_container_diff_patch.push_diff(diff);
-                        if !state_diff.is_empty() {
-                            sub_container_diff_patch.bring_back_sub_container(
-                                &state_diff,
-                                &mut self.states,
-                                &mut idx2state_diff,
-                            );
-                            idx2state_diff.insert(idx, state_diff);
-                        }
-                    } else {
-                        sub_container_diff_patch.push_diff(diff);
+                    sub_container_diff_patch.push_diff(diff);
+                    if !state_diff.is_empty() {
+                        sub_container_diff_patch.bring_back_sub_container(
+                            &state_diff,
+                            &mut self.states,
+                            &mut idx2state_diff,
+                        );
+                        idx2state_diff.insert(idx, state_diff);
                     }
                 } else {
                     sub_container_diff_patch.push_diff(diff);
@@ -456,25 +428,18 @@ impl DocState {
             let Some(internal_diff) = std::mem::take(&mut diff.diff) else {
                 // only bring_back
                 if is_recording {
-                    if let Some(state_diff) = diff
-                        .container
-                        .as_idx()
-                        .and_then(|x| idx2state_diff.remove(x))
-                    {
+                    if let Some(state_diff) = idx2state_diff.remove(&diff.idx) {
                         diff.diff = Some(state_diff.into());
                     };
                 }
                 continue;
             };
-            let state = if let OpContainer::Idx(idx) = diff.container {
-                if self.in_txn {
-                    self.changed_idx_in_txn.insert(idx);
-                }
-                self.set_parent_by_diff(internal_diff.as_internal().unwrap(), idx);
-                get_or_create!(self, idx)
-            } else {
-                get_or_create_unknown!(self, diff.container.as_id().unwrap().clone())
-            };
+            let idx = diff.idx;
+            if self.in_txn {
+                self.changed_idx_in_txn.insert(idx);
+            }
+            self.set_parent_by_diff(internal_diff.as_internal().unwrap(), idx);
+            let state = get_or_create!(self, idx);
 
             if is_recording {
                 // process bring_back before apply
@@ -485,11 +450,7 @@ impl DocState {
                         &self.global_txn,
                         &self.weak_state,
                     );
-                    if let Some(state_diff) = diff
-                        .container
-                        .as_idx()
-                        .and_then(|x| idx2state_diff.remove(x))
-                    {
+                    if let Some(state_diff) = idx2state_diff.remove(&diff.idx) {
                         // use `concat`(hierarchical and relative order) rather than `compose`
                         state_diff.concat(external_diff)
                     } else {
@@ -525,7 +486,7 @@ impl DocState {
     pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
         // set parent first, `MapContainer` will only be created for TreeID that does not contain
         self.set_container_parent_by_op(raw_op);
-        let idx = *op.container.as_idx().unwrap();
+        let idx = op.container;
         let state = get_or_create!(self, idx);
         if self.in_txn {
             self.changed_idx_in_txn.insert(idx);
@@ -543,13 +504,11 @@ impl DocState {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &State> {
-        self.states.values().chain(self.unknown_states.values())
+        self.states.values()
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut State> {
-        self.states
-            .values_mut()
-            .chain(self.unknown_states.values_mut())
+        self.states.values_mut()
     }
 
     fn set_container_parent_by_op(&mut self, raw_op: &RawOp) {
@@ -641,14 +600,9 @@ impl DocState {
         cid: ContainerID,
         decode_ctx: StateSnapshotDecodeContext,
     ) {
-        if cid.is_unknown() {
-            let state = get_or_create_unknown!(self, cid.clone());
-            state.import_from_snapshot_ops(decode_ctx);
-        } else {
-            let idx = self.arena.register_container(&cid);
-            let state = get_or_create!(self, idx);
-            state.import_from_snapshot_ops(decode_ctx);
-        }
+        let idx = self.arena.register_container(&cid);
+        let state = get_or_create!(self, idx);
+        state.import_from_snapshot_ops(decode_ctx);
     }
 
     pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<InternalDocDiff>) {
@@ -671,13 +625,6 @@ impl DocState {
         self.states.get(&idx)
     }
 
-    pub(super) fn get_state_and_unknown(&self, container: &OpContainer) -> Option<&State> {
-        match container {
-            OpContainer::ID(id) => self.unknown_states.get(id),
-            OpContainer::Idx(idx) => self.get_state(*idx),
-        }
-    }
-
     pub(crate) fn get_value_by_idx(&mut self, container_idx: ContainerIdx) -> LoroValue {
         self.states
             .get_mut(&container_idx)
@@ -694,13 +641,13 @@ impl DocState {
     pub(super) fn init_with_states_and_version(
         &mut self,
         states: FxHashMap<ContainerIdx, State>,
-        unknown_states: FxHashMap<ContainerID, State>,
         frontiers: Frontiers,
+        oplog: &OpLog,
+        unknown_containers: Vec<ContainerID>,
     ) {
         assert!(self.states.is_empty(), "overriding states");
         self.pre_txn(Default::default(), EventTriggerKind::Import);
         self.states = states;
-        self.unknown_states = unknown_states;
         for (idx, state) in self.states.iter() {
             for child_id in state.get_child_containers() {
                 let child_idx = self.arena.register_container(&child_id);
@@ -709,11 +656,11 @@ impl DocState {
         }
 
         if self.is_recording() {
-            let diff = self
+            let mut diff: Vec<_> = self
                 .states
                 .iter_mut()
                 .map(|(&idx, state)| InternalContainerDiff {
-                    container: OpContainer::Idx(idx),
+                    idx,
                     bring_back: false,
                     is_container_deleted: false,
                     diff: Some(
@@ -723,11 +670,30 @@ impl DocState {
                     ),
                 })
                 .collect();
-            // TODO: unknown_states
+            let mut diff_calc = DiffCalculator::new();
+            // TODO: diff calc unknown
+            let still_unknown_containers: FxHashSet<_> = unknown_containers
+                .iter()
+                .filter(|x| x.is_unknown())
+                .collect();
+            let mut unknown_diffs = diff_calc.calc_diff_internal(
+                oplog,
+                &Default::default(),
+                None,
+                oplog.vv(),
+                Some(&frontiers),
+                Some(&|idx| {
+                    !still_unknown_containers.contains(&self.arena.idx_to_id(idx).unwrap())
+                }),
+            );
+
+            // diff
+            diff.append(&mut unknown_diffs);
+
             self.record_diff(InternalDocDiff {
                 origin: Default::default(),
                 by: EventTriggerKind::Import,
-                diff,
+                diff: diff.into(),
                 new_version: Cow::Borrowed(&frontiers),
             });
         }
@@ -981,29 +947,20 @@ impl DocState {
                     // omit event form deleted container
                     continue;
                 }
-                let Some((last_container_diff, _)) = containers.get_mut(&container_diff.container)
-                else {
-                    if let OpContainer::Idx(idx) = container_diff.container {
-                        if let Some(path) = self.get_path(idx) {
-                            containers.insert(
-                                container_diff.container,
-                                (container_diff.diff.unwrap(), path),
-                            );
-                        } else {
-                            // if we cannot find the path to the container, the container must be overwritten afterwards.
-                            // So we can ignore the diff from it.
-                            tracing::info!(
-                                "⚠️ WARNING: ignore because cannot find path {:#?} deep_value {:#?}",
-                                &container_diff,
-                                self.get_deep_value_with_id()
-                            );
-                        }
+                let Some((last_container_diff, _)) = containers.get_mut(&container_diff.idx) else {
+                    let idx = container_diff.idx;
+                    if let Some(path) = self.get_path(idx) {
+                        containers.insert(container_diff.idx, (container_diff.diff.unwrap(), path));
                     } else {
-                        containers.insert(
-                            container_diff.container,
-                            (container_diff.diff.unwrap(), vec![]),
+                        // if we cannot find the path to the container, the container must be overwritten afterwards.
+                        // So we can ignore the diff from it.
+                        tracing::info!(
+                            "⚠️ WARNING: ignore because cannot find path {:#?} deep_value {:#?}",
+                            &container_diff,
+                            self.get_deep_value_with_id()
                         );
                     }
+
                     continue;
                 };
 
@@ -1017,12 +974,9 @@ impl DocState {
         let mut diff: Vec<_> = containers
             .into_iter()
             .map(|(container, (diff, path))| {
-                let (id, idx, is_unknown) = match container {
-                    OpContainer::ID(id) => (id, ContainerIdx::unknown(), true),
-                    OpContainer::Idx(idx) => {
-                        (self.arena.get_container_id(idx).unwrap(), idx, false)
-                    }
-                };
+                let idx = container;
+                let id = self.arena.get_container_id(idx).unwrap();
+                let is_unknown = id.is_unknown();
 
                 ContainerDiff {
                     id,
@@ -1175,8 +1129,8 @@ impl DocState {
         }
     }
 
-    pub fn create_unknown_state(&self, id: ContainerID) -> State {
-        State::UnknownState(Box::new(UnknownState::new(id)))
+    pub fn create_unknown_state(&self, idx: ContainerIdx) -> State {
+        State::UnknownState(Box::new(UnknownState::new(idx)))
     }
 
     pub fn get_relative_position(&mut self, pos: &Cursor) -> Option<usize> {
@@ -1318,7 +1272,7 @@ impl SubContainerDiffPatch {
                                         state.to_diff(&self.arena, &self.txn, &self.weak_state);
                                     if !diff.is_empty() {
                                         self.diff_queue.push(InternalContainerDiff {
-                                            container: OpContainer::Idx(idx),
+                                            idx,
                                             bring_back: true,
                                             is_container_deleted: false,
                                             diff: None,
@@ -1342,7 +1296,7 @@ impl SubContainerDiffPatch {
                             let diff = state.to_diff(&self.arena, &self.txn, &self.weak_state);
                             if !diff.is_empty() {
                                 self.diff_queue.push(InternalContainerDiff {
-                                    container: OpContainer::Idx(idx),
+                                    idx,
                                     bring_back: true,
                                     is_container_deleted: false,
                                     diff: None,

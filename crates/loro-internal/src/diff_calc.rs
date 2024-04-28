@@ -22,7 +22,7 @@ use crate::{
     cursor::AbsolutePosition,
     delta::{Delta, MapDelta, MapValue},
     event::InternalDiff,
-    op::{OpContainer, RichOp, SliceRange, SliceRanges},
+    op::{RichOp, SliceRange, SliceRanges},
     span::{HasId, HasLamport},
     version::Frontiers,
     InternalString, VersionVector,
@@ -43,7 +43,7 @@ pub struct DiffCalculator {
     /// ContainerIdx -> (depth, calculator)
     ///
     /// if depth is None, we need to calculate it again
-    calculators: FxHashMap<OpContainer, (Option<NonZeroU16>, ContainerDiffCalculator)>,
+    calculators: FxHashMap<ContainerIdx, (Option<NonZeroU16>, ContainerDiffCalculator)>,
     last_vv: VersionVector,
     has_all: bool,
 }
@@ -57,7 +57,7 @@ impl DiffCalculator {
         }
     }
 
-    pub(crate) fn get_calc(&self, container: &OpContainer) -> Option<&ContainerDiffCalculator> {
+    pub(crate) fn get_calc(&self, container: &ContainerIdx) -> Option<&ContainerDiffCalculator> {
         self.calculators.get(container).map(|(_, c)| c)
     }
 
@@ -124,11 +124,10 @@ impl DiffCalculator {
                     .unwrap_or_else(|e| e);
                 let mut visited = FxHashSet::default();
                 for mut op in &change.ops.vec()[iter_start..] {
-                    if let OpContainer::Idx(idx) = op.container {
-                        if let Some(filter) = container_filter {
-                            if !filter(idx) {
-                                continue;
-                            }
+                    let idx = op.container;
+                    if let Some(filter) = container_filter {
+                        if !filter(idx) {
+                            continue;
                         }
                     }
 
@@ -145,8 +144,8 @@ impl DiffCalculator {
                     }
                     let vv = &mut vv.borrow_mut();
                     vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
-                    let container = op.container.clone();
-                    let depth = container.as_idx().and_then(|x| oplog.arena.get_depth(*x));
+                    let container = op.container;
+                    let depth = oplog.arena.get_depth(container);
                     let (old_depth, calculator) = { self.get_or_create_calc(&container, depth) };
                     // checkout use the same diff_calculator, the depth of calculator is not updated
                     // That may cause the container to be considered deleted
@@ -155,7 +154,7 @@ impl DiffCalculator {
                     }
 
                     if !started_set.contains(&op.container) {
-                        started_set.insert(container.clone());
+                        started_set.insert(container);
                         calculator.start_tracking(oplog, &lca);
                     }
 
@@ -181,15 +180,14 @@ impl DiffCalculator {
                 let mut set = FxHashSet::default();
                 oplog.for_each_change_within(before, after, |change| {
                     for op in change.ops.iter() {
-                        if let OpContainer::Idx(idx) = op.container {
-                            if let Some(filter) = container_filter {
-                                if !filter(idx) {
-                                    continue;
-                                }
+                        let idx = op.container;
+                        if let Some(filter) = container_filter {
+                            if !filter(idx) {
+                                continue;
                             }
                         }
 
-                        set.insert(op.container.clone());
+                        set.insert(op.container);
                     }
                 });
                 Some(set)
@@ -202,7 +200,7 @@ impl DiffCalculator {
         // we need to iterate from parents to children. i.e. from smaller depth to larger depth.
         let mut new_containers = FxHashSet::default();
         let mut container_id_to_depth = FxHashMap::default();
-        let mut all: Vec<(Option<NonZeroU16>, OpContainer)> = if let Some(set) = affected_set {
+        let mut all: Vec<(Option<NonZeroU16>, ContainerIdx)> = if let Some(set) = affected_set {
             // only visit the affected containers
             set.into_iter()
                 .map(|x| {
@@ -220,23 +218,20 @@ impl DiffCalculator {
         while !all.is_empty() {
             // sort by depth and lamport, ensure we iterate from top to bottom
             all.sort_by_key(|x| x.0);
-            for (_, container) in std::mem::take(&mut all) {
-                if ans.contains_key(&container) {
+            for (_, container_idx) in std::mem::take(&mut all) {
+                if ans.contains_key(&container_idx) {
                     continue;
                 }
-                let (depth, calc) = self.calculators.get_mut(&container).unwrap();
+                let (depth, calc) = self.calculators.get_mut(&container_idx).unwrap();
                 if depth.is_none() {
-                    let d = container.as_idx().and_then(|x| oplog.arena.get_depth(*x));
+                    let d = oplog.arena.get_depth(container_idx);
                     if d != *depth {
                         *depth = d;
-                        all.push((*depth, container));
+                        all.push((*depth, container_idx));
                         continue;
                     }
                 }
-                let id = match container.clone() {
-                    OpContainer::Idx(idx) => oplog.arena.idx_to_id(idx).unwrap(),
-                    OpContainer::ID(id) => id,
-                };
+                let id = oplog.arena.idx_to_id(container_idx).unwrap();
                 let bring_back = new_containers.remove(&id);
 
                 let diff = calc.calculate_diff(oplog, before, after, |c| {
@@ -246,11 +241,11 @@ impl DiffCalculator {
                 });
                 if !diff.is_empty() || bring_back {
                     ans.insert(
-                        container.clone(),
+                        container_idx.clone(),
                         (
                             *depth,
                             InternalContainerDiff {
-                                container,
+                                idx: container_idx,
                                 bring_back,
                                 is_container_deleted: false,
                                 diff: Some(diff.into()),
@@ -263,25 +258,20 @@ impl DiffCalculator {
 
         while !new_containers.is_empty() {
             for id in std::mem::take(&mut new_containers) {
-                let container = if id.is_unknown() {
-                    OpContainer::ID(id.clone())
-                } else {
-                    let Some(idx) = oplog.arena.id_to_idx(&id) else {
-                        continue;
-                    };
-                    OpContainer::Idx(idx)
+                let Some(idx) = oplog.arena.id_to_idx(&id) else {
+                    continue;
                 };
 
-                if ans.contains_key(&container) {
+                if ans.contains_key(&idx) {
                     continue;
                 }
                 let depth = container_id_to_depth.remove(&id).unwrap();
                 ans.insert(
-                    container.clone(),
+                    idx,
                     (
                         depth,
                         InternalContainerDiff {
-                            container,
+                            idx,
                             bring_back: true,
                             is_container_deleted: false,
                             diff: None,
@@ -300,21 +290,19 @@ impl DiffCalculator {
     // TODO: we may remove depth info
     pub(crate) fn get_or_create_calc(
         &mut self,
-        container: &OpContainer,
+        idx: &ContainerIdx,
         depth: Option<NonZeroU16>,
     ) -> &mut (Option<NonZeroU16>, ContainerDiffCalculator) {
         self.calculators
-            .entry(container.clone())
-            .or_insert_with(|| match container.get_type() {
+            .entry(*idx)
+            .or_insert_with(|| match idx.get_type() {
                 crate::ContainerType::Text => (
                     depth,
                     ContainerDiffCalculator::Richtext(RichtextDiffCalculator::default()),
                 ),
                 crate::ContainerType::Map => (
                     depth,
-                    ContainerDiffCalculator::Map(MapDiffCalculator::new(
-                        *container.as_idx().unwrap(),
-                    )),
+                    ContainerDiffCalculator::Map(MapDiffCalculator::new(*idx)),
                 ),
                 crate::ContainerType::List => (
                     depth,
@@ -322,9 +310,7 @@ impl DiffCalculator {
                 ),
                 crate::ContainerType::Tree => (
                     depth,
-                    ContainerDiffCalculator::Tree(TreeDiffCalculator::new(
-                        *container.as_idx().unwrap(),
-                    )),
+                    ContainerDiffCalculator::Tree(TreeDiffCalculator::new(*idx)),
                 ),
                 crate::ContainerType::Unknown(_) => (
                     depth,

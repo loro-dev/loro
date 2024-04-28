@@ -33,16 +33,17 @@ pub mod idx {
     }
 
     impl ContainerIdx {
-        pub(crate) const TYPE_MASK: u32 = 0b1111 << 28;
+        pub(crate) const TYPE_MASK: u32 = 0b11111 << 27;
         pub(crate) const INDEX_MASK: u32 = !Self::TYPE_MASK;
 
         #[allow(unused)]
         pub(crate) fn get_type(self) -> ContainerType {
-            match (self.0 & Self::TYPE_MASK) >> 28 {
+            match (self.0 & Self::TYPE_MASK) >> 27 {
                 0 => ContainerType::Map,
                 1 => ContainerType::List,
                 2 => ContainerType::Text,
                 3 => ContainerType::Tree,
+                a if self.is_unknown() => ContainerType::Unknown((a << 1 >> 28) as u8),
                 _ => unreachable!(),
             }
         }
@@ -58,15 +59,14 @@ pub mod idx {
                 ContainerType::List => 1,
                 ContainerType::Text => 2,
                 ContainerType::Tree => 3,
-                ContainerType::Unknown(_) => unreachable!(),
-            } << 28;
+                ContainerType::Unknown(c) => (0b10000 | c) as u32,
+            } << 27;
 
             Self(prefix | index)
         }
 
-        // TODO: better way
-        pub(crate) fn unknown() -> Self {
-            Self(u32::MAX)
+        pub(crate) fn is_unknown(&self) -> bool {
+            self.0 >> 31 == 1
         }
     }
 }
@@ -208,5 +208,11 @@ mod test {
         assert_eq!(s, "cid:root-kkk:Text");
         let actual = ContainerID::try_from(s.as_str()).unwrap();
         assert_eq!(actual, container_id);
+    }
+
+    #[test]
+    fn unknown() {
+        let idx = ContainerIdx::from_index_and_type(1, ContainerType::Unknown(1));
+        println!("idx {:?}", idx);
     }
 }

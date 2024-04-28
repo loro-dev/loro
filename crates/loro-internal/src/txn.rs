@@ -25,7 +25,7 @@ use crate::{
     event::Diff,
     handler::{Handler, ValueOrHandler},
     id::{Counter, PeerID, ID},
-    op::{Op, OpContainer, RawOp, RawOpContent},
+    op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
     version::Frontiers,
     InternalString, LoroError, LoroValue,
@@ -305,7 +305,7 @@ impl Transaction {
                 diff: Cow::Owned(
                     arr.into_iter()
                         .map(|x| InternalContainerDiff {
-                            container: OpContainer::Idx(x.idx),
+                            idx: x.idx,
                             bring_back: false,
                             is_container_deleted: false,
                             diff: Some(x.diff.into()),
@@ -524,7 +524,7 @@ fn change_to_diff(
             }
         }
         'outer: {
-            let idx = *op.container.as_idx().unwrap();
+            let idx = op.container;
             match hint {
                 EventHint::Mark { start, end, style } => {
                     let mut meta = StyleMeta::default();

@@ -29,7 +29,7 @@ use crate::{
     event::{str_to_path, EventTriggerKind, Index},
     handler::{Handler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
-    op::{InnerContent, OpContainer},
+    op::InnerContent,
     oplog::dag::FrontiersNotIncluded,
     version::Frontiers,
     HandlerTrait, InternalString, LoroError, VersionVector,
@@ -916,7 +916,7 @@ impl LoroDoc {
                 );
                 // TODO: remove depth info
                 let depth = self.arena.get_depth(idx);
-                let (_,diff_calc) = &mut diff_calc.get_or_create_calc(&OpContainer::Idx(idx),depth);
+                let (_, diff_calc) = &mut diff_calc.get_or_create_calc(&idx, depth);
                 match diff_calc {
                     crate::diff_calc::ContainerDiffCalculator::Richtext(text) => {
                         let c = text.get_id_latest_pos(id).unwrap();
@@ -990,10 +990,9 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
     let start_vv = oplog.dag.frontiers_to_vv(&id.into()).unwrap();
     for change in oplog.iter_changes_causally_rev(&start_vv, &oplog.dag.vv) {
         for op in change.ops.iter().rev() {
-            if op.container.as_idx().unwrap() != &idx {
+            if op.container != idx {
                 continue;
             }
-
             if let InnerContent::List(InnerListOp::Delete(d)) = &op.content {
                 if d.id_start.to_span(d.atom_len()).contains(id) {
                     return Some(ID::new(change.peer(), op.counter));

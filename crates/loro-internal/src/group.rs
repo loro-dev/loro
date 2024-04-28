@@ -30,7 +30,7 @@ impl OpGroups {
             ) {
                 continue;
             }
-            let container = *op.container.as_idx().unwrap();
+            let container = op.container;
             let rich_op = RichOp::new_by_change(change, op);
             let manager = self
                 .groups

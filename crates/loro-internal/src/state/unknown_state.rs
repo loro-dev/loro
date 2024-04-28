@@ -1,12 +1,11 @@
 use std::sync::{Mutex, Weak};
 
-use loro_common::{ContainerID, IdLpSpan, LamportSpan, LoroResult, LoroValue};
-use rle::HasLength;
+use loro_common::{ContainerID, LoroResult, LoroValue};
 
 use crate::{
     arena::SharedArena,
     container::idx::ContainerIdx,
-    encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
+    encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     op::{Op, RawOp},
     txn::Transaction,
@@ -17,28 +16,18 @@ use super::ContainerState;
 
 #[derive(Debug, Clone)]
 pub struct UnknownState {
-    id: ContainerID,
-    ops: Vec<IdLpSpan>,
-    blob: Vec<u8>,
+    idx: ContainerIdx,
 }
 
 impl UnknownState {
-    pub fn new(id: ContainerID) -> Self {
-        Self {
-            id,
-            ops: Vec::new(),
-            blob: Vec::new(),
-        }
+    pub fn new(idx: ContainerIdx) -> Self {
+        Self { idx }
     }
 }
 
 impl ContainerState for UnknownState {
     fn container_idx(&self) -> ContainerIdx {
         unreachable!()
-    }
-
-    fn container(&self) -> crate::op::OpContainer {
-        crate::op::OpContainer::ID(self.id.clone())
     }
 
     fn is_unknown(&self) -> bool {
@@ -50,7 +39,7 @@ impl ContainerState for UnknownState {
     }
 
     fn is_state_empty(&self) -> bool {
-        self.ops.is_empty() && self.blob.is_empty()
+        false
     }
 
     fn apply_diff_and_convert(
@@ -70,15 +59,6 @@ impl ContainerState for UnknownState {
         _txn: &Weak<Mutex<Option<Transaction>>>,
         _state: &Weak<Mutex<DocState>>,
     ) {
-        for op in diff.as_unknown().unwrap().iter() {
-            self.ops.push(IdLpSpan {
-                peer: op.peer,
-                lamport: LamportSpan {
-                    start: op.lamport.unwrap(),
-                    end: op.lamport.unwrap() + op.op.atom_len() as u32,
-                },
-            });
-        }
     }
 
     fn apply_local_op(&mut self, _raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
@@ -116,25 +96,11 @@ impl ContainerState for UnknownState {
     #[doc = r" The ops should be encoded into the snapshot as well as the blob."]
     #[doc = r" The users then can use the ops and the blob to restore the state to the current state."]
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
-        for op in self.ops.iter() {
-            encoder.encode_op(*op, || unreachable!());
-        }
-        self.blob.clone()
+        unreachable!()
     }
 
     #[doc = r" Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
-        assert_eq!(ctx.mode, EncodeMode::Snapshot);
-        self.ops = ctx
-            .ops
-            .map(|x| {
-                IdLpSpan::new(
-                    x.peer,
-                    x.lamport.unwrap(),
-                    x.lamport.unwrap() + x.op.atom_len() as u32,
-                )
-            })
-            .collect();
-        self.blob = ctx.blob.to_owned();
+        unreachable!()
     }
 }

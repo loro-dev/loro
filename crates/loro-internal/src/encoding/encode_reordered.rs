@@ -13,9 +13,9 @@ use serde_columnar::{columnar, ColumnarError};
 use crate::{
     arena::SharedArena,
     change::{Change, Lamport, Timestamp},
-    container::{list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
+    container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
     encoding::StateSnapshotDecodeContext,
-    op::{FutureInnerContent, Op, OpContainer, OpWithId, SliceRange},
+    op::{FutureInnerContent, Op, OpWithId, SliceRange},
     state::ContainerState,
     version::Frontiers,
     DocState, LoroDoc, OpLog, VersionVector,
@@ -27,7 +27,7 @@ use self::encode::{encode_changes, encode_ops, init_encode, TempOp};
 use super::{
     arena::*,
     parse_header_and_body,
-    value::{FutureValue, Value, ValueKind, ValueReader, ValueWriter},
+    value::{Value, ValueKind, ValueReader, ValueWriter},
     ImportBlobMetadata,
 };
 
@@ -68,7 +68,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &mut diff_changes
             .iter()
             .flat_map(|x| x.ops.iter())
-            .map(|x| x.container.clone()),
+            .map(|x| x.container),
         &oplog.arena,
     );
     let cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
@@ -364,7 +364,6 @@ fn extract_ops(
             peer_idx,
             value_type,
             counter,
-            op_len,
         } = op?;
         if containers.len() <= container_index as usize
             || arenas.peer_ids.len() <= peer_idx as usize
@@ -376,22 +375,9 @@ fn extract_ops(
         let kind = ValueKind::from_u8(value_type);
         let value = Value::decode(kind, &mut value_reader, arenas, ID::new(peer, counter))?;
 
-        let content = decode_op(
-            cid,
-            value,
-            op_len,
-            &mut del_iter,
-            shared_arena,
-            arenas,
-            prop,
-        )?;
+        let content = decode_op(cid, value, &mut del_iter, shared_arena, arenas, prop)?;
 
-        let container = if cid.is_unknown() {
-            OpContainer::ID(cid.clone())
-        } else {
-            let c_idx = shared_arena.register_container(cid);
-            OpContainer::Idx(c_idx)
-        };
+        let container = shared_arena.register_container(cid);
 
         let op = Op {
             counter,
@@ -433,11 +419,11 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         cid_idx_pairs: c_pairs,
         container_to_index: container_idx2index,
     } = extract_containers_in_order(
-        &mut state.iter().map(|x| x.container()).chain(
+        &mut state.iter().map(|x| x.container_idx()).chain(
             diff_changes
                 .iter()
                 .flat_map(|x| x.ops.iter())
-                .map(|x| x.container.clone()),
+                .map(|x| x.container),
         ),
         &oplog.arena,
     );
@@ -461,12 +447,25 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     for (_, container) in c_pairs.iter() {
         let container_index = *container_idx2index.get(container).unwrap() as u32;
 
-        let state = match state.get_state_and_unknown(container) {
+        let is_unknown = container.is_unknown();
+
+        if is_unknown {
+            states.push(EncodedStateInfo {
+                container_index,
+                op_len: 0,
+                is_unknown,
+                state_bytes_len: 0,
+            });
+            continue;
+        }
+
+        let state = match state.get_state(*container) {
             Some(state) if !state.is_state_empty() => state,
             _ => {
                 states.push(EncodedStateInfo {
                     container_index,
                     op_len: 0,
+                    is_unknown,
                     state_bytes_len: 0,
                 });
                 continue;
@@ -514,6 +513,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         states.push(EncodedStateInfo {
             container_index,
             op_len: op_len as u32,
+            is_unknown: false,
             state_bytes_len: bytes.len() as u32,
         });
         state_bytes.extend(bytes);
@@ -744,7 +744,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         op.lamport = oplog.get_lamport_at(op.id());
     }
 
-    let future_id = decode_snapshot_states(
+    decode_snapshot_states(
         &mut state,
         oplog.frontiers().clone(),
         iter.states,
@@ -754,8 +754,6 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         &oplog,
     )
     .unwrap();
-
-    // TODO: diff calc
 
     assert!(pending_changes.is_empty());
     // we cannot assert this because frontiers of oplog is not updated yet when batch_importing
@@ -790,12 +788,18 @@ fn decode_snapshot_states(
 ) -> LoroResult<()> {
     let mut state_blob_index: usize = 0;
     let mut ops_index: usize = 0;
+    let mut unknown_containers = Vec::new();
     for encoded_state in encoded_state_iter {
         let EncodedStateInfo {
             container_index,
             mut op_len,
+            is_unknown,
             state_bytes_len,
         } = encoded_state?;
+        if is_unknown {
+            unknown_containers.push(containers[container_index as usize].clone());
+            continue;
+        }
         if op_len == 0 && state_bytes_len == 0 {
             continue;
         }
@@ -806,13 +810,7 @@ fn decode_snapshot_states(
 
         let container_id = &containers[container_index as usize];
 
-        // TODO: maybe can parse unknown container
-        let container = if container_id.is_unknown() {
-            OpContainer::ID(container_id.clone())
-        } else {
-            let idx = state.arena.register_container(container_id);
-            OpContainer::Idx(idx)
-        };
+        let container = state.arena.register_container(container_id);
 
         if state_blob_arena.len() < state_blob_index + state_bytes_len as usize {
             return Err(LoroError::DecodeDataCorruptionError);
@@ -839,6 +837,7 @@ fn decode_snapshot_states(
                 }
             })
             .cloned();
+
         state.init_container(
             container_id.clone(),
             StateSnapshotDecodeContext {
@@ -851,8 +850,7 @@ fn decode_snapshot_states(
     }
 
     let s = take(&mut state.states);
-    let us = take(&mut state.unknown_states);
-    state.init_with_states_and_version(s, us, frontiers);
+    state.init_with_states_and_version(s, frontiers, oplog, unknown_containers);
     Ok(())
 }
 
@@ -865,8 +863,9 @@ mod encode {
     use crate::{
         arena::SharedArena,
         change::{Change, Lamport},
-        encoding::value::{EncodedTreeMove, FutureValue, MarkStart, Value, ValueKind, ValueWriter},
-        op::{FutureInnerContent, Op, OpContainer},
+        container::idx::ContainerIdx,
+        encoding::value::{EncodedTreeMove, MarkStart, Value, ValueKind, ValueWriter},
+        op::{FutureInnerContent, Op},
     };
 
     #[derive(Debug, Clone)]
@@ -973,7 +972,6 @@ mod encode {
                 counter: op.counter,
                 prop,
                 value_type: value_type.to_u8(),
-                op_len: op.atom_len(),
             });
         }
 
@@ -984,7 +982,7 @@ mod encode {
         diff_changes: &'a [Cow<'a, Change>],
         dep_arena: &mut super::DepsArena,
         push_op: &mut impl FnMut(TempOp<'a>),
-        container_idx2index: &FxHashMap<OpContainer, usize>,
+        container_idx2index: &FxHashMap<ContainerIdx, usize>,
         registers: &mut EncodedRegisters,
     ) -> Vec<EncodedChange> {
         let mut changes: Vec<EncodedChange> = Vec::with_capacity(diff_changes.len());
@@ -1213,7 +1211,7 @@ mod encode {
                 Value::TreeMove(EncodedTreeMove::from_op(t))
             }
             crate::op::InnerContent::Future(f) => match f {
-                FutureInnerContent::Unknown { op_len: _, value } => Value::from_owned(value),
+                FutureInnerContent::Unknown { prop: _, value } => Value::from_owned(value),
             },
         };
         let (k, mut i) = value.encode(value_writer, registers);
@@ -1226,7 +1224,6 @@ mod encode {
 fn decode_op(
     cid: &ContainerID,
     value: Value<'_>,
-    op_len: usize,
     del_iter: &mut impl Iterator<Item = Result<EncodedDeleteStartId, ColumnarError>>,
     shared_arena: &SharedArena,
     arenas: &DecodedArenas<'_>,
@@ -1329,7 +1326,7 @@ fn decode_op(
             }
         },
         ContainerType::Unknown(_) => crate::op::InnerContent::Future(FutureInnerContent::Unknown {
-            op_len,
+            prop,
             value: value.into_owned(),
         }),
     };
@@ -1341,8 +1338,8 @@ pub type PeerIdx = usize;
 
 struct ExtractedContainer {
     containers: Vec<ContainerID>,
-    cid_idx_pairs: Vec<(ContainerID, OpContainer)>,
-    container_to_index: FxHashMap<OpContainer, usize>,
+    cid_idx_pairs: Vec<(ContainerID, ContainerIdx)>,
+    container_to_index: FxHashMap<ContainerIdx, usize>,
 }
 
 /// Extract containers from oplog changes.
@@ -1350,7 +1347,7 @@ struct ExtractedContainer {
 /// Containers are sorted by their peer_id and counter so that
 /// they can be compressed by using delta encoding.
 fn extract_containers_in_order(
-    c_iter: &mut dyn Iterator<Item = OpContainer>,
+    c_iter: &mut dyn Iterator<Item = ContainerIdx>,
     arena: &SharedArena,
 ) -> ExtractedContainer {
     let mut containers = Vec::new();
@@ -1359,14 +1356,9 @@ fn extract_containers_in_order(
         if visited.contains(&c) {
             continue;
         }
-        visited.insert(c.clone());
-        //TODO:
-        let id = if let OpContainer::Idx(idx) = c {
-            arena.get_container_id(idx).unwrap()
-        } else {
-            c.as_id().unwrap().clone()
-        };
-        containers.push((id, c.clone()));
+        visited.insert(c);
+        let id = arena.get_container_id(c).unwrap();
+        containers.push((id, c));
     }
 
     containers.sort_unstable_by(|(a, _), (b, _)| {
@@ -1450,8 +1442,6 @@ struct EncodedOp {
     value_type: u8,
     #[columnar(strategy = "DeltaRle")]
     counter: i32,
-    #[columnar(strategy = "Rle")]
-    op_len: usize,
 }
 
 #[columnar(vec, ser, de, iterable)]
@@ -1491,6 +1481,8 @@ struct EncodedStateInfo {
     op_len: u32,
     #[columnar(strategy = "DeltaRle")]
     state_bytes_len: u32,
+    #[columnar(strategy = "BoolRle")]
+    is_unknown: bool,
 }
 
 #[cfg(test)]

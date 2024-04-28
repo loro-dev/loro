@@ -8,7 +8,7 @@ use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
     delta::{Delta, MapDelta, ResolvedMapDelta, StyleMeta, TreeDelta, TreeDiff},
     handler::ValueOrHandler,
-    op::{OpContainer, OpWithId, SliceRanges},
+    op::{OpWithId, SliceRanges},
     utils::string_slice::StringSlice,
     InternalString,
 };
@@ -104,7 +104,7 @@ impl DocDiff {
 
 #[derive(Debug, Clone)]
 pub(crate) struct InternalContainerDiff {
-    pub(crate) container: OpContainer,
+    pub(crate) idx: ContainerIdx,
     // If true, this event is created by the container which was resurrected by another container
     pub(crate) bring_back: bool,
     pub(crate) is_container_deleted: bool,

@@ -16,7 +16,7 @@ use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::group::OpGroups;
 use crate::id::{Counter, PeerID, ID};
-use crate::op::{FutureInnerContent, ListSlice, OpContainer, RawOpContent, RemoteOp, RichOp};
+use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
@@ -550,11 +550,7 @@ impl OpLog {
     }
 
     pub(crate) fn local_op_to_remote(&self, op: &crate::op::Op) -> SmallVec<[RemoteOp<'_>; 1]> {
-        let container = if let OpContainer::Idx(idx) = op.container {
-            self.arena.get_container_id(idx).unwrap()
-        } else {
-            op.container.as_id().unwrap().clone()
-        };
+        let container = self.arena.get_container_id(op.container).unwrap();
         let mut contents: SmallVec<[_; 1]> = SmallVec::new();
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
@@ -628,12 +624,12 @@ impl OpLog {
             }
             crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(*tree)),
             crate::op::InnerContent::Future(f) => match f {
-                FutureInnerContent::Unknown { op_len, value } => contents.push(
-                    RawOpContent::Future(crate::op::FutureRawOpContent::Unknown {
-                        op_len: *op_len,
+                FutureInnerContent::Unknown { prop, value } => contents.push(RawOpContent::Future(
+                    crate::op::FutureRawOpContent::Unknown {
+                        prop: *prop,
                         value: value.clone(),
-                    }),
-                ),
+                    },
+                )),
             },
         };
 
