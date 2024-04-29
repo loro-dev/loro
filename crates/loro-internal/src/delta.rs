@@ -1,3 +1,5 @@
+mod movable_list;
+pub(crate) use movable_list::{ElementDelta, MovableListInnerDelta};
 mod seq;
 pub use seq::{Delta, DeltaItem, DeltaType, DeltaValue, Meta};
 mod map;

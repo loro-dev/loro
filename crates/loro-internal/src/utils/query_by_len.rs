@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use generic_btree::{BTreeTrait, FindResult, Query};
 
-use super::richtext_state::{RichtextStateChunk, RichtextTreeTrait};
+use crate::container::richtext::richtext_state::{RichtextStateChunk, RichtextTreeTrait};
 
 /// An easy way to implement [Query] by using key index
 ///
@@ -10,7 +10,7 @@ use super::richtext_state::{RichtextStateChunk, RichtextTreeTrait};
 /// - prefer next element when this element has zero length.
 /// - prefer next element rather than previous element when the left is at the middle of two elements.
 pub struct IndexQuery<T: QueryByLen<B>, B: BTreeTrait> {
-    left: usize,
+    pub left: usize,
     _data: PhantomData<(T, B)>,
 }
 
@@ -20,8 +20,8 @@ pub struct IndexQuery<T: QueryByLen<B>, B: BTreeTrait> {
 /// - prefer next element when this element has zero length.
 /// - prefer next element rather than previous element when the left is at the middle of two elements.
 pub struct IndexQueryWithEntityIndex<T: QueryByLen<B>, B: BTreeTrait> {
-    left: usize,
-    entity_index: usize,
+    pub left: usize,
+    pub entity_index: usize,
     _data: PhantomData<(T, B)>,
 }
 
@@ -31,8 +31,8 @@ pub struct IndexQueryWithEntityIndex<T: QueryByLen<B>, B: BTreeTrait> {
 /// - prefer next element when this element has zero length.
 /// - prefer next element rather than previous element when the left is at the middle of two elements.
 pub struct EntityIndexQueryWithEventIndex {
-    left: usize,
-    pub(super) event_index: usize,
+    pub left: usize,
+    pub event_index: usize,
 }
 
 impl<T: QueryByLen<B>, B: BTreeTrait> IndexQueryWithEntityIndex<T, B> {

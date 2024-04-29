@@ -1,7 +1,14 @@
 [package]
 name = "loro-delta"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
+license = "MIT"
+description = "Loro internal library. It's used as a delta between two versions of text or lists. It's also an efficient Rope."
+homepage = "https://loro.dev"
+authors = ["Zixuan Chen", "Liang Zhao"]
+categories = ["data-structures", "text-editing"]
+keywords = ["rope"]
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

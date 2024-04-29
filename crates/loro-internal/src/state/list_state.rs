@@ -6,7 +6,7 @@ use std::{
 use super::ContainerState;
 use crate::{
     arena::SharedArena,
-    container::{idx::ContainerIdx, ContainerID},
+    container::{idx::ContainerIdx, list::list_op::ListOp, ContainerID},
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff, ListDiff},
     handler::ValueOrHandler,
@@ -349,7 +349,7 @@ impl ContainerState for ListState {
             match span {
                 crate::delta::DeltaItem::Retain { retain: len, .. } => {
                     index += len;
-                    ans.push_retain(*len, ());
+                    ans.push_retain(*len, Default::default());
                 }
                 crate::delta::DeltaItem::Insert { insert: value, .. } => {
                     let mut arr = Vec::new();
@@ -363,7 +363,7 @@ impl ContainerState for ListState {
                         arr.iter()
                             .map(|v| ValueOrHandler::from_value(v.clone(), arena, txn, state)),
                     ) {
-                        ans.push_insert(arr, ());
+                        ans.push_insert(arr, Default::default());
                     }
                     let len = arr.len();
                     self.insert_batch(index, arr, value.id);
@@ -422,7 +422,7 @@ impl ContainerState for ListState {
             RawOpContent::Map(_) => unreachable!(),
             RawOpContent::Tree(_) => unreachable!(),
             RawOpContent::List(list) => match list {
-                crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
+                ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(list) => match list {
                         std::borrow::Cow::Borrowed(list) => {
                             self.insert_batch(*pos, list.to_vec(), op.id_full());
@@ -433,11 +433,17 @@ impl ContainerState for ListState {
                     },
                     _ => unreachable!(),
                 },
-                crate::container::list::list_op::ListOp::Delete(del) => {
+                ListOp::Delete(del) => {
                     self.delete_range(del.span.to_urange());
                 }
-                crate::container::list::list_op::ListOp::StyleStart { .. } => unreachable!(),
-                crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),
+                ListOp::Move { .. } => {
+                    todo!("invoke move")
+                }
+                ListOp::StyleStart { .. } => unreachable!(),
+                ListOp::StyleEnd { .. } => unreachable!(),
+                ListOp::Set { .. } => {
+                    unreachable!()
+                }
             },
         }
         Ok(())

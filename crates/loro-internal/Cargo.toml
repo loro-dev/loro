@@ -1,6 +1,6 @@
 [package]
 name = "loro-internal"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 license = "MIT"
 description = "Loro internal library. Do not use it directly as it's not stable."
@@ -14,9 +14,9 @@ keywords = ["crdt", "local-first"]
 
 [dependencies]
 loro-delta = { path = "../delta", package = "loro-delta" }
-rle = { path = "../rle", version = "0.4.0", package = "loro-rle" }
+rle = { path = "../rle", package = "loro-rle" }
 fractional_index = { path = "../fractional_index", features = ["serde"] }
-loro-common = { path = "../loro-common", version = "0.4.0" }
+loro-common = { path = "../loro-common" }
 smallvec = { version = "1.8.0", features = ["serde"] }
 postcard = "1"
 fxhash = { workspace = true }
@@ -57,14 +57,12 @@ proptest = "1.0.0"
 proptest-derive = "0.3.0"
 static_assertions = "1.1.0"
 tabled = "0.10.0"
-color-backtrace = { version = "0.5" }
 ctor = "0.1.23"
 criterion = "0.5.0"
 arbtest = "0.2.0"
 bench-utils = { path = "../bench-utils" }
+dev-utils = { path = "../dev-utils" }
 zstd = "0.13.0"
-tracing-subscriber = "0.3.18"
-tracing-chrome = "0.7.1"
 
 # See https://matklad.github.io/2021/02/27/delete-cargo-integration-tests.html
 [lib]

@@ -92,10 +92,13 @@ pub struct TreeActor {
 
 impl TreeActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker = MapTracker::empty();
+        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
         tracker.insert(
             "tree".to_string(),
-            Value::empty_container(ContainerType::Tree),
+            Value::empty_container(
+                ContainerType::Tree,
+                ContainerID::new_root("tree", ContainerType::Tree),
+            ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let tree = tracker.clone();

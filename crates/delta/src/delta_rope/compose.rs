@@ -1,4 +1,4 @@
-use generic_btree::rle::HasLength;
+
 
 use super::*;
 
@@ -16,6 +16,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
             return;
         }
 
+        // trace!("Composing {:#?}\n{:#?}", &self, &other);
         let mut index = 0;
 
         let mut push_rest = false;
@@ -56,6 +57,8 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                 }
             }
         }
+
+        // trace!("Composed {:#?}", &self);
     }
 
     fn _compose_replace(
@@ -84,22 +87,20 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         }
 
         if left_del_len > 0 || should_insert {
-            self.insert_values(
-                *index,
-                [DeltaItem::Replace {
-                    value: if should_insert {
-                        this_value.clone()
-                    } else {
-                        Default::default()
-                    },
-                    attr: if should_insert {
-                        this_attr.clone()
-                    } else {
-                        Default::default()
-                    },
-                    delete: left_del_len,
-                }],
-            );
+            let replace = DeltaItem::Replace {
+                value: if should_insert {
+                    this_value.clone()
+                } else {
+                    Default::default()
+                },
+                attr: if should_insert {
+                    this_attr.clone()
+                } else {
+                    Default::default()
+                },
+                delete: left_del_len,
+            };
+            self.insert_values(*index, [replace]);
         }
 
         *index += this_value.rle_len();
@@ -191,10 +192,6 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                     // on the `delete` field of this item.
                     let left = left_del_len.saturating_sub(value_end - value_start);
                     *delete += left;
-                }
-
-                if value_start == value_end {
-                    return (true, None, None);
                 }
 
                 let (l, r) = item.update_with_split(value_start..value_end, |item| {

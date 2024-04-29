@@ -4,7 +4,7 @@ use crate::op::OpWithId;
 use crate::version::Frontiers;
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{IdLpSpan, LoroResult};
+use loro_common::{IdLpSpan, LoroResult, PeerID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 use serde::{Deserialize, Serialize};
@@ -94,6 +94,7 @@ pub(crate) struct StateSnapshotEncoder<'a> {
     /// The `record_idspan` function is used to record the id span to track the
     /// encoded order.
     record_idspan: &'a mut dyn FnMut(IdLpSpan),
+    register_peer: &'a mut dyn FnMut(PeerID) -> usize,
     #[allow(unused)]
     mode: EncodeMode,
 }
@@ -118,10 +119,15 @@ impl StateSnapshotEncoder<'_> {
     pub fn mode(&self) -> EncodeMode {
         self.mode
     }
+
+    pub(crate) fn register_peer(&mut self, peer: PeerID) -> usize {
+        (self.register_peer)(peer)
+    }
 }
 
 pub(crate) struct StateSnapshotDecodeContext<'a> {
     pub oplog: &'a OpLog,
+    pub peers: &'a [PeerID],
     pub ops: &'a mut dyn Iterator<Item = OpWithId>,
     #[allow(unused)]
     pub blob: &'a [u8],
@@ -219,6 +225,7 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
         &doc.app_state().try_lock().unwrap(),
         &Default::default(),
     );
+
     encode_header_and_body(EncodeMode::Snapshot, body)
 }
 

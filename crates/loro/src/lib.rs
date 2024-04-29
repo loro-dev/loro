@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::change::Timestamp;
@@ -15,12 +16,14 @@ use loro_internal::OpLog;
 
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
-    MapHandler as InnerMapHandler, TextHandler as InnerTextHandler,
-    TreeHandler as InnerTreeHandler,
+    MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
+    TextHandler as InnerTextHandler, TreeHandler as InnerTreeHandler,
 };
 use std::cmp::Ordering;
 use std::ops::Range;
 use std::sync::Arc;
+
+use tracing::info;
 
 pub mod event;
 
@@ -52,6 +55,7 @@ impl Default for LoroDoc {
 }
 
 impl LoroDoc {
+    /// Create a new `LoroDoc` instance.
     pub fn new() -> Self {
         let mut doc = InnerLoroDoc::default();
         doc.start_auto_commit();
@@ -125,13 +129,28 @@ impl LoroDoc {
         self.doc.checkout(frontiers)
     }
 
+    /// Checkout the `DocState` to the latest version.
+    ///
+    /// > The document becomes detached during a `checkout` operation.
+    /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
+    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > recorded in the `OpLog` without being applied to the `DocState`.
+    ///
+    /// This has the same effect as `attach`.
+    pub fn checkout_to_latest(&self) {
+        self.doc.checkout_to_latest()
+    }
+
+    /// Compare the frontiers with the current OpLog's version.
+    ///
+    /// If `other` contains any version that's not contained in the current OpLog, return [Ordering::Less].
     pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
         self.doc.cmp_with_frontiers(other)
     }
 
     /// Compare two frontiers.
     ///
-    /// If the frontiers are not included in the document, return `FrontiersNotIncluded`.
+    /// If the frontiers are not included in the document, return [`FrontiersNotIncluded`].
     pub fn cmp_frontiers(
         &self,
         a: &Frontiers,
@@ -156,7 +175,16 @@ impl LoroDoc {
         self.doc.import_batch(bytes)
     }
 
-    /// Get a [ListHandler] by container id.
+    /// Get a [LoroMovableList] by container id.
+    ///
+    /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> LoroMovableList {
+        LoroMovableList {
+            handler: self.doc.get_movable_list(id),
+        }
+    }
+
+    /// Get a [LoroList] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> LoroList {
@@ -165,7 +193,7 @@ impl LoroDoc {
         }
     }
 
-    /// Get a [MapHandler] by container id.
+    /// Get a [LoroMap] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> LoroMap {
@@ -174,7 +202,7 @@ impl LoroDoc {
         }
     }
 
-    /// Get a [TextHandler] by container id.
+    /// Get a [LoroText] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> LoroText {
@@ -183,7 +211,7 @@ impl LoroDoc {
         }
     }
 
-    /// Get a [TreeHandler] by container id.
+    /// Get a [LoroTree] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> LoroTree {
@@ -216,14 +244,20 @@ impl LoroDoc {
             .commit_with(origin.map(|x| x.into()), timestamp, immediate_renew)
     }
 
+    /// Whether the document is in detached mode, where the [loro_internal::DocState] is not synchronized with the latest version of the [loro_internal::OpLog].
     pub fn is_detached(&self) -> bool {
         self.doc.is_detached()
     }
 
+    /// Import updates/snapshot exported by [`LoroDoc::export_snapshot`] or [`LoroDoc::export_from`].
     pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
         self.doc.import_with(bytes, "".into())
     }
 
+    /// Import updates/snapshot exported by [`LoroDoc::export_snapshot`] or [`LoroDoc::export_from`].
+    ///
+    /// It marks the import with a custom `origin` string. It can be used to track the import source
+    /// in the generated events.
     pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<(), LoroError> {
         self.doc.import_with(bytes, origin.into())
     }
@@ -233,6 +267,7 @@ impl LoroDoc {
         self.doc.export_from(vv)
     }
 
+    /// Export the current state and history of the document.
     pub fn export_snapshot(&self) -> Vec<u8> {
         self.doc.export_snapshot()
     }
@@ -247,6 +282,7 @@ impl LoroDoc {
         self.doc.vv_to_frontiers(vv)
     }
 
+    /// Access the `OpLog`.
     pub fn with_oplog<R>(&self, f: impl FnOnce(&OpLog) -> R) -> R {
         let oplog = self.doc.oplog().lock().unwrap();
         f(&oplog)
@@ -272,6 +308,7 @@ impl LoroDoc {
         self.doc.len_changes()
     }
 
+    /// Get the current state of the document.
     pub fn get_deep_value(&self) -> LoroValue {
         self.doc.get_deep_value()
     }
@@ -361,8 +398,15 @@ impl LoroDoc {
         self.doc.unsubscribe(id)
     }
 
+    /// Estimate the size of the document states in memory.
     pub fn log_estimate_size(&self) {
         self.doc.log_estimated_size();
+    }
+
+    /// Check the correctness of the document state by comparing it with the state
+    /// calculated by applying all the history.
+    pub fn check_state_correctness_slow(&self) {
+        self.doc.check_state_diff_calc_consistency_slow()
     }
 
     /// Get the handler by the path.
@@ -404,15 +448,24 @@ impl LoroDoc {
 /// It's used to prevent the user from implementing the trait directly.
 #[allow(private_bounds)]
 trait SealedTrait {}
+
+/// The common trait for all the containers.
+/// It's used internally, you can't implement it directly.
 #[allow(private_bounds)]
 pub trait ContainerTrait: SealedTrait {
+    /// The handler of the container.
     type Handler: HandlerTrait;
+    /// Convert the container to a [Container].
     fn to_container(&self) -> Container;
+    /// Convert the container to a handler.
     fn to_handler(&self) -> Self::Handler;
+    /// Convert the handler to a container.
     fn from_handler(handler: Self::Handler) -> Self;
+    /// Try to convert the container to the handler.
     fn try_from_container(container: Container) -> Option<Self>
     where
         Self: Sized;
+    /// Whether the container is attached to a document.
     fn is_attached(&self) -> bool;
     /// If a detached container is attached, this method will return its corresponding attached handler.
     fn get_attached(&self) -> Option<Self>
@@ -490,15 +543,18 @@ impl LoroList {
         self.handler.is_attached()
     }
 
+    /// Insert a value at the given position.
     pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
         self.handler.insert(pos, v)
     }
 
+    /// Delete values at the given position.
     #[inline]
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
         self.handler.delete(pos, len)
     }
 
+    /// Get the value at the given position.
     #[inline]
     pub fn get(&self, index: usize) -> Option<Either<LoroValue, Container>> {
         match self.handler.get_(index) {
@@ -508,31 +564,39 @@ impl LoroList {
         }
     }
 
+    /// Get the deep value of the container.
     #[inline]
     pub fn get_deep_value(&self) -> LoroValue {
         self.handler.get_deep_value()
     }
 
+    /// Get the shallow value of the container.
+    ///
+    /// This does not convert the state of sub-containers; instead, it represents them as [LoroValue::Container].
     #[inline]
     pub fn get_value(&self) -> LoroValue {
         self.handler.get_value()
     }
 
+    /// Get the ID of the container.
     #[inline]
     pub fn id(&self) -> ContainerID {
         self.handler.id().clone()
     }
 
+    /// Pop the last element of the list.
     #[inline]
     pub fn pop(&self) -> LoroResult<Option<LoroValue>> {
         self.handler.pop()
     }
 
+    /// Push a value to the list.
     #[inline]
     pub fn push(&self, v: impl Into<LoroValue>) -> LoroResult<()> {
         self.handler.push(v.into())
     }
 
+    /// Push a container to the list.
     #[inline]
     pub fn push_container<C: ContainerTrait>(&self, child: C) -> LoroResult<C> {
         let pos = self.handler.len();
@@ -541,6 +605,7 @@ impl LoroList {
         ))
     }
 
+    /// Iterate over the elements of the list.
     pub fn for_each<I>(&self, f: I)
     where
         I: FnMut((usize, ValueOrHandler)),
@@ -548,11 +613,13 @@ impl LoroList {
         self.handler.for_each(f)
     }
 
+    /// Get the length of the list.
     #[inline]
     pub fn len(&self) -> usize {
         self.handler.len()
     }
 
+    /// Whether the list is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.handler.is_empty()
@@ -698,14 +765,17 @@ impl LoroMap {
         }
     }
 
+    /// Whether the container is attached to a document.
     pub fn is_attached(&self) -> bool {
         self.handler.is_attached()
     }
 
+    /// Delete a key-value pair from the map.
     pub fn delete(&self, key: &str) -> LoroResult<()> {
         self.handler.delete(key)
     }
 
+    /// Iterate over the key-value pairs of the map.
     pub fn for_each<I>(&self, f: I)
     where
         I: FnMut(&str, ValueOrHandler),
@@ -713,22 +783,27 @@ impl LoroMap {
         self.handler.for_each(f)
     }
 
+    /// Insert a key-value pair into the map.
     pub fn insert(&self, key: &str, value: impl Into<LoroValue>) -> LoroResult<()> {
         self.handler.insert(key, value)
     }
 
+    /// Get the length of the map.
     pub fn len(&self) -> usize {
         self.handler.len()
     }
 
+    /// Get the ID of the map.
     pub fn id(&self) -> ContainerID {
         self.handler.id().clone()
     }
 
+    /// Whether the map is empty.
     pub fn is_empty(&self) -> bool {
         self.handler.is_empty()
     }
 
+    /// Get the value of the map with the given key.
     pub fn get(&self, key: &str) -> Option<Either<LoroValue, Container>> {
         match self.handler.get_(key) {
             None => None,
@@ -757,14 +832,21 @@ impl LoroMap {
         ))
     }
 
+    /// Get the shallow value of the map.
+    ///
+    /// It will not convert the state of sub-containers, but represent them as [LoroValue::Container].
     pub fn get_value(&self) -> LoroValue {
         self.handler.get_value()
     }
 
+    /// Get the deep value of the map.
+    ///
+    /// It will convert the state of sub-containers into a nested JSON value.
     pub fn get_deep_value(&self) -> LoroValue {
         self.handler.get_deep_value()
     }
 
+    /// Get or create a container with the given key.
     pub fn get_or_create_container<C: ContainerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
         Ok(C::from_handler(
             self.handler
@@ -848,18 +930,22 @@ impl LoroText {
         self.handler.delete(pos, len)
     }
 
+    /// Whether the text container is empty.
     pub fn is_empty(&self) -> bool {
         self.handler.is_empty()
     }
 
+    /// Get the length of the text container in UTF-8.
     pub fn len_utf8(&self) -> usize {
         self.handler.len_utf8()
     }
 
+    /// Get the length of the text container in Unicode.
     pub fn len_unicode(&self) -> usize {
         self.handler.len_unicode()
     }
 
+    /// Get the length of the text container in UTF-16.
     pub fn len_utf16(&self) -> usize {
         self.handler.len_utf16()
     }
@@ -1255,15 +1341,231 @@ impl Default for LoroTree {
     }
 }
 
+/// [LoroMovableList container](https://loro.dev/docs/tutorial/list)
+///
+/// It is used to model movable ordered lists.
+///
+/// Using a combination of insert and delete operations, one can simulate set and move
+/// operations on a List. However, this approach fails in concurrent editing scenarios.
+/// For example, if the same element is set or moved concurrently, the simulation would
+/// result in the deletion of the original element and the insertion of two new elements,
+/// which does not meet expectations.
+#[derive(Clone, Debug)]
+pub struct LoroMovableList {
+    handler: InnerMovableListHandler,
+}
+
+impl SealedTrait for LoroMovableList {}
+impl ContainerTrait for LoroMovableList {
+    type Handler = InnerMovableListHandler;
+
+    fn to_container(&self) -> Container {
+        Container::MovableList(self.clone())
+    }
+
+    fn to_handler(&self) -> Self::Handler {
+        self.handler.clone()
+    }
+
+    fn from_handler(handler: Self::Handler) -> Self {
+        Self { handler }
+    }
+
+    fn try_from_container(container: Container) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        match container {
+            Container::MovableList(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    fn get_attached(&self) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        self.handler.get_attached().map(Self::from_handler)
+    }
+}
+
+impl LoroMovableList {
+    /// Create a new container that is detached from the document.
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn new() -> LoroMovableList {
+        Self {
+            handler: InnerMovableListHandler::new_detached(),
+        }
+    }
+
+    /// Get the container id.
+    pub fn id(&self) -> ContainerID {
+        self.handler.id().clone()
+    }
+
+    /// Insert a value at the given position.
+    pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
+        self.handler.insert(pos, v)
+    }
+
+    /// Delete the value at the given position.
+    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+        self.handler.delete(pos, len)
+    }
+
+    /// Get the value at the given position.
+    pub fn get(&self, index: usize) -> Option<Either<LoroValue, Container>> {
+        match self.handler.get_(index) {
+            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
+            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            None => None,
+        }
+    }
+
+    /// Get the length of the list.
+    pub fn len(&self) -> usize {
+        self.handler.len()
+    }
+
+    /// Whether the list is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Get the shallow value of the list.
+    ///
+    /// It will not convert the state of sub-containers, but represent them as [LoroValue::Container].
+    pub fn get_value(&self) -> LoroValue {
+        self.handler.get_value()
+    }
+
+    /// Get the deep value of the list.
+    ///
+    /// It will convert the state of sub-containers into a nested JSON value.
+    pub fn get_deep_value(&self) -> LoroValue {
+        self.handler.get_deep_value()
+    }
+
+    /// Pop the last element of the list.
+    pub fn pop(&self) -> LoroResult<Option<Either<LoroValue, Container>>> {
+        Ok(match self.handler.pop_()? {
+            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
+            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            None => None,
+        })
+    }
+
+    /// Push a value to the end of the list.
+    pub fn push(&self, v: impl Into<LoroValue>) -> LoroResult<()> {
+        self.handler.push(v.into())
+    }
+
+    /// Push a container to the end of the list.
+    pub fn push_container<C: ContainerTrait>(&self, child: C) -> LoroResult<C> {
+        let pos = self.handler.len();
+        Ok(C::from_handler(
+            self.handler.insert_container(pos, child.to_handler())?,
+        ))
+    }
+
+    /// Set the value at the given position.
+    pub fn set(&self, pos: usize, value: impl Into<LoroValue>) -> LoroResult<()> {
+        self.handler.set(pos, value.into())
+    }
+
+    /// Move the value at the given position to the given position.
+    pub fn mov(&self, from: usize, to: usize) -> LoroResult<()> {
+        self.handler.mov(from, to)
+    }
+
+    /// Insert a container at the given position.
+    pub fn insert_container<C: ContainerTrait>(&self, pos: usize, child: C) -> LoroResult<C> {
+        Ok(C::from_handler(
+            self.handler.insert_container(pos, child.to_handler())?,
+        ))
+    }
+
+    /// Set the container at the given position.
+    pub fn set_container<C: ContainerTrait>(&self, pos: usize, child: C) -> LoroResult<C> {
+        Ok(C::from_handler(
+            self.handler.set_container(pos, child.to_handler())?,
+        ))
+    }
+
+    /// Log the internal state of the list.
+    pub fn log_internal_state(&self) {
+        info!(
+            "movable_list internal state: {}",
+            self.handler.log_internal_state()
+        )
+    }
+
+    /// Get the cursor at the given position.
+    ///
+    /// Using "index" to denote cursor positions can be unstable, as positions may
+    /// shift with document edits. To reliably represent a position or range within
+    /// a document, it is more effective to leverage the unique ID of each item/character
+    /// in a List CRDT or Text CRDT.
+    ///
+    /// Loro optimizes State metadata by not storing the IDs of deleted elements. This
+    /// approach complicates tracking cursors since they rely on these IDs. The solution
+    /// recalculates position by replaying relevant history to update stable positions
+    /// accurately. To minimize the performance impact of history replay, the system
+    /// updates cursor info to reference only the IDs of currently present elements,
+    /// thereby reducing the need for replay.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use loro::LoroDoc;
+    /// use loro_internal::cursor::Side;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let list = doc.get_movable_list("list");
+    /// list.insert(0, 0).unwrap();
+    /// let cursor = list.get_cursor(0, Side::Middle).unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 0);
+    /// list.insert(0, 0).unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 1);
+    /// list.insert(0, 0).unwrap();
+    /// list.insert(0, 0).unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 3);
+    /// list.insert(4, 0).unwrap();
+    /// assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 3);
+    /// ```
+    pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
+        self.handler.get_cursor(pos, side)
+    }
+}
+
+impl Default for LoroMovableList {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 use enum_as_inner::EnumAsInner;
 
 /// All the CRDT containers supported by loro.
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum Container {
+    /// [LoroList container](https://loro.dev/docs/tutorial/list)
     List(LoroList),
+    /// [LoroMap container](https://loro.dev/docs/tutorial/map)
     Map(LoroMap),
+    /// [LoroText container](https://loro.dev/docs/tutorial/text)
     Text(LoroText),
+    /// [LoroTree container]
     Tree(LoroTree),
+    /// [LoroMovableList container](https://loro.dev/docs/tutorial/list)
+    MovableList(LoroMovableList),
 }
 
 impl SealedTrait for Container {}
@@ -1280,6 +1582,7 @@ impl ContainerTrait for Container {
             Container::Map(x) => Self::Handler::Map(x.to_handler()),
             Container::Text(x) => Self::Handler::Text(x.to_handler()),
             Container::Tree(x) => Self::Handler::Tree(x.to_handler()),
+            Container::MovableList(x) => Self::Handler::MovableList(x.to_handler()),
         }
     }
 
@@ -1288,6 +1591,7 @@ impl ContainerTrait for Container {
             InnerHandler::Text(x) => Container::Text(LoroText { handler: x }),
             InnerHandler::Map(x) => Container::Map(LoroMap { handler: x }),
             InnerHandler::List(x) => Container::List(LoroList { handler: x }),
+            InnerHandler::MovableList(x) => Container::MovableList(LoroMovableList { handler: x }),
             InnerHandler::Tree(x) => Container::Tree(LoroTree { handler: x }),
         }
     }
@@ -1298,12 +1602,14 @@ impl ContainerTrait for Container {
             Container::Map(x) => x.is_attached(),
             Container::Text(x) => x.is_attached(),
             Container::Tree(x) => x.is_attached(),
+            Container::MovableList(x) => x.is_attached(),
         }
     }
 
     fn get_attached(&self) -> Option<Self> {
         match self {
             Container::List(x) => x.get_attached().map(Container::List),
+            Container::MovableList(x) => x.get_attached().map(Container::MovableList),
             Container::Map(x) => x.get_attached().map(Container::Map),
             Container::Text(x) => x.get_attached().map(Container::Text),
             Container::Tree(x) => x.get_attached().map(Container::Tree),
@@ -1327,24 +1633,29 @@ impl Container {
     pub fn new(kind: ContainerType) -> Self {
         match kind {
             ContainerType::List => Container::List(LoroList::new()),
+            ContainerType::MovableList => Container::MovableList(LoroMovableList::new()),
             ContainerType::Map => Container::Map(LoroMap::new()),
             ContainerType::Text => Container::Text(LoroText::new()),
             ContainerType::Tree => Container::Tree(LoroTree::new()),
         }
     }
 
+    /// Get the type of the container.
     pub fn get_type(&self) -> ContainerType {
         match self {
             Container::List(_) => ContainerType::List,
+            Container::MovableList(_) => ContainerType::MovableList,
             Container::Map(_) => ContainerType::Map,
             Container::Text(_) => ContainerType::Text,
             Container::Tree(_) => ContainerType::Tree,
         }
     }
 
+    /// Get the id of the container.
     pub fn id(&self) -> ContainerID {
         match self {
             Container::List(x) => x.id(),
+            Container::MovableList(x) => x.id(),
             Container::Map(x) => x.id(),
             Container::Text(x) => x.id(),
             Container::Tree(x) => x.id(),
@@ -1359,12 +1670,16 @@ impl From<InnerHandler> for Container {
             InnerHandler::Map(x) => Container::Map(LoroMap { handler: x }),
             InnerHandler::List(x) => Container::List(LoroList { handler: x }),
             InnerHandler::Tree(x) => Container::Tree(LoroTree { handler: x }),
+            InnerHandler::MovableList(x) => Container::MovableList(LoroMovableList { handler: x }),
         }
     }
 }
 
+/// It's a type that can be either a value or a container.
 #[derive(Debug, Clone, EnumAsInner)]
 pub enum ValueOrContainer {
+    /// A value.
     Value(LoroValue),
+    /// A container.
     Container(Container),
 }

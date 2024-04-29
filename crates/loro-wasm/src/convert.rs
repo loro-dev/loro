@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
-use loro_internal::delta::ResolvedMapDelta;
+use loro_internal::delta::{ResolvedMapDelta};
 use loro_internal::encoding::ImportBlobMetadata;
-use loro_internal::event::Diff;
+use loro_internal::event::{Diff};
 use loro_internal::handler::{Handler, ValueOrHandler};
 use loro_internal::{ListDiffItem, LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
 use crate::{
-    frontiers_to_ids, Container, JsContainer, JsImportBlobMetadata, LoroList, LoroMap, LoroText,
-    LoroTree,
+    frontiers_to_ids, Container, JsContainer, JsImportBlobMetadata, LoroList, LoroMap,
+    LoroMovableList, LoroText, LoroTree,
 };
 use wasm_bindgen::__rt::IntoJsResult;
 use wasm_bindgen::convert::RefFromWasmAbi;
@@ -59,6 +59,10 @@ pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
         "Tree" => {
             let obj = unsafe { LoroTree::ref_from_abi(ptr_u32) };
             Container::Tree(obj.clone())
+        }
+        "MovableList" => {
+            let obj = unsafe { LoroMovableList::ref_from_abi(ptr_u32) };
+            Container::MovableList(obj.clone())
         }
         _ => {
             return Err(JsValue::from_str(
@@ -284,5 +288,6 @@ pub(crate) fn handler_to_js_value(handler: Handler, doc: Option<Arc<LoroDoc>>) -
         Handler::Map(m) => LoroMap { handler: m, doc }.into(),
         Handler::List(l) => LoroList { handler: l, doc }.into(),
         Handler::Tree(t) => LoroTree { handler: t, doc }.into(),
+        Handler::MovableList(m) => LoroMovableList { handler: m, doc }.into(),
     }
 }

@@ -11,7 +11,7 @@ use crate::{
     delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
     event::TextDiffItem,
     op::ListSlice,
-    state::{ContainerState, FractionalIndexGenResult, State, TreeParentId},
+    state::{ContainerState, FractionalIndexGenResult, IndexType, State, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
 };
@@ -31,6 +31,7 @@ use std::{
     ops::Deref,
     sync::{Arc, Mutex, Weak},
 };
+use tracing::{info, instrument};
 
 const INSERT_CONTAINER_VALUE_ARG_ERROR: &str =
     "Cannot insert a LoroValue::Container directly. To create child container, use insert_container";
@@ -206,6 +207,9 @@ impl BasicHandler {
                     inner: handler.into(),
                 }),
                 ContainerType::Text => Handler::Text(TextHandler {
+                    inner: handler.into(),
+                }),
+                ContainerType::MovableList => Handler::MovableList(MovableListHandler {
                     inner: handler.into(),
                 }),
             })
@@ -538,6 +542,118 @@ pub struct ListHandler {
     inner: MaybeDetached<Vec<ValueOrHandler>>,
 }
 
+#[derive(Clone)]
+pub struct MovableListHandler {
+    inner: MaybeDetached<Vec<ValueOrHandler>>,
+}
+
+impl HandlerTrait for MovableListHandler {
+    fn is_attached(&self) -> bool {
+        matches!(&self.inner, MaybeDetached::Attached(..))
+    }
+
+    fn attached_handler(&self) -> Option<&BasicHandler> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => Some(a),
+        }
+    }
+
+    fn get_value(&self) -> LoroValue {
+        match &self.inner {
+            MaybeDetached::Detached(a) => {
+                let a = a.try_lock().unwrap();
+                LoroValue::List(Arc::new(a.value.iter().map(|v| v.to_value()).collect()))
+            }
+            MaybeDetached::Attached(a) => a.get_value(),
+        }
+    }
+
+    fn get_deep_value(&self) -> LoroValue {
+        match &self.inner {
+            MaybeDetached::Detached(a) => {
+                let a = a.try_lock().unwrap();
+                LoroValue::List(Arc::new(
+                    a.value.iter().map(|v| v.to_deep_value()).collect(),
+                ))
+            }
+            MaybeDetached::Attached(a) => a.get_deep_value(),
+        }
+    }
+
+    fn kind(&self) -> ContainerType {
+        ContainerType::MovableList
+    }
+
+    fn to_handler(&self) -> Handler {
+        Handler::MovableList(self.clone())
+    }
+
+    fn from_handler(h: Handler) -> Option<Self> {
+        match h {
+            Handler::MovableList(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn attach(
+        &self,
+        txn: &mut Transaction,
+        parent: &BasicHandler,
+        self_id: ContainerID,
+    ) -> LoroResult<Self> {
+        match &self.inner {
+            MaybeDetached::Detached(l) => {
+                let mut l = l.try_lock().unwrap();
+                let inner = create_handler(parent, self_id);
+                let list = inner.into_movable_list().unwrap();
+                for (index, v) in l.value.iter().enumerate() {
+                    match v {
+                        ValueOrHandler::Value(v) => {
+                            list.insert_with_txn(txn, index, v.clone())?;
+                        }
+                        ValueOrHandler::Handler(h) => {
+                            list.insert_container_with_txn(txn, index, h.clone())?;
+                        }
+                    }
+                }
+                l.attached = list.attached_handler().cloned();
+                Ok(list)
+            }
+            MaybeDetached::Attached(a) => {
+                let new_inner = create_handler(a, self_id);
+                let ans = new_inner.into_movable_list().unwrap();
+
+                for (i, v) in self.get_value().into_list().unwrap().iter().enumerate() {
+                    if let LoroValue::Container(id) = v {
+                        ans.insert_container_with_txn(txn, i, create_handler(a, id.clone()))
+                            .unwrap();
+                    } else {
+                        ans.insert_with_txn(txn, i, v.clone()).unwrap();
+                    }
+                }
+
+                Ok(ans)
+            }
+        }
+    }
+
+    fn get_attached(&self) -> Option<Self> {
+        match &self.inner {
+            MaybeDetached::Detached(d) => d.lock().unwrap().attached.clone().map(|x| Self {
+                inner: MaybeDetached::Attached(x),
+            }),
+            MaybeDetached::Attached(_a) => Some(self.clone()),
+        }
+    }
+}
+
+impl std::fmt::Debug for MovableListHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MovableListHandler {}", self.id())
+    }
+}
+
 impl std::fmt::Debug for ListHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.inner {
@@ -814,6 +930,7 @@ pub enum Handler {
     Text(TextHandler),
     Map(MapHandler),
     List(ListHandler),
+    MovableList(MovableListHandler),
     Tree(TreeHandler),
 }
 
@@ -824,6 +941,7 @@ impl HandlerTrait for Handler {
             Self::Map(x) => x.is_attached(),
             Self::List(x) => x.is_attached(),
             Self::Tree(x) => x.is_attached(),
+            Self::MovableList(x) => x.is_attached(),
         }
     }
 
@@ -832,6 +950,7 @@ impl HandlerTrait for Handler {
             Self::Text(x) => x.attached_handler(),
             Self::Map(x) => x.attached_handler(),
             Self::List(x) => x.attached_handler(),
+            Self::MovableList(x) => x.attached_handler(),
             Self::Tree(x) => x.attached_handler(),
         }
     }
@@ -841,6 +960,7 @@ impl HandlerTrait for Handler {
             Self::Text(x) => x.get_value(),
             Self::Map(x) => x.get_value(),
             Self::List(x) => x.get_value(),
+            Self::MovableList(x) => x.get_value(),
             Self::Tree(x) => x.get_value(),
         }
     }
@@ -850,6 +970,7 @@ impl HandlerTrait for Handler {
             Self::Text(x) => x.get_deep_value(),
             Self::Map(x) => x.get_deep_value(),
             Self::List(x) => x.get_deep_value(),
+            Self::MovableList(x) => x.get_deep_value(),
             Self::Tree(x) => x.get_deep_value(),
         }
     }
@@ -859,6 +980,7 @@ impl HandlerTrait for Handler {
             Self::Text(x) => x.kind(),
             Self::Map(x) => x.kind(),
             Self::List(x) => x.kind(),
+            Self::MovableList(x) => x.kind(),
             Self::Tree(x) => x.kind(),
         }
     }
@@ -868,6 +990,7 @@ impl HandlerTrait for Handler {
             Self::Text(x) => x.to_handler(),
             Self::Map(x) => x.to_handler(),
             Self::List(x) => x.to_handler(),
+            Self::MovableList(x) => x.to_handler(),
             Self::Tree(x) => x.to_handler(),
         }
     }
@@ -882,6 +1005,7 @@ impl HandlerTrait for Handler {
             Self::Text(x) => Ok(Handler::Text(x.attach(txn, parent, self_id)?)),
             Self::Map(x) => Ok(Handler::Map(x.attach(txn, parent, self_id)?)),
             Self::List(x) => Ok(Handler::List(x.attach(txn, parent, self_id)?)),
+            Self::MovableList(x) => Ok(Handler::MovableList(x.attach(txn, parent, self_id)?)),
             Self::Tree(x) => Ok(Handler::Tree(x.attach(txn, parent, self_id)?)),
         }
     }
@@ -891,6 +1015,7 @@ impl HandlerTrait for Handler {
             Self::Text(x) => x.get_attached().map(Handler::Text),
             Self::Map(x) => x.get_attached().map(Handler::Map),
             Self::List(x) => x.get_attached().map(Handler::List),
+            Self::MovableList(x) => x.get_attached().map(Handler::MovableList),
             Self::Tree(x) => x.get_attached().map(Handler::Tree),
         }
     }
@@ -929,6 +1054,9 @@ impl Handler {
             ContainerType::Text => Self::Text(TextHandler {
                 inner: handler.into(),
             }),
+            ContainerType::MovableList => Self::MovableList(MovableListHandler {
+                inner: handler.into(),
+            }),
         }
     }
 
@@ -938,6 +1066,7 @@ impl Handler {
             ContainerType::Map => Self::Map(MapHandler::new_detached()),
             ContainerType::List => Self::List(ListHandler::new_detached()),
             ContainerType::Tree => Self::Tree(TreeHandler::new_detached()),
+            ContainerType::MovableList => Self::MovableList(MovableListHandler::new_detached()),
         }
     }
 
@@ -947,6 +1076,7 @@ impl Handler {
             Self::List(x) => x.id(),
             Self::Text(x) => x.id(),
             Self::Tree(x) => x.id(),
+            Self::MovableList(x) => x.id(),
         }
     }
 
@@ -956,6 +1086,7 @@ impl Handler {
             Self::List(x) => x.idx(),
             Self::Text(x) => x.idx(),
             Self::Tree(x) => x.idx(),
+            Self::MovableList(x) => x.idx(),
         }
     }
 
@@ -965,6 +1096,7 @@ impl Handler {
             Self::List(_) => ContainerType::List,
             Self::Text(_) => ContainerType::Text,
             Self::Tree(_) => ContainerType::Tree,
+            Self::MovableList(_) => ContainerType::MovableList,
         }
     }
 
@@ -972,6 +1104,7 @@ impl Handler {
         match self {
             Self::Map(x) => x.get_deep_value(),
             Self::List(x) => x.get_deep_value(),
+            Self::MovableList(x) => x.get_deep_value(),
             Self::Text(x) => x.get_deep_value(),
             Self::Tree(x) => x.get_deep_value(),
         }
@@ -1003,18 +1136,24 @@ impl ValueOrHandler {
         }
     }
 
-    fn to_value(&self) -> LoroValue {
+    pub(crate) fn to_value(&self) -> LoroValue {
         match self {
             Self::Value(v) => v.clone(),
-            Self::Handler(h) => LoroValue::Container(h.id()),
+            Self::Handler(h) => LoroValue::Container(h.id().clone()),
         }
     }
 
-    fn to_deep_value(&self) -> LoroValue {
+    pub(crate) fn to_deep_value(&self) -> LoroValue {
         match self {
             Self::Value(v) => v.clone(),
             Self::Handler(h) => h.get_deep_value(),
         }
+    }
+}
+
+impl From<LoroValue> for ValueOrHandler {
+    fn from(value: LoroValue) -> Self {
+        ValueOrHandler::Value(value)
     }
 }
 
@@ -1696,7 +1835,7 @@ impl ListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
-            EventHint::InsertList { len: 1 },
+            EventHint::InsertList { len: 1, pos },
             &inner.state,
         )
     }
@@ -1775,7 +1914,7 @@ impl ListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
-            EventHint::InsertList { len: 1 },
+            EventHint::InsertList { len: 1, pos },
             &inner.state,
         )?;
         let ans = child.attach(txn, inner, container_id)?;
@@ -1988,6 +2127,583 @@ impl ListHandler {
                     container: self.id(),
                     side,
                 })
+            }
+        }
+    }
+}
+
+impl MovableListHandler {
+    pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => unimplemented!(),
+            MaybeDetached::Attached(a) => {
+                a.with_txn(|txn| self.insert_with_txn(txn, pos, v.into()))
+            }
+        }
+    }
+
+    #[instrument(skip_all)]
+    pub fn insert_with_txn(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        v: LoroValue,
+    ) -> LoroResult<()> {
+        if pos > self.len() {
+            return Err(LoroError::OutOfBound {
+                pos,
+                len: self.len(),
+            });
+        }
+
+        if v.is_container() {
+            return Err(LoroError::ArgErr(
+                INSERT_CONTAINER_VALUE_ARG_ERROR
+                    .to_string()
+                    .into_boxed_str(),
+            ));
+        }
+
+        let op_index = self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            Ok(list
+                .convert_index(pos, IndexType::ForUser, IndexType::ForOp)
+                .unwrap())
+        })?;
+
+        let inner = self.inner.try_attached_state()?;
+        txn.apply_local_op(
+            inner.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
+                slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
+                pos: op_index,
+            }),
+            EventHint::InsertList { len: 1, pos },
+            &inner.state,
+        )
+    }
+
+    #[inline]
+    pub fn mov(&self, from: usize, to: usize) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => unimplemented!(),
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.move_with_txn(txn, from, to)),
+        }
+    }
+
+    /// Move element from `from` to `to`. After this op, elem will be at pos `to`.
+    #[instrument(skip_all)]
+    pub fn move_with_txn(&self, txn: &mut Transaction, from: usize, to: usize) -> LoroResult<()> {
+        if from == to {
+            return Ok(());
+        }
+
+        if from >= self.len() {
+            return Err(LoroError::OutOfBound {
+                pos: from,
+                len: self.len(),
+            });
+        }
+
+        if to >= self.len() {
+            return Err(LoroError::OutOfBound {
+                pos: to,
+                len: self.len(),
+            });
+        }
+
+        let (op_from, op_to, elem_id, value) = self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            let (elem_id, elem) = list
+                .get_elem_at_given_pos(from, IndexType::ForUser)
+                .unwrap();
+            Ok((
+                list.convert_index(from, IndexType::ForUser, IndexType::ForOp)
+                    .unwrap(),
+                list.convert_index(to, IndexType::ForUser, IndexType::ForOp)
+                    .unwrap(),
+                elem_id,
+                elem.value().clone(),
+            ))
+        })?;
+
+        let inner = self.inner.try_attached_state()?;
+        txn.apply_local_op(
+            inner.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Move {
+                from: op_from as u32,
+                to: op_to as u32,
+                elem_id: elem_id.to_id(),
+            }),
+            EventHint::Move {
+                value,
+                from: from as u32,
+                to: to as u32,
+            },
+            &inner.state,
+        )
+    }
+
+    pub fn push(&self, v: LoroValue) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(d) => {
+                let mut d = d.lock().unwrap();
+                d.value.push(v.into());
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.push_with_txn(txn, v)),
+        }
+    }
+
+    pub fn push_with_txn(&self, txn: &mut Transaction, v: LoroValue) -> LoroResult<()> {
+        let pos = self.len();
+        self.insert_with_txn(txn, pos, v)
+    }
+
+    pub fn pop_(&self) -> LoroResult<Option<ValueOrHandler>> {
+        match &self.inner {
+            MaybeDetached::Detached(d) => {
+                let mut d = d.lock().unwrap();
+                Ok(d.value.pop())
+            }
+            MaybeDetached::Attached(a) => {
+                let last = self.len() - 1;
+                let ans = self.get_(last);
+                a.with_txn(|txn| self.pop_with_txn(txn))?;
+                Ok(ans)
+            }
+        }
+    }
+
+    pub fn pop(&self) -> LoroResult<Option<LoroValue>> {
+        match &self.inner {
+            MaybeDetached::Detached(a) => {
+                let mut a = a.lock().unwrap();
+                Ok(a.value.pop().map(|x| x.to_value()))
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.pop_with_txn(txn)),
+        }
+    }
+
+    pub fn pop_with_txn(&self, txn: &mut Transaction) -> LoroResult<Option<LoroValue>> {
+        let len = self.len();
+        if len == 0 {
+            return Ok(None);
+        }
+
+        let v = self.get(len - 1);
+        self.delete_with_txn(txn, len - 1, 1)?;
+        Ok(v)
+    }
+
+    pub fn insert_container<H: HandlerTrait>(&self, pos: usize, child: H) -> LoroResult<H> {
+        match &self.inner {
+            MaybeDetached::Detached(d) => {
+                let mut d = d.lock().unwrap();
+                d.value
+                    .insert(pos, ValueOrHandler::Handler(child.to_handler()));
+                Ok(child)
+            }
+            MaybeDetached::Attached(a) => {
+                a.with_txn(|txn| self.insert_container_with_txn(txn, pos, child))
+            }
+        }
+    }
+
+    pub fn insert_container_with_txn<H: HandlerTrait>(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        child: H,
+    ) -> LoroResult<H> {
+        if pos > self.len() {
+            return Err(LoroError::OutOfBound {
+                pos,
+                len: self.len(),
+            });
+        }
+
+        let op_index = self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            Ok(list
+                .convert_index(pos, IndexType::ForUser, IndexType::ForOp)
+                .unwrap())
+        })?;
+
+        let id = txn.next_id();
+        let container_id = ContainerID::new_normal(id, child.kind());
+        let v = LoroValue::Container(container_id.clone());
+        let inner = self.inner.try_attached_state()?;
+        txn.apply_local_op(
+            inner.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
+                slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
+                pos: op_index,
+            }),
+            EventHint::InsertList { len: 1, pos },
+            &inner.state,
+        )?;
+        child.attach(txn, inner, container_id)
+    }
+
+    pub fn set(&self, index: usize, value: impl Into<LoroValue>) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(d) => {
+                let mut d = d.lock().unwrap();
+                d.value[index] = ValueOrHandler::Value(value.into());
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => {
+                a.with_txn(|txn| self.set_with_txn(txn, index, value.into()))
+            }
+        }
+    }
+
+    pub fn set_with_txn(
+        &self,
+        txn: &mut Transaction,
+        index: usize,
+        value: LoroValue,
+    ) -> LoroResult<()> {
+        if index >= self.len() {
+            return Err(LoroError::OutOfBound {
+                pos: index,
+                len: self.len(),
+            });
+        }
+
+        let inner = self.inner.try_attached_state()?;
+        let Some(elem_id) = self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            Ok(list.get_elem_id_at(index, IndexType::ForUser))
+        })?
+        else {
+            unreachable!()
+        };
+
+        let op = crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Set {
+            elem_id: elem_id.to_id(),
+            value: value.clone(),
+        });
+
+        let hint = EventHint::SetList { index, value };
+        txn.apply_local_op(inner.container_idx, op, hint, &inner.state)
+    }
+
+    pub fn set_container<H: HandlerTrait>(&self, pos: usize, child: H) -> LoroResult<H> {
+        match &self.inner {
+            MaybeDetached::Detached(d) => {
+                let mut d = d.lock().unwrap();
+                d.value[pos] = ValueOrHandler::Handler(child.to_handler());
+                Ok(child)
+            }
+            MaybeDetached::Attached(a) => {
+                a.with_txn(|txn| self.set_container_with_txn(txn, pos, child))
+            }
+        }
+    }
+
+    pub fn set_container_with_txn<H: HandlerTrait>(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        child: H,
+    ) -> Result<H, LoroError> {
+        let id = txn.next_id();
+        let container_id = ContainerID::new_normal(id, child.kind());
+        let v = LoroValue::Container(container_id.clone());
+        let Some(elem_id) = self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            Ok(list.get_elem_id_at(pos, IndexType::ForUser))
+        })?
+        else {
+            unreachable!()
+        };
+        let inner = self.inner.try_attached_state()?;
+        txn.apply_local_op(
+            inner.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Set {
+                elem_id: elem_id.to_id(),
+                value: v.clone(),
+            }),
+            EventHint::SetList {
+                index: pos,
+                value: v,
+            },
+            &inner.state,
+        )?;
+
+        child.attach(txn, inner, container_id)
+    }
+
+    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(d) => {
+                let mut d = d.lock().unwrap();
+                d.value.drain(pos..pos + len);
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, pos, len)),
+        }
+    }
+
+    #[instrument(skip_all)]
+    pub fn delete_with_txn(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
+        if len == 0 {
+            return Ok(());
+        }
+
+        if pos + len > self.len() {
+            return Err(LoroError::OutOfBound {
+                pos: pos + len,
+                len: self.len(),
+            });
+        }
+
+        let (ids, new_poses) = self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            let ids: Vec<_> = (pos..pos + len)
+                .map(|i| list.get_list_id_at(i, IndexType::ForUser).unwrap())
+                .collect();
+            let poses: Vec<_> = (pos..pos + len)
+                // need to -i because we delete the previous ones
+                .map(|user_index| {
+                    let op_index = list
+                        .convert_index(user_index, IndexType::ForUser, IndexType::ForOp)
+                        .unwrap();
+                    assert!(op_index >= user_index);
+                    op_index - (user_index - pos)
+                })
+                .collect();
+            Ok((ids, poses))
+        })?;
+
+        info!(?pos, ?len, ?ids, ?new_poses, "delete_with_txn");
+        let user_pos = pos;
+        let inner = self.inner.try_attached_state()?;
+        for (id, op_pos) in ids.into_iter().zip(new_poses.into_iter()) {
+            txn.apply_local_op(
+                inner.container_idx,
+                crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
+                    id,
+                    op_pos as isize,
+                    1,
+                ))),
+                EventHint::DeleteList(DeleteSpan::new(user_pos as isize, 1)),
+                &inner.state,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_child_handler(&self, index: usize) -> LoroResult<Handler> {
+        match &self.inner {
+            MaybeDetached::Detached(l) => {
+                let list = l.try_lock().unwrap();
+                let value = list.value.get(index).ok_or(LoroError::OutOfBound {
+                    pos: index,
+                    len: list.value.len(),
+                })?;
+                match value {
+                    ValueOrHandler::Handler(h) => Ok(h.clone()),
+                    _ => Err(LoroError::ArgErr(
+                        format!(
+                            "Expected container at index {}, but found {:?}",
+                            index, value
+                        )
+                        .into_boxed_str(),
+                    )),
+                }
+            }
+            MaybeDetached::Attached(a) => {
+                let Some(value) = a.with_state(|state| {
+                    state
+                        .as_movable_list_state()
+                        .as_ref()
+                        .unwrap()
+                        .get(index, IndexType::ForUser)
+                        .cloned()
+                }) else {
+                    return Err(LoroError::OutOfBound {
+                        pos: index,
+                        len: a.with_state(|state| state.as_list_state().unwrap().len()),
+                    });
+                };
+                match value {
+                    LoroValue::Container(id) => Ok(create_handler(a, id)),
+                    _ => Err(LoroError::ArgErr(
+                        format!(
+                            "Expected container at index {}, but found {:?}",
+                            index, value
+                        )
+                        .into_boxed_str(),
+                    )),
+                }
+            }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match &self.inner {
+            MaybeDetached::Detached(d) => {
+                let d = d.lock().unwrap();
+                d.value.len()
+            }
+            MaybeDetached::Attached(a) => {
+                a.with_state(|state| state.as_movable_list_state().unwrap().len())
+            }
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn get_deep_value_with_id(&self) -> LoroValue {
+        let inner = self.inner.try_attached_state().unwrap();
+        inner
+            .state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_container_deep_value_with_id(inner.container_idx, None)
+    }
+
+    pub fn get(&self, index: usize) -> Option<LoroValue> {
+        match &self.inner {
+            MaybeDetached::Detached(d) => {
+                let d = d.lock().unwrap();
+                d.value.get(index).map(|v| v.to_value())
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_movable_list_state().unwrap();
+                a.get(index, IndexType::ForUser).cloned()
+            }),
+        }
+    }
+
+    /// Get value at given index, if it's a container, return a handler to the container
+    pub fn get_(&self, index: usize) -> Option<ValueOrHandler> {
+        match &self.inner {
+            MaybeDetached::Detached(d) => {
+                let d = d.lock().unwrap();
+                d.value.get(index).cloned()
+            }
+            MaybeDetached::Attached(m) => m.with_state(|state| {
+                let a = state.as_movable_list_state().unwrap();
+                match a.get(index, IndexType::ForUser) {
+                    Some(v) => {
+                        if let LoroValue::Container(id) = v {
+                            Some(ValueOrHandler::Handler(create_handler(m, id.clone())))
+                        } else {
+                            Some(ValueOrHandler::Value(v.clone()))
+                        }
+                    }
+                    None => None,
+                }
+            }),
+        }
+    }
+
+    pub fn for_each<I>(&self, mut f: I)
+    where
+        I: FnMut(ValueOrHandler),
+    {
+        match &self.inner {
+            MaybeDetached::Detached(d) => {
+                let d = d.lock().unwrap();
+                for v in d.value.iter() {
+                    f(v.clone());
+                }
+            }
+            MaybeDetached::Attached(m) => m.with_state(|state| {
+                let a = state.as_movable_list_state().unwrap();
+                for v in a.iter() {
+                    match v {
+                        LoroValue::Container(c) => {
+                            f(ValueOrHandler::Handler(create_handler(m, c.clone())));
+                        }
+                        value => {
+                            f(ValueOrHandler::Value(value.clone()));
+                        }
+                    }
+                }
+            }),
+        }
+    }
+
+    pub fn log_internal_state(&self) -> String {
+        match &self.inner {
+            MaybeDetached::Detached(d) => {
+                let d = d.lock().unwrap();
+                format!("{:#?}", &d.value)
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_movable_list_state().unwrap();
+                format!("{:#?}", a)
+            }),
+        }
+    }
+
+    pub fn new_detached() -> MovableListHandler {
+        MovableListHandler {
+            inner: MaybeDetached::new_detached(Default::default()),
+        }
+    }
+
+    pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(inner) => {
+                let (id, len) = inner.with_state(|s| {
+                    let l = s.as_movable_list_state().unwrap();
+                    (l.get_list_item_id_at(pos), l.len())
+                });
+
+                if len == 0 {
+                    return Some(Cursor {
+                        id: None,
+                        container: self.id(),
+                        side: if side == Side::Middle {
+                            Side::Left
+                        } else {
+                            side
+                        },
+                    });
+                }
+
+                if len <= pos {
+                    return Some(Cursor {
+                        id: None,
+                        container: self.id(),
+                        side: Side::Right,
+                    });
+                }
+
+                let id = id?;
+                Some(Cursor {
+                    id: Some(id.id()),
+                    container: self.id(),
+                    side,
+                })
+            }
+        }
+    }
+
+    pub(crate) fn op_pos_to_user_pos(&self, new_pos: usize) -> usize {
+        match &self.inner {
+            MaybeDetached::Detached(_) => new_pos,
+            MaybeDetached::Attached(inner) => {
+                let mut pos = new_pos;
+                inner.with_state(|s| {
+                    let l = s.as_movable_list_state().unwrap();
+                    pos = l
+                        .convert_index(new_pos, IndexType::ForOp, IndexType::ForUser)
+                        .unwrap_or(l.len());
+                });
+                pos
             }
         }
     }

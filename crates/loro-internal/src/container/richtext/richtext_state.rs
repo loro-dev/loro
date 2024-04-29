@@ -15,13 +15,12 @@ use std::{
     str::Utf8Error,
     sync::Arc,
 };
+use tracing::instrument;
 
 use crate::{
-    container::richtext::{
-        query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex},
-        style_range_map::EMPTY_STYLES,
-    },
+    container::richtext::style_range_map::EMPTY_STYLES,
     delta::{DeltaValue, StyleMeta},
+    utils::query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex, QueryByLen},
 };
 
 use self::{
@@ -33,7 +32,6 @@ use self::{
 };
 
 use super::{
-    query_by_len::{IndexQuery, QueryByLen},
     style_range_map::{IterAnchorItem, StyleRangeMap, Styles},
     AnchorType, RichtextSpan, StyleOp,
 };
@@ -675,7 +673,7 @@ pub(crate) struct PosCache {
     pub(super) unicode_len: i32,
     pub(super) bytes: i32,
     pub(super) utf16_len: i32,
-    pub(super) entity_len: i32,
+    pub(crate) entity_len: i32,
 }
 
 impl PosCache {
@@ -823,6 +821,8 @@ impl BTreeTrait for RichtextTreeTrait {
 
 // This query implementation will prefer right element when both left element and right element are valid.
 mod query {
+    use crate::utils::query_by_len::{IndexQuery, QueryByLen};
+
     use super::*;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1138,7 +1138,6 @@ mod cursor_cache {
                 let offset = pos - c.pos;
                 let leaf = tree.get_leaf(c.leaf.into());
                 let s = leaf.elem().as_str()?;
-
                 let Some(offset) = pos_to_unicode_index(s, offset, pos_type) else {
                     continue;
                 };
@@ -1156,6 +1155,7 @@ mod cursor_cache {
             None
         }
 
+        #[allow(unused)]
         pub fn diagnose() {
             let hit = CACHE_HIT.load(std::sync::atomic::Ordering::Relaxed);
             let miss = CACHE_MISS.load(std::sync::atomic::Ordering::Relaxed);
@@ -1741,6 +1741,7 @@ impl RichtextState {
     // PERF: can be splitted into two methods. One is without cursor_to_event_index
     // PERF: can be speed up a lot by detecting whether the range is in a single leaf first
     /// This is used to accept changes from DiffCalculator
+    #[instrument(skip(self, f))]
     pub(crate) fn drain_by_entity_index(
         &mut self,
         pos: usize,

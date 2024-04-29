@@ -18,7 +18,7 @@ pub mod utf16;
 /// A [DeltaRope] is a rope-like data structure that can be used to represent
 /// a sequence of [DeltaItem]. It has efficient operations for composing other
 /// [DeltaRope]s. It can also be used as a rope, where it only contains insertions.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DeltaRope<V: DeltaValue, Attr: DeltaAttr> {
     tree: BTree<DeltaTreeTrait<V, Attr>>,
 }

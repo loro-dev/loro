@@ -24,10 +24,13 @@ pub struct ListActor {
 
 impl ListActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker = MapTracker::empty();
+        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
         tracker.insert(
             "list".to_string(),
-            Value::empty_container(ContainerType::List),
+            Value::empty_container(
+                ContainerType::List,
+                ContainerID::new_root("list", ContainerType::List),
+            ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let list = tracker.clone();

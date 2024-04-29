@@ -24,6 +24,7 @@
     "opset",
     "peekable",
     "Peritext",
+    "pointee",
     "reparent",
     "RUSTFLAGS",
     "smstring",

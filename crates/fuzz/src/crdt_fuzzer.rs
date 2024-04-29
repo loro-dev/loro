@@ -4,7 +4,7 @@ use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
 use loro::{ContainerType, Frontiers};
 use tabled::TableIteratorExt;
-use tracing::info_span;
+use tracing::{info, info_span};
 
 use crate::{actions::ActionWrapper, array_mut_ref};
 
@@ -92,19 +92,26 @@ impl CRDTFuzzer {
         match action {
             Action::SyncAll => {
                 for i in 1..self.site_num() {
-                    let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
-                    a.loro
-                        .import(&b.loro.export_from(&a.loro.oplog_vv()))
-                        .unwrap();
+                    info_span!("Importing", "importing to 0 from {}", i).in_scope(|| {
+                        let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
+                        a.loro
+                            .import(&b.loro.export_from(&a.loro.oplog_vv()))
+                            .unwrap();
+                    });
                 }
 
                 for i in 1..self.site_num() {
-                    let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
-                    b.loro
-                        .import(&a.loro.export_from(&b.loro.oplog_vv()))
-                        .unwrap();
+                    info_span!("Importing", "importing to {} from {}", i, 0).in_scope(|| {
+                        let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
+                        b.loro
+                            .import(&a.loro.export_from(&b.loro.oplog_vv()))
+                            .unwrap();
+                    });
                 }
                 self.actors.iter_mut().for_each(|a| a.record_history());
+                // for i in 0..self.site_num() {
+                //     self.actors[i].loro.check_state_correctness_slow();
+                // }
             }
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(&mut self.actors, [*from as usize, *to as usize]);
@@ -132,6 +139,7 @@ impl CRDTFuzzer {
                 let actor = &mut self.actors[*site as usize];
                 let action = action.as_action().unwrap();
                 actor.apply(action, *container);
+                // actor.loro.commit();
             }
         }
     }
@@ -139,28 +147,30 @@ impl CRDTFuzzer {
     fn check_equal(&mut self) {
         for i in 0..self.site_num() - 1 {
             for j in i + 1..self.site_num() {
-                let s = info_span!("checking", "{} with {}", i, j);
-                let _g = s.enter();
+                let _s = info_span!("checking eq", ?i, ?j);
+                let _g = _s.enter();
                 let (a, b) = array_mut_ref!(&mut self.actors, [i, j]);
                 let a_doc = &mut a.loro;
                 let b_doc = &mut b.loro;
-                a_doc.attach();
-                b_doc.attach();
+                info_span!("Attach", peer = i).in_scope(|| {
+                    a_doc.attach();
+                });
+                info_span!("Attach", peer = j).in_scope(|| {
+                    b_doc.attach();
+                });
                 if (i + j) % 2 == 0 {
-                    info_span!("Update", "from" = j, "to" = i).in_scope(|| {
+                    info_span!("Updates", from = j, to = i).in_scope(|| {
                         a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
                     });
-
-                    info_span!("Update", "from" = i, "to" = j).in_scope(|| {
+                    info_span!("Updates", from = i, to = j).in_scope(|| {
                         b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
                     });
                 } else {
-                    info_span!("Snapshot", "from" = j, "to" = i).in_scope(|| {
-                        a_doc.import(&b_doc.export_snapshot()).unwrap();
+                    info_span!("Snapshot", from = i, to = j).in_scope(|| {
+                        b_doc.import(&a_doc.export_snapshot()).unwrap();
                     });
-                    info_span!("Snapshot", "from" = i, "to" = j).in_scope(|| {
-                        let s = a_doc.export_snapshot();
-                        b_doc.import(&s).unwrap();
+                    info_span!("Snapshot", from = j, to = i).in_scope(|| {
+                        a_doc.import(&b_doc.export_snapshot()).unwrap();
                     });
                 }
                 a.check_eq(b);
@@ -176,8 +186,8 @@ impl CRDTFuzzer {
         }
     }
 
-    fn check_history(&self) {
-        for actor in self.actors.iter() {
+    fn check_history(&mut self) {
+        for actor in self.actors.iter_mut() {
             actor.check_history();
         }
     }
@@ -193,6 +203,7 @@ pub enum FuzzTarget {
     List,
     Text,
     Tree,
+    MovableList,
     All,
 }
 
@@ -205,6 +216,7 @@ impl FuzzTarget {
                 set.insert(ContainerType::List);
                 set.insert(ContainerType::Text);
                 set.insert(ContainerType::Tree);
+                set.insert(ContainerType::MovableList);
             }
             FuzzTarget::Map => {
                 set.insert(ContainerType::Map);
@@ -219,6 +231,9 @@ impl FuzzTarget {
                 set.insert(ContainerType::Tree);
                 set.insert(ContainerType::Map);
             }
+            FuzzTarget::MovableList => {
+                set.insert(ContainerType::MovableList);
+            }
         }
         set
     }
@@ -229,11 +244,14 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
     let mut applied = Vec::new();
     for action in actions.iter_mut() {
         fuzzer.pre_process(action);
-        applied.push(action.clone());
-        debug_log::debug_log!("\n{}", (&applied).table());
-        fuzzer.apply_action(action);
+        info_span!("ApplyAction", ?action).in_scope(|| {
+            applied.push(action.clone());
+            info!("OptionsTable \n{}", (&applied).table());
+            fuzzer.apply_action(action);
+        });
     }
-    debug_log::group!("check synced");
+    let span = &info_span!("check synced");
+    let _g = span.enter();
     fuzzer.check_equal();
     fuzzer.check_tracker();
     fuzzer.check_history();

@@ -8,7 +8,7 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, IdLp, LoroResult};
-use loro_delta::DeltaRopeBuilder;
+use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
 
@@ -20,16 +20,14 @@ use crate::{
         richtext::Style,
         IntoContainerId,
     },
-    delta::{
-        ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem,
-    },
-    event::{Diff, TextDiff},
+    delta::{ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem},
+    event::{Diff, ListDeltaMeta, TextDiff},
     handler::{Handler, ValueOrHandler},
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
     version::Frontiers,
-    InternalString, LoroError, LoroValue, StringSlice,
+    InternalString, LoroError, LoroValue,
 };
 
 use super::{
@@ -89,6 +87,16 @@ pub(super) enum EventHint {
     },
     InsertList {
         len: u32,
+        pos: usize,
+    },
+    SetList {
+        index: usize,
+        value: LoroValue,
+    },
+    Move {
+        value: LoroValue,
+        from: u32,
+        to: u32,
     },
     DeleteList(DeleteSpan),
     Map {
@@ -112,6 +120,8 @@ impl generic_btree::rle::HasLength for EventHint {
             EventHint::Map { .. } => 1,
             EventHint::Tree(_) => 1,
             EventHint::MarkEnd => 1,
+            EventHint::Move { .. } => 1,
+            EventHint::SetList { .. } => 1,
         }
     }
 }
@@ -132,7 +142,9 @@ impl generic_btree::rle::Mergeable for EventHint {
                     ..
                 },
             ) => *pos + *event_len == *r_pos && styles == r_styles,
-            (EventHint::InsertList { .. }, EventHint::InsertList { .. }) => true,
+            (EventHint::InsertList { pos, len }, EventHint::InsertList { pos: pos_right, .. }) => {
+                pos + *len as usize == *pos_right
+            }
             // We don't merge delete text because it's hard to infer the correct pos to split:
             // `range` param is in unicode range, but the delete text event is in UTF-16 range.
             // Without the original text, it's impossible to convert the range.
@@ -161,7 +173,10 @@ impl generic_btree::rle::Mergeable for EventHint {
                 *len += *r_len;
                 *event_len += *r_event_len;
             }
-            (EventHint::InsertList { len }, EventHint::InsertList { len: r_len }) => *len += *r_len,
+            (
+                EventHint::InsertList { len, pos: _ },
+                EventHint::InsertList { len: r_len, pos: _ },
+            ) => *len += *r_len,
             (EventHint::DeleteList(l), EventHint::DeleteList(r)) => l.merge(r, &()),
             (
                 EventHint::DeleteText { span, unicode_len },
@@ -309,7 +324,7 @@ impl Transaction {
                             idx: x.idx,
                             bring_back: false,
                             is_container_deleted: false,
-                            diff: Some(x.diff.into()),
+                            diff: (x.diff.into()),
                         })
                         .collect(),
                 ),
@@ -524,110 +539,145 @@ fn change_to_diff(
                 assert_eq!(ops.len(), 1);
             }
         }
-        'outer: {
-            match hint {
-                EventHint::Mark { start, end, style } => {
-                    let mut meta = StyleMeta::default();
-                    meta.insert(
-                        style.key.clone(),
-                        StyleMetaItem {
-                            lamport,
-                            peer: change.id.peer,
-                            value: style.data,
-                        },
-                    );
-                    let diff: TextDiff = DeltaRopeBuilder::new()
-                        .retain(start as usize, Default::default())
-                        .retain((end - start) as usize, meta)
-                        .build();
-                    ans.push(TxnContainerDiff {
-                        idx: op.container,
-                        diff: Diff::Text(diff),
-                    });
-                }
-                EventHint::InsertText { styles, pos, .. } => {
-                    let mut delta: TextDiff = DeltaRopeBuilder::new()
-                        .retain(pos as usize, Default::default())
-                        .build();
-                    for op in ops.iter() {
-                        let InnerListOp::InsertText { slice, .. } = op.content.as_list().unwrap()
-                        else {
-                            unreachable!()
-                        };
-
-                        delta.push_insert(StringSlice::new(slice.clone()), styles.clone());
-                    }
-                    ans.push(TxnContainerDiff {
-                        idx: op.container,
-                        diff: Diff::Text(delta),
-                    })
-                }
-                EventHint::DeleteText {
-                    span,
-                    unicode_len: _,
-                    // we don't need to iter over ops here, because we already
-                    // know what the events should be
-                } => ans.push(TxnContainerDiff {
+        match hint {
+            EventHint::Mark { start, end, style } => {
+                let mut meta = StyleMeta::default();
+                meta.insert(
+                    style.key.clone(),
+                    StyleMetaItem {
+                        lamport,
+                        peer: change.id.peer,
+                        value: style.data,
+                    },
+                );
+                let diff = DeltaRopeBuilder::new()
+                    .retain(start as usize, Default::default())
+                    .retain((end - start) as usize, meta)
+                    .build();
+                ans.push(TxnContainerDiff {
                     idx: op.container,
-                    diff: Diff::Text(
-                        DeltaRopeBuilder::new()
-                            .retain(span.start() as usize, Default::default())
-                            .delete(span.len())
-                            .build(),
-                    ),
-                }),
-                EventHint::InsertList { .. } => {
-                    for op in ops.iter() {
-                        let (range, pos) = op.content.as_list().unwrap().as_insert().unwrap();
-                        let values = arena
-                            .get_values(range.to_range())
-                            .into_iter()
-                            .map(|v| ValueOrHandler::from_value(v, arena, txn, state));
-                        ans.push(TxnContainerDiff {
-                            idx: op.container,
-                            diff: Diff::List(
-                                DeltaRopeBuilder::new()
-                                    .retain(*pos, ())
-                                    .insert_many(values, ())
-                                    .build(),
-                            ),
-                        })
-                    }
+                    diff: Diff::Text(diff),
+                });
+            }
+            EventHint::InsertText { styles, pos, .. } => {
+                let mut delta: TextDiff = DeltaRopeBuilder::new()
+                    .retain(pos as usize, Default::default())
+                    .build();
+                for op in ops.iter() {
+                    let InnerListOp::InsertText { slice, .. } = op.content.as_list().unwrap()
+                    else {
+                        unreachable!()
+                    };
+
+                    delta.push_insert(slice.clone().into(), styles.clone());
                 }
-                EventHint::DeleteList(s) => {
+                ans.push(TxnContainerDiff {
+                    idx: op.container,
+                    diff: Diff::Text(delta),
+                })
+            }
+            EventHint::DeleteText {
+                span,
+                unicode_len: _,
+                // we don't need to iter over ops here, because we already
+                // know what the events should be
+            } => ans.push(TxnContainerDiff {
+                idx: op.container,
+                diff: Diff::Text(
+                    DeltaRopeBuilder::new()
+                        .retain(span.start() as usize, Default::default())
+                        .delete(span.len())
+                        .build(),
+                ),
+            }),
+            EventHint::InsertList { pos, .. } => {
+                // We should use pos from event hint because index in op may
+                // be using op index for the MovableList
+                for op in ops.iter() {
+                    let (range, _) = op.content.as_list().unwrap().as_insert().unwrap();
+                    let values = arena
+                        .get_values(range.to_range())
+                        .into_iter()
+                        .map(|v| ValueOrHandler::from_value(v, arena, txn, state));
                     ans.push(TxnContainerDiff {
                         idx: op.container,
                         diff: Diff::List(
                             DeltaRopeBuilder::new()
-                                .retain(s.start() as usize, ())
-                                .delete(s.len())
+                                .retain(pos, Default::default())
+                                .insert_many(values, Default::default())
                                 .build(),
                         ),
-                    });
+                    })
                 }
-                EventHint::Map { key, value } => ans.push(TxnContainerDiff {
+            }
+            EventHint::DeleteList(s) => {
+                ans.push(TxnContainerDiff {
                     idx: op.container,
-                    diff: Diff::Map(ResolvedMapDelta::new().with_entry(
-                        key,
-                        ResolvedMapValue {
-                            value: value.map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
-                            idlp: IdLp::new(peer, lamport),
-                        },
-                    )),
-                }),
-                EventHint::Tree(tree_diff) => {
-                    let mut diff = TreeDiff::default();
-                    diff.push(tree_diff);
-                    ans.push(TxnContainerDiff {
-                        idx: op.container,
-                        diff: Diff::Tree(diff),
-                    });
-                }
-                EventHint::MarkEnd => {
-                    // do nothing
-                    break 'outer;
-                }
-            };
+                    diff: Diff::List(
+                        DeltaRopeBuilder::new()
+                            .retain(s.start() as usize, Default::default())
+                            .delete(s.len())
+                            .build(),
+                    ),
+                });
+            }
+            EventHint::Map { key, value } => ans.push(TxnContainerDiff {
+                idx: op.container,
+                diff: Diff::Map(ResolvedMapDelta::new().with_entry(
+                    key,
+                    ResolvedMapValue {
+                        value: value.map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+                        idlp: IdLp::new(peer, lamport),
+                    },
+                )),
+            }),
+            EventHint::Tree(tree_diff) => {
+                let mut diff = TreeDiff::default();
+                diff.push(tree_diff);
+                ans.push(TxnContainerDiff {
+                    idx: op.container,
+                    diff: Diff::Tree(diff),
+                });
+            }
+            EventHint::Move { from, to, value } => {
+                let mut a = DeltaRopeBuilder::new()
+                    .retain(from as usize, Default::default())
+                    .delete(1)
+                    .build();
+                a.compose(
+                    &DeltaRopeBuilder::new()
+                        .retain(to as usize, Default::default())
+                        .insert(
+                            ArrayVec::from([ValueOrHandler::from_value(value, arena, txn, state)]),
+                            ListDeltaMeta { from_move: true },
+                        )
+                        .build(),
+                );
+                ans.push(TxnContainerDiff {
+                    idx: op.container,
+                    diff: Diff::List(a),
+                });
+            }
+            EventHint::SetList { index, value } => {
+                ans.push(TxnContainerDiff {
+                    idx: op.container,
+                    diff: Diff::List(
+                        DeltaRopeBuilder::new()
+                            .retain(index, Default::default())
+                            .delete(1)
+                            .insert(
+                                ArrayVec::from([ValueOrHandler::from_value(
+                                    value, arena, txn, state,
+                                )]),
+                                Default::default(),
+                            )
+                            .build(),
+                    ),
+                });
+            }
+            EventHint::MarkEnd => {
+                // do nothing
+            }
         }
 
         lamport += ops

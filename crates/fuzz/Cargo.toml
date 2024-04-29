@@ -11,7 +11,6 @@ loro = { path = "../loro" }
 loro-internal = { path = "../loro-internal", features = ["test_utils"] }
 arbitrary = "1"
 tabled = "0.10"
-debug-log = { workspace = true }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
 enum-as-inner = { workspace = true }
@@ -19,8 +18,9 @@ rand = "0.8.5"
 tracing = { workspace = true }
 
 [dev-dependencies]
+ctor = "0.2"
 arbtest = "^0.2.0"
+dev-utils = { path = "../dev-utils" }
 tracing-subscriber = "0.3.18"
 tracing-chrome = "0.7.1"
 color-backtrace = "0.6.1"
-ctor = "0.2"

@@ -11,7 +11,10 @@ pub mod diff_calc;
 pub mod handler;
 pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem, ListDiffItem};
 pub use fxhash::FxHashMap;
-pub use handler::{BasicHandler, HandlerTrait, ListHandler, MapHandler, TextHandler, TreeHandler};
+pub use handler::{
+    BasicHandler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextHandler,
+    TreeHandler,
+};
 pub use loro::LoroDoc;
 pub use oplog::OpLog;
 pub use state::DocState;
@@ -34,6 +37,7 @@ pub mod version;
 mod error;
 #[cfg(feature = "test_utils")]
 pub mod fuzz;
+mod parent;
 mod span;
 #[cfg(test)]
 pub mod tests;

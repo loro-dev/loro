@@ -825,6 +825,11 @@ fn state_may_deadlock_when_import() {
     })
 }
 
+#[ctor::ctor]
+fn init() {
+    dev_utils::setup_test_log();
+}
+
 #[test]
 fn missing_event_when_checkout() {
     let doc = LoroDoc::new_auto_commit();
