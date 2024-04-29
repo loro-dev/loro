@@ -2636,6 +2636,7 @@ impl LoroTreeNode {
     /// @example
     /// ```typescript
     /// import { Loro } from "loro-crdt";
+    ///
     /// let doc = new Loro();
     /// let tree = doc.getTree("tree");
     /// let root = tree.createNode();
@@ -2688,6 +2689,22 @@ impl LoroTreeNode {
         Ok(())
     }
 
+    /// Move the tree node to be after the target node.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.createNode();
+    /// const node = root.createNode();
+    /// const node2 = root.createNode();
+    /// node2.moveAfter(node);
+    /// // root
+    /// //  /  \
+    /// // node node2
+    /// ```
     #[wasm_bindgen(js_name = "moveAfter")]
     pub fn mov_after(&self, target: &JsTreeID) -> JsResult<()> {
         let target = parse_js_tree_id(target)?;
@@ -2695,6 +2712,22 @@ impl LoroTreeNode {
         Ok(())
     }
 
+    /// Move the tree node to be before the target node.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.createNode();
+    /// const node = root.createNode();
+    /// const node2 = root.createNode();
+    /// node2.moveBefore(node);
+    /// //   root
+    /// //  /    \
+    /// // node2 node
+    /// ```
     #[wasm_bindgen(js_name = "moveBefore")]
     pub fn mov_before(&self, target: &JsTreeID) -> JsResult<()> {
         let target = parse_js_tree_id(target)?;

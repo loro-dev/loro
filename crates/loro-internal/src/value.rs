@@ -320,16 +320,17 @@ impl ApplyDiff for LoroValue {
                         }
                     }
                 } else {
-                    let seq = Arc::make_mut(seq);
-                    for item in diff.iter() {
-                        match item {
-                            Diff::Tree(tree) => {
-                                let mut v = TreeValue(seq);
-                                v.apply_diff(tree);
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
+                    // let seq = Arc::make_mut(seq);
+                    // for item in diff.iter() {
+                    //     match item {
+                    //         Diff::Tree(tree) => {
+                    //             let mut v = TreeValue(seq);
+                    //             v.apply_diff(tree);
+                    //         }
+                    //         _ => unreachable!(),
+                    //     }
+                    // }
+                    unimplemented!()
                 }
             }
             LoroValue::Map(map) => {

@@ -31,8 +31,9 @@ use crate::{
 
 use self::{
     arena::{
-        decode_arena, encode_arena, ContainerArena, DecodedArenas, EncodedTreeID, TreeIDArena,
-    , PeerIdArena},
+        decode_arena, encode_arena, ContainerArena, DecodedArenas, EncodedTreeID, PeerIdArena,
+        TreeIDArena,
+    },
     encode::{encode_changes, encode_ops, init_encode, TempOp, ValueRegister},
     value::ValueReader,
 };
@@ -993,6 +994,7 @@ mod encode {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn encode_ops<'p, 'a: 'p>(
         ops: &'a [TempOp<'a>],
         arena: &crate::arena::SharedArena,

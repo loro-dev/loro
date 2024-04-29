@@ -1155,6 +1155,23 @@ impl LoroTree {
         self.handler.create_at(parent, index)
     }
 
+    /// Create a new tree node at the given index and return the [`TreeID`].
+    ///
+    /// If the `parent` is `None`, the created node is the root of a tree.
+    /// If the `index` is greater than the number of children of the parent, error will be returned.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let tree = doc.get_tree("tree");
+    /// // create a root
+    /// let root = tree.create(None).unwrap();
+    /// // create a new child at index 0
+    /// let child = tree.create_at(root, 0).unwrap();
+    /// ```
     pub fn create_at<T: Into<Option<TreeID>>>(
         &self,
         parent: T,
@@ -1301,10 +1318,12 @@ impl LoroTree {
         self.handler.nodes()
     }
 
+    /// Return all children of the target node.
     pub fn children(&self, parent: Option<TreeID>) -> Vec<TreeID> {
         self.handler.children(parent)
     }
 
+    /// Return the number of children of the target node.
     pub fn children_num(&self, parent: Option<TreeID>) -> Option<usize> {
         self.handler.children_num(parent)
     }

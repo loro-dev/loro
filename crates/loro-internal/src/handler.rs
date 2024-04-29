@@ -860,11 +860,11 @@ impl HandlerTrait for TreeHandler {
                             let new_p = ans.create_with_txn(txn, None, index)?;
                             mapping.insert(p, new_p);
                             let new_t = ans.create_with_txn(txn, new_p, index)?;
-                            mapping.insert(&target, new_t);
+                            mapping.insert(target, new_t);
                         }
                     } else {
                         let new_t = ans.create_with_txn(txn, None, index)?;
-                        mapping.insert(&target, new_t);
+                        mapping.insert(target, new_t);
                     }
                 }
 

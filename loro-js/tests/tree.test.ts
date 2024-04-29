@@ -89,7 +89,7 @@ describe("loro tree", () => {
     const root = tree.createNode();
     const child: LoroTreeNode = tree.createNode(root.id);
     let count = 0;
-    const sub = tree.subscribe(loro, () => {
+    const sub = tree.subscribe(() => {
       count += 1;
     });
     assertEquals(count, 0);

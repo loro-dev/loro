@@ -350,7 +350,10 @@ impl FromGenericAction for TreeAction {
 }
 
 #[derive(Debug)]
-pub struct TreeTracker(Vec<TreeNode>);
+pub struct TreeTracker {
+    id: ContainerID,
+    tree: Vec<TreeNode>,
+}
 
 impl TreeTracker {
     pub(crate) fn find_node_by_id(&self, id: TreeID) -> Option<&TreeNode> {
@@ -379,8 +382,12 @@ impl TreeTracker {
 }
 
 impl ApplyDiff for TreeTracker {
-    fn empty() -> Self {
-        TreeTracker(Vec::new())
+    fn id(&self) -> &ContainerID {
+        &self.id
+    }
+
+    fn empty(id: ContainerID) -> Self {
+        TreeTracker { id, tree: vec![] }
     }
 
     fn apply_diff(&mut self, diff: Diff) {
@@ -408,7 +415,7 @@ impl ApplyDiff for TreeTracker {
                         parent.children.retain(|n| n.id != target);
                     } else {
                         let index = self.iter().position(|n| n.id == target).unwrap();
-                        self.0.remove(index);
+                        self.tree.remove(index);
                     };
                 }
                 TreeExternalDiff::Move {
@@ -423,7 +430,7 @@ impl ApplyDiff for TreeTracker {
                         parent.children.remove(index)
                     } else {
                         let index = self.iter().position(|n| n.id == target).unwrap();
-                        self.0.remove(index)
+                        self.tree.remove(index)
                     };
                     node.parent = *parent;
                     node.position = position.to_string();
@@ -464,12 +471,12 @@ impl ApplyDiff for TreeTracker {
 impl Deref for TreeTracker {
     type Target = Vec<TreeNode>;
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.tree
     }
 }
 impl DerefMut for TreeTracker {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.tree
     }
 }
 
@@ -486,7 +493,7 @@ impl TreeNode {
     pub fn new(id: TreeID, parent: Option<TreeID>, position: String) -> Self {
         TreeNode {
             id,
-            meta: ContainerTracker::Map(MapTracker::empty()),
+            meta: ContainerTracker::Map(MapTracker::empty(id.associated_meta_container())),
             parent,
             position,
             children: vec![],
