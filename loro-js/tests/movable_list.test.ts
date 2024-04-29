@@ -97,11 +97,11 @@ describe("movable list", () => {
     subList.push("d");
     subList.push("e");
     subList.push("f");
-    expect(list.toJson()).toEqual(["a", ["d", "e", "f"], "b", "c"]);
+    expect(list.toJSON()).toEqual(["a", ["d", "e", "f"], "b", "c"]);
     list.move(1, 0);
-    expect(list.toJson()).toEqual([["d", "e", "f"], "a", "b", "c"]);
+    expect(list.toJSON()).toEqual([["d", "e", "f"], "a", "b", "c"]);
     list.move(0, 3);
-    expect(list.toJson()).toEqual(["a", "b", "c", ["d", "e", "f"]]);
+    expect(list.toJSON()).toEqual(["a", "b", "c", ["d", "e", "f"]]);
   });
 
   it("can be inserted into a list as an attached container", () => {
@@ -112,12 +112,12 @@ describe("movable list", () => {
     list.push("c");
     const blist = doc.getList("blist");
     const newList: LoroMovableList = blist.insertContainer(0, list);
-    expect(blist.toJson()).toEqual([["a", "b", "c"]]);
+    expect(blist.toJSON()).toEqual([["a", "b", "c"]]);
     newList.move(0, 1);
-    expect(blist.toJson()).toEqual([["b", "a", "c"]]);
+    expect(blist.toJSON()).toEqual([["b", "a", "c"]]);
     list.move(0, 2);
     // change on list should not affect blist
-    expect(blist.toJson()).toEqual([["b", "a", "c"]]);
+    expect(blist.toJSON()).toEqual([["b", "a", "c"]]);
   });
 
   it("length should be correct when there are concurrent move", () => {
@@ -132,7 +132,7 @@ describe("movable list", () => {
     listB.move(0, 1);
     list.move(0, 1);
     docB.import(docA.exportFrom());
-    expect(listB.toJson()).toEqual(["b", "a", "c"]);
+    expect(listB.toJSON()).toEqual(["b", "a", "c"]);
     expect(listB.length).toBe(3);
   });
 
@@ -151,9 +151,9 @@ describe("movable list", () => {
     listB.set(1, "fromB");
     docB.import(docA.exportFrom());
     docA.import(docB.exportFrom());
-    expect(listA.toJson()).toEqual(["a", "fromB", "c"]);
+    expect(listA.toJSON()).toEqual(["a", "fromB", "c"]);
     expect(listA.length).toBe(3);
-    expect(listB.toJson()).toEqual(["a", "fromB", "c"]);
+    expect(listB.toJSON()).toEqual(["a", "fromB", "c"]);
     expect(listB.length).toBe(3);
   });
 
@@ -205,7 +205,7 @@ describe("movable list", () => {
     const map = list.insertContainer(0, new LoroMap());
     expectTypeOf(map).toMatchTypeOf<LoroMap<{ name: string }>>();
     map.set("name", "Alice");
-    expect(list.toJson()).toStrictEqual([{ name: "Alice" }]);
+    expect(list.toJSON()).toStrictEqual([{ name: "Alice" }]);
   });
 
   it("set container", () => {
@@ -214,6 +214,6 @@ describe("movable list", () => {
     list.insert(0, 100);
     const text = list.setContainer(0, new LoroText());
     text.insert(0, "Hello");
-    expect(list.toJson()).toStrictEqual(["Hello"]);
+    expect(list.toJSON()).toStrictEqual(["Hello"]);
   });
 });

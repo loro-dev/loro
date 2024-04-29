@@ -299,7 +299,7 @@ describe("event", () => {
       list.insertContainer(0, new LoroText());
       loro.commit();
       await oneMs();
-      expect(loro.toJson().list[0]).toBe("abc");
+      expect(loro.toJSON().list[0]).toBe("abc");
     });
   });
 

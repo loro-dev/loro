@@ -19,7 +19,7 @@ use loro_internal::{
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, cmp::Ordering, panic, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
 
 mod awareness;
@@ -477,7 +477,7 @@ impl Loro {
     /// const frontiers = doc.frontiers();
     /// text.insert(0, "Hello World!");
     /// loro.checkout(frontiers);
-    /// console.log(doc.toJson()); // {"text": ""}
+    /// console.log(doc.toJSON()); // {"text": ""}
     /// ```
     pub fn checkout(&mut self, frontiers: Vec<JsID>) -> JsResult<()> {
         self.0.checkout(&ids_to_frontiers(frontiers)?)?;
@@ -889,9 +889,9 @@ impl Loro {
     /// /*
     /// {"list": ["Hello", {"foo": "bar"}]}
     ///  *\/
-    /// console.log(doc.toJson());
+    /// console.log(doc.toJSON());
     /// ```
-    #[wasm_bindgen(js_name = "toJson")]
+    #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsResult<JsValue> {
         let json = self.0.get_deep_value();
         Ok(json.into())
@@ -1759,7 +1759,7 @@ impl LoroMap {
     /// text.insert(0, "Hello");
     /// console.log(map.getDeepValue());  // {"foo": "bar", "text": "Hello"}
     /// ```
-    #[wasm_bindgen(js_name = "toJson")]
+    #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsValue {
         self.handler.get_deep_value().into()
     }
@@ -2044,7 +2044,7 @@ impl LoroList {
     /// text.insert(0, "Hello");
     /// console.log(list.getDeepValue());  // [100, "Hello"];
     /// ```
-    #[wasm_bindgen(js_name = "toJson")]
+    #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsValue {
         let value = self.handler.get_deep_value();
         value.into()
@@ -2365,7 +2365,7 @@ impl LoroMovableList {
     /// text.insert(0, "Hello");
     /// console.log(list.getDeepValue());  // [100, "Hello"];
     /// ```
-    #[wasm_bindgen(js_name = "toJson")]
+    #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsValue {
         let value = self.handler.get_deep_value();
         value.into()
@@ -2846,9 +2846,9 @@ impl LoroTree {
     /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: 'cid:0@F2462C4159C4C8D1:Map' } ]
     /// console.log(tree.value);
     /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: { color: 'red' } } ]
-    /// console.log(tree.toJson());
+    /// console.log(tree.toJSON());
     /// ```
-    #[wasm_bindgen(js_name = "toJson")]
+    #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsValue {
         self.handler.get_deep_value().into()
     }
