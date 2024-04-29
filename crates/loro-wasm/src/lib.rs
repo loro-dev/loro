@@ -1,4 +1,6 @@
+//! Loro WASM bindings.
 #![allow(non_snake_case)]
+#![warn(missing_docs)]
 use convert::resolved_diff_to_js;
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
@@ -35,6 +37,7 @@ fn run() {
     console_error_panic_hook::set_once();
 }
 
+/// Enable debug info of Loro
 #[wasm_bindgen(js_name = setDebug)]
 pub fn set_debug() {
     tracing_wasm::set_as_global_default();
@@ -1541,6 +1544,7 @@ impl LoroText {
         }
     }
 
+    /// get the cursor at the given position.
     #[wasm_bindgen(skip_typescript)]
     pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
         let mut side_value = Side::Middle;
@@ -2181,6 +2185,7 @@ impl LoroList {
         }
     }
 
+    /// Get the cursor at the position.
     #[wasm_bindgen(skip_typescript)]
     pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
         let mut side_value = Side::Middle;
@@ -2193,12 +2198,14 @@ impl LoroList {
             .map(|pos| Cursor { pos })
     }
 
+    /// Push a value to the end of the list.
     pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
         let v: JsValue = value.into();
         self.handler.push(v.into())?;
         Ok(())
     }
 
+    /// Pop a value from the end of the list.
     pub fn pop(&self) -> JsResult<Option<JsLoroValue>> {
         let v = self.handler.pop()?;
         if let Some(v) = v {
@@ -2502,6 +2509,7 @@ impl LoroMovableList {
         }
     }
 
+    /// Get the cursor of the container.
     #[wasm_bindgen(skip_typescript)]
     pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
         let mut side_value = Side::Middle;
@@ -2546,6 +2554,7 @@ impl LoroMovableList {
         Ok(())
     }
 
+    /// Set the container at the given position.
     #[wasm_bindgen(skip_typescript)]
     pub fn setContainer(&self, pos: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
@@ -2553,12 +2562,14 @@ impl LoroMovableList {
         Ok(handler_to_js_value(c, self.doc.clone()).into())
     }
 
+    /// Push a value to the end of the list.
     pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
         let v: JsValue = value.into();
         self.handler.push(v.into())?;
         Ok(())
     }
 
+    /// Pop a value from the end of the list.
     pub fn pop(&self) -> JsResult<Option<JsLoroValue>> {
         let v = self.handler.pop()?;
         Ok(v.map(|v| {
@@ -2576,6 +2587,7 @@ pub struct LoroTree {
     doc: Option<Arc<LoroDoc>>,
 }
 
+/// The handler of a tree node.
 #[wasm_bindgen]
 pub struct LoroTreeNode {
     id: TreeID,
@@ -2993,6 +3005,37 @@ impl Default for LoroTree {
     }
 }
 
+/// Cursor is a stable position representation in the doc.
+/// When expressing the position of a cursor, using "index" can be unstable
+/// because the cursor's position may change due to other deletions and insertions,
+/// requiring updates with each edit. To stably represent a position or range within
+/// a list structure, we can utilize the ID of each item/character on List CRDT or
+/// Text CRDT for expression.
+///
+/// Loro optimizes State metadata by not storing the IDs of deleted elements. This
+/// approach complicates tracking cursors since they rely on these IDs. The solution
+/// recalculates position by replaying relevant history to update cursors
+/// accurately. To minimize the performance impact of history replay, the system
+/// updates cursor info to reference only the IDs of currently present elements,
+/// thereby reducing the need for replay.
+///
+/// @example
+/// ```ts
+///
+/// const doc = new Loro();
+/// const text = doc.getText("text");
+/// text.insert(0, "123");
+/// const pos0 = text.getCursor(0, 0);
+/// {
+///   const ans = doc.getCursorPos(pos0!);
+///   expect(ans.offset).toBe(0);
+/// }
+/// text.insert(0, "1");
+/// {
+///   const ans = doc.getCursorPos(pos0!);
+///   expect(ans.offset).toBe(1);
+/// }
+/// ```
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct Cursor {
@@ -3001,11 +3044,15 @@ pub struct Cursor {
 
 #[wasm_bindgen]
 impl Cursor {
+    /// Get the id of the given container.
     pub fn containerId(&self) -> JsContainerID {
         let js_value: JsValue = self.pos.container.to_string().into();
         JsContainerID::from(js_value)
     }
 
+    /// Get the ID that represents the position.
+    ///
+    /// It can be undefined if it's not binded into a specific ID.
     pub fn pos(&self) -> Option<JsID> {
         match self.pos.id {
             Some(id) => {
@@ -3016,6 +3063,7 @@ impl Cursor {
         }
     }
 
+    /// Get which side of the character/list item the cursor is on.
     pub fn side(&self) -> JsSide {
         JsValue::from(match self.pos.side {
             cursor::Side::Left => -1,
@@ -3025,10 +3073,12 @@ impl Cursor {
         .into()
     }
 
+    /// Encode the cursor into a Uint8Array.
     pub fn encode(&self) -> Vec<u8> {
         self.pos.encode()
     }
 
+    /// Decode the cursor from a Uint8Array.
     pub fn decode(data: &[u8]) -> JsResult<Cursor> {
         let pos = cursor::Cursor::decode(data).map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Cursor { pos })
@@ -3051,12 +3101,18 @@ fn loro_value_to_js_value_or_container(
     }
 }
 
+/// [VersionVector](https://en.wikipedia.org/wiki/Version_vector)
+/// is a map from [PeerID] to [Counter]. Its a right-open interval.
+///
+/// i.e. a [VersionVector] of `{A: 1, B: 2}` means that A has 1 atomic op and B has 2 atomic ops,
+/// thus ID of `{client: A, counter: 1}` is out of the range.
 #[wasm_bindgen]
 #[derive(Debug, Default)]
 pub struct VersionVector(pub(crate) InternalVersionVector);
 
 #[wasm_bindgen]
 impl VersionVector {
+    /// Create a new version vector.
     #[wasm_bindgen(constructor)]
     pub fn new(value: JsIntoVersionVector) -> JsResult<VersionVector> {
         let value: JsValue = value.into();
@@ -3074,6 +3130,7 @@ impl VersionVector {
         VersionVector::from_json(JsVersionVectorMap::from(value))
     }
 
+    /// Create a new version vector from a Map.
     #[wasm_bindgen(js_name = "parseJSON", method)]
     pub fn from_json(version: JsVersionVectorMap) -> JsResult<VersionVector> {
         let map: JsValue = version.into();
@@ -3096,6 +3153,7 @@ impl VersionVector {
         Ok(Self(vv))
     }
 
+    /// Convert the version vector to a Map
     #[wasm_bindgen(js_name = "toJSON", method)]
     pub fn to_json(&self) -> JsVersionVectorMap {
         let vv = &self.0;
@@ -3110,20 +3168,26 @@ impl VersionVector {
         JsVersionVectorMap::from(value)
     }
 
+    /// Encode the version vector into a Uint8Array.
     pub fn encode(&self) -> Vec<u8> {
         self.0.encode()
     }
 
+    /// Decode the version vector from a Uint8Array.
     pub fn decode(bytes: &[u8]) -> JsResult<VersionVector> {
         let vv = InternalVersionVector::decode(bytes)?;
         Ok(Self(vv))
     }
 
+    /// Get the counter of a peer.
     pub fn get(&self, peer_id: JsIntoPeerID) -> JsResult<Option<Counter>> {
         let id = js_peer_to_peer(peer_id.into())?;
         Ok(self.0.get(&id).copied())
     }
 
+    /// Compare the version vector with another version vector.
+    ///
+    /// If they are concurrent, return undefined.
     pub fn compare(&self, other: &VersionVector) -> Option<i32> {
         self.0.partial_cmp(&other.0).map(|o| match o {
             std::cmp::Ordering::Less => -1,
@@ -3132,6 +3196,7 @@ impl VersionVector {
         })
     }
 }
+
 const ID_CONVERT_ERROR: &str = "Invalid peer id. It must be a number, a BigInt, or a decimal string that can be parsed to a unsigned 64-bit integer";
 fn js_peer_to_peer(value: JsValue) -> JsResult<u64> {
     if value.is_bigint() {
@@ -3154,7 +3219,7 @@ fn js_peer_to_peer(value: JsValue) -> JsResult<u64> {
     }
 }
 
-pub enum Container {
+enum Container {
     Text(LoroText),
     Map(LoroMap),
     List(LoroList),

@@ -1,3 +1,4 @@
+//! Loro event handling.
 use enum_as_inner::EnumAsInner;
 use loro_internal::container::ContainerID;
 use loro_internal::delta::TreeDiff;
@@ -12,47 +13,86 @@ use std::sync::Arc;
 
 use crate::ValueOrContainer;
 
+/// A subscriber to the event.
 pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
 
+/// An event that is triggered by a change in the state of a [super::LoroDoc].
 #[derive(Debug)]
 pub struct DiffEvent<'a> {
+    /// How the event is triggered.
     pub triggered_by: EventTriggerKind,
+    /// The origin of the event.
     pub origin: &'a str,
+    /// The current receiver of the event.
     pub current_target: Option<ContainerID>,
+    /// The diffs of the event.
     pub events: Vec<ContainerDiff<'a>>,
 }
 
+/// A diff of a container.
 #[derive(Debug)]
 pub struct ContainerDiff<'a> {
+    /// The target container id of the diff.
     pub target: &'a ContainerID,
+    /// The path of the diff.
     pub path: &'a [(ContainerID, Index)],
+    /// The diff
     pub diff: Diff<'a>,
 }
 
+/// A concrete diff.
 #[derive(Debug, EnumAsInner)]
 pub enum Diff<'a> {
+    /// A list diff.
     List(Vec<ListDiffItem>),
+    /// A text diff.
     Text(Vec<TextDelta>),
+    /// A map diff.
     Map(MapDelta<'a>),
+    /// A tree diff.
     Tree(&'a TreeDiff),
 }
 
+/// A list diff item.
+///
+/// We use a `Vec<ListDiffItem>` to represent a list diff.
+///
+/// Each item can be either an insert, delete, or retain.
+///
+/// ## Example
+///
+/// `[Retain(3), Delete(1), Insert{insert: [Value(1), Value(2)], is_move: false}]`
+///
+/// It means that the list has 3 elements that are not changed, 1 element is deleted, and 2 elements are inserted.
+///
+/// If the original list is [1, 2, 3, 4, 5], the list after the diff is [1, 2, 3, 1, 2, 5].
 #[derive(Debug)]
 pub enum ListDiffItem {
+    /// Insert a new element into the list.
     Insert {
+        /// The new elements to insert.
         insert: Vec<ValueOrContainer>,
+        /// Whether the new elements are created by moving
         is_move: bool,
     },
+    /// Delete n elements from the list at the current index.
     Delete {
+        /// The number of elements to delete.
         delete: usize,
     },
+    /// Retain n elements in the list.
+    ///
+    /// This is used to keep the current index unchanged.
     Retain {
+        /// The number of elements to retain.
         retain: usize,
     },
 }
 
+/// A map delta.
 #[derive(Debug)]
 pub struct MapDelta<'a> {
+    /// All the updated keys and their new values.
     pub updated: FxHashMap<&'a str, Option<ValueOrContainer>>,
 }
 

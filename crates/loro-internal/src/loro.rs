@@ -159,7 +159,7 @@ impl LoroDoc {
         self.oplog.lock().unwrap().is_empty() && self.state.lock().unwrap().is_empty()
     }
 
-    /// Whether [OpLog] ans [DocState] are detached.
+    /// Whether [OpLog] and [DocState] are detached.
     #[inline(always)]
     pub fn is_detached(&self) -> bool {
         self.detached.load(Acquire)

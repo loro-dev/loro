@@ -10,6 +10,7 @@ extern "C" {
     pub fn error(s: &str);
 }
 
+/// Console log macro.
 #[macro_export]
 macro_rules! console_log {
     // Note that this is using the `log` function imported above during
@@ -17,6 +18,7 @@ macro_rules! console_log {
     ($($t:tt)*) => ($crate::log::log(&format_args!($($t)*).to_string()))
 }
 
+/// Console log macro.
 #[macro_export]
 macro_rules! console_error {
     // Note that this is using the `log` function imported above during
