@@ -535,6 +535,7 @@ dependencies = [
  "arbitrary",
  "bench-utils",
  "color-backtrace",
+ "criterion",
  "ctor 0.2.6",
  "flate2",
  "loro",
