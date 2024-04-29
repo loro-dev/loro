@@ -140,7 +140,7 @@ impl Sliceable for Op {
         Op {
             counter: (self.counter + from as Counter),
             content,
-            container: self.container.clone(),
+            container: self.container,
         }
     }
 }

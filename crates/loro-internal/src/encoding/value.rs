@@ -959,20 +959,6 @@ impl ValueWriter {
     }
 }
 
-fn write_tree_move(op: &EncodedTreeMove) -> Vec<u8> {
-    let mut writer = ValueWriter::new();
-    writer.write_u64(op.subject_peer);
-    writer.write_i32(op.subject_cnt);
-    writer.write_u8(op.is_parent_null as u8);
-    if op.is_parent_null {
-        return writer.finish();
-    }
-
-    writer.write_u64(op.parent_peer);
-    writer.write_i32(op.parent_cnt);
-    writer.finish()
-}
-
 fn get_loro_value_kind(value: &LoroValue) -> ValueKind {
     match value {
         LoroValue::Null => ValueKind::Null,

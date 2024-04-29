@@ -57,10 +57,6 @@ impl DiffCalculator {
         }
     }
 
-    pub(crate) fn get_calc(&self, container: &ContainerIdx) -> Option<&ContainerDiffCalculator> {
-        self.calculators.get(container).map(|(_, c)| c)
-    }
-
     // PERF: if the causal order is linear, we can skip some of the calculation
     #[allow(unused)]
     pub(crate) fn calc_diff(
@@ -211,7 +207,7 @@ impl DiffCalculator {
         } else {
             self.calculators
                 .iter_mut()
-                .map(|(x, (depth, _))| (*depth, x.clone()))
+                .map(|(x, (depth, _))| (*depth, *x))
                 .collect()
         };
         let mut ans = FxHashMap::default();
@@ -241,7 +237,7 @@ impl DiffCalculator {
                 });
                 if !diff.is_empty() || bring_back {
                     ans.insert(
-                        container_idx.clone(),
+                        container_idx,
                         (
                             *depth,
                             InternalContainerDiff {
