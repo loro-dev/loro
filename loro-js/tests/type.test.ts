@@ -2,6 +2,7 @@ import {
   Loro,
   LoroList,
   LoroMap,
+  LoroMovableList,
   LoroText,
   LoroTree,
   PeerID,
@@ -62,4 +63,17 @@ test("doc type and container type", () => {
   expectTypeOf(list.toArray()).toMatchTypeOf<string[]>();
   const numList = map.setContainer("num", new LoroList());
   expectTypeOf(list.toArray()).toMatchTypeOf<string[]>();
+});
+
+test("fail on set/insert container", () => {
+  const list = new LoroList();
+  // list.insert(0, list); // should fail
+  const map = new LoroMap();
+  // map.set("a", list); // should fail
+  map.setContainer("a", list); // should work
+  const mList = new LoroMovableList();
+  // mList.insert(0, list); // should fail
+  // mList.set(0, list); // should fail
+  mList.insertContainer(0, list); // should work
+  mList.setContainer(0, list); // should work
 });

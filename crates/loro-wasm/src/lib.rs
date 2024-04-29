@@ -2199,6 +2199,7 @@ impl LoroList {
     }
 
     /// Push a value to the end of the list.
+    #[wasm_bindgen(skip_typescript)]
     pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
         let v: JsValue = value.into();
         self.handler.push(v.into())?;
@@ -2563,6 +2564,7 @@ impl LoroMovableList {
     }
 
     /// Push a value to the end of the list.
+    #[wasm_bindgen(skip_typescript)]
     pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
         let v: JsValue = value.into();
         self.handler.push(v.into())?;
