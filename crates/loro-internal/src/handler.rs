@@ -2132,7 +2132,17 @@ impl ListHandler {
 impl MovableListHandler {
     pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
         match &self.inner {
-            MaybeDetached::Detached(_) => unimplemented!(),
+            MaybeDetached::Detached(d) => {
+                let mut d = d.lock().unwrap();
+                if pos > d.value.len() {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        len: d.value.len(),
+                    });
+                }
+                d.value.insert(pos, ValueOrHandler::Value(v.into()));
+                Ok(())
+            }
             MaybeDetached::Attached(a) => {
                 a.with_txn(|txn| self.insert_with_txn(txn, pos, v.into()))
             }
@@ -2183,7 +2193,24 @@ impl MovableListHandler {
     #[inline]
     pub fn mov(&self, from: usize, to: usize) -> LoroResult<()> {
         match &self.inner {
-            MaybeDetached::Detached(_) => unimplemented!(),
+            MaybeDetached::Detached(d) => {
+                let mut d = d.lock().unwrap();
+                if from >= d.value.len() {
+                    return Err(LoroError::OutOfBound {
+                        pos: from,
+                        len: d.value.len(),
+                    });
+                }
+                if to >= d.value.len() {
+                    return Err(LoroError::OutOfBound {
+                        pos: to,
+                        len: d.value.len(),
+                    });
+                }
+                let v = d.value.remove(from);
+                d.value.insert(to, v);
+                Ok(())
+            }
             MaybeDetached::Attached(a) => a.with_txn(|txn| self.move_with_txn(txn, from, to)),
         }
     }
@@ -2297,6 +2324,12 @@ impl MovableListHandler {
         match &self.inner {
             MaybeDetached::Detached(d) => {
                 let mut d = d.lock().unwrap();
+                if pos > d.value.len() {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        len: d.value.len(),
+                    });
+                }
                 d.value
                     .insert(pos, ValueOrHandler::Handler(child.to_handler()));
                 Ok(child)
@@ -2347,6 +2380,12 @@ impl MovableListHandler {
         match &self.inner {
             MaybeDetached::Detached(d) => {
                 let mut d = d.lock().unwrap();
+                if index >= d.value.len() {
+                    return Err(LoroError::OutOfBound {
+                        pos: index,
+                        len: d.value.len(),
+                    });
+                }
                 d.value[index] = ValueOrHandler::Value(value.into());
                 Ok(())
             }
