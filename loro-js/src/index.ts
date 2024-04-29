@@ -276,7 +276,7 @@ declare module "loro-wasm" {
      *  list.insert(0, 100);
      *  const text = list.insertContainer(1, new LoroText());
      *  text.insert(0, "Hello");
-     *  console.log(list.toJson());  // [100, "Hello"];
+     *  console.log(list.toJSON());  // [100, "Hello"];
      *  ```
      */
     insertContainer<C extends Container>(
@@ -352,7 +352,7 @@ declare module "loro-wasm" {
      *  list.insert(0, 100);
      *  const text = list.insertContainer(1, new LoroText());
      *  text.insert(0, "Hello");
-     *  console.log(list.toJson());  // [100, "Hello"];
+     *  console.log(list.toJSON());  // [100, "Hello"];
      *  ```
      */
     insertContainer<C extends Container>(
@@ -431,7 +431,7 @@ declare module "loro-wasm" {
      *  list.insert(0, 100);
      *  const text = list.setContainer(0, new LoroText());
      *  text.insert(0, "Hello");
-     *  console.log(list.toJson());  // ["Hello"];
+     *  console.log(list.toJSON());  // ["Hello"];
      *  ```
      */
     setContainer<C extends Container>(

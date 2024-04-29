@@ -16,14 +16,14 @@ describe("Checkout", () => {
     });
     const v = doc.frontiers();
     text.insert(1, "i");
-    expect(doc.toJson()).toStrictEqual({
+    expect(doc.toJSON()).toStrictEqual({
       text: "Hi",
     });
 
     expect(doc.isDetached()).toBeFalsy();
     doc.checkout([{ peer: "0", counter: 0 }]);
     expect(doc.isDetached()).toBeTruthy();
-    expect(doc.toJson()).toStrictEqual({
+    expect(doc.toJSON()).toStrictEqual({
       text: "H",
     });
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -39,17 +39,17 @@ describe("Checkout", () => {
     expect(v[0].counter).toBe(3);
     v[0].counter -= 1;
     doc.checkout(v);
-    expect(doc.toJson()).toStrictEqual({
+    expect(doc.toJSON()).toStrictEqual({
       text: "你好世",
     });
     v[0].counter -= 1;
     doc.checkout(v);
-    expect(doc.toJson()).toStrictEqual({
+    expect(doc.toJSON()).toStrictEqual({
       text: "你好",
     });
     v[0].counter -= 1;
     doc.checkout(v);
-    expect(doc.toJson()).toStrictEqual({
+    expect(doc.toJSON()).toStrictEqual({
       text: "你",
     });
   });

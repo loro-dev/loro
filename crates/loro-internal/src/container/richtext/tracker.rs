@@ -507,6 +507,10 @@ impl Tracker {
     }
 
     fn check_vv_correctness(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
         for span in self.rope.tree().iter() {
             if span.id.peer == UNKNOWN_PEER_ID {
                 continue;
@@ -525,6 +529,10 @@ impl Tracker {
     // It can only check the correctness of insertions in id_to_cursor.
     // The deletions are not checked.
     fn check_id_to_cursor_insertions_correctness(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
         for rope_elem in self.rope.tree().iter() {
             let id_span = rope_elem.id_span();
             let leaf_from_start = self.id_to_cursor.get_insert(id_span.id_start()).unwrap();

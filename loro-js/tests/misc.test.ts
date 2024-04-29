@@ -159,7 +159,7 @@ describe("sync", () => {
 
     const loro_bk = new Loro();
     loro_bk.import(loro.exportFrom(undefined));
-    assertEquals(loro_bk.toJson(), loro.toJson());
+    assertEquals(loro_bk.toJSON(), loro.toJSON());
     const text_bk = loro_bk.getText("text");
     assertEquals(text_bk.toString(), "hello world");
     text_bk.insert(0, "a ");
@@ -192,17 +192,17 @@ describe("wasm", () => {
 
   it("getValueDeep", () => {
     bText.insert(0, "hello world Text");
-    assertEquals(b.toJson(), { ab: 123, hh: "hello world Text" });
+    assertEquals(b.toJSON(), { ab: 123, hh: "hello world Text" });
   });
 
   it("get container by id", () => {
     const id = b.id;
     const b2 = loro.getContainerById(id) as LoroMap;
-    assertEquals(b2.toJson(), b.toJson());
+    assertEquals(b2.toJSON(), b.toJSON());
     assertEquals(b2.id, id);
     b2.set("0", 12);
 
-    assertEquals(b2.toJson(), b.toJson());
+    assertEquals(b2.toJSON(), b.toJSON());
   });
 });
 
