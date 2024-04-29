@@ -686,6 +686,10 @@ impl RichtextState {
     /// Panic if inconsistent.
     #[allow(unused)]
     pub(crate) fn check_consistency_between_content_and_style_ranges(&mut self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
         self.state
             .get_mut()
             .check_consistency_between_content_and_style_ranges();
