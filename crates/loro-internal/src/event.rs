@@ -34,7 +34,7 @@ pub struct ContainerDiff {
     pub diff: Diff,
 }
 
-///
+/// The kind of the event trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventTriggerKind {
     /// The event is triggered by a local transaction.
