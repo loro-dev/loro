@@ -347,6 +347,10 @@ mod inner {
 
         #[allow(dead_code)]
         pub fn check_consistency(&self) {
+            if !cfg!(debug_assertions) {
+                return;
+            }
+
             let mut failed = false;
             if self.check_list_item_consistency().is_err() {
                 error!("list item consistency check failed, self={:#?}", self);

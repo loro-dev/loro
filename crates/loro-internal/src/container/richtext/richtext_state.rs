@@ -233,7 +233,7 @@ mod text_chunk {
         }
 
         fn check(&self) {
-            if cfg!(debug_assertions) {
+            if cfg!(any(debug_assertions, test)) {
                 assert_eq!(self.unicode_len, self.as_str().chars().count() as i32);
                 assert_eq!(
                     self.utf16_len,
@@ -1904,6 +1904,10 @@ impl RichtextState {
 
     #[allow(unused)]
     pub(crate) fn check(&self) {
+        if !cfg!(any(debug_assertions, test)) {
+            return;
+        }
+
         self.tree.check();
         self.check_consistency_between_content_and_style_ranges();
         self.check_style_anchors_appear_in_pairs();
@@ -2116,7 +2120,7 @@ impl RichtextState {
 
     /// Allow StyleAnchors to appear in pairs, so that there won't be unmatched single StyleAnchors.
     pub(crate) fn check_style_anchors_appear_in_pairs(&self) {
-        if !cfg!(debug_assertions) {
+        if !cfg!(any(debug_assertions, test)) {
             return;
         }
 
