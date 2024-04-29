@@ -139,10 +139,32 @@ describe("loro tree node", ()=>{
         const child = root.createNode();
         const child2 = root.createNode();
         assertEquals(child2.parent()!.id, root.id);
-        child2.move(child.id);
+        child2.move(child);
         assertEquals(child2.parent()!.id, child.id);
         assertEquals(child.children()[0].id, child2.id);
-        expect(()=>child2.move(child.id, 1)).toThrowError();
+        expect(()=>child2.move(child, 1)).toThrowError();
+    });
+
+    it("moveAfter", () => {
+        const root = tree.createNode();
+        const child = root.createNode();
+        const child2 = root.createNode();
+        assertEquals(child2.parent()!.id, root.id);
+        child2.moveAfter(child);
+        assertEquals(child2.parent()!.id, root.id);
+        assertEquals(child.index(), 0);
+        assertEquals(child2.index(), 1);
+    });
+
+    it("moveBefore", () => {
+        const root = tree.createNode();
+        const child = root.createNode();
+        const child2 = root.createNode();
+        assertEquals(child2.parent()!.id, root.id);
+        child2.moveBefore(child);
+        assertEquals(child2.parent()!.id, root.id);
+        assertEquals(child.index(), 1);
+        assertEquals(child2.index(), 0);
     });
 
     it("index", () => {

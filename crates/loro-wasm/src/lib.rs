@@ -23,6 +23,7 @@ use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
+use wasm_bindgen_derive::TryFromJsValue;
 
 mod awareness;
 mod log;
@@ -90,6 +91,8 @@ extern "C" {
     pub type JsTreeID;
     #[wasm_bindgen(typescript_type = "TreeID | undefined")]
     pub type JsParentTreeID;
+    #[wasm_bindgen(typescript_type = "LoroTreeNode | undefined")]
+    pub type JsTreeNodeOrUndefined;
     #[wasm_bindgen(typescript_type = "Delta<string>[]")]
     pub type JsStringDelta;
     #[wasm_bindgen(typescript_type = "Map<PeerID, number>")]
@@ -2589,9 +2592,11 @@ pub struct LoroTree {
     doc: Option<Arc<LoroDoc>>,
 }
 
+extern crate alloc;
 /// The handler of a tree node.
-#[derive(Clone)]
+#[derive(TryFromJsValue)]
 #[wasm_bindgen]
+#[derive(Clone)]
 pub struct LoroTreeNode {
     id: TreeID,
     tree: TreeHandler,
@@ -2604,6 +2609,16 @@ fn parse_js_parent(parent: &JsParentTreeID) -> JsResult<Option<TreeID>> {
         None
     } else {
         Some(TreeID::try_from(js_value)?)
+    };
+    Ok(parent)
+}
+
+fn parse_js_tree_node(parent: &JsTreeNodeOrUndefined) -> JsResult<Option<LoroTreeNode>> {
+    let js_value: &JsValue = parent.as_ref();
+    let parent: Option<LoroTreeNode> = if js_value.is_undefined() {
+        None
+    } else {
+        Some(LoroTreeNode::try_from(js_value)?)
     };
     Ok(parent)
 }
@@ -2678,12 +2693,12 @@ impl LoroTreeNode {
     ///
     /// ```
     #[wasm_bindgen(js_name = "move")]
-    pub fn mov(&self, parent: &JsParentTreeID, index: Option<usize>) -> JsResult<()> {
-        let parent: Option<TreeID> = parse_js_parent(parent)?;
+    pub fn mov(&self, parent: &JsTreeNodeOrUndefined, index: Option<usize>) -> JsResult<()> {
+        let parent: Option<LoroTreeNode> = parse_js_tree_node(parent)?;
         if let Some(index) = index {
-            self.tree.move_to(self.id, parent, index)?
+            self.tree.move_to(self.id, parent.map(|x| x.id), index)?
         } else {
-            self.tree.mov(self.id, parent)?;
+            self.tree.mov(self.id, parent.map(|x| x.id))?;
         }
 
         Ok(())
@@ -2706,9 +2721,8 @@ impl LoroTreeNode {
     /// // node node2
     /// ```
     #[wasm_bindgen(js_name = "moveAfter")]
-    pub fn mov_after(&self, target: &JsTreeID) -> JsResult<()> {
-        let target = parse_js_tree_id(target)?;
-        self.tree.mov_after(self.id, target)?;
+    pub fn mov_after(&self, target: &LoroTreeNode) -> JsResult<()> {
+        self.tree.mov_after(self.id, target.id)?;
         Ok(())
     }
 
@@ -2729,9 +2743,8 @@ impl LoroTreeNode {
     /// // node2 node
     /// ```
     #[wasm_bindgen(js_name = "moveBefore")]
-    pub fn mov_before(&self, target: &JsTreeID) -> JsResult<()> {
-        let target = parse_js_tree_id(target)?;
-        self.tree.mov_before(self.id, target)?;
+    pub fn mov_before(&self, target: &LoroTreeNode) -> JsResult<()> {
+        self.tree.mov_before(self.id, target.id)?;
         Ok(())
     }
 
