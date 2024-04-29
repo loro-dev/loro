@@ -226,6 +226,9 @@ describe("richtext", () => {
     const text = doc.getText("text");
     doc.setPeerId("1");
     text.insert(0, "123");
+    const posEnd = text.getCursor(10, 0);
+    expect(posEnd!.containerId()).toBe("cid:root-text:Text");
+    expect(posEnd!.side()).toBe(1);
     const pos0 = text.getCursor(0, 0);
     expect(pos0?.containerId()).toBe("cid:root-text:Text");
     // pos0 points to the first character, i.e. the id of '1'
