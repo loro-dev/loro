@@ -436,8 +436,8 @@ mod inner {
         #[inline]
         pub fn get_list_item_at(&self, pos: usize, index_type: IndexType) -> Option<&ListItem> {
             let index = match index_type {
-                IndexType::ForUser => self.list.query::<UserLenQuery>(&pos).unwrap(),
-                IndexType::ForOp => self.list.query::<OpLenQuery>(&pos).unwrap(),
+                IndexType::ForUser => self.list.query::<UserLenQuery>(&pos)?,
+                IndexType::ForOp => self.list.query::<OpLenQuery>(&pos)?,
             };
             self.list.get_elem(index.leaf())
         }

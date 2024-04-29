@@ -793,6 +793,18 @@ fn get_cursor_for_list() {
 }
 
 #[test]
+fn get_out_of_bound_cursor() {
+    let a = LoroDoc::new();
+    let text = a.get_text("text");
+    text.insert(0, "123").unwrap();
+    text.get_cursor(5, loro_internal::cursor::Side::Right);
+    let list = a.get_list("list");
+    list.get_cursor(5, loro_internal::cursor::Side::Right);
+    let mlist = a.get_movable_list("list");
+    mlist.get_cursor(5, loro_internal::cursor::Side::Right);
+}
+
+#[test]
 fn awareness() {
     let mut a = Awareness::new(1, 1);
     a.set_local_state(1);

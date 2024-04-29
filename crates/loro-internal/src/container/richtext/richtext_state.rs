@@ -244,7 +244,7 @@ mod text_chunk {
 
         pub(crate) fn entity_range_to_event_range(&self, range: Range<usize>) -> Range<usize> {
             if cfg!(feature = "wasm") {
-                assert!(range.start < range.end);
+                assert!(range.start <= range.end);
                 if range.start == 0 && range.end == self.unicode_len as usize {
                     return 0..self.utf16_len as usize;
                 }
@@ -1665,7 +1665,7 @@ impl RichtextState {
             return Vec::new();
         }
 
-        if pos == self.len(pos_type) {
+        if pos + len > self.len(pos_type) {
             return Vec::new();
         }
 
