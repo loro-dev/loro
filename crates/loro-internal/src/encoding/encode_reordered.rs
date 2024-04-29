@@ -1214,7 +1214,7 @@ mod encode {
                 FutureInnerContent::Unknown { prop: _, value } => Value::from_owned(value),
             },
         };
-        let (k, mut i) = value.encode(value_writer, registers);
+        let (k, _) = value.encode(value_writer, registers);
         k
     }
 }
@@ -1259,7 +1259,7 @@ fn decode_op(
                 crate::container::list::list_op::InnerListOp::StyleStart {
                     start: prop as u32,
                     end: prop as u32 + mark.len,
-                    key: mark.key.into(),
+                    key: mark.key,
                     value: mark.value,
                     info: TextStyleInfoFlag::from_byte(mark.info),
                 },
@@ -1386,7 +1386,7 @@ fn extract_containers_in_order(
     let container_idx2index = containers
         .iter()
         .enumerate()
-        .map(|(i, (_, c))| (c.clone(), i))
+        .map(|(i, (_, c))| (*c, i))
         .collect();
 
     ExtractedContainer {
