@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    sync::{Arc, Mutex, RwLock, Weak},
+    sync::{atomic::AtomicU8, Arc, Mutex, RwLock, Weak},
 };
 
 use enum_as_inner::EnumAsInner;
@@ -12,9 +12,7 @@ use tracing::{info, instrument, trace_span};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
-    container::{
-        idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw,
-    },
+    container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
     cursor::Cursor,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
@@ -226,8 +224,8 @@ impl State {
         Self::RichtextState(Box::new(RichtextState::new(idx, config)))
     }
 
-    pub fn new_tree(idx: ContainerIdx) -> Self {
-        Self::TreeState(Box::new(TreeState::new(idx)))
+    pub fn new_tree(idx: ContainerIdx, peer: PeerID, jitter: Arc<AtomicU8>) -> Self {
+        Self::TreeState(Box::new(TreeState::new(idx, peer, jitter)))
     }
 }
 
@@ -1082,7 +1080,11 @@ impl DocState {
                 idx,
                 self.config.text_style_config.clone(),
             ))),
-            ContainerType::Tree => State::TreeState(Box::new(TreeState::new(idx))),
+            ContainerType::Tree => State::TreeState(Box::new(TreeState::new(
+                idx,
+                self.peer,
+                self.config.tree_position_jitter.clone(),
+            ))),
             ContainerType::MovableList => {
                 State::MovableListState(Box::new(MovableListState::new(idx)))
             }

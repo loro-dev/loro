@@ -5,6 +5,9 @@ pub struct Configure {
     pub(crate) text_style_config: Arc<RwLock<StyleConfigMap>>,
     record_timestamp: Arc<AtomicBool>,
     merge_interval: Arc<AtomicI64>,
+    /// should be larger than 0.
+    /// do not use `jitter` by default
+    pub(crate) tree_position_jitter: Arc<AtomicU8>,
 }
 
 impl Default for Configure {
@@ -13,6 +16,7 @@ impl Default for Configure {
             text_style_config: Arc::new(RwLock::new(StyleConfigMap::default_rich_text_config())),
             record_timestamp: Arc::new(AtomicBool::new(false)),
             merge_interval: Arc::new(AtomicI64::new(1000 * 1000)),
+            tree_position_jitter: Arc::new(AtomicU8::new(1)),
         }
     }
 }
@@ -48,7 +52,7 @@ pub struct DefaultRandom;
 #[cfg(test)]
 use std::sync::atomic::AtomicU64;
 use std::sync::{
-    atomic::{AtomicBool, AtomicI64},
+    atomic::{AtomicBool, AtomicI64, AtomicU8},
     Arc, RwLock,
 };
 #[cfg(test)]

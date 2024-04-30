@@ -1,7 +1,6 @@
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "jitter")]
 mod jitter;
 
 const TERMINATOR: u8 = 128;

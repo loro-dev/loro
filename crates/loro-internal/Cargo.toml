@@ -75,8 +75,6 @@ default = []
 wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen", "loro-common/wasm"]
 # whether to use list slice instead of raw str in text container
 test_utils = ["rand", "arbitrary", "tabled"]
-# whether to use jitter for generating fractional_index
-tree_jitter = ["fractional_index/jitter", "rand"]
 
 [[bench]]
 name = "text_r"

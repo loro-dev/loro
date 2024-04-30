@@ -4,15 +4,15 @@ use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
+    ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
 };
-#[cfg(feature = "tree_jitter")]
 use rand::SeedableRng;
 use rle::HasLength;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::container::idx::ContainerIdx;
@@ -91,7 +91,6 @@ impl NodeChildren {
         }
     }
 
-    #[cfg(not(feature = "tree_jitter"))]
     fn generate_fi_at(&self, pos: usize, target: &TreeID) -> FractionalIndexGenResult {
         let mut reset_ids = vec![];
         let mut left = None;
@@ -516,8 +515,8 @@ pub struct TreeState {
     idx: ContainerIdx,
     trees: FxHashMap<TreeID, TreeStateNode>,
     children: TreeChildrenCache,
-    #[cfg(feature = "tree_jitter")]
-    rng: rand::rngs::StdRng,
+    rng: Option<rand::rngs::StdRng>,
+    jitter: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
@@ -543,13 +542,16 @@ pub(crate) struct TreeStateNode {
 }
 
 impl TreeState {
-    pub fn new(idx: ContainerIdx) -> Self {
+    pub fn new(idx: ContainerIdx, peer_id: PeerID, config: Arc<AtomicU8>) -> Self {
+        let jitter = config.load(Ordering::Relaxed);
+        let use_jitter = jitter != 1;
+
         Self {
             idx,
             trees: FxHashMap::default(),
             children: Default::default(),
-            #[cfg(feature = "tree_jitter")]
-            rng: rand::rngs::StdRng::seed_from_u64(idx.to_index() as u64),
+            rng: use_jitter.then_some(rand::rngs::StdRng::seed_from_u64(peer_id)),
+            jitter,
         }
     }
 
@@ -704,17 +706,23 @@ impl TreeState {
         }
     }
 
-    #[cfg(not(feature = "tree_jitter"))]
     pub(crate) fn generate_position_at(
         &mut self,
         target: &TreeID,
         parent: &TreeParentId,
         index: usize,
     ) -> FractionalIndexGenResult {
-        self.children
-            .entry(*parent)
-            .or_default()
-            .generate_fi_at(index, target)
+        if let Some(rng) = self.rng.as_mut() {
+            self.children
+                .entry(*parent)
+                .or_default()
+                .generate_fi_at_jitter(index, target, rng, self.jitter)
+        } else {
+            self.children
+                .entry(*parent)
+                .or_default()
+                .generate_fi_at(index, target)
+        }
     }
 
     pub(crate) fn get_index_by_tree_id(&self, target: &TreeID) -> Option<usize> {
@@ -963,7 +971,6 @@ impl ContainerState for TreeState {
                 ans.push(t);
             }
         }
-        #[cfg(feature = "test_utils")]
         ans.sort_by_key(|x| {
             let parent = if let LoroValue::String(p) = x.get("parent").unwrap() {
                 Some(p.clone())
@@ -1034,19 +1041,19 @@ pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
     }
 }
 
-#[cfg(feature = "tree_jitter")]
 mod jitter {
-    use super::{FractionalIndexGenResult, NodeChildren, TreeParentId, TreeState};
+    use super::{FractionalIndexGenResult, NodeChildren};
     use fractional_index::FractionalIndex;
     use loro_common::TreeID;
     use rand::Rng;
 
     impl NodeChildren {
-        fn generate_fi_at(
+        pub(super) fn generate_fi_at_jitter(
             &self,
             pos: usize,
             target: &TreeID,
             rng: &mut impl Rng,
+            jitter: u8,
         ) -> FractionalIndexGenResult {
             let mut reset_ids = vec![];
             let mut left = None;
@@ -1083,20 +1090,22 @@ mod jitter {
 
                 if reset_ids.is_empty() {
                     return FractionalIndexGenResult::Ok(
-                        FractionalIndex::new(
+                        FractionalIndex::new_jitter(
                             left.map(|x| &x.position),
                             right.map(|x| &x.0.position),
                             rng,
+                            jitter,
                         )
                         .unwrap(),
                     );
                 }
             }
-            let positions = FractionalIndex::generate_n_evenly(
+            let positions = FractionalIndex::generate_n_evenly_jitter(
                 left.map(|x| &x.position),
                 next_right.as_ref(),
                 reset_ids.len() + 1,
                 rng,
+                jitter,
             )
             .unwrap();
             FractionalIndexGenResult::Rearrange(
@@ -1106,20 +1115,6 @@ mod jitter {
                     .zip(positions)
                     .collect(),
             )
-        }
-    }
-
-    impl TreeState {
-        pub(crate) fn generate_position_at(
-            &mut self,
-            target: &TreeID,
-            parent: &TreeParentId,
-            index: usize,
-        ) -> FractionalIndexGenResult {
-            self.children
-                .entry(*parent)
-                .or_default()
-                .generate_fi_at(index, target, &mut self.rng)
         }
     }
 }
