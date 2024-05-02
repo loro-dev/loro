@@ -236,7 +236,7 @@ impl Sliceable for DeleteSpanWithId {
             id_start: if self.span.signed_len > 0 {
                 self.id_start.inc(from as i32)
             } else {
-                // If the span is reversed, the id_start remains the same after slicing.
+                // If the span is reversed, the id_start should be affected by `to`
                 //
                 // Example:
                 //
@@ -245,7 +245,14 @@ impl Sliceable for DeleteSpanWithId {
                 // 0 1 2  <-- counter of the IDs
                 // ↑
                 // id_start
-                self.id_start
+                //
+                // If from=1, to=2
+                // a b c
+                // - - -  <-- deletions happen backward
+                // 0 1 2  <-- counter of the IDs
+                //   ↑
+                //   id_start
+                self.id_start.inc((self.atom_len() - to) as i32)
             },
             span: self.span.slice(from, to),
         }
