@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.15.1
+
+### Patch Changes
+
+- 04c6290: N
+- Updated dependencies [04c6290]
+  - loro-wasm@0.15.1
+
 ## 0.15.0
 
 ### Minor Changes
