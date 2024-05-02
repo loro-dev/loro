@@ -249,7 +249,7 @@ impl CrdtRope {
             let mut ans = SmallVec::with_capacity(len);
             for i in (0..len).rev() {
                 let a = self.delete(
-                    start_id.inc((len - i - 1) as i32),
+                    start_id.inc(i as i32),
                     pos + i,
                     1,
                     false,

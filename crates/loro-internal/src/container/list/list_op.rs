@@ -112,9 +112,14 @@ impl HasLength for DeleteSpan {
     }
 }
 
+/// Delete span that the initial id is `id_start`.
+///
+/// This span may be reversed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteSpanWithId {
+    /// This is the target id with the smallest counter no matter whether the span is reversed.
     pub id_start: ID,
+    /// The deleted position span
     pub span: DeleteSpan,
 }
 
@@ -228,7 +233,20 @@ impl Mergable for DeleteSpanWithId {
 impl Sliceable for DeleteSpanWithId {
     fn slice(&self, from: usize, to: usize) -> Self {
         Self {
-            id_start: self.id_start.inc(from as i32),
+            id_start: if self.span.signed_len > 0 {
+                self.id_start.inc(from as i32)
+            } else {
+                // If the span is reversed, the id_start remains the same after slicing.
+                //
+                // Example:
+                //
+                // a b c
+                // - - -  <-- deletions happen backward
+                // 0 1 2  <-- counter of the IDs
+                // ↑
+                // id_start
+                self.id_start
+            },
             span: self.span.slice(from, to),
         }
     }

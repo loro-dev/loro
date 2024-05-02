@@ -5304,3 +5304,58 @@ fn test_tree_delete_nested() {
         ],
     )
 }
+
+#[test]
+fn test_text() {
+    test_multi_sites(
+        5,
+        vec![
+            FuzzTarget::Map,
+            FuzzTarget::List,
+            FuzzTarget::Text,
+            FuzzTarget::Tree,
+            FuzzTarget::MovableList,
+        ],
+        &mut [
+            Handle {
+                site: 255,
+                target: 15,
+                container: 57,
+                action: Generic(GenericAction {
+                    value: I32(757935405),
+                    bool: true,
+                    key: 805292845,
+                    pos: 33041,
+                    length: 0,
+                    prop: 1238489669910396928,
+                }),
+            },
+            Handle {
+                site: 45,
+                target: 45,
+                container: 45,
+                action: Generic(GenericAction {
+                    value: I32(757935405),
+                    bool: true,
+                    key: 805292845,
+                    pos: 3255307780432560401,
+                    length: 18446743168229387565,
+                    prop: 3255307777713581326,
+                }),
+            },
+            Handle {
+                site: 45,
+                target: 45,
+                container: 45,
+                action: Generic(GenericAction {
+                    value: I32(757935405),
+                    bool: true,
+                    key: 4291505453,
+                    pos: 18388247646700638511,
+                    length: 18446744073709507839,
+                    prop: 5570344,
+                }),
+            },
+        ],
+    )
+}
