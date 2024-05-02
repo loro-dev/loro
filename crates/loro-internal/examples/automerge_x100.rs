@@ -30,4 +30,7 @@ fn main() {
     );
     println!("Snapshot size {}", snapshot.len());
     println!("Snapshot size after compression {}", compressed.len());
+    let start = Instant::now();
+    let _doc = LoroDoc::from_snapshot(&snapshot);
+    println!("Snapshot importing time {:?}", start.elapsed());
 }
