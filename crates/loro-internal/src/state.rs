@@ -12,9 +12,7 @@ use tracing::{info, instrument, trace_span};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
-    container::{
-        idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw,
-    },
+    container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
     cursor::Cursor,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
@@ -69,6 +67,14 @@ pub struct DocState {
 
     // diff related stuff
     event_recorder: EventRecorder,
+}
+
+impl std::fmt::Debug for DocState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DocState")
+            .field("peer", &self.peer)
+            .finish()
+    }
 }
 
 #[enum_dispatch]

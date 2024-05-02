@@ -1,6 +1,6 @@
 pub use crate::container::richtext::config::{StyleConfig, StyleConfigMap};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Configure {
     pub(crate) text_style_config: Arc<RwLock<StyleConfigMap>>,
     record_timestamp: Arc<AtomicBool>,
@@ -43,6 +43,7 @@ impl Configure {
     }
 }
 
+#[derive(Debug)]
 pub struct DefaultRandom;
 
 #[cfg(test)]

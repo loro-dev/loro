@@ -91,7 +91,7 @@ fn create_handler(inner: &BasicHandler, id: ContainerID) -> Handler {
 }
 
 /// Flatten attributes that allow overlap
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BasicHandler {
     id: ContainerID,
     arena: SharedArena,

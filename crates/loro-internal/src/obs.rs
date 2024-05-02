@@ -46,6 +46,15 @@ pub struct Observer {
     taken_times: AtomicUsize,
 }
 
+impl std::fmt::Debug for Observer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Observer")
+            .field("next_sub_id", &self.next_sub_id)
+            .field("taken_times", &self.taken_times)
+            .finish()
+    }
+}
+
 impl Observer {
     pub fn new(arena: SharedArena) -> Self {
         Self {

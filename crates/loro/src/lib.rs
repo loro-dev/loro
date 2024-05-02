@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
+#![warn(missing_debug_implementations)]
 use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::change::Timestamp;
@@ -44,6 +45,7 @@ pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
 
 /// `LoroDoc` is the entry for the whole document.
 /// When it's dropped, all the associated [`Handler`]s will be invalidated.
+#[derive(Debug)]
 pub struct LoroDoc {
     doc: InnerLoroDoc,
 }

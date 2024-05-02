@@ -81,6 +81,7 @@ pub use loro_common::ContainerType;
 
 pub use loro_common::ContainerID;
 
+#[derive(Debug)]
 pub enum ContainerIdRaw {
     Root { name: InternalString },
     Normal { id: ID },
