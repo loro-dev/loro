@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -7,18 +9,18 @@ const TERMINATOR: u8 = 128;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct FractionalIndex(Vec<u8>);
+pub struct FractionalIndex(Arc<Vec<u8>>);
 
 impl Default for FractionalIndex {
     fn default() -> Self {
-        FractionalIndex(vec![TERMINATOR])
+        FractionalIndex(Arc::new(vec![TERMINATOR]))
     }
 }
 
 impl FractionalIndex {
     pub fn from_vec_unterminated(mut bytes: Vec<u8>) -> Self {
         bytes.push(TERMINATOR);
-        FractionalIndex(bytes)
+        FractionalIndex(Arc::new(bytes))
     }
 
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, String> {
@@ -28,7 +30,7 @@ impl FractionalIndex {
                 TERMINATOR
             ));
         }
-        Ok(FractionalIndex(bytes))
+        Ok(FractionalIndex(Arc::new(bytes)))
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -41,7 +43,6 @@ impl FractionalIndex {
     }
 }
 
-#[cfg(not(feature = "jitter"))]
 mod impls {
     use crate::*;
     fn new_before(bytes: &[u8]) -> Vec<u8> {

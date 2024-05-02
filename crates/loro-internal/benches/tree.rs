@@ -29,20 +29,6 @@ mod tree {
             );
 
             group.bench_with_input(
-                BenchmarkId::new("create node front", input),
-                &input,
-                |b, i| {
-                    b.iter(|| {
-                        let loro = LoroDoc::new_auto_commit();
-                        let tree = loro.get_tree("tree");
-                        for _ in 0..*i {
-                            tree.create_at(None, 0).unwrap();
-                        }
-                    })
-                },
-            );
-
-            group.bench_with_input(
                 BenchmarkId::new("move node append", input),
                 &input,
                 |b, i| {
@@ -62,31 +48,6 @@ mod tree {
                             let i = rng.gen::<usize>() % SIZE;
                             let j = rng.gen::<usize>() % SIZE;
                             tree.mov(ids[i], ids[j]).unwrap_or_default();
-                        }
-                    })
-                },
-            );
-
-            group.bench_with_input(
-                BenchmarkId::new("move node front", input),
-                &input,
-                |b, i| {
-                    let loro = LoroDoc::new_auto_commit();
-                    let tree = loro.get_tree("tree");
-                    const SIZE: usize = 1000;
-                    let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
-                    let mut ids = vec![];
-                    for _ in 0..SIZE {
-                        let pos = rng.gen::<usize>() % (ids.len() + 1);
-                        ids.push(tree.create_at(None, pos).unwrap());
-                    }
-
-                    b.iter(|| {
-                        for _ in 0..*i {
-                            tree.create_at(None, 0).unwrap();
-                            let i = rng.gen::<usize>() % SIZE;
-                            let j = rng.gen::<usize>() % SIZE;
-                            tree.move_to(ids[i], ids[j], 0).unwrap_or_default();
                         }
                     })
                 },
