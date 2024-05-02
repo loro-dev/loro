@@ -1,6 +1,6 @@
 use loro::{LoroDoc, LoroMap};
 
-pub fn init_sheet() -> LoroDoc {
+pub fn init_large_sheet() -> LoroDoc {
     let doc = LoroDoc::new();
     doc.set_peer_id(0).unwrap();
     let cols = doc.get_list("cols");

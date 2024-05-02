@@ -14,7 +14,7 @@ keywords = ["rope"]
 
 [dependencies]
 arrayvec = "0.7.4"
-generic-btree = { version = "^0.10.4" }
+generic-btree = { version = "^0.10.5" }
 heapless = "0.8.0"
 tracing = "0.1.40"
 enum-as-inner = "0.5.1"
