@@ -211,6 +211,7 @@ name = "fractional_index"
 version = "0.1.0"
 dependencies = [
  "imbl",
+ "rand",
  "serde",
  "smallvec",
 ]
@@ -342,9 +343,9 @@ dependencies = [
 
 [[package]]
 name = "imbl"
-version = "2.0.3"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "978d142c8028edf52095703af2fad11d6f611af1246685725d6b850634647085"
+checksum = "bc3be8d8cd36f33a46b1849f31f837c44d9fa87223baee3b4bd96b8f11df81eb"
 dependencies = [
  "bitmaps 3.2.1",
  "imbl-sized-chunks",
@@ -421,7 +422,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
@@ -433,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
@@ -448,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "loro-delta"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "arrayvec",
  "enum-as-inner 0.5.1",
@@ -459,7 +460,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -495,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "loro-rle"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "append-only-bytes",
  "arref",

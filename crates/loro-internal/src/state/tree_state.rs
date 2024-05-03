@@ -661,6 +661,36 @@ impl TreeState {
         }
     }
 
+    pub(crate) fn tree_nodes(&self) -> Vec<TreeNode> {
+        let mut ans = vec![];
+        let children = self.children.get(&TreeParentId::Root);
+        let mut q = children
+            .map(|x| {
+                VecDeque::from_iter(x.iter().enumerate().zip(std::iter::repeat(None::<TreeID>)))
+            })
+            .unwrap_or_default();
+
+        while let Some(((index, (position, &target)), parent)) = q.pop_front() {
+            ans.push(TreeNode {
+                id: target,
+                parent,
+                position: position.position.clone(),
+                index,
+            });
+            if let Some(children) = self.children.get(&TreeParentId::Node(target)) {
+                q.extend(
+                    children
+                        .iter()
+                        .enumerate()
+                        .map(|(index, (position, this_target))| {
+                            ((index, (position, this_target)), Some(target))
+                        }),
+                );
+            }
+        }
+        ans
+    }
+
     pub fn nodes(&self) -> Vec<TreeID> {
         self.trees
             .keys()
@@ -943,43 +973,11 @@ impl ContainerState for TreeState {
     }
 
     fn get_value(&mut self) -> LoroValue {
-        let mut ans = vec![];
-        let iter = self.trees.keys();
-        for target in iter {
-            if !self.is_node_deleted(target) {
-                let node = self.trees.get(target).unwrap();
-                let mut t = FxHashMap::default();
-                t.insert("id".to_string(), target.id().to_string().into());
-                let p = node
-                    .parent
-                    .as_node()
-                    .map(|p| p.to_string().into())
-                    .unwrap_or(LoroValue::Null);
-                t.insert("parent".to_string(), p);
-                t.insert(
-                    "meta".to_string(),
-                    target.associated_meta_container().into(),
-                );
-                t.insert(
-                    "index".to_string(),
-                    (self.get_index_by_tree_id(target).unwrap() as i64).into(),
-                );
-                t.insert(
-                    "position".to_string(),
-                    node.position.clone().unwrap().to_string().into(),
-                );
-                ans.push(t);
-            }
-        }
-        ans.sort_by_key(|x| {
-            let parent = if let LoroValue::String(p) = x.get("parent").unwrap() {
-                Some(p.clone())
-            } else {
-                None
-            };
-            (parent, *x.get("index").unwrap().as_i64().unwrap())
-        });
-        ans.into()
+        self.tree_nodes()
+            .into_iter()
+            .map(|x| x.into_value())
+            .collect::<Vec<_>>()
+            .into()
     }
 
     /// Get the index of the child container
@@ -1038,6 +1036,32 @@ pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
         let meta = map.get_mut("meta").unwrap();
         let id = meta.as_container().unwrap();
         *meta = state.get_container_deep_value(state.arena.register_container(id));
+    }
+}
+
+pub(crate) struct TreeNode {
+    pub(crate) id: TreeID,
+    pub(crate) parent: Option<TreeID>,
+    pub(crate) position: FractionalIndex,
+    pub(crate) index: usize,
+}
+
+impl TreeNode {
+    fn into_value(self) -> LoroValue {
+        let mut t = FxHashMap::default();
+        t.insert("id".to_string(), self.id.to_string().into());
+        let p = self
+            .parent
+            .map(|p| p.to_string().into())
+            .unwrap_or(LoroValue::Null);
+        t.insert("parent".to_string(), p);
+        t.insert(
+            "meta".to_string(),
+            self.id.associated_meta_container().into(),
+        );
+        t.insert("index".to_string(), (self.index as i64).into());
+        t.insert("position".to_string(), self.position.to_string().into());
+        t.into()
     }
 }
 
