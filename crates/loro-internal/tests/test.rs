@@ -7,7 +7,7 @@ use loro_internal::{
     event::{Diff, EventTriggerKind},
     handler::{Handler, TextDelta, ValueOrHandler},
     version::Frontiers,
-    ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson,
+    ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
 };
 use serde_json::json;
 
@@ -938,4 +938,25 @@ fn insert_attach_container() -> LoroResult<()> {
         })
     );
     Ok(())
+}
+
+#[test]
+fn tree_attach() {
+    let tree = TreeHandler::new_detached();
+    let id = tree.create(None).unwrap();
+    tree.get_meta(id).unwrap().insert("key", "value").unwrap();
+    let doc = LoroDoc::new_auto_commit();
+    doc.get_list("list").insert_container(0, tree).unwrap();
+    let v = doc.get_deep_value();
+    assert_eq!(
+        v.as_map().unwrap().get("list").unwrap().as_list().unwrap()[0]
+            .as_list()
+            .unwrap()[0]
+            .as_map()
+            .unwrap()
+            .get("meta")
+            .unwrap()
+            .to_json_value(),
+        json!({"key":"value"})
+    )
 }

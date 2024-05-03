@@ -124,7 +124,7 @@ impl TreeInner {
                 .unwrap_or(LoroValue::Null);
             loro_map_value.insert("parent".to_string(), parent);
             loro_map_value.insert(
-                "data".to_string(),
+                "meta".to_string(),
                 if deep {
                     map.get_deep_value()
                 } else {
@@ -169,7 +169,7 @@ impl HandlerTrait for TreeHandler {
                     })
                     .unwrap_or_default();
                 while let Some(((idx, target), parent)) = q.pop_front() {
-                    let real_id = tree.create_at(parent, idx)?;
+                    let real_id = tree.create_with_txn(txn, parent, idx)?;
                     let map = t.value.map.get(target).unwrap();
                     map.attach(
                         txn,
