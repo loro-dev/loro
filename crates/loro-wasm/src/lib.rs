@@ -138,6 +138,8 @@ extern "C" {
     pub type JsMapStr;
     #[wasm_bindgen(typescript_type = "'List'")]
     pub type JsListStr;
+    #[wasm_bindgen(typescript_type = "'MovableList'")]
+    pub type JsMovableListStr;
     #[wasm_bindgen(typescript_type = "ImportBlobMetadata")]
     pub type JsImportBlobMetadata;
     #[wasm_bindgen(typescript_type = "Side")]
@@ -2252,8 +2254,8 @@ impl LoroMovableList {
         }
     }
 
-    /// "List"
-    pub fn kind(&self) -> JsListStr {
+    /// "MovableList"
+    pub fn kind(&self) -> JsMovableListStr {
         JsValue::from_str("MovableList").into()
     }
 
