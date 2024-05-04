@@ -112,9 +112,14 @@ impl HasLength for DeleteSpan {
     }
 }
 
+/// Delete span that the initial id is `id_start`.
+///
+/// This span may be reversed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteSpanWithId {
+    /// This is the target id with the smallest counter no matter whether the span is reversed.
     pub id_start: ID,
+    /// The deleted position span
     pub span: DeleteSpan,
 }
 
@@ -171,13 +176,56 @@ impl Mergable for DeleteSpanWithId {
     where
         Self: Sized,
     {
-        self.id_end() == rhs.id_start && self.span.is_mergable(&rhs.span, &())
+        let this = self.span;
+        let other = rhs.span;
+        // merge continuous deletions:
+        // note that the previous deletions will affect the position of the later deletions
+        match (self.span.bidirectional(), rhs.span.bidirectional()) {
+            (true, true) => {
+                (this.pos == other.pos && self.id_start.inc(1) == rhs.id_start)
+                    || (this.pos == other.pos + 1 && self.id_start == rhs.id_start.inc(1))
+            }
+            (true, false) => {
+                if this.pos == other.prev_pos() {
+                    if other.signed_len > 0 {
+                        self.id_start.inc(1) == rhs.id_start
+                    } else {
+                        self.id_start == rhs.id_end()
+                    }
+                } else {
+                    false
+                }
+            }
+            (false, true) => {
+                if this.next_pos() == other.pos {
+                    if this.signed_len > 0 {
+                        self.id_end() == rhs.id_start
+                    } else {
+                        self.id_start == rhs.id_start.inc(1)
+                    }
+                } else {
+                    false
+                }
+            }
+            (false, false) => {
+                if this.next_pos() == other.pos && this.direction() == other.direction() {
+                    if self.span.signed_len > 0 {
+                        self.id_end() == rhs.id_start
+                    } else {
+                        self.id_start == rhs.id_end()
+                    }
+                } else {
+                    false
+                }
+            }
+        }
     }
 
     fn merge(&mut self, rhs: &Self, _conf: &())
     where
         Self: Sized,
     {
+        self.id_start.counter = rhs.id_start.counter.min(self.id_start.counter);
         self.span.merge(&rhs.span, &())
     }
 }
@@ -185,7 +233,27 @@ impl Mergable for DeleteSpanWithId {
 impl Sliceable for DeleteSpanWithId {
     fn slice(&self, from: usize, to: usize) -> Self {
         Self {
-            id_start: self.id_start.inc(from as i32),
+            id_start: if self.span.signed_len > 0 {
+                self.id_start.inc(from as i32)
+            } else {
+                // If the span is reversed, the id_start should be affected by `to`
+                //
+                // Example:
+                //
+                // a b c
+                // - - -  <-- deletions happen backward
+                // 0 1 2  <-- counter of the IDs
+                // ↑
+                // id_start
+                //
+                // If from=1, to=2
+                // a b c
+                // - - -  <-- deletions happen backward
+                // 0 1 2  <-- counter of the IDs
+                //   ↑
+                //   id_start
+                self.id_start.inc((self.atom_len() - to) as i32)
+            },
             span: self.span.slice(from, to),
         }
     }
@@ -553,7 +621,7 @@ impl Sliceable for InnerListOp {
     }
 }
 
-#[cfg(all(test, feature = "test_utils"))]
+#[cfg(test)]
 mod test {
     use loro_common::ID;
     use rle::{Mergable, Sliceable};
@@ -642,5 +710,22 @@ mod test {
         assert_eq!(a.slice(1, 2), DeleteSpan::new(0, -1));
         assert_eq!(a.slice(0, 1).to_range(), 1..2);
         assert_eq!(a.slice(1, 2).to_range(), 0..1);
+    }
+
+    #[test]
+    fn mergeable() {
+        let a = DeleteSpan::new(14852, 1);
+        let mut a_with_id = DeleteSpanWithId {
+            id_start: ID::new(0, 9),
+            span: a,
+        };
+        let b = DeleteSpan::new(14851, 1);
+        let b_with_id = DeleteSpanWithId {
+            id_start: ID::new(0, 8),
+            span: b,
+        };
+        assert!(a_with_id.is_mergable(&b_with_id, &()));
+        a_with_id.merge(&b_with_id, &());
+        assert!(a_with_id.span.signed_len == -2);
     }
 }
