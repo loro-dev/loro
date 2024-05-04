@@ -82,6 +82,16 @@ impl Default for LoroDoc {
     }
 }
 
+impl std::fmt::Debug for LoroDoc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoroDoc")
+            .field("config", &self.config)
+            .field("auto_commit", &self.auto_commit)
+            .field("detached", &self.detached)
+            .finish()
+    }
+}
+
 impl LoroDoc {
     pub fn new() -> Self {
         let oplog = OpLog::new();

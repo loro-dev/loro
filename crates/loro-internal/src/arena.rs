@@ -47,6 +47,7 @@ pub struct SharedArena {
     inner: Arc<InnerSharedArena>,
 }
 
+#[derive(Debug)]
 pub struct StrAllocResult {
     /// unicode start
     pub start: usize,

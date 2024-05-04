@@ -23,7 +23,7 @@ pub enum DeltaItem<Value, Meta> {
     Delete { delete: usize, attributes: Meta },
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Debug, Eq)]
 pub enum DeltaType {
     Retain,
     Insert,
@@ -253,6 +253,7 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
     }
 }
 
+#[derive(Debug)]
 pub struct DeltaIterator<V, M: Meta> {
     // The reversed Vec uses pop() to simulate getting the first element each time
     ops: Vec<DeltaItem<V, M>>,

@@ -5,6 +5,7 @@
 //!
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![warn(rustdoc::broken_intra_doc_links)]
+#![warn(missing_debug_implementations)]
 
 pub mod arena;
 pub mod diff_calc;
