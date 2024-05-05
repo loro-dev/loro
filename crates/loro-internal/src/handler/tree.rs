@@ -637,6 +637,10 @@ impl TreeHandler {
         }
     }
 
+    pub fn roots(&self) -> Vec<TreeID> {
+        self.children(None)
+    }
+
     #[allow(non_snake_case)]
     pub fn __internal__next_tree_id(&self) -> TreeID {
         match &self.inner {
@@ -677,6 +681,16 @@ impl TreeHandler {
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
                 a.get_index_by_tree_id(target)
+            }),
+        }
+    }
+
+    pub fn get_position_by_tree_id(&self, target: &TreeID) -> Option<FractionalIndex> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => unreachable!(),
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.get_position(target)
             }),
         }
     }

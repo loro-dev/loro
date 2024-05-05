@@ -720,6 +720,13 @@ impl TreeState {
         self.children.get(parent).map(|x| x.len())
     }
 
+    pub fn children(&self, parent: &TreeParentId) -> Vec<TreeID> {
+        self.children
+            .get(parent)
+            .map(|x| x.iter().map(|x| *x.1).collect())
+            .unwrap_or_default()
+    }
+
     /// Determine whether the target is the child of the node
     ///
     /// O(1)
@@ -753,6 +760,10 @@ impl TreeState {
                 .or_default()
                 .generate_fi_at(index, target)
         }
+    }
+
+    pub(crate) fn get_position(&self, target: &TreeID) -> Option<FractionalIndex> {
+        self.trees.get(target).and_then(|x| x.position.clone())
     }
 
     pub(crate) fn get_index_by_tree_id(&self, target: &TreeID) -> Option<usize> {

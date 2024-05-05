@@ -82,9 +82,9 @@ export type MapDiff = {
 };
 
 export type TreeDiffItem =
-  | { target: TreeID; action: "create"; parent: TreeID | undefined }
+  | { target: TreeID; action: "create"; parent: TreeID | undefined; index: number; position: string }
   | { target: TreeID; action: "delete" }
-  | { target: TreeID; action: "move"; parent: TreeID | undefined };
+  | { target: TreeID; action: "move"; parent: TreeID | undefined;  index: number; position: string };
 
 export type TreeDiff = {
   type: "tree";

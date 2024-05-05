@@ -21,7 +21,7 @@ use loro_internal::{
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, f32::consts::E, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
 use wasm_bindgen_derive::TryFromJsValue;
 
@@ -93,6 +93,8 @@ extern "C" {
     pub type JsParentTreeID;
     #[wasm_bindgen(typescript_type = "LoroTreeNode | undefined")]
     pub type JsTreeNodeOrUndefined;
+    #[wasm_bindgen(typescript_type = "string | undefined")]
+    pub type JsPositionOrUndefined;
     #[wasm_bindgen(typescript_type = "Delta<string>[]")]
     pub type JsStringDelta;
     #[wasm_bindgen(typescript_type = "Map<PeerID, number>")]
@@ -2755,6 +2757,22 @@ impl LoroTreeNode {
         Ok(index)
     }
 
+    /// Get the `Fractional Index` of the node.
+    #[wasm_bindgen]
+    pub fn position(&self) -> JsResult<JsPositionOrUndefined> {
+        if self.tree.is_attached() {
+            let pos = self.tree.get_position_by_tree_id(&self.id);
+            let ans = if let Some(pos) = pos.map(|x| x.to_string()) {
+                JsValue::from_str(&pos).into()
+            } else {
+                JsValue::UNDEFINED.into()
+            };
+            Ok(ans)
+        } else {
+            Err(JsValue::from_str("Tree is detached"))
+        }
+    }
+
     /// Get the associated metadata map container of a tree node.
     #[wasm_bindgen(getter, skip_typescript)]
     pub fn data(&self) -> JsResult<LoroMap> {
@@ -3003,6 +3021,16 @@ impl LoroTree {
     pub fn nodes(&mut self) -> Vec<LoroTreeNode> {
         self.handler
             .nodes()
+            .into_iter()
+            .map(|n| LoroTreeNode::from_tree(n, self.handler.clone(), self.doc.clone()))
+            .collect()
+    }
+
+    /// Get the root nodes of the forest.
+    #[wasm_bindgen]
+    pub fn roots(&self) -> Vec<LoroTreeNode> {
+        self.handler
+            .roots()
             .into_iter()
             .map(|n| LoroTreeNode::from_tree(n, self.handler.clone(), self.doc.clone()))
             .collect()
