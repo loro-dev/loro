@@ -6,6 +6,7 @@ license = "MIT"
 documentation = "https://docs.rs/loro/"
 description = "Loro is a high-performance CRDTs framework. Make your app collaborative efforlessly."
 homepage = "https://loro.dev"
+repository = "https://github.com/loro-dev/loro/"
 authors = ["Zixuan Chen", "Liang Zhao"]
 categories = ["data-structures", "crdt", "collaborative-editing", "local-first"]
 keywords = ["crdt", "local-first"]
