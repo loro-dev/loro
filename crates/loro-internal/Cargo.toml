@@ -21,7 +21,7 @@ crdt-list = { version = "0.4.0" }
 rand = { version = "0.8.5", optional = true }
 arbitrary = { version = "1", optional = true }
 tabled = { version = "0.10.0", optional = true }
-wasm-bindgen = { version = "=0.2.86", optional = true }
+wasm-bindgen = { version = "=0.2.90", optional = true }
 serde-wasm-bindgen = { version = "0.5.0", optional = true }
 js-sys = { version = "0.3.60", optional = true }
 serde_json = { version = "1" }
@@ -52,7 +52,6 @@ ctor = "0.1.23"
 criterion = "0.4.0"
 flate2 = "1.0.24"
 arbtest = "0.2.0"
-bench-utils = { path = "../bench-utils" }
 
 # See https://matklad.github.io/2021/02/27/delete-cargo-integration-tests.html
 [lib]

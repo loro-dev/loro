@@ -27,5 +27,13 @@
     "https://lra6z45nakk5lnu3yjchp7tftsdnwwikwr65ocha5eojfnlgu4sa.arweave.net/XEHs860CldW2m8JEd_5lnIbbWQq0fdcI4OkckrVmpyQ/path/posix.ts": "7c2539b5d9e22b47f02ccc5b6ef11e3975a5c60f49d2241271eaa5936e6082a0",
     "https://lra6z45nakk5lnu3yjchp7tftsdnwwikwr65ocha5eojfnlgu4sa.arweave.net/XEHs860CldW2m8JEd_5lnIbbWQq0fdcI4OkckrVmpyQ/path/separator.ts": "9dd15d46ff84a16e13554f56af7fee1f85f8d0f379efbbe60ac066a60561f036",
     "https://lra6z45nakk5lnu3yjchp7tftsdnwwikwr65ocha5eojfnlgu4sa.arweave.net/XEHs860CldW2m8JEd_5lnIbbWQq0fdcI4OkckrVmpyQ/path/win32.ts": "47114c941681ecbabab4ec355cb41d525fb5a14175cc47a5c76fdc5eaee2685a"
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:vite-plugin-top-level-await@^1.2.2",
+        "npm:vite-plugin-wasm@^3.1.0"
+      ]
+    }
   }
 }
