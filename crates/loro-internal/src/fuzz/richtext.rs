@@ -88,7 +88,7 @@ impl Actor {
                         let mut txn = text_doc.txn().unwrap();
                         let text_h = text_doc.get_text("text");
                         // println!("diff {:?}", text_diff);
-                        let text_deltas = text_diff.iter().map(TextDelta::from).collect::<Vec<_>>();
+                        let text_deltas = TextDelta::from_text_diff(text_diff.iter());
                         // println!(
                         //     "\n{} before {:?}",
                         //     text_doc.peer_id(),
@@ -482,30 +482,6 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
 
 #[cfg(test)]
 mod failed_tests {
-    static mut GUARD: Option<FlushGuard> = None;
-    #[ctor::ctor]
-    fn init_color_backtrace() {
-        color_backtrace::install();
-        use tracing_chrome::ChromeLayerBuilder;
-        use tracing_subscriber::{prelude::*, registry::Registry};
-        if option_env!("DEBUG").is_some() {
-            let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                .include_args(true)
-                .include_locations(true)
-                .build();
-            // SAFETY: Test
-            unsafe { GUARD = Some(_guard) };
-            tracing::subscriber::set_global_default(
-                Registry::default()
-                    .with(tracing_subscriber::fmt::Layer::default())
-                    .with(chrome_layer),
-            )
-            .unwrap();
-        }
-    }
-
-    use tracing_chrome::FlushGuard;
-
     use super::test_multi_sites;
     use super::Action::*;
     use super::RichTextAction;

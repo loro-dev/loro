@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
@@ -12,17 +10,6 @@ use crate::{
     },
     encoding::OwnedValue,
 };
-
-/// @deprecated
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
-pub enum ContentType {
-    /// See [`crate::container::text::TextContent`]
-    List,
-    /// See [`crate::container::map::MapInsertContent`]
-    Map,
-    /// Users can define their own content types.
-    Custom(u16),
-}
 
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum InnerContent {
@@ -93,6 +80,18 @@ impl<'a> RawOpContent<'a> {
                     info: *info,
                 }),
                 ListOp::StyleEnd => RawOpContent::List(ListOp::StyleEnd),
+                ListOp::Move {
+                    from,
+                    to,
+                    elem_id: from_id,
+                } => RawOpContent::List(ListOp::Move {
+                    from: *from,
+                    to: *to,
+                    elem_id: *from_id,
+                }),
+                ListOp::Set { elem_id, value } => {
+                    RawOpContent::List(ListOp::Set { elem_id: *elem_id, value: value.clone() })
+                }
             },
             Self::Tree(arg0) => RawOpContent::Tree(*arg0),
             Self::Future(f) => RawOpContent::Future(match f {
@@ -102,42 +101,6 @@ impl<'a> RawOpContent<'a> {
                 },
             }),
         }
-    }
-}
-
-/// @deprecated
-pub trait MergeableContent {
-    fn is_mergable_content(&self, other: &dyn InsertContentTrait) -> bool;
-    fn merge_content(&mut self, other: &dyn InsertContentTrait);
-}
-
-/// @deprecated
-pub trait SliceableContent {
-    fn slice_content(&self, from: usize, to: usize) -> Box<dyn InsertContentTrait>;
-}
-
-/// @deprecated
-pub trait CloneContent {
-    fn clone_content(&self) -> Box<dyn InsertContentTrait>;
-}
-
-/// @deprecated
-pub trait InsertContentTrait:
-    HasLength + std::fmt::Debug + Any + MergeableContent + SliceableContent + CloneContent
-{
-    fn id(&self) -> ContentType;
-    // TODO: provide an encoding method
-}
-
-impl<T: Sliceable + InsertContentTrait> SliceableContent for T {
-    fn slice_content(&self, from: usize, to: usize) -> Box<dyn InsertContentTrait> {
-        Box::new(self.slice(from, to))
-    }
-}
-
-impl<T: Clone + InsertContentTrait> CloneContent for T {
-    fn clone_content(&self) -> Box<dyn InsertContentTrait> {
-        Box::new(self.clone())
     }
 }
 

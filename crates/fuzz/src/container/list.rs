@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use loro::{Container, ContainerID, ContainerType, LoroDoc, LoroList};
+use tracing::{debug_span};
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
@@ -23,17 +24,23 @@ pub struct ListActor {
 
 impl ListActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker = MapTracker::empty();
+        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
         tracker.insert(
             "list".to_string(),
-            Value::empty_container(ContainerType::List),
+            Value::empty_container(
+                ContainerType::List,
+                ContainerID::new_root("list", ContainerType::List),
+            ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let list = tracker.clone();
 
+        let peer_id = loro.peer_id();
         loro.subscribe(
             &ContainerID::new_root("list", ContainerType::List),
             Arc::new(move |event| {
+                let s = debug_span!("List event", peer = peer_id);
+                let _g = s.enter();
                 let mut list = list.lock().unwrap();
                 list.apply_diff(event);
             }),

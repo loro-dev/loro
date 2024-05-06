@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
-use loro_internal::delta::{DeltaItem, ResolvedMapDelta};
+use loro_internal::delta::{ResolvedMapDelta};
 use loro_internal::encoding::ImportBlobMetadata;
-use loro_internal::event::Diff;
+use loro_internal::event::{Diff};
 use loro_internal::handler::{Handler, ValueOrHandler};
-use loro_internal::{LoroDoc, LoroValue};
+use loro_internal::{ListDiffItem, LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
 use crate::{
-    frontiers_to_ids, Container, JsContainer, JsImportBlobMetadata, LoroList, LoroMap, LoroText,
-    LoroTree,
+    frontiers_to_ids, Container, JsContainer, JsImportBlobMetadata, LoroList, LoroMap,
+    LoroMovableList, LoroText, LoroTree,
 };
 use wasm_bindgen::__rt::IntoJsResult;
 use wasm_bindgen::convert::RefFromWasmAbi;
@@ -60,6 +60,10 @@ pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
             let obj = unsafe { LoroTree::ref_from_abi(ptr_u32) };
             Container::Tree(obj.clone())
         }
+        "MovableList" => {
+            let obj = unsafe { LoroMovableList::ref_from_abi(ptr_u32) };
+            Container::MovableList(obj.clone())
+        }
         _ => {
             return Err(JsValue::from_str(
                 format!(
@@ -88,9 +92,16 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("list"))
                 .unwrap();
             // set diff as array
-            let arr = Array::new_with_length(list.len() as u32);
-            for (i, v) in list.iter().enumerate() {
-                arr.set(i as u32, delta_item_to_js(v.clone(), doc));
+            let arr = Array::new();
+            let mut i = 0;
+            for v in list.iter() {
+                let (a, b) = delta_item_to_js(v.clone(), doc);
+                arr.set(i as u32, a);
+                i += 1;
+                if let Some(b) = b {
+                    arr.set(i as u32, b);
+                    i += 1;
+                }
             }
             js_sys::Reflect::set(
                 &obj,
@@ -104,7 +115,12 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("text"))
                 .unwrap();
             // set diff as array
-            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &JsValue::from(text)).unwrap();
+            js_sys::Reflect::set(
+                &obj,
+                &JsValue::from_str("diff"),
+                &loro_internal::wasm::text_diff_to_js_value(text),
+            )
+            .unwrap();
         }
         Diff::Map(map) => {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("map"))
@@ -124,45 +140,62 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
     obj.into_js_result().unwrap()
 }
 
-fn delta_item_to_js(item: DeltaItem<Vec<ValueOrHandler>, ()>, doc: &Arc<LoroDoc>) -> JsValue {
-    let obj = Object::new();
+fn delta_item_to_js(item: ListDiffItem, doc: &Arc<LoroDoc>) -> (JsValue, Option<JsValue>) {
     match item {
-        DeltaItem::Retain { retain: len, .. } => {
+        loro_internal::loro_delta::DeltaItem::Retain { len, attr: _ } => {
+            let obj = Object::new();
             js_sys::Reflect::set(
                 &obj,
                 &JsValue::from_str("retain"),
                 &JsValue::from_f64(len as f64),
             )
             .unwrap();
+            (obj.into_js_result().unwrap(), None)
         }
-        DeltaItem::Insert { insert: value, .. } => {
-            let arr = Array::new_with_length(value.len() as u32);
-            for (i, v) in value.into_iter().enumerate() {
-                let value = match v {
-                    ValueOrHandler::Value(v) => convert(v),
-                    ValueOrHandler::Handler(h) => handler_to_js_value(h, Some(doc.clone())),
-                };
-                arr.set(i as u32, value);
+        loro_internal::loro_delta::DeltaItem::Replace {
+            value,
+            attr: _,
+            delete,
+        } => {
+            let mut a = None;
+            let mut b: Option<JsValue> = None;
+            if value.len() > 0 {
+                let obj = Object::new();
+                let arr = Array::new_with_length(value.len() as u32);
+                for (i, v) in value.into_iter().enumerate() {
+                    let value = match v {
+                        ValueOrHandler::Value(v) => convert(v),
+                        ValueOrHandler::Handler(h) => handler_to_js_value(h, Some(doc.clone())),
+                    };
+                    arr.set(i as u32, value);
+                }
+
+                js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_str("insert"),
+                    &arr.into_js_result().unwrap(),
+                )
+                .unwrap();
+                a = Some(obj.into_js_result().unwrap());
+            }
+            if delete > 0 {
+                let obj = Object::new();
+                js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_str("delete"),
+                    &JsValue::from_f64(delete as f64),
+                )
+                .unwrap();
+                b = Some(obj.into_js_result().unwrap());
             }
 
-            js_sys::Reflect::set(
-                &obj,
-                &JsValue::from_str("insert"),
-                &arr.into_js_result().unwrap(),
-            )
-            .unwrap();
-        }
-        DeltaItem::Delete { delete: len, .. } => {
-            js_sys::Reflect::set(
-                &obj,
-                &JsValue::from_str("delete"),
-                &JsValue::from_f64(len as f64),
-            )
-            .unwrap();
+            if a.is_none() {
+                a = std::mem::take(&mut b);
+            }
+
+            (a.unwrap(), b)
         }
     }
-
-    obj.into_js_result().unwrap()
 }
 
 pub fn convert(value: LoroValue) -> JsValue {
@@ -255,5 +288,6 @@ pub(crate) fn handler_to_js_value(handler: Handler, doc: Option<Arc<LoroDoc>>) -
         Handler::Map(m) => LoroMap { handler: m, doc }.into(),
         Handler::List(l) => LoroList { handler: l, doc }.into(),
         Handler::Tree(t) => LoroTree { handler: t, doc }.into(),
+        Handler::MovableList(m) => LoroMovableList { handler: m, doc }.into(),
     }
 }

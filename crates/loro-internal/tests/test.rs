@@ -119,6 +119,7 @@ fn event_from_checkout() {
 fn handler_in_event() {
     let doc = LoroDoc::new_auto_commit();
     doc.subscribe_root(Arc::new(|e| {
+        dbg!(&e);
         let value = e.events[0]
             .diff
             .as_list()
@@ -126,7 +127,7 @@ fn handler_in_event() {
             .iter()
             .next()
             .unwrap()
-            .as_insert()
+            .as_replace()
             .unwrap()
             .0
             .iter()
@@ -824,6 +825,11 @@ fn state_may_deadlock_when_import() {
     })
 }
 
+#[ctor::ctor]
+fn init() {
+    dev_utils::setup_test_log();
+}
+
 #[test]
 fn missing_event_when_checkout() {
     let doc = LoroDoc::new_auto_commit();
@@ -886,4 +892,50 @@ fn empty_event() {
     }));
     doc.import(&doc.export_snapshot()).unwrap();
     assert!(!fire.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+#[test]
+fn insert_attach_container() -> LoroResult<()> {
+    let doc = LoroDoc::new_auto_commit();
+    let list = doc.get_list("list");
+    list.insert_container(0, MapHandler::new_detached())?
+        .insert("key", 1)?;
+    list.insert_container(1, MapHandler::new_detached())?
+        .insert("key", 2)?;
+    let elem = list.insert_container(2, MapHandler::new_detached())?;
+    elem.insert("key", 3)?;
+    let new_map = list.insert_container(0, elem)?;
+    assert_eq!(new_map.get_value().to_json_value(), json!({"key": 3}));
+    list.delete(3, 1)?;
+
+    let elem = list.insert_container(0, TextHandler::new_detached())?;
+    elem.insert(0, "abc")?;
+    elem.mark(0, 2, "bold", true.into())?;
+    let new_text = list.insert_container(0, elem)?;
+    assert_eq!(
+        new_text.get_richtext_value().to_json_value(),
+        json!([{"insert":"ab", "attributes": {"bold": true}}, {"insert":"c"}])
+    );
+
+    let elem = list.insert_container(0, ListHandler::new_detached())?;
+    elem.insert(0, "list")?;
+    let new_list = list.insert_container(0, elem)?;
+    new_list.insert(0, "new_list")?;
+    assert_eq!(
+        new_list.get_value().to_json_value(),
+        json!(["new_list", "list"])
+    );
+
+    // let elem = list.insert_container(2, TreeHandler::new_detached())?;
+    // let p = elem.create(None)?;
+    // elem.create(p)?;
+    // list.insert_container(0, elem)?;
+
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [["new_list", "list"], ["list"],"abc", "abc", {"key": 3}, {"key": 1}, {"key": 2}]
+        })
+    );
+    Ok(())
 }

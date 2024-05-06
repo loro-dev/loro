@@ -10,6 +10,7 @@ use tracing::span;
 
 pub mod draw;
 pub mod json;
+pub mod list;
 pub mod sheet;
 pub mod test_preload {
     pub use bench_utils::json::JsonAction::*;

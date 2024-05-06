@@ -25,10 +25,13 @@ pub mod idx {
 
     impl std::fmt::Debug for ContainerIdx {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_tuple("ContainerIdx")
-                .field(&self.get_type())
-                .field(&self.to_index())
-                .finish()
+            write!(f, "ContainerIdx({} {})", self.get_type(), self.to_index())
+        }
+    }
+
+    impl std::fmt::Display for ContainerIdx {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "ContainerIdx({} {})", self.get_type(), self.to_index())
         }
     }
 
@@ -43,6 +46,7 @@ pub mod idx {
                 1 => ContainerType::List,
                 2 => ContainerType::Text,
                 3 => ContainerType::Tree,
+                4 => ContainerType::MovableList,
                 a if self.is_unknown() => ContainerType::Unknown((a << 1 >> 28) as u8),
                 _ => unreachable!(),
             }
@@ -59,6 +63,7 @@ pub mod idx {
                 ContainerType::List => 1,
                 ContainerType::Text => 2,
                 ContainerType::Tree => 3,
+                ContainerType::MovableList => 4,
                 ContainerType::Unknown(c) => (0b10000 | c) as u32,
             } << 27;
 
@@ -82,6 +87,7 @@ pub use loro_common::ContainerType;
 
 pub use loro_common::ContainerID;
 
+#[derive(Debug)]
 pub enum ContainerIdRaw {
     Root { name: InternalString },
     Normal { id: ID },
@@ -208,11 +214,5 @@ mod test {
         assert_eq!(s, "cid:root-kkk:Text");
         let actual = ContainerID::try_from(s.as_str()).unwrap();
         assert_eq!(actual, container_id);
-    }
-
-    #[test]
-    fn unknown() {
-        let idx = ContainerIdx::from_index_and_type(1, ContainerType::Unknown(1));
-        println!("idx {:?}", idx);
     }
 }

@@ -1,12 +1,16 @@
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHasher64;
 use itertools::Itertools;
+use loro_delta::{array_vec::ArrayVec, delta_trait::DeltaAttr, DeltaItem, DeltaRope};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
-    delta::{Delta, MapDelta, ResolvedMapDelta, StyleMeta, TreeDelta, TreeDiff},
+    delta::{
+        Delta, MapDelta, Meta, MovableListInnerDelta, ResolvedMapDelta, StyleMeta, TreeDelta,
+        TreeDiff,
+    },
     handler::ValueOrHandler,
     op::{OpWithId, SliceRanges},
     utils::string_slice::StringSlice,
@@ -31,7 +35,7 @@ pub struct ContainerDiff {
     pub diff: Diff,
 }
 
-///
+/// The kind of the event trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventTriggerKind {
     /// The event is triggered by a local transaction.
@@ -108,11 +112,13 @@ pub(crate) struct InternalContainerDiff {
     // If true, this event is created by the container which was resurrected by another container
     pub(crate) bring_back: bool,
     pub(crate) is_container_deleted: bool,
-    pub(crate) diff: Option<DiffVariant>,
+    pub(crate) diff: DiffVariant,
 }
 
-#[derive(Debug, Clone, EnumAsInner)]
+#[derive(Default, Debug, Clone, EnumAsInner)]
 pub(crate) enum DiffVariant {
+    #[default]
+    None,
     Internal(InternalDiff),
     External(Diff),
 }
@@ -127,6 +133,7 @@ pub(crate) enum DiffVariant {
 pub(crate) struct InternalDocDiff<'a> {
     pub(crate) origin: InternalString,
     pub(crate) by: EventTriggerKind,
+    /// The values inside this array is in random order
     pub(crate) diff: Cow<'a, [InternalContainerDiff]>,
     pub(crate) new_version: Cow<'a, Frontiers>,
 }
@@ -148,11 +155,21 @@ impl<'a> InternalDocDiff<'a> {
 
 pub type Path = SmallVec<[Index; 4]>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, enum_as_inner::EnumAsInner)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, enum_as_inner::EnumAsInner)]
 pub enum Index {
     Key(InternalString),
     Seq(usize),
     Node(TreeID),
+}
+
+impl std::fmt::Debug for Index {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Key(arg0) => write!(f, "Index::Key(\"{}\")", arg0),
+            Self::Seq(arg0) => write!(f, "Index::Seq({})", arg0),
+            Self::Node(arg0) => write!(f, "Index::Node({})", arg0),
+        }
+    }
 }
 
 impl std::fmt::Display for Index {
@@ -209,6 +226,7 @@ pub(crate) enum InternalDiff {
     RichtextRaw(Delta<RichtextStateChunk>),
     Map(MapDelta),
     Tree(TreeDelta),
+    MovableList(MovableListInnerDelta),
     Unknown(Vec<OpWithId>),
 }
 
@@ -217,6 +235,61 @@ impl From<InternalDiff> for DiffVariant {
         DiffVariant::Internal(diff)
     }
 }
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ListDeltaMeta {
+    /// Whether the content of the insert is moved from
+    /// a deletion in the same delta and **the value is not changed**.
+    ///
+    /// If true, this op must be a move op under the hood.
+    /// But an insert created by a move op doesn't necessarily
+    /// have this flag, because the insert content may not
+    /// be moved from a deletion in the same delta.
+    pub from_move: bool,
+}
+
+impl Meta for ListDeltaMeta {
+    fn is_empty(&self) -> bool {
+        !self.from_move
+    }
+
+    fn compose(
+        &mut self,
+        other: &Self,
+        type_pair: (crate::delta::DeltaType, crate::delta::DeltaType),
+    ) {
+        // We can't have two Some because we don't have `move_from` for Retain.
+        // And this function is only called when composing a insert/retain with a retain.
+        if let (crate::delta::DeltaType::Insert, crate::delta::DeltaType::Insert) = type_pair {
+            unreachable!()
+        }
+
+        self.from_move = self.from_move || other.from_move;
+    }
+
+    fn is_mergeable(&self, other: &Self) -> bool {
+        self.from_move == other.from_move
+    }
+
+    fn merge(&mut self, _other: &Self) {}
+}
+
+impl DeltaAttr for ListDeltaMeta {
+    fn compose(&mut self, other: &Self) {
+        self.from_move = self.from_move || other.from_move;
+    }
+
+    fn attr_is_empty(&self) -> bool {
+        !self.from_move
+    }
+}
+
+pub type ListDiffInsertItem = ArrayVec<ValueOrHandler, 8>;
+pub type ListDiffItem = DeltaItem<ListDiffInsertItem, ListDeltaMeta>;
+pub type ListDiff = DeltaRope<ListDiffInsertItem, ListDeltaMeta>;
+
+pub type TextDiffItem = DeltaItem<StringSlice, StyleMeta>;
+pub type TextDiff = DeltaRope<StringSlice, StyleMeta>;
 
 /// Diff is the diff between two versions of a container.
 /// It's used to describe the change of a container and the events.
@@ -230,12 +303,12 @@ impl From<InternalDiff> for DiffVariant {
 #[non_exhaustive]
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum Diff {
-    List(Delta<Vec<ValueOrHandler>>),
+    List(ListDiff),
     // TODO: refactor, doesn't make much sense to use `StyleMeta` here, because sometime style
     // don't have peer and lamport info
     /// - When feature `wasm` is enabled, it should use utf16 indexes.
     /// - When feature `wasm` is disabled, it should use unicode indexes.
-    Text(Delta<StringSlice, StyleMeta>),
+    Text(TextDiff),
     Map(ResolvedMapDelta),
     Tree(TreeDiff),
 }
@@ -253,6 +326,7 @@ impl InternalDiff {
             InternalDiff::RichtextRaw(t) => t.is_empty(),
             InternalDiff::Map(m) => m.updated.is_empty(),
             InternalDiff::Tree(t) => t.is_empty(),
+            InternalDiff::MovableList(t) => t.is_empty(),
             InternalDiff::Unknown(v) => v.is_empty(),
         }
     }
@@ -277,8 +351,14 @@ impl Diff {
     pub(crate) fn compose(self, diff: Diff) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {
-            (Diff::List(a), Diff::List(b)) => Ok(Diff::List(a.compose(b))),
-            (Diff::Text(a), Diff::Text(b)) => Ok(Diff::Text(a.compose(b))),
+            (Diff::List(mut a), Diff::List(b)) => {
+                a.compose(&b);
+                Ok(Diff::List(a))
+            }
+            (Diff::Text(mut a), Diff::Text(b)) => {
+                a.compose(&b);
+                Ok(Diff::Text(a))
+            }
             (Diff::Map(a), Diff::Map(b)) => Ok(Diff::Map(a.compose(b))),
 
             (Diff::Tree(a), Diff::Tree(b)) => Ok(Diff::Tree(a.compose(b))),
@@ -286,6 +366,7 @@ impl Diff {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn is_empty(&self) -> bool {
         match self {
             Diff::List(s) => s.is_empty(),
@@ -295,10 +376,17 @@ impl Diff {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn concat(self, diff: Diff) -> Diff {
         match (self, diff) {
-            (Diff::List(a), Diff::List(b)) => Diff::List(a.compose(b)),
-            (Diff::Text(a), Diff::Text(b)) => Diff::Text(a.compose(b)),
+            (Diff::List(mut a), Diff::List(b)) => {
+                a.compose(&b);
+                Diff::List(a)
+            }
+            (Diff::Text(mut a), Diff::Text(b)) => {
+                a.compose(&b);
+                Diff::Text(a)
+            }
             (Diff::Map(a), Diff::Map(b)) => {
                 let mut a = a;
                 for (k, v) in b.updated {

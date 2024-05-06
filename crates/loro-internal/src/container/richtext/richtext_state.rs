@@ -1,7 +1,7 @@
 use append_only_bytes::BytesSlice;
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{
-    rle::{HasLength, Mergeable, Sliceable},
+    rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, Cursor,
 };
 use loro_common::{Counter, IdFull, IdLpSpan, IdSpan, Lamport, LoroValue, ID};
@@ -15,13 +15,12 @@ use std::{
     str::Utf8Error,
     sync::Arc,
 };
+use tracing::instrument;
 
 use crate::{
-    container::richtext::{
-        query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex},
-        style_range_map::EMPTY_STYLES,
-    },
+    container::richtext::style_range_map::EMPTY_STYLES,
     delta::{DeltaValue, StyleMeta},
+    utils::query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex, QueryByLen},
 };
 
 use self::{
@@ -33,7 +32,6 @@ use self::{
 };
 
 use super::{
-    query_by_len::{IndexQuery, QueryByLen},
     style_range_map::{IterAnchorItem, StyleRangeMap, Styles},
     AnchorType, RichtextSpan, StyleOp,
 };
@@ -235,7 +233,7 @@ mod text_chunk {
         }
 
         fn check(&self) {
-            if cfg!(debug_assertions) {
+            if cfg!(any(debug_assertions, test)) {
                 assert_eq!(self.unicode_len, self.as_str().chars().count() as i32);
                 assert_eq!(
                     self.utf16_len,
@@ -246,7 +244,7 @@ mod text_chunk {
 
         pub(crate) fn entity_range_to_event_range(&self, range: Range<usize>) -> Range<usize> {
             if cfg!(feature = "wasm") {
-                assert!(range.start < range.end);
+                assert!(range.start <= range.end);
                 if range.start == 0 && range.end == self.unicode_len as usize {
                     return 0..self.utf16_len as usize;
                 }
@@ -555,6 +553,21 @@ impl Sliceable for RichtextStateChunk {
     }
 }
 
+impl TryInsert for RichtextStateChunk {
+    fn try_insert(&mut self, _pos: usize, elem: Self) -> Result<(), Self>
+    where
+        Self: Sized,
+    {
+        Err(elem)
+    }
+}
+
+impl CanRemove for RichtextStateChunk {
+    fn can_remove(&self) -> bool {
+        self.rle_len() == 0
+    }
+}
+
 pub(crate) fn unicode_to_utf8_index(s: &str, unicode_index: usize) -> Option<usize> {
     let mut current_unicode_index = 0;
     for (byte_index, _) in s.char_indices() {
@@ -660,7 +673,7 @@ pub(crate) struct PosCache {
     pub(super) unicode_len: i32,
     pub(super) bytes: i32,
     pub(super) utf16_len: i32,
-    pub(super) entity_len: i32,
+    pub(crate) entity_len: i32,
 }
 
 impl PosCache {
@@ -719,8 +732,15 @@ impl Sub for PosCache {
     }
 }
 
+impl CanRemove for PosCache {
+    fn can_remove(&self) -> bool {
+        self.bytes == 0
+    }
+}
+
 pub(crate) struct RichtextTreeTrait;
 
+#[derive(Debug)]
 pub(crate) struct EntityRangeInfo {
     pub id_start: ID,
     pub entity_start: usize,
@@ -801,6 +821,8 @@ impl BTreeTrait for RichtextTreeTrait {
 
 // This query implementation will prefer right element when both left element and right element are valid.
 mod query {
+    use crate::utils::query_by_len::{IndexQuery, QueryByLen};
+
     use super::*;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1116,7 +1138,6 @@ mod cursor_cache {
                 let offset = pos - c.pos;
                 let leaf = tree.get_leaf(c.leaf.into());
                 let s = leaf.elem().as_str()?;
-
                 let Some(offset) = pos_to_unicode_index(s, offset, pos_type) else {
                     continue;
                 };
@@ -1134,6 +1155,7 @@ mod cursor_cache {
             None
         }
 
+        #[allow(unused)]
         pub fn diagnose() {
             let hit = CACHE_HIT.load(std::sync::atomic::Ordering::Relaxed);
             let miss = CACHE_MISS.load(std::sync::atomic::Ordering::Relaxed);
@@ -1497,7 +1519,7 @@ impl RichtextState {
 
         // Find the start and the end of the range, and entity index of left cursor
         let (left, right, mut entity_index) = if pos == 0 {
-            let left = self.tree.start_cursor();
+            let left = self.tree.start_cursor().unwrap();
             let mut right = left;
             let mut elem = self.tree.get_elem(right.leaf).unwrap();
             let entity_index = 0;
@@ -1537,7 +1559,7 @@ impl RichtextState {
 
             match self.tree.next_elem(q.cursor) {
                 // If next is None, we know the range is empty, return directly
-                None => return (Some(self.tree.end_cursor()), entity_index),
+                None => return (self.tree.end_cursor(), entity_index),
                 Some(x) => {
                     assert_eq!(right.offset, elem.rle_len());
                     right = x;
@@ -1595,7 +1617,7 @@ impl RichtextState {
 
             iter = match self.tree.next_elem(iter) {
                 Some(x) => x,
-                None => self.tree.end_cursor(),
+                None => self.tree.end_cursor().unwrap(),
             };
             entity_index += 1;
         }
@@ -1643,7 +1665,7 @@ impl RichtextState {
             return Vec::new();
         }
 
-        if pos == self.len(pos_type) {
+        if pos + len > self.len(pos_type) {
             return Vec::new();
         }
 
@@ -1719,6 +1741,7 @@ impl RichtextState {
     // PERF: can be splitted into two methods. One is without cursor_to_event_index
     // PERF: can be speed up a lot by detecting whether the range is in a single leaf first
     /// This is used to accept changes from DiffCalculator
+    #[instrument(skip(self, f))]
     pub(crate) fn drain_by_entity_index(
         &mut self,
         pos: usize,
@@ -1881,6 +1904,10 @@ impl RichtextState {
 
     #[allow(unused)]
     pub(crate) fn check(&self) {
+        if !cfg!(any(debug_assertions, test)) {
+            return;
+        }
+
         self.tree.check();
         self.check_consistency_between_content_and_style_ranges();
         self.check_style_anchors_appear_in_pairs();
@@ -2093,7 +2120,7 @@ impl RichtextState {
 
     /// Allow StyleAnchors to appear in pairs, so that there won't be unmatched single StyleAnchors.
     pub(crate) fn check_style_anchors_appear_in_pairs(&self) {
-        if !cfg!(debug_assertions) {
+        if !cfg!(any(debug_assertions, test)) {
             return;
         }
 

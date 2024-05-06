@@ -3,11 +3,12 @@ use std::ops::{Deref, DerefMut};
 
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
-use loro::ID;
 use loro::{
     event::{Diff, DiffEvent, ListDiffItem},
     ContainerType, Index, LoroDoc, LoroText, LoroValue, TreeExternalDiff, TreeID, ValueOrContainer,
 };
+use loro::{ContainerID, ID};
+
 #[derive(Debug, EnumAsInner)]
 pub enum Value {
     Value(LoroValue),
@@ -15,16 +16,15 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn empty_container(ty: ContainerType) -> Self {
+    pub fn empty_container(ty: ContainerType, id: ContainerID) -> Self {
         match ty {
-            ContainerType::Map => Value::Container(ContainerTracker::Map(MapTracker::empty())),
-            ContainerType::List => {
-                Value::Container(ContainerTracker::List(ListTracker(Vec::new())))
+            ContainerType::Map => Value::Container(ContainerTracker::Map(MapTracker::empty(id))),
+            ContainerType::List => Value::Container(ContainerTracker::List(ListTracker::empty(id))),
+            ContainerType::MovableList => {
+                Value::Container(ContainerTracker::MovableList(MovableListTracker::empty(id)))
             }
-            ContainerType::Text => Value::Container(ContainerTracker::Text(TextTracker::empty())),
-            ContainerType::Tree => {
-                Value::Container(ContainerTracker::Tree(TreeTracker(Vec::new())))
-            }
+            ContainerType::Text => Value::Container(ContainerTracker::Text(TextTracker::empty(id))),
+            ContainerType::Tree => Value::Container(ContainerTracker::Tree(TreeTracker::empty(id))),
             ContainerType::Unknown(_) => unreachable!(),
         }
     }
@@ -46,6 +46,7 @@ impl From<ContainerTracker> for Value {
 pub enum ContainerTracker {
     Map(MapTracker),
     List(ListTracker),
+    MovableList(MovableListTracker),
     Text(TextTracker),
     Tree(TreeTracker),
 }
@@ -55,30 +56,52 @@ impl ContainerTracker {
         match self {
             ContainerTracker::Map(map) => map.to_value(),
             ContainerTracker::List(list) => list.to_value(),
+            ContainerTracker::MovableList(list) => list.to_value(),
             ContainerTracker::Text(text) => text.to_value(),
             ContainerTracker::Tree(tree) => tree.to_value(),
+        }
+    }
+
+    pub fn id(&self) -> &ContainerID {
+        match self {
+            ContainerTracker::Map(map) => map.id(),
+            ContainerTracker::List(list) => list.id(),
+            ContainerTracker::MovableList(list) => list.id(),
+            ContainerTracker::Text(text) => text.id(),
+            ContainerTracker::Tree(tree) => tree.id(),
         }
     }
 }
 
 #[derive(Debug)]
-pub struct MapTracker(FxHashMap<String, Value>);
+pub struct MapTracker {
+    id: ContainerID,
+    map: FxHashMap<String, Value>,
+}
 impl Deref for MapTracker {
     type Target = FxHashMap<String, Value>;
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.map
     }
 }
 impl DerefMut for MapTracker {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.map
     }
 }
 
 impl ApplyDiff for MapTracker {
-    fn empty() -> Self {
-        MapTracker(FxHashMap::default())
+    fn empty(id: ContainerID) -> Self {
+        MapTracker {
+            map: Default::default(),
+            id,
+        }
     }
+
+    fn id(&self) -> &ContainerID {
+        &self.id
+    }
+
     fn apply_diff(&mut self, diff: Diff) {
         let diff = diff.as_map().unwrap();
         for (k, v) in diff.updated.iter() {
@@ -88,7 +111,7 @@ impl ApplyDiff for MapTracker {
                         self.insert(k.to_string(), v.clone().into());
                     }
                     ValueOrContainer::Container(c) => {
-                        self.insert(k.to_string(), Value::empty_container(c.get_type()));
+                        self.insert(k.to_string(), Value::empty_container(c.get_type(), c.id()));
                     }
                 }
             } else {
@@ -113,22 +136,32 @@ impl ApplyDiff for MapTracker {
     }
 }
 #[derive(Debug)]
-pub struct ListTracker(Vec<Value>);
+pub struct ListTracker {
+    id: ContainerID,
+    list: Vec<Value>,
+}
 impl Deref for ListTracker {
     type Target = Vec<Value>;
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.list
     }
 }
 impl DerefMut for ListTracker {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.list
     }
 }
 
 impl ApplyDiff for ListTracker {
-    fn empty() -> Self {
-        ListTracker(Vec::new())
+    fn empty(id: ContainerID) -> Self {
+        Self {
+            list: Vec::new(),
+            id,
+        }
+    }
+
+    fn id(&self) -> &ContainerID {
+        &self.id
     }
 
     fn apply_diff(&mut self, diff: Diff) {
@@ -139,10 +172,12 @@ impl ApplyDiff for ListTracker {
                 ListDiffItem::Retain { retain: len } => {
                     index += len;
                 }
-                ListDiffItem::Insert { insert: value } => {
+                ListDiffItem::Insert { insert: value, .. } => {
                     for v in value {
                         let value = match v {
-                            ValueOrContainer::Container(c) => Value::empty_container(c.get_type()),
+                            ValueOrContainer::Container(c) => {
+                                Value::empty_container(c.get_type(), c.id())
+                            }
                             ValueOrContainer::Value(v) => Value::Value(v.clone()),
                         };
                         self.insert(index, value);
@@ -167,8 +202,103 @@ impl ApplyDiff for ListTracker {
     }
 }
 
+#[derive(Debug)]
+pub struct MovableListTracker {
+    list: Vec<Value>,
+    id: ContainerID,
+}
+
+impl Deref for MovableListTracker {
+    type Target = Vec<Value>;
+    fn deref(&self) -> &Self::Target {
+        &self.list
+    }
+}
+impl DerefMut for MovableListTracker {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.list
+    }
+}
+
+impl ApplyDiff for MovableListTracker {
+    fn empty(id: ContainerID) -> Self {
+        Self {
+            list: Vec::new(),
+            id,
+        }
+    }
+
+    fn id(&self) -> &ContainerID {
+        &self.id
+    }
+
+    fn apply_diff(&mut self, diff: Diff) {
+        let diff = diff.as_list().unwrap();
+        let mut index = 0;
+        let mut maybe_from_move = FxHashMap::default();
+        let mut id_to_container = FxHashMap::default();
+        for item in diff.iter() {
+            match item {
+                ListDiffItem::Retain { retain: len } => {
+                    index += len;
+                }
+                ListDiffItem::Insert {
+                    insert: value,
+                    is_move,
+                } => {
+                    for v in value {
+                        let value = match v {
+                            ValueOrContainer::Container(c) => {
+                                if let Some(c) = id_to_container.remove(&c.id()) {
+                                    Value::Container(c)
+                                } else {
+                                    if *is_move {
+                                        maybe_from_move.insert(c.id().clone(), index);
+                                    }
+                                    Value::empty_container(c.get_type(), c.id())
+                                }
+                            }
+                            ValueOrContainer::Value(v) => Value::Value(v.clone()),
+                        };
+                        self.insert(index, value);
+                        index += 1;
+                    }
+                }
+                ListDiffItem::Delete { delete: len } => {
+                    for v in self.drain(index..index + *len) {
+                        if let Value::Container(c) = v {
+                            let id = c.id().clone();
+                            id_to_container.insert(id, c);
+                        }
+                    }
+                }
+            }
+        }
+
+        for (id, index) in maybe_from_move {
+            if let Some(old) = id_to_container.remove(&id) {
+                self.list[index] = Value::Container(old);
+            } else {
+                // It may happen that the container is moved and also the value changed
+                // thus the container is not in the id_to_container map
+            }
+        }
+    }
+
+    fn to_value(&self) -> LoroValue {
+        self.iter()
+            .map(|v| match v {
+                Value::Container(c) => c.to_value(),
+                Value::Value(v) => v.clone(),
+            })
+            .collect::<Vec<_>>()
+            .into()
+    }
+}
+
 pub struct TextTracker {
     _doc: LoroDoc,
+    id: ContainerID,
     pub text: LoroText,
 }
 
@@ -181,10 +311,18 @@ impl Debug for TextTracker {
 }
 
 impl ApplyDiff for TextTracker {
-    fn empty() -> Self {
+    fn empty(id: ContainerID) -> Self {
         let doc = LoroDoc::new();
         let text = doc.get_text("text");
-        TextTracker { _doc: doc, text }
+        TextTracker {
+            _doc: doc,
+            text,
+            id,
+        }
+    }
+
+    fn id(&self) -> &ContainerID {
+        &self.id
     }
 
     fn apply_diff(&mut self, diff: Diff) {
@@ -197,11 +335,21 @@ impl ApplyDiff for TextTracker {
     }
 }
 #[derive(Debug)]
-pub struct TreeTracker(Vec<TreeNode>);
+pub struct TreeTracker {
+    id: ContainerID,
+    tree: Vec<TreeNode>,
+}
 
 impl ApplyDiff for TreeTracker {
-    fn empty() -> Self {
-        TreeTracker(Vec::new())
+    fn empty(id: ContainerID) -> Self {
+        TreeTracker {
+            tree: Vec::new(),
+            id,
+        }
+    }
+
+    fn id(&self) -> &ContainerID {
+        &self.id
     }
 
     fn apply_diff(&mut self, diff: Diff) {
@@ -214,7 +362,15 @@ impl ApplyDiff for TreeTracker {
                     self.push(node);
                 }
                 TreeExternalDiff::Delete => {
-                    self.retain(|node| node.id != target && node.parent != Some(target));
+                    let mut s = vec![target];
+                    while let Some(target) = s.pop() {
+                        self.retain(|node| node.id != target);
+                        let children = self
+                            .iter()
+                            .filter(|node| node.parent == Some(target))
+                            .map(|x| x.id);
+                        s.extend(children);
+                    }
                 }
                 TreeExternalDiff::Move(parent) => {
                     let node = self.iter_mut().find(|node| node.id == target).unwrap();
@@ -258,12 +414,12 @@ impl ApplyDiff for TreeTracker {
 impl Deref for TreeTracker {
     type Target = Vec<TreeNode>;
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.tree
     }
 }
 impl DerefMut for TreeTracker {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.tree
     }
 }
 
@@ -278,7 +434,10 @@ impl TreeNode {
     pub fn new(id: TreeID, parent: Option<TreeID>) -> Self {
         TreeNode {
             id,
-            meta: ContainerTracker::Map(MapTracker::empty()),
+            meta: ContainerTracker::Map(MapTracker::empty(ContainerID::new_normal(
+                ID::new(id.peer, id.counter),
+                ContainerType::Map,
+            ))),
             parent,
         }
     }
@@ -310,13 +469,19 @@ impl ContainerTracker {
                             .meta
                     }
                     Index::Seq(idx) => {
-                        value = value
-                            .as_list_mut()
-                            .unwrap()
-                            .get_mut(*idx)
-                            .unwrap()
-                            .as_container_mut()
-                            .unwrap()
+                        value = match value {
+                            ContainerTracker::List(l) => {
+                                l.get_mut(*idx).unwrap().as_container_mut().unwrap()
+                            }
+                            ContainerTracker::MovableList(l) => {
+                                let item = l.get_mut(*idx).unwrap();
+
+                                item.as_container_mut().unwrap()
+                            }
+                            _ => {
+                                unreachable!()
+                            }
+                        }
                     }
                 }
             }
@@ -328,6 +493,9 @@ impl ContainerTracker {
                 }
                 ContainerType::List => {
                     value.as_list_mut().unwrap().apply_diff(diff);
+                }
+                ContainerType::MovableList => {
+                    value.as_movable_list_mut().unwrap().apply_diff(diff);
                 }
                 ContainerType::Text => {
                     value.as_text_mut().unwrap().apply_diff(diff);
@@ -342,7 +510,8 @@ impl ContainerTracker {
 }
 
 pub trait ApplyDiff {
-    fn empty() -> Self;
+    fn empty(id: ContainerID) -> Self;
+    fn id(&self) -> &ContainerID;
     fn apply_diff(&mut self, diff: Diff);
     fn to_value(&self) -> LoroValue;
 }

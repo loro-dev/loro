@@ -208,6 +208,23 @@ declare module "loro-wasm" {
       name: Key,
     ): T[Key] extends LoroList ? T[Key] : LoroList;
     /**
+     * Get a LoroMovableList by container id
+     *
+     * The object returned is a new js object each time because it need to cross
+     * the WASM boundary.
+     *
+     * @example
+     * ```ts
+     * import { Loro } from "loro-crdt";
+     *
+     * const doc = new Loro();
+     * const list = doc.getList("list");
+     * ```
+     */
+    getMovableList<Key extends (keyof T) | ContainerID>(
+      name: Key,
+    ): T[Key] extends LoroMovableList ? T[Key] : LoroMovableList;
+    /**
      * Get a LoroTree by container id
      *
      *  The object returned is a new js object each time because it need to cross
@@ -252,14 +269,14 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { Loro, LoroText } from "loro-crdt";
      *
      *  const doc = new Loro();
      *  const list = doc.getList("list");
      *  list.insert(0, 100);
      *  const text = list.insertContainer(1, new LoroText());
      *  text.insert(0, "Hello");
-     *  console.log(list.getDeepValue());  // [100, "Hello"];
+     *  console.log(list.toJSON());  // [100, "Hello"];
      *  ```
      */
     insertContainer<C extends Container>(
@@ -296,10 +313,131 @@ declare module "loro-wasm" {
      *  console.log(list.value);  // [100, "foo", true];
      *  ```
      */
-    insert(pos: number, value: Exclude<T, Container>): void;
+    insert<V extends T>(pos: number, value: Exclude<V, Container>): void;
     delete(pos: number, len: number): void;
-    subscribe(txn: Loro, listener: Listener): number;
+    push<V extends T>(value: Exclude<V, Container>): void;
+    subscribe(listener: Listener): number;
     getAttached(): undefined | LoroList<T>;
+  }
+
+  interface LoroMovableList<T = unknown> {
+    new (): LoroMovableList<T>;
+    /**
+     *  Get elements of the list. If the value is a child container, the corresponding
+     *  `Container` will be returned.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro, LoroText } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getMovableList("list");
+     *  list.insert(0, 100);
+     *  list.insert(1, "foo");
+     *  list.insert(2, true);
+     *  list.insertContainer(3, new LoroText());
+     *  console.log(list.value);  // [100, "foo", true, LoroText];
+     *  ```
+     */
+    toArray(): T[];
+    /**
+     * Insert a container at the index.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getMovableList("list");
+     *  list.insert(0, 100);
+     *  const text = list.insertContainer(1, new LoroText());
+     *  text.insert(0, "Hello");
+     *  console.log(list.toJSON());  // [100, "Hello"];
+     *  ```
+     */
+    insertContainer<C extends Container>(
+      pos: number,
+      child: C,
+    ): T extends C ? T : C;
+    /**
+     * Get the value at the index. If the value is a container, the corresponding handler will be returned.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getMoableList("list");
+     *  list.insert(0, 100);
+     *  console.log(list.get(0));  // 100
+     *  console.log(list.get(1));  // undefined
+     *  ```
+     */
+    get(index: number): T;
+    /**
+     *  Insert a value at index.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getMovableList("list");
+     *  list.insert(0, 100);
+     *  list.insert(1, "foo");
+     *  list.insert(2, true);
+     *  console.log(list.value);  // [100, "foo", true];
+     *  ```
+     */
+    insert<V extends T>(pos: number, value: Exclude<V, Container>): void;
+    delete(pos: number, len: number): void;
+    push<V extends T>(value: Exclude<V, Container>): void;
+    subscribe(listener: Listener): number;
+    getAttached(): undefined | LoroMovableList<T>;
+    /**
+     *  Set the value at the given position.
+     *
+     *  It's different from `delete` + `insert` that it will replace the value at the position.
+     *
+     *  For example, if you have a list `[1, 2, 3]`, and you call `set(1, 100)`, the list will be `[1, 100, 3]`.
+     *  If concurrently someone call `set(1, 200)`, the list will be `[1, 200, 3]` or `[1, 100, 3]`.
+     *
+     *  But if you use `delete` + `insert` to simulate the set operation, they may create redundant operations
+     *  and the final result will be `[1, 100, 200, 3]` or `[1, 200, 100, 3]`.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getList("list");
+     *  list.insert(0, 100);
+     *  list.insert(1, "foo");
+     *  list.insert(2, true);
+     *  list.set(1, "bar");
+     *  console.log(list.value);  // [100, "bar", true];
+     *  ```
+     */
+    set<V extends T>(pos: number, value: Exclude<V, Container>): void;
+    /**
+     * Set a container at the index.
+     *
+     *  @example
+     *  ```ts
+     *  import { Loro } from "loro-crdt";
+     *
+     *  const doc = new Loro();
+     *  const list = doc.getMovableList("list");
+     *  list.insert(0, 100);
+     *  const text = list.setContainer(0, new LoroText());
+     *  text.insert(0, "Hello");
+     *  console.log(list.toJSON());  // ["Hello"];
+     *  ```
+     */
+    setContainer<C extends Container>(
+      pos: number,
+      child: C,
+    ): T extends C ? T : C;
   }
 
   interface LoroMap<
@@ -374,16 +512,19 @@ declare module "loro-wasm" {
      *  map.set("foo", "baz");
      *  ```
      */
-    set<Key extends keyof T>(key: Key, value: Exclude<T[Key], Container>): void;
+    set<Key extends keyof T, V extends T[Key]>(
+      key: Key,
+      value: Exclude<V, Container>,
+    ): void;
     delete(key: string): void;
-    subscribe(txn: Loro, listener: Listener): number;
+    subscribe(listener: Listener): number;
   }
 
   interface LoroText {
     new (): LoroText;
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
-    subscribe(txn: Loro, listener: Listener): number;
+    subscribe(listener: Listener): number;
   }
 
   interface LoroTree<
@@ -395,7 +536,7 @@ declare module "loro-wasm" {
     delete(target: TreeID): void;
     has(target: TreeID): boolean;
     getNodeByID(target: TreeID): LoroTreeNode;
-    subscribe(txn: Loro, listener: Listener): number;
+    subscribe(listener: Listener): number;
   }
 
   interface LoroTreeNode<

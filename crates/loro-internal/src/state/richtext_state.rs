@@ -6,6 +6,7 @@ use std::{
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::HasLength;
 use loro_common::{ContainerID, InternalString, LoroResult, LoroValue, ID};
+use loro_delta::DeltaRopeBuilder;
 
 use crate::{
     arena::SharedArena,
@@ -20,9 +21,10 @@ use crate::{
             AnchorType, RichtextState as InnerState, StyleOp, Styles,
         },
     },
-    delta::{Delta, DeltaItem, StyleMeta, StyleMetaItem},
+    delta::{StyleMeta, StyleMetaItem},
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
-    event::{Diff, Index, InternalDiff},
+    event::{Diff, Index, InternalDiff, TextDiff},
+    handler::TextDelta,
     op::{Op, RawOp},
     txn::Transaction,
     utils::{lazy::LazyLoad, string_slice::StringSlice},
@@ -181,6 +183,18 @@ impl RichtextState {
 
         None
     }
+
+    pub(crate) fn get_delta(&mut self) -> Vec<TextDelta> {
+        let mut delta = Vec::new();
+        // TODO: merge last
+        for span in self.state.get_mut().iter() {
+            delta.push(TextDelta::Insert {
+                insert: span.text.as_str().to_string(),
+                attributes: span.attributes.to_option_map(),
+            })
+        }
+        delta
+    }
 }
 
 impl Clone for RichtextState {
@@ -226,9 +240,8 @@ impl ContainerState for RichtextState {
 
         // tracing::info!("Self state = {:#?}", &self);
         // PERF: compose delta
-        let mut ans: Delta<StringSlice, StyleMeta> = Delta::new();
-        let mut style_delta: Delta<StringSlice, StyleMeta> = Delta::new();
-
+        let mut ans: TextDiff = TextDiff::new();
+        let mut style_delta: TextDiff = TextDiff::new();
         let mut style_starts: FxHashMap<Arc<StyleOp>, Pos> = FxHashMap::default();
         let mut entity_index = 0;
         let mut event_index = 0;
@@ -247,13 +260,10 @@ impl ContainerState for RichtextState {
                             let insert_styles = styles.clone().into();
 
                             if pos > event_index {
-                                ans = ans.retain(pos - event_index);
+                                ans.push_retain(pos - event_index, Default::default());
                             }
                             event_index = pos + s.event_len() as usize;
-                            ans = ans.insert_with_meta(
-                                StringSlice::from(s.bytes().clone()),
-                                insert_styles,
-                            );
+                            ans.push_insert(StringSlice::from(s.bytes().clone()), insert_styles);
                         }
                         RichtextStateChunk::Style { anchor_type, style } => {
                             let (new_event_index, _) =
@@ -266,7 +276,7 @@ impl ContainerState for RichtextState {
                                 );
 
                             if new_event_index > event_index {
-                                ans = ans.retain(new_event_index - event_index);
+                                ans.push_retain(new_event_index - event_index, Default::default());
                                 // inserting style anchor will not affect event_index's positions
                                 event_index = new_event_index;
                             }
@@ -287,8 +297,9 @@ impl ContainerState for RichtextState {
                                         entity_index: start_entity_index,
                                         event_index: start_event_index,
                                     } = self.get_style_start(&mut style_starts, style);
-                                    let mut delta: Delta<StringSlice, StyleMeta> =
-                                        Delta::new().retain(start_event_index);
+                                    let mut delta: TextDiff = DeltaRopeBuilder::new()
+                                        .retain(start_event_index, Default::default())
+                                        .build();
                                     // we need to + 1 because we also need to annotate the end anchor
                                     let event =
                                         self.state.get_mut().annotate_style_range_with_event(
@@ -296,11 +307,11 @@ impl ContainerState for RichtextState {
                                             style.clone(),
                                         );
                                     for (s, l) in event {
-                                        delta = delta.retain_with_meta(l, s);
+                                        delta.push_retain(l, s);
                                     }
 
-                                    delta = delta.chop();
-                                    style_delta = style_delta.compose(delta);
+                                    delta.chop();
+                                    style_delta.compose(&delta);
                                 }
                             }
                         }
@@ -337,13 +348,14 @@ impl ContainerState for RichtextState {
                     );
 
                     if start > event_index {
-                        ans = ans.retain(start - event_index);
+                        ans.push_retain(start - event_index, Default::default());
                         event_index = start;
                     }
 
                     if let Some((entity_range, event_range)) = affected_style_range {
-                        let mut delta: Delta<StringSlice, StyleMeta> =
-                            Delta::new().retain(event_range.start);
+                        let mut delta: TextDiff = DeltaRopeBuilder::new()
+                            .retain(event_range.start, Default::default())
+                            .build();
                         let mut entity_len_sum = 0;
                         let expected_sum = entity_range.len();
 
@@ -371,24 +383,24 @@ impl ContainerState for RichtextState {
                                             )
                                         }
                                     }
-                                    delta = delta.retain_with_meta(event_len, style_meta);
+                                    delta.push_retain(event_len, style_meta);
                                 }
                                 RichtextStateChunk::Style { .. } => {}
                             }
                         }
 
                         debug_assert_eq!(entity_len_sum, expected_sum);
-                        delta = delta.chop();
-                        style_delta = style_delta.compose(delta);
+                        delta.chop();
+                        style_delta.compose(&delta);
                     }
 
-                    ans = ans.delete(end - start);
+                    ans.push_delete(end - start);
                 }
             }
         }
 
         // self.check_consistency_between_content_and_style_ranges();
-        let ans = ans.compose(style_delta);
+        ans.compose(&style_delta);
         Diff::Text(ans)
     }
 
@@ -537,7 +549,9 @@ impl ContainerState for RichtextState {
                         }),
                     );
                 }
+                list_op::InnerListOp::Set { .. } => {}
                 list_op::InnerListOp::StyleEnd => {}
+                list_op::InnerListOp::Move { .. } => unreachable!(),
             },
             _ => unreachable!(),
         }
@@ -552,12 +566,9 @@ impl ContainerState for RichtextState {
         _txn: &Weak<Mutex<Option<Transaction>>>,
         _state: &Weak<Mutex<DocState>>,
     ) -> Diff {
-        let mut delta = crate::delta::Delta::new();
+        let mut delta = TextDiff::new();
         for span in self.state.get_mut().iter() {
-            delta.vec.push(DeltaItem::Insert {
-                insert: span.text,
-                attributes: span.attributes,
-            })
+            delta.push_insert(span.text, span.attributes);
         }
 
         Diff::Text(delta)
@@ -675,6 +686,10 @@ impl RichtextState {
     /// Panic if inconsistent.
     #[allow(unused)]
     pub(crate) fn check_consistency_between_content_and_style_ranges(&mut self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
         self.state
             .get_mut()
             .check_consistency_between_content_and_style_ranges();

@@ -1,0 +1,33 @@
+[package]
+name = "loro-delta"
+version = "0.5.0"
+edition = "2021"
+license = "MIT"
+description = "Loro internal library. It's used as a delta between two versions of text or lists. It's also an efficient Rope."
+homepage = "https://loro.dev"
+repository = "https://github.com/loro-dev/loro/"
+authors = ["Zixuan Chen", "Liang Zhao"]
+categories = ["data-structures", "text-editing"]
+keywords = ["rope"]
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+arrayvec = "0.7.4"
+generic-btree = { version = "^0.10.5" }
+heapless = "0.8.0"
+tracing = "0.1.40"
+enum-as-inner = "0.5.1"
+
+[dev-dependencies]
+criterion = { version = "0.4", features = ["html_reports"] }
+rand = { version = "0.8.5" }
+tracing-subscriber = "0.3.18"
+color-backtrace = "0.6.1"
+ctor = "0.2"
+
+
+[[bench]]
+name = "rope"
+harness = false

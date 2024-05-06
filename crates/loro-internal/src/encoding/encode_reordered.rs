@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp::Ordering, mem::take};
+use std::{borrow::Cow, cell::RefCell, cmp::Ordering, mem::take, rc::Rc, sync::Arc};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
@@ -9,6 +9,7 @@ use loro_common::{
 };
 use rle::HasLength;
 use serde_columnar::{columnar, ColumnarError};
+use tracing::instrument;
 
 use crate::{
     arena::SharedArena,
@@ -22,7 +23,11 @@ use crate::{
 };
 pub(super) use encode::ValueRegister;
 
-use self::encode::{encode_changes, encode_ops, init_encode, TempOp};
+use self::{
+    arena::{decode_arena, encode_arena, ContainerArena, DecodedArenas, PeerIdArena},
+    encode::{encode_changes, encode_ops, init_encode, TempOp, ValueRegister},
+    value::ValueReader,
+};
 
 use super::{
     arena::*,
@@ -138,6 +143,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     serde_columnar::to_vec(&doc).unwrap()
 }
 
+#[instrument(skip_all)]
 pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
     let iter = serde_columnar::iter_from_bytes::<EncodedDoc>(bytes)?;
     let arenas = decode_arena(&iter.arenas)?;
@@ -158,7 +164,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
         ..
     } = arenas;
 
-    let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
+    let changes = decode_changes(iter.changes, iter.start_counters, &peer_ids, deps, ops_map)?;
 
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
@@ -270,7 +276,7 @@ fn import_changes_to_oplog(
 fn decode_changes<'a>(
     encoded_changes: IterableEncodedChange<'_>,
     mut counters: Vec<i32>,
-    peer_ids: PeerIdArena,
+    peer_ids: &PeerIdArena,
     mut deps: impl Iterator<Item = Result<EncodedDep, ColumnarError>> + 'a,
     mut ops_map: std::collections::HashMap<
         u64,
@@ -411,6 +417,7 @@ fn extract_ops(
 pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVector) -> Vec<u8> {
     assert!(!state.is_in_txn());
     assert_eq!(oplog.frontiers(), &state.frontiers);
+
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
@@ -474,6 +481,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
 
         let mut op_len = 0;
         let bytes = state.encode_snapshot(super::StateSnapshotEncoder {
+            register_peer: &mut |peer| RefCell::borrow_mut(&peer_register_1).register(&peer),
             check_idspan: &|_id_span| {
                 // TODO: todo!("check intersection by vv that defined by idlp");
                 // if let Some(counter) = vv.intersect_span(id_span) {
@@ -488,7 +496,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
             encoder_by_op: &mut |op| {
                 origin_ops.push(TempOp {
                     op: Cow::Owned(op.op),
-                    peer_idx: registers.peer.register(&op.peer) as u32,
+                    peer_idx: RefCell::borrow_mut(&peer_register).register(&op.peer) as u32,
                     peer_id: op.peer,
                     container_index,
                     prop_that_used_for_sort: -1,
@@ -498,10 +506,9 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
             record_idspan: &mut |id_span| {
                 let len = id_span.atom_len();
                 op_len += len;
+                let start_id = oplog.idlp_to_id(IdLp::new(id_span.peer, id_span.lamport.start));
                 pos_mapping_heap.push(PosMappingItem {
-                    start_id: oplog
-                        .idlp_to_id(IdLp::new(id_span.peer, id_span.lamport.start))
-                        .unwrap(),
+                    start_id: start_id.expect("convert idlp to id failed"),
                     len,
                     target_value: pos_target_value,
                 });
@@ -519,6 +526,11 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         state_bytes.extend(bytes);
     }
 
+    drop(peer_register_1);
+    let mut peer_register = match Rc::try_unwrap(peer_register) {
+        Ok(r) => r.into_inner(),
+        Err(_) => unreachable!(),
+    };
     let changes = encode_changes(
         &diff_changes,
         &mut dep_arena,
@@ -715,6 +727,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
 
     assert!(state.frontiers.is_empty());
     assert!(oplog.frontiers().is_empty());
+
     let iter = serde_columnar::iter_from_bytes::<EncodedDoc>(bytes)?;
     let arenas = decode_arena(&iter.arenas)?;
     let ExtractedOps {
@@ -736,7 +749,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         ..
     } = arenas;
 
-    let changes = decode_changes(iter.changes, iter.start_counters, peer_ids, deps, ops_map)?;
+    let changes = decode_changes(iter.changes, iter.start_counters, &peer_ids, deps, ops_map)?;
     let (new_ids, pending_changes) = import_changes_to_oplog(changes, &mut oplog)?;
 
     for op in ops.iter_mut() {
@@ -752,6 +765,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         state_blob_arena,
         ops,
         &oplog,
+        &peer_ids,
     )
     .unwrap();
 
@@ -777,6 +791,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_snapshot_states(
     state: &mut DocState,
     frontiers: Frontiers,
@@ -785,6 +800,7 @@ fn decode_snapshot_states(
     state_blob_arena: &[u8],
     ops: Vec<OpWithId>,
     oplog: &std::sync::MutexGuard<'_, OpLog>,
+    peers: &PeerIdArena,
 ) -> LoroResult<()> {
     let mut state_blob_index: usize = 0;
     let mut ops_index: usize = 0;
@@ -850,6 +866,7 @@ fn decode_snapshot_states(
                 ops: &mut next_ops,
                 blob: state_bytes,
                 mode: crate::encoding::EncodeMode::Snapshot,
+                peers: &peers.peer_ids,
             },
         );
     }
@@ -1126,6 +1143,8 @@ mod encode {
     fn get_op_prop(op: &Op, registers: &mut EncodedRegisters) -> i32 {
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
+                crate::container::list::list_op::InnerListOp::Move { to, .. } => *to as i32,
+                crate::container::list::list_op::InnerListOp::Set { .. } => 0,
                 crate::container::list::list_op::InnerListOp::Insert { pos, .. } => *pos as i32,
                 crate::container::list::list_op::InnerListOp::InsertText { pos, .. } => *pos as i32,
                 crate::container::list::list_op::InnerListOp::Delete(span) => span.span.pos as i32,
@@ -1169,7 +1188,10 @@ mod encode {
         let value = match &op.content {
             crate::op::InnerContent::List(list) => match list {
                 crate::container::list::list_op::InnerListOp::Insert { slice, .. } => {
-                    assert_eq!(op.container.get_type(), ContainerType::List);
+                    assert!(matches!(
+                        op.container.get_type(),
+                        ContainerType::List | ContainerType::MovableList
+                    ));
                     let value = arena.get_values(slice.0.start as usize..slice.0.end as usize);
                     Value::LoroValueArray(value)
                 }
@@ -1196,13 +1218,48 @@ mod encode {
                     key,
                     value,
                     info,
-                } => Value::MarkStart(MarkStart {
-                    len: end - start,
-                    key: key.clone(),
-                    value: value.clone(),
-                    info: info.to_byte(),
-                }),
-                crate::container::list::list_op::InnerListOp::StyleEnd => Value::Null,
+                } => {
+                    value_writer.write(
+                        &Value::MarkStart(MarkStart {
+                            len: end - start,
+                            key: key.clone(),
+                            value: value.clone(),
+                            info: info.to_byte(),
+                        }),
+                        register_key,
+                        register_cid,
+                    );
+                    ValueKind::MarkStart
+                }
+                crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
+                    value_writer.write(
+                        &Value::Set {
+                            peer_idx: register_peer.register(&elem_id.peer),
+                            lamport: elem_id.lamport,
+                            value: value.clone(),
+                        },
+                        register_key,
+                        register_cid,
+                    );
+                    ValueKind::Set
+                }
+                crate::container::list::list_op::InnerListOp::StyleEnd => ValueKind::Null,
+                crate::container::list::list_op::InnerListOp::Move {
+                    from,
+                    from_id,
+                    to: _,
+                } => {
+                    value_writer.write(
+                        &Value::Move {
+                            from: *from as usize,
+                            from_idx: register_peer.register(&from_id.peer),
+                            lamport: from_id.lamport as usize,
+                        },
+                        register_key,
+                        register_cid,
+                    );
+                    ValueKind::Move
+                }
             },
             crate::op::InnerContent::Map(map) => {
                 assert_eq!(op.container.get_type(), ContainerType::Map);
@@ -1330,6 +1387,70 @@ fn decode_op(
                 unreachable!()
             }
         },
+        ContainerType::MovableList => {
+            let pos = prop as usize;
+            match kind {
+                ValueKind::Array => {
+                    let arr = value_reader.read_value_content(ValueKind::Array, &keys.keys, id)?;
+
+                    let range = arena.alloc_values(
+                        Arc::try_unwrap(
+                            arr.into_list()
+                                .map_err(|_| LoroError::DecodeDataCorruptionError)?,
+                        )
+                        .unwrap()
+                        .into_iter(),
+                    );
+                    crate::op::InnerContent::List(
+                        crate::container::list::list_op::InnerListOp::Insert {
+                            slice: SliceRange::new(range.start as u32..range.end as u32),
+                            pos,
+                        },
+                    )
+                }
+                ValueKind::DeleteSeq => {
+                    let del_start = del_iter.next().unwrap()?;
+                    let peer_idx = del_start.peer_idx;
+                    let cnt = del_start.counter;
+                    let len = del_start.len;
+                    crate::op::InnerContent::List(
+                        crate::container::list::list_op::InnerListOp::Delete(
+                            DeleteSpanWithId::new(
+                                ID::new(peers[peer_idx], cnt as Counter),
+                                pos as isize,
+                                len,
+                            ),
+                        ),
+                    )
+                }
+                ValueKind::Set => {
+                    let peer_idx = value_reader.read_usize()?;
+                    let lamport = value_reader.read_usize()?;
+                    let value = value_reader.read_value_type_and_content(&keys.keys, id)?;
+                    let peer = peers[peer_idx];
+                    crate::op::InnerContent::List(
+                        crate::container::list::list_op::InnerListOp::Set {
+                            elem_id: IdLp::new(peer, lamport as Lamport),
+                            value,
+                        },
+                    )
+                }
+                ValueKind::Move => {
+                    let from = value_reader.read_usize()?;
+                    let peer_idx = value_reader.read_usize()?;
+                    let lamport = value_reader.read_usize()?;
+                    let from_peer = peers[peer_idx];
+                    crate::op::InnerContent::List(
+                        crate::container::list::list_op::InnerListOp::Move {
+                            from: from as u32,
+                            from_id: IdLp::new(from_peer, lamport as Lamport),
+                            to: prop as u32,
+                        },
+                    )
+                }
+                _ => unreachable!(),
+            }
+        }
         ContainerType::Unknown(_) => crate::op::InnerContent::Future(FutureInnerContent::Unknown {
             prop,
             value: value.into_owned(),

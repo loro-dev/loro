@@ -1,5 +1,10 @@
 #![cfg(test)]
 
+#[ctor::ctor]
+fn init() {
+    dev_utils::setup_test_log();
+}
+
 use crate::{op::ListSlice, LoroValue};
 
 #[cfg(proptest)]

@@ -6,10 +6,9 @@ use std::{
 use super::ContainerState;
 use crate::{
     arena::SharedArena,
-    container::{idx::ContainerIdx, ContainerID},
-    delta::Delta,
+    container::{idx::ContainerIdx, list::list_op::ListOp, ContainerID},
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
-    event::{Diff, Index, InternalDiff},
+    event::{Diff, Index, InternalDiff, ListDiff},
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp, RawOpContent},
     txn::Transaction,
@@ -19,10 +18,11 @@ use crate::{
 use fxhash::FxHashMap;
 use generic_btree::{
     iter,
-    rle::{HasLength, Mergeable, Sliceable},
+    rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
 use loro_common::{IdFull, IdLpSpan, LoroResult, ID};
+use loro_delta::array_vec::ArrayVec;
 
 #[derive(Debug)]
 pub struct ListState {
@@ -76,6 +76,18 @@ impl Mergeable for Elem {
 
     fn merge_left(&mut self, _left: &Self) {
         unreachable!()
+    }
+}
+
+impl TryInsert for Elem {
+    fn try_insert(&mut self, _pos: usize, _elem: Self) -> Result<(), Self> {
+        Err(_elem)
+    }
+}
+
+impl CanRemove for Elem {
+    fn can_remove(&self) -> bool {
+        false
     }
 }
 
@@ -331,13 +343,13 @@ impl ContainerState for ListState {
         let InternalDiff::ListRaw(delta) = diff else {
             unreachable!()
         };
-        let mut ans: Delta<_> = Delta::default();
+        let mut ans: ListDiff = ListDiff::default();
         let mut index = 0;
         for span in delta.iter() {
             match span {
                 crate::delta::DeltaItem::Retain { retain: len, .. } => {
                     index += len;
-                    ans = ans.retain(*len);
+                    ans.push_retain(*len, Default::default());
                 }
                 crate::delta::DeltaItem::Insert { insert: value, .. } => {
                     let mut arr = Vec::new();
@@ -347,18 +359,19 @@ impl ContainerState for ListState {
                             arr.push(value);
                         }
                     }
-                    ans = ans.insert(
+                    for arr in ArrayVec::from_many(
                         arr.iter()
-                            .map(|v| ValueOrHandler::from_value(v.clone(), arena, txn, state))
-                            .collect::<Vec<_>>(),
-                    );
+                            .map(|v| ValueOrHandler::from_value(v.clone(), arena, txn, state)),
+                    ) {
+                        ans.push_insert(arr, Default::default());
+                    }
                     let len = arr.len();
                     self.insert_batch(index, arr, value.id);
                     index += len;
                 }
                 crate::delta::DeltaItem::Delete { delete: len, .. } => {
                     self.delete_range(index..index + len);
-                    ans = ans.delete(*len);
+                    ans.push_delete(*len);
                 }
             }
         }
@@ -407,7 +420,7 @@ impl ContainerState for ListState {
     fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<()> {
         match &op.content {
             RawOpContent::List(list) => match list {
-                crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
+                ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(list) => match list {
                         std::borrow::Cow::Borrowed(list) => {
                             self.insert_batch(*pos, list.to_vec(), op.id_full());
@@ -418,11 +431,17 @@ impl ContainerState for ListState {
                     },
                     _ => unreachable!(),
                 },
-                crate::container::list::list_op::ListOp::Delete(del) => {
+                ListOp::Delete(del) => {
                     self.delete_range(del.span.to_urange());
                 }
-                crate::container::list::list_op::ListOp::StyleStart { .. } => unreachable!(),
-                crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),
+                ListOp::Move { .. } => {
+                    todo!("invoke move")
+                }
+                ListOp::StyleStart { .. } => unreachable!(),
+                ListOp::StyleEnd { .. } => unreachable!(),
+                ListOp::Set { .. } => {
+                    unreachable!()
+                }
             },
             _ => unreachable!(),
         }
@@ -437,14 +456,11 @@ impl ContainerState for ListState {
         txn: &Weak<Mutex<Option<Transaction>>>,
         state: &Weak<Mutex<DocState>>,
     ) -> Diff {
-        Diff::List(
-            Delta::new().insert(
-                self.to_vec()
-                    .into_iter()
-                    .map(|v| ValueOrHandler::from_value(v, arena, txn, state))
-                    .collect::<Vec<_>>(),
-            ),
-        )
+        Diff::List(ListDiff::from_many(
+            self.to_vec()
+                .into_iter()
+                .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+        ))
     }
 
     fn get_value(&mut self) -> LoroValue {

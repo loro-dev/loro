@@ -1,6 +1,6 @@
 [package]
 name = "loro-rle"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 license = "MIT"
 description = "A internal library of loro for storing and manipulating run-length encoded data. Do not use it directly."
@@ -21,7 +21,6 @@ fxhash = "0.2.1"
 append-only-bytes = { version = "0.1.11", features = ["u32_range"] }
 
 [dev-dependencies]
-color-backtrace = { version = "0.5" }
 ctor = "0.1.23"
 proptest = "1.0.0"
 smartstring = "1.0.1"

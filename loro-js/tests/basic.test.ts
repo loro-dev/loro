@@ -20,14 +20,14 @@ it("basic example", () => {
   const map = doc.getMap("map");
   // map can only has string key
   map.set("key", "value");
-  expect(doc.toJson()).toStrictEqual({
+  expect(doc.toJSON()).toStrictEqual({
     list: ["A", "B", "C"],
     map: { key: "value" },
   });
 
   // delete 2 elements at index 0
   list.delete(0, 2);
-  expect(doc.toJson()).toStrictEqual({
+  expect(doc.toJSON()).toStrictEqual({
     list: ["C"],
     map: { key: "value" },
   });
@@ -38,7 +38,7 @@ it("basic example", () => {
   text.insert(0, "Hi! ");
 
   // delete 1 element at index 0
-  expect(doc.toJson()).toStrictEqual({
+  expect(doc.toJSON()).toStrictEqual({
     list: ["Hi! Hello", "C"],
     map: { key: "value" },
   });
@@ -46,7 +46,7 @@ it("basic example", () => {
   // Insert a list container to the map
   const list2 = map.setContainer("test", new LoroList());
   list2.insert(0, 1);
-  expect(doc.toJson()).toStrictEqual({
+  expect(doc.toJSON()).toStrictEqual({
     list: ["Hi! Hello", "C"],
     map: { key: "value", test: [1] },
   });
@@ -60,7 +60,7 @@ it("get or create on Map", () => {
   container.insert(0, 2);
   const text = map.getOrCreateContainer("text", new LoroText());
   text.insert(0, "Hello");
-  expect(docA.toJson()).toStrictEqual({
+  expect(docA.toJSON()).toStrictEqual({
     map: { list: [2, 1], text: "Hello" },
   });
 });
@@ -74,7 +74,7 @@ it("basic sync example", () => {
   listA.insert(2, "C");
   // B import the ops from A
   docB.import(docA.exportFrom());
-  expect(docB.toJson()).toStrictEqual({
+  expect(docB.toJSON()).toStrictEqual({
     list: ["A", "B", "C"],
   });
 
@@ -84,10 +84,10 @@ it("basic sync example", () => {
   // A import the ops from B
   docA.import(docB.exportFrom(docA.version()));
   // list at A is now ["A", "C"], with the same state as B
-  expect(docA.toJson()).toStrictEqual({
+  expect(docA.toJSON()).toStrictEqual({
     list: ["A", "C"],
   });
-  expect(docA.toJson()).toStrictEqual(docB.toJson());
+  expect(docA.toJSON()).toStrictEqual(docB.toJSON());
 });
 
 it("basic events", () => {
@@ -103,9 +103,8 @@ describe("list", () => {
     const map = list.insertContainer(0, new LoroMap());
     map.set("key", "value");
     const v = list.get(0) as LoroMap;
-    console.log(v);
     expect(v instanceof LoroMap).toBeTruthy();
-    expect(v.toJson()).toStrictEqual({ key: "value" });
+    expect(v.toJSON()).toStrictEqual({ key: "value" });
   });
 
   it("toArray", () => {
@@ -129,7 +128,7 @@ describe("map", () => {
     const list = map.setContainer("key", new LoroList());
     list.insert(0, 1);
     expect(map.get("key") instanceof LoroList).toBeTruthy();
-    expect((map.get("key") as LoroList).toJson()).toStrictEqual([1]);
+    expect((map.get("key") as LoroList).toJSON()).toStrictEqual([1]);
   });
 
   it("set large int", () => {
@@ -170,7 +169,7 @@ describe("import", () => {
     b.getList("list").insert(0, [1, 2]);
     const updates = b.exportFrom(b.frontiersToVV(a.frontiers()));
     a.import(updates);
-    expect(a.toJson()).toStrictEqual(b.toJson());
+    expect(a.toJSON()).toStrictEqual(b.toJSON());
   });
 
   it("from snapshot", () => {
@@ -179,7 +178,7 @@ describe("import", () => {
     const bytes = a.exportSnapshot();
     const b = Loro.fromSnapshot(bytes);
     b.getText("text").insert(0, "123");
-    expect(b.toJson()).toStrictEqual({ text: "123hello" });
+    expect(b.toJSON()).toStrictEqual({ text: "123hello" });
   });
 
   it("importBatch Error #181", () => {
@@ -189,7 +188,6 @@ describe("import", () => {
     docB.importUpdateBatch([updateA]);
     docB.getText("text").insert(0, "hello");
     docB.commit();
-    console.log(docB.exportFrom());
   });
 });
 
@@ -245,9 +243,9 @@ it("handlers should still be usable after doc is dropped", () => {
   text.insert(0, "123");
   expect(text.toString()).toBe("123");
   list.insert(0, 1);
-  expect(list.toJson()).toStrictEqual([1]);
+  expect(list.toJSON()).toStrictEqual([1]);
   map.set("k", 8);
-  expect(map.toJson()).toStrictEqual({ k: 8 });
+  expect(map.toJSON()).toStrictEqual({ k: 8 });
 });
 
 it("get change with given lamport", () => {
@@ -421,9 +419,9 @@ it("prelim support", () => {
   {
     // Changes will be reflected in the container tree
     text.insert(0, "Heello");
-    expect(list.toJson()).toStrictEqual([{ "3": 2, "9": 9, text: "Heello" }]);
+    expect(list.toJSON()).toStrictEqual([{ "3": 2, "9": 9, text: "Heello" }]);
     text.delete(1, 1);
-    expect(list.toJson()).toStrictEqual([{ "3": 2, "9": 9, text: "Hello" }]);
+    expect(list.toJSON()).toStrictEqual([{ "3": 2, "9": 9, text: "Hello" }]);
   }
   const doc = new Loro();
   const rootMap = doc.getMap("map");
@@ -436,7 +434,7 @@ it("prelim support", () => {
   text.insert(0, "Detached ");
   attachedText.insert(0, "Attached ");
   expect(text.toString()).toBe("Detached Hello");
-  expect(doc.toJson()).toStrictEqual({
+  expect(doc.toJSON()).toStrictEqual({
     map: {
       test: {
         "3": 2,
@@ -453,7 +451,6 @@ it("get elem by path", () => {
   map.set("key", 1);
   expect(doc.getByPath("map/key")).toBe(1);
   const map1 = doc.getByPath("map") as LoroMap;
-  console.log(map1);
   expect(getType(map1)).toBe("Map");
   map1.set("key1", 1);
   expect(doc.getByPath("map/key1")).toBe(1);

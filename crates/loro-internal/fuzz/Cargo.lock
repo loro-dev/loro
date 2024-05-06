@@ -18,6 +18,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayvec"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
+
+[[package]]
 name = "arref"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -64,12 +70,6 @@ name = "byteorder"
 version = "1.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
-
-[[package]]
-name = "bytes"
-version = "1.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89b2fd2a0dcf38d7971e2194b6b6eebab45ae01067456a7fd93d5547a61b70be"
 
 [[package]]
 name = "cc"
@@ -203,12 +203,13 @@ dependencies = [
 
 [[package]]
 name = "generic-btree"
-version = "0.8.2"
+version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3563af09b8ffaa7cc5541d9e167b90c429d89791e88887739680e1fcb4f69d01"
+checksum = "210507e6dec78bb1304e52a174bd99efdd83894219bf20d656a066a0ce2fedc5"
 dependencies = [
+ "arref",
  "fxhash",
- "heapless",
+ "heapless 0.7.16",
  "itertools",
  "loro-thunderdome",
  "proc-macro2",
@@ -235,16 +236,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "heapless"
 version = "0.7.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db04bc24a18b9ea980628ecf00e6c0264f3c1426dac36c00cb49b6fbad8b0743"
 dependencies = [
  "atomic-polyfill",
- "hash32",
+ "hash32 0.2.1",
  "rustc_version",
  "serde",
  "spin",
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "heapless"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32 0.3.1",
  "stable_deref_trait",
 ]
 
@@ -333,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "0.2.0"
+version = "0.5.0"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
@@ -347,8 +367,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-delta"
+version = "0.5.0"
+dependencies = [
+ "arrayvec",
+ "enum-as-inner 0.5.1",
+ "generic-btree",
+ "heapless 0.8.0",
+ "tracing",
+]
+
+[[package]]
 name = "loro-internal"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -362,7 +393,7 @@ dependencies = [
  "itertools",
  "leb128",
  "loro-common",
- "loro-preload",
+ "loro-delta",
  "loro-rle",
  "md5",
  "num",
@@ -389,18 +420,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-preload"
-version = "0.2.0"
-dependencies = [
- "bytes",
- "loro-common",
- "serde",
- "serde_columnar",
-]
-
-[[package]]
 name = "loro-rle"
-version = "0.2.0"
+version = "0.5.0"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -583,7 +604,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c2b180dc0bade59f03fd005cb967d3f1e5f69b13922dad0cd6e047cb8af2363"
 dependencies = [
  "cobs",
- "heapless",
+ "heapless 0.7.16",
  "serde",
 ]
 
@@ -727,9 +748,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a41a9a14c8a221abb13091da4d1075699999e6a12213283c452680a70376efd0"
+checksum = "a5d54dd7e7a1ec134c842f8a3bdb5a1fc662d002682e0457f976f3046cf9ccf8"
 dependencies = [
  "itertools",
  "postcard",
@@ -740,9 +761,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar_derive"
-version = "0.3.2"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46d50a130ce1b4cf3b1585342ee0bf71e7589845ec23283e85fc875606018520"
+checksum = "3e5eaacabbc55a397ffbb1ee32523f40f86fdefea8a8d9db19630d8b7c00edd1"
 dependencies = [
  "darling",
  "proc-macro2",

@@ -21,7 +21,7 @@ pub(super) struct IdToCursor {
 
 static EMPTY_VEC: Vec<Fragment> = vec![];
 impl IdToCursor {
-    pub fn push(&mut self, id: ID, cursor: Cursor) {
+    pub fn insert(&mut self, id: ID, cursor: Cursor) {
         let list = self.map.entry(id.peer).or_default();
         if let Some(last) = list.last_mut() {
             let last_end = last.counter + last.cursor.rle_len() as Counter;
@@ -72,7 +72,7 @@ impl IdToCursor {
     }
 
     pub fn iter_all(&self) -> impl Iterator<Item = IterCursor> + '_ {
-        self.map.iter().flat_map(|(client_id, list)| {
+        self.map.iter().flat_map(|(peer, list)| {
             list.iter()
                 .flat_map(move |f| -> Box<dyn Iterator<Item = IterCursor>> {
                     match &f.cursor {
@@ -82,7 +82,7 @@ impl IdToCursor {
                                 let ans = IterCursor::Insert {
                                     leaf: elem.leaf,
                                     id_span: IdSpan::new(
-                                        *client_id,
+                                        *peer,
                                         f.counter + offset as Counter,
                                         f.counter + offset as Counter + elem.len as Counter,
                                     ),
@@ -94,15 +94,21 @@ impl IdToCursor {
                         Cursor::Delete(span) => {
                             let start_counter = f.counter;
                             let end_counter = f.counter + span.atom_len() as Counter;
-                            let id_span = IdSpan::new(*client_id, start_counter, end_counter);
+                            let id_span = IdSpan::new(*peer, start_counter, end_counter);
                             Box::new(std::iter::once(IterCursor::Delete(id_span)))
                         }
+                        Cursor::Move { from, to } => Box::new(std::iter::once(IterCursor::Move {
+                            from_id: *from,
+                            to_leaf: *to,
+                            new_op_id: ID::new(*peer, f.counter),
+                        })),
                     }
                 })
         })
     }
 
     pub fn iter(&self, mut iter_id_span: IdSpan) -> impl Iterator<Item = IterCursor> + '_ {
+        // TODO: can be simplified a bit
         iter_id_span.normalize_();
         let list = self.map.get(&iter_id_span.peer).unwrap_or(&EMPTY_VEC);
         let mut index = 0;
@@ -177,6 +183,21 @@ impl IdToCursor {
 
                     return Some(IterCursor::Delete(span.slice(from as usize, to as usize)));
                 }
+                Cursor::Move { from, to } => {
+                    offset_in_insert_set = 0;
+                    index += 1;
+                    counter = list.get(index).map(|x| x.counter).unwrap_or(Counter::MAX);
+                    if !iter_id_span.counter.contains(f.counter) {
+                        continue;
+                    }
+
+                    let op_id = ID::new(iter_id_span.peer, f.counter);
+                    return Some(IterCursor::Move {
+                        from_id: *from,
+                        to_leaf: *to,
+                        new_op_id: op_id,
+                    });
+                }
             }
         })
     }
@@ -203,6 +224,7 @@ impl IdToCursor {
             .map(|x| match &x.cursor {
                 Cursor::Insert { set, len } => set.len(),
                 Cursor::Delete(_) => 0,
+                Cursor::Move { .. } => 0,
             })
             .sum::<usize>();
         eprintln!(
@@ -246,9 +268,18 @@ impl Fragment {
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum IterCursor {
-    Insert { leaf: LeafIndex, id_span: IdSpan },
+    Insert {
+        leaf: LeafIndex,
+        id_span: IdSpan,
+    },
     // deleted id_span, the start may be greater than the end
     Delete(IdSpan),
+    // Move from `from ID` to `to LeafIndex` with `op_id`
+    Move {
+        from_id: ID,
+        to_leaf: LeafIndex,
+        new_op_id: ID,
+    },
 }
 
 #[derive(Debug)]
@@ -258,6 +289,11 @@ pub(super) enum Cursor {
         len: u32,
     },
     Delete(IdSpan),
+    Move {
+        from: ID,
+        to: LeafIndex,
+        // to id is the same as the current op_id
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -274,6 +310,13 @@ impl Cursor {
                 len: len as u32
             }],
             len: len as u32,
+        }
+    }
+
+    pub fn new_move(leaf: LeafIndex, from_id: ID) -> Self {
+        Self::Move {
+            to: leaf,
+            from: from_id,
         }
     }
 
@@ -360,6 +403,9 @@ impl Cursor {
                     set.iter().map(|x| x.len as usize).sum::<usize>() as u32
                 );
             }
+            Self::Move { .. } => {
+                unreachable!("update_insert on Move")
+            }
             _ => unreachable!(),
         }
     }
@@ -381,6 +427,10 @@ impl Cursor {
 
                 unreachable!()
             }
+            Cursor::Move { to, .. } => {
+                assert!(pos == 0);
+                Some(*to)
+            }
             Cursor::Delete(_) => unreachable!(),
         }
     }
@@ -391,6 +441,7 @@ impl HasLength for Cursor {
         match self {
             Cursor::Insert { set: _, len } => *len as usize,
             Cursor::Delete(d) => d.atom_len(),
+            Cursor::Move { .. } => 1,
         }
     }
 }

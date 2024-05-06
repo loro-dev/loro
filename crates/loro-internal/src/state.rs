@@ -7,13 +7,12 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
+use loro_delta::DeltaItem;
+use tracing::{info, instrument, trace_span};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
-    container::{
-        idx::ContainerIdx, list::list_op::ListOp, map::MapSet, richtext::config::StyleConfigMap,
-        tree::tree_op::TreeOp, ContainerIdRaw,
-    },
+    container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
     cursor::Cursor,
     delta::DeltaItem,
     diff_calc::DiffCalculator,
@@ -22,7 +21,7 @@ use crate::{
     fx_map,
     handler::ValueOrHandler,
     id::PeerID,
-    op::{FutureRawOpContent, ListSlice, Op, RawOp, RawOpContent},
+    op::{FutureRawOpContent,Op, RawOp},
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue, OpLog,
@@ -30,10 +29,12 @@ use crate::{
 
 mod list_state;
 mod map_state;
+mod movable_list_state;
 mod richtext_state;
 mod tree_state;
 mod unknown_state;
 
+pub(crate) use self::movable_list_state::{IndexType, MovableListState};
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
@@ -73,6 +74,14 @@ pub struct DocState {
     event_recorder: EventRecorder,
 }
 
+impl std::fmt::Debug for DocState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DocState")
+            .field("peer", &self.peer)
+            .finish()
+    }
+}
+
 #[enum_dispatch]
 pub(crate) trait ContainerState: Clone {
     fn container_idx(&self) -> ContainerIdx;
@@ -83,6 +92,7 @@ pub(crate) trait ContainerState: Clone {
 
     fn is_state_empty(&self) -> bool;
 
+    #[must_use]
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
@@ -211,6 +221,7 @@ impl<T: ContainerState> ContainerState for Box<T> {
 #[derive(EnumAsInner, Clone, Debug)]
 pub enum State {
     ListState(Box<ListState>),
+    MovableListState(Box<MovableListState>),
     MapState(Box<MapState>),
     RichtextState(Box<RichtextState>),
     TreeState(Box<TreeState>),
@@ -366,114 +377,175 @@ impl DocState {
     }
 
     /// It's expected that diff only contains [`InternalDiff`]
+    ///
+    #[instrument(skip_all)]
     pub(crate) fn apply_diff(&mut self, mut diff: InternalDocDiff<'static>) {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
-        // tracing::info!("Diff = {:#?}", &diff);
         let is_recording = self.is_recording();
         self.pre_txn(diff.origin.clone(), diff.by);
-        let Cow::Owned(inner) = std::mem::take(&mut diff.diff) else {
+        let Cow::Owned(mut diffs) = std::mem::take(&mut diff.diff) else {
             unreachable!()
         };
 
-        let mut idx2state_diff = FxHashMap::default();
-        let mut diffs = if is_recording {
-            let mut sub_container_diff_patch = SubContainerDiffPatch {
-                all_idx: inner.iter().map(|d| d.idx).collect(),
-                diff_queue: vec![],
-                mark_bring_back: FxHashSet::default(),
-                arena: self.arena.clone(),
-                txn: self.global_txn.clone(),
-                weak_state: self.weak_state.clone(),
-            };
+        // # Revival
+        //
+        // A Container, if it is deleted from its parent Container, will still exist
+        // in the internal state of Loro;  whereas on the user side, a tree structure
+        // is maintained following Events, and at this point, the corresponding state
+        // is considered deleted.
+        //
+        // Sometimes, this "pseudo-dead" Container may be revived (for example, through
+        // backtracking or parallel editing),  and the user side should receive an Event
+        // that restores the consistency between the revived Container and the  internal
+        // state of Loro. This Event is required to restore the pseudo-dead  Container
+        // State to its current state on Loro, and we refer to this process as "revival".
+        //
+        // Revival occurs during the application of the internal diff, and this operation
+        // is necessary when it needs to be converted into an external Event.
+        //
+        // We can utilize the output of the Diff to determine which child nodes should be revived.
+        //
+        // For nodes that are to be revived, we can disregard the Events output by their
+        // round of apply_diff_and_convert,  and instead, directly convert their state into
+        // an Event once their application is complete.
+        //
+        // Suppose A is revived and B is A's child, and B also needs to be revived; therefore,
+        // we should process each level alternately.
 
-            // To handle the `bring_back`, we need cache the state diff of current version first,
-            // because the state that is applied diffs could be also set to `bring_back` later.
-            // We recursively determine one by one whether we need to bring back and push the diff to the queue.
-            // let mut diff_queue = vec![];
-            // let mut need_bring_back = FxHashSet::default();
-            // let all_idx: FxHashSet<ContainerIdx> = inner.iter().map(|d| d.idx).collect();
-            for mut diff in inner {
-                let idx = diff.idx;
-                if sub_container_diff_patch.marked_bring_back(&idx) {
-                    diff.bring_back = true;
-                }
-                if diff.bring_back {
-                    let state = get_or_create!(self, idx);
-                    let state_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
-                    if diff.diff.is_none() && state_diff.is_empty() {
-                        // empty diff, skip it
+        // We need to ensure diff is processed in order
+        diffs.sort_by_cached_key(|diff| self.arena.get_depth(diff.idx).unwrap());
+
+        let mut to_revive_in_next_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
+        let mut to_revive_in_this_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
+        let mut last_depth = 0;
+        let len = diffs.len();
+        for mut diff in std::mem::replace(&mut diffs, Vec::with_capacity(len)) {
+            let this_depth = self.arena.get_depth(diff.idx).unwrap().get();
+            while this_depth > last_depth {
+                // Clear `to_revive` when we are going to process a new level
+                // so that we can process the revival of the next level
+                let to_create = std::mem::take(&mut to_revive_in_this_layer);
+                to_revive_in_this_layer = std::mem::take(&mut to_revive_in_next_layer);
+                for new in to_create {
+                    let state = {
+                        if !self.states.contains_key(&new) {
+                            continue;
+                        }
+                        self.states.get_mut(&new).unwrap()
+                    };
+
+                    if state.is_state_empty() {
                         continue;
                     }
-                    sub_container_diff_patch.push_diff(diff);
-                    if !state_diff.is_empty() {
-                        sub_container_diff_patch.bring_back_sub_container(
-                            &state_diff,
-                            &mut self.states,
-                            &mut idx2state_diff,
-                        );
-                        idx2state_diff.insert(idx, state_diff);
-                    }
-                } else {
-                    sub_container_diff_patch.push_diff(diff);
-                }
-            }
-            sub_container_diff_patch.take_diff()
-        } else {
-            inner
-        };
-        // apply diff
-        for diff in &mut diffs {
-            let Some(internal_diff) = std::mem::take(&mut diff.diff) else {
-                // only bring_back
-                if is_recording {
-                    if let Some(state_diff) = idx2state_diff.remove(&diff.idx) {
-                        diff.diff = Some(state_diff.into());
-                    };
-                }
-                continue;
-            };
-            let idx = diff.idx;
-            if self.in_txn {
-                self.changed_idx_in_txn.insert(idx);
-            }
-            self.set_parent_by_diff(internal_diff.as_internal().unwrap(), idx);
-            let state = get_or_create!(self, idx);
 
-            if is_recording {
-                // process bring_back before apply
-                let external_diff = if diff.bring_back {
-                    let external_diff = state.apply_diff_and_convert(
-                        internal_diff.into_internal().unwrap(),
-                        &self.arena,
-                        &self.global_txn,
-                        &self.weak_state,
-                    );
-                    if let Some(state_diff) = idx2state_diff.remove(&diff.idx) {
-                        // use `concat`(hierarchical and relative order) rather than `compose`
-                        state_diff.concat(external_diff)
-                    } else {
-                        // empty state
-                        external_diff
-                    }
-                } else {
-                    state.apply_diff_and_convert(
-                        internal_diff.into_internal().unwrap(),
-                        &self.arena,
-                        &self.global_txn,
-                        &self.weak_state,
-                    )
-                };
-                diff.diff = Some(external_diff.into());
-            } else {
-                state.apply_diff(
-                    internal_diff.into_internal().unwrap(),
-                    &self.arena,
-                    &self.global_txn,
-                    &self.weak_state,
-                );
+                    let external_diff =
+                        state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
+                    trigger_on_new_container(&external_diff, |cid| {
+                        to_revive_in_this_layer.insert(cid);
+                    });
+
+                    diffs.push(InternalContainerDiff {
+                        idx: new,
+                        bring_back: true,
+                        is_container_deleted: false,
+                        diff: external_diff.into(),
+                    });
+                }
+
+                last_depth += 1;
             }
+
+            let idx = diff.idx;
+            let internal_diff = std::mem::take(&mut diff.diff);
+            match &internal_diff {
+                crate::event::DiffVariant::None => {
+                    if is_recording {
+                        let state = get_or_create!(self, diff.idx);
+                        let extern_diff =
+                            state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
+                        trigger_on_new_container(&extern_diff, |cid| {
+                            to_revive_in_next_layer.insert(cid);
+                        });
+                        diff.diff = extern_diff.into();
+                    }
+                }
+                crate::event::DiffVariant::Internal(_) => {
+                    if self.in_txn {
+                        self.changed_idx_in_txn.insert(idx);
+                    }
+                    let state = get_or_create!(self, idx);
+                    if is_recording {
+                        // process bring_back before apply
+                        let span = trace_span!("handle internal recording");
+                        let _g = span.enter();
+                        let external_diff =
+                            if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
+                                state.apply_diff(
+                                    internal_diff.into_internal().unwrap(),
+                                    &self.arena,
+                                    &self.global_txn,
+                                    &self.weak_state,
+                                );
+                                state.to_diff(&self.arena, &self.global_txn, &self.weak_state)
+                            } else {
+                                state.apply_diff_and_convert(
+                                    internal_diff.into_internal().unwrap(),
+                                    &self.arena,
+                                    &self.global_txn,
+                                    &self.weak_state,
+                                )
+                            };
+                        trigger_on_new_container(&external_diff, |cid| {
+                            to_revive_in_next_layer.insert(cid);
+                        });
+                        diff.diff = external_diff.into();
+                    } else {
+                        state.apply_diff(
+                            internal_diff.into_internal().unwrap(),
+                            &self.arena,
+                            &self.global_txn,
+                            &self.weak_state,
+                        );
+                    }
+                }
+                crate::event::DiffVariant::External(_) => unreachable!(),
+            }
+
+            to_revive_in_this_layer.remove(&idx);
+            diffs.push(diff);
+        }
+
+        // Revive the last several layers
+        while !to_revive_in_this_layer.is_empty() || !to_revive_in_next_layer.is_empty() {
+            let to_create = std::mem::take(&mut to_revive_in_this_layer);
+            for new in to_create {
+                let state = {
+                    if !self.states.contains_key(&new) {
+                        continue;
+                    }
+                    self.states.get_mut(&new).unwrap()
+                };
+
+                if state.is_state_empty() {
+                    continue;
+                }
+
+                let external_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
+                trigger_on_new_container(&external_diff, |cid| {
+                    to_revive_in_next_layer.insert(cid);
+                });
+
+                diffs.push(InternalContainerDiff {
+                    idx: new,
+                    bring_back: true,
+                    is_container_deleted: false,
+                    diff: external_diff.into(),
+                });
+            }
+
+            to_revive_in_this_layer = std::mem::take(&mut to_revive_in_next_layer);
         }
 
         diff.diff = diffs.into();
@@ -485,11 +557,10 @@ impl DocState {
 
     pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
         // set parent first, `MapContainer` will only be created for TreeID that does not contain
-        self.set_container_parent_by_op(raw_op);
-        let idx = op.container;
-        let state = get_or_create!(self, idx);
+        self.set_container_parent_by_raw_op(raw_op);
+        let state = get_or_create!(self, op.container);
         if self.in_txn {
-            self.changed_idx_in_txn.insert(idx);
+            self.changed_idx_in_txn.insert(op.container);
         }
         state.apply_local_op(raw_op, op)
     }
@@ -509,90 +580,6 @@ impl DocState {
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut State> {
         self.states.values_mut()
-    }
-
-    fn set_container_parent_by_op(&mut self, raw_op: &RawOp) {
-        let container = raw_op.container;
-        match &raw_op.content {
-            RawOpContent::List(op) => {
-                if let ListOp::Insert {
-                    slice: ListSlice::RawData(list),
-                    ..
-                } = op
-                {
-                    let list = match list {
-                        std::borrow::Cow::Borrowed(list) => list.iter(),
-                        std::borrow::Cow::Owned(list) => list.iter(),
-                    };
-                    for value in list {
-                        if value.is_container() {
-                            let c = value.as_container().unwrap();
-                            let idx = self.arena.register_container(c);
-                            self.arena.set_parent(idx, Some(container));
-                        }
-                    }
-                }
-            }
-            RawOpContent::Map(MapSet { key: _, value }) => {
-                if value.is_none() {
-                    return;
-                }
-                let value = value.as_ref().unwrap();
-                if value.is_container() {
-                    let idx = self.arena.register_container(value.as_container().unwrap());
-                    self.arena.set_parent(idx, Some(container));
-                }
-            }
-            RawOpContent::Tree(TreeOp { target, .. }) => {
-                // create associated metadata container
-                // TODO: maybe we could create map container only when setting metadata
-                let container_id = target.associated_meta_container();
-                let child_idx = self.arena.register_container(&container_id);
-                self.arena.set_parent(child_idx, Some(container));
-            }
-            RawOpContent::Future(f) => match f {
-                FutureRawOpContent::Unknown { .. } => unreachable!(),
-            },
-        }
-    }
-
-    fn set_parent_by_diff(&mut self, diff: &InternalDiff, container: ContainerIdx) {
-        match diff {
-            InternalDiff::ListRaw(list) => {
-                for span in list.iter() {
-                    if let DeltaItem::Insert { insert: value, .. } = span {
-                        for slices in value.ranges.iter() {
-                            for i in slices.0.start..slices.0.end {
-                                let value = self.arena.get_value(i as usize).unwrap();
-                                if value.is_container() {
-                                    let c = value.as_container().unwrap();
-                                    let idx = self.arena.register_container(c);
-                                    self.arena.set_parent(idx, Some(container));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            InternalDiff::Map(delta) => {
-                for (_, value) in delta.updated.iter() {
-                    if let Some(LoroValue::Container(c)) = &value.value {
-                        let idx = self.arena.register_container(c);
-                        self.arena.set_parent(idx, Some(container));
-                    }
-                }
-            }
-            InternalDiff::Tree(tree) => {
-                for diff in tree.diff.iter() {
-                    let target = &diff.target;
-                    let container_id = target.associated_meta_container();
-                    let child_idx = self.arena.register_container(&container_id);
-                    self.arena.set_parent(child_idx, Some(container));
-                }
-            }
-            InternalDiff::RichtextRaw(_) => {}
-            InternalDiff::Unknown(_) => {}
-        }
     }
 
     pub(crate) fn init_container(
@@ -667,11 +654,9 @@ impl DocState {
                     idx,
                     bring_back: false,
                     is_container_deleted: false,
-                    diff: Some(
-                        state
-                            .to_diff(&self.arena, &self.global_txn, &self.weak_state)
-                            .into(),
-                    ),
+                    diff: state
+                        .to_diff(&self.arena, &self.global_txn, &self.weak_state)
+                        .into(),
                 })
                 .collect();
             let mut diff_calc = DiffCalculator::new();
@@ -947,16 +932,14 @@ impl DocState {
                     continue;
                 }
                 let Some((last_container_diff, _)) = containers.get_mut(&container_diff.idx) else {
-                    let idx = container_diff.idx;
-                    if let Some(path) = self.get_path(idx) {
-                        containers.insert(container_diff.idx, (container_diff.diff.unwrap(), path));
+                    if let Some(path) = self.get_path(container_diff.idx) {
+                        containers.insert(container_diff.idx, (container_diff.diff, path));
                     } else {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
-                        tracing::info!(
-                            "⚠️ WARNING: ignore because cannot find path {:#?} deep_value {:#?}",
+                        tracing::warn!(
+                            "⚠️ WARNING: ignore event because cannot find its path {:#?}",
                             &container_diff,
-                            self.get_deep_value_with_id()
                         );
                     }
 
@@ -965,7 +948,7 @@ impl DocState {
                 // TODO: PERF avoid this clone
                 *last_container_diff = last_container_diff
                     .clone()
-                    .compose(container_diff.diff.unwrap())
+                    .compose(container_diff.diff)
                     .unwrap();
             }
         }
@@ -1000,14 +983,17 @@ impl DocState {
 
     // the container may be override, so it may return None
     fn get_path(&self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
-        let s = tracing::span!(tracing::Level::INFO, "GET PATH ", ?idx);
-        let _e = s.enter();
         let mut ans = Vec::new();
         let mut idx = idx;
+        let id = self.arena.idx_to_id(idx).unwrap();
+        let s = tracing::span!(tracing::Level::INFO, "GET PATH ", ?id);
+        let _e = s.enter();
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
+            let s = tracing::span!(tracing::Level::INFO, "GET PATH ", ?id);
+            let _e = s.enter();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                let parent_state = self.states.get(&parent_idx).unwrap();
+                let parent_state = self.states.get(&parent_idx)?;
                 let Some(prop) = parent_state.get_child_index(&id) else {
                     tracing::info!("Missing in parent children");
                     return None;
@@ -1016,9 +1002,12 @@ impl DocState {
                 idx = parent_idx;
             } else {
                 // this container may be deleted
-                tracing::info!("Deleted or root");
-                let prop = id.as_root()?.0.clone();
-                ans.push((id, Index::Key(prop)));
+                let Ok(prop) = id.clone().into_root() else {
+                    let id = format!("{}", &id);
+                    info!(?id, "Missing parent - container is deleted");
+                    return None;
+                };
+                ans.push((id, Index::Key(prop.0)));
                 break;
             }
         }
@@ -1048,46 +1037,61 @@ impl DocState {
 
     /// Check whether two [DocState]s are the same. Panic if not.
     ///
+    /// Compared to check equality on `get_deep_value`, this function also checks the equality on richtext
+    /// styles and states that are not reachable from the root.
+    ///
     /// This is only used for test.
     pub(crate) fn check_is_the_same(&mut self, other: &mut Self) {
-        let arena = self.arena.clone();
-        let f = |state: &mut State| {
+        fn get_entries_for_state(
+            arena: &SharedArena,
+            state: &mut State,
+        ) -> Option<(ContainerID, (ContainerIdx, LoroValue))> {
             let id = arena.idx_to_id(state.container_idx()).unwrap();
             let value = match state {
                 State::RichtextState(s) => s.get_richtext_value(),
                 _ => state.get_value(),
             };
-            (id, (state.container_idx(), value))
-        };
 
-        let self_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> =
-            self.states.values_mut().map(f).collect();
-        let mut other_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> =
-            other.states.values_mut().map(f).collect();
+            if match &value {
+                LoroValue::List(l) => l.is_empty(),
+                LoroValue::Map(m) => m.is_empty(),
+                _ => false,
+            } {
+                return None;
+            }
 
-        for (id, (idx, value)) in self_id_to_states {
-            let other_state = match other_id_to_states.remove(&id) {
+            Some((id, (state.container_idx(), value)))
+        }
+
+        let self_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> = self
+            .states
+            .values_mut()
+            .filter_map(|state: &mut State| {
+                let arena = &self.arena;
+                get_entries_for_state(arena, state)
+            })
+            .collect();
+        let mut other_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> = other
+            .states
+            .values_mut()
+            .filter_map(|state: &mut State| {
+                let arena = &other.arena;
+                get_entries_for_state(arena, state)
+            })
+            .collect();
+
+        for (id, (idx, this_value)) in self_id_to_states {
+            let (_, other_value) = match other_id_to_states.remove(&id) {
                 Some(x) => x,
                 None => {
-                    let is_empty = match value {
-                        LoroValue::List(l) => l.is_empty(),
-                        LoroValue::Map(m) => m.is_empty(),
-                        _ => unreachable!(),
-                    };
-
-                    if is_empty {
-                        // the container is empty, so it's ok
-                        continue;
-                    }
-
                     panic!("id: {:?}, path: {:?} is missing", id, self.get_path(idx));
                 }
             };
 
             assert_eq!(
-                value,
-                other_state.1,
-                "id: {:?}, path: {:?}",
+                this_value,
+                other_value,
+                "[self!=other] id: {:?}, path: {:?}",
                 id,
                 self.get_path(idx)
             );
@@ -1123,6 +1127,9 @@ impl DocState {
                 self.config.text_style_config.clone(),
             ))),
             ContainerType::Tree => State::TreeState(Box::new(TreeState::new(idx))),
+            ContainerType::MovableList => {
+                State::MovableListState(Box::new(MovableListState::new(idx)))
+            }
             ContainerType::Unknown(_) => unreachable!(),
         }
     }
@@ -1138,6 +1145,8 @@ impl DocState {
             match state {
                 State::ListState(s) => s.get_index_of_id(id),
                 State::RichtextState(s) => s.get_event_index_of_id(id),
+                State::MovableListState(s) => s.get_index_of_id(id),
+                State::MapState(_) | State::TreeState(_) => {
                 State::MapState(_) | State::TreeState(_) | State::UnknownState(_) => {
                     unreachable!()
                 }
@@ -1150,6 +1159,8 @@ impl DocState {
             match state {
                 State::ListState(s) => Some(s.len()),
                 State::RichtextState(s) => Some(s.len_event()),
+                State::MovableListState(s) => Some(s.len()),
+                State::MapState(_) | State::TreeState(_) => {
                 State::MapState(_) | State::TreeState(_) | State::UnknownState(_) => {
                     unreachable!()
                 }
@@ -1181,6 +1192,13 @@ impl DocState {
                     };
                     state_idx = self.arena.register_container(c);
                 }
+                State::MovableListState(l) => {
+                    let Some(LoroValue::Container(c)) = l.get(*index.as_seq()?, IndexType::ForUser)
+                    else {
+                        return None;
+                    };
+                    state_idx = self.arena.register_container(c);
+                }
                 State::MapState(m) => {
                     let Some(LoroValue::Container(c)) = m.get(index.as_key()?) else {
                         return None;
@@ -1201,6 +1219,7 @@ impl DocState {
         let index = path.last().unwrap();
         let value: LoroValue = match parent_state {
             State::ListState(l) => l.get(*index.as_seq()?).cloned()?,
+            State::MovableListState(l) => l.get(*index.as_seq()?, IndexType::ForUser).cloned()?,
             State::MapState(m) => m.get(index.as_key()?).cloned()?,
             State::RichtextState(s) => {
                 let s = s.to_string_mut();
@@ -1220,95 +1239,39 @@ impl DocState {
     }
 }
 
-struct SubContainerDiffPatch {
-    // All the container idx that are in the diff
-    all_idx: FxHashSet<ContainerIdx>,
-    // All diffs after resolving the bring_back
-    diff_queue: Vec<InternalContainerDiff>,
-    // All the container idx that need to be brought back
-    mark_bring_back: FxHashSet<ContainerIdx>,
-    arena: SharedArena,
-    txn: Weak<Mutex<Option<Transaction>>>,
-    weak_state: Weak<Mutex<DocState>>,
-}
+fn trigger_on_new_container(state_diff: &Diff, mut listener: impl FnMut(ContainerIdx)) {
+    match state_diff {
+        Diff::List(list) => {
+            for delta in list.iter() {
+                if let DeltaItem::Replace {
+                    value,
+                    attr,
+                    delete: _,
+                } = delta
+                {
+                    if attr.from_move {
+                        continue;
+                    }
 
-impl SubContainerDiffPatch {
-    fn take_diff(self) -> Vec<InternalContainerDiff> {
-        self.diff_queue
-    }
-
-    fn marked_bring_back(&self, idx: &ContainerIdx) -> bool {
-        self.mark_bring_back.contains(idx)
-    }
-
-    fn push_diff(&mut self, diff: InternalContainerDiff) {
-        self.diff_queue.push(diff);
-    }
-
-    fn bring_back_sub_container(
-        &mut self,
-        state_diff: &Diff,
-        states: &mut FxHashMap<ContainerIdx, State>,
-        idx2state: &mut FxHashMap<ContainerIdx, Diff>,
-    ) {
-        match state_diff {
-            Diff::List(list) => {
-                for delta in list.iter() {
-                    if delta.is_insert() {
-                        for v in delta.as_insert().unwrap().0.iter() {
-                            if matches!(v, ValueOrHandler::Handler(_)) {
-                                let idx = v.as_handler().unwrap().container_idx();
-                                if self.all_idx.contains(&idx) {
-                                    // There is one in subsequent elements that require applying the diff
-                                    self.mark_bring_back.insert(idx);
-                                } else if let Some(state) = states.get_mut(&idx) {
-                                    // only bring back
-                                    // If the state is not empty, add this to queue and check
-                                    // whether there are sub-containers created by it recursively
-                                    // and finally cache the state
-                                    let diff =
-                                        state.to_diff(&self.arena, &self.txn, &self.weak_state);
-                                    if !diff.is_empty() {
-                                        self.diff_queue.push(InternalContainerDiff {
-                                            idx,
-                                            bring_back: true,
-                                            is_container_deleted: false,
-                                            diff: None,
-                                        });
-                                        self.bring_back_sub_container(&diff, states, idx2state);
-                                        idx2state.insert(idx, diff);
-                                    }
-                                }
-                            }
+                    for v in value.iter() {
+                        if let ValueOrHandler::Handler(h) = v {
+                            let idx = h.container_idx();
+                            listener(idx);
                         }
                     }
                 }
             }
-            Diff::Map(map) => {
-                for (_, v) in map.updated.iter() {
-                    if let Some(ValueOrHandler::Handler(handler)) = &v.value {
-                        let idx = handler.container_idx();
-                        if self.all_idx.contains(&idx) {
-                            self.mark_bring_back.insert(idx);
-                        } else if let Some(state) = states.get_mut(&idx) {
-                            let diff = state.to_diff(&self.arena, &self.txn, &self.weak_state);
-                            if !diff.is_empty() {
-                                self.diff_queue.push(InternalContainerDiff {
-                                    idx,
-                                    bring_back: true,
-                                    is_container_deleted: false,
-                                    diff: None,
-                                });
-                                self.bring_back_sub_container(&diff, states, idx2state);
-                                idx2state.insert(idx, diff);
-                            }
-                        }
-                    }
+        }
+        Diff::Map(map) => {
+            for (_, v) in map.updated.iter() {
+                if let Some(ValueOrHandler::Handler(h)) = &v.value {
+                    let idx = h.container_idx();
+                    listener(idx);
                 }
             }
-            _ => {}
-        };
-    }
+        }
+        _ => {}
+    };
 }
 
 #[derive(Default, Clone)]

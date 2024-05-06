@@ -3,6 +3,7 @@ name = "loro-wasm"
 version = "0.1.0"
 edition = "2021"
 publish = false
+repository = "https://github.com/loro-dev/loro/"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

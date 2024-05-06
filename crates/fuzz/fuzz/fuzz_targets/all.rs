@@ -12,6 +12,7 @@ fuzz_target!(|actions: Vec<Action>| {
             FuzzTarget::List,
             FuzzTarget::Text,
             FuzzTarget::Tree,
+            FuzzTarget::MovableList,
         ],
         &mut actions.clone(),
     )

@@ -42,11 +42,12 @@ struct InnerSharedArena {
 
 /// This is shared between [OpLog] and [AppState].
 ///
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct SharedArena {
     inner: Arc<InnerSharedArena>,
 }
 
+#[derive(Debug)]
 pub struct StrAllocResult {
     /// unicode start
     pub start: usize,
@@ -55,6 +56,13 @@ pub struct StrAllocResult {
 }
 
 impl SharedArena {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(InnerSharedArena::default()),
+        }
+    }
+
     pub fn register_container(&self, id: &ContainerID) -> ContainerIdx {
         let mut container_id_to_idx = self.inner.container_id_to_idx.lock().unwrap();
         if let Some(&idx) = container_id_to_idx.get(id) {
@@ -167,6 +175,26 @@ impl SharedArena {
                 );
             }
         }
+    }
+
+    pub fn log_all_container(&self) {
+        self.inner
+            .container_id_to_idx
+            .lock()
+            .unwrap()
+            .iter()
+            .for_each(|(id, idx)| {
+                tracing::info!("container {:?} {:?}", id, idx);
+            });
+        self.inner
+            .container_idx_to_id
+            .lock()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .for_each(|(i, id)| {
+                tracing::info!("container {} {:?}", i, id);
+            });
     }
 
     pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
@@ -310,6 +338,20 @@ impl SharedArena {
                     container,
                     content: InnerContent::List(InnerListOp::StyleEnd),
                 },
+                ListOp::Move {
+                    from,
+                    to,
+                    elem_id: from_id,
+                } => Op {
+                    counter,
+                    container,
+                    content: InnerContent::List(InnerListOp::Move { from, to, from_id }),
+                },
+                ListOp::Set { elem_id, value } => Op {
+                    counter,
+                    container,
+                    content: InnerContent::List(InnerListOp::Set { elem_id, value }),
+                },
             },
             crate::op::RawOpContent::Tree(tree) => Op {
                 counter,
@@ -363,12 +405,23 @@ impl SharedArena {
         self.inner.root_c_idx.lock().unwrap().clone()
     }
 
+    // TODO: this can return a u16 directly now, since the depths are always valid
     pub(crate) fn get_depth(&self, container: ContainerIdx) -> Option<NonZeroU16> {
         get_depth(
             container,
             &mut self.inner.depth.lock().unwrap(),
             &self.inner.parents.lock().unwrap(),
         )
+    }
+
+    pub(crate) fn iter_value_slice(
+        &self,
+        range: Range<usize>,
+    ) -> impl Iterator<Item = LoroValue> + '_ {
+        let values = self.inner.values.lock().unwrap();
+        range
+            .into_iter()
+            .map(move |i| values.get(i).unwrap().clone())
     }
 
     pub(crate) fn get_root_container_idx_by_key(

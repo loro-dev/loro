@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-
 use loro_internal::{
-    delta::DeltaItem,
     event::Diff,
     handler::{Handler, ValueOrHandler},
     ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
@@ -17,12 +15,8 @@ fn main() {
             match &container_diff.diff {
                 Diff::List(list) => {
                     for item in list.iter() {
-                        if let DeltaItem::Insert {
-                            insert,
-                            attributes: _,
-                        } = item
-                        {
-                            for v in insert {
+                        if let loro_delta::DeltaItem::Replace { value, .. } = item {
+                            for v in value.iter() {
                                 match v {
                                     ValueOrHandler::Handler(h) => {
                                         // You can directly obtain the handler and perform some operations.
