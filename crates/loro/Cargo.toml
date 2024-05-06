@@ -27,3 +27,4 @@ ctor = "0.2"
 dev-utils = { path = "../dev-utils" }
 
 [features]
+counter = ["loro-internal/counter"]

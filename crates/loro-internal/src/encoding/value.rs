@@ -261,7 +261,7 @@ impl<'a> Value<'a> {
                 value,
             } => Value::ListSet {
                 peer_idx: *peer_idx,
-                lamport: lamport.clone(),
+                lamport: *lamport,
                 value: value.clone(),
             },
             OwnedValue::Future(value) => match value {

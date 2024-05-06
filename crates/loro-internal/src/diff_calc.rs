@@ -2,6 +2,8 @@ use std::{num::NonZeroU16, sync::Arc};
 
 #[cfg(feature = "counter")]
 mod counter;
+#[cfg(feature = "counter")]
+pub(crate) use counter::CounterDiffCalculator;
 pub(super) mod tree;
 mod unknown;
 use itertools::Itertools;
@@ -33,7 +35,7 @@ use crate::{
     InternalString, VersionVector,
 };
 
-use self::{counter::CounterDiffCalculator, tree::TreeDiffCalculator};
+use self::tree::TreeDiffCalculator;
 
 use self::unknown::UnknownDiffCalculator;
 

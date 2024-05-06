@@ -1138,6 +1138,7 @@ mod encode {
 
     fn get_future_op_prop(op: &FutureInnerContent) -> i32 {
         match &op {
+            #[cfg(feature = "counter")]
             FutureInnerContent::Counter(c) => *c as i32,
             FutureInnerContent::Unknown { .. } => 0,
         }
@@ -1175,6 +1176,7 @@ mod encode {
             }
             crate::op::InnerContent::Tree(..) => 0,
             crate::op::InnerContent::Future(f) => match f {
+                #[cfg(feature = "counter")]
                 FutureInnerContent::Counter(_) => 0,
                 FutureInnerContent::Unknown { .. } => 0,
             },
@@ -1258,6 +1260,7 @@ mod encode {
                 Value::TreeMove(EncodedTreeMove::from_op(t))
             }
             crate::op::InnerContent::Future(f) => match f {
+                #[cfg(feature = "counter")]
                 FutureInnerContent::Counter(_) => Value::Future(FutureValue::Counter),
                 FutureInnerContent::Unknown { prop: _, value } => Value::from_owned(value),
             },

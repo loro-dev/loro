@@ -57,6 +57,7 @@ impl<'a> Clone for RawOpContent<'a> {
             Self::List(arg0) => Self::List(arg0.clone()),
             Self::Tree(arg0) => Self::Tree(*arg0),
             Self::Future(f) => Self::Future(match f {
+                #[cfg(feature = "counter")]
                 FutureRawOpContent::Counter(x) => FutureRawOpContent::Counter(*x),
                 FutureRawOpContent::Unknown { prop, value } => FutureRawOpContent::Unknown {
                     prop: *prop,
@@ -107,6 +108,7 @@ impl<'a> RawOpContent<'a> {
             },
             Self::Tree(arg0) => RawOpContent::Tree(*arg0),
             Self::Future(f) => RawOpContent::Future(match f {
+                #[cfg(feature = "counter")]
                 FutureRawOpContent::Counter(x) => FutureRawOpContent::Counter(*x),
                 FutureRawOpContent::Unknown { prop, value } => FutureRawOpContent::Unknown {
                     prop: *prop,
@@ -124,6 +126,7 @@ impl<'a> HasLength for RawOpContent<'a> {
             RawOpContent::List(x) => x.content_len(),
             RawOpContent::Tree(x) => x.content_len(),
             RawOpContent::Future(f) => match f {
+                #[cfg(feature = "counter")]
                 FutureRawOpContent::Counter(_) => 1,
                 FutureRawOpContent::Unknown { .. } => 1,
             },
