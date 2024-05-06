@@ -41,7 +41,8 @@ pub enum ValueKind {
 
 #[derive(Debug)]
 pub enum FutureValueKind {
-    // start from 19
+    #[cfg(feature = "counter")]
+    Counter, // 19
     Unknown(u8),
 }
 
@@ -68,6 +69,8 @@ impl ValueKind {
             ValueKind::ListMove => 17,
             ValueKind::ListSet => 18,
             ValueKind::Future(future_value_kind) => match future_value_kind {
+                #[cfg(feature = "counter")]
+                FutureValueKind::Counter => 19,
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
             },
         }
@@ -95,6 +98,8 @@ impl ValueKind {
             16 => ValueKind::TreeMove,
             17 => ValueKind::ListMove,
             18 => ValueKind::ListSet,
+            #[cfg(feature = "counter")]
+            19 => ValueKind::Future(FutureValueKind::Counter),
             _ => ValueKind::Future(FutureValueKind::Unknown(kind)),
         }
     }
@@ -134,14 +139,24 @@ pub enum Value<'a> {
 }
 
 pub enum FutureValue<'a> {
+    #[cfg(feature = "counter")]
+    Counter,
     // The future value cannot depend on the arena for encoding.
-    Unknown { kind: u8, data: &'a [u8] },
+    Unknown {
+        kind: u8,
+        data: &'a [u8],
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum OwnedFutureValue {
+    #[cfg(feature = "counter")]
+    Counter,
     // The future value cannot depend on the arena for encoding.
-    Unknown { kind: u8, data: Vec<u8> },
+    Unknown {
+        kind: u8,
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -199,6 +214,8 @@ impl<'a> Value<'a> {
             Value::ListMove { .. } => ValueKind::ListMove,
             Value::ListSet { .. } => ValueKind::ListSet,
             Value::Future(value) => match value {
+                #[cfg(feature = "counter")]
+                FutureValue::Counter => ValueKind::Future(FutureValueKind::Counter),
                 FutureValue::Unknown { kind, data: _ } => {
                     ValueKind::Future(FutureValueKind::Unknown(*kind))
                 }
@@ -248,6 +265,8 @@ impl<'a> Value<'a> {
                 value: value.clone(),
             },
             OwnedValue::Future(value) => match value {
+                #[cfg(feature = "counter")]
+                OwnedFutureValue::Counter => Value::Future(FutureValue::Counter),
                 OwnedFutureValue::Unknown { kind, data } => Value::Future(FutureValue::Unknown {
                     kind: *kind,
                     data: data.as_slice(),
@@ -296,6 +315,8 @@ impl<'a> Value<'a> {
                 value,
             },
             Value::Future(value) => match value {
+                #[cfg(feature = "counter")]
+                FutureValue::Counter => OwnedValue::Future(OwnedFutureValue::Counter),
                 FutureValue::Unknown { kind, data } => {
                     OwnedValue::Future(OwnedFutureValue::Unknown {
                         kind,
@@ -312,6 +333,8 @@ impl<'a> Value<'a> {
     ) -> LoroResult<Self> {
         let bytes_length = value_reader.read_usize()?;
         let value = match future_kind {
+            #[cfg(feature = "counter")]
+            FutureValueKind::Counter => FutureValue::Counter,
             FutureValueKind::Unknown(kind) => FutureValue::Unknown {
                 kind,
                 data: value_reader.take_bytes(bytes_length),
@@ -319,18 +342,6 @@ impl<'a> Value<'a> {
         };
         Ok(Value::Future(value))
     }
-
-    // pub(super) fn decode_as_unknown<'r: 'a>(
-    //     kind: ValueKind,
-    //     bytes_len: usize,
-    //     value_reader: &'r mut ValueReader,
-    // ) -> LoroResult<Self> {
-    //     let value = FutureValue::Unknown {
-    //         kind: kind.to_u8(),
-    //         data: value_reader.take_bytes(bytes_len),
-    //     };
-    //     Ok(Value::Future(value))
-    // }
 
     pub(super) fn decode<'r: 'a>(
         kind: ValueKind,
@@ -400,6 +411,8 @@ impl<'a> Value<'a> {
         value_writer: &mut ValueWriter,
     ) -> (FutureValueKind, usize) {
         match value {
+            #[cfg(feature = "counter")]
+            FutureValue::Counter => (FutureValueKind::Counter, 0),
             FutureValue::Unknown { kind, data } => (
                 FutureValueKind::Unknown(kind),
                 value_writer.write_binary(data),

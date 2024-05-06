@@ -888,7 +888,7 @@ mod encode {
         arena::SharedArena,
         change::{Change, Lamport},
         container::idx::ContainerIdx,
-        encoding::value::{EncodedTreeMove, MarkStart, Value, ValueKind, ValueWriter},
+        encoding::value::{EncodedTreeMove, FutureValue, MarkStart, Value, ValueKind, ValueWriter},
         op::{FutureInnerContent, Op},
     };
 
@@ -1138,6 +1138,7 @@ mod encode {
 
     fn get_future_op_prop(op: &FutureInnerContent) -> i32 {
         match &op {
+            FutureInnerContent::Counter(c) => *c as i32,
             FutureInnerContent::Unknown { .. } => 0,
         }
     }
@@ -1174,6 +1175,7 @@ mod encode {
             }
             crate::op::InnerContent::Tree(..) => 0,
             crate::op::InnerContent::Future(f) => match f {
+                FutureInnerContent::Counter(_) => 0,
                 FutureInnerContent::Unknown { .. } => 0,
             },
         }
@@ -1256,6 +1258,7 @@ mod encode {
                 Value::TreeMove(EncodedTreeMove::from_op(t))
             }
             crate::op::InnerContent::Future(f) => match f {
+                FutureInnerContent::Counter(_) => Value::Future(FutureValue::Counter),
                 FutureInnerContent::Unknown { prop: _, value } => Value::from_owned(value),
             },
         };
@@ -1421,6 +1424,11 @@ fn decode_op(
                 _ => unreachable!(),
             }
         }
+        #[cfg(feature = "counter")]
+        ContainerType::Counter => {
+            crate::op::InnerContent::Future(FutureInnerContent::Counter(prop as i64))
+        }
+
         ContainerType::Unknown(_) => crate::op::InnerContent::Future(FutureInnerContent::Unknown {
             prop,
             value: value.into_owned(),
