@@ -359,6 +359,14 @@ impl SharedArena {
                 content: crate::op::InnerContent::Tree(tree),
             },
             crate::op::RawOpContent::Future(f) => match f {
+                #[cfg(feature = "counter")]
+                crate::op::FutureRawOpContent::Counter(c) => Op {
+                    counter,
+                    container,
+                    content: crate::op::InnerContent::Future(
+                        crate::op::FutureInnerContent::Counter(c),
+                    ),
+                },
                 crate::op::FutureRawOpContent::Unknown { prop, value } => Op {
                     counter,
                     container,

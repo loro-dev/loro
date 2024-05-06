@@ -211,6 +211,10 @@ impl BasicHandler {
                 ContainerType::MovableList => Handler::MovableList(MovableListHandler {
                     inner: handler.into(),
                 }),
+                #[cfg(feature = "counter")]
+                ContainerType::Counter => Handler::Counter(counter::CounterHandler {
+                    inner: handler.into(),
+                }),
                 ContainerType::Unknown(_) => unreachable!(),
             })
         }
@@ -930,6 +934,8 @@ pub enum Handler {
     List(ListHandler),
     MovableList(MovableListHandler),
     Tree(TreeHandler),
+    #[cfg(feature = "counter")]
+    Counter(counter::CounterHandler),
 }
 
 impl HandlerTrait for Handler {
@@ -940,6 +946,8 @@ impl HandlerTrait for Handler {
             Self::List(x) => x.is_attached(),
             Self::Tree(x) => x.is_attached(),
             Self::MovableList(x) => x.is_attached(),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => x.is_attached(),
         }
     }
 
@@ -950,6 +958,8 @@ impl HandlerTrait for Handler {
             Self::List(x) => x.attached_handler(),
             Self::MovableList(x) => x.attached_handler(),
             Self::Tree(x) => x.attached_handler(),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => x.attached_handler(),
         }
     }
 
@@ -960,6 +970,8 @@ impl HandlerTrait for Handler {
             Self::List(x) => x.get_value(),
             Self::MovableList(x) => x.get_value(),
             Self::Tree(x) => x.get_value(),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => x.get_value(),
         }
     }
 
@@ -970,6 +982,8 @@ impl HandlerTrait for Handler {
             Self::List(x) => x.get_deep_value(),
             Self::MovableList(x) => x.get_deep_value(),
             Self::Tree(x) => x.get_deep_value(),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => x.get_deep_value(),
         }
     }
 
@@ -980,6 +994,8 @@ impl HandlerTrait for Handler {
             Self::List(x) => x.kind(),
             Self::MovableList(x) => x.kind(),
             Self::Tree(x) => x.kind(),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => x.kind(),
         }
     }
 
@@ -990,6 +1006,8 @@ impl HandlerTrait for Handler {
             Self::List(x) => x.to_handler(),
             Self::MovableList(x) => x.to_handler(),
             Self::Tree(x) => x.to_handler(),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => x.to_handler(),
         }
     }
 
@@ -1005,6 +1023,8 @@ impl HandlerTrait for Handler {
             Self::List(x) => Ok(Handler::List(x.attach(txn, parent, self_id)?)),
             Self::MovableList(x) => Ok(Handler::MovableList(x.attach(txn, parent, self_id)?)),
             Self::Tree(x) => Ok(Handler::Tree(x.attach(txn, parent, self_id)?)),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => Ok(Handler::Counter(x.attach(txn, parent, self_id)?)),
         }
     }
 
@@ -1015,6 +1035,8 @@ impl HandlerTrait for Handler {
             Self::List(x) => x.get_attached().map(Handler::List),
             Self::MovableList(x) => x.get_attached().map(Handler::MovableList),
             Self::Tree(x) => x.get_attached().map(Handler::Tree),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => x.get_attached().map(Handler::Counter),
         }
     }
 
@@ -1055,6 +1077,10 @@ impl Handler {
             ContainerType::MovableList => Self::MovableList(MovableListHandler {
                 inner: handler.into(),
             }),
+            #[cfg(feature = "counter")]
+            ContainerType::Counter => Self::Counter(counter::CounterHandler {
+                inner: handler.into(),
+            }),
             ContainerType::Unknown(_) => unreachable!(),
         }
     }
@@ -1066,6 +1092,8 @@ impl Handler {
             ContainerType::List => Self::List(ListHandler::new_detached()),
             ContainerType::Tree => Self::Tree(TreeHandler::new_detached()),
             ContainerType::MovableList => Self::MovableList(MovableListHandler::new_detached()),
+            #[cfg(feature = "counter")]
+            ContainerType::Counter => Self::Counter(counter::CounterHandler::new_detached()),
             ContainerType::Unknown(_) => unreachable!(),
         }
     }
@@ -1077,6 +1105,8 @@ impl Handler {
             Self::Text(x) => x.id(),
             Self::Tree(x) => x.id(),
             Self::MovableList(x) => x.id(),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => x.id(),
         }
     }
 
@@ -1087,6 +1117,8 @@ impl Handler {
             Self::Text(x) => x.idx(),
             Self::Tree(x) => x.idx(),
             Self::MovableList(x) => x.idx(),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => x.idx(),
         }
     }
 
@@ -1097,6 +1129,8 @@ impl Handler {
             Self::Text(_) => ContainerType::Text,
             Self::Tree(_) => ContainerType::Tree,
             Self::MovableList(_) => ContainerType::MovableList,
+            #[cfg(feature = "counter")]
+            Self::Counter(_) => ContainerType::Counter,
         }
     }
 
@@ -1107,6 +1141,8 @@ impl Handler {
             Self::MovableList(x) => x.get_deep_value(),
             Self::Text(x) => x.get_deep_value(),
             Self::Tree(x) => x.get_deep_value(),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => x.get_deep_value(),
         }
     }
 }
@@ -3218,6 +3254,140 @@ fn with_txn<R>(
     match &mut *txn {
         Some(t) => f(t),
         None => Err(LoroError::AutoCommitNotStarted),
+    }
+}
+
+#[cfg(feature = "counter")]
+mod counter {
+
+    use loro_common::LoroResult;
+
+    use crate::{
+        state::ContainerState,
+        txn::{EventHint, Transaction},
+        HandlerTrait,
+    };
+
+    use super::{create_handler, Handler, MaybeDetached};
+
+    #[derive(Clone)]
+    pub(crate) struct CounterHandler {
+        pub(super) inner: MaybeDetached<i64>,
+    }
+
+    impl CounterHandler {
+        pub fn new_detached() -> Self {
+            Self {
+                inner: MaybeDetached::new_detached(0),
+            }
+        }
+
+        pub fn increment(&self, n: i64) -> LoroResult<()> {
+            match &self.inner {
+                MaybeDetached::Detached(d) => {
+                    let d = &mut d.try_lock().unwrap().value;
+                    *d += n;
+                    Ok(())
+                }
+                MaybeDetached::Attached(a) => a.with_txn(|txn| self.increment_with_txn(txn, n)),
+            }
+        }
+
+        fn increment_with_txn(&self, txn: &mut Transaction, n: i64) -> LoroResult<()> {
+            let inner = self.inner.try_attached_state()?;
+            txn.apply_local_op(
+                inner.container_idx,
+                crate::op::RawOpContent::Future(crate::op::FutureRawOpContent::Counter(n)),
+                EventHint::Counter(n),
+                &inner.state,
+            )
+        }
+    }
+
+    impl std::fmt::Debug for CounterHandler {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match &self.inner {
+                MaybeDetached::Detached(_) => write!(f, "CounterHandler Dettached"),
+                MaybeDetached::Attached(a) => write!(f, "CounterHandler {}", a.id),
+            }
+        }
+    }
+
+    impl HandlerTrait for CounterHandler {
+        fn is_attached(&self) -> bool {
+            matches!(&self.inner, MaybeDetached::Attached(..))
+        }
+
+        fn attached_handler(&self) -> Option<&crate::BasicHandler> {
+            self.inner.attached_handler()
+        }
+
+        fn get_value(&self) -> loro_common::LoroValue {
+            match &self.inner {
+                MaybeDetached::Detached(t) => {
+                    let t = t.try_lock().unwrap();
+                    t.value.into()
+                }
+                MaybeDetached::Attached(a) => {
+                    a.with_state(|state| state.as_counter_state_mut().unwrap().get_value())
+                }
+            }
+        }
+
+        fn get_deep_value(&self) -> loro_common::LoroValue {
+            self.get_value()
+        }
+
+        fn kind(&self) -> loro_common::ContainerType {
+            loro_common::ContainerType::Counter
+        }
+
+        fn to_handler(&self) -> super::Handler {
+            Handler::Counter(self.clone())
+        }
+
+        fn from_handler(h: super::Handler) -> Option<Self> {
+            match h {
+                Handler::Counter(x) => Some(x),
+                _ => None,
+            }
+        }
+
+        fn attach(
+            &self,
+            txn: &mut crate::txn::Transaction,
+            parent: &crate::BasicHandler,
+            self_id: loro_common::ContainerID,
+        ) -> loro_common::LoroResult<Self> {
+            match &self.inner {
+                MaybeDetached::Detached(v) => {
+                    let mut v = v.try_lock().unwrap();
+                    let inner = create_handler(parent, self_id);
+                    let c = inner.into_counter().unwrap();
+
+                    c.increment(v.value);
+
+                    v.attached = c.attached_handler().cloned();
+                    Ok(c)
+                }
+                MaybeDetached::Attached(a) => {
+                    let new_inner = create_handler(a, self_id);
+                    let ans = new_inner.into_counter().unwrap();
+                    let delta = *self.get_value().as_i64().unwrap();
+                    ans.increment_with_txn(txn, delta);
+                    Ok(ans)
+                }
+            }
+        }
+
+        fn get_attached(&self) -> Option<Self> {
+            match &self.inner {
+                MaybeDetached::Attached(a) => Some(Self {
+                    inner: MaybeDetached::Attached(a.clone()),
+                }),
+                MaybeDetached::Detached(_) => None,
+            }
+        }
     }
 }
 

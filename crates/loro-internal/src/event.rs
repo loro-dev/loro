@@ -2,6 +2,7 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHasher64;
 use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, delta_trait::DeltaAttr, DeltaItem, DeltaRope};
+use num::Zero;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -12,7 +13,7 @@ use crate::{
         TreeDiff,
     },
     handler::ValueOrHandler,
-    op::{OpWithId, SliceRanges},
+    op::SliceRanges,
     utils::string_slice::StringSlice,
     InternalString,
 };
@@ -227,7 +228,9 @@ pub(crate) enum InternalDiff {
     Map(MapDelta),
     Tree(TreeDelta),
     MovableList(MovableListInnerDelta),
-    Unknown(Vec<OpWithId>),
+    #[cfg(feature = "counter")]
+    Counter(i64),
+    Unknown,
 }
 
 impl From<InternalDiff> for DiffVariant {
@@ -311,6 +314,8 @@ pub enum Diff {
     Text(TextDiff),
     Map(ResolvedMapDelta),
     Tree(TreeDiff),
+    #[cfg(feature = "counter")]
+    Counter(i64),
 }
 
 impl From<Diff> for DiffVariant {
@@ -327,7 +332,9 @@ impl InternalDiff {
             InternalDiff::Map(m) => m.updated.is_empty(),
             InternalDiff::Tree(t) => t.is_empty(),
             InternalDiff::MovableList(t) => t.is_empty(),
-            InternalDiff::Unknown(v) => v.is_empty(),
+            #[cfg(feature = "counter")]
+            InternalDiff::Counter(c) => c.is_zero(),
+            InternalDiff::Unknown => true,
         }
     }
 
@@ -362,6 +369,8 @@ impl Diff {
             (Diff::Map(a), Diff::Map(b)) => Ok(Diff::Map(a.compose(b))),
 
             (Diff::Tree(a), Diff::Tree(b)) => Ok(Diff::Tree(a.compose(b))),
+            #[cfg(feature = "counter")]
+            (Diff::Counter(a), Diff::Counter(b)) => Ok(Diff::Counter(a + b)),
             (a, _) => Err(a),
         }
     }
@@ -373,6 +382,8 @@ impl Diff {
             Diff::Text(t) => t.is_empty(),
             Diff::Map(m) => m.updated.is_empty(),
             Diff::Tree(t) => t.diff.is_empty(),
+            #[cfg(feature = "counter")]
+            Diff::Counter(c) => c.is_zero(),
         }
     }
 
@@ -396,6 +407,8 @@ impl Diff {
             }
 
             (Diff::Tree(a), Diff::Tree(b)) => Diff::Tree(a.extend(b.diff)),
+            #[cfg(feature = "counter")]
+            (Diff::Counter(a), Diff::Counter(b)) => Diff::Counter(a + b),
             _ => unreachable!(),
         }
     }

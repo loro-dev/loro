@@ -953,7 +953,8 @@ impl LoroDoc {
                 );
                 // TODO: remove depth info
                 let depth = self.arena.get_depth(idx);
-                let (_, diff_calc) = &mut diff_calc.get_or_create_calc(&idx, depth);
+                let (_, diff_calc) =
+                    &mut diff_calc.get_or_create_calc(&idx, depth, before, &oplog.dag.vv);
                 match diff_calc {
                     crate::diff_calc::ContainerDiffCalculator::Richtext(text) => {
                         let c = text.get_id_latest_pos(id).unwrap();
@@ -995,6 +996,8 @@ impl LoroDoc {
                     }
                     crate::diff_calc::ContainerDiffCalculator::Tree(_) => unreachable!(),
                     crate::diff_calc::ContainerDiffCalculator::Map(_) => unreachable!(),
+                    #[cfg(feature = "counter")]
+                    crate::diff_calc::ContainerDiffCalculator::Counter(_) => unreachable!(),
                     crate::diff_calc::ContainerDiffCalculator::Unknown(_) => unreachable!(),
                 }
             } else {
@@ -1044,6 +1047,8 @@ impl LoroDoc {
                     ContainerType::Map | ContainerType::Tree | ContainerType::Unknown(_) => {
                         unreachable!()
                     }
+                    #[cfg(feature = "counter")]
+                    ContainerType::Counter => unreachable!(),
                 }
             }
         }

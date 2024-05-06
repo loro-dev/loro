@@ -694,6 +694,9 @@ impl Loro {
             ContainerType::MovableList => {
                 unimplemented!()
             }
+            ContainerType::Unknown(_) => {
+                unimplemented!()
+            }
         })
     }
 

@@ -246,6 +246,8 @@ enum TypeHint {
     Text,
     List,
     Tree,
+    #[cfg(feature = "counter")]
+    Counter,
 }
 
 pub trait ApplyDiff {
@@ -455,6 +457,8 @@ impl ApplyDiff for LoroValue {
             Diff::Text(_) => TypeHint::Text,
             Diff::Map(_) => TypeHint::Map,
             Diff::Tree(_) => TypeHint::Tree,
+            #[cfg(feature = "counter")]
+            Diff::Counter(_) => TypeHint::Counter,
         };
         let value = {
             let mut hints = Vec::with_capacity(path.len());
@@ -478,6 +482,8 @@ impl ApplyDiff for LoroValue {
                             TypeHint::Text => LoroValue::String(Default::default()),
                             TypeHint::List => LoroValue::List(Default::default()),
                             TypeHint::Tree => LoroValue::List(Default::default()),
+                            #[cfg(feature = "counter")]
+                            TypeHint::Counter => LoroValue::I64(0),
                         })
                     }
                     Index::Seq(index) => {

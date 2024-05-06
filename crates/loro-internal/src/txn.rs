@@ -125,6 +125,8 @@ pub(super) enum EventHint {
     },
     Tree(TreeDiffItem),
     MarkEnd,
+    #[cfg(feature = "counter")]
+    Counter(i64),
 }
 
 impl generic_btree::rle::HasLength for EventHint {
@@ -142,6 +144,8 @@ impl generic_btree::rle::HasLength for EventHint {
             EventHint::MarkEnd => 1,
             EventHint::Move { .. } => 1,
             EventHint::SetList { .. } => 1,
+            #[cfg(feature = "counter")]
+            EventHint::Counter(_) => 1,
         }
     }
 }
@@ -697,6 +701,13 @@ fn change_to_diff(
             }
             EventHint::MarkEnd => {
                 // do nothing
+            }
+            #[cfg(feature = "counter")]
+            EventHint::Counter(diff) => {
+                ans.push(TxnContainerDiff {
+                    idx: op.container,
+                    diff: Diff::Counter(diff),
+                });
             }
         }
 

@@ -41,14 +41,11 @@ pub mod idx {
 
         #[allow(unused)]
         pub(crate) fn get_type(self) -> ContainerType {
-            match (self.0 & Self::TYPE_MASK) >> 27 {
-                0 => ContainerType::Map,
-                1 => ContainerType::List,
-                2 => ContainerType::Text,
-                3 => ContainerType::Tree,
-                4 => ContainerType::MovableList,
-                a if self.is_unknown() => ContainerType::Unknown((a << 1 >> 28) as u8),
-                _ => unreachable!(),
+            let a = (self.0 & Self::TYPE_MASK) >> 27;
+            if self.is_unknown() {
+                ContainerType::Unknown((a & 0xf) as u8)
+            } else {
+                ContainerType::try_from_u8(a as u8).unwrap()
             }
         }
 
@@ -58,13 +55,10 @@ pub mod idx {
         }
 
         pub(crate) fn from_index_and_type(index: u32, container_type: ContainerType) -> Self {
-            let prefix: u32 = match container_type {
-                ContainerType::Map => 0,
-                ContainerType::List => 1,
-                ContainerType::Text => 2,
-                ContainerType::Tree => 3,
-                ContainerType::MovableList => 4,
-                ContainerType::Unknown(c) => (0b10000 | c) as u32,
+            let prefix: u32 = if let ContainerType::Unknown(c) = container_type {
+                (0b10000 | c) as u32
+            } else {
+                container_type.to_u8() as u32
             } << 27;
 
             Self(prefix | index)

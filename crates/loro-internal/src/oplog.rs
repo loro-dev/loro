@@ -16,7 +16,7 @@ use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::group::OpGroups;
 use crate::id::{Counter, PeerID, ID};
-use crate::op::{ListSlice,FutureInnerContent, Op, RawOpContent, RemoteOp, RichOp};
+use crate::op::{FutureInnerContent, ListSlice, Op, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
@@ -639,6 +639,10 @@ impl OpLog {
             }
             crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(*tree)),
             crate::op::InnerContent::Future(f) => match f {
+                #[cfg(feature = "counter")]
+                crate::op::FutureInnerContent::Counter(c) => contents.push(RawOpContent::Future(
+                    crate::op::FutureRawOpContent::Counter(*c),
+                )),
                 FutureInnerContent::Unknown { prop, value } => contents.push(RawOpContent::Future(
                     crate::op::FutureRawOpContent::Unknown {
                         prop: *prop,

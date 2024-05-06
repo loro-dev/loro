@@ -34,6 +34,6 @@ impl DiffCalculatorTrait for UnknownDiffCalculator {
         _to: &crate::VersionVector,
         _on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
-        InternalDiff::Unknown(self.ops.clone())
+        InternalDiff::Unknown
     }
 }

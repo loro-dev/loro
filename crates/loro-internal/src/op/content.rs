@@ -22,7 +22,12 @@ pub enum InnerContent {
 
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum FutureInnerContent {
-    Unknown { prop: i32, value: OwnedValue },
+    #[cfg(feature = "counter")]
+    Counter(i64),
+    Unknown {
+        prop: i32,
+        value: OwnedValue,
+    },
 }
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
@@ -35,9 +40,14 @@ pub enum RawOpContent<'a> {
     Future(FutureRawOpContent),
 }
 
-#[derive(EnumAsInner, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(EnumAsInner, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FutureRawOpContent {
-    Unknown { prop: i32, value: OwnedValue },
+    #[cfg(feature = "counter")]
+    Counter(i64),
+    Unknown {
+        prop: i32,
+        value: OwnedValue,
+    },
 }
 
 impl<'a> Clone for RawOpContent<'a> {
@@ -47,6 +57,7 @@ impl<'a> Clone for RawOpContent<'a> {
             Self::List(arg0) => Self::List(arg0.clone()),
             Self::Tree(arg0) => Self::Tree(*arg0),
             Self::Future(f) => Self::Future(match f {
+                FutureRawOpContent::Counter(x) => FutureRawOpContent::Counter(*x),
                 FutureRawOpContent::Unknown { prop, value } => FutureRawOpContent::Unknown {
                     prop: *prop,
                     value: value.clone(),
@@ -89,12 +100,14 @@ impl<'a> RawOpContent<'a> {
                     to: *to,
                     elem_id: *from_id,
                 }),
-                ListOp::Set { elem_id, value } => {
-                    RawOpContent::List(ListOp::Set { elem_id: *elem_id, value: value.clone() })
-                }
+                ListOp::Set { elem_id, value } => RawOpContent::List(ListOp::Set {
+                    elem_id: *elem_id,
+                    value: value.clone(),
+                }),
             },
             Self::Tree(arg0) => RawOpContent::Tree(*arg0),
             Self::Future(f) => RawOpContent::Future(match f {
+                FutureRawOpContent::Counter(x) => FutureRawOpContent::Counter(*x),
                 FutureRawOpContent::Unknown { prop, value } => FutureRawOpContent::Unknown {
                     prop: *prop,
                     value: value.clone(),
@@ -111,6 +124,7 @@ impl<'a> HasLength for RawOpContent<'a> {
             RawOpContent::List(x) => x.content_len(),
             RawOpContent::Tree(x) => x.content_len(),
             RawOpContent::Future(f) => match f {
+                FutureRawOpContent::Counter(_) => 1,
                 FutureRawOpContent::Unknown { .. } => 1,
             },
         }
@@ -123,9 +137,7 @@ impl<'a> Sliceable for RawOpContent<'a> {
             RawOpContent::Map(x) => RawOpContent::Map(x.slice(from, to)),
             RawOpContent::List(x) => RawOpContent::List(x.slice(from, to)),
             RawOpContent::Tree(x) => RawOpContent::Tree(x.slice(from, to)),
-            RawOpContent::Future(f) => match f {
-                FutureRawOpContent::Unknown { .. } => unreachable!(),
-            },
+            RawOpContent::Future(f) => RawOpContent::Future(f.clone()),
         }
     }
 }
@@ -136,7 +148,6 @@ impl<'a> Mergable for RawOpContent<'a> {
         Self: Sized,
     {
         match (self, other) {
-            (RawOpContent::Map(x), RawOpContent::Map(y)) => x.is_mergable(y, &()),
             (RawOpContent::List(x), RawOpContent::List(y)) => x.is_mergable(y, &()),
             _ => false,
         }
@@ -147,21 +158,11 @@ impl<'a> Mergable for RawOpContent<'a> {
         Self: Sized,
     {
         match self {
-            RawOpContent::Map(x) => match _other {
-                RawOpContent::Map(y) => x.merge(y, &()),
-                _ => unreachable!(),
-            },
             RawOpContent::List(x) => match _other {
                 RawOpContent::List(y) => x.merge(y, &()),
                 _ => unreachable!(),
             },
-            RawOpContent::Tree(x) => match _other {
-                RawOpContent::Tree(y) => x.merge(y, &()),
-                _ => unreachable!(),
-            },
-            RawOpContent::Future(f) => match f {
-                FutureRawOpContent::Unknown { .. } => unreachable!(),
-            },
+            _ => unreachable!(),
         }
     }
 }
@@ -172,9 +173,7 @@ impl HasLength for InnerContent {
             InnerContent::List(list) => list.atom_len(),
             InnerContent::Map(_) => 1,
             InnerContent::Tree(_) => 1,
-            InnerContent::Future(f) => match f {
-                FutureInnerContent::Unknown { .. } => 1,
-            },
+            InnerContent::Future(_) => 1,
         }
     }
 }
@@ -185,9 +184,7 @@ impl Sliceable for InnerContent {
             a @ InnerContent::Map(_) => a.clone(),
             a @ InnerContent::Tree(_) => a.clone(),
             InnerContent::List(x) => InnerContent::List(x.slice(from, to)),
-            InnerContent::Future(f) => match f {
-                FutureInnerContent::Unknown { .. } => unreachable!(),
-            },
+            InnerContent::Future(f) => InnerContent::Future(f.clone()),
         }
     }
 }

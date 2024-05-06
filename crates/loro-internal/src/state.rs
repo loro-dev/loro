@@ -26,6 +26,8 @@ use crate::{
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue, OpLog,
 };
 
+#[cfg(feature = "counter")]
+mod counter_state;
 mod list_state;
 mod map_state;
 mod movable_list_state;
@@ -224,6 +226,8 @@ pub enum State {
     MapState(Box<MapState>),
     RichtextState(Box<RichtextState>),
     TreeState(Box<TreeState>),
+    #[cfg(feature = "counter")]
+    CounterState(Box<counter_state::CounterState>),
     UnknownState(Box<UnknownState>),
 }
 
@@ -1129,6 +1133,10 @@ impl DocState {
             ContainerType::MovableList => {
                 State::MovableListState(Box::new(MovableListState::new(idx)))
             }
+            #[cfg(feature = "counter")]
+            ContainerType::Counter => {
+                State::CounterState(Box::new(counter_state::CounterState::new(idx)))
+            }
             ContainerType::Unknown(_) => unreachable!(),
         }
     }
@@ -1146,6 +1154,8 @@ impl DocState {
                 State::RichtextState(s) => s.get_event_index_of_id(id),
                 State::MovableListState(s) => s.get_index_of_id(id),
                 State::MapState(_) | State::TreeState(_) | State::UnknownState(_) => unreachable!(),
+                #[cfg(feature = "counter")]
+                State::CounterState(_) => unreachable!(),
             }
         } else {
             if matches!(pos.side, crate::cursor::Side::Left) {
@@ -1157,6 +1167,8 @@ impl DocState {
                 State::RichtextState(s) => Some(s.len_event()),
                 State::MovableListState(s) => Some(s.len()),
                 State::MapState(_) | State::TreeState(_) | State::UnknownState(_) => unreachable!(),
+                #[cfg(feature = "counter")]
+                State::CounterState(_) => unreachable!(),
             }
         }
     }
@@ -1204,6 +1216,8 @@ impl DocState {
                     let cid = id.associated_meta_container();
                     state_idx = self.arena.register_container(&cid);
                 }
+                #[cfg(feature = "counter")]
+                State::CounterState(_) => return None,
                 State::UnknownState(_) => unreachable!(),
             }
         }
@@ -1225,6 +1239,8 @@ impl DocState {
                 let cid = id.associated_meta_container();
                 cid.into()
             }
+            #[cfg(feature = "counter")]
+            State::CounterState(_) => unreachable!(),
             State::UnknownState(_) => unreachable!(),
         };
 

@@ -1,5 +1,7 @@
 use std::{num::NonZeroU16, sync::Arc};
 
+#[cfg(feature = "counter")]
+mod counter;
 pub(super) mod tree;
 mod unknown;
 use itertools::Itertools;
@@ -31,7 +33,7 @@ use crate::{
     InternalString, VersionVector,
 };
 
-use self::tree::TreeDiffCalculator;
+use self::{counter::CounterDiffCalculator, tree::TreeDiffCalculator};
 
 use self::unknown::UnknownDiffCalculator;
 
@@ -150,7 +152,8 @@ impl DiffCalculator {
                     vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
                     let container = op.container;
                     let depth = oplog.arena.get_depth(container);
-                    let (old_depth, calculator) = { self.get_or_create_calc(&container, depth) };
+                    let (old_depth, calculator) =
+                        self.get_or_create_calc(&container, depth, before, after);
                     // checkout use the same diff_calculator, the depth of calculator is not updated
                     // That may cause the container to be considered deleted
                     if *old_depth != depth {
@@ -293,6 +296,8 @@ impl DiffCalculator {
         &mut self,
         idx: &ContainerIdx,
         depth: Option<NonZeroU16>,
+        before_vv: &VersionVector,
+        after_vv: &VersionVector,
     ) -> &mut (Option<NonZeroU16>, ContainerDiffCalculator) {
         self.calculators
             .entry(*idx)
@@ -320,6 +325,14 @@ impl DiffCalculator {
                 crate::ContainerType::MovableList => (
                     depth,
                     ContainerDiffCalculator::MovableList(MovableListDiffCalculator::new(*idx)),
+                ),
+                #[cfg(feature = "counter")]
+                crate::ContainerType::Counter => (
+                    depth,
+                    ContainerDiffCalculator::Counter(CounterDiffCalculator::new(
+                        before_vv.clone(),
+                        after_vv.clone(),
+                    )),
                 ),
             })
     }
@@ -359,6 +372,8 @@ pub(crate) enum ContainerDiffCalculator {
     Richtext(RichtextDiffCalculator),
     Tree(TreeDiffCalculator),
     MovableList(MovableListDiffCalculator),
+    #[cfg(feature = "counter")]
+    Counter(counter::CounterDiffCalculator),
     Unknown(UnknownDiffCalculator),
 }
 
