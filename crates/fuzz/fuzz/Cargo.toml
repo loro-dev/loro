@@ -32,3 +32,9 @@ name = "mov"
 path = "fuzz_targets/mov.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "counter"
+path = "fuzz_targets/counter.rs"
+test = false
+doc = false

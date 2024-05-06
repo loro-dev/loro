@@ -51,6 +51,9 @@ pub enum Diff<'a> {
     Map(MapDelta<'a>),
     /// A tree diff.
     Tree(&'a TreeDiff),
+    #[cfg(feature = "counter")]
+    /// A counter diff.
+    Counter(i64),
 }
 
 /// A list diff item.

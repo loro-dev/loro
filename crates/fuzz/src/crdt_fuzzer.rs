@@ -201,6 +201,7 @@ pub enum FuzzTarget {
     Text,
     Tree,
     MovableList,
+    Counter,
     All,
 }
 
@@ -230,6 +231,9 @@ impl FuzzTarget {
             }
             FuzzTarget::MovableList => {
                 set.insert(ContainerType::MovableList);
+            }
+            FuzzTarget::Counter => {
+                set.insert(ContainerType::Counter);
             }
         }
         set

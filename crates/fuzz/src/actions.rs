@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+use crate::container::CounterAction;
 pub use crate::container::MovableListAction;
 
 use super::{
@@ -21,6 +22,7 @@ pub enum ActionInner {
     MovableList(MovableListAction),
     Text(TextAction),
     Tree(TreeAction),
+    Counter(CounterAction),
 }
 
 impl ActionInner {
@@ -33,6 +35,7 @@ impl ActionInner {
             }
             ContainerType::Text => Self::Text(TextAction::from_generic_action(action)),
             ContainerType::Tree => Self::Tree(TreeAction::from_generic_action(action)),
+            ContainerType::Counter => Self::Counter(CounterAction::from_generic_action(action)),
             ContainerType::Unknown(_) => unreachable!(),
         }
     }

@@ -12,7 +12,7 @@ use rand::{rngs::StdRng, Rng};
 use tracing::info_span;
 
 use crate::{
-    container::{ListActor, MovableListActor, TextActor, TreeActor},
+    container::{CounterActor, ListActor, MovableListActor, TextActor, TreeActor},
     value::{ApplyDiff, ContainerTracker, MapTracker, Value},
 };
 
@@ -69,6 +69,7 @@ impl Actor {
             ActionExecutor::TextActor(actor) => actor.add_new_container(container),
             ActionExecutor::TreeActor(actor) => actor.add_new_container(container),
             ActionExecutor::MovableListActor(actor) => actor.add_new_container(container),
+            ActionExecutor::CounterActor(actor) => actor.add_new_container(container),
         }
     }
 
@@ -248,6 +249,19 @@ impl Actor {
                     ActionExecutor::TreeActor(TreeActor::new(self.loro.clone())),
                 );
             }
+            ContainerType::Counter => {
+                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                    "counter".to_string(),
+                    Value::empty_container(
+                        ContainerType::Counter,
+                        ContainerID::new_root("counter", ContainerType::Counter),
+                    ),
+                );
+                self.targets.insert(
+                    target,
+                    ActionExecutor::CounterActor(CounterActor::new(self.loro.clone())),
+                );
+            }
             ContainerType::Unknown(_) => unreachable!(),
         }
     }
@@ -261,6 +275,7 @@ pub enum ActionExecutor {
     MovableListActor(MovableListActor),
     TextActor(TextActor),
     TreeActor(TreeActor),
+    CounterActor(CounterActor),
 }
 
 impl Debug for ActionExecutor {
@@ -271,6 +286,7 @@ impl Debug for ActionExecutor {
             ActionExecutor::MovableListActor(_) => write!(f, "MovableListActor"),
             ActionExecutor::TextActor(_) => write!(f, "TextActor"),
             ActionExecutor::TreeActor(_) => write!(f, "TreeActor"),
+            ActionExecutor::CounterActor(_) => write!(f, "CounterActor"),
         }
     }
 }

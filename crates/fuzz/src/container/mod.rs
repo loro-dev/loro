@@ -1,8 +1,10 @@
+mod counter;
 mod list;
 mod map;
 mod movable_list;
 mod text;
 mod tree;
+pub use counter::*;
 pub use list::*;
 pub use map::*;
 pub use movable_list::*;

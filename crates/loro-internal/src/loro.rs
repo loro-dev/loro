@@ -669,6 +669,22 @@ impl LoroDoc {
         .unwrap()
     }
 
+    #[cfg(feature = "counter")]
+    pub fn get_counter<I: IntoContainerId>(
+        &self,
+        id: I,
+    ) -> crate::handler::counter::CounterHandler {
+        let id = id.into_container_id(&self.arena, ContainerType::Counter);
+        Handler::new_attached(
+            id,
+            self.arena.clone(),
+            self.get_global_txn(),
+            Arc::downgrade(&self.state),
+        )
+        .into_counter()
+        .unwrap()
+    }
+
     /// This is for debugging purpose. It will travel the whole oplog
     #[inline]
     pub fn diagnose_size(&self) {

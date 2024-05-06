@@ -43,6 +43,11 @@ pub use loro_internal::version::{Frontiers, VersionVector};
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
 
+#[cfg(feature = "counter")]
+mod counter;
+#[cfg(feature = "counter")]
+pub use counter::LoroCounter;
+
 /// `LoroDoc` is the entry for the whole document.
 /// When it's dropped, all the associated [`Handler`]s will be invalidated.
 #[derive(Debug)]
@@ -219,6 +224,16 @@ impl LoroDoc {
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> LoroTree {
         LoroTree {
             handler: self.doc.get_tree(id),
+        }
+    }
+
+    #[cfg(feature = "counter")]
+    /// Get a [LoroCounter] by container id.
+    ///  
+    /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    pub fn get_counter<I: IntoContainerId>(&self, id: I) -> LoroCounter {
+        LoroCounter {
+            handler: self.doc.get_counter(id),
         }
     }
 
@@ -1487,6 +1502,9 @@ pub enum Container {
     Tree(LoroTree),
     /// [LoroMovableList container](https://loro.dev/docs/tutorial/list)
     MovableList(LoroMovableList),
+    #[cfg(feature = "counter")]
+    /// [LoroCounter container]
+    Counter(counter::LoroCounter),
 }
 
 impl SealedTrait for Container {}
@@ -1504,6 +1522,8 @@ impl ContainerTrait for Container {
             Container::Text(x) => Self::Handler::Text(x.to_handler()),
             Container::Tree(x) => Self::Handler::Tree(x.to_handler()),
             Container::MovableList(x) => Self::Handler::MovableList(x.to_handler()),
+            #[cfg(feature = "counter")]
+            Container::Counter(x) => Self::Handler::Counter(x.to_handler()),
         }
     }
 
@@ -1514,6 +1534,8 @@ impl ContainerTrait for Container {
             InnerHandler::List(x) => Container::List(LoroList { handler: x }),
             InnerHandler::MovableList(x) => Container::MovableList(LoroMovableList { handler: x }),
             InnerHandler::Tree(x) => Container::Tree(LoroTree { handler: x }),
+            #[cfg(feature = "counter")]
+            InnerHandler::Counter(x) => Container::Counter(counter::LoroCounter { handler: x }),
         }
     }
 
@@ -1524,6 +1546,8 @@ impl ContainerTrait for Container {
             Container::Text(x) => x.is_attached(),
             Container::Tree(x) => x.is_attached(),
             Container::MovableList(x) => x.is_attached(),
+            #[cfg(feature = "counter")]
+            Container::Counter(x) => x.is_attached(),
         }
     }
 
@@ -1534,6 +1558,8 @@ impl ContainerTrait for Container {
             Container::Map(x) => x.get_attached().map(Container::Map),
             Container::Text(x) => x.get_attached().map(Container::Text),
             Container::Tree(x) => x.get_attached().map(Container::Tree),
+            #[cfg(feature = "counter")]
+            Container::Counter(x) => x.get_attached().map(Container::Counter),
         }
     }
 
@@ -1558,6 +1584,8 @@ impl Container {
             ContainerType::Map => Container::Map(LoroMap::new()),
             ContainerType::Text => Container::Text(LoroText::new()),
             ContainerType::Tree => Container::Tree(LoroTree::new()),
+            #[cfg(feature = "counter")]
+            ContainerType::Counter => Container::Counter(counter::LoroCounter::new()),
             ContainerType::Unknown(_) => unreachable!(),
         }
     }
@@ -1570,6 +1598,8 @@ impl Container {
             Container::Map(_) => ContainerType::Map,
             Container::Text(_) => ContainerType::Text,
             Container::Tree(_) => ContainerType::Tree,
+            #[cfg(feature = "counter")]
+            Container::Counter(_) => ContainerType::Counter,
         }
     }
 
@@ -1581,6 +1611,8 @@ impl Container {
             Container::Map(x) => x.id(),
             Container::Text(x) => x.id(),
             Container::Tree(x) => x.id(),
+            #[cfg(feature = "counter")]
+            Container::Counter(x) => x.id(),
         }
     }
 }
@@ -1593,6 +1625,8 @@ impl From<InnerHandler> for Container {
             InnerHandler::List(x) => Container::List(LoroList { handler: x }),
             InnerHandler::Tree(x) => Container::Tree(LoroTree { handler: x }),
             InnerHandler::MovableList(x) => Container::MovableList(LoroMovableList { handler: x }),
+            #[cfg(feature = "counter")]
+            InnerHandler::Counter(x) => Container::Counter(counter::LoroCounter { handler: x }),
         }
     }
 }

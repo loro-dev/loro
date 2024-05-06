@@ -3258,7 +3258,7 @@ fn with_txn<R>(
 }
 
 #[cfg(feature = "counter")]
-mod counter {
+pub mod counter {
 
     use loro_common::LoroResult;
 
@@ -3271,7 +3271,7 @@ mod counter {
     use super::{create_handler, Handler, MaybeDetached};
 
     #[derive(Clone)]
-    pub(crate) struct CounterHandler {
+    pub struct CounterHandler {
         pub(super) inner: MaybeDetached<i64>,
     }
 
@@ -3365,7 +3365,7 @@ mod counter {
                     let inner = create_handler(parent, self_id);
                     let c = inner.into_counter().unwrap();
 
-                    c.increment(v.value);
+                    c.increment(v.value)?;
 
                     v.attached = c.attached_handler().cloned();
                     Ok(c)
@@ -3374,7 +3374,7 @@ mod counter {
                     let new_inner = create_handler(a, self_id);
                     let ans = new_inner.into_counter().unwrap();
                     let delta = *self.get_value().as_i64().unwrap();
-                    ans.increment_with_txn(txn, delta);
+                    ans.increment_with_txn(txn, delta)?;
                     Ok(ans)
                 }
             }
