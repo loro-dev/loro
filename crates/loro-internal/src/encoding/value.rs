@@ -353,9 +353,9 @@ impl<'a> Value<'a> {
             ValueKind::LoroValueArray => {
                 let len = value_reader.read_usize()?;
                 let mut ans = Vec::with_capacity(len);
-                for _ in 0..len {
-                    let loro_value =
-                        value_reader.read_value_type_and_content(&arenas.keys.keys, id)?;
+                for i in 0..len {
+                    let loro_value = value_reader
+                        .read_value_type_and_content(&arenas.keys.keys, id.inc(i as i32))?;
                     ans.push(loro_value);
                 }
                 Value::LoroValueArray(ans)

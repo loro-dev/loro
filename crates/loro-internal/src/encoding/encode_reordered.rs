@@ -72,6 +72,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             .map(|x| x.container),
         &oplog.arena,
     );
+
     let cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
 
     let mut registers = EncodedRegisters {
