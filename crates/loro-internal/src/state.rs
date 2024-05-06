@@ -14,14 +14,13 @@ use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
     cursor::Cursor,
-    delta::DeltaItem,
     diff_calc::DiffCalculator,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
     fx_map,
     handler::ValueOrHandler,
     id::PeerID,
-    op::{FutureRawOpContent,Op, RawOp},
+    op::{Op, RawOp},
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue, OpLog,
@@ -1146,10 +1145,7 @@ impl DocState {
                 State::ListState(s) => s.get_index_of_id(id),
                 State::RichtextState(s) => s.get_event_index_of_id(id),
                 State::MovableListState(s) => s.get_index_of_id(id),
-                State::MapState(_) | State::TreeState(_) => {
-                State::MapState(_) | State::TreeState(_) | State::UnknownState(_) => {
-                    unreachable!()
-                }
+                State::MapState(_) | State::TreeState(_) | State::UnknownState(_) => unreachable!(),
             }
         } else {
             if matches!(pos.side, crate::cursor::Side::Left) {
@@ -1160,10 +1156,7 @@ impl DocState {
                 State::ListState(s) => Some(s.len()),
                 State::RichtextState(s) => Some(s.len_event()),
                 State::MovableListState(s) => Some(s.len()),
-                State::MapState(_) | State::TreeState(_) => {
-                State::MapState(_) | State::TreeState(_) | State::UnknownState(_) => {
-                    unreachable!()
-                }
+                State::MapState(_) | State::TreeState(_) | State::UnknownState(_) => unreachable!(),
             }
         }
     }

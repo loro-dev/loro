@@ -848,6 +848,7 @@ impl LoroDoc {
     }
 
     #[cfg(feature = "test_utils")]
+    #[allow(unused)]
     pub(crate) fn arena(&self) -> &SharedArena {
         &self.arena
     }

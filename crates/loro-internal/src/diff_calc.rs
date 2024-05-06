@@ -319,7 +319,7 @@ impl DiffCalculator {
                 ),
                 crate::ContainerType::MovableList => (
                     depth,
-                    ContainerDiffCalculator::MovableList(MovableListDiffCalculator::new(idx)),
+                    ContainerDiffCalculator::MovableList(MovableListDiffCalculator::new(*idx)),
                 ),
             })
     }

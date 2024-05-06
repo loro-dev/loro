@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cell::RefCell, cmp::Ordering, mem::take, rc::Rc, sync::Arc};
+use std::{borrow::Cow, cell::RefCell, cmp::Ordering, mem::take, rc::Rc};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
@@ -23,11 +23,7 @@ use crate::{
 };
 pub(super) use encode::ValueRegister;
 
-use self::{
-    arena::{decode_arena, encode_arena, ContainerArena, DecodedArenas, PeerIdArena},
-    encode::{encode_changes, encode_ops, init_encode, TempOp, ValueRegister},
-    value::ValueReader,
-};
+use self::encode::{encode_changes, encode_ops, init_encode, TempOp};
 
 use super::{
     arena::*,
@@ -437,11 +433,14 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     let cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
     let mut dep_arena = DepsArena::default();
     let mut value_writer = ValueWriter::new();
-    let mut registers = EncodedRegisters {
+    let registers = Rc::new(RefCell::new(EncodedRegisters {
         peer: peer_register,
         container: cid_register,
         key: key_register,
-    };
+    }));
+
+    let registers_clone = registers.clone();
+
     // This stores the required op positions of each container state.
     // The states can be encoded in these positions in the next step.
     // This data structure stores that mapping from op id to the required total order.
@@ -481,7 +480,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
 
         let mut op_len = 0;
         let bytes = state.encode_snapshot(super::StateSnapshotEncoder {
-            register_peer: &mut |peer| RefCell::borrow_mut(&peer_register_1).register(&peer),
+            register_peer: &mut |peer| RefCell::borrow_mut(&registers).peer.register(&peer),
             check_idspan: &|_id_span| {
                 // TODO: todo!("check intersection by vv that defined by idlp");
                 // if let Some(counter) = vv.intersect_span(id_span) {
@@ -496,7 +495,9 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
             encoder_by_op: &mut |op| {
                 origin_ops.push(TempOp {
                     op: Cow::Owned(op.op),
-                    peer_idx: RefCell::borrow_mut(&peer_register).register(&op.peer) as u32,
+                    peer_idx: RefCell::borrow_mut(&registers_clone)
+                        .peer
+                        .register(&op.peer) as u32,
                     peer_id: op.peer,
                     container_index,
                     prop_that_used_for_sort: -1,
@@ -526,8 +527,8 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         state_bytes.extend(bytes);
     }
 
-    drop(peer_register_1);
-    let mut peer_register = match Rc::try_unwrap(peer_register) {
+    drop(registers_clone);
+    let mut registers = match Rc::try_unwrap(registers) {
         Ok(r) => r.into_inner(),
         Err(_) => unreachable!(),
     };
@@ -1218,48 +1219,29 @@ mod encode {
                     key,
                     value,
                     info,
-                } => {
-                    value_writer.write(
-                        &Value::MarkStart(MarkStart {
-                            len: end - start,
-                            key: key.clone(),
-                            value: value.clone(),
-                            info: info.to_byte(),
-                        }),
-                        register_key,
-                        register_cid,
-                    );
-                    ValueKind::MarkStart
-                }
+                } => Value::MarkStart(MarkStart {
+                    len: *end - *start,
+                    key: key.clone(),
+                    value: value.clone(),
+                    info: info.to_byte(),
+                }),
                 crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
-                    value_writer.write(
-                        &Value::Set {
-                            peer_idx: register_peer.register(&elem_id.peer),
-                            lamport: elem_id.lamport,
-                            value: value.clone(),
-                        },
-                        register_key,
-                        register_cid,
-                    );
-                    ValueKind::Set
+                    Value::ListSet {
+                        peer_idx: registers.peer.register(&elem_id.peer),
+                        lamport: elem_id.lamport,
+                        value: value.clone(),
+                    }
                 }
-                crate::container::list::list_op::InnerListOp::StyleEnd => ValueKind::Null,
+                crate::container::list::list_op::InnerListOp::StyleEnd => Value::Null,
                 crate::container::list::list_op::InnerListOp::Move {
                     from,
                     from_id,
                     to: _,
-                } => {
-                    value_writer.write(
-                        &Value::Move {
-                            from: *from as usize,
-                            from_idx: register_peer.register(&from_id.peer),
-                            lamport: from_id.lamport as usize,
-                        },
-                        register_key,
-                        register_cid,
-                    );
-                    ValueKind::Move
-                }
+                } => Value::ListMove {
+                    from: *from as usize,
+                    from_idx: registers.peer.register(&from_id.peer),
+                    lamport: from_id.lamport as usize,
+                },
             },
             crate::op::InnerContent::Map(map) => {
                 assert_eq!(op.container.get_type(), ContainerType::Map);
@@ -1389,18 +1371,9 @@ fn decode_op(
         },
         ContainerType::MovableList => {
             let pos = prop as usize;
-            match kind {
-                ValueKind::Array => {
-                    let arr = value_reader.read_value_content(ValueKind::Array, &keys.keys, id)?;
-
-                    let range = arena.alloc_values(
-                        Arc::try_unwrap(
-                            arr.into_list()
-                                .map_err(|_| LoroError::DecodeDataCorruptionError)?,
-                        )
-                        .unwrap()
-                        .into_iter(),
-                    );
+            match value {
+                Value::LoroValueArray(arr) => {
+                    let range = shared_arena.alloc_values(arr.into_iter());
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
                             slice: SliceRange::new(range.start as u32..range.end as u32),
@@ -1408,7 +1381,7 @@ fn decode_op(
                         },
                     )
                 }
-                ValueKind::DeleteSeq => {
+                Value::DeleteSeq => {
                     let del_start = del_iter.next().unwrap()?;
                     let peer_idx = del_start.peer_idx;
                     let cnt = del_start.counter;
@@ -1416,38 +1389,34 @@ fn decode_op(
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Delete(
                             DeleteSpanWithId::new(
-                                ID::new(peers[peer_idx], cnt as Counter),
+                                ID::new(arenas.peer_ids[peer_idx], cnt as Counter),
                                 pos as isize,
                                 len,
                             ),
                         ),
                     )
                 }
-                ValueKind::Set => {
-                    let peer_idx = value_reader.read_usize()?;
-                    let lamport = value_reader.read_usize()?;
-                    let value = value_reader.read_value_type_and_content(&keys.keys, id)?;
-                    let peer = peers[peer_idx];
-                    crate::op::InnerContent::List(
-                        crate::container::list::list_op::InnerListOp::Set {
-                            elem_id: IdLp::new(peer, lamport as Lamport),
-                            value,
-                        },
-                    )
-                }
-                ValueKind::Move => {
-                    let from = value_reader.read_usize()?;
-                    let peer_idx = value_reader.read_usize()?;
-                    let lamport = value_reader.read_usize()?;
-                    let from_peer = peers[peer_idx];
-                    crate::op::InnerContent::List(
-                        crate::container::list::list_op::InnerListOp::Move {
-                            from: from as u32,
-                            from_id: IdLp::new(from_peer, lamport as Lamport),
-                            to: prop as u32,
-                        },
-                    )
-                }
+                Value::ListMove {
+                    from,
+                    from_idx,
+                    lamport,
+                } => crate::op::InnerContent::List(
+                    crate::container::list::list_op::InnerListOp::Move {
+                        from: from as u32,
+                        from_id: IdLp::new(arenas.peer_ids[from_idx], lamport as Lamport),
+                        to: prop as u32,
+                    },
+                ),
+                Value::ListSet {
+                    peer_idx,
+                    lamport,
+                    value,
+                } => crate::op::InnerContent::List(
+                    crate::container::list::list_op::InnerListOp::Set {
+                        elem_id: IdLp::new(arenas.peer_ids[peer_idx], lamport as Lamport),
+                        value,
+                    },
+                ),
                 _ => unreachable!(),
             }
         }

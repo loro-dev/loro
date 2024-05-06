@@ -8,7 +8,10 @@ use loro_common::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{container::tree::tree_op::TreeOp, encoding::encode_reordered::MAX_COLLECTION_SIZE};
+use crate::{
+    change::Lamport, container::tree::tree_op::TreeOp,
+    encoding::encode_reordered::MAX_COLLECTION_SIZE,
+};
 
 use super::arena::{DecodedArenas, EncodedRegisters};
 
@@ -31,13 +34,14 @@ pub enum ValueKind {
     LoroValueArray, // 14
     MarkStart,      // 15
     TreeMove,       // 16
-
+    ListMove,       // 17
+    ListSet,        // 18
     Future(FutureValueKind),
 }
 
 #[derive(Debug)]
 pub enum FutureValueKind {
-    // start from 17
+    // start from 19
     Unknown(u8),
 }
 
@@ -61,6 +65,8 @@ impl ValueKind {
             ValueKind::LoroValueArray => 14,
             ValueKind::MarkStart => 15,
             ValueKind::TreeMove => 16,
+            ValueKind::ListMove => 17,
+            ValueKind::ListSet => 18,
             ValueKind::Future(future_value_kind) => match future_value_kind {
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
             },
@@ -87,6 +93,8 @@ impl ValueKind {
             14 => ValueKind::LoroValueArray,
             15 => ValueKind::MarkStart,
             16 => ValueKind::TreeMove,
+            17 => ValueKind::ListMove,
+            18 => ValueKind::ListSet,
             _ => ValueKind::Future(FutureValueKind::Unknown(kind)),
         }
     }
@@ -112,6 +120,16 @@ pub enum Value<'a> {
     Map(FxHashMap<InternalString, Value<'a>>),
     MarkStart(MarkStart),
     TreeMove(EncodedTreeMove),
+    ListMove {
+        from: usize,
+        from_idx: usize,
+        lamport: usize,
+    },
+    ListSet {
+        peer_idx: usize,
+        lamport: Lamport,
+        value: LoroValue,
+    },
     Future(FutureValue<'a>),
 }
 
@@ -145,6 +163,16 @@ pub enum OwnedValue {
     Map(FxHashMap<InternalString, OwnedValue>),
     MarkStart(MarkStart),
     TreeMove(EncodedTreeMove),
+    ListMove {
+        from: usize,
+        from_idx: usize,
+        lamport: usize,
+    },
+    ListSet {
+        peer_idx: usize,
+        lamport: Lamport,
+        value: LoroValue,
+    },
     Future(OwnedFutureValue),
 }
 
@@ -168,6 +196,8 @@ impl<'a> Value<'a> {
             Value::MarkStart { .. } => ValueKind::MarkStart,
             Value::Binary(_) => ValueKind::Binary,
             Value::TreeMove(..) => ValueKind::TreeMove,
+            Value::ListMove { .. } => ValueKind::ListMove,
+            Value::ListSet { .. } => ValueKind::ListSet,
             Value::Future(value) => match value {
                 FutureValue::Unknown { kind, data: _ } => {
                     ValueKind::Future(FutureValueKind::Unknown(*kind))
@@ -199,6 +229,24 @@ impl<'a> Value<'a> {
             OwnedValue::MarkStart(x) => Value::MarkStart(x.clone()),
             OwnedValue::Binary(x) => Value::Binary(x.as_slice()),
             OwnedValue::TreeMove(x) => Value::TreeMove(x.clone()),
+            OwnedValue::ListMove {
+                from,
+                from_idx,
+                lamport,
+            } => Value::ListMove {
+                from: *from,
+                from_idx: *from_idx,
+                lamport: *lamport,
+            },
+            OwnedValue::ListSet {
+                peer_idx,
+                lamport,
+                value,
+            } => Value::ListSet {
+                peer_idx: *peer_idx,
+                lamport: lamport.clone(),
+                value: value.clone(),
+            },
             OwnedValue::Future(value) => match value {
                 OwnedFutureValue::Unknown { kind, data } => Value::Future(FutureValue::Unknown {
                     kind: *kind,
@@ -229,6 +277,24 @@ impl<'a> Value<'a> {
             Value::MarkStart(x) => OwnedValue::MarkStart(x),
             Value::Binary(x) => OwnedValue::Binary(x.to_owned()),
             Value::TreeMove(x) => OwnedValue::TreeMove(x),
+            Value::ListMove {
+                from,
+                from_idx,
+                lamport,
+            } => OwnedValue::ListMove {
+                from,
+                from_idx,
+                lamport,
+            },
+            Value::ListSet {
+                peer_idx,
+                lamport,
+                value,
+            } => OwnedValue::ListSet {
+                peer_idx,
+                lamport,
+                value,
+            },
             Value::Future(value) => match value {
                 FutureValue::Unknown { kind, data } => {
                     OwnedValue::Future(OwnedFutureValue::Unknown {
@@ -303,6 +369,26 @@ impl<'a> Value<'a> {
                 Value::MarkStart(value_reader.read_mark(&arenas.keys.keys, id)?)
             }
             ValueKind::TreeMove => Value::TreeMove(value_reader.read_tree_move()?),
+            ValueKind::ListMove => {
+                let from = value_reader.read_usize()?;
+                let from_idx = value_reader.read_usize()?;
+                let lamport = value_reader.read_usize()?;
+                Value::ListMove {
+                    from,
+                    from_idx,
+                    lamport,
+                }
+            }
+            ValueKind::ListSet => {
+                let peer_idx = value_reader.read_usize()?;
+                let lamport = value_reader.read_usize()? as u32;
+                let value = value_reader.read_value_type_and_content(&arenas.keys.keys, id)?;
+                Value::ListSet {
+                    peer_idx,
+                    lamport,
+                    value,
+                }
+            }
             ValueKind::Future(future_kind) => {
                 Self::decode_without_arena(future_kind, value_reader)?
             }
@@ -353,6 +439,26 @@ impl<'a> Value<'a> {
             Value::Map(x) => (ValueKind::Map, value_writer.write_map(x, registers)),
             Value::MarkStart(x) => (ValueKind::MarkStart, value_writer.write_mark(x, registers)),
             Value::TreeMove(tree) => (ValueKind::TreeMove, value_writer.write_tree_move(&tree)),
+            Value::ListMove {
+                from,
+                from_idx,
+                lamport,
+            } => (
+                ValueKind::ListMove,
+                value_writer.write_usize(from)
+                    + value_writer.write_usize(from_idx)
+                    + value_writer.write_usize(lamport),
+            ),
+            Value::ListSet {
+                peer_idx,
+                lamport,
+                value,
+            } => (
+                ValueKind::ListSet,
+                value_writer.write_usize(peer_idx)
+                    + value_writer.write_usize(lamport as usize)
+                    + value_writer.write_value_type_and_content(&value, registers),
+            ),
             Value::Future(value) => {
                 let (k, i) = Self::encode_without_registers(value, value_writer);
                 (ValueKind::Future(k), i)
@@ -360,22 +466,6 @@ impl<'a> Value<'a> {
         }
     }
 }
-
-// pub trait EncodeValue {
-//     fn encode(&self, value_writer: &mut ValueWriter, registers: &mut EncodedRegisters)
-//         -> ValueKind;
-//     fn encode_maybe_unknown(&self, value_writer: &mut ValueWriter) -> (ValueKind, usize);
-//     fn decode<'a>(
-//         kind: ValueKind,
-//         value_reader: &mut ValueReader,
-//         arenas: &'a DecodedArenas<'a>,
-//         id: ID,
-//     ) -> Self;
-//     fn decode_as_unknown<'a>(
-//         kind: ValueKind,
-//         value_reader: &mut ValueReader,
-//     ) -> (Self, FutureValueKind);
-// }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MarkStart {

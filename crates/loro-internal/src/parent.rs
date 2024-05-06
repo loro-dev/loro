@@ -59,6 +59,9 @@ impl OpLog {
                     let idx = arena.register_container(&id);
                     arena.set_parent(idx, Some(op.container));
                 }
+                crate::op::InnerContent::Future(_) => {
+                    // TODO: check
+                }
             }
         }
     }
@@ -108,6 +111,9 @@ impl DocState {
                 let container_id = target.associated_meta_container();
                 let child_idx = self.arena.register_container(&container_id);
                 self.arena.set_parent(child_idx, Some(container));
+            }
+            RawOpContent::Future(_) => {
+                // TODO: check
             }
         }
     }

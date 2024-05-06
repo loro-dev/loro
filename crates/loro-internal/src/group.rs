@@ -15,7 +15,7 @@ use crate::{
     change::{Change, Lamport},
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},
     diff_calc::tree::TreeCacheForDiff,
-    op::{FutureInnerContent, InnerContent, RichOp},
+    op::{InnerContent, RichOp},
     VersionVector,
 };
 
@@ -346,6 +346,7 @@ impl OpGroupTrait for MovableListOpGroup {
             },
             InnerContent::Map(_) => unreachable!(),
             InnerContent::Tree(_) => unreachable!(),
+            InnerContent::Future(_) => unreachable!(),
         };
     }
 }
