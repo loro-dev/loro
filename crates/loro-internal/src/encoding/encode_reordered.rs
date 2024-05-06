@@ -797,7 +797,12 @@ fn decode_snapshot_states(
             state_bytes_len,
         } = encoded_state?;
         if is_unknown {
-            unknown_containers.push(containers[container_index as usize].clone());
+            let container_id = containers[container_index as usize].clone();
+            let container = state.arena.register_container(&container_id);
+            unknown_containers.push(container);
+            if container.is_unknown() {
+                state.init_unknown_container(container_id);
+            }
             continue;
         }
         if op_len == 0 && state_bytes_len == 0 {

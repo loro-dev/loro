@@ -605,6 +605,11 @@ impl DocState {
         state.import_from_snapshot_ops(decode_ctx);
     }
 
+    pub(crate) fn init_unknown_container(&mut self, cid: ContainerID) {
+        let idx = self.arena.register_container(&cid);
+        get_or_create!(self, idx);
+    }
+
     pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<InternalDocDiff>) {
         self.in_txn = false;
         self.frontiers = new_frontiers;
@@ -643,7 +648,7 @@ impl DocState {
         states: FxHashMap<ContainerIdx, State>,
         frontiers: Frontiers,
         oplog: &OpLog,
-        unknown_containers: Vec<ContainerID>,
+        unknown_containers: Vec<ContainerIdx>,
     ) {
         assert!(self.states.is_empty(), "overriding states");
         self.pre_txn(Default::default(), EventTriggerKind::Import);
@@ -654,7 +659,6 @@ impl DocState {
                 self.arena.set_parent(child_idx, Some(*idx));
             }
         }
-
         if self.is_recording() {
             let mut diff: Vec<_> = self
                 .states
@@ -671,24 +675,19 @@ impl DocState {
                 })
                 .collect();
             let mut diff_calc = DiffCalculator::new();
-            // TODO: diff calc unknown
-            let still_unknown_containers: FxHashSet<_> = unknown_containers
-                .iter()
-                .filter(|x| x.is_unknown())
-                .collect();
             let mut unknown_diffs = diff_calc.calc_diff_internal(
                 oplog,
                 &Default::default(),
-                None,
+                Some(&Default::default()),
                 oplog.vv(),
                 Some(&frontiers),
-                Some(&|idx| {
-                    !still_unknown_containers.contains(&self.arena.idx_to_id(idx).unwrap())
-                }),
+                Some(&|idx| idx.is_unknown() && unknown_containers.contains(&idx)),
             );
 
             // diff
-            diff.append(&mut unknown_diffs);
+            if !unknown_diffs.is_empty() {
+                diff.append(&mut unknown_diffs);
+            }
 
             self.record_diff(InternalDocDiff {
                 origin: Default::default(),
@@ -936,7 +935,7 @@ impl DocState {
         }
 
         let triggered_by = diffs[0].by;
-        assert!(diffs.iter().all(|x| x.by == triggered_by));
+        debug_assert!(diffs.iter().all(|x| x.by == triggered_by));
         let mut containers = FxHashMap::default();
         let to = (*diffs.last().unwrap().new_version).to_owned();
         let origin = diffs[0].origin.clone();
@@ -963,7 +962,6 @@ impl DocState {
 
                     continue;
                 };
-
                 // TODO: PERF avoid this clone
                 *last_container_diff = last_container_diff
                     .clone()
