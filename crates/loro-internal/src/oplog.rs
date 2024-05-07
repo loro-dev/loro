@@ -637,7 +637,7 @@ impl OpLog {
                     value,
                 }))
             }
-            crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(*tree)),
+            crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(tree.clone())),
             crate::op::InnerContent::Future(f) => match f {
                 #[cfg(feature = "counter")]
                 crate::op::FutureInnerContent::Counter(c) => contents.push(RawOpContent::Future(

@@ -1,5 +1,6 @@
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
+#[cfg(feature = "wasm")]
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -31,7 +32,8 @@ pub enum FutureInnerContent {
 }
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
-#[derive(EnumAsInner, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(EnumAsInner, Debug, PartialEq)]
+#[cfg_attr(feature = "wasm", derive(Serialize, Deserialize,))]
 pub enum RawOpContent<'a> {
     Map(MapSet),
     List(ListOp<'a>),
@@ -55,7 +57,7 @@ impl<'a> Clone for RawOpContent<'a> {
         match self {
             Self::Map(arg0) => Self::Map(arg0.clone()),
             Self::List(arg0) => Self::List(arg0.clone()),
-            Self::Tree(arg0) => Self::Tree(*arg0),
+            Self::Tree(arg0) => Self::Tree(arg0.clone()),
             Self::Future(f) => Self::Future(match f {
                 #[cfg(feature = "counter")]
                 FutureRawOpContent::Counter(x) => FutureRawOpContent::Counter(*x),
@@ -106,7 +108,7 @@ impl<'a> RawOpContent<'a> {
                     value: value.clone(),
                 }),
             },
-            Self::Tree(arg0) => RawOpContent::Tree(*arg0),
+            Self::Tree(arg0) => RawOpContent::Tree(arg0.clone()),
             Self::Future(f) => RawOpContent::Future(match f {
                 #[cfg(feature = "counter")]
                 FutureRawOpContent::Counter(x) => FutureRawOpContent::Counter(*x),
@@ -134,17 +136,6 @@ impl<'a> HasLength for RawOpContent<'a> {
     }
 }
 
-impl<'a> Sliceable for RawOpContent<'a> {
-    fn slice(&self, from: usize, to: usize) -> Self {
-        match self {
-            RawOpContent::Map(x) => RawOpContent::Map(x.slice(from, to)),
-            RawOpContent::List(x) => RawOpContent::List(x.slice(from, to)),
-            RawOpContent::Tree(x) => RawOpContent::Tree(x.slice(from, to)),
-            RawOpContent::Future(f) => RawOpContent::Future(f.clone()),
-        }
-    }
-}
-
 impl<'a> Mergable for RawOpContent<'a> {
     fn is_mergable(&self, other: &Self, _conf: &()) -> bool
     where
@@ -152,6 +143,7 @@ impl<'a> Mergable for RawOpContent<'a> {
     {
         match (self, other) {
             (RawOpContent::List(x), RawOpContent::List(y)) => x.is_mergable(y, &()),
+            (RawOpContent::Tree(x), RawOpContent::Tree(y)) => x.is_mergable(y, &()),
             _ => false,
         }
     }

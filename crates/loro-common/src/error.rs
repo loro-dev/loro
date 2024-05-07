@@ -31,7 +31,7 @@ pub enum LoroError {
     OutOfBound { pos: usize, len: usize },
     #[error("Every op id should be unique. ID {id} has been used. You should use a new PeerID to edit the content. ")]
     UsedOpID { id: ID },
-    #[error("Movable Tree Error")]
+    #[error("Movable Tree Error: {0}")]
     TreeError(#[from] LoroTreeError),
     #[error("Invalid argument ({0})")]
     ArgErr(Box<str>),
@@ -61,6 +61,8 @@ pub enum LoroTreeError {
     TreeNodeParentNotFound(TreeID),
     #[error("TreeID {0:?} doesn't exist")]
     TreeNodeNotExist(TreeID),
+    #[error("The index({index}) should be <= the length of children ({len})")]
+    IndexOutOfBound { len: usize, index: usize },
 }
 
 #[cfg(feature = "wasm")]

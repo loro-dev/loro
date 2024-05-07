@@ -1,6 +1,6 @@
 pub mod actions;
 pub mod actor;
-mod container;
+pub mod container;
 pub mod crdt_fuzzer;
 mod macros;
 mod value;

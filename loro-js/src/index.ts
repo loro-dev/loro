@@ -82,9 +82,9 @@ export type MapDiff = {
 };
 
 export type TreeDiffItem =
-  | { target: TreeID; action: "create"; parent: TreeID | undefined }
+  | { target: TreeID; action: "create"; parent: TreeID | undefined; index: number; position: string }
   | { target: TreeID; action: "delete" }
-  | { target: TreeID; action: "move"; parent: TreeID | undefined };
+  | { target: TreeID; action: "move"; parent: TreeID | undefined;  index: number; position: string };
 
 export type TreeDiff = {
   type: "tree";
@@ -531,8 +531,8 @@ declare module "loro-wasm" {
     T extends Record<string, unknown> = Record<string, unknown>,
   > {
     new (): LoroTree<T>;
-    createNode(parent: TreeID | undefined): LoroTreeNode<T>;
-    move(target: TreeID, parent: TreeID | undefined): void;
+    createNode(parent?: TreeID, index?: number ): LoroTreeNode<T>;
+    move(target: TreeID, parent?: TreeID, index?: number): void;
     delete(target: TreeID): void;
     has(target: TreeID): boolean;
     getNodeByID(target: TreeID): LoroTreeNode;
@@ -546,9 +546,8 @@ declare module "loro-wasm" {
      * Get the associated metadata map container of a tree node.
      */
     readonly data: LoroMap<T>;
-    createNode(): LoroTreeNode<T>;
-    setAsRoot(): void;
-    moveTo(parent: LoroTreeNode<T>): void;
+    createNode(index?: number): LoroTreeNode<T>;
+    move(parent?: LoroTreeNode<T>, index?: number): void;
     parent(): LoroTreeNode<T> | undefined;
     children(): Array<LoroTreeNode<T>>;
   }

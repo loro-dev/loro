@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    sync::{Arc, Mutex, RwLock, Weak},
+    sync::{atomic::AtomicU8, Arc, Mutex, RwLock, Weak},
 };
 
 use enum_as_inner::EnumAsInner;
@@ -39,7 +39,7 @@ pub(crate) use self::movable_list_state::{IndexType, MovableListState};
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
-pub(crate) use tree_state::{get_meta_value, TreeParentId, TreeState};
+pub(crate) use tree_state::{get_meta_value, FractionalIndexGenResult, TreeParentId, TreeState};
 
 use self::unknown_state::UnknownState;
 
@@ -241,8 +241,8 @@ impl State {
         Self::RichtextState(Box::new(RichtextState::new(idx, config)))
     }
 
-    pub fn new_tree(idx: ContainerIdx) -> Self {
-        Self::TreeState(Box::new(TreeState::new(idx)))
+    pub fn new_tree(idx: ContainerIdx, peer: PeerID, jitter: Arc<AtomicU8>) -> Self {
+        Self::TreeState(Box::new(TreeState::new(idx, peer, jitter)))
     }
 
     pub fn new_unknown(idx: ContainerIdx) -> Self {
@@ -1137,7 +1137,11 @@ impl DocState {
                 idx,
                 self.config.text_style_config.clone(),
             ))),
-            ContainerType::Tree => State::TreeState(Box::new(TreeState::new(idx))),
+            ContainerType::Tree => State::TreeState(Box::new(TreeState::new(
+                idx,
+                self.peer,
+                self.config.tree_position_jitter.clone(),
+            ))),
             ContainerType::MovableList => {
                 State::MovableListState(Box::new(MovableListState::new(idx)))
             }

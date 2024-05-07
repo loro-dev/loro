@@ -7,7 +7,7 @@ use loro_internal::{
     event::{Diff, EventTriggerKind},
     handler::{Handler, TextDelta, ValueOrHandler},
     version::Frontiers,
-    ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson,
+    ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
 };
 use serde_json::json;
 
@@ -725,15 +725,15 @@ fn tree_checkout() {
     doc_a.set_peer_id(1).unwrap();
     let tree = doc_a.get_tree("root");
     let id1 = doc_a
-        .with_txn(|txn| tree.create_with_txn(txn, None))
+        .with_txn(|txn| tree.create_with_txn(txn, None, 0))
         .unwrap();
     let id2 = doc_a
-        .with_txn(|txn| tree.create_with_txn(txn, id1))
+        .with_txn(|txn| tree.create_with_txn(txn, id1, 0))
         .unwrap();
     let v1_state = tree.get_deep_value();
     let v1 = doc_a.oplog_frontiers();
     let _id3 = doc_a
-        .with_txn(|txn| tree.create_with_txn(txn, id2))
+        .with_txn(|txn| tree.create_with_txn(txn, id2, 0))
         .unwrap();
     let v2_state = tree.get_deep_value();
     let v2 = doc_a.oplog_frontiers();
@@ -767,7 +767,7 @@ fn tree_checkout() {
     doc_a.attach();
     doc_a
         .with_txn(|txn| {
-            tree.create_with_txn(txn, None)
+            tree.create_with_txn(txn, None, 0)
             //tree.insert_meta(txn, id1, "a", 1.into())
         })
         .unwrap();
@@ -866,8 +866,8 @@ fn missing_event_when_checkout() {
 
     let doc2 = LoroDoc::new_auto_commit();
     let tree = doc2.get_tree("tree");
-    let node = tree.create(None).unwrap();
-    let _ = tree.create(None).unwrap();
+    let node = tree.create_at(None, 0).unwrap();
+    let _ = tree.create_at(None, 0).unwrap();
     let meta = tree.get_meta(node).unwrap();
     meta.insert("a", 0).unwrap();
     doc.import(&doc2.export_from(&doc.oplog_vv())).unwrap();
@@ -938,4 +938,25 @@ fn insert_attach_container() -> LoroResult<()> {
         })
     );
     Ok(())
+}
+
+#[test]
+fn tree_attach() {
+    let tree = TreeHandler::new_detached();
+    let id = tree.create(None).unwrap();
+    tree.get_meta(id).unwrap().insert("key", "value").unwrap();
+    let doc = LoroDoc::new_auto_commit();
+    doc.get_list("list").insert_container(0, tree).unwrap();
+    let v = doc.get_deep_value();
+    assert_eq!(
+        v.as_map().unwrap().get("list").unwrap().as_list().unwrap()[0]
+            .as_list()
+            .unwrap()[0]
+            .as_map()
+            .unwrap()
+            .get("meta")
+            .unwrap()
+            .to_json_value(),
+        json!({"key":"value"})
+    )
 }

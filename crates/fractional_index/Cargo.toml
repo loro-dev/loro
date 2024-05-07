@@ -1,0 +1,21 @@
+[package]
+name = "fractional_index"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+imbl = "^3.0"
+smallvec = "^1.13"
+serde = { version = "^1.0", features = ["derive", "rc"], optional = true }
+rand = { version = "^0.8" }
+
+[dev-dependencies]
+fraction_index = { version = "^2.0", package = "fractional_index" }
+criterion = "^0.5.0"
+
+
+[[bench]]
+name = "fractional_index"
+harness = false

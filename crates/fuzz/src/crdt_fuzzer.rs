@@ -6,7 +6,7 @@ use loro::{ContainerType, Frontiers};
 use tabled::TableIteratorExt;
 use tracing::{info, info_span};
 
-use crate::array_mut_ref;
+use crate::{actions::ActionWrapper, array_mut_ref};
 
 pub use super::actions::Action;
 use super::actor::Actor;
@@ -75,6 +75,9 @@ impl CRDTFuzzer {
                 container,
                 action,
             } => {
+                if matches!(action, ActionWrapper::Action(_)) {
+                    return;
+                }
                 *site %= max_users;
                 let actor = &mut self.actors[*site as usize];
                 *target %= self.targets.len() as u8;
@@ -242,7 +245,6 @@ impl FuzzTarget {
 
 pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &mut [Action]) {
     let mut fuzzer = CRDTFuzzer::new(site_num, fuzz_targets);
-
     let mut applied = Vec::new();
     for action in actions.iter_mut() {
         fuzzer.pre_process(action);

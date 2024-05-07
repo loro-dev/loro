@@ -15,8 +15,15 @@ use crate::{
     arena::SharedArena,
     change::{Change, Lamport, Timestamp},
     container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
-    encoding::StateSnapshotDecodeContext,
+    encoding::{
+        encode_reordered::{
+            arena::PositionArena,
+            value::{ValueKind, ValueWriter},
+        },
+        StateSnapshotDecodeContext,
+    },
     op::{FutureInnerContent, Op, OpWithId, SliceRange},
+    op::{Op, OpWithId, SliceRange},
     state::ContainerState,
     version::Frontiers,
     DocState, LoroDoc, OpLog, VersionVector,
@@ -92,6 +99,9 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &mut registers,
     );
 
+    let positions = position_register.into_iter().sorted_unstable().collect();
+    let mut position_register = ValueRegister::from_existing(positions);
+
     ops.sort_by(move |a, b| {
         a.container_index
             .cmp(&b.container_index)
@@ -114,6 +124,11 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &mut key_register,
     );
 
+    let position_arena = PositionArena::from_positions(position_register.unwrap_vec());
+    let tree_id_arena = TreeIDArena {
+        tree_ids: tree_id_register.unwrap_vec(),
+    };
+
     let frontiers = oplog
         .dag
         .vv_to_frontiers(&actual_start_vv)
@@ -132,6 +147,8 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             container_arena,
             key_register.unwrap_vec(),
             dep_arena,
+            position_arena,
+            tree_id_arena,
             &[],
         )),
         start_frontiers: frontiers,
@@ -550,6 +567,8 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     );
 
     let ops: Vec<TempOp> = calc_sorted_ops_for_snapshot(origin_ops, pos_mapping_heap);
+    let positions: Vec<_> = position_register.into_iter().sorted_unstable().collect();
+    let mut position_register = ValueRegister::from_existing(positions);
 
     let (encoded_ops, del_starts) =
         encode_ops(ops, &oplog.arena, &mut value_writer, &mut registers);
@@ -566,6 +585,11 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         &mut key_register,
     );
 
+    let position_arena = PositionArena::from_positions(position_register.unwrap_vec());
+    let tree_id_arena = TreeIDArena {
+        tree_ids: tree_id_register.unwrap_vec(),
+    };
+
     let doc = EncodedDoc {
         ops: encoded_ops,
         delete_starts: del_starts,
@@ -578,6 +602,8 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
             container_arena,
             key_register.unwrap_vec(),
             dep_arena,
+            position_arena,
+            tree_id_arena,
             &state_bytes,
         )),
         start_frontiers: Vec::new(),
@@ -991,8 +1017,8 @@ mod encode {
             let value_type = encode_op(&op, arena, &mut delete_start, value_writer, registers);
             let prop = get_op_prop(&op, registers);
             encoded_ops.push(EncodedOp {
-                container_index,
-                peer_idx,
+                container_index: *container_index,
+                peer_idx: *peer_idx,
                 counter: op.counter,
                 prop,
                 value_type: value_type.to_u8(),
@@ -1002,7 +1028,7 @@ mod encode {
         (encoded_ops, delete_start)
     }
 
-    pub(super) fn encode_changes<'a>(
+    pub(super) fn encode_changes<'p, 'a: 'p>(
         diff_changes: &'a [Cow<'a, Change>],
         dep_arena: &mut super::DepsArena,
         push_op: &mut impl FnMut(TempOp<'a>),
@@ -1096,6 +1122,10 @@ mod encode {
                     self.map_value_to_index.insert(key.clone(), idx);
                     idx
                 }
+            }
+
+            pub fn get(&self, key: &T) -> Option<usize> {
+                self.map_value_to_index.get(key).copied()
             }
 
             pub fn contains(&self, key: &T) -> bool {

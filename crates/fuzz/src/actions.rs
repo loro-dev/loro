@@ -15,7 +15,7 @@ use loro::{Container, ContainerType};
 use tabled::Tabled;
 
 #[enum_dispatch(Actionable)]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ActionInner {
     Map(MapAction),
     List(ListAction),
@@ -23,6 +23,18 @@ pub enum ActionInner {
     Text(TextAction),
     Tree(TreeAction),
     Counter(CounterAction),
+}
+
+impl Debug for ActionInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ActionInner::Map(m) => write!(f, "ActionInner::Map({:?})", m),
+            ActionInner::List(l) => write!(f, "ActionInner::List({:?})", l),
+            ActionInner::Text(t) => write!(f, "ActionInner::Text({:?})", t),
+            ActionInner::Tree(t) => write!(f, "ActionInner::Tree({:?})", t),
+            ActionInner::MovableList(m) => write!(f, "ActionInner::MovableList({:?})", m),
+        }
+    }
 }
 
 impl ActionInner {

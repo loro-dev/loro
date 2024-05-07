@@ -5,9 +5,11 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use loro::{
     event::{Diff, DiffEvent, ListDiffItem},
-    ContainerType, Index, LoroDoc, LoroText, LoroValue, TreeExternalDiff, TreeID, ValueOrContainer,
+    ContainerType, Index, LoroDoc, LoroText, LoroValue, ValueOrContainer,
 };
-use loro::{ContainerID, ID};
+
+use crate::container::TreeTracker;
+use loro::ContainerID;
 
 use crate::container::CounterTracker;
 
@@ -342,114 +344,6 @@ impl ApplyDiff for TextTracker {
         self.text.to_string().into()
     }
 }
-#[derive(Debug)]
-pub struct TreeTracker {
-    id: ContainerID,
-    tree: Vec<TreeNode>,
-}
-
-impl ApplyDiff for TreeTracker {
-    fn empty(id: ContainerID) -> Self {
-        TreeTracker {
-            tree: Vec::new(),
-            id,
-        }
-    }
-
-    fn id(&self) -> &ContainerID {
-        &self.id
-    }
-
-    fn apply_diff(&mut self, diff: Diff) {
-        let diff = diff.as_tree().unwrap();
-        for diff in &diff.diff {
-            let target = diff.target;
-            match &diff.action {
-                TreeExternalDiff::Create(parent) => {
-                    let node = TreeNode::new(target, *parent);
-                    self.push(node);
-                }
-                TreeExternalDiff::Delete => {
-                    let mut s = vec![target];
-                    while let Some(target) = s.pop() {
-                        self.retain(|node| node.id != target);
-                        let children = self
-                            .iter()
-                            .filter(|node| node.parent == Some(target))
-                            .map(|x| x.id);
-                        s.extend(children);
-                    }
-                }
-                TreeExternalDiff::Move(parent) => {
-                    let node = self.iter_mut().find(|node| node.id == target).unwrap();
-                    node.parent = *parent;
-                }
-            }
-        }
-    }
-
-    fn to_value(&self) -> LoroValue {
-        let mut list: Vec<FxHashMap<_, _>> = Vec::new();
-        for node in self.iter() {
-            let mut map = FxHashMap::default();
-            map.insert("id".to_string(), node.id.to_string().into());
-            map.insert("meta".to_string(), node.meta.to_value());
-            map.insert(
-                "parent".to_string(),
-                match node.parent {
-                    Some(parent) => parent.to_string().into(),
-                    None => LoroValue::Null,
-                },
-            );
-            list.push(map);
-        }
-        // compare by peer and then counter
-        list.sort_by_key(|x| {
-            let id: ID = x
-                .get("id")
-                .unwrap()
-                .as_string()
-                .unwrap()
-                .as_str()
-                .try_into()
-                .unwrap();
-            id
-        });
-        list.into()
-    }
-}
-
-impl Deref for TreeTracker {
-    type Target = Vec<TreeNode>;
-    fn deref(&self) -> &Self::Target {
-        &self.tree
-    }
-}
-impl DerefMut for TreeTracker {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.tree
-    }
-}
-
-#[derive(Debug)]
-pub struct TreeNode {
-    id: TreeID,
-    meta: ContainerTracker,
-    parent: Option<TreeID>,
-}
-
-impl TreeNode {
-    pub fn new(id: TreeID, parent: Option<TreeID>) -> Self {
-        TreeNode {
-            id,
-            meta: ContainerTracker::Map(MapTracker::empty(ContainerID::new_normal(
-                ID::new(id.peer, id.counter),
-                ContainerType::Map,
-            ))),
-            parent,
-        }
-    }
-}
 
 impl ContainerTracker {
     pub fn apply_diff(&mut self, diff: DiffEvent) {
@@ -471,8 +365,7 @@ impl ContainerTracker {
                         value = &mut value
                             .as_tree_mut()
                             .unwrap()
-                            .iter_mut()
-                            .find(|node| &node.id == tree_id)
+                            .find_node_by_id_mut(*tree_id)
                             .unwrap()
                             .meta
                     }

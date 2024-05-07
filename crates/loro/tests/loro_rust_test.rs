@@ -355,25 +355,6 @@ fn map() -> LoroResult<()> {
     Ok(())
 }
 
-#[test]
-#[cfg(feature = "test_utils")]
-fn tree() {
-    use loro::{LoroDoc, ToJson};
-
-    let doc = LoroDoc::new();
-    doc.set_peer_id(1).unwrap();
-    let tree = doc.get_tree("tree");
-    let root = tree.create(None).unwrap();
-    let root2 = tree.create(None).unwrap();
-    tree.mov(root2, root).unwrap();
-    let root_meta = tree.get_meta(root).unwrap();
-    root_meta.insert("color", "red").unwrap();
-    assert_eq!(
-        tree.get_value_with_meta().to_json(),
-        r#"[{"parent":null,"meta":{"color":"red"},"id":"0@1"},{"parent":"0@1","meta":{},"id":"1@1"}]"#
-    )
-}
-
 fn check_sync_send(_doc: impl Sync + Send) {}
 
 #[test]

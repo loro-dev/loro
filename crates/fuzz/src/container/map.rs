@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    fmt::Debug,
+    sync::{Arc, Mutex},
+};
 
 use loro::{Container, ContainerID, ContainerType, LoroDoc, LoroMap, LoroValue};
 
@@ -71,10 +74,25 @@ impl ActorTrait for MapActor {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum MapAction {
     Insert { key: u8, value: FuzzValue },
     Delete { key: u8 },
+}
+
+impl Debug for MapAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MapAction::Insert { key, value } => {
+                write!(
+                    f,
+                    "MapAction::Insert {{ key: {}, value: {:?} }}",
+                    key, value
+                )
+            }
+            MapAction::Delete { key } => write!(f, "MapAction::Delete {{ key: {} }}", key),
+        }
+    }
 }
 
 impl MapAction {

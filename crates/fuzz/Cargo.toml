@@ -7,15 +7,16 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tracing = "0.1"
 loro = { path = "../loro", features = ["counter"] }
 loro-without-counter = { git = "https://github.com/loro-dev/loro.git", package = "loro", rev = "279f9e9e78d60c9989c9058e4fe390f0b2251987" }
 loro-internal = { path = "../loro-internal", features = ["test_utils"] }
-arbitrary = "1"
-tabled = "0.10"
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
 enum-as-inner = { workspace = true }
+tracing = { workspace = true }
+itertools = { workspace = true }
+arbitrary = "1"
+tabled = "0.10"
 rand = "0.8.5"
 
 [dev-dependencies]
@@ -23,4 +24,5 @@ ctor = "0.2"
 arbtest = "^0.2.0"
 dev-utils = { path = "../dev-utils" }
 tracing-subscriber = "0.3.18"
+tracing-chrome = "0.7.1"
 color-backtrace = "0.6.1"
