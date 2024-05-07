@@ -643,7 +643,7 @@ impl OpLog {
                     value,
                 }))
             }
-            crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(*tree)),
+            crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(tree.clone())),
         };
 
         let mut ans = SmallVec::with_capacity(contents.len());

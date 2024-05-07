@@ -58,7 +58,8 @@ impl OpWithId {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "wasm", derive(Serialize, Deserialize))]
 pub struct RemoteOp<'a> {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerID,
@@ -163,17 +164,6 @@ impl<'a> Mergable for RemoteOp<'a> {
 impl<'a> HasLength for RemoteOp<'a> {
     fn content_len(&self) -> usize {
         self.content.atom_len()
-    }
-}
-
-impl<'a> Sliceable for RemoteOp<'a> {
-    fn slice(&self, from: usize, to: usize) -> Self {
-        assert!(to > from);
-        RemoteOp {
-            counter: (self.counter + from as Counter),
-            content: self.content.slice(from, to),
-            container: self.container.clone(),
-        }
     }
 }
 

@@ -98,6 +98,16 @@ impl LoroDoc {
         self.doc.set_change_merge_interval(interval);
     }
 
+    /// Set the jitter of the tree position(Fractional Index).
+    ///
+    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
+    /// value 1 is default, which means no jitter, any value larger than 1 will enable jitter.
+    /// Generally speaking, jitter will affect the growth rate of document size.
+    #[inline]
+    pub fn set_fractional_index_jitter(&self, jitter: u8) {
+        self.doc.set_fractional_index_jitter(jitter);
+    }
+
     /// Set the rich text format configuration of the document.
     ///
     /// You need to config it if you use rich text `mark` method.
@@ -1152,7 +1162,34 @@ impl LoroTree {
     /// let child = tree.create(root).unwrap();
     /// ```
     pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
-        self.handler.create(parent)
+        let parent = parent.into();
+        let index = self.children_num(parent).unwrap_or(0);
+        self.handler.create_at(parent, index)
+    }
+
+    /// Create a new tree node at the given index and return the [`TreeID`].
+    ///
+    /// If the `parent` is `None`, the created node is the root of a tree.
+    /// If the `index` is greater than the number of children of the parent, error will be returned.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let tree = doc.get_tree("tree");
+    /// // create a root
+    /// let root = tree.create(None).unwrap();
+    /// // create a new child at index 0
+    /// let child = tree.create_at(root, 0).unwrap();
+    /// ```
+    pub fn create_at<T: Into<Option<TreeID>>>(
+        &self,
+        parent: T,
+        index: usize,
+    ) -> LoroResult<TreeID> {
+        self.handler.create_at(parent, index)
     }
 
     /// Move the `target` node to be a child of the `parent` node.
@@ -1172,7 +1209,70 @@ impl LoroTree {
     /// tree.mov(root2, root).unwrap();
     /// ```
     pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
-        self.handler.mov(target, parent.into())
+        let parent = parent.into();
+        let index = self.children_num(parent).unwrap_or(0);
+        self.handler.move_to(target, parent, index)
+    }
+
+    /// Move the `target` node to be a child of the `parent` node at the given index.
+    /// If the `parent` is `None`, the `target` node will be a root.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let tree = doc.get_tree("tree");
+    /// let root = tree.create(None).unwrap();
+    /// let root2 = tree.create(None).unwrap();
+    /// // move `root2` to be a child of `root` at index 0.
+    /// tree.mov_to(root2, root, 0).unwrap();
+    /// ```
+    pub fn mov_to<T: Into<Option<TreeID>>>(
+        &self,
+        target: TreeID,
+        parent: T,
+        to: usize,
+    ) -> LoroResult<()> {
+        let parent = parent.into();
+        self.handler.move_to(target, parent, to)
+    }
+
+    /// Move the `target` node to be a child after the `after` node with the same parent.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let tree = doc.get_tree("tree");
+    /// let root = tree.create(None).unwrap();
+    /// let root2 = tree.create(None).unwrap();
+    /// // move `root` to be a child after `root2`.
+    /// tree.mov_after(root, root2).unwrap();
+    /// ```
+    pub fn mov_after(&self, target: TreeID, after: TreeID) -> LoroResult<()> {
+        self.handler.mov_after(target, after)
+    }
+
+    /// Move the `target` node to be a child before the `before` node with the same parent.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let tree = doc.get_tree("tree");
+    /// let root = tree.create(None).unwrap();
+    /// let root2 = tree.create(None).unwrap();
+    /// // move `root` to be a child before `root2`.
+    /// tree.mov_before(root, root2).unwrap();
+    /// ```
+    pub fn mov_before(&self, target: TreeID, before: TreeID) -> LoroResult<()> {
+        self.handler.mov_before(target, before)
     }
 
     /// Delete a tree node.
@@ -1216,7 +1316,7 @@ impl LoroTree {
     ///
     /// - If the target node does not exist, return `None`.
     /// - If the target node is a root node, return `Some(None)`.
-    pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
+    pub fn parent(&self, target: &TreeID) -> Option<Option<TreeID>> {
         self.handler.get_node_parent(target)
     }
 
@@ -1230,9 +1330,26 @@ impl LoroTree {
         self.handler.nodes()
     }
 
+    /// Return all children of the target node.
+    pub fn children(&self, parent: Option<TreeID>) -> Vec<TreeID> {
+        self.handler.children(parent)
+    }
+
+    /// Return the number of children of the target node.
+    pub fn children_num(&self, parent: Option<TreeID>) -> Option<usize> {
+        self.handler.children_num(parent)
+    }
+
     /// Return container id of the tree.
     pub fn id(&self) -> ContainerID {
         self.handler.id().clone()
+    }
+
+    /// Return the fractional index of the target node with hex format.
+    pub fn fractional_index(&self, target: &TreeID) -> Option<String> {
+        self.handler
+            .get_position_by_tree_id(target)
+            .map(|x| x.to_string())
     }
 
     /// Return the flat array of the forest.

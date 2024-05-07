@@ -60,6 +60,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitmaps"
+version = "3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1d084b0137aaa901caf9f1e8b21daa6aa24d41cd806e111335541eff9683bd6"
+
+[[package]]
 name = "bytecount"
 version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -201,6 +207,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
+name = "fractional_index"
+version = "0.1.0"
+dependencies = [
+ "imbl",
+ "rand",
+ "serde",
+ "smallvec",
+]
+
+[[package]]
 name = "fuzz"
 version = "0.1.0"
 dependencies = [
@@ -317,12 +333,34 @@ version = "15.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0acd33ff0285af998aaf9b57342af478078f53492322fafc47450e09397e0e9"
 dependencies = [
- "bitmaps",
+ "bitmaps 2.1.0",
  "rand_core",
  "rand_xoshiro",
  "sized-chunks",
  "typenum",
  "version_check",
+]
+
+[[package]]
+name = "imbl"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc3be8d8cd36f33a46b1849f31f837c44d9fa87223baee3b4bd96b8f11df81eb"
+dependencies = [
+ "bitmaps 3.2.1",
+ "imbl-sized-chunks",
+ "rand_core",
+ "rand_xoshiro",
+ "version_check",
+]
+
+[[package]]
+name = "imbl-sized-chunks"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "144006fb58ed787dcae3f54575ff4349755b00ccc99f4b4873860b654be1ed63"
+dependencies = [
+ "bitmaps 3.2.1",
 ]
 
 [[package]]
@@ -427,8 +465,10 @@ dependencies = [
  "append-only-bytes",
  "arbitrary",
  "arref",
+ "either",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
+ "fractional_index",
  "fxhash",
  "generic-btree",
  "getrandom",
@@ -840,7 +880,7 @@ version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16d69225bde7a69b235da73377861095455d298f2b970996eec25ddbb42b3d1e"
 dependencies = [
- "bitmaps",
+ "bitmaps 2.1.0",
  "typenum",
 ]
 

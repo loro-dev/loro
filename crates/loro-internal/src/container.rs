@@ -74,7 +74,6 @@ pub mod list;
 pub mod map;
 pub mod richtext;
 pub mod tree;
-
 use idx::ContainerIdx;
 
 pub use loro_common::ContainerType;

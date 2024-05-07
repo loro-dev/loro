@@ -1,9 +1,5 @@
 use std::{fmt::Debug, time::Instant};
 
-pub mod recursive_refactored;
-pub mod richtext;
-pub mod tree;
-
 pub fn minify_error<T, F, N>(site_num: u8, actions: Vec<T>, f: F, normalize: N)
 where
     F: Fn(u8, &mut [T]),

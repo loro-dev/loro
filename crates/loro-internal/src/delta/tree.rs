@@ -1,56 +1,41 @@
-use std::{
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
-
-use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{ContainerType, IdFull, LoroValue, TreeID};
-use serde::Serialize;
+use fractional_index::FractionalIndex;
+use loro_common::{IdFull, TreeID};
+use std::fmt::Debug;
+use std::ops::{Deref, DerefMut};
 
 use crate::state::TreeParentId;
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default)]
 pub struct TreeDiff {
     pub diff: Vec<TreeDiffItem>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone)]
 pub struct TreeDiffItem {
     pub target: TreeID,
     pub action: TreeExternalDiff,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone)]
 pub enum TreeExternalDiff {
-    Create(Option<TreeID>),
-    Move(Option<TreeID>),
+    Create {
+        parent: Option<TreeID>,
+        index: usize,
+        position: FractionalIndex,
+    },
+    Move {
+        parent: Option<TreeID>,
+        index: usize,
+        position: FractionalIndex,
+    },
     Delete,
 }
 
-impl TreeDiffItem {
-    pub(crate) fn from_delta_item(item: TreeDeltaItem) -> Option<TreeDiffItem> {
-        let target = item.target;
-        match item.action {
-            TreeInternalDiff::Create(p) => Some(TreeDiffItem {
-                target,
-                action: TreeExternalDiff::Create(p.into_node().ok()),
-            }),
-            TreeInternalDiff::Move(p) => Some(TreeDiffItem {
-                target,
-                action: TreeExternalDiff::Move(p.into_node().ok()),
-            }),
-            TreeInternalDiff::Delete(_) | TreeInternalDiff::UnCreate => Some(TreeDiffItem {
-                target,
-                action: TreeExternalDiff::Delete,
-            }),
-            TreeInternalDiff::MoveInDelete(_) => None,
-        }
-    }
-}
-
 impl TreeDiff {
-    pub(crate) fn compose(self, _other: Self) -> Self {
-        unreachable!("tree compose")
+    pub(crate) fn compose(mut self, other: Self) -> Self {
+        // TODO: better compose
+        self.diff.extend(other.diff);
+        self
     }
 
     pub(crate) fn extend<I: IntoIterator<Item = TreeDiffItem>>(mut self, other: I) -> Self {
@@ -60,13 +45,23 @@ impl TreeDiff {
 }
 
 /// Representation of differences in movable tree. It's an ordered list of [`TreeDiff`].
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct TreeDelta {
     pub(crate) diff: Vec<TreeDeltaItem>,
 }
 
+impl Debug for TreeDelta {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TreeDelta{ diff: [\n")?;
+        for item in self.diff.iter() {
+            f.write_fmt(format_args!("\t{:?}, \n", item))?;
+        }
+        f.write_str("]}")
+    }
+}
+
 /// The semantic action in movable tree.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct TreeDeltaItem {
     pub target: TreeID,
     pub action: TreeInternalDiff,
@@ -74,18 +69,30 @@ pub struct TreeDeltaItem {
 }
 
 /// The action of [`TreeDiff`]. It's the same as  [`crate::container::tree::tree_op::TreeOp`], but semantic.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum TreeInternalDiff {
     /// First create the node, have not seen it before
-    Create(TreeParentId),
+    Create {
+        parent: TreeParentId,
+        position: FractionalIndex,
+    },
     /// For retreating, if the node is only created, not move it to `DELETED_ROOT` but delete it directly
     UnCreate,
     /// Move the node to the parent, the node exists
-    Move(TreeParentId),
+    Move {
+        parent: TreeParentId,
+        position: FractionalIndex,
+    },
     /// move under a parent that is deleted
-    Delete(TreeParentId),
+    Delete {
+        parent: TreeParentId,
+        position: Option<FractionalIndex>,
+    },
     /// old parent is deleted, new parent is deleted too
-    MoveInDelete(TreeParentId),
+    MoveInDelete {
+        parent: TreeParentId,
+        position: Option<FractionalIndex>,
+    },
 }
 
 impl TreeDeltaItem {
@@ -100,7 +107,9 @@ impl TreeDeltaItem {
         op_id: IdFull,
         is_new_parent_deleted: bool,
         is_old_parent_deleted: bool,
+        position: Option<FractionalIndex>,
     ) -> Self {
+        // TODO: check op id
         let action = if matches!(parent, TreeParentId::Unexist) {
             TreeInternalDiff::UnCreate
         } else {
@@ -108,10 +117,16 @@ impl TreeDeltaItem {
                 is_new_parent_deleted,
                 is_old_parent_deleted || old_parent == TreeParentId::Unexist,
             ) {
-                (true, true) => TreeInternalDiff::MoveInDelete(parent),
-                (true, false) => TreeInternalDiff::Delete(parent),
-                (false, true) => TreeInternalDiff::Create(parent),
-                (false, false) => TreeInternalDiff::Move(parent),
+                (true, true) => TreeInternalDiff::MoveInDelete { parent, position },
+                (true, false) => TreeInternalDiff::Delete { parent, position },
+                (false, true) => TreeInternalDiff::Create {
+                    parent,
+                    position: position.unwrap(),
+                },
+                (false, false) => TreeInternalDiff::Move {
+                    parent,
+                    position: position.unwrap(),
+                },
             }
         };
 
@@ -132,77 +147,9 @@ impl Deref for TreeDelta {
 
 impl TreeDelta {
     // TODO: cannot handle this for now
-    pub(crate) fn compose(&self, _x: TreeDelta) -> TreeDelta {
-        unimplemented!("tree compose")
-    }
-}
-
-// TODO: we moved the `TreeValue` to `fuzz` crate,
-//       when we clean up the `fuzz` in `internal` crate, we can remove this.
-#[derive(Debug)]
-pub(crate) struct TreeValue<'a>(pub(crate) &'a mut Vec<LoroValue>);
-
-impl<'a> TreeValue<'a> {
-    pub(crate) fn apply_diff(&mut self, diff: &TreeDiff) {
-        for d in diff.diff.iter() {
-            let target = d.target;
-            match d.action {
-                TreeExternalDiff::Create(parent) => {
-                    self.create_target(target);
-                    self.mov(target, parent);
-                }
-                TreeExternalDiff::Delete => self.delete_target(target),
-                TreeExternalDiff::Move(parent) => self.mov(target, parent),
-            }
-        }
-    }
-
-    fn mov(&mut self, target: TreeID, parent: Option<TreeID>) {
-        let map = self
-            .0
-            .iter_mut()
-            .find(|x| {
-                let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
-                id.as_ref() == &target.to_string()
-            })
-            .unwrap()
-            .as_map_mut()
-            .unwrap();
-        let map_mut = Arc::make_mut(map);
-        let p = if let Some(p) = parent {
-            p.to_string().into()
-        } else {
-            LoroValue::Null
-        };
-        map_mut.insert("parent".to_string(), p);
-    }
-
-    fn create_target(&mut self, target: TreeID) {
-        let mut t = FxHashMap::default();
-        t.insert("id".to_string(), target.id().to_string().into());
-        t.insert("parent".to_string(), LoroValue::Null);
-        t.insert("meta".to_string(), ContainerType::Map.default_value());
-        self.0.push(t.into());
-    }
-
-    fn delete_target(&mut self, target: TreeID) {
-        let mut deleted = FxHashSet::default();
-        let mut s = vec![target.to_string()];
-        while let Some(delete) = s.pop() {
-            deleted.insert(delete.clone());
-            self.0.retain_mut(|x| {
-                let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
-                !deleted.contains(id.as_ref())
-            });
-            for node in self.0.iter() {
-                let node = node.as_map().unwrap().as_ref();
-                if let Some(LoroValue::String(parent)) = node.get("parent") {
-                    if parent.as_ref() == &delete {
-                        s.push((*node.get("id").unwrap().as_string().unwrap().clone()).clone());
-                    }
-                }
-            }
-        }
+    pub(crate) fn compose(mut self, x: TreeDelta) -> TreeDelta {
+        self.diff.extend(x.diff);
+        self
     }
 }
 

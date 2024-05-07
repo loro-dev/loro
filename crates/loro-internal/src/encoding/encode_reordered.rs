@@ -17,7 +17,10 @@ use crate::{
     change::{Change, Lamport, Timestamp},
     container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
     encoding::{
-        encode_reordered::value::{ValueKind, ValueWriter},
+        encode_reordered::{
+            arena::PositionArena,
+            value::{ValueKind, ValueWriter},
+        },
         StateSnapshotDecodeContext,
     },
     op::{Op, OpWithId, SliceRange},
@@ -27,7 +30,10 @@ use crate::{
 };
 
 use self::{
-    arena::{decode_arena, encode_arena, ContainerArena, DecodedArenas, PeerIdArena},
+    arena::{
+        decode_arena, encode_arena, ContainerArena, DecodedArenas, EncodedTreeID, PeerIdArena,
+        TreeIDArena,
+    },
     encode::{encode_changes, encode_ops, init_encode, TempOp, ValueRegister},
     value::ValueReader,
 };
@@ -62,6 +68,8 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let vv = &actual_start_vv;
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
+    let mut position_register = FxHashSet::default();
+    let mut tree_id_register: ValueRegister<EncodedTreeID> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
     let ExtractedContainer {
         containers,
@@ -85,8 +93,12 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &mut peer_register,
         &mut |op| ops.push(op),
         &mut key_register,
+        &mut position_register,
         &container_idx2index,
     );
+
+    let positions = position_register.into_iter().sorted_unstable().collect();
+    let mut position_register = ValueRegister::from_existing(positions);
 
     ops.sort_by(move |a, b| {
         a.container_index
@@ -95,14 +107,15 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             .then_with(|| a.peer_idx.cmp(&b.peer_idx))
             .then_with(|| a.lamport.cmp(&b.lamport))
     });
-
     let (encoded_ops, del_starts) = encode_ops(
-        ops,
+        &ops,
         arena,
         &mut value_writer,
         &mut key_register,
         &mut cid_register,
         &mut peer_register,
+        &mut position_register,
+        &mut tree_id_register,
     );
 
     let container_arena = ContainerArena::from_containers(
@@ -110,6 +123,11 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &mut peer_register,
         &mut key_register,
     );
+
+    let position_arena = PositionArena::from_positions(position_register.unwrap_vec());
+    let tree_id_arena = TreeIDArena {
+        tree_ids: tree_id_register.unwrap_vec(),
+    };
 
     let frontiers = oplog
         .dag
@@ -129,6 +147,8 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             container_arena,
             key_register.unwrap_vec(),
             dep_arena,
+            position_arena,
+            tree_id_arena,
             &[],
         )),
         start_frontiers: frontiers,
@@ -145,6 +165,8 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
         containers,
         keys,
         deps,
+        positions,
+        tree_ids,
         state_blob_arena: _,
     } = decode_arena(&iter.arenas)?;
     let ops_map = extract_ops(
@@ -155,6 +177,8 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
         &containers,
         &keys,
         &peer_ids,
+        &positions.parse_to_positions(),
+        &tree_ids.tree_ids,
         false,
     )?
     .ops_map;
@@ -350,6 +374,8 @@ fn extract_ops(
     containers: &ContainerArena,
     keys: &arena::KeyArena,
     peer_ids: &arena::PeerIdArena,
+    positions: &[Vec<u8>],
+    tree_ids: &[EncodedTreeID],
     should_extract_ops_with_ids: bool,
 ) -> LoroResult<ExtractedOps> {
     let mut value_reader = ValueReader::new(raw_values);
@@ -386,6 +412,8 @@ fn extract_ops(
             prop,
             keys,
             &peer_ids.peer_ids,
+            positions,
+            tree_ids,
             ID::new(peer, counter),
         )?;
 
@@ -424,6 +452,8 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
 
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
     let mut key_register: ValueRegister<InternalString> = ValueRegister::new();
+    let mut tree_id_register: ValueRegister<EncodedTreeID> = ValueRegister::new();
+    let mut position_register = FxHashSet::default();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
     let ExtractedContainer {
         containers,
@@ -527,18 +557,23 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
             origin_ops.push(op);
         },
         &mut key_register,
+        &mut position_register,
         &container_idx2index,
     );
 
     let ops: Vec<TempOp> = calc_sorted_ops_for_snapshot(origin_ops, pos_mapping_heap);
+    let positions: Vec<_> = position_register.into_iter().sorted_unstable().collect();
+    let mut position_register = ValueRegister::from_existing(positions);
 
     let (encoded_ops, del_starts) = encode_ops(
-        ops,
+        &ops,
         &oplog.arena,
         &mut value_writer,
         &mut key_register,
         &mut cid_register,
         &mut peer_register,
+        &mut position_register,
+        &mut tree_id_register,
     );
 
     let container_arena = ContainerArena::from_containers(
@@ -546,6 +581,11 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         &mut peer_register,
         &mut key_register,
     );
+
+    let position_arena = PositionArena::from_positions(position_register.unwrap_vec());
+    let tree_id_arena = TreeIDArena {
+        tree_ids: tree_id_register.unwrap_vec(),
+    };
 
     let doc = EncodedDoc {
         ops: encoded_ops,
@@ -559,6 +599,8 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
             container_arena,
             key_register.unwrap_vec(),
             dep_arena,
+            position_arena,
+            tree_id_arena,
             &state_bytes,
         )),
         start_frontiers: Vec::new(),
@@ -723,6 +765,8 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         containers,
         keys,
         deps,
+        positions,
+        tree_ids,
         state_blob_arena,
     } = decode_arena(&iter.arenas)?;
     let ExtractedOps {
@@ -737,6 +781,8 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         &containers,
         &keys,
         &peer_ids,
+        &positions.parse_to_positions(),
+        &tree_ids.tree_ids,
         true,
     )?;
 
@@ -853,7 +899,7 @@ fn decode_snapshot_states(
 }
 
 mod encode {
-    use fxhash::FxHashMap;
+    use fxhash::{FxHashMap, FxHashSet};
     use loro_common::{ContainerID, ContainerType, HasId, PeerID, ID};
     use num_traits::ToPrimitive;
     use rle::{HasLength, Sliceable};
@@ -948,13 +994,16 @@ mod encode {
         }
     }
 
-    pub(super) fn encode_ops(
-        ops: Vec<TempOp<'_>>,
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn encode_ops<'p, 'a: 'p>(
+        ops: &'a [TempOp<'a>],
         arena: &crate::arena::SharedArena,
         value_writer: &mut ValueWriter,
         key_register: &mut ValueRegister<InternalString>,
         cid_register: &mut ValueRegister<ContainerID>,
         peer_register: &mut ValueRegister<u64>,
+        position_register: &mut ValueRegister<&'p [u8]>,
+        tree_id_regitster: &mut ValueRegister<EncodedTreeID>,
     ) -> (Vec<EncodedOp>, Vec<EncodedDeleteStartId>) {
         let mut encoded_ops = Vec::with_capacity(ops.len());
         let mut delete_start = Vec::new();
@@ -966,19 +1015,21 @@ mod encode {
         } in ops
         {
             let value_type = encode_op(
-                &op,
+                op,
                 arena,
                 &mut delete_start,
                 value_writer,
                 key_register,
                 cid_register,
                 peer_register,
+                position_register,
+                tree_id_regitster,
             );
 
-            let prop = get_op_prop(&op, key_register);
+            let prop = get_op_prop(op, key_register);
             encoded_ops.push(EncodedOp {
-                container_index,
-                peer_idx,
+                container_index: *container_index,
+                peer_idx: *peer_idx,
                 counter: op.counter,
                 prop,
                 value_type: value_type.to_u8().unwrap(),
@@ -988,12 +1039,13 @@ mod encode {
         (encoded_ops, delete_start)
     }
 
-    pub(super) fn encode_changes<'a>(
+    pub(super) fn encode_changes<'p, 'a: 'p>(
         diff_changes: &'a [Cow<'a, Change>],
         dep_arena: &mut super::arena::DepsArena,
         peer_register: &mut ValueRegister<u64>,
         push_op: &mut impl FnMut(TempOp<'a>),
         key_register: &mut ValueRegister<InternalString>,
+        position_register: &mut FxHashSet<&'p [u8]>,
         container_idx2index: &FxHashMap<ContainerIdx, usize>,
     ) -> Vec<EncodedChange> {
         let mut changes: Vec<EncodedChange> = Vec::with_capacity(diff_changes.len());
@@ -1024,7 +1076,7 @@ mod encode {
                 push_op(TempOp {
                     op: Cow::Borrowed(op),
                     lamport,
-                    prop_that_used_for_sort: get_sorting_prop(op, key_register),
+                    prop_that_used_for_sort: get_sorting_prop(op, key_register, position_register),
                     peer_idx: peer_idx as u32,
                     peer_id: change.id.peer,
                     container_index: container_idx2index[&op.container] as u32,
@@ -1038,6 +1090,7 @@ mod encode {
     pub(super) use value_register::ValueRegister;
 
     use super::{
+        arena::EncodedTreeID,
         value::{MarkStart, Value, ValueKind},
         EncodedChange, EncodedDeleteStartId, EncodedOp,
     };
@@ -1080,6 +1133,10 @@ mod encode {
                     self.map_value_to_index.insert(key.clone(), idx);
                     idx
                 }
+            }
+
+            pub fn get(&self, key: &T) -> Option<usize> {
+                self.map_value_to_index.get(key).copied()
             }
 
             pub fn contains(&self, key: &T) -> bool {
@@ -1141,26 +1198,40 @@ mod encode {
         }
     }
 
-    fn get_sorting_prop(op: &Op, register_key: &mut ValueRegister<InternalString>) -> i32 {
+    fn get_sorting_prop<'p, 'a: 'p>(
+        op: &'a Op,
+        register_key: &mut ValueRegister<InternalString>,
+        register_position: &mut FxHashSet<&'p [u8]>,
+    ) -> i32 {
         match &op.content {
             crate::op::InnerContent::List(_) => 0,
             crate::op::InnerContent::Map(map) => {
                 let key = register_key.register(&map.key);
                 key as i32
             }
-            crate::op::InnerContent::Tree(..) => 0,
+            crate::op::InnerContent::Tree(op) => {
+                if let Some(position) = &op.position {
+                    register_position.insert(position.as_bytes_without_terminated());
+                    0
+                } else {
+                    -1
+                }
+            }
         }
     }
 
     #[inline]
-    fn encode_op(
-        op: &Op,
+    #[allow(clippy::too_many_arguments)]
+    fn encode_op<'p, 'a: 'p>(
+        op: &'a Op,
         arena: &crate::arena::SharedArena,
         delete_start: &mut Vec<EncodedDeleteStartId>,
         value_writer: &mut ValueWriter,
         register_key: &mut ValueRegister<InternalString>,
         register_cid: &mut ValueRegister<ContainerID>,
         register_peer: &mut ValueRegister<PeerID>,
+        register_position: &mut ValueRegister<&'p [u8]>,
+        tree_id_regitster: &mut ValueRegister<EncodedTreeID>,
     ) -> ValueKind {
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
@@ -1253,7 +1324,12 @@ mod encode {
             }
             crate::op::InnerContent::Tree(t) => {
                 assert_eq!(op.container.get_type(), ContainerType::Tree);
-                let op = EncodedTreeMove::from_tree_op(t, register_peer);
+                let op = EncodedTreeMove::from_tree_op(
+                    t,
+                    register_peer,
+                    register_position,
+                    tree_id_regitster,
+                );
                 value_writer.write(&Value::TreeMove(op), register_key, register_cid);
                 ValueKind::TreeMove
             }
@@ -1272,6 +1348,8 @@ fn decode_op(
     prop: i32,
     keys: &arena::KeyArena,
     peers: &[u64],
+    positions: &[Vec<u8>],
+    tree_ids: &[EncodedTreeID],
     id: ID,
 ) -> LoroResult<crate::op::InnerContent> {
     let content = match cid.container_type() {
@@ -1383,7 +1461,7 @@ fn decode_op(
         ContainerType::Tree => match kind {
             ValueKind::TreeMove => {
                 let op = value_reader.read_tree_move()?;
-                crate::op::InnerContent::Tree(op.as_tree_op(peers)?)
+                crate::op::InnerContent::Tree(op.as_tree_op(peers, positions, tree_ids)?)
             }
             _ => unreachable!(),
         },
@@ -1609,13 +1687,14 @@ struct EncodedStateInfo {
 mod value {
     use std::sync::Arc;
 
+    use fractional_index::FractionalIndex;
     use fxhash::FxHashMap;
     use loro_common::{
         ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue,
         PeerID, TreeID, ID,
     };
 
-    use super::{encode::ValueRegister, MAX_COLLECTION_SIZE};
+    use super::{arena::EncodedTreeID, encode::ValueRegister, MAX_COLLECTION_SIZE};
     use crate::{change::Lamport, container::tree::tree_op::TreeOp};
     use num_traits::{FromPrimitive, ToPrimitive};
 
@@ -1660,43 +1739,83 @@ mod value {
         pub info: u8,
     }
 
+    #[derive(Debug)]
     pub struct EncodedTreeMove {
-        pub subject_peer_idx: usize,
-        pub subject_cnt: usize,
+        pub subject_idx: usize,
         pub is_parent_null: bool,
-        pub parent_peer_idx: usize,
-        pub parent_cnt: usize,
+        pub parent_idx: usize,
+        pub position: usize,
     }
 
     impl EncodedTreeMove {
-        pub fn as_tree_op(&self, peer_ids: &[u64]) -> LoroResult<TreeOp> {
+        pub fn as_tree_op(
+            &self,
+            peer_ids: &[u64],
+            positions: &[Vec<u8>],
+            tree_ids: &[EncodedTreeID],
+        ) -> LoroResult<TreeOp> {
+            let parent = if self.is_parent_null {
+                None
+            } else {
+                let EncodedTreeID { peer_idx, counter } = tree_ids[self.parent_idx];
+                Some(TreeID::new(
+                    *(peer_ids
+                        .get(peer_idx)
+                        .ok_or(LoroError::DecodeDataCorruptionError)?),
+                    counter as Counter,
+                ))
+            };
+            let position = if parent.is_some_and(|x| TreeID::is_deleted_root(&x)) {
+                None
+            } else {
+                let bytes = &positions[self.position];
+                Some(FractionalIndex::from_vec_unterminated(bytes.clone()))
+            };
+            let EncodedTreeID { peer_idx, counter } = tree_ids[self.subject_idx];
             Ok(TreeOp {
                 target: TreeID::new(
                     *(peer_ids
-                        .get(self.subject_peer_idx)
+                        .get(peer_idx)
                         .ok_or(LoroError::DecodeDataCorruptionError)?),
-                    self.subject_cnt as Counter,
+                    counter as Counter,
                 ),
-                parent: if self.is_parent_null {
-                    None
-                } else {
-                    Some(TreeID::new(
-                        *(peer_ids
-                            .get(self.parent_peer_idx)
-                            .ok_or(LoroError::DecodeDataCorruptionError)?),
-                        self.parent_cnt as Counter,
-                    ))
-                },
+                parent,
+                position,
             })
         }
 
-        pub fn from_tree_op(op: &TreeOp, register_peer_id: &mut ValueRegister<PeerID>) -> Self {
+        pub fn from_tree_op<'p, 'a: 'p>(
+            op: &'a TreeOp,
+            register_peer_id: &mut ValueRegister<PeerID>,
+            register_position: &mut ValueRegister<&'p [u8]>,
+            tree_id_regitster: &mut ValueRegister<EncodedTreeID>,
+        ) -> Self {
+            let position = if let Some(position) = &op.position {
+                let bytes = position.as_bytes_without_terminated();
+                register_position.get(&bytes).unwrap()
+            } else {
+                debug_assert!(op.parent.is_some_and(|x| TreeID::is_deleted_root(&x)));
+                // placeholder
+                0
+            };
+
+            let target_idx = tree_id_regitster.register(&EncodedTreeID {
+                peer_idx: register_peer_id.register(&op.target.peer),
+                counter: op.target.counter,
+            });
+
+            let parent_idx = op.parent.map(|x| {
+                tree_id_regitster.register(&EncodedTreeID {
+                    peer_idx: register_peer_id.register(&x.peer),
+                    counter: x.counter,
+                })
+            });
+
             EncodedTreeMove {
-                subject_peer_idx: register_peer_id.register(&op.target.peer),
-                subject_cnt: op.target.counter as usize,
+                subject_idx: target_idx,
                 is_parent_null: op.parent.is_none(),
-                parent_peer_idx: op.parent.map_or(0, |x| register_peer_id.register(&x.peer)),
-                parent_cnt: op.parent.map_or(0, |x| x.counter as usize),
+                parent_idx: parent_idx.unwrap_or(0),
+                position,
             }
         }
     }
@@ -1857,7 +1976,7 @@ mod value {
     }
 
     pub struct ValueWriter {
-        buffer: Vec<u8>,
+        pub(super) buffer: Vec<u8>,
     }
 
     impl ValueWriter {
@@ -2043,15 +2162,13 @@ mod value {
         }
 
         fn write_tree_move(&mut self, op: &EncodedTreeMove) {
-            self.write_usize(op.subject_peer_idx);
-            self.write_usize(op.subject_cnt);
+            self.write_usize(op.subject_idx);
             self.write_u8(op.is_parent_null as u8);
+            self.write_usize(op.position);
             if op.is_parent_null {
                 return;
             }
-
-            self.write_usize(op.parent_peer_idx);
-            self.write_usize(op.parent_cnt);
+            self.write_usize(op.parent_idx);
         }
 
         pub(crate) fn finish(self) -> Vec<u8> {
@@ -2399,30 +2516,29 @@ mod value {
         }
 
         pub fn read_tree_move(&mut self) -> LoroResult<EncodedTreeMove> {
-            let subject_peer_idx = self.read_usize()?;
-            let subject_cnt = self.read_usize()?;
+            let subject_idx = self.read_usize()?;
             let is_parent_null = self.read_u8()? != 0;
-            let mut parent_peer_idx = 0;
-            let mut parent_cnt = 0;
+            let position = self.read_usize()?;
+            let mut parent_idx = 0;
             if !is_parent_null {
-                parent_peer_idx = self.read_usize()?;
-                parent_cnt = self.read_usize()?;
+                parent_idx = self.read_usize()?;
             }
-
             Ok(EncodedTreeMove {
-                subject_peer_idx,
-                subject_cnt,
+                subject_idx,
                 is_parent_null,
-                parent_peer_idx,
-                parent_cnt,
+                parent_idx,
+                position,
             })
         }
     }
 }
 
 mod arena {
+    use std::borrow::Cow;
+
     use crate::InternalString;
-    use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, PeerID};
+    use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, PeerID};
+    use rle::Sliceable;
     use serde::{Deserialize, Serialize};
     use serde_columnar::{columnar, ColumnarError};
 
@@ -2433,6 +2549,8 @@ mod arena {
         containers: ContainerArena,
         keys: Vec<InternalString>,
         deps: DepsArena,
+        position_arena: PositionArena,
+        tree_id_arena: TreeIDArena,
         state_blob_arena: &[u8],
     ) -> Vec<u8> {
         let peer_ids = PeerIdArena {
@@ -2445,6 +2563,8 @@ mod arena {
             container_arena: &containers.encode(),
             key_arena: &key_arena.encode(),
             deps_arena: &deps.encode(),
+            position_arena: &position_arena.encode(),
+            tree_id_arena: &tree_id_arena.encode(),
             state_blob_arena,
         };
 
@@ -2456,6 +2576,8 @@ mod arena {
         pub(super) containers: ContainerArena,
         pub(super) keys: KeyArena,
         pub deps: Box<dyn Iterator<Item = Result<EncodedDep, ColumnarError>> + 'a>,
+        pub(super) positions: PositionArena<'a>,
+        pub(super) tree_ids: TreeIDArena,
         pub state_blob_arena: &'a [u8],
     }
 
@@ -2466,6 +2588,8 @@ mod arena {
             containers: ContainerArena::decode(arenas.container_arena)?,
             keys: KeyArena::decode(arenas.key_arena)?,
             deps: Box::new(DepsArena::decode_iter(arenas.deps_arena)?),
+            positions: PositionArena::decode(arenas.position_arena)?,
+            tree_ids: TreeIDArena::decode(arenas.tree_id_arena)?,
             state_blob_arena: arenas.state_blob_arena,
         })
     }
@@ -2475,6 +2599,8 @@ mod arena {
         container_arena: &'a [u8],
         key_arena: &'a [u8],
         deps_arena: &'a [u8],
+        position_arena: &'a [u8],
+        tree_id_arena: &'a [u8],
         state_blob_arena: &'a [u8],
     }
 
@@ -2485,6 +2611,8 @@ mod arena {
                     + self.container_arena.len()
                     + self.key_arena.len()
                     + self.deps_arena.len()
+                    + self.position_arena.len()
+                    + self.tree_id_arena.len()
                     + 4 * 4,
             );
 
@@ -2492,6 +2620,8 @@ mod arena {
             write_arena(&mut ans, self.container_arena);
             write_arena(&mut ans, self.key_arena);
             write_arena(&mut ans, self.deps_arena);
+            write_arena(&mut ans, self.position_arena);
+            write_arena(&mut ans, self.tree_id_arena);
             write_arena(&mut ans, self.state_blob_arena);
             ans
         }
@@ -2501,12 +2631,16 @@ mod arena {
             let (container_arena, rest) = read_arena(rest)?;
             let (key_arena, rest) = read_arena(rest)?;
             let (deps_arena, rest) = read_arena(rest)?;
+            let (position_arena, rest) = read_arena(rest)?;
+            let (tree_id_arena, rest) = read_arena(rest)?;
             let (state_blob_arena, _) = read_arena(rest)?;
             Ok(EncodedArenas {
                 peer_id_arena,
                 container_arena,
                 key_arena,
                 deps_arena,
+                position_arena,
+                tree_id_arena,
                 state_blob_arena,
             })
         }
@@ -2701,6 +2835,68 @@ mod arena {
         }
     }
 
+    #[derive(Clone)]
+    #[columnar(vec, ser, de, iterable)]
+    pub(super) struct PositionDelta<'a> {
+        #[columnar(strategy = "Rle")]
+        common_prefix_length: usize,
+        #[columnar(borrow)]
+        rest: Cow<'a, [u8]>,
+    }
+
+    #[columnar(ser, de)]
+    pub(super) struct PositionArena<'a> {
+        #[columnar(class = "vec", iter = "PositionDelta<'a>")]
+        pub(super) positions: Vec<PositionDelta<'a>>,
+    }
+
+    impl<'a> PositionArena<'a> {
+        pub fn from_positions(positions: Vec<&'a [u8]>) -> Self {
+            let mut ans = Vec::with_capacity(positions.len());
+            let mut last_bytes: &[u8] = &[];
+            for p in positions {
+                let common = longest_common_prefix_length(last_bytes, p);
+                let rest = &p[common..];
+                last_bytes = p;
+                ans.push(PositionDelta {
+                    common_prefix_length: common,
+                    rest: Cow::Borrowed(rest),
+                })
+            }
+            Self { positions: ans }
+        }
+
+        pub fn parse_to_positions(self) -> Vec<Vec<u8>> {
+            let mut ans: Vec<Vec<u8>> = Vec::with_capacity(self.positions.len());
+            for PositionDelta {
+                common_prefix_length,
+                rest,
+            } in self.positions
+            {
+                // +1 for Fractional Index
+                let mut p = Vec::with_capacity(rest.len() + common_prefix_length + 1);
+                if let Some(last_bytes) = ans.last() {
+                    p.extend_from_slice(&last_bytes.slice(0, common_prefix_length));
+                }
+                p.extend_from_slice(rest.as_ref());
+                ans.push(p);
+            }
+            ans
+        }
+
+        pub fn encode(&self) -> Vec<u8> {
+            serde_columnar::to_vec(&self).unwrap()
+        }
+
+        pub fn decode<'de: 'a>(bytes: &'de [u8]) -> LoroResult<Self> {
+            Ok(serde_columnar::from_bytes(bytes)?)
+        }
+    }
+
+    fn longest_common_prefix_length(a: &[u8], b: &[u8]) -> usize {
+        a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
+    }
+
     fn write_arena(buffer: &mut Vec<u8>, arena: &[u8]) {
         leb128::write::unsigned(buffer, arena.len() as u64).unwrap();
         buffer.extend_from_slice(arena);
@@ -2720,6 +2916,32 @@ mod arena {
         }
 
         Ok((reader[..len as usize].as_ref(), &reader[len as usize..]))
+    }
+
+    #[derive(Clone, Hash, PartialEq, Eq, Debug)]
+    #[columnar(vec, ser, de, iterable)]
+    pub struct EncodedTreeID {
+        #[columnar(strategy = "Rle")]
+        pub peer_idx: PeerIdx,
+        #[columnar(strategy = "DeltaRle")]
+        pub counter: Counter,
+    }
+
+    #[derive(Clone)]
+    #[columnar(vec, ser, de)]
+    pub struct TreeIDArena {
+        #[columnar(class = "vec", iter = "EncodedTreeID")]
+        pub(super) tree_ids: Vec<EncodedTreeID>,
+    }
+
+    impl TreeIDArena {
+        pub fn decode(bytes: &[u8]) -> LoroResult<Self> {
+            Ok(serde_columnar::from_bytes(bytes)?)
+        }
+
+        pub fn encode(&self) -> Vec<u8> {
+            serde_columnar::to_vec(&self).unwrap()
+        }
     }
 }
 

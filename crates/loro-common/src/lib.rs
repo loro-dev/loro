@@ -394,8 +394,10 @@ pub const DELETED_TREE_ROOT: TreeID = TreeID {
 /// Special ID:
 /// - [`DELETED_TREE_ROOT`]: the root of all deleted nodes. To get it by [`TreeID::delete_root()`]
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+
 pub struct TreeID {
     pub peer: PeerID,
+    // TODO: can use a NonMax here
     pub counter: Counter,
 }
 

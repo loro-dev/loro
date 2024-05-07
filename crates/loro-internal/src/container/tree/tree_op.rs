@@ -1,5 +1,6 @@
+use fractional_index::FractionalIndex;
 use loro_common::TreeID;
-use rle::{HasLength, Mergable, Sliceable};
+use rle::{HasLength, Mergable};
 use serde::{Deserialize, Serialize};
 
 use crate::state::TreeParentId;
@@ -11,14 +12,16 @@ use crate::state::TreeParentId;
 /// - **Move**: move target tree node a child node of the specified parent node.
 /// - **Delete**: move target tree node to [`loro_common::DELETED_TREE_ROOT`].
 ///
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TreeOp {
     pub(crate) target: TreeID,
     pub(crate) parent: Option<TreeID>,
+    // If the op is `delete`, the position is None
+    pub(crate) position: Option<FractionalIndex>,
 }
 
 impl TreeOp {
-    // TODO: use `TreeParentId` instead of `Option<TreeID>`
     pub(crate) fn parent_id(&self) -> TreeParentId {
         match self.parent {
             Some(parent) => {
@@ -28,7 +31,7 @@ impl TreeOp {
                     TreeParentId::Node(parent)
                 }
             }
-            None => TreeParentId::None,
+            None => TreeParentId::Root,
         }
     }
 }
@@ -36,13 +39,6 @@ impl TreeOp {
 impl HasLength for TreeOp {
     fn content_len(&self) -> usize {
         1
-    }
-}
-
-impl Sliceable for TreeOp {
-    fn slice(&self, from: usize, to: usize) -> Self {
-        assert!(from == 0 && to == 1);
-        *self
     }
 }
 

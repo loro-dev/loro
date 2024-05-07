@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     container::richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
-    delta::{Delta, DeltaItem, Meta, StyleMeta, TreeValue},
+    delta::{Delta, DeltaItem, Meta, StyleMeta},
     event::{Diff, Index, Path, TextDiff, TextDiffItem},
     handler::ValueOrHandler,
     utils::string_slice::StringSlice,
@@ -320,16 +320,17 @@ impl ApplyDiff for LoroValue {
                         }
                     }
                 } else {
-                    let seq = Arc::make_mut(seq);
-                    for item in diff.iter() {
-                        match item {
-                            Diff::Tree(tree) => {
-                                let mut v = TreeValue(seq);
-                                v.apply_diff(tree);
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
+                    // let seq = Arc::make_mut(seq);
+                    // for item in diff.iter() {
+                    //     match item {
+                    //         Diff::Tree(tree) => {
+                    //             let mut v = TreeValue(seq);
+                    //             v.apply_diff(tree);
+                    //         }
+                    //         _ => unreachable!(),
+                    //     }
+                    // }
+                    unimplemented!()
                 }
             }
             LoroValue::Map(map) => {
@@ -406,16 +407,17 @@ impl ApplyDiff for LoroValue {
                         }
                     }
                 } else {
-                    let seq = Arc::make_mut(seq);
-                    for item in diff.iter() {
-                        match item {
-                            Diff::Tree(tree) => {
-                                let mut v = TreeValue(seq);
-                                v.apply_diff(tree);
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
+                    // let seq = Arc::make_mut(seq);
+                    // for item in diff.iter() {
+                    //     match item {
+                    //         Diff::Tree(tree) => {
+                    //             let mut v = TreeValue(seq);
+                    //             v.apply_diff(tree);
+                    //         }
+                    //         _ => unreachable!(),
+                    //     }
+                    // }
+                    unimplemented!()
                 }
             }
             LoroValue::Map(map) => {
@@ -546,17 +548,41 @@ pub mod wasm {
             for diff in value.diff.iter() {
                 let obj = Object::new();
                 js_sys::Reflect::set(&obj, &"target".into(), &diff.target.into()).unwrap();
-                match diff.action {
-                    TreeExternalDiff::Create(p) => {
+                match &diff.action {
+                    TreeExternalDiff::Create {
+                        parent,
+                        index,
+                        position,
+                    } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"create".into()).unwrap();
-                        js_sys::Reflect::set(&obj, &"parent".into(), &p.into()).unwrap();
+                        js_sys::Reflect::set(&obj, &"parent".into(), &JsValue::from(*parent))
+                            .unwrap();
+                        js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
+                        js_sys::Reflect::set(
+                            &obj,
+                            &"position".into(),
+                            &position.to_string().into(),
+                        )
+                        .unwrap();
                     }
                     TreeExternalDiff::Delete => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"delete".into()).unwrap();
                     }
-                    TreeExternalDiff::Move(p) => {
+                    TreeExternalDiff::Move {
+                        parent,
+                        index,
+                        position,
+                    } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"move".into()).unwrap();
-                        js_sys::Reflect::set(&obj, &"parent".into(), &p.into()).unwrap();
+                        js_sys::Reflect::set(&obj, &"parent".into(), &JsValue::from(*parent))
+                            .unwrap();
+                        js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
+                        js_sys::Reflect::set(
+                            &obj,
+                            &"position".into(),
+                            &position.to_string().into(),
+                        )
+                        .unwrap();
                     }
                 }
                 array.push(&obj);
