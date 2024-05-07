@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 loro = { path = "../loro", features = ["counter"] }
-loro-without-counter = { git = "https://github.com/loro-dev/loro.git", package = "loro", rev = "279f9e9e78d60c9989c9058e4fe390f0b2251987" }
+loro-without-counter = { git = "https://github.com/loro-dev/loro.git", package = "loro", branch = "leon/feat-encode-forward" }
 loro-internal = { path = "../loro-internal", features = ["test_utils"] }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }

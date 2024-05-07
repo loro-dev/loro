@@ -646,6 +646,17 @@ dependencies = [
 
 [[package]]
 name = "fractional_index"
+version = "0.1.0"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#400609b4c2aa6e712857d51bae73860e35120c73"
+dependencies = [
+ "imbl",
+ "rand",
+ "serde",
+ "smallvec",
+]
+
+[[package]]
+name = "fractional_index"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1151a9f3ec0f115ddf899dd5baf57532c29b424ef4c63fb2f5636ba789dcbc4"
@@ -667,7 +678,7 @@ dependencies = [
  "fxhash",
  "itertools 0.12.1",
  "loro 0.5.1",
- "loro 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=279f9e9e78d60c9989c9058e4fe390f0b2251987)",
+ "loro 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward)",
  "loro-internal 0.5.1",
  "rand",
  "tabled 0.10.0",
@@ -1003,13 +1014,13 @@ dependencies = [
 [[package]]
 name = "loro"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=279f9e9e78d60c9989c9058e4fe390f0b2251987#279f9e9e78d60c9989c9058e4fe390f0b2251987"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#400609b4c2aa6e712857d51bae73860e35120c73"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
  "generic-btree",
- "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=279f9e9e78d60c9989c9058e4fe390f0b2251987)",
- "loro-internal 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=279f9e9e78d60c9989c9058e4fe390f0b2251987)",
+ "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward)",
+ "loro-internal 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward)",
  "tracing",
 ]
 
@@ -1033,12 +1044,12 @@ dependencies = [
 [[package]]
 name = "loro-common"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=279f9e9e78d60c9989c9058e4fe390f0b2251987#279f9e9e78d60c9989c9058e4fe390f0b2251987"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#400609b4c2aa6e712857d51bae73860e35120c73"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
  "fxhash",
- "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=279f9e9e78d60c9989c9058e4fe390f0b2251987)",
+ "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward)",
  "nonmax",
  "serde",
  "serde_columnar",
@@ -1065,7 +1076,7 @@ dependencies = [
 [[package]]
 name = "loro-delta"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=279f9e9e78d60c9989c9058e4fe390f0b2251987#279f9e9e78d60c9989c9058e4fe390f0b2251987"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#400609b4c2aa6e712857d51bae73860e35120c73"
 dependencies = [
  "arrayvec",
  "enum-as-inner 0.5.1",
@@ -1128,27 +1139,30 @@ dependencies = [
 [[package]]
 name = "loro-internal"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=279f9e9e78d60c9989c9058e4fe390f0b2251987#279f9e9e78d60c9989c9058e4fe390f0b2251987"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#400609b4c2aa6e712857d51bae73860e35120c73"
 dependencies = [
  "append-only-bytes",
  "arref",
+ "either",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
+ "fractional_index 0.1.0 (git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward)",
  "fxhash",
  "generic-btree",
  "getrandom",
  "im",
- "itertools 0.11.0",
+ "itertools 0.12.1",
  "leb128",
- "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=279f9e9e78d60c9989c9058e4fe390f0b2251987)",
- "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=279f9e9e78d60c9989c9058e4fe390f0b2251987)",
- "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=279f9e9e78d60c9989c9058e4fe390f0b2251987)",
+ "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward)",
+ "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward)",
+ "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward)",
  "md5",
  "num",
  "num-derive",
  "num-traits",
  "once_cell",
  "postcard",
+ "rand",
  "serde",
  "serde_columnar",
  "serde_json",
@@ -1177,7 +1191,7 @@ dependencies = [
 [[package]]
 name = "loro-rle"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=279f9e9e78d60c9989c9058e4fe390f0b2251987#279f9e9e78d60c9989c9058e4fe390f0b2251987"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#400609b4c2aa6e712857d51bae73860e35120c73"
 dependencies = [
  "append-only-bytes",
  "arref",

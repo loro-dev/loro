@@ -31,7 +31,7 @@ impl ContainerState for UnknownState {
     }
 
     fn estimate_size(&self) -> usize {
-        unreachable!()
+        0
     }
 
     fn is_state_empty(&self) -> bool {
@@ -79,12 +79,12 @@ impl ContainerState for UnknownState {
     #[doc = r" Get the index of the child container"]
     #[allow(unused)]
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
-        unreachable!()
+        None
     }
 
     #[allow(unused)]
     fn get_child_containers(&self) -> Vec<ContainerID> {
-        unreachable!()
+        vec![]
     }
 
     #[doc = r" Encode the ops and the blob that can be used to restore the state to the current state."]
