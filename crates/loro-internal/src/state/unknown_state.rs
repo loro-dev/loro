@@ -30,10 +30,6 @@ impl ContainerState for UnknownState {
         self.idx
     }
 
-    fn is_unknown(&self) -> bool {
-        true
-    }
-
     fn estimate_size(&self) -> usize {
         unreachable!()
     }

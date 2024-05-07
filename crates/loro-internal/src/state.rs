@@ -86,9 +86,6 @@ impl std::fmt::Debug for DocState {
 #[enum_dispatch]
 pub(crate) trait ContainerState: Clone {
     fn container_idx(&self) -> ContainerIdx;
-    fn is_unknown(&self) -> bool {
-        false
-    }
     fn estimate_size(&self) -> usize;
 
     fn is_state_empty(&self) -> bool;

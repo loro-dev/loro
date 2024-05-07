@@ -586,12 +586,6 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     serde_columnar::to_vec(&doc).unwrap()
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Eq, PartialOrd, Ord)]
-struct IdWithLamport {
-    peer: PeerID,
-    lamport: Lamport,
-}
-
 #[derive(Clone, Copy, PartialEq, Debug, Eq)]
 struct PosMappingItem {
     start_id: ID,

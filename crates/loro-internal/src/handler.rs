@@ -765,7 +765,6 @@ impl HandlerTrait for ListHandler {
     }
 }
 
-///
 #[derive(Clone)]
 pub struct TreeHandler {
     inner: MaybeDetached<TreeInner>,
