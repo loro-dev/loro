@@ -573,7 +573,6 @@ impl TreeState {
                 return Err(LoroTreeError::CyclicMoveError.into());
             }
         }
-        // move or delete or create children node
         if let Some(old_parent) = self.trees.get(&target).map(|x| x.parent) {
             // remove old position
             self.delete_position(&old_parent, target);
