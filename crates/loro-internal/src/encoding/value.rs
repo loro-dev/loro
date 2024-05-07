@@ -412,7 +412,11 @@ impl<'a> Value<'a> {
     ) -> (FutureValueKind, usize) {
         match value {
             #[cfg(feature = "counter")]
-            FutureValue::Counter => (FutureValueKind::Counter, 0),
+            FutureValue::Counter => {
+                // write bytes length
+                value_writer.write_u8(0);
+                (FutureValueKind::Counter, 0)
+            }
             FutureValue::Unknown { kind, data } => (
                 FutureValueKind::Unknown(kind),
                 value_writer.write_binary(data),

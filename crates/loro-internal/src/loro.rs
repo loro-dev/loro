@@ -969,8 +969,7 @@ impl LoroDoc {
                 );
                 // TODO: remove depth info
                 let depth = self.arena.get_depth(idx);
-                let (_, diff_calc) =
-                    &mut diff_calc.get_or_create_calc(&idx, depth, before, &oplog.dag.vv);
+                let (_, diff_calc) = &mut diff_calc.get_or_create_calc(&idx, depth);
                 match diff_calc {
                     crate::diff_calc::ContainerDiffCalculator::Richtext(text) => {
                         let c = text.get_id_latest_pos(id).unwrap();

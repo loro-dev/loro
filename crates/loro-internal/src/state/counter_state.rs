@@ -15,7 +15,7 @@ use crate::{
 use super::ContainerState;
 
 #[derive(Debug, Clone)]
-pub(crate) struct CounterState {
+pub struct CounterState {
     idx: ContainerIdx,
     value: i64,
 }
@@ -65,7 +65,7 @@ impl ContainerState for CounterState {
         let _ = self.apply_diff_and_convert(diff, arena, txn, state);
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
         if let RawOpContent::Future(FutureRawOpContent::Counter(diff)) = raw_op.content {
             self.value += diff;
             Ok(())
@@ -77,9 +77,9 @@ impl ContainerState for CounterState {
     #[doc = " Convert a state to a diff, such that an empty state will be transformed into the same as this state when it\'s applied."]
     fn to_diff(
         &mut self,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        _arena: &SharedArena,
+        _txn: &Weak<Mutex<Option<Transaction>>>,
+        _state: &Weak<Mutex<DocState>>,
     ) -> Diff {
         Diff::Counter(self.value)
     }
@@ -104,7 +104,7 @@ impl ContainerState for CounterState {
     #[doc = " State will use the provided encoder to encode the ops and export a blob."]
     #[doc = " The ops should be encoded into the snapshot as well as the blob."]
     #[doc = " The users then can use the ops and the blob to restore the state to the current state."]
-    fn encode_snapshot(&self, encoder: StateSnapshotEncoder) -> Vec<u8> {
+    fn encode_snapshot(&self, _encoder: StateSnapshotEncoder) -> Vec<u8> {
         let mut ans = vec![];
         leb128::write::signed(&mut ans, self.value).unwrap();
         ans
@@ -112,7 +112,7 @@ impl ContainerState for CounterState {
 
     #[doc = " Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
-        let mut reader = ctx.blob.clone();
+        let mut reader = ctx.blob;
         self.value = leb128::read::signed(&mut reader).unwrap();
     }
 }

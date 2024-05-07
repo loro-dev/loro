@@ -165,6 +165,8 @@ impl<'a> From<&'a DiffInner> for Diff<'a> {
                 Diff::Text(text)
             }
             DiffInner::Tree(t) => Diff::Tree(t),
+            #[cfg(feature = "counter")]
+            DiffInner::Counter(c) => Diff::Counter(*c),
             _ => todo!(),
         }
     }

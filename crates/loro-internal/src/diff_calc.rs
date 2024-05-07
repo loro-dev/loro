@@ -91,7 +91,7 @@ impl DiffCalculator {
     ) -> Vec<InternalContainerDiff> {
         let s = tracing::span!(tracing::Level::INFO, "DiffCalc");
         let _e = s.enter();
-        tracing::info!("Before: {:?} After: {:?}", &before, &after);
+
         if self.has_all {
             let include_before = self.last_vv.includes_vv(before);
             let include_after = self.last_vv.includes_vv(after);
@@ -100,6 +100,12 @@ impl DiffCalculator {
                 self.last_vv = Default::default();
             }
         }
+        tracing::info!(
+            "Before: {:?} After: {:?} has_all {}",
+            &before,
+            &after,
+            self.has_all
+        );
         let affected_set = if !self.has_all {
             // if we don't have all the ops, we need to calculate the diff by tracing back
             let mut merged = before.clone();
@@ -110,7 +116,7 @@ impl DiffCalculator {
             }
             let (lca, iter) =
                 oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
-
+            tracing::info!("LCA: {:?}", &lca);
             let mut started_set = FxHashSet::default();
             for (change, start_counter, vv) in iter {
                 if change.id.counter > 0 && self.has_all {
@@ -154,8 +160,7 @@ impl DiffCalculator {
                     vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
                     let container = op.container;
                     let depth = oplog.arena.get_depth(container);
-                    let (old_depth, calculator) =
-                        self.get_or_create_calc(&container, depth, before, after);
+                    let (old_depth, calculator) = self.get_or_create_calc(&container, depth);
                     // checkout use the same diff_calculator, the depth of calculator is not updated
                     // That may cause the container to be considered deleted
                     if *old_depth != depth {
@@ -298,8 +303,6 @@ impl DiffCalculator {
         &mut self,
         idx: &ContainerIdx,
         depth: Option<NonZeroU16>,
-        before_vv: &VersionVector,
-        after_vv: &VersionVector,
     ) -> &mut (Option<NonZeroU16>, ContainerDiffCalculator) {
         self.calculators
             .entry(*idx)
@@ -322,7 +325,7 @@ impl DiffCalculator {
                 ),
                 crate::ContainerType::Unknown(_) => (
                     depth,
-                    ContainerDiffCalculator::Unknown(unknown::UnknownDiffCalculator::default()),
+                    ContainerDiffCalculator::Unknown(unknown::UnknownDiffCalculator),
                 ),
                 crate::ContainerType::MovableList => (
                     depth,
@@ -331,10 +334,7 @@ impl DiffCalculator {
                 #[cfg(feature = "counter")]
                 crate::ContainerType::Counter => (
                     depth,
-                    ContainerDiffCalculator::Counter(CounterDiffCalculator::new(
-                        before_vv.clone(),
-                        after_vv.clone(),
-                    )),
+                    ContainerDiffCalculator::Counter(CounterDiffCalculator::new(*idx)),
                 ),
             })
     }

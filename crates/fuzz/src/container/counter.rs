@@ -71,14 +71,12 @@ impl ActorTrait for CounterActor {
 }
 
 impl Actionable for CounterAction {
-    fn pre_process(&mut self, _actor: &mut ActionExecutor, _container: usize) {
-        self.0 = self.0.rem_euclid(100)
-    }
+    fn pre_process(&mut self, _actor: &mut ActionExecutor, _container: usize) {}
 
     fn apply(&self, actor: &mut ActionExecutor, container: usize) -> Option<Container> {
         let actor = actor.as_counter_actor_mut().unwrap();
         let counter = actor.containers.get(container).unwrap();
-        counter.increment(self.0 as i64);
+        counter.increment(self.0 as i64).unwrap();
         None
     }
 
@@ -102,11 +100,8 @@ impl Actionable for CounterAction {
 impl FromGenericAction for CounterAction {
     fn from_generic_action(action: &GenericAction) -> Self {
         let pos = action.bool;
-        let v = if pos {
-            action.prop as i32
-        } else {
-            -(action.prop as i32)
-        };
+        let v = action.prop.rem_euclid(200);
+        let v = if pos { v as i32 } else { -(v as i32) };
         CounterAction(v)
     }
 }

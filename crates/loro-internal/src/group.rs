@@ -53,6 +53,10 @@ impl OpGroups {
                             OpGroup::MovableList(MovableListOpGroup::new(self.arena.clone()))
                         }
                         ContainerType::Tree => OpGroup::Tree(TreeOpGroup::default()),
+                        #[cfg(feature = "counter")]
+                        ContainerType::Counter => {
+                            OpGroup::Counter(counter::CounterOpGroup::default())
+                        }
                         _ => unreachable!(),
                     });
             manager.insert(&rich_op)
@@ -93,6 +97,19 @@ impl OpGroups {
                 _ => None,
             })
     }
+
+    #[cfg(feature = "counter")]
+    pub(crate) fn get_counter(
+        &self,
+        container_idx: &ContainerIdx,
+    ) -> Option<&counter::CounterOpGroup> {
+        self.groups
+            .get(container_idx)
+            .and_then(|group| match group {
+                OpGroup::Counter(counter) => Some(counter),
+                _ => None,
+            })
+    }
 }
 
 #[enum_dispatch(OpGroupTrait)]
@@ -101,6 +118,8 @@ pub(crate) enum OpGroup {
     Map(MapOpGroup),
     Tree(TreeOpGroup),
     MovableList(MovableListOpGroup),
+    #[cfg(feature = "counter")]
+    Counter(counter::CounterOpGroup),
 }
 
 #[enum_dispatch]
@@ -499,6 +518,36 @@ impl<'a, T> Iterator for SmallSetIter<'a, T> {
                 }
             }
             SmallSet::Many(_) => self.iter.as_mut().unwrap().next(),
+        }
+    }
+}
+
+#[cfg(feature = "counter")]
+mod counter {
+    use std::collections::BTreeMap;
+
+    use loro_common::ID;
+
+    use super::OpGroupTrait;
+
+    #[derive(Debug, Clone, Default)]
+    pub(crate) struct CounterOpGroup {
+        pub(crate) ops: BTreeMap<ID, i64>,
+    }
+
+    impl CounterOpGroup {}
+
+    impl OpGroupTrait for CounterOpGroup {
+        fn insert(&mut self, op: &crate::op::RichOp) {
+            self.ops.insert(
+                op.id(),
+                *op.raw_op()
+                    .content
+                    .as_future()
+                    .unwrap()
+                    .as_counter()
+                    .unwrap(),
+            );
         }
     }
 }
