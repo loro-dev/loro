@@ -33,6 +33,7 @@ impl Debug for ActionInner {
             ActionInner::Text(t) => write!(f, "ActionInner::Text({:?})", t),
             ActionInner::Tree(t) => write!(f, "ActionInner::Tree({:?})", t),
             ActionInner::MovableList(m) => write!(f, "ActionInner::MovableList({:?})", m),
+            ActionInner::Counter(c) => write!(f, "ActionInner::Counter({:?})", c),
         }
     }
 }

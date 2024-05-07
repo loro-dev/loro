@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use enum_as_inner::EnumAsInner;
+use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use loro_common::{
     ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue, PeerID,
@@ -13,7 +14,10 @@ use crate::{
     encoding::encode_reordered::MAX_COLLECTION_SIZE,
 };
 
-use super::arena::{DecodedArenas, EncodedRegisters};
+use super::{
+    arena::{DecodedArenas, EncodedRegisters, EncodedTreeID},
+    encode_reordered::ValueRegister,
+};
 
 #[derive(Debug)]
 pub enum ValueKind {
@@ -508,34 +512,80 @@ pub struct MarkStart {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-
 pub struct EncodedTreeMove {
-    pub subject_peer: PeerID,
-    pub subject_cnt: Counter,
+    pub subject_idx: usize,
     pub is_parent_null: bool,
-    pub parent_peer: PeerID,
-    pub parent_cnt: Counter,
+    pub parent_idx: usize,
+    pub position: usize,
 }
 
 impl EncodedTreeMove {
-    pub fn from_op(op: &TreeOp) -> Self {
-        Self {
-            subject_peer: op.target.peer,
-            subject_cnt: op.target.counter,
-            is_parent_null: op.parent.is_none(),
-            parent_peer: op.parent.map(|x| x.peer).unwrap_or(0),
-            parent_cnt: op.parent.map(|x| x.counter).unwrap_or(0),
-        }
+    pub fn as_tree_op(
+        &self,
+        peer_ids: &[u64],
+        positions: &[Vec<u8>],
+        tree_ids: &[EncodedTreeID],
+    ) -> LoroResult<TreeOp> {
+        let parent = if self.is_parent_null {
+            None
+        } else {
+            let EncodedTreeID { peer_idx, counter } = tree_ids[self.parent_idx];
+            Some(TreeID::new(
+                *(peer_ids
+                    .get(peer_idx)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?),
+                counter as Counter,
+            ))
+        };
+        let position = if parent.is_some_and(|x| TreeID::is_deleted_root(&x)) {
+            None
+        } else {
+            let bytes = &positions[self.position];
+            Some(FractionalIndex::from_vec_unterminated(bytes.clone()))
+        };
+        let EncodedTreeID { peer_idx, counter } = tree_ids[self.subject_idx];
+        Ok(TreeOp {
+            target: TreeID::new(
+                *(peer_ids
+                    .get(peer_idx)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?),
+                counter as Counter,
+            ),
+            parent,
+            position,
+        })
     }
 
-    pub fn as_tree_op(&self) -> TreeOp {
-        TreeOp {
-            target: TreeID::new(self.subject_peer, self.subject_cnt),
-            parent: if self.is_parent_null {
-                None
-            } else {
-                Some(TreeID::new(self.parent_peer, self.parent_cnt))
-            },
+    pub fn from_tree_op<'p, 'a: 'p>(op: &'a TreeOp, registers: &mut EncodedRegisters) -> Self {
+        let position = if let Some(position) = &op.position {
+            let bytes = position.as_bytes_without_terminated();
+            let either::Right(position_register) = &mut registers.position else {
+                unreachable!()
+            };
+            position_register.get(&bytes).unwrap()
+        } else {
+            debug_assert!(op.parent.is_some_and(|x| TreeID::is_deleted_root(&x)));
+            // placeholder
+            0
+        };
+
+        let target_idx = registers.tree_id.register(&EncodedTreeID {
+            peer_idx: registers.peer.register(&op.target.peer),
+            counter: op.target.counter,
+        });
+
+        let parent_idx = op.parent.map(|x| {
+            registers.tree_id.register(&EncodedTreeID {
+                peer_idx: registers.peer.register(&x.peer),
+                counter: x.counter,
+            })
+        });
+
+        EncodedTreeMove {
+            subject_idx: target_idx,
+            is_parent_null: op.parent.is_none(),
+            parent_idx: parent_idx.unwrap_or(0),
+            position,
         }
     }
 }
@@ -898,22 +948,18 @@ impl<'a> ValueReader<'a> {
     }
 
     pub fn read_tree_move(&mut self) -> LoroResult<EncodedTreeMove> {
-        let subject_peer = self.read_u64()?;
-        let subject_cnt = self.read_i32()?;
+        let subject_idx = self.read_usize()?;
         let is_parent_null = self.read_u8()? != 0;
-        let mut parent_peer = 0;
-        let mut parent_cnt = 0;
+        let position = self.read_usize()?;
+        let mut parent_idx = 0;
         if !is_parent_null {
-            parent_peer = self.read_u64()?;
-            parent_cnt = self.read_i32()?;
+            parent_idx = self.read_usize()?;
         }
-
         Ok(EncodedTreeMove {
-            subject_peer,
-            subject_cnt,
+            subject_idx,
             is_parent_null,
-            parent_peer,
-            parent_cnt,
+            parent_idx,
+            position,
         })
     }
 }
@@ -1064,16 +1110,15 @@ impl ValueWriter {
     }
 
     fn write_tree_move(&mut self, op: &EncodedTreeMove) -> usize {
-        let mut l = self.write_u64(op.subject_peer);
-        l += self.write_i32(op.subject_cnt);
-        l += self.write_u8(op.is_parent_null as u8);
+        let len = self.buffer.len();
+        self.write_usize(op.subject_idx);
+        self.write_u8(op.is_parent_null as u8);
+        self.write_usize(op.position);
         if op.is_parent_null {
-            return l;
+            return self.buffer.len() - len;
         }
-
-        l += self.write_u64(op.parent_peer);
-        l += self.write_i32(op.parent_cnt);
-        l
+        self.write_usize(op.parent_idx);
+        self.buffer.len() - len
     }
 
     pub(crate) fn finish(self) -> Vec<u8> {

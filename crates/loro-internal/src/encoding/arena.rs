@@ -1,7 +1,9 @@
-use std::ops::Deref;
+use std::{borrow::Cow, ops::Deref};
 
 use crate::InternalString;
-use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, PeerID};
+use fxhash::FxHashSet;
+use itertools::Itertools;
+use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, PeerID};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, ColumnarError};
 
@@ -12,6 +14,8 @@ pub(super) fn encode_arena(
     containers: ContainerArena,
     keys: Vec<InternalString>,
     deps: DepsArena,
+    position_arena: PositionArena,
+    tree_id_arena: TreeIDArena,
     state_blob_arena: &[u8],
 ) -> Vec<u8> {
     let peer_ids = PeerIdArena {
@@ -24,17 +28,32 @@ pub(super) fn encode_arena(
         container_arena: &containers.encode(),
         key_arena: &key_arena.encode(),
         deps_arena: &deps.encode(),
+        position_arena: &position_arena.encode(),
+        tree_id_arena: &tree_id_arena.encode(),
         state_blob_arena,
     };
 
     encoded.encode_arenas()
 }
 
-#[derive(Default)]
-pub struct EncodedRegisters {
+pub struct EncodedRegisters<'a> {
     pub(super) peer: ValueRegister<PeerID>,
     pub(super) key: ValueRegister<InternalString>,
     pub(super) container: ValueRegister<ContainerID>,
+    pub(super) tree_id: ValueRegister<EncodedTreeID>,
+    pub(super) position: either::Either<FxHashSet<&'a [u8]>, ValueRegister<&'a [u8]>>,
+}
+
+impl<'a> EncodedRegisters<'a> {
+    pub(crate) fn convert_position(&mut self) {
+        let position_register =
+            std::mem::replace(&mut self.position, either::Left(Default::default()))
+                .left()
+                .unwrap();
+        let positions = position_register.into_iter().sorted_unstable().collect();
+        let position_register = ValueRegister::from_existing(positions);
+        self.position = either::Right(position_register);
+    }
 }
 
 pub struct DecodedArenas<'a> {
@@ -42,6 +61,8 @@ pub struct DecodedArenas<'a> {
     pub(super) containers: ContainerArena,
     pub(super) keys: KeyArena,
     pub deps: Box<dyn Iterator<Item = Result<EncodedDep, ColumnarError>> + 'a>,
+    pub(super) positions: PositionArena<'a>,
+    pub(super) tree_ids: TreeIDArena,
     pub state_blob_arena: &'a [u8],
 }
 
@@ -52,6 +73,8 @@ pub fn decode_arena(bytes: &[u8]) -> LoroResult<DecodedArenas> {
         containers: ContainerArena::decode(arenas.container_arena)?,
         keys: KeyArena::decode(arenas.key_arena)?,
         deps: Box::new(DepsArena::decode_iter(arenas.deps_arena)?),
+        positions: PositionArena::decode(arenas.position_arena)?,
+        tree_ids: TreeIDArena::decode(arenas.tree_id_arena)?,
         state_blob_arena: arenas.state_blob_arena,
     })
 }
@@ -61,6 +84,8 @@ struct EncodedArenas<'a> {
     container_arena: &'a [u8],
     key_arena: &'a [u8],
     deps_arena: &'a [u8],
+    position_arena: &'a [u8],
+    tree_id_arena: &'a [u8],
     state_blob_arena: &'a [u8],
 }
 
@@ -71,6 +96,8 @@ impl EncodedArenas<'_> {
                 + self.container_arena.len()
                 + self.key_arena.len()
                 + self.deps_arena.len()
+                + self.position_arena.len()
+                + self.tree_id_arena.len()
                 + 4 * 4,
         );
 
@@ -78,6 +105,8 @@ impl EncodedArenas<'_> {
         write_arena(&mut ans, self.container_arena);
         write_arena(&mut ans, self.key_arena);
         write_arena(&mut ans, self.deps_arena);
+        write_arena(&mut ans, self.position_arena);
+        write_arena(&mut ans, self.tree_id_arena);
         write_arena(&mut ans, self.state_blob_arena);
         ans
     }
@@ -87,12 +116,16 @@ impl EncodedArenas<'_> {
         let (container_arena, rest) = read_arena(rest)?;
         let (key_arena, rest) = read_arena(rest)?;
         let (deps_arena, rest) = read_arena(rest)?;
+        let (position_arena, rest) = read_arena(rest)?;
+        let (tree_id_arena, rest) = read_arena(rest)?;
         let (state_blob_arena, _) = read_arena(rest)?;
         Ok(EncodedArenas {
             peer_id_arena,
             container_arena,
             key_arena,
             deps_arena,
+            position_arena,
+            tree_id_arena,
             state_blob_arena,
         })
     }
@@ -317,6 +350,95 @@ impl KeyArena {
     pub fn decode(bytes: &[u8]) -> LoroResult<Self> {
         Ok(serde_columnar::from_bytes(bytes)?)
     }
+}
+
+#[derive(Clone, Hash, PartialEq, Eq, Debug)]
+#[columnar(vec, ser, de, iterable)]
+pub struct EncodedTreeID {
+    #[columnar(strategy = "Rle")]
+    pub peer_idx: PeerIdx,
+    #[columnar(strategy = "DeltaRle")]
+    pub counter: Counter,
+}
+
+#[derive(Clone)]
+#[columnar(vec, ser, de)]
+pub struct TreeIDArena {
+    #[columnar(class = "vec", iter = "EncodedTreeID")]
+    pub(super) tree_ids: Vec<EncodedTreeID>,
+}
+
+impl TreeIDArena {
+    pub fn decode(bytes: &[u8]) -> LoroResult<Self> {
+        Ok(serde_columnar::from_bytes(bytes)?)
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        serde_columnar::to_vec(&self).unwrap()
+    }
+}
+
+#[derive(Clone)]
+#[columnar(vec, ser, de, iterable)]
+pub(super) struct PositionDelta<'a> {
+    #[columnar(strategy = "Rle")]
+    common_prefix_length: usize,
+    #[columnar(borrow)]
+    rest: Cow<'a, [u8]>,
+}
+
+#[derive(Default)]
+#[columnar(ser, de)]
+pub(super) struct PositionArena<'a> {
+    #[columnar(class = "vec", iter = "PositionDelta<'a>")]
+    pub(super) positions: Vec<PositionDelta<'a>>,
+}
+
+impl<'a> PositionArena<'a> {
+    pub fn from_positions(positions: Vec<&'a [u8]>) -> Self {
+        let mut ans = Vec::with_capacity(positions.len());
+        let mut last_bytes: &[u8] = &[];
+        for p in positions {
+            let common = longest_common_prefix_length(last_bytes, p);
+            let rest = &p[common..];
+            last_bytes = p;
+            ans.push(PositionDelta {
+                common_prefix_length: common,
+                rest: Cow::Borrowed(rest),
+            })
+        }
+        Self { positions: ans }
+    }
+
+    pub fn parse_to_positions(self) -> Vec<Vec<u8>> {
+        let mut ans: Vec<Vec<u8>> = Vec::with_capacity(self.positions.len());
+        for PositionDelta {
+            common_prefix_length,
+            rest,
+        } in self.positions
+        {
+            // +1 for Fractional Index
+            let mut p = Vec::with_capacity(rest.len() + common_prefix_length + 1);
+            if let Some(last_bytes) = ans.last() {
+                p.extend_from_slice(&last_bytes[0..common_prefix_length]);
+            }
+            p.extend_from_slice(rest.as_ref());
+            ans.push(p);
+        }
+        ans
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        serde_columnar::to_vec(&self).unwrap()
+    }
+
+    pub fn decode<'de: 'a>(bytes: &'de [u8]) -> LoroResult<Self> {
+        Ok(serde_columnar::from_bytes(bytes)?)
+    }
+}
+
+fn longest_common_prefix_length(a: &[u8], b: &[u8]) -> usize {
+    a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
 }
 
 fn write_arena(buffer: &mut Vec<u8>, arena: &[u8]) {

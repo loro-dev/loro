@@ -5,7 +5,7 @@ use generic_btree::rle::Sliceable;
 use itertools::Itertools;
 use loro_common::{
     ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp,
-    InternalString, LoroError, LoroResult, PeerID, ID,
+    LoroError, LoroResult, PeerID, ID,
 };
 use rle::HasLength;
 use serde_columnar::{columnar, ColumnarError};
@@ -15,15 +15,8 @@ use crate::{
     arena::SharedArena,
     change::{Change, Lamport, Timestamp},
     container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
-    encoding::{
-        encode_reordered::{
-            arena::PositionArena,
-            value::{ValueKind, ValueWriter},
-        },
-        StateSnapshotDecodeContext,
-    },
+    encoding::StateSnapshotDecodeContext,
     op::{FutureInnerContent, Op, OpWithId, SliceRange},
-    op::{Op, OpWithId, SliceRange},
     state::ContainerState,
     version::Frontiers,
     DocState, LoroDoc, OpLog, VersionVector,
@@ -66,7 +59,6 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
 
     let vv = &actual_start_vv;
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
-    let key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
     let ExtractedContainer {
         containers,
@@ -80,12 +72,12 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &oplog.arena,
     );
 
-    let cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
-
     let mut registers = EncodedRegisters {
         peer: peer_register,
-        container: cid_register,
-        key: key_register,
+        container: ValueRegister::from_existing(containers),
+        key: ValueRegister::new(),
+        tree_id: ValueRegister::new(),
+        position: either::Left(FxHashSet::default()),
     };
     let mut dep_arena = DepsArena::default();
     let mut value_writer = ValueWriter::new();
@@ -98,9 +90,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &container2index,
         &mut registers,
     );
-
-    let positions = position_register.into_iter().sorted_unstable().collect();
-    let mut position_register = ValueRegister::from_existing(positions);
+    registers.convert_position();
 
     ops.sort_by(move |a, b| {
         a.container_index
@@ -110,12 +100,13 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             .then_with(|| a.lamport.cmp(&b.lamport))
     });
 
-    let (encoded_ops, del_starts) = encode_ops(ops, arena, &mut value_writer, &mut registers);
-
+    let (encoded_ops, del_starts) = encode_ops(&ops, arena, &mut value_writer, &mut registers);
     let EncodedRegisters {
         peer: mut peer_register,
         container: cid_register,
         key: mut key_register,
+        tree_id: tree_id_register,
+        position: position_register,
     } = registers;
 
     let container_arena = ContainerArena::from_containers(
@@ -124,7 +115,8 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &mut key_register,
     );
 
-    let position_arena = PositionArena::from_positions(position_register.unwrap_vec());
+    let position_arena =
+        PositionArena::from_positions(position_register.right().unwrap().unwrap_vec());
     let tree_id_arena = TreeIDArena {
         tree_ids: tree_id_register.unwrap_vec(),
     };
@@ -160,26 +152,23 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
 #[instrument(skip_all)]
 pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
     let iter = serde_columnar::iter_from_bytes::<EncodedDoc>(bytes)?;
-    let arenas = decode_arena(&iter.arenas)?;
+    let mut arenas = decode_arena(&iter.arenas)?;
     let ops_map = extract_ops(
         &iter.raw_values,
         iter.ops,
         iter.delete_starts,
         &oplog.arena,
-        &arenas,
+        &mut arenas,
         false,
     )?
     .ops_map;
-
     let DecodedArenas {
         peer_ids,
         deps,
         state_blob_arena: _,
         ..
     } = arenas;
-
     let changes = decode_changes(iter.changes, iter.start_counters, &peer_ids, deps, ops_map)?;
-
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
@@ -366,7 +355,7 @@ fn extract_ops(
     iter: impl Iterator<Item = Result<EncodedOp, ColumnarError>>,
     mut del_iter: impl Iterator<Item = Result<EncodedDeleteStartId, ColumnarError>>,
     shared_arena: &SharedArena,
-    arenas: &DecodedArenas<'_>,
+    arenas: &mut DecodedArenas<'_>,
     should_extract_ops_with_ids: bool,
 ) -> LoroResult<ExtractedOps> {
     let mut value_reader = ValueReader::new(raw_values);
@@ -377,6 +366,7 @@ fn extract_ops(
         .map(|x| x.as_container_id(arenas))
         .try_collect()?;
     let mut ops = Vec::new();
+    let positions = std::mem::take(&mut arenas.positions).parse_to_positions();
     for op in iter {
         let EncodedOp {
             container_index,
@@ -401,7 +391,15 @@ fn extract_ops(
             prop,
         )?;
 
-        let content = decode_op(cid, value, &mut del_iter, shared_arena, arenas, prop)?;
+        let content = decode_op(
+            cid,
+            value,
+            &mut del_iter,
+            shared_arena,
+            arenas,
+            &positions,
+            prop,
+        )?;
 
         let container = shared_arena.register_container(cid);
 
@@ -439,7 +437,6 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     assert_eq!(oplog.frontiers(), &state.frontiers);
 
     let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
-    let key_register: ValueRegister<InternalString> = ValueRegister::new();
     let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
     let ExtractedContainer {
         containers,
@@ -454,13 +451,14 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         ),
         &oplog.arena,
     );
-    let cid_register: ValueRegister<ContainerID> = ValueRegister::from_existing(containers);
     let mut dep_arena = DepsArena::default();
     let mut value_writer = ValueWriter::new();
     let registers = Rc::new(RefCell::new(EncodedRegisters {
         peer: peer_register,
-        container: cid_register,
-        key: key_register,
+        container: ValueRegister::from_existing(containers),
+        key: ValueRegister::new(),
+        tree_id: ValueRegister::new(),
+        position: either::Left(FxHashSet::default()),
     }));
 
     let registers_clone = registers.clone();
@@ -567,25 +565,28 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     );
 
     let ops: Vec<TempOp> = calc_sorted_ops_for_snapshot(origin_ops, pos_mapping_heap);
-    let positions: Vec<_> = position_register.into_iter().sorted_unstable().collect();
-    let mut position_register = ValueRegister::from_existing(positions);
+
+    registers.convert_position();
 
     let (encoded_ops, del_starts) =
-        encode_ops(ops, &oplog.arena, &mut value_writer, &mut registers);
+        encode_ops(&ops, &oplog.arena, &mut value_writer, &mut registers);
 
     let EncodedRegisters {
         peer: mut peer_register,
         container: cid_register,
         key: mut key_register,
+        tree_id: tree_id_register,
+        position: position_register,
     } = registers;
-
     let container_arena = ContainerArena::from_containers(
         cid_register.unwrap_vec(),
         &mut peer_register,
         &mut key_register,
     );
 
-    let position_arena = PositionArena::from_positions(position_register.unwrap_vec());
+    let position_arena =
+        PositionArena::from_positions(position_register.right().unwrap().unwrap_vec());
+
     let tree_id_arena = TreeIDArena {
         tree_ids: tree_id_register.unwrap_vec(),
     };
@@ -757,7 +758,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     assert!(oplog.frontiers().is_empty());
 
     let iter = serde_columnar::iter_from_bytes::<EncodedDoc>(bytes)?;
-    let arenas = decode_arena(&iter.arenas)?;
+    let mut arenas = decode_arena(&iter.arenas)?;
     let ExtractedOps {
         ops_map,
         mut ops,
@@ -767,7 +768,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         iter.ops,
         iter.delete_starts,
         &oplog.arena,
-        &arenas,
+        &mut arenas,
         true,
     )?;
     let DecodedArenas {
@@ -905,7 +906,7 @@ fn decode_snapshot_states(
 }
 
 mod encode {
-    use fxhash::FxHashMap;
+    use fxhash::{FxHashMap, FxHashSet};
     use loro_common::{ContainerType, HasId, PeerID, ID};
     use rle::{HasLength, Sliceable};
     use std::borrow::Cow;
@@ -999,11 +1000,11 @@ mod encode {
         }
     }
 
-    pub(super) fn encode_ops(
-        ops: Vec<TempOp<'_>>,
+    pub(super) fn encode_ops<'p, 'a: 'p>(
+        ops: &'a [TempOp<'a>],
         arena: &SharedArena,
         value_writer: &mut ValueWriter,
-        registers: &mut EncodedRegisters,
+        registers: &mut EncodedRegisters<'p>,
     ) -> (Vec<EncodedOp>, Vec<EncodedDeleteStartId>) {
         let mut encoded_ops = Vec::with_capacity(ops.len());
         let mut delete_start = Vec::new();
@@ -1033,7 +1034,7 @@ mod encode {
         dep_arena: &mut super::DepsArena,
         push_op: &mut impl FnMut(TempOp<'a>),
         container_idx2index: &FxHashMap<ContainerIdx, usize>,
-        registers: &mut EncodedRegisters,
+        registers: &mut EncodedRegisters<'p>,
     ) -> Vec<EncodedChange> {
         let mut changes: Vec<EncodedChange> = Vec::with_capacity(diff_changes.len());
         for change in diff_changes.iter() {
@@ -1197,14 +1198,25 @@ mod encode {
         }
     }
 
-    fn get_sorting_prop(op: &Op, registers: &mut EncodedRegisters) -> i32 {
+    fn get_sorting_prop<'p, 'a: 'p>(op: &'a Op, registers: &mut EncodedRegisters<'p>) -> i32 {
         match &op.content {
             crate::op::InnerContent::List(_) => 0,
             crate::op::InnerContent::Map(map) => {
                 let key = registers.key.register(&map.key);
                 key as i32
             }
-            crate::op::InnerContent::Tree(..) => 0,
+            crate::op::InnerContent::Tree(op) => {
+                if let Some(position) = &op.position {
+                    if let either::Either::Left(position_register) = &mut registers.position {
+                        position_register.insert(&position.as_bytes_without_terminated());
+                    } else {
+                        unreachable!()
+                    }
+                    0
+                } else {
+                    -1
+                }
+            }
             crate::op::InnerContent::Future(f) => match f {
                 #[cfg(feature = "counter")]
                 FutureInnerContent::Counter(_) => 0,
@@ -1214,12 +1226,12 @@ mod encode {
     }
 
     #[inline]
-    fn encode_op(
-        op: &Op,
+    fn encode_op<'p, 'a: 'p>(
+        op: &'a Op,
         arena: &SharedArena,
         delete_start: &mut Vec<EncodedDeleteStartId>,
         value_writer: &mut ValueWriter,
-        registers: &mut EncodedRegisters,
+        registers: &mut EncodedRegisters<'p>,
     ) -> ValueKind {
         let value = match &op.content {
             crate::op::InnerContent::List(list) => match list {
@@ -1287,7 +1299,7 @@ mod encode {
             }
             crate::op::InnerContent::Tree(t) => {
                 assert_eq!(op.container.get_type(), ContainerType::Tree);
-                Value::TreeMove(EncodedTreeMove::from_op(t))
+                Value::TreeMove(EncodedTreeMove::from_tree_op(t, registers))
             }
             crate::op::InnerContent::Future(f) => match f {
                 #[cfg(feature = "counter")]
@@ -1300,7 +1312,6 @@ mod encode {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 #[inline]
 fn decode_op(
     cid: &ContainerID,
@@ -1308,6 +1319,7 @@ fn decode_op(
     del_iter: &mut impl Iterator<Item = Result<EncodedDeleteStartId, ColumnarError>>,
     shared_arena: &SharedArena,
     arenas: &DecodedArenas<'_>,
+    positions: &[Vec<u8>],
     prop: i32,
 ) -> LoroResult<crate::op::InnerContent> {
     let content = match cid.container_type() {
@@ -1401,7 +1413,11 @@ fn decode_op(
             }
         }
         ContainerType::Tree => match value {
-            Value::TreeMove(op) => crate::op::InnerContent::Tree(op.as_tree_op()),
+            Value::TreeMove(op) => crate::op::InnerContent::Tree(op.as_tree_op(
+                &arenas.peer_ids,
+                &positions,
+                &arenas.tree_ids.tree_ids,
+            )?),
             _ => {
                 unreachable!()
             }
@@ -1644,6 +1660,8 @@ mod test {
             key: ValueRegister::new(),
             container: ValueRegister::new(),
             peer: ValueRegister::new(),
+            tree_id: ValueRegister::new(),
+            position: either::Either::Left(FxHashSet::default()),
         };
 
         let mut writer = ValueWriter::new();

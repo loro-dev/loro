@@ -38,11 +38,12 @@ pub enum RawOpContent<'a> {
     Map(MapSet),
     List(ListOp<'a>),
     Tree(TreeOp),
-    #[serde(untagged)]
+    #[cfg_attr(feature = "wasm", serde(untagged))]
     Future(FutureRawOpContent),
 }
 
-#[derive(EnumAsInner, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(EnumAsInner, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "wasm", derive(Serialize, Deserialize,))]
 pub enum FutureRawOpContent {
     #[cfg(feature = "counter")]
     Counter(i64),
