@@ -1059,13 +1059,20 @@ impl DocState {
                 State::RichtextState(s) => s.get_richtext_value(),
                 _ => state.get_value(),
             };
-
             if match &value {
                 LoroValue::List(l) => l.is_empty(),
                 LoroValue::Map(m) => m.is_empty(),
                 _ => false,
             } {
                 return None;
+            }
+            #[cfg(feature = "counter")]
+            if id.container_type() == ContainerType::Counter {
+                if let LoroValue::I64(c) = value {
+                    if c == 0 {
+                        return None;
+                    }
+                }
             }
 
             Some((id, (state.container_idx(), value)))
@@ -1087,7 +1094,6 @@ impl DocState {
                 get_entries_for_state(arena, state)
             })
             .collect();
-
         for (id, (idx, this_value)) in self_id_to_states {
             let (_, other_value) = match other_id_to_states.remove(&id) {
                 Some(x) => x,

@@ -131,19 +131,19 @@ impl Actor {
                 assert_value_eq(v, &actual);
             });
         }
-        // let f = self.rand_frontiers();
-        // if f.is_empty() {
-        //     return;
-        // }
+        let f = self.rand_frontiers();
+        if f.is_empty() {
+            return;
+        }
 
-        // self.loro.checkout(&f).unwrap();
-        // self.loro.check_state_correctness_slow();
-        // // check snapshot correctness after checkout
-        // self.loro.checkout_to_latest();
-        // let new_doc = LoroDoc::new();
-        // new_doc.import(&self.loro.export_snapshot()).unwrap();
-        // new_doc.checkout(&f).unwrap();
-        // new_doc.check_state_correctness_slow();
+        self.loro.checkout(&f).unwrap();
+        self.loro.check_state_correctness_slow();
+        // check snapshot correctness after checkout
+        self.loro.checkout_to_latest();
+        let new_doc = LoroDoc::new();
+        new_doc.import(&self.loro.export_snapshot()).unwrap();
+        new_doc.checkout(&f).unwrap();
+        new_doc.check_state_correctness_slow();
     }
 
     fn rand_frontiers(&mut self) -> Frontiers {
