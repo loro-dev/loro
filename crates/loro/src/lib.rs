@@ -1345,6 +1345,13 @@ impl LoroTree {
         self.handler.id().clone()
     }
 
+    /// Return the fractional index of the target node with hex format.
+    pub fn fractional_index(&self, target: &TreeID) -> Option<String> {
+        self.handler
+            .get_position_by_tree_id(target)
+            .map(|x| x.to_string())
+    }
+
     /// Return the flat array of the forest.
     ///
     /// Note: the metadata will be not resolved. So if you don't only care about hierarchy

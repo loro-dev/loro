@@ -2772,8 +2772,10 @@ impl LoroTreeNode {
     }
 
     /// Get the `Fractional Index` of the node.
-    #[wasm_bindgen]
-    pub fn position(&self) -> JsResult<JsPositionOrUndefined> {
+    ///
+    /// Note: the tree container must be attached to the document.
+    #[wasm_bindgen(js_name = "fractionalIndex")]
+    pub fn fractional_index(&self) -> JsResult<JsPositionOrUndefined> {
         if self.tree.is_attached() {
             let pos = self.tree.get_position_by_tree_id(&self.id);
             let ans = if let Some(pos) = pos.map(|x| x.to_string()) {
