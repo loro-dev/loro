@@ -665,6 +665,7 @@ dependencies = [
  "enum-as-inner 0.5.1",
  "enum_dispatch",
  "fxhash",
+ "itertools 0.12.1",
  "loro",
  "loro-internal",
  "rand",
@@ -914,6 +915,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1044,7 +1054,7 @@ dependencies = [
  "generic-btree",
  "getrandom",
  "im",
- "itertools 0.11.0",
+ "itertools 0.12.1",
  "js-sys",
  "leb128",
  "loro-common",

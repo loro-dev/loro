@@ -35,7 +35,7 @@ serde_json = { version = "1" }
 arref = "0.1.0"
 serde_columnar = { workspace = true }
 append-only-bytes = { version = "0.1.12", features = ["u32_range"] }
-itertools = "0.11.0"
+itertools = { workspace = true }
 enum_dispatch = { workspace = true }
 im = "15.1.0"
 generic-btree = { version = "^0.10.5" }
