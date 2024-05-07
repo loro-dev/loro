@@ -69,6 +69,14 @@ pub struct DocState {
     event_recorder: EventRecorder,
 }
 
+impl std::fmt::Debug for DocState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DocState")
+            .field("peer", &self.peer)
+            .finish()
+    }
+}
+
 #[enum_dispatch]
 pub(crate) trait ContainerState: Clone {
     fn container_idx(&self) -> ContainerIdx;

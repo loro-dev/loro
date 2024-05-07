@@ -685,9 +685,9 @@ dependencies = [
 
 [[package]]
 name = "generic-btree"
-version = "0.10.4"
+version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6f48456155f3a6d10b31a8510ebba3b3d38b01275fa17db8eb4033c1cf55846"
+checksum = "210507e6dec78bb1304e52a174bd99efdd83894219bf20d656a066a0ce2fedc5"
 dependencies = [
  "arref",
  "fxhash",
@@ -976,7 +976,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "ctor 0.2.6",
  "dev-utils",
@@ -991,7 +991,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
@@ -1008,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "loro-delta"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "arrayvec",
  "color-backtrace",
@@ -1024,7 +1024,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -1075,7 +1075,7 @@ dependencies = [
 
 [[package]]
 name = "loro-rle"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "append-only-bytes",
  "arref",

@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
+#![warn(missing_debug_implementations)]
 use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::change::Timestamp;
@@ -44,6 +45,7 @@ pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
 
 /// `LoroDoc` is the entry for the whole document.
 /// When it's dropped, all the associated [`Handler`]s will be invalidated.
+#[derive(Debug)]
 pub struct LoroDoc {
     doc: InnerLoroDoc,
 }
@@ -87,7 +89,7 @@ impl LoroDoc {
         self.doc.set_record_timestamp(record);
     }
 
-    /// Set the interval of mergeable changes.
+    /// Set the interval of mergeable changes, in milliseconds.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
     /// The defualt value is 1000 seconds.

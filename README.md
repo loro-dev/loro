@@ -39,6 +39,7 @@ Explore our vision for the local-first development paradigm in our blog post: [*
 - **Text Editing with Fugue**: Loro integrates [Fugue](https://arxiv.org/abs/2305.00583), a CRDT algorithm designed to minimize interleaving anomalies in concurrent text editing.
 - **Peritext-like Rich Text CRDT**: Drawing inspiration from [Peritext](https://www.inkandswitch.com/peritext/), Loro manages rich text CRDTs that excel at merging concurrent rich text style edits, maintaining the original intent of users input as much as possible. Details on this will be explored further in an upcoming blog post.
 - **Moveable Tree**: For applications requiring directory-like data manipulation, Loro utilizes the algorithm from [*A Highly-Available Move Operation for Replicated Trees*](https://ieeexplore.ieee.org/document/9563274), which simplifies the process of moving hierarchical data structures.
+- [**Moveable List**](https://loro.dev/docs/tutorial/list): Both `List` and `MovableList` utilize the [*Fugue*](https://arxiv.org/abs/2305.00583) to achieve *maximal noninterleaving*. Additionally, `MovableList` uses the algorithm from [*Moving Elements in List CRDTs*](https://martin.kleppmann.com/2020/04/27/papoc-list-move.html) to implement the move operation.
 
 ## Advanced Features in Loro
 
@@ -95,12 +96,13 @@ deno task test-wasm
 Loro draws inspiration from the innovative work of the following projects and individuals:
 
 - [Ink & Switch](https://inkandswitch.com/): The principles of Local-first Software have greatly influenced this project. The [Peritext](https://www.inkandswitch.com/peritext/) project has also shaped our approach to rich text CRDTs.
-- [Diamond-types](https://github.com/josephg/diamond-types): The ingenious OT-like merging algorithm from @josephg has been adapted to reduce the computation and space usage of CRDTs.
+- [Diamond-types](https://github.com/josephg/diamond-types): The [Replayable Event Graph (REG)](https://loro.dev/docs/advanced/replayable_event_graph) algorithm from @josephg has been adapted to reduce the computation and space usage of CRDTs.
 - [Automerge](https://github.com/automerge/automerge): Their use of columnar encoding for CRDTs has informed our strategies for efficient data encoding.
-- [Yjs](https://github.com/yjs/yjs): We have incorporated a similar algorithm for effectively merging collaborative editing operations, thanks to their pioneering contributions.
+- [Yjs](https://github.com/yjs/yjs): We have incorporated a similar algorithm for effectively merging collaborative editing operations, thanks to their pioneering works.
 - [Matthew Weidner](https://mattweidner.com/): His work on the [Fugue](https://arxiv.org/abs/2305.00583) algorithm has been invaluable, enhancing our text editing capabilities.
-
+- [Martin Kleppmann](https://martin.kleppmann.com/): His work on CRDTs has significantly influenced our comprehension of the field.
  
+
 [local-first]: https://www.inkandswitch.com/local-first/
 [Fugue]: https://arxiv.org/abs/2305.00583
 [Peritext]: https://www.inkandswitch.com/peritext/

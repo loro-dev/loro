@@ -191,11 +191,12 @@ pub enum ContainerType {
 }
 
 impl ContainerType {
-    pub const ALL_TYPES: [ContainerType; 4] = [
+    pub const ALL_TYPES: [ContainerType; 5] = [
         ContainerType::Map,
         ContainerType::List,
         ContainerType::Text,
         ContainerType::Tree,
+        ContainerType::MovableList,
     ];
 
     pub fn default_value(&self) -> LoroValue {
