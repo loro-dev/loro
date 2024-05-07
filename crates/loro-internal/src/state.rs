@@ -1137,7 +1137,7 @@ impl DocState {
             ContainerType::Counter => {
                 State::CounterState(Box::new(counter_state::CounterState::new(idx)))
             }
-            ContainerType::Unknown(_) => unreachable!(),
+            ContainerType::Unknown(_) => State::UnknownState(Box::new(UnknownState::new(idx))),
         }
     }
 
