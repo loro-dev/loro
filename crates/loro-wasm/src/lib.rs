@@ -21,7 +21,7 @@ use loro_internal::{
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, cmp::Ordering, f32::consts::E, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
 use wasm_bindgen_derive::TryFromJsValue;
 
@@ -296,10 +296,20 @@ impl Loro {
 
     /// If two continuous local changes are within the interval, they will be merged into one change.
     ///
-    /// The defualt value is 1_000_000, the default unit is miliseconds.
+    /// The default value is 1_000_000, the default unit is milliseconds.
     #[wasm_bindgen(js_name = "setChangeMergeInterval")]
     pub fn set_change_merge_interval(&self, interval: f64) {
         self.0.set_change_merge_interval(interval as i64);
+    }
+
+    /// Set the jitter of the tree position(Fractional Index).
+    ///
+    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
+    /// value 1 is default, which means no jitter, any value larger than 1 will enable jitter.
+    /// Generally speaking, jitter will affect the growth rate of document size.
+    #[wasm_bindgen(js_name = "setFractionalIndexJitter")]
+    pub fn set_fractional_index_jitter(&self, jitter: u8) {
+        self.0.set_fractional_index_jitter(jitter);
     }
 
     /// Set the rich text format configuration of the document.

@@ -98,6 +98,16 @@ impl LoroDoc {
         self.doc.set_change_merge_interval(interval);
     }
 
+    /// Set the jitter of the tree position(Fractional Index).
+    ///
+    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
+    /// value 1 is default, which means no jitter, any value larger than 1 will enable jitter.
+    /// Generally speaking, jitter will affect the growth rate of document size.
+    #[inline]
+    pub fn set_fractional_index_jitter(&self, jitter: u8) {
+        self.doc.set_fractional_index_jitter(jitter);
+    }
+
     /// Set the rich text format configuration of the document.
     ///
     /// You need to config it if you use rich text `mark` method.

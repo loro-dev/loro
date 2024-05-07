@@ -36,6 +36,11 @@ impl Configure {
             .store(record, std::sync::atomic::Ordering::Relaxed);
     }
 
+    pub fn set_fractional_index_jitter(&self, jitter: u8) {
+        self.tree_position_jitter
+            .store(jitter, std::sync::atomic::Ordering::Relaxed);
+    }
+
     pub fn merge_interval(&self) -> i64 {
         self.merge_interval
             .load(std::sync::atomic::Ordering::Relaxed)
