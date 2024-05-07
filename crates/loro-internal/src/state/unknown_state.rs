@@ -96,7 +96,9 @@ impl ContainerState for UnknownState {
     #[doc = r" State will use the provided encoder to encode the ops and export a blob."]
     #[doc = r" The ops should be encoded into the snapshot as well as the blob."]
     #[doc = r" The users then can use the ops and the blob to restore the state to the current state."]
-    fn encode_snapshot(&self, _encoder: StateSnapshotEncoder) -> Vec<u8> {}
+    fn encode_snapshot(&self, _encoder: StateSnapshotEncoder) -> Vec<u8> {
+        vec![]
+    }
 
     #[doc = r" Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, _ctx: StateSnapshotDecodeContext) {}
