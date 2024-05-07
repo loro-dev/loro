@@ -647,7 +647,7 @@ dependencies = [
 [[package]]
 name = "fractional_index"
 version = "0.1.0"
-source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#400609b4c2aa6e712857d51bae73860e35120c73"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#15442d82c4735e40b45a020603846b723ea12c96"
 dependencies = [
  "imbl",
  "rand",
@@ -1014,7 +1014,7 @@ dependencies = [
 [[package]]
 name = "loro"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#400609b4c2aa6e712857d51bae73860e35120c73"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#15442d82c4735e40b45a020603846b723ea12c96"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
@@ -1044,7 +1044,7 @@ dependencies = [
 [[package]]
 name = "loro-common"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#400609b4c2aa6e712857d51bae73860e35120c73"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#15442d82c4735e40b45a020603846b723ea12c96"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
@@ -1076,7 +1076,7 @@ dependencies = [
 [[package]]
 name = "loro-delta"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#400609b4c2aa6e712857d51bae73860e35120c73"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#15442d82c4735e40b45a020603846b723ea12c96"
 dependencies = [
  "arrayvec",
  "enum-as-inner 0.5.1",
@@ -1139,7 +1139,7 @@ dependencies = [
 [[package]]
 name = "loro-internal"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#400609b4c2aa6e712857d51bae73860e35120c73"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#15442d82c4735e40b45a020603846b723ea12c96"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -1191,7 +1191,7 @@ dependencies = [
 [[package]]
 name = "loro-rle"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#400609b4c2aa6e712857d51bae73860e35120c73"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/feat-encode-forward#15442d82c4735e40b45a020603846b723ea12c96"
 dependencies = [
  "append-only-bytes",
  "arref",
