@@ -63,6 +63,43 @@ impl ActorTrait for CounterActor {
         let result = counter.get_value();
         let tracker = self.tracker.lock().unwrap().to_value();
         assert_eq!(&result, tracker.into_map().unwrap().get("counter").unwrap());
+
+        use loro_without_counter::LoroDoc as LoroDocWithoutCounter;
+        // snapshot to snapshot
+        let unknown_loro = LoroDocWithoutCounter::new();
+        unknown_loro.import(&loro.export_snapshot()).unwrap();
+        let new_loro = LoroDoc::new();
+        new_loro.import(&unknown_loro.export_snapshot()).unwrap();
+        assert_eq!(new_loro.get_deep_value(), loro.get_deep_value());
+
+        // updates to updates
+        let unknown_loro = LoroDocWithoutCounter::new();
+        unknown_loro
+            .import(&loro.export_from(&Default::default()))
+            .unwrap();
+        let new_loro = LoroDoc::new();
+        new_loro
+            .import(&unknown_loro.export_from(&Default::default()))
+            .unwrap();
+        assert_eq!(new_loro.get_deep_value(), loro.get_deep_value());
+
+        // snapshot to updates
+        let unknown_loro = LoroDocWithoutCounter::new();
+        unknown_loro.import(&loro.export_snapshot()).unwrap();
+        let new_loro = LoroDoc::new();
+        new_loro
+            .import(&unknown_loro.export_from(&Default::default()))
+            .unwrap();
+        assert_eq!(new_loro.get_deep_value(), loro.get_deep_value());
+
+        // updates to snapshot
+        let unknown_loro = LoroDocWithoutCounter::new();
+        unknown_loro
+            .import(&loro.export_from(&Default::default()))
+            .unwrap();
+        let new_loro = LoroDoc::new();
+        new_loro.import(&unknown_loro.export_snapshot()).unwrap();
+        assert_eq!(new_loro.get_deep_value(), loro.get_deep_value());
     }
 
     fn add_new_container(&mut self, container: Container) {

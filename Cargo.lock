@@ -128,7 +128,7 @@ dependencies = [
  "arbitrary",
  "enum-as-inner 0.5.1",
  "flate2",
- "loro-common",
+ "loro-common 0.5.1",
  "rand",
  "serde_json",
 ]
@@ -538,7 +538,7 @@ dependencies = [
  "criterion",
  "ctor 0.2.6",
  "flate2",
- "loro",
+ "loro 0.5.1",
  "serde_json",
  "tabled 0.15.0",
  "tracing",
@@ -581,8 +581,9 @@ dependencies = [
  "enum-as-inner 0.5.1",
  "enum_dispatch",
  "fxhash",
- "loro",
- "loro-internal",
+ "loro 0.5.1",
+ "loro 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=test/without-counter)",
+ "loro-internal 0.5.1",
  "rand",
  "tabled 0.10.0",
  "tracing",
@@ -859,9 +860,22 @@ dependencies = [
  "either",
  "enum-as-inner 0.6.0",
  "generic-btree",
- "loro-delta",
- "loro-internal",
+ "loro-delta 0.5.1",
+ "loro-internal 0.5.1",
  "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "loro"
+version = "0.5.1"
+source = "git+https://github.com/loro-dev/loro.git?branch=test/without-counter#8173824c80930c89f60e28a45ab1aff5ead36bf6"
+dependencies = [
+ "either",
+ "enum-as-inner 0.6.0",
+ "generic-btree",
+ "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=test/without-counter)",
+ "loro-internal 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=test/without-counter)",
  "tracing",
 ]
 
@@ -873,13 +887,29 @@ dependencies = [
  "enum-as-inner 0.6.0",
  "fxhash",
  "js-sys",
- "loro-rle",
+ "loro-rle 0.5.1",
  "nonmax",
  "serde",
  "serde_columnar",
  "string_cache",
  "thiserror",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "loro-common"
+version = "0.5.1"
+source = "git+https://github.com/loro-dev/loro.git?branch=test/without-counter#8173824c80930c89f60e28a45ab1aff5ead36bf6"
+dependencies = [
+ "arbitrary",
+ "enum-as-inner 0.6.0",
+ "fxhash",
+ "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=test/without-counter)",
+ "nonmax",
+ "serde",
+ "serde_columnar",
+ "string_cache",
+ "thiserror",
 ]
 
 [[package]]
@@ -896,6 +926,18 @@ dependencies = [
  "rand",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "loro-delta"
+version = "0.5.1"
+source = "git+https://github.com/loro-dev/loro.git?branch=test/without-counter#8173824c80930c89f60e28a45ab1aff5ead36bf6"
+dependencies = [
+ "arrayvec",
+ "enum-as-inner 0.5.1",
+ "generic-btree",
+ "heapless 0.8.0",
+ "tracing",
 ]
 
 [[package]]
@@ -921,9 +963,9 @@ dependencies = [
  "itertools 0.11.0",
  "js-sys",
  "leb128",
- "loro-common",
- "loro-delta",
- "loro-rle",
+ "loro-common 0.5.1",
+ "loro-delta 0.5.1",
+ "loro-rle 0.5.1",
  "md5",
  "miniz_oxide 0.7.1",
  "num",
@@ -948,6 +990,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-internal"
+version = "0.5.1"
+source = "git+https://github.com/loro-dev/loro.git?branch=test/without-counter#8173824c80930c89f60e28a45ab1aff5ead36bf6"
+dependencies = [
+ "append-only-bytes",
+ "arref",
+ "enum-as-inner 0.5.1",
+ "enum_dispatch",
+ "fxhash",
+ "generic-btree",
+ "getrandom",
+ "im",
+ "itertools 0.11.0",
+ "leb128",
+ "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=test/without-counter)",
+ "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=test/without-counter)",
+ "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=test/without-counter)",
+ "md5",
+ "num",
+ "num-derive",
+ "num-traits",
+ "once_cell",
+ "postcard",
+ "serde",
+ "serde_columnar",
+ "serde_json",
+ "smallvec",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "loro-rle"
 version = "0.5.1"
 dependencies = [
@@ -965,6 +1039,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-rle"
+version = "0.5.1"
+source = "git+https://github.com/loro-dev/loro.git?branch=test/without-counter#8173824c80930c89f60e28a45ab1aff5ead36bf6"
+dependencies = [
+ "append-only-bytes",
+ "arref",
+ "enum-as-inner 0.6.0",
+ "fxhash",
+ "num",
+ "smallvec",
+]
+
+[[package]]
 name = "loro-thunderdome"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -977,8 +1064,8 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom",
  "js-sys",
- "loro-internal",
- "loro-rle",
+ "loro-internal 0.5.1",
+ "loro-rle 0.5.1",
  "serde",
  "serde-wasm-bindgen",
  "tracing",

@@ -1280,6 +1280,9 @@ fn decode_op(
     arenas: &DecodedArenas<'_>,
     prop: i32,
 ) -> LoroResult<crate::op::InnerContent> {
+    if cid.is_unknown() {
+        println!("##############unknown container");
+    }
     let content = match cid.container_type() {
         ContainerType::Text => match value {
             Value::Str(s) => {

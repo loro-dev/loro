@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 tracing = "0.1"
 loro = { path = "../loro", features = ["counter"] }
+loro-without-counter = { git = "https://github.com/loro-dev/loro.git", package = "loro", branch = "test/without-counter" }
 loro-internal = { path = "../loro-internal", features = ["test_utils"] }
 arbitrary = "1"
 tabled = "0.10"
