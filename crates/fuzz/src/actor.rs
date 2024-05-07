@@ -299,8 +299,7 @@ pub trait ActorTrait {
     fn add_new_container(&mut self, container: Container);
 }
 
-#[allow(unused)]
-fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
+pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
     #[must_use]
     fn eq(a: &LoroValue, b: &LoroValue) -> bool {
         match (a, b) {
