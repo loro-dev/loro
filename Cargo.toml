@@ -24,3 +24,4 @@ tracing = { version = "0.1", features = [
     "release_max_level_warn",
 ] }
 serde_columnar = { version = "0.3.4" }
+itertools = "0.12.1"

@@ -6,6 +6,7 @@ use std::{
 };
 
 use fxhash::FxHashMap;
+use itertools::Itertools;
 use loro::{
     event::Diff, Container, ContainerID, ContainerType, LoroDoc, LoroError, LoroTree, LoroValue,
     TreeExternalDiff, TreeID,
@@ -447,23 +448,17 @@ impl ApplyDiff for TreeTracker {
 
     fn to_value(&self) -> LoroValue {
         let mut list: Vec<FxHashMap<_, _>> = Vec::new();
-        for (i, node) in self.iter().enumerate() {
-            node.to_value(i, &mut list);
+        let mut q = VecDeque::from_iter(
+            self.iter()
+                .sorted_unstable_by_key(|x| &x.position)
+                .enumerate(),
+        );
+
+        while let Some((i, node)) = q.pop_front() {
+            list.push(node.to_value(i));
+            q.extend(node.children.iter().enumerate());
         }
 
-        list.sort_by_key(|x| {
-            let parent = if let LoroValue::String(p) = x.get("parent").unwrap() {
-                Some(p.clone())
-            } else {
-                None
-            };
-
-            (
-                parent,
-                *x.get("index").unwrap().as_i64().unwrap(),
-                x.get("id").unwrap().as_string().unwrap().clone(),
-            )
-        });
         list.into()
     }
 }
@@ -500,10 +495,7 @@ impl TreeNode {
         }
     }
 
-    fn to_value(&self, index: usize, list: &mut Vec<FxHashMap<String, LoroValue>>) {
-        for (i, child) in self.children.iter().enumerate() {
-            child.to_value(i, list);
-        }
+    fn to_value(&self, index: usize) -> FxHashMap<String, LoroValue> {
         let mut map = FxHashMap::default();
         map.insert("id".to_string(), self.id.to_string().into());
         map.insert("meta".to_string(), self.meta.to_value());
@@ -516,6 +508,6 @@ impl TreeNode {
         );
         map.insert("position".to_string(), self.position.clone().into());
         map.insert("index".to_string(), (index as i64).into());
-        list.push(map);
+        map
     }
 }
