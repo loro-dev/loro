@@ -376,7 +376,13 @@ fn extract_ops(
         let peer = arenas.peer_ids[peer_idx as usize];
         let cid = &containers[container_index as usize];
         let kind = ValueKind::from_u8(value_type);
-        let value = Value::decode(kind, &mut value_reader, arenas, ID::new(peer, counter))?;
+        let value = Value::decode(
+            kind,
+            &mut value_reader,
+            arenas,
+            ID::new(peer, counter),
+            prop,
+        )?;
 
         let content = decode_op(cid, value, &mut del_iter, shared_arena, arenas, prop)?;
 
@@ -1140,7 +1146,7 @@ mod encode {
         match &op {
             #[cfg(feature = "counter")]
             FutureInnerContent::Counter(c) => *c as i32,
-            FutureInnerContent::Unknown { .. } => 0,
+            FutureInnerContent::Unknown { prop, .. } => *prop,
         }
     }
 
@@ -1280,9 +1286,6 @@ fn decode_op(
     arenas: &DecodedArenas<'_>,
     prop: i32,
 ) -> LoroResult<crate::op::InnerContent> {
-    if cid.is_unknown() {
-        println!("##############unknown container");
-    }
     let content = match cid.container_type() {
         ContainerType::Text => match value {
             Value::Str(s) => {

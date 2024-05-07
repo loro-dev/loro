@@ -649,8 +649,27 @@ impl DocState {
                 self.arena.set_parent(child_idx, Some(*idx));
             }
         }
+
+        if !unknown_containers.is_empty() {
+            let mut diff_calc = DiffCalculator::new();
+            let unknown_diffs = diff_calc.calc_diff_internal(
+                oplog,
+                &Default::default(),
+                Some(&Default::default()),
+                oplog.vv(),
+                Some(&frontiers),
+                Some(&|idx| !idx.is_unknown() && unknown_containers.contains(&idx)),
+            );
+            self.apply_diff(InternalDocDiff {
+                origin: Default::default(),
+                by: EventTriggerKind::Import,
+                diff: unknown_diffs.into(),
+                new_version: Cow::Owned(frontiers.clone()),
+            })
+        }
+
         if self.is_recording() {
-            let mut diff: Vec<_> = self
+            let diff: Vec<_> = self
                 .states
                 .iter_mut()
                 .map(|(&idx, state)| InternalContainerDiff {
@@ -662,20 +681,6 @@ impl DocState {
                         .into(),
                 })
                 .collect();
-            let mut diff_calc = DiffCalculator::new();
-            let mut unknown_diffs = diff_calc.calc_diff_internal(
-                oplog,
-                &Default::default(),
-                Some(&Default::default()),
-                oplog.vv(),
-                Some(&frontiers),
-                Some(&|idx| idx.is_unknown() && unknown_containers.contains(&idx)),
-            );
-
-            // diff
-            if !unknown_diffs.is_empty() {
-                diff.append(&mut unknown_diffs);
-            }
 
             self.record_diff(InternalDocDiff {
                 origin: Default::default(),
