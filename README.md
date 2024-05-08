@@ -13,6 +13,22 @@
   Make your app state synchronized and collaborative effortlessly.
 </p>
 <p align="center">
+  <a href="https://trendshift.io/repositories/4964" target="_blank"><img src="https://trendshift.io/api/badge/repositories/4964" alt="loro-dev%2Floro | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+</p>
+<p align="center">
+  <a href="https://loro.dev/docs">
+    <b>Documentation</b>
+  </a>
+  |
+  <a href="https://loro.dev/docs/tutorial/get_started">
+    <b>Getting Started</b>
+  </a>
+  |
+  <a href="https://docs.rs/loro">
+    <b>Rust Doc</b>
+  </a>
+</p>
+<p align="center">
   <a aria-label="X" href="https://x.com/loro_dev" target="_blank">
     <img alt="" src="https://img.shields.io/badge/Twitter-black?style=for-the-badge&logo=Twitter">
   </a>
@@ -29,13 +45,13 @@ https://github.com/loro-dev/loro/assets/18425020/fe246c47-a120-44b3-91d4-1e7232a
 
 Loro is a CRDTs(Conflict-free Replicated Data Types) library that makes building [local-first apps][local-first] easier. 
 
-Explore our vision for the local-first development paradigm in our blog post: [**Reimagine State Management with CRDTs**](https://loro.dev/blog/loro-now-open-source).
+Explore our vision in our blog: [**Reimagine State Management with CRDTs**](https://loro.dev/blog/loro-now-open-source).
 
 # Features
 
 ## Supported CRDT Algorithms
 
-- **Common Data Structures**: Support for `List` for ordered collections, LWW(Last Write Win) `Map` for key-value pairs, `Tree` for hierarchical data, and `Text` for rich text manipulation, enabling various applications.
+- **Common Data Structures**: Includes `List` for ordered collections, LWW (Last Write Win) `Map` for key-value pairs, `Tree` for hierarchical data, and `Text` for rich text manipulation, enabling various applications.
 - **Text Editing with Fugue**: Loro integrates [Fugue](https://arxiv.org/abs/2305.00583), a CRDT algorithm designed to minimize interleaving anomalies in concurrent text editing.
 - **Peritext-like Rich Text CRDT**: Drawing inspiration from [Peritext](https://www.inkandswitch.com/peritext/), Loro manages rich text CRDTs that excel at merging concurrent rich text style edits, maintaining the original intent of users input as much as possible. Details on this will be explored further in an upcoming blog post.
 - **Moveable Tree**: For applications requiring directory-like data manipulation, Loro utilizes the algorithm from [*A Highly-Available Move Operation for Replicated Trees*](https://ieeexplore.ieee.org/document/9563274), which simplifies the process of moving hierarchical data structures.
