@@ -61,17 +61,17 @@ Explore our vision in our blog: [**Reimagine State Management with CRDTs**](http
 
 **Supported CRDT Algorithms**
 
-- Text Editing with [Fugue]
-- [Peritext-like Rich Text CRDT](https://loro.dev/blog/loro-richtext)
-- [Moveable Tree](https://loro.dev/docs/tutorial/tree)
-- [Moveable List](https://loro.dev/docs/tutorial/list)
-- [CRDT Map](https://loro.dev/docs/tutorial/map)
-- [Replayable Event Graph](https://loro.dev/docs/advanced/replayable_event_graph)
+- 📝 Text Editing with [Fugue]
+- 📙 [Peritext-like Rich Text CRDT](https://loro.dev/blog/loro-richtext)
+- 🌲 [Moveable Tree](https://loro.dev/docs/tutorial/tree)
+- 🚗 [Moveable List](https://loro.dev/docs/tutorial/list)
+- 🗺️ [Last-Write-Wins Map](https://loro.dev/docs/tutorial/map)
+- 🔄 [Replayable Event Graph](https://loro.dev/docs/advanced/replayable_event_graph)
 
 **Advanced Features in Loro**
 
-- Preserve Editing History in a [Replayable Event Graph](https://loro.dev/docs/advanced/replayable_event_graph)
-- Time Travel Through History
+- 📖 Preserve Editing History in a [Replayable Event Graph](https://loro.dev/docs/advanced/replayable_event_graph)
+- ⏱️ Fast [Time Travel](https://loro.dev/docs/tutorial/time_travel) Through History
 
 https://github.com/loro-dev/loro/assets/18425020/ec2d20a3-3d8c-4483-a601-b200243c9792
 
