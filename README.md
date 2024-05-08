@@ -17,7 +17,7 @@
 </p>
 <p align="center">
   <a href="https://loro.dev/docs">
-    <b>Documentations</b>
+    <b>Documentation</b>
   </a>
   |
   <a href="https://loro.dev/docs/tutorial/get_started">
@@ -45,15 +45,15 @@ https://github.com/loro-dev/loro/assets/18425020/fe246c47-a120-44b3-91d4-1e7232a
 
 Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) library that makes building [local-first apps][local-first] easier. 
 
-You can use it now in JS and Rust.
+Loro is currently available for JavaScript (via WASM) and Rust developers. 
 
-Explore our vision in: [**Reimagine State Management with CRDTs**](https://loro.dev/blog/loro-now-open-source).
+Explore our vision in our blog: [**Reimagine State Management with CRDTs**](https://loro.dev/blog/loro-now-open-source).
 
 # Features
 
 ## Supported CRDT Algorithms
 
-- **Common Data Structures**: Support for `List` for ordered collections, LWW(Last Write Win) `Map` for key-value pairs, `Tree` for hierarchical data, and `Text` for rich text manipulation, enabling various applications.
+- **Common Data Structures**: Includes `List` for ordered collections, LWW (Last Write Win) `Map` for key-value pairs, `Tree` for hierarchical data, and `Text` for rich text manipulation, enabling various applications.
 - **Text Editing with Fugue**: Loro integrates [Fugue](https://arxiv.org/abs/2305.00583), a CRDT algorithm designed to minimize interleaving anomalies in concurrent text editing.
 - **Peritext-like Rich Text CRDT**: Drawing inspiration from [Peritext](https://www.inkandswitch.com/peritext/), Loro manages rich text CRDTs that excel at merging concurrent rich text style edits, maintaining the original intent of users input as much as possible. Learn more in our blog [Introduction to Loro's Rich Text CRDT](https://loro.dev/blog/loro-richtext).
 - **Moveable Tree**: For applications requiring directory-like data manipulation, Loro utilizes the algorithm from [*A Highly-Available Move Operation for Replicated Trees*](https://ieeexplore.ieee.org/document/9563274), which simplifies the process of moving hierarchical data structures.
