@@ -7,8 +7,8 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-loro = { path = "../loro", features = ["counter"] }
-loro-without-counter = { git = "https://github.com/loro-dev/loro.git", package = "loro", branch = "leon/feat-encode-forward" }
+loro-without-counter = { path = "../loro", package = "loro" }
+loro = { git = "https://github.com/loro-dev/loro.git", branch = "leon/feat-encode-forward", features = ["counter"]}
 loro-internal = { path = "../loro-internal", features = ["test_utils"] }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
