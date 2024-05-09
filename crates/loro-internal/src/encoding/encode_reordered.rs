@@ -940,7 +940,7 @@ mod encode {
         arena::SharedArena,
         change::{Change, Lamport},
         container::idx::ContainerIdx,
-        encoding::value::{EncodedTreeMove, FutureValue, MarkStart, Value, ValueKind, ValueWriter},
+        encoding::value::{EncodedTreeMove, MarkStart, Value, ValueKind, ValueWriter},
         op::{FutureInnerContent, Op},
     };
 
@@ -1040,8 +1040,8 @@ mod encode {
             ..
         } in ops
         {
-            let value_type = encode_op(&op, arena, &mut delete_start, value_writer, registers);
-            let prop = get_op_prop(&op, registers);
+            let value_type = encode_op(op, arena, &mut delete_start, value_writer, registers);
+            let prop = get_op_prop(op, registers);
             encoded_ops.push(EncodedOp {
                 container_index: *container_index,
                 peer_idx: *peer_idx,
@@ -1234,7 +1234,7 @@ mod encode {
             crate::op::InnerContent::Tree(op) => {
                 if let Some(position) = &op.position {
                     if let either::Either::Left(position_register) = &mut registers.position {
-                        position_register.insert(&position.as_bytes_without_terminated());
+                        position_register.insert(position.as_bytes_without_terminated());
                     } else {
                         unreachable!()
                     }
@@ -1441,7 +1441,7 @@ fn decode_op(
         ContainerType::Tree => match value {
             Value::TreeMove(op) => crate::op::InnerContent::Tree(op.as_tree_op(
                 &arenas.peer_ids,
-                &positions,
+                positions,
                 &arenas.tree_ids.tree_ids,
             )?),
             _ => {
