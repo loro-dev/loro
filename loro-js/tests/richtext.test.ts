@@ -280,4 +280,10 @@ describe("richtext", () => {
     const ans = doc.getCursorPos(pos3!);
     expect(ans.offset).toBe(3);
   });
+
+  it("Insert cursed str", () => {
+    const doc = new Loro();
+    const text = doc.getText("text");
+    text.insert(0, `“aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`);
+  });
 });
