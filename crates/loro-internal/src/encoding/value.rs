@@ -634,6 +634,18 @@ impl<'a> ValueReader<'a> {
                 }
                 ans.into()
             }
+            // TODO: unified Array and LoroValueArray
+            ValueKind::LoroValueArray => {
+                let len = self.read_usize()?;
+                if len > MAX_COLLECTION_SIZE {
+                    return Err(LoroError::DecodeDataCorruptionError);
+                }
+                let mut ans = Vec::with_capacity(len);
+                for i in 0..len {
+                    ans.push(self.recursive_read_value_type_and_content(keys, id.inc(i as i32))?);
+                }
+                ans.into()
+            }
             ValueKind::Map => {
                 let len = self.read_usize()?;
                 if len > MAX_COLLECTION_SIZE {

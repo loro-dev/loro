@@ -36,6 +36,7 @@ pub(super) fn encode_arena(
     encoded.encode_arenas()
 }
 
+#[derive(Debug)]
 pub struct EncodedRegisters<'a> {
     pub(super) peer: ValueRegister<PeerID>,
     pub(super) key: ValueRegister<InternalString>,

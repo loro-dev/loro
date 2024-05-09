@@ -112,9 +112,9 @@ impl DocState {
                 let child_idx = self.arena.register_container(&container_id);
                 self.arena.set_parent(child_idx, Some(container));
             }
-            RawOpContent::Future(_) => {
-                // TODO: check
-            }
+            #[cfg(feature = "counter")]
+            RawOpContent::Counter(_) => {}
+            RawOpContent::Unknown { .. } => {}
         }
     }
 }

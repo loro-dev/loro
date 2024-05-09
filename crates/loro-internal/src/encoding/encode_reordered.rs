@@ -1106,6 +1106,7 @@ mod encode {
     mod value_register {
         use fxhash::FxHashMap;
 
+        #[derive(Debug)]
         pub struct ValueRegister<T> {
             map_value_to_index: FxHashMap<T, usize>,
             vec: Vec<T>,

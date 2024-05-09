@@ -38,13 +38,6 @@ pub enum RawOpContent<'a> {
     Map(MapSet),
     List(ListOp<'a>),
     Tree(TreeOp),
-    #[cfg_attr(feature = "wasm", serde(untagged))]
-    Future(FutureRawOpContent),
-}
-
-#[derive(EnumAsInner, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "wasm", derive(Serialize, Deserialize,))]
-pub enum FutureRawOpContent {
     #[cfg(feature = "counter")]
     Counter(i64),
     Unknown {
@@ -59,14 +52,12 @@ impl<'a> Clone for RawOpContent<'a> {
             Self::Map(arg0) => Self::Map(arg0.clone()),
             Self::List(arg0) => Self::List(arg0.clone()),
             Self::Tree(arg0) => Self::Tree(arg0.clone()),
-            Self::Future(f) => Self::Future(match f {
-                #[cfg(feature = "counter")]
-                FutureRawOpContent::Counter(x) => FutureRawOpContent::Counter(*x),
-                FutureRawOpContent::Unknown { prop, value } => FutureRawOpContent::Unknown {
-                    prop: *prop,
-                    value: value.clone(),
-                },
-            }),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => Self::Counter(*x),
+            Self::Unknown { prop, value } => Self::Unknown {
+                prop: *prop,
+                value: value.clone(),
+            },
         }
     }
 }
@@ -110,14 +101,12 @@ impl<'a> RawOpContent<'a> {
                 }),
             },
             Self::Tree(arg0) => RawOpContent::Tree(arg0.clone()),
-            Self::Future(f) => RawOpContent::Future(match f {
-                #[cfg(feature = "counter")]
-                FutureRawOpContent::Counter(x) => FutureRawOpContent::Counter(*x),
-                FutureRawOpContent::Unknown { prop, value } => FutureRawOpContent::Unknown {
-                    prop: *prop,
-                    value: value.clone(),
-                },
-            }),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => RawOpContent::Counter(*x),
+            Self::Unknown { prop, value } => RawOpContent::Unknown {
+                prop: *prop,
+                value: value.clone(),
+            },
         }
     }
 }
@@ -128,11 +117,9 @@ impl<'a> HasLength for RawOpContent<'a> {
             RawOpContent::Map(x) => x.content_len(),
             RawOpContent::List(x) => x.content_len(),
             RawOpContent::Tree(x) => x.content_len(),
-            RawOpContent::Future(f) => match f {
-                #[cfg(feature = "counter")]
-                FutureRawOpContent::Counter(_) => 1,
-                FutureRawOpContent::Unknown { .. } => 1,
-            },
+            #[cfg(feature = "counter")]
+            RawOpContent::Counter(_) => 1,
+            RawOpContent::Unknown { .. } => 1,
         }
     }
 }
