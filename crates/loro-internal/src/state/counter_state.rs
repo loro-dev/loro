@@ -7,7 +7,7 @@ use crate::{
     container::idx::ContainerIdx,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
-    op::{FutureRawOpContent, Op, RawOp, RawOpContent},
+    op::{Op, RawOp, RawOpContent},
     txn::Transaction,
     DocState,
 };
@@ -66,7 +66,7 @@ impl ContainerState for CounterState {
     }
 
     fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
-        if let RawOpContent::Future(FutureRawOpContent::Counter(diff)) = raw_op.content {
+        if let RawOpContent::Counter(diff) = raw_op.content {
             self.value += diff;
             Ok(())
         } else {

@@ -2941,7 +2941,7 @@ pub mod counter {
             let inner = self.inner.try_attached_state()?;
             txn.apply_local_op(
                 inner.container_idx,
-                crate::op::RawOpContent::Future(crate::op::FutureRawOpContent::Counter(n)),
+                crate::op::RawOpContent::Counter(n),
                 EventHint::Counter(n),
                 &inner.state,
             )
