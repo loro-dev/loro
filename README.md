@@ -43,46 +43,37 @@ https://github.com/loro-dev/loro/assets/18425020/fe246c47-a120-44b3-91d4-1e7232a
 
 > ⚠️ **Notice**: The current API and encoding schema of Loro are **experimental** and **subject to change**. You should not use it in production.
 
-Loro is a CRDTs(Conflict-free Replicated Data Types) library that makes building [local-first apps][local-first] easier. 
+Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) library that makes building [local-first apps][local-first] easier. It is currently available for JavaScript (via WASM) and Rust developers. 
 
-Explore our vision in our blog: [**Reimagine State Management with CRDTs**](https://loro.dev/blog/loro-now-open-source).
+Explore our vision in our blog: [**✨ Reimagine State Management with CRDTs**](https://loro.dev/blog/loro-now-open-source).
 
 # Features
 
-## Supported CRDT Algorithms
+**Basic Features Provided by CRDTs**
 
-- **Common Data Structures**: Includes `List` for ordered collections, LWW (Last Write Win) `Map` for key-value pairs, `Tree` for hierarchical data, and `Text` for rich text manipulation, enabling various applications.
-- **Text Editing with Fugue**: Loro integrates [Fugue](https://arxiv.org/abs/2305.00583), a CRDT algorithm designed to minimize interleaving anomalies in concurrent text editing.
-- **Peritext-like Rich Text CRDT**: Drawing inspiration from [Peritext](https://www.inkandswitch.com/peritext/), Loro manages rich text CRDTs that excel at merging concurrent rich text style edits, maintaining the original intent of users input as much as possible. Details on this will be explored further in an upcoming blog post.
-- **Moveable Tree**: For applications requiring directory-like data manipulation, Loro utilizes the algorithm from [*A Highly-Available Move Operation for Replicated Trees*](https://ieeexplore.ieee.org/document/9563274), which simplifies the process of moving hierarchical data structures.
-- [**Moveable List**](https://loro.dev/docs/tutorial/list): Both `List` and `MovableList` utilize the [*Fugue*](https://arxiv.org/abs/2305.00583) to achieve *maximal noninterleaving*. Additionally, `MovableList` uses the algorithm from [*Moving Elements in List CRDTs*](https://martin.kleppmann.com/2020/04/27/papoc-list-move.html) to implement the move operation.
+- P2P Synchronization
+- Automatic Merging
+- Local Availability
+- Scalability
+- Delta Updates
 
-## Advanced Features in Loro
+**Supported CRDT Algorithms**
 
-- **Preserve Editing History**
-  - With Loro, you can track changes effortlessly as it records the editing history with low overhead. 
-  - This feature is essential for audit trails, undo/redo functionality, and understanding the evolution of your data over time.
-- **Time Travel Through History**
-  - It allows users to compare and merge manually when needed, although CRDTs typically resolve conflicts well.
-- **High Performance**
-  - [See benchmarks](https://www.loro.dev/docs/performance).
+- 📝 Text Editing with [Fugue]
+- 📙 [Peritext-like Rich Text CRDT](https://loro.dev/blog/loro-richtext)
+- 🌲 [Moveable Tree](https://loro.dev/docs/tutorial/tree)
+- 🚗 [Moveable List](https://loro.dev/docs/tutorial/list)
+- 🗺️ [Last-Write-Wins Map](https://loro.dev/docs/tutorial/map)
+- 🔄 [Replayable Event Graph](https://loro.dev/docs/advanced/replayable_event_graph)
 
-> **Build time travel feature easily for large documents**.
+**Advanced Features in Loro**
 
+- 📖 Preserve Editing History in a [Replayable Event Graph](https://loro.dev/docs/advanced/replayable_event_graph)
+- ⏱️ Fast [Time Travel](https://loro.dev/docs/tutorial/time_travel) Through History
 
 https://github.com/loro-dev/loro/assets/18425020/ec2d20a3-3d8c-4483-a601-b200243c9792
 
-
-
-## Features Provided by CRDTs
-
-- **Decentralized Synchronization**: Loro allows your app's state synced via p2p connections.
-- **Automatic Merging**: CRDTs guarantee strong eventual consistency by automating the merging of concurrent changes.
-- **Local Availability**: Data can be persisted on users' devices, supporting offline functionality and real-time responsiveness. 
-- **Scalability**: Effortlessly scale your application horizontally thanks to the inherently distributed nature of CRDTs.
-- **Delta Updates**
-
-# Development
+# Example
 
 ### Development Environment Setup
 
