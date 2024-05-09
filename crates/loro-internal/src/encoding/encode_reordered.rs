@@ -461,95 +461,22 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         position: either::Left(FxHashSet::default()),
     }));
 
-    let registers_clone = registers.clone();
-
     // This stores the required op positions of each container state.
     // The states can be encoded in these positions in the next step.
     // This data structure stores that mapping from op id to the required total order.
     let mut origin_ops: Vec<TempOp<'_>> = Vec::new();
     let mut pos_mapping_heap: Vec<PosMappingItem> = Vec::new();
-    let mut pos_target_value = 0;
 
-    let mut states = Vec::new();
-    let mut state_bytes = Vec::new();
-    for (_, container) in c_pairs.iter() {
-        let container_index = *container_idx2index.get(container).unwrap() as u32;
+    let (states, state_bytes) = encode_snapshot_states(
+        c_pairs.iter().map(|(_, x)| x).copied(),
+        state,
+        oplog,
+        &container_idx2index,
+        registers.clone(),
+        &mut origin_ops,
+        &mut pos_mapping_heap,
+    );
 
-        let is_unknown = container.is_unknown();
-
-        if is_unknown {
-            states.push(EncodedStateInfo {
-                container_index,
-                op_len: 0,
-                is_unknown,
-                state_bytes_len: 0,
-            });
-            continue;
-        }
-
-        let state = match state.get_state(*container) {
-            Some(state) if !state.is_state_empty() => state,
-            _ => {
-                states.push(EncodedStateInfo {
-                    container_index,
-                    op_len: 0,
-                    is_unknown,
-                    state_bytes_len: 0,
-                });
-                continue;
-            }
-        };
-
-        let mut op_len = 0;
-        let bytes = state.encode_snapshot(super::StateSnapshotEncoder {
-            register_peer: &mut |peer| RefCell::borrow_mut(&registers).peer.register(&peer),
-            check_idspan: &|_id_span| {
-                // TODO: todo!("check intersection by vv that defined by idlp");
-                // if let Some(counter) = vv.intersect_span(id_span) {
-                //     Err(IdSpan {
-                //         client_id: id_span.peer,
-                //         counter,
-                //     })
-                // } else {
-                Ok(())
-                // }
-            },
-            encoder_by_op: &mut |op| {
-                origin_ops.push(TempOp {
-                    op: Cow::Owned(op.op),
-                    peer_idx: RefCell::borrow_mut(&registers_clone)
-                        .peer
-                        .register(&op.peer) as u32,
-                    peer_id: op.peer,
-                    container_index,
-                    prop_that_used_for_sort: -1,
-                    lamport: op.lamport.unwrap(),
-                });
-            },
-            record_idspan: &mut |id_span| {
-                let len = id_span.atom_len();
-                op_len += len;
-                let start_id = oplog.idlp_to_id(IdLp::new(id_span.peer, id_span.lamport.start));
-                pos_mapping_heap.push(PosMappingItem {
-                    start_id: start_id.expect("convert idlp to id failed"),
-                    len,
-                    target_value: pos_target_value,
-                });
-                pos_target_value += len as i32;
-            },
-            mode: super::EncodeMode::Snapshot,
-        });
-
-        states.push(EncodedStateInfo {
-            container_index,
-            op_len: op_len as u32,
-            is_unknown: false,
-            state_bytes_len: bytes.len() as u32,
-        });
-        state_bytes.extend(bytes);
-    }
-
-    drop(registers_clone);
     let mut registers = match Rc::try_unwrap(registers) {
         Ok(r) => r.into_inner(),
         Err(_) => unreachable!(),
@@ -820,6 +747,100 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     Ok(())
 }
 
+fn encode_snapshot_states(
+    container_idxs: impl Iterator<Item = ContainerIdx>,
+    state: &DocState,
+    oplog: &OpLog,
+    container_idx2index: &FxHashMap<ContainerIdx, usize>,
+    registers: Rc<RefCell<EncodedRegisters>>,
+    origin_ops: &mut Vec<TempOp<'_>>,
+    pos_mapping_heap: &mut Vec<PosMappingItem>,
+) -> (Vec<EncodedStateInfo>, Vec<u8>) {
+    let mut pos_target_value = 0;
+    let registers_clone = registers.clone();
+
+    let mut states = Vec::new();
+    let mut state_bytes = Vec::new();
+    for container in container_idxs {
+        let container_index = *container_idx2index.get(&container).unwrap() as u32;
+
+        // if the container is unknown, we don't need to encode the state
+        // but we flag it as unknown, so that we can decode it as unknown later
+        let is_unknown = container.is_unknown();
+        if is_unknown {
+            states.push(EncodedStateInfo {
+                container_index,
+                op_len: 0,
+                is_unknown,
+                state_bytes_len: 0,
+            });
+            continue;
+        }
+
+        let state = match state.get_state(container) {
+            Some(state) if !state.is_state_empty() => state,
+            _ => {
+                states.push(EncodedStateInfo {
+                    container_index,
+                    op_len: 0,
+                    is_unknown,
+                    state_bytes_len: 0,
+                });
+                continue;
+            }
+        };
+
+        let mut op_len = 0;
+        let bytes = state.encode_snapshot(super::StateSnapshotEncoder {
+            register_peer: &mut |peer| RefCell::borrow_mut(&registers).peer.register(&peer),
+            check_idspan: &|_id_span| {
+                // TODO: todo!("check intersection by vv that defined by idlp");
+                // if let Some(counter) = vv.intersect_span(id_span) {
+                //     Err(IdSpan {
+                //         client_id: id_span.peer,
+                //         counter,
+                //     })
+                // } else {
+                Ok(())
+                // }
+            },
+            encoder_by_op: &mut |op| {
+                origin_ops.push(TempOp {
+                    op: Cow::Owned(op.op),
+                    peer_idx: RefCell::borrow_mut(&registers_clone)
+                        .peer
+                        .register(&op.peer) as u32,
+                    peer_id: op.peer,
+                    container_index,
+                    prop_that_used_for_sort: -1,
+                    lamport: op.lamport.unwrap(),
+                });
+            },
+            record_idspan: &mut |id_span| {
+                let len = id_span.atom_len();
+                op_len += len;
+                let start_id = oplog.idlp_to_id(IdLp::new(id_span.peer, id_span.lamport.start));
+                pos_mapping_heap.push(PosMappingItem {
+                    start_id: start_id.expect("convert idlp to id failed"),
+                    len,
+                    target_value: pos_target_value,
+                });
+                pos_target_value += len as i32;
+            },
+            mode: super::EncodeMode::Snapshot,
+        });
+
+        states.push(EncodedStateInfo {
+            container_index,
+            op_len: op_len as u32,
+            is_unknown: false,
+            state_bytes_len: bytes.len() as u32,
+        });
+        state_bytes.extend(bytes);
+    }
+    (states, state_bytes)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn decode_snapshot_states(
     state: &mut DocState,
@@ -842,6 +863,10 @@ fn decode_snapshot_states(
             state_bytes_len,
         } = encoded_state?;
         if is_unknown {
+            // if the container is unknown, we don't need to decode the state
+            // There are two cases:
+            // 1. The container is encoded as unknown, but now it's known. we should rebuild the state by `diff_calc`.
+            // 2. The container is unknown, and it's still unknown. we should init an unknown state and emit an unknown event.
             let container_id = containers[container_index as usize].clone();
             let container = state.arena.register_container(&container_id);
             unknown_containers.push(container);
@@ -906,7 +931,7 @@ fn decode_snapshot_states(
 }
 
 mod encode {
-    use fxhash::{FxHashMap, FxHashSet};
+    use fxhash::FxHashMap;
     use loro_common::{ContainerType, HasId, PeerID, ID};
     use rle::{HasLength, Sliceable};
     use std::borrow::Cow;

@@ -4,8 +4,8 @@ use enum_as_inner::EnumAsInner;
 use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue, PeerID,
-    TreeID, ID,
+    ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue, TreeID,
+    ID,
 };
 use serde::{Deserialize, Serialize};
 
@@ -14,10 +14,7 @@ use crate::{
     encoding::encode_reordered::MAX_COLLECTION_SIZE,
 };
 
-use super::{
-    arena::{DecodedArenas, EncodedRegisters, EncodedTreeID},
-    encode_reordered::ValueRegister,
-};
+use super::arena::{DecodedArenas, EncodedRegisters, EncodedTreeID};
 
 #[derive(Debug)]
 pub enum ValueKind {
