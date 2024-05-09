@@ -43,7 +43,7 @@ pub mod idx {
         pub(crate) fn get_type(self) -> ContainerType {
             let a = (self.0 & Self::TYPE_MASK) >> 27;
             if self.is_unknown() {
-                ContainerType::Unknown((a & 0xf) as u8)
+                Self::parse_unknown_type(a)
             } else {
                 ContainerType::try_from_u8(a as u8).unwrap()
             }
@@ -55,8 +55,8 @@ pub mod idx {
         }
 
         pub(crate) fn from_index_and_type(index: u32, container_type: ContainerType) -> Self {
-            let prefix: u32 = if let ContainerType::Unknown(c) = container_type {
-                (0b10000 | c) as u32
+            let prefix: u32 = if matches!(container_type, ContainerType::Unknown(_)) {
+                Self::unknown_to_prefix(container_type)
             } else {
                 container_type.to_u8() as u32
             } << 27;
@@ -66,6 +66,23 @@ pub mod idx {
 
         pub(crate) fn is_unknown(&self) -> bool {
             self.0 >> 31 == 1
+        }
+
+        // The type_value is >>27 first, so it's 5 bits.
+        // we want to get the last 4 bits. so we use 0b1111 to get the last 4 bits.
+        fn parse_unknown_type(type_value: u32) -> ContainerType {
+            ContainerType::Unknown((type_value & 0b1111) as u8)
+        }
+
+        // we use the top 5 bits to represent the type of the container.
+        // the first bit is whether it's an unknown type.
+        // So when we convert an unknown type to a prefix, we need to set the first bit to 1.
+        fn unknown_to_prefix(c: ContainerType) -> u32 {
+            if let ContainerType::Unknown(c) = c {
+                (0b10000 | c) as u32
+            } else {
+                unreachable!()
+            }
         }
     }
 }
