@@ -170,7 +170,7 @@ impl ParsedHeaderAndBody<'_> {
     /// Return if the checksum is correct.
     fn check_checksum(&self) -> LoroResult<()> {
         if md5::compute(self.checksum_body).0 != self.checksum {
-            return Err(LoroError::DecodeDataCorruptionError);
+            return Err(LoroError::DecodeChecksumMismatchCorruptionError);
         }
 
         Ok(())

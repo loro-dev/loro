@@ -9,13 +9,18 @@ pub type LoroResult<T> = Result<T, LoroError>;
 pub enum LoroError {
     #[error("Context's client_id({found:?}) does not match Container's client_id({expected:?})")]
     UnmatchedContext { expected: PeerID, found: PeerID },
-    #[error("Decode version vector error. Please provide correct version.")]
+    #[error("Decode error: Version vector error. Please provide correct version.")]
     DecodeVersionVectorError,
-    #[error("Decode error ({0})")]
+    #[error("Decode error: ({0})")]
     DecodeError(Box<str>),
-    #[error("Checksum mismatch. The data is corrupted.")]
+    #[error(
+        // This should not happen after v1.0.0
+        "Decode error: The data is either corrupted or originates from an older version that is incompatible due to a breaking change."
+    )]
     DecodeDataCorruptionError,
-    #[error("Encountered an incompatible Encoding version \"{0}\". Loro's encoding is backward compatible but not forward compatible. Please upgrade the version of Loro to support this version of the exported data.")]
+    #[error("Decode error: Checksum mismatch. The data is corrupted.")]
+    DecodeChecksumMismatchCorruptionError,
+    #[error("Decode error: Encoding version \"{0}\" is incompatible. Loro's encoding is backward compatible but not forward compatible. Please upgrade the version of Loro to support this version of the exported data.")]
     IncompatibleFutureEncodingError(usize),
     #[error("Js error ({0})")]
     JsError(Box<str>),
