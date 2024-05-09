@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.15.4
+
+### Patch Changes
+
+- Revert tree fraction index change
+- Updated dependencies
+  - loro-wasm@0.15.4
+
 ## 0.15.3
 
 ### Patch Changes
