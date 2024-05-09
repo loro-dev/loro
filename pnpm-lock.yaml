@@ -82,6 +82,9 @@ importers:
       eslint:
         specifier: ^8.46.0
         version: registry.npmmirror.com/eslint@8.46.0
+      loro-crdt-old:
+        specifier: npm:loro-crdt@0.15.4
+        version: /loro-crdt@0.15.4
       prettier:
         specifier: ^3.0.0
         version: registry.npmmirror.com/prettier@3.0.0
@@ -2477,6 +2480,16 @@ packages:
 
   /lodash.startcase@4.4.0:
     resolution: {integrity: sha512-+WKqsK294HMSc2jEbNgpHpd0JfIBhp7rEV4aqXWqFr6AlXov+SlcgB1Fv01y2kGe3Gc8nMW7VA0SrGuSkRfIEg==}
+    dev: true
+
+  /loro-crdt@0.15.4:
+    resolution: {integrity: sha512-F/c6SVQWsXDmcfwjJE1Gwoj7N3pgn7PHk6fUjBNoFs/niahB3lAvepqnbdzLeKjthZo4r4jopbhlRf5kG8V4VQ==}
+    dependencies:
+      loro-wasm: 0.15.4
+    dev: true
+
+  /loro-wasm@0.15.4:
+    resolution: {integrity: sha512-EDK+hh+KMCuzMotHmN/9+hMSH3SW0xzLxdJm3vAiV00DQYzFwN6w1IaSkGdEhGV5QZFspOn/6GKLEgJHgYF2zg==}
     dev: true
 
   /loupe@2.3.7:
