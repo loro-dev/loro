@@ -90,7 +90,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         &container2index,
         &mut registers,
     );
-    registers.convert_position();
+    registers.sort_fractional_index();
 
     ops.sort_by(move |a, b| {
         a.container_index
@@ -566,7 +566,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
 
     let ops: Vec<TempOp> = calc_sorted_ops_for_snapshot(origin_ops, pos_mapping_heap);
 
-    registers.convert_position();
+    registers.sort_fractional_index();
 
     let (encoded_ops, del_starts) =
         encode_ops(&ops, &oplog.arena, &mut value_writer, &mut registers);

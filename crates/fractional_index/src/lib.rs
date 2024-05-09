@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fmt::Display, sync::Arc};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -194,9 +194,9 @@ mod impls {
     }
 }
 
-impl ToString for FractionalIndex {
-    fn to_string(&self) -> String {
-        bytes_to_hex(&self.0)
+impl Display for FractionalIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", bytes_to_hex(&self.0))
     }
 }
 

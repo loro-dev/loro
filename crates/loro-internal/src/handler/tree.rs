@@ -16,7 +16,6 @@ use crate::{
 
 use super::{create_handler, Handler, MaybeDetached};
 
-///
 #[derive(Clone)]
 pub struct TreeHandler {
     pub(super) inner: MaybeDetached<TreeInner>,

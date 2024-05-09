@@ -45,7 +45,7 @@ pub struct EncodedRegisters<'a> {
 }
 
 impl<'a> EncodedRegisters<'a> {
-    pub(crate) fn convert_position(&mut self) {
+    pub(crate) fn sort_fractional_index(&mut self) {
         let position_register =
             std::mem::replace(&mut self.position, either::Left(Default::default()))
                 .left()
