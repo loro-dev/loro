@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.15.3
+
+### Patch Changes
+
+- 43506cc: Fix unsound issue caused by wasm-bindgen
+
+  #### 🐛 Bug Fixes
+
+  - Fix potential movable list bug (#354)
+  - Tree fuzz sort value (#351)
+  - Upgrade wasm-bindgen to fix str free err (#353)
+
+  #### 📚 Documentation
+
+  - Simplify readme (#352)
+
+- Updated dependencies [43506cc]
+  - loro-wasm@0.15.3
+
 ## 0.15.2
 
 ### Patch Changes
