@@ -19,7 +19,7 @@ pub enum LoroError {
     )]
     DecodeDataCorruptionError,
     #[error("Decode error: Checksum mismatch. The data is corrupted.")]
-    DecodeChecksumMismatchCorruptionError,
+    DecodeChecksumMismatchError,
     #[error("Decode error: Encoding version \"{0}\" is incompatible. Loro's encoding is backward compatible but not forward compatible. Please upgrade the version of Loro to support this version of the exported data.")]
     IncompatibleFutureEncodingError(usize),
     #[error("Js error ({0})")]

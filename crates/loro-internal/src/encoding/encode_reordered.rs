@@ -2235,7 +2235,7 @@ mod value {
                         let key_idx = self.read_usize()?;
                         let key = keys
                             .get(key_idx)
-                            .ok_or(LoroError::DecodeChecksumMismatchCorruptionError)?
+                            .ok_or(LoroError::DecodeDataCorruptionError)?
                             .to_string();
                         let value = self.recursive_read_value_type_and_content(keys, id)?;
                         ans.insert(key, value);
