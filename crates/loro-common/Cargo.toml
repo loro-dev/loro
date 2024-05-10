@@ -6,6 +6,7 @@ license = "MIT"
 description = "Common types and functions for Loro. This is an internal lib of Loro."
 documentation = "https://docs.rs/loro/"
 homepage = "https://loro.dev"
+repository = "https://github.com/loro-dev/loro"
 authors = ["Zixuan Chen", "Liang Zhao"]
 categories = ["data-structures", "crdt", "collaborative-editing", "local-first"]
 keywords = ["crdt", "local-first"]
