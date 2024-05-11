@@ -931,6 +931,8 @@ fn decode_snapshot_states(
 }
 
 mod encode {
+    #[allow(unused_imports)]
+    use crate::encoding::value::FutureValue;
     use fxhash::FxHashMap;
     use loro_common::{ContainerType, HasId, PeerID, ID};
     use rle::{HasLength, Sliceable};
