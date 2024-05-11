@@ -101,31 +101,12 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     });
 
     let (encoded_ops, del_starts) = encode_ops(&ops, arena, &mut value_writer, &mut registers);
-    let EncodedRegisters {
-        peer: mut peer_register,
-        container: cid_register,
-        key: mut key_register,
-        tree_id: tree_id_register,
-        position: position_register,
-    } = registers;
-
-    let container_arena = ContainerArena::from_containers(
-        cid_register.unwrap_vec(),
-        &mut peer_register,
-        &mut key_register,
-    );
-
-    let position_arena =
-        PositionArena::from_positions(position_register.right().unwrap().unwrap_vec());
-    let tree_id_arena = TreeIDArena {
-        tree_ids: tree_id_register.unwrap_vec(),
-    };
 
     let frontiers = oplog
         .dag
         .vv_to_frontiers(&actual_start_vv)
         .iter()
-        .map(|x| (peer_register.register(&x.peer), x.counter))
+        .map(|x| (registers.peer.register(&x.peer), x.counter))
         .collect();
     let doc = EncodedDoc {
         ops: encoded_ops,
@@ -134,15 +115,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         states: Vec::new(),
         start_counters,
         raw_values: Cow::Owned(value_writer.finish()),
-        arenas: Cow::Owned(encode_arena(
-            peer_register.unwrap_vec(),
-            container_arena,
-            key_register.unwrap_vec(),
-            dep_arena,
-            position_arena,
-            tree_id_arena,
-            &[],
-        )),
+        arenas: Cow::Owned(encode_arena(registers, dep_arena, &[])),
         start_frontiers: frontiers,
     };
 
@@ -498,26 +471,6 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     let (encoded_ops, del_starts) =
         encode_ops(&ops, &oplog.arena, &mut value_writer, &mut registers);
 
-    let EncodedRegisters {
-        peer: mut peer_register,
-        container: cid_register,
-        key: mut key_register,
-        tree_id: tree_id_register,
-        position: position_register,
-    } = registers;
-    let container_arena = ContainerArena::from_containers(
-        cid_register.unwrap_vec(),
-        &mut peer_register,
-        &mut key_register,
-    );
-
-    let position_arena =
-        PositionArena::from_positions(position_register.right().unwrap().unwrap_vec());
-
-    let tree_id_arena = TreeIDArena {
-        tree_ids: tree_id_register.unwrap_vec(),
-    };
-
     let doc = EncodedDoc {
         ops: encoded_ops,
         delete_starts: del_starts,
@@ -525,15 +478,7 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         states,
         start_counters,
         raw_values: Cow::Owned(value_writer.finish()),
-        arenas: Cow::Owned(encode_arena(
-            peer_register.unwrap_vec(),
-            container_arena,
-            key_register.unwrap_vec(),
-            dep_arena,
-            position_arena,
-            tree_id_arena,
-            &state_bytes,
-        )),
+        arenas: Cow::Owned(encode_arena(registers, dep_arena, &state_bytes)),
         start_frontiers: Vec::new(),
     };
 

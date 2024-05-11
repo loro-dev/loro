@@ -59,9 +59,11 @@ impl OpLog {
                     let idx = arena.register_container(&id);
                     arena.set_parent(idx, Some(op.container));
                 }
-                crate::op::InnerContent::Future(_) => {
-                    // TODO: check
-                }
+                crate::op::InnerContent::Future(f) => match &f {
+                    #[cfg(feature = "counter")]
+                    crate::op::FutureInnerContent::Counter(_) => {}
+                    crate::op::FutureInnerContent::Unknown { .. } => {}
+                },
             }
         }
     }
