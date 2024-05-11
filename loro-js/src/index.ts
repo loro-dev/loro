@@ -97,7 +97,7 @@ interface Listener {
   (event: LoroEventBatch): void;
 }
 
-const CONTAINER_TYPES = ["Map", "Text", "List", "Tree"];
+const CONTAINER_TYPES = ["Map", "Text", "List", "Tree", "MovableList"];
 
 export function isContainerId(s: string): s is ContainerID {
   return s.startsWith("cid:");
