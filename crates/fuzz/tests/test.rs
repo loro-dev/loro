@@ -5575,7 +5575,8 @@ fn unknown_container() {
     doc.subscribe(
         &list.id(),
         Arc::new(|e| {
-            println!("{:?}", e);
+            assert_eq!(e.events.len(), 2);
+            assert!(e.events[1].is_unknown)
         }),
     );
 

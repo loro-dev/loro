@@ -69,7 +69,7 @@ impl ContainerState for UnknownState {
         _txn: &Weak<Mutex<Option<Transaction>>>,
         _state: &Weak<Mutex<DocState>>,
     ) -> Diff {
-        unreachable!()
+        Diff::Unknown
     }
 
     fn get_value(&mut self) -> LoroValue {

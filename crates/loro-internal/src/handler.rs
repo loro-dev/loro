@@ -765,6 +765,64 @@ impl HandlerTrait for ListHandler {
         }
     }
 }
+#[derive(Clone)]
+pub struct UnknownHandler {
+    inner: BasicHandler,
+}
+
+impl Debug for UnknownHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "UnknownHandler")
+    }
+}
+
+impl HandlerTrait for UnknownHandler {
+    fn is_attached(&self) -> bool {
+        true
+    }
+
+    fn attached_handler(&self) -> Option<&BasicHandler> {
+        Some(&self.inner)
+    }
+
+    fn get_value(&self) -> LoroValue {
+        todo!()
+    }
+
+    fn get_deep_value(&self) -> LoroValue {
+        todo!()
+    }
+
+    fn kind(&self) -> ContainerType {
+        self.inner.id.container_type()
+    }
+
+    fn to_handler(&self) -> Handler {
+        Handler::Unknown(self.clone())
+    }
+
+    fn from_handler(h: Handler) -> Option<Self> {
+        match h {
+            Handler::Unknown(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn attach(
+        &self,
+        _txn: &mut Transaction,
+        _parent: &BasicHandler,
+        self_id: ContainerID,
+    ) -> LoroResult<Self> {
+        let new_inner = create_handler(&self.inner, self_id);
+        let ans = new_inner.into_unknown().unwrap();
+        Ok(ans)
+    }
+
+    fn get_attached(&self) -> Option<Self> {
+        Some(self.clone())
+    }
+}
 
 #[derive(Clone, EnumAsInner, Debug)]
 pub enum Handler {
@@ -775,6 +833,7 @@ pub enum Handler {
     Tree(TreeHandler),
     #[cfg(feature = "counter")]
     Counter(counter::CounterHandler),
+    Unknown(UnknownHandler),
 }
 
 impl HandlerTrait for Handler {
@@ -787,6 +846,7 @@ impl HandlerTrait for Handler {
             Self::MovableList(x) => x.is_attached(),
             #[cfg(feature = "counter")]
             Self::Counter(x) => x.is_attached(),
+            Self::Unknown(x) => x.is_attached(),
         }
     }
 
@@ -799,6 +859,7 @@ impl HandlerTrait for Handler {
             Self::Tree(x) => x.attached_handler(),
             #[cfg(feature = "counter")]
             Self::Counter(x) => x.attached_handler(),
+            Self::Unknown(x) => x.attached_handler(),
         }
     }
 
@@ -811,6 +872,7 @@ impl HandlerTrait for Handler {
             Self::Tree(x) => x.get_value(),
             #[cfg(feature = "counter")]
             Self::Counter(x) => x.get_value(),
+            Self::Unknown(x) => x.get_value(),
         }
     }
 
@@ -823,6 +885,7 @@ impl HandlerTrait for Handler {
             Self::Tree(x) => x.get_deep_value(),
             #[cfg(feature = "counter")]
             Self::Counter(x) => x.get_deep_value(),
+            Self::Unknown(x) => x.get_deep_value(),
         }
     }
 
@@ -835,6 +898,7 @@ impl HandlerTrait for Handler {
             Self::Tree(x) => x.kind(),
             #[cfg(feature = "counter")]
             Self::Counter(x) => x.kind(),
+            Self::Unknown(x) => x.kind(),
         }
     }
 
@@ -847,6 +911,7 @@ impl HandlerTrait for Handler {
             Self::Tree(x) => x.to_handler(),
             #[cfg(feature = "counter")]
             Self::Counter(x) => x.to_handler(),
+            Self::Unknown(x) => x.to_handler(),
         }
     }
 
@@ -864,6 +929,7 @@ impl HandlerTrait for Handler {
             Self::Tree(x) => Ok(Handler::Tree(x.attach(txn, parent, self_id)?)),
             #[cfg(feature = "counter")]
             Self::Counter(x) => Ok(Handler::Counter(x.attach(txn, parent, self_id)?)),
+            Self::Unknown(x) => Ok(Handler::Unknown(x.attach(txn, parent, self_id)?)),
         }
     }
 
@@ -876,6 +942,7 @@ impl HandlerTrait for Handler {
             Self::Tree(x) => x.get_attached().map(Handler::Tree),
             #[cfg(feature = "counter")]
             Self::Counter(x) => x.get_attached().map(Handler::Counter),
+            Self::Unknown(x) => x.get_attached().map(Handler::Unknown),
         }
     }
 
@@ -920,7 +987,7 @@ impl Handler {
             ContainerType::Counter => Self::Counter(counter::CounterHandler {
                 inner: handler.into(),
             }),
-            ContainerType::Unknown(_) => unreachable!(),
+            ContainerType::Unknown(_) => Self::Unknown(UnknownHandler { inner: handler }),
         }
     }
 
@@ -946,6 +1013,7 @@ impl Handler {
             Self::MovableList(x) => x.id(),
             #[cfg(feature = "counter")]
             Self::Counter(x) => x.id(),
+            Self::Unknown(x) => x.id(),
         }
     }
 
@@ -958,6 +1026,7 @@ impl Handler {
             Self::MovableList(x) => x.idx(),
             #[cfg(feature = "counter")]
             Self::Counter(x) => x.idx(),
+            Self::Unknown(x) => x.idx(),
         }
     }
 
@@ -970,6 +1039,7 @@ impl Handler {
             Self::MovableList(_) => ContainerType::MovableList,
             #[cfg(feature = "counter")]
             Self::Counter(_) => ContainerType::Counter,
+            Self::Unknown(x) => x.id().container_type(),
         }
     }
 
@@ -982,6 +1052,7 @@ impl Handler {
             Self::Tree(x) => x.get_deep_value(),
             #[cfg(feature = "counter")]
             Self::Counter(x) => x.get_deep_value(),
+            Self::Unknown(x) => x.get_deep_value(),
         }
     }
 }

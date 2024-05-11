@@ -316,6 +316,7 @@ pub enum Diff {
     Tree(TreeDiff),
     #[cfg(feature = "counter")]
     Counter(i64),
+    Unknown,
 }
 
 impl From<Diff> for DiffVariant {
@@ -375,7 +376,6 @@ impl Diff {
         }
     }
 
-    #[allow(unused)]
     pub(crate) fn is_empty(&self) -> bool {
         match self {
             Diff::List(s) => s.is_empty(),
@@ -384,6 +384,7 @@ impl Diff {
             Diff::Tree(t) => t.diff.is_empty(),
             #[cfg(feature = "counter")]
             Diff::Counter(c) => c.is_zero(),
+            Diff::Unknown => true,
         }
     }
 

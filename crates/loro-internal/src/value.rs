@@ -461,6 +461,7 @@ impl ApplyDiff for LoroValue {
             Diff::Tree(_) => TypeHint::Tree,
             #[cfg(feature = "counter")]
             Diff::Counter(_) => TypeHint::Counter,
+            Diff::Unknown => unreachable!(),
         };
         let value = {
             let mut hints = Vec::with_capacity(path.len());

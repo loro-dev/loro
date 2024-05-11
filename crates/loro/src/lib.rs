@@ -19,6 +19,7 @@ use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
     TextHandler as InnerTextHandler, TreeHandler as InnerTreeHandler,
+    UnknownHandler as InnerUnknownHandler,
 };
 use std::cmp::Ordering;
 use std::ops::Range;
@@ -1357,7 +1358,7 @@ impl LoroTree {
 
     /// Return container id of the tree.
     pub fn id(&self) -> ContainerID {
-        self.handler.id().clone()
+        self.handler.id()
     }
 
     /// Return the fractional index of the target node with hex format.
@@ -1604,6 +1605,50 @@ impl Default for LoroMovableList {
     }
 }
 
+/// Unknown container.
+#[derive(Clone, Debug)]
+pub struct LoroUnknown {
+    handler: InnerUnknownHandler,
+}
+
+impl SealedTrait for LoroUnknown {}
+impl ContainerTrait for LoroUnknown {
+    type Handler = InnerUnknownHandler;
+
+    fn to_container(&self) -> Container {
+        Container::Unknown(self.clone())
+    }
+
+    fn to_handler(&self) -> Self::Handler {
+        self.handler.clone()
+    }
+
+    fn from_handler(handler: Self::Handler) -> Self {
+        Self { handler }
+    }
+
+    fn try_from_container(container: Container) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        match container {
+            Container::Unknown(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
+    fn get_attached(&self) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        self.handler.get_attached().map(Self::from_handler)
+    }
+}
+
 use enum_as_inner::EnumAsInner;
 
 /// All the CRDT containers supported by loro.
@@ -1622,6 +1667,8 @@ pub enum Container {
     #[cfg(feature = "counter")]
     /// [LoroCounter container]
     Counter(counter::LoroCounter),
+    /// Unknown container
+    Unknown(LoroUnknown),
 }
 
 impl SealedTrait for Container {}
@@ -1641,6 +1688,7 @@ impl ContainerTrait for Container {
             Container::MovableList(x) => Self::Handler::MovableList(x.to_handler()),
             #[cfg(feature = "counter")]
             Container::Counter(x) => Self::Handler::Counter(x.to_handler()),
+            Container::Unknown(x) => Self::Handler::Unknown(x.to_handler()),
         }
     }
 
@@ -1653,6 +1701,7 @@ impl ContainerTrait for Container {
             InnerHandler::Tree(x) => Container::Tree(LoroTree { handler: x }),
             #[cfg(feature = "counter")]
             InnerHandler::Counter(x) => Container::Counter(counter::LoroCounter { handler: x }),
+            InnerHandler::Unknown(x) => Container::Unknown(LoroUnknown { handler: x }),
         }
     }
 
@@ -1665,6 +1714,7 @@ impl ContainerTrait for Container {
             Container::MovableList(x) => x.is_attached(),
             #[cfg(feature = "counter")]
             Container::Counter(x) => x.is_attached(),
+            Container::Unknown(x) => x.is_attached(),
         }
     }
 
@@ -1677,6 +1727,7 @@ impl ContainerTrait for Container {
             Container::Tree(x) => x.get_attached().map(Container::Tree),
             #[cfg(feature = "counter")]
             Container::Counter(x) => x.get_attached().map(Container::Counter),
+            Container::Unknown(x) => x.get_attached().map(Container::Unknown),
         }
     }
 
@@ -1717,6 +1768,7 @@ impl Container {
             Container::Tree(_) => ContainerType::Tree,
             #[cfg(feature = "counter")]
             Container::Counter(_) => ContainerType::Counter,
+            Container::Unknown(x) => x.handler.id().container_type(),
         }
     }
 
@@ -1730,6 +1782,7 @@ impl Container {
             Container::Tree(x) => x.id(),
             #[cfg(feature = "counter")]
             Container::Counter(x) => x.id(),
+            Container::Unknown(x) => x.handler.id(),
         }
     }
 }
@@ -1744,6 +1797,7 @@ impl From<InnerHandler> for Container {
             InnerHandler::MovableList(x) => Container::MovableList(LoroMovableList { handler: x }),
             #[cfg(feature = "counter")]
             InnerHandler::Counter(x) => Container::Counter(counter::LoroCounter { handler: x }),
+            InnerHandler::Unknown(x) => Container::Unknown(LoroUnknown { handler: x }),
         }
     }
 }

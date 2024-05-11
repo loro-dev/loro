@@ -14,7 +14,7 @@ pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem,
 pub use fxhash::FxHashMap;
 pub use handler::{
     BasicHandler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextHandler,
-    TreeHandler,
+    TreeHandler, UnknownHandler,
 };
 pub use loro::LoroDoc;
 pub use oplog::OpLog;
