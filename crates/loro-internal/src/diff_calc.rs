@@ -160,7 +160,7 @@ impl DiffCalculator {
                     vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
                     let container = op.container;
                     let depth = oplog.arena.get_depth(container);
-                    let (old_depth, calculator) = self.get_or_create_calc(&container, depth);
+                    let (old_depth, calculator) = self.get_or_create_calc(container, depth);
                     // checkout use the same diff_calculator, the depth of calculator is not updated
                     // That may cause the container to be considered deleted
                     if *old_depth != depth {
@@ -301,11 +301,11 @@ impl DiffCalculator {
     // TODO: we may remove depth info
     pub(crate) fn get_or_create_calc(
         &mut self,
-        idx: &ContainerIdx,
+        idx: ContainerIdx,
         depth: Option<NonZeroU16>,
     ) -> &mut (Option<NonZeroU16>, ContainerDiffCalculator) {
         self.calculators
-            .entry(*idx)
+            .entry(idx)
             .or_insert_with(|| match idx.get_type() {
                 crate::ContainerType::Text => (
                     depth,
@@ -313,7 +313,7 @@ impl DiffCalculator {
                 ),
                 crate::ContainerType::Map => (
                     depth,
-                    ContainerDiffCalculator::Map(MapDiffCalculator::new(*idx)),
+                    ContainerDiffCalculator::Map(MapDiffCalculator::new(idx)),
                 ),
                 crate::ContainerType::List => (
                     depth,
@@ -321,7 +321,7 @@ impl DiffCalculator {
                 ),
                 crate::ContainerType::Tree => (
                     depth,
-                    ContainerDiffCalculator::Tree(TreeDiffCalculator::new(*idx)),
+                    ContainerDiffCalculator::Tree(TreeDiffCalculator::new(idx)),
                 ),
                 crate::ContainerType::Unknown(_) => (
                     depth,
@@ -329,12 +329,12 @@ impl DiffCalculator {
                 ),
                 crate::ContainerType::MovableList => (
                     depth,
-                    ContainerDiffCalculator::MovableList(MovableListDiffCalculator::new(*idx)),
+                    ContainerDiffCalculator::MovableList(MovableListDiffCalculator::new(idx)),
                 ),
                 #[cfg(feature = "counter")]
                 crate::ContainerType::Counter => (
                     depth,
-                    ContainerDiffCalculator::Counter(CounterDiffCalculator::new(*idx)),
+                    ContainerDiffCalculator::Counter(CounterDiffCalculator::new(idx)),
                 ),
             })
     }

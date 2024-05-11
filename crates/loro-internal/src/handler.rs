@@ -3009,7 +3009,7 @@ pub mod counter {
                     let inner = create_handler(parent, self_id);
                     let c = inner.into_counter().unwrap();
 
-                    c.increment(v.value)?;
+                    c.increment_with_txn(txn, v.value)?;
 
                     v.attached = c.attached_handler().cloned();
                     Ok(c)
