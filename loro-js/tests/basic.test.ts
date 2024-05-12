@@ -307,6 +307,11 @@ it("isContainer", () => {
   const doc = new Loro();
   const t = doc.getText("t");
   expect(isContainer(t)).toBeTruthy();
+  expect(isContainer(doc.getMap("m"))).toBeTruthy();
+  expect(isContainer(doc.getMovableList("l"))).toBeTruthy();
+  expect(isContainer(doc.getText("text"))).toBeTruthy();
+  expect(isContainer(doc.getTree("tree"))).toBeTruthy();
+  expect(isContainer(doc.getList("list"))).toBeTruthy();
   expect(getType(t)).toBe("Text");
   expect(getType(123)).toBe("Json");
 });
