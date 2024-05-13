@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cell::RefCell, cmp::Ordering, mem::take, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, cmp::Ordering, mem::take, rc::Rc, sync::Arc};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
@@ -1214,7 +1214,7 @@ mod encode {
                         ContainerType::List | ContainerType::MovableList
                     ));
                     let value = arena.get_values(slice.0.start as usize..slice.0.end as usize);
-                    Value::LoroValueArray(value)
+                    Value::LoroValue(value.into())
                 }
                 crate::container::list::list_op::InnerListOp::InsertText {
                     slice,
@@ -1358,8 +1358,8 @@ fn decode_op(
         ContainerType::List => {
             let pos = prop as usize;
             match value {
-                Value::LoroValueArray(arr) => {
-                    let range = shared_arena.alloc_values(arr.into_iter());
+                Value::LoroValue(arr) => {
+                    let range = shared_arena.alloc_values(arr.into_list().unwrap().iter().cloned());
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
                             slice: SliceRange::new(range.start as u32..range.end as u32),
@@ -1398,8 +1398,8 @@ fn decode_op(
         ContainerType::MovableList => {
             let pos = prop as usize;
             match value {
-                Value::LoroValueArray(arr) => {
-                    let range = shared_arena.alloc_values(arr.into_iter());
+                Value::LoroValue(arr) => {
+                    let range = shared_arena.alloc_values(arr.into_list().unwrap().iter().cloned());
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
                             slice: SliceRange::new(range.start as u32..range.end as u32),

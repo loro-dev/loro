@@ -18,32 +18,75 @@ use super::arena::{DecodedArenas, EncodedRegisters, EncodedTreeID};
 
 #[derive(Debug)]
 pub enum ValueKind {
-    Null,           // 0
-    True,           // 1
-    False,          // 2
-    I64,            // 3
-    F64,            // 4
-    Str,            // 5
-    Binary,         // 6
-    ContainerType,  // 7
-    DeleteOnce,     // 8
-    DeleteSeq,      // 9
-    DeltaInt,       // 10
-    Array,          // 11
-    Map,            // 12
-    LoroValue,      // 13
-    LoroValueArray, // 14
-    MarkStart,      // 15
-    TreeMove,       // 16
-    ListMove,       // 17
-    ListSet,        // 18
+    Null,          // 0
+    True,          // 1
+    False,         // 2
+    I64,           // 3
+    F64,           // 4
+    Str,           // 5
+    Binary,        // 6
+    ContainerType, // 7
+    DeleteOnce,    // 8
+    DeleteSeq,     // 9
+    DeltaInt,      // 10
+    LoroValue,     // 11
+    MarkStart,     // 12
+    TreeMove,      // 13
+    ListMove,      // 14
+    ListSet,       // 15
     Future(FutureValueKind),
+}
+
+#[derive(Debug)]
+pub enum LoroValueKind {
+    Null,
+    True,
+    False,
+    I64,
+    F64,
+    Binary,
+    Str,
+    List,
+    Map,
+    ContainerType,
+}
+impl LoroValueKind {
+    fn from_u8(kind: u8) -> Self {
+        match kind {
+            0 => LoroValueKind::Null,
+            1 => LoroValueKind::True,
+            2 => LoroValueKind::False,
+            3 => LoroValueKind::I64,
+            4 => LoroValueKind::F64,
+            5 => LoroValueKind::Str,
+            6 => LoroValueKind::Binary,
+            7 => LoroValueKind::List,
+            8 => LoroValueKind::Map,
+            9 => LoroValueKind::ContainerType,
+            _ => unreachable!(),
+        }
+    }
+
+    fn to_u8(&self) -> u8 {
+        match self {
+            LoroValueKind::Null => 0,
+            LoroValueKind::True => 1,
+            LoroValueKind::False => 2,
+            LoroValueKind::I64 => 3,
+            LoroValueKind::F64 => 4,
+            LoroValueKind::Str => 5,
+            LoroValueKind::Binary => 6,
+            LoroValueKind::List => 7,
+            LoroValueKind::Map => 8,
+            LoroValueKind::ContainerType => 9,
+        }
+    }
 }
 
 #[derive(Debug)]
 pub enum FutureValueKind {
     #[cfg(feature = "counter")]
-    Counter, // 19
+    Counter, // 16
     Unknown(u8),
 }
 
@@ -61,17 +104,14 @@ impl ValueKind {
             ValueKind::DeleteOnce => 8,
             ValueKind::DeleteSeq => 9,
             ValueKind::DeltaInt => 10,
-            ValueKind::Array => 11,
-            ValueKind::Map => 12,
-            ValueKind::LoroValue => 13,
-            ValueKind::LoroValueArray => 14,
-            ValueKind::MarkStart => 15,
-            ValueKind::TreeMove => 16,
-            ValueKind::ListMove => 17,
-            ValueKind::ListSet => 18,
+            ValueKind::LoroValue => 11,
+            ValueKind::MarkStart => 12,
+            ValueKind::TreeMove => 13,
+            ValueKind::ListMove => 14,
+            ValueKind::ListSet => 15,
             ValueKind::Future(future_value_kind) => match future_value_kind {
                 #[cfg(feature = "counter")]
-                FutureValueKind::Counter => 19,
+                FutureValueKind::Counter => 16,
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
             },
         }
@@ -91,22 +131,19 @@ impl ValueKind {
             8 => ValueKind::DeleteOnce,
             9 => ValueKind::DeleteSeq,
             10 => ValueKind::DeltaInt,
-            11 => ValueKind::Array,
-            12 => ValueKind::Map,
-            13 => ValueKind::LoroValue,
-            14 => ValueKind::LoroValueArray,
-            15 => ValueKind::MarkStart,
-            16 => ValueKind::TreeMove,
-            17 => ValueKind::ListMove,
-            18 => ValueKind::ListSet,
+            11 => ValueKind::LoroValue,
+            12 => ValueKind::MarkStart,
+            13 => ValueKind::TreeMove,
+            14 => ValueKind::ListMove,
+            15 => ValueKind::ListSet,
             #[cfg(feature = "counter")]
-            19 => ValueKind::Future(FutureValueKind::Counter),
+            16 => ValueKind::Future(FutureValueKind::Counter),
             _ => ValueKind::Future(FutureValueKind::Unknown(kind)),
         }
     }
 }
 
-#[derive(EnumAsInner)]
+#[derive(Debug, EnumAsInner)]
 pub enum Value<'a> {
     Null,
     True,
@@ -119,11 +156,8 @@ pub enum Value<'a> {
     DeleteOnce,
     DeleteSeq,
     DeltaInt(i32),
-    Array(Vec<Value<'a>>),
-    LoroValueArray(Vec<LoroValue>),
     #[allow(clippy::enum_variant_names)]
     LoroValue(LoroValue),
-    Map(FxHashMap<InternalString, Value<'a>>),
     MarkStart(MarkStart),
     TreeMove(EncodedTreeMove),
     ListMove {
@@ -139,6 +173,7 @@ pub enum Value<'a> {
     Future(FutureValue<'a>),
 }
 
+#[derive(Debug)]
 pub enum FutureValue<'a> {
     #[cfg(feature = "counter")]
     Counter,
@@ -175,10 +210,7 @@ pub enum OwnedValue {
     DeleteOnce,
     DeleteSeq,
     DeltaInt(i32),
-    Array(Vec<OwnedValue>),
-    LoroValueArray(Vec<LoroValue>),
     LoroValue(LoroValue),
-    Map(FxHashMap<InternalString, OwnedValue>),
     MarkStart(MarkStart),
     TreeMove(EncodedTreeMove),
     ListMove {
@@ -207,10 +239,7 @@ impl<'a> Value<'a> {
             Value::Str(_) => ValueKind::Str,
             Value::DeleteSeq { .. } => ValueKind::DeleteSeq,
             Value::DeltaInt(_) => ValueKind::DeltaInt,
-            Value::Array(_) => ValueKind::Array,
-            Value::Map(_) => ValueKind::Map,
             Value::LoroValue(_) => ValueKind::LoroValue,
-            Value::LoroValueArray(_) => ValueKind::LoroValueArray,
             Value::MarkStart { .. } => ValueKind::MarkStart,
             Value::Binary(_) => ValueKind::Binary,
             Value::TreeMove(..) => ValueKind::TreeMove,
@@ -240,14 +269,7 @@ impl<'a> Value<'a> {
             OwnedValue::Str(x) => Value::Str(x.as_str()),
             OwnedValue::DeleteSeq => Value::DeleteSeq,
             OwnedValue::DeltaInt(x) => Value::DeltaInt(*x),
-            OwnedValue::Array(x) => Value::Array(x.iter().map(Value::from_owned).collect()),
-            OwnedValue::Map(x) => Value::Map(
-                x.iter()
-                    .map(|(k, v)| (k.clone(), Value::from_owned(v)))
-                    .collect(),
-            ),
             OwnedValue::LoroValue(x) => Value::LoroValue(x.clone()),
-            OwnedValue::LoroValueArray(x) => Value::LoroValueArray(x.clone()),
             OwnedValue::MarkStart(x) => Value::MarkStart(x.clone()),
             OwnedValue::Binary(x) => Value::Binary(x.as_slice()),
             OwnedValue::TreeMove(x) => Value::TreeMove(x.clone()),
@@ -295,12 +317,7 @@ impl<'a> Value<'a> {
             Value::Str(x) => OwnedValue::Str(x.to_owned()),
             Value::DeleteSeq => OwnedValue::DeleteSeq,
             Value::DeltaInt(x) => OwnedValue::DeltaInt(x),
-            Value::Array(x) => OwnedValue::Array(x.into_iter().map(|x| x.into_owned()).collect()),
-            Value::Map(x) => {
-                OwnedValue::Map(x.into_iter().map(|(k, v)| (k, v.into_owned())).collect())
-            }
             Value::LoroValue(x) => OwnedValue::LoroValue(x),
-            Value::LoroValueArray(x) => OwnedValue::LoroValueArray(x),
             Value::MarkStart(x) => OwnedValue::MarkStart(x),
             Value::Binary(x) => OwnedValue::Binary(x.to_owned()),
             Value::TreeMove(x) => OwnedValue::TreeMove(x),
@@ -373,21 +390,9 @@ impl<'a> Value<'a> {
             ValueKind::DeleteOnce => Value::DeleteOnce,
             ValueKind::DeleteSeq => Value::DeleteSeq,
             ValueKind::DeltaInt => Value::DeltaInt(value_reader.read_i32()?),
-            ValueKind::LoroValueArray => {
-                let len = value_reader.read_usize()?;
-                let mut ans = Vec::with_capacity(len);
-                for i in 0..len {
-                    let loro_value = value_reader
-                        .read_value_type_and_content(&arenas.keys.keys, id.inc(i as i32))?;
-                    ans.push(loro_value);
-                }
-                Value::LoroValueArray(ans)
-            }
             ValueKind::LoroValue => {
                 Value::LoroValue(value_reader.read_value_type_and_content(&arenas.keys, id)?)
             }
-            ValueKind::Array => unimplemented!(),
-            ValueKind::Map => unimplemented!(),
             ValueKind::MarkStart => {
                 Value::MarkStart(value_reader.read_mark(&arenas.keys.keys, id)?)
             }
@@ -457,19 +462,10 @@ impl<'a> Value<'a> {
             Value::DeleteOnce => (ValueKind::DeleteOnce, 0),
             Value::DeleteSeq => (ValueKind::DeleteSeq, 0),
             Value::DeltaInt(x) => (ValueKind::DeltaInt, value_writer.write_i32(x)),
-            Value::LoroValueArray(arr) => {
-                let mut l = value_writer.write_usize(arr.len());
-                for value in arr {
-                    l += value_writer.write_value_type_and_content(&value, registers);
-                }
-                (ValueKind::LoroValueArray, l)
-            }
             Value::LoroValue(x) => (
                 ValueKind::LoroValue,
                 value_writer.write_value_type_and_content(&x, registers),
             ),
-            Value::Array(x) => (ValueKind::Array, value_writer.write_array(x, registers)),
-            Value::Map(x) => (ValueKind::Map, value_writer.write_map(x, registers)),
             Value::MarkStart(x) => (ValueKind::MarkStart, value_writer.write_mark(x, registers)),
             Value::TreeMove(tree) => (ValueKind::TreeMove, value_writer.write_tree_move(&tree)),
             Value::ListMove {
@@ -606,24 +602,23 @@ impl<'a> ValueReader<'a> {
         id: ID,
     ) -> LoroResult<LoroValue> {
         let kind = self.read_u8()?;
-        self.read_value_content(ValueKind::from_u8(kind), keys, id)
+        self.read_value_content(LoroValueKind::from_u8(kind), keys, id)
     }
 
     pub fn read_value_content(
         &mut self,
-        kind: ValueKind,
+        kind: LoroValueKind,
         keys: &[InternalString],
         id: ID,
     ) -> LoroResult<LoroValue> {
         Ok(match kind {
-            ValueKind::Null => LoroValue::Null,
-            ValueKind::True => LoroValue::Bool(true),
-            ValueKind::False => LoroValue::Bool(false),
-            ValueKind::I64 => LoroValue::I64(self.read_i64()?),
-            ValueKind::F64 => LoroValue::Double(self.read_f64()?),
-            ValueKind::Str => LoroValue::String(Arc::new(self.read_str()?.to_owned())),
-            ValueKind::DeltaInt => LoroValue::I64(self.read_i64()?),
-            ValueKind::Array => {
+            LoroValueKind::Null => LoroValue::Null,
+            LoroValueKind::True => LoroValue::Bool(true),
+            LoroValueKind::False => LoroValue::Bool(false),
+            LoroValueKind::I64 => LoroValue::I64(self.read_i64()?),
+            LoroValueKind::F64 => LoroValue::Double(self.read_f64()?),
+            LoroValueKind::Str => LoroValue::String(Arc::new(self.read_str()?.to_owned())),
+            LoroValueKind::List => {
                 let len = self.read_usize()?;
                 if len > MAX_COLLECTION_SIZE {
                     return Err(LoroError::DecodeDataCorruptionError);
@@ -634,19 +629,7 @@ impl<'a> ValueReader<'a> {
                 }
                 ans.into()
             }
-            // TODO: unified Array and LoroValueArray
-            ValueKind::LoroValueArray => {
-                let len = self.read_usize()?;
-                if len > MAX_COLLECTION_SIZE {
-                    return Err(LoroError::DecodeDataCorruptionError);
-                }
-                let mut ans = Vec::with_capacity(len);
-                for i in 0..len {
-                    ans.push(self.recursive_read_value_type_and_content(keys, id.inc(i as i32))?);
-                }
-                ans.into()
-            }
-            ValueKind::Map => {
+            LoroValueKind::Map => {
                 let len = self.read_usize()?;
                 if len > MAX_COLLECTION_SIZE {
                     return Err(LoroError::DecodeDataCorruptionError);
@@ -663,8 +646,8 @@ impl<'a> ValueReader<'a> {
                 }
                 ans.into()
             }
-            ValueKind::Binary => LoroValue::Binary(Arc::new(self.read_binary()?.to_owned())),
-            ValueKind::ContainerType => {
+            LoroValueKind::Binary => LoroValue::Binary(Arc::new(self.read_binary()?.to_owned())),
+            LoroValueKind::ContainerType => {
                 let u8 = self.read_u8()?;
                 let container_id = ContainerID::new_normal(
                     id,
@@ -673,7 +656,6 @@ impl<'a> ValueReader<'a> {
 
                 LoroValue::Container(container_id)
             }
-            a => unreachable!("Unexpected value kind {:?}", a),
         })
     }
 
@@ -737,21 +719,19 @@ impl<'a> ValueReader<'a> {
                     0
                 };
                 let kind = self.read_u8()?;
-                let kind = ValueKind::from_u8(kind);
+                let kind = LoroValueKind::from_u8(kind);
                 let value = match kind {
-                    ValueKind::Null => LoroValue::Null,
-                    ValueKind::True => LoroValue::Bool(true),
-                    ValueKind::False => LoroValue::Bool(false),
-                    ValueKind::I64 => LoroValue::I64(self.read_i64()?),
-                    ValueKind::F64 => LoroValue::Double(self.read_f64()?),
-                    ValueKind::Str => LoroValue::String(Arc::new(self.read_str()?.to_owned())),
-                    ValueKind::DeltaInt => LoroValue::I64(self.read_i64()?),
-                    ValueKind::LoroValueArray => {
+                    LoroValueKind::Null => LoroValue::Null,
+                    LoroValueKind::True => LoroValue::Bool(true),
+                    LoroValueKind::False => LoroValue::Bool(false),
+                    LoroValueKind::I64 => LoroValue::I64(self.read_i64()?),
+                    LoroValueKind::F64 => LoroValue::Double(self.read_f64()?),
+                    LoroValueKind::Str => LoroValue::String(Arc::new(self.read_str()?.to_owned())),
+                    LoroValueKind::List => {
                         let len = self.read_usize()?;
                         if len > MAX_COLLECTION_SIZE {
                             return Err(LoroError::DecodeDataCorruptionError);
                         }
-
                         let ans = Vec::with_capacity(len);
                         stack.push(task);
                         stack.push(Task::ReadList {
@@ -761,7 +741,7 @@ impl<'a> ValueReader<'a> {
                         });
                         continue;
                     }
-                    ValueKind::Map => {
+                    LoroValueKind::Map => {
                         let len = self.read_usize()?;
                         if len > MAX_COLLECTION_SIZE {
                             return Err(LoroError::DecodeDataCorruptionError);
@@ -776,10 +756,10 @@ impl<'a> ValueReader<'a> {
                         });
                         continue;
                     }
-                    ValueKind::Binary => {
+                    LoroValueKind::Binary => {
                         LoroValue::Binary(Arc::new(self.read_binary()?.to_owned()))
                     }
-                    ValueKind::ContainerType => {
+                    LoroValueKind::ContainerType => {
                         let u8 = self.read_u8()?;
                         let container_id = ContainerID::new_normal(
                             id,
@@ -788,7 +768,6 @@ impl<'a> ValueReader<'a> {
 
                         LoroValue::Container(container_id)
                     }
-                    a => unreachable!("Unexpected value kind {:?}", a),
                 };
 
                 task = match task {
@@ -992,21 +971,21 @@ impl ValueWriter {
         &mut self,
         value: &LoroValue,
         registers: &mut EncodedRegisters,
-    ) -> (ValueKind, usize) {
+    ) -> (LoroValueKind, usize) {
         match value {
-            LoroValue::Null => (ValueKind::Null, 0),
-            LoroValue::Bool(true) => (ValueKind::True, 0),
-            LoroValue::Bool(false) => (ValueKind::False, 0),
-            LoroValue::I64(value) => (ValueKind::I64, self.write_i64(*value)),
-            LoroValue::Double(value) => (ValueKind::F64, self.write_f64(*value)),
-            LoroValue::String(value) => (ValueKind::Str, self.write_str(value)),
+            LoroValue::Null => (LoroValueKind::Null, 0),
+            LoroValue::Bool(true) => (LoroValueKind::True, 0),
+            LoroValue::Bool(false) => (LoroValueKind::False, 0),
+            LoroValue::I64(value) => (LoroValueKind::I64, self.write_i64(*value)),
+            LoroValue::Double(value) => (LoroValueKind::F64, self.write_f64(*value)),
+            LoroValue::String(value) => (LoroValueKind::Str, self.write_str(value)),
             LoroValue::List(value) => {
                 let mut len = self.write_usize(value.len());
                 for value in value.iter() {
                     let l = self.write_value_type_and_content(value, registers);
                     len += l;
                 }
-                (ValueKind::Array, len)
+                (LoroValueKind::List, len)
             }
             LoroValue::Map(value) => {
                 let mut len = self.write_usize(value.len());
@@ -1016,11 +995,11 @@ impl ValueWriter {
                     let l = self.write_value_type_and_content(value, registers);
                     len += l;
                 }
-                (ValueKind::Map, len)
+                (LoroValueKind::Map, len)
             }
-            LoroValue::Binary(value) => (ValueKind::Binary, self.write_binary(value)),
+            LoroValue::Binary(value) => (LoroValueKind::Binary, self.write_binary(value)),
             LoroValue::Container(c) => (
-                ValueKind::ContainerType,
+                LoroValueKind::ContainerType,
                 self.write_u8(c.container_type().to_u8()),
             ),
         }
@@ -1135,17 +1114,17 @@ impl ValueWriter {
     }
 }
 
-fn get_loro_value_kind(value: &LoroValue) -> ValueKind {
+fn get_loro_value_kind(value: &LoroValue) -> LoroValueKind {
     match value {
-        LoroValue::Null => ValueKind::Null,
-        LoroValue::Bool(true) => ValueKind::True,
-        LoroValue::Bool(false) => ValueKind::False,
-        LoroValue::I64(_) => ValueKind::I64,
-        LoroValue::Double(_) => ValueKind::F64,
-        LoroValue::String(_) => ValueKind::Str,
-        LoroValue::List(_) => ValueKind::LoroValueArray,
-        LoroValue::Map(_) => ValueKind::Map,
-        LoroValue::Binary(_) => ValueKind::Binary,
-        LoroValue::Container(_) => ValueKind::ContainerType,
+        LoroValue::Null => LoroValueKind::Null,
+        LoroValue::Bool(true) => LoroValueKind::True,
+        LoroValue::Bool(false) => LoroValueKind::False,
+        LoroValue::I64(_) => LoroValueKind::I64,
+        LoroValue::Double(_) => LoroValueKind::F64,
+        LoroValue::String(_) => LoroValueKind::Str,
+        LoroValue::List(_) => LoroValueKind::List,
+        LoroValue::Map(_) => LoroValueKind::Map,
+        LoroValue::Binary(_) => LoroValueKind::Binary,
+        LoroValue::Container(_) => LoroValueKind::ContainerType,
     }
 }
