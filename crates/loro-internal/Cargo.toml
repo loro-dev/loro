@@ -50,7 +50,6 @@ tracing = { version = "0.1", features = ["release_max_level_warn"] }
 
 [dev-dependencies]
 miniz_oxide = "0.7.1"
-serde_json = "1.0.87"
 dhat = "0.3.1"
 rand = { version = "0.8.5" }
 base64 = "0.21.5"

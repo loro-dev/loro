@@ -227,36 +227,6 @@ pub enum OwnedValue {
 }
 
 impl<'a> Value<'a> {
-    pub fn kind(&self) -> ValueKind {
-        match self {
-            Value::Null => ValueKind::Null,
-            Value::True => ValueKind::True,
-            Value::False => ValueKind::False,
-            Value::DeleteOnce => ValueKind::DeleteOnce,
-            Value::I64(_) => ValueKind::I64,
-            Value::ContainerIdx(_) => ValueKind::ContainerType,
-            Value::F64(_) => ValueKind::F64,
-            Value::Str(_) => ValueKind::Str,
-            Value::DeleteSeq { .. } => ValueKind::DeleteSeq,
-            Value::DeltaInt(_) => ValueKind::DeltaInt,
-            Value::LoroValue(_) => ValueKind::LoroValue,
-            Value::MarkStart { .. } => ValueKind::MarkStart,
-            Value::Binary(_) => ValueKind::Binary,
-            Value::TreeMove(..) => ValueKind::TreeMove,
-            Value::ListMove { .. } => ValueKind::ListMove,
-            Value::ListSet { .. } => ValueKind::ListSet,
-            Value::Future(value) => match value {
-                #[cfg(feature = "counter")]
-                FutureValue::Counter => ValueKind::Future(FutureValueKind::Counter),
-                FutureValue::Unknown {
-                    kind,
-                    prop: _,
-                    data: _,
-                } => ValueKind::Future(FutureValueKind::Unknown(*kind)),
-            },
-        }
-    }
-
     pub fn from_owned(owned_value: &'a OwnedValue) -> Self {
         match owned_value {
             OwnedValue::Null => Value::Null,
@@ -850,6 +820,7 @@ impl<'a> ValueReader<'a> {
         leb128::read::signed(&mut self.raw).map_err(|_| LoroError::DecodeDataCorruptionError)
     }
 
+    #[allow(unused)]
     pub fn read_u64(&mut self) -> LoroResult<u64> {
         leb128::read::unsigned(&mut self.raw).map_err(|_| LoroError::DecodeDataCorruptionError)
     }
@@ -1046,38 +1017,6 @@ impl ValueWriter {
     fn write_u8(&mut self, value: u8) -> usize {
         let len = self.buffer.len();
         self.buffer.push(value);
-        self.buffer.len() - len
-    }
-
-    pub fn write_kind(&mut self, kind: ValueKind) -> usize {
-        let len = self.buffer.len();
-        self.write_u8(kind.to_u8());
-        self.buffer.len() - len
-    }
-
-    fn write_array(&mut self, value: Vec<Value>, registers: &mut EncodedRegisters) -> usize {
-        let len = self.buffer.len();
-        self.write_usize(value.len());
-        for value in value {
-            self.write_kind(value.kind());
-            value.encode(self, registers);
-        }
-        self.buffer.len() - len
-    }
-
-    fn write_map(
-        &mut self,
-        value: FxHashMap<InternalString, Value>,
-        registers: &mut EncodedRegisters,
-    ) -> usize {
-        let len = self.buffer.len();
-        self.write_usize(value.len());
-        for (key, value) in value {
-            let key_idx = registers.key.register(&key);
-            self.write_usize(key_idx);
-            self.write_kind(value.kind());
-            value.encode(self, registers);
-        }
         self.buffer.len() - len
     }
 

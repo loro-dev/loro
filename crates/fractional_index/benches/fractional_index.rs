@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-#[cfg(not(feature = "jitter"))]
+
 pub fn criterion_benchmark(c: &mut Criterion) {
     use criterion::{AxisScale, BenchmarkId, PlotConfiguration};
     use fraction_index::FractionalIndex as MyIndex;
@@ -117,9 +117,6 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         });
     });
 }
-
-#[cfg(feature = "jitter")]
-fn criterion_benchmark(_: &mut Criterion) {}
 
 criterion_group!(benches, criterion_benchmark);
 criterion_main!(benches);

@@ -991,6 +991,7 @@ impl Handler {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn new_unattached(kind: ContainerType) -> Self {
         match kind {
             ContainerType::Text => Self::Text(TextHandler::new_detached()),
