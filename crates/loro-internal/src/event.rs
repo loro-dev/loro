@@ -333,7 +333,7 @@ impl InternalDiff {
             InternalDiff::Tree(t) => t.is_empty(),
             InternalDiff::MovableList(t) => t.is_empty(),
             #[cfg(feature = "counter")]
-            InternalDiff::Counter(c) => c.is_zero(),
+            InternalDiff::Counter(c) => *c == 0,
             InternalDiff::Unknown => true,
         }
     }
