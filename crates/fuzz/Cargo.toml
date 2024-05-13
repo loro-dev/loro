@@ -10,7 +10,7 @@ publish = false
 loro-without-counter = { path = "../loro", package = "loro" }
 loro = { git = "https://github.com/loro-dev/loro.git", features = [
     "counter",
-], rev = "0f0ba335ebf3b019ba308a4fc3ab6d459e152739" }
+], rev = "c93a80dbff7ead8afb466884642dbef49f9e16b4" }
 loro-internal = { path = "../loro-internal", features = ["test_utils"] }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }

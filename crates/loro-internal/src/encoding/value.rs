@@ -1017,6 +1017,7 @@ impl ValueWriter {
         self.buffer.len() - len
     }
 
+    #[allow(unused)]
     fn write_u64(&mut self, value: u64) -> usize {
         let len = self.buffer.len();
         leb128::write::unsigned(&mut self.buffer, value).unwrap();
