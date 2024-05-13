@@ -382,7 +382,7 @@ impl Diff {
             Diff::Map(m) => m.updated.is_empty(),
             Diff::Tree(t) => t.diff.is_empty(),
             #[cfg(feature = "counter")]
-            Diff::Counter(c) => c.is_zero(),
+            Diff::Counter(c) => *c == 0,
             Diff::Unknown => true,
         }
     }
