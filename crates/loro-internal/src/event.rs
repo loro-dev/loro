@@ -2,7 +2,6 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHasher64;
 use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, delta_trait::DeltaAttr, DeltaItem, DeltaRope};
-use num::Zero;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
