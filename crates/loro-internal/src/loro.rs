@@ -679,6 +679,22 @@ impl LoroDoc {
         .unwrap()
     }
 
+    #[cfg(feature = "counter")]
+    pub fn get_counter<I: IntoContainerId>(
+        &self,
+        id: I,
+    ) -> crate::handler::counter::CounterHandler {
+        let id = id.into_container_id(&self.arena, ContainerType::Counter);
+        Handler::new_attached(
+            id,
+            self.arena.clone(),
+            self.get_global_txn(),
+            Arc::downgrade(&self.state),
+        )
+        .into_counter()
+        .unwrap()
+    }
+
     /// This is for debugging purpose. It will travel the whole oplog
     #[inline]
     pub fn diagnose_size(&self) {
@@ -858,6 +874,7 @@ impl LoroDoc {
     }
 
     #[cfg(feature = "test_utils")]
+    #[allow(unused)]
     pub(crate) fn arena(&self) -> &SharedArena {
         &self.arena
     }
@@ -940,6 +957,7 @@ impl LoroDoc {
             drop(state);
             self.commit_then_renew();
             let oplog = self.oplog().lock().unwrap();
+            // TODO: assert pos.id is not unknown
             if let Some(id) = pos.id {
                 let idx = oplog
                     .arena
@@ -961,7 +979,7 @@ impl LoroDoc {
                 );
                 // TODO: remove depth info
                 let depth = self.arena.get_depth(idx);
-                let diff_calc = &mut diff_calc.get_or_create_calc(idx, depth).1;
+                let (_, diff_calc) = &mut diff_calc.get_or_create_calc(idx, depth);
                 match diff_calc {
                     crate::diff_calc::ContainerDiffCalculator::Richtext(text) => {
                         let c = text.get_id_latest_pos(id).unwrap();
@@ -1003,6 +1021,9 @@ impl LoroDoc {
                     }
                     crate::diff_calc::ContainerDiffCalculator::Tree(_) => unreachable!(),
                     crate::diff_calc::ContainerDiffCalculator::Map(_) => unreachable!(),
+                    #[cfg(feature = "counter")]
+                    crate::diff_calc::ContainerDiffCalculator::Counter(_) => unreachable!(),
+                    crate::diff_calc::ContainerDiffCalculator::Unknown(_) => unreachable!(),
                 }
             } else {
                 match pos.container.container_type() {
@@ -1048,7 +1069,11 @@ impl LoroDoc {
                             },
                         })
                     }
-                    ContainerType::Map | ContainerType::Tree => unreachable!(),
+                    ContainerType::Map | ContainerType::Tree | ContainerType::Unknown(_) => {
+                        unreachable!()
+                    }
+                    #[cfg(feature = "counter")]
+                    ContainerType::Counter => unreachable!(),
                 }
             }
         }
@@ -1062,7 +1087,6 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
             if op.container != idx {
                 continue;
             }
-
             if let InnerContent::List(InnerListOp::Delete(d)) = &op.content {
                 if d.id_start.to_span(d.atom_len()).contains(id) {
                     return Some(ID::new(change.peer(), op.counter));

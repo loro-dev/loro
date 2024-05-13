@@ -31,6 +31,7 @@ pub struct ContainerDiff {
     pub id: ContainerID,
     pub path: Vec<(ContainerID, Index)>,
     pub(crate) idx: ContainerIdx,
+    pub is_unknown: bool,
     pub diff: Diff,
 }
 
@@ -226,6 +227,9 @@ pub(crate) enum InternalDiff {
     Map(MapDelta),
     Tree(TreeDelta),
     MovableList(MovableListInnerDelta),
+    #[cfg(feature = "counter")]
+    Counter(i64),
+    Unknown,
 }
 
 impl From<InternalDiff> for DiffVariant {
@@ -309,6 +313,9 @@ pub enum Diff {
     Text(TextDiff),
     Map(ResolvedMapDelta),
     Tree(TreeDiff),
+    #[cfg(feature = "counter")]
+    Counter(i64),
+    Unknown,
 }
 
 impl From<Diff> for DiffVariant {
@@ -325,6 +332,9 @@ impl InternalDiff {
             InternalDiff::Map(m) => m.updated.is_empty(),
             InternalDiff::Tree(t) => t.is_empty(),
             InternalDiff::MovableList(t) => t.is_empty(),
+            #[cfg(feature = "counter")]
+            InternalDiff::Counter(c) => *c == 0,
+            InternalDiff::Unknown => true,
         }
     }
 
@@ -359,17 +369,21 @@ impl Diff {
             (Diff::Map(a), Diff::Map(b)) => Ok(Diff::Map(a.compose(b))),
 
             (Diff::Tree(a), Diff::Tree(b)) => Ok(Diff::Tree(a.compose(b))),
+            #[cfg(feature = "counter")]
+            (Diff::Counter(a), Diff::Counter(b)) => Ok(Diff::Counter(a + b)),
             (a, _) => Err(a),
         }
     }
 
-    #[allow(unused)]
     pub(crate) fn is_empty(&self) -> bool {
         match self {
             Diff::List(s) => s.is_empty(),
             Diff::Text(t) => t.is_empty(),
             Diff::Map(m) => m.updated.is_empty(),
             Diff::Tree(t) => t.diff.is_empty(),
+            #[cfg(feature = "counter")]
+            Diff::Counter(c) => *c == 0,
+            Diff::Unknown => true,
         }
     }
 
@@ -393,6 +407,8 @@ impl Diff {
             }
 
             (Diff::Tree(a), Diff::Tree(b)) => Diff::Tree(a.extend(b.diff)),
+            #[cfg(feature = "counter")]
+            (Diff::Counter(a), Diff::Counter(b)) => Diff::Counter(a + b),
             _ => unreachable!(),
         }
     }

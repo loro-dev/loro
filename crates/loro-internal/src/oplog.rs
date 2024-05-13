@@ -16,7 +16,7 @@ use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::group::OpGroups;
 use crate::id::{Counter, PeerID, ID};
-use crate::op::{ListSlice, Op, RawOpContent, RemoteOp, RichOp};
+use crate::op::{FutureInnerContent, ListSlice, Op, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
@@ -578,8 +578,7 @@ impl OpLog {
                             pos: *pos,
                         }))
                     }
-                    loro_common::ContainerType::Map => unreachable!(),
-                    loro_common::ContainerType::Tree => unreachable!(),
+                    _ => unreachable!(),
                 },
                 list_op::InnerListOp::InsertText {
                     slice,
@@ -596,12 +595,7 @@ impl OpLog {
                             pos: *pos as usize,
                         }));
                     }
-                    loro_common::ContainerType::List
-                    | loro_common::ContainerType::MovableList
-                    | loro_common::ContainerType::Map
-                    | loro_common::ContainerType::Tree => {
-                        unreachable!()
-                    }
+                    _ => unreachable!(),
                 },
                 list_op::InnerListOp::Delete(del) => {
                     contents.push(RawOpContent::List(list_op::ListOp::Delete(*del)))
@@ -644,6 +638,18 @@ impl OpLog {
                 }))
             }
             crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(tree.clone())),
+            crate::op::InnerContent::Future(f) => match f {
+                #[cfg(feature = "counter")]
+                crate::op::FutureInnerContent::Counter(c) => {
+                    contents.push(RawOpContent::Counter(*c))
+                }
+                FutureInnerContent::Unknown { prop, value } => {
+                    contents.push(crate::op::RawOpContent::Unknown {
+                        prop: *prop,
+                        value: value.clone(),
+                    })
+                }
+            },
         };
 
         let mut ans = SmallVec::with_capacity(contents.len());

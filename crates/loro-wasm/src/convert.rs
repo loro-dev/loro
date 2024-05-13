@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
-use loro_internal::delta::{ResolvedMapDelta};
+use loro_internal::delta::ResolvedMapDelta;
 use loro_internal::encoding::ImportBlobMetadata;
-use loro_internal::event::{Diff};
+use loro_internal::event::Diff;
 use loro_internal::handler::{Handler, ValueOrHandler};
 use loro_internal::{ListDiffItem, LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
@@ -289,5 +289,6 @@ pub(crate) fn handler_to_js_value(handler: Handler, doc: Option<Arc<LoroDoc>>) -
         Handler::List(l) => LoroList { handler: l, doc }.into(),
         Handler::Tree(t) => LoroTree { handler: t, doc }.into(),
         Handler::MovableList(m) => LoroMovableList { handler: m, doc }.into(),
+        Handler::Unknown(_) => unreachable!(),
     }
 }

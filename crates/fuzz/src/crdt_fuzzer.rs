@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
@@ -17,11 +17,11 @@ pub enum FuzzValue {
     Container(ContainerType),
 }
 
-impl ToString for FuzzValue {
-    fn to_string(&self) -> String {
+impl Display for FuzzValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FuzzValue::I32(i) => i.to_string(),
-            FuzzValue::Container(c) => c.to_string(),
+            FuzzValue::I32(i) => write!(f, "{}", i),
+            FuzzValue::Container(c) => write!(f, "{}", c),
         }
     }
 }
@@ -204,6 +204,7 @@ pub enum FuzzTarget {
     Text,
     Tree,
     MovableList,
+    Counter,
     All,
 }
 
@@ -233,6 +234,9 @@ impl FuzzTarget {
             }
             FuzzTarget::MovableList => {
                 set.insert(ContainerType::MovableList);
+            }
+            FuzzTarget::Counter => {
+                set.insert(ContainerType::Counter);
             }
         }
         set

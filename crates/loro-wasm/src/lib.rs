@@ -709,7 +709,17 @@ impl Loro {
                 .into()
             }
             ContainerType::MovableList => {
-                unimplemented!()
+                let movelist = self.0.get_movable_list(container_id);
+                LoroMovableList {
+                    handler: movelist,
+                    doc: Some(self.0.clone()),
+                }
+                .into()
+            }
+            ContainerType::Unknown(_) => {
+                return Err(JsValue::from_str(
+                    "You are attempting to get an unknown container",
+                ));
             }
         })
     }

@@ -38,3 +38,9 @@ name = "tree"
 path = "fuzz_targets/tree.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "counter"
+path = "fuzz_targets/counter.rs"
+test = false
+doc = false

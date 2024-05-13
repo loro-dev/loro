@@ -59,6 +59,11 @@ impl OpLog {
                     let idx = arena.register_container(&id);
                     arena.set_parent(idx, Some(op.container));
                 }
+                crate::op::InnerContent::Future(f) => match &f {
+                    #[cfg(feature = "counter")]
+                    crate::op::FutureInnerContent::Counter(_) => {}
+                    crate::op::FutureInnerContent::Unknown { .. } => {}
+                },
             }
         }
     }
@@ -109,6 +114,9 @@ impl DocState {
                 let child_idx = self.arena.register_container(&container_id);
                 self.arena.set_parent(child_idx, Some(container));
             }
+            #[cfg(feature = "counter")]
+            RawOpContent::Counter(_) => {}
+            RawOpContent::Unknown { .. } => {}
         }
     }
 }

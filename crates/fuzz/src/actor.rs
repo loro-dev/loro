@@ -12,7 +12,7 @@ use rand::{rngs::StdRng, Rng};
 use tracing::info_span;
 
 use crate::{
-    container::{ListActor, MovableListActor, TextActor, TreeActor},
+    container::{CounterActor, ListActor, MovableListActor, TextActor, TreeActor},
     value::{ApplyDiff, ContainerTracker, MapTracker, Value},
 };
 
@@ -69,6 +69,7 @@ impl Actor {
             ActionExecutor::TextActor(actor) => actor.add_new_container(container),
             ActionExecutor::TreeActor(actor) => actor.add_new_container(container),
             ActionExecutor::MovableListActor(actor) => actor.add_new_container(container),
+            ActionExecutor::CounterActor(actor) => actor.add_new_container(container),
         }
     }
 
@@ -130,7 +131,6 @@ impl Actor {
                 assert_value_eq(v, &actual);
             });
         }
-
         let f = self.rand_frontiers();
         if f.is_empty() {
             return;
@@ -150,6 +150,7 @@ impl Actor {
         let vv = self.loro.oplog_vv();
         let frontiers_num = self.rng.gen_range(1..5);
         let mut frontiers: Frontiers = Frontiers::default();
+
         if vv.len() == 0 {
             return frontiers;
         }
@@ -248,6 +249,20 @@ impl Actor {
                     ActionExecutor::TreeActor(TreeActor::new(self.loro.clone())),
                 );
             }
+            ContainerType::Counter => {
+                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                    "counter".to_string(),
+                    Value::empty_container(
+                        ContainerType::Counter,
+                        ContainerID::new_root("counter", ContainerType::Counter),
+                    ),
+                );
+                self.targets.insert(
+                    target,
+                    ActionExecutor::CounterActor(CounterActor::new(self.loro.clone())),
+                );
+            }
+            ContainerType::Unknown(_) => unreachable!(),
         }
     }
 }
@@ -260,6 +275,7 @@ pub enum ActionExecutor {
     MovableListActor(MovableListActor),
     TextActor(TextActor),
     TreeActor(TreeActor),
+    CounterActor(CounterActor),
 }
 
 impl Debug for ActionExecutor {
@@ -270,6 +286,7 @@ impl Debug for ActionExecutor {
             ActionExecutor::MovableListActor(_) => write!(f, "MovableListActor"),
             ActionExecutor::TextActor(_) => write!(f, "TextActor"),
             ActionExecutor::TreeActor(_) => write!(f, "TreeActor"),
+            ActionExecutor::CounterActor(_) => write!(f, "CounterActor"),
         }
     }
 }
@@ -282,8 +299,7 @@ pub trait ActorTrait {
     fn add_new_container(&mut self, container: Container);
 }
 
-#[allow(unused)]
-fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
+pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
     #[must_use]
     fn eq(a: &LoroValue, b: &LoroValue) -> bool {
         match (a, b) {
@@ -299,7 +315,7 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                         continue;
                     }
 
-                    if !eq(v, b.get(k).unwrap()) {
+                    if !eq(v, b.get(k).unwrap_or(&LoroValue::I64(0))) {
                         return false;
                     }
                 }
@@ -315,7 +331,7 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                         continue;
                     }
 
-                    if !eq(v, a.get(k).unwrap()) {
+                    if !eq(v, a.get(k).unwrap_or(&LoroValue::I64(0))) {
                         return false;
                     }
                 }
@@ -325,7 +341,6 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
             (a, b) => a == b,
         }
     }
-
     assert!(
         eq(a, b),
         "Expect left == right, but\nleft = {:#?}\nright = {:#?}",

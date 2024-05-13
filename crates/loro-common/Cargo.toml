@@ -28,3 +28,4 @@ nonmax = "0.5.5"
 
 [features]
 wasm = ["wasm-bindgen", "js-sys"]
+counter = []

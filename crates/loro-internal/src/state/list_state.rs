@@ -419,8 +419,6 @@ impl ContainerState for ListState {
 
     fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<()> {
         match &op.content {
-            RawOpContent::Map(_) => unreachable!(),
-            RawOpContent::Tree(_) => unreachable!(),
             RawOpContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(list) => match list {
@@ -445,6 +443,7 @@ impl ContainerState for ListState {
                     unreachable!()
                 }
             },
+            _ => unreachable!(),
         }
         Ok(())
     }

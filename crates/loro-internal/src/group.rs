@@ -37,8 +37,13 @@ impl OpGroups {
         for op in change.ops.iter() {
             if matches!(
                 op.container.get_type(),
-                ContainerType::Text | ContainerType::List
+                ContainerType::Text | ContainerType::List | ContainerType::Unknown(_)
             ) {
+                continue;
+            }
+
+            #[cfg(feature = "counter")]
+            if matches!(op.container.get_type(), ContainerType::Counter) {
                 continue;
             }
 
@@ -370,6 +375,7 @@ impl OpGroupTrait for MovableListOpGroup {
             },
             InnerContent::Map(_) => unreachable!(),
             InnerContent::Tree(_) => unreachable!(),
+            InnerContent::Future(_) => unreachable!(),
         };
     }
 }

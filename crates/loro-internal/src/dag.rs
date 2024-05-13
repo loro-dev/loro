@@ -36,6 +36,7 @@ use self::{
 pub(crate) trait DagNode: HasLamport + HasId + HasLength + Debug + Sliceable {
     fn deps(&self) -> &[ID];
 
+    #[allow(unused)]
     #[inline]
     fn get_lamport_from_counter(&self, c: Counter) -> Lamport {
         self.lamport() + c as Lamport - self.id_start().counter as Lamport
@@ -50,7 +51,7 @@ pub(crate) trait Dag: Debug {
     type Node: DagNode;
 
     fn get(&self, id: ID) -> Option<&Self::Node>;
-
+    #[allow(unused)]
     fn frontier(&self) -> &[ID];
     fn vv(&self) -> VersionVector;
 }
@@ -58,18 +59,22 @@ pub(crate) trait Dag: Debug {
 pub(crate) trait DagUtils: Dag {
     fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> Frontiers;
     /// Slow, should probably only use on dev
+    #[allow(unused)]
     fn get_vv(&self, id: ID) -> VersionVector;
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff;
     fn contains(&self, id: ID) -> bool;
     fn iter_causal(&self, from: &[ID], target: IdSpanVector) -> DagCausalIter<'_, Self>
     where
         Self: Sized;
+    #[allow(unused)]
     fn iter(&self) -> DagIterator<'_, Self::Node>
     where
         Self: Sized;
+    #[allow(unused)]
     fn iter_with_vv(&self) -> DagIteratorVV<'_, Self::Node>
     where
         Self: Sized;
+    #[allow(unused)]
     fn mermaid(&self) -> String
     where
         Self: Sized;

@@ -11,6 +11,8 @@ use loro::{
 use crate::container::TreeTracker;
 use loro::ContainerID;
 
+use crate::container::CounterTracker;
+
 #[derive(Debug, EnumAsInner)]
 pub enum Value {
     Value(LoroValue),
@@ -27,6 +29,10 @@ impl Value {
             }
             ContainerType::Text => Value::Container(ContainerTracker::Text(TextTracker::empty(id))),
             ContainerType::Tree => Value::Container(ContainerTracker::Tree(TreeTracker::empty(id))),
+            ContainerType::Counter => {
+                Value::Container(ContainerTracker::Counter(CounterTracker::empty(id)))
+            }
+            ContainerType::Unknown(_) => unreachable!(),
         }
     }
 }
@@ -50,6 +56,7 @@ pub enum ContainerTracker {
     MovableList(MovableListTracker),
     Text(TextTracker),
     Tree(TreeTracker),
+    Counter(CounterTracker),
 }
 
 impl ContainerTracker {
@@ -60,6 +67,7 @@ impl ContainerTracker {
             ContainerTracker::MovableList(list) => list.to_value(),
             ContainerTracker::Text(text) => text.to_value(),
             ContainerTracker::Tree(tree) => tree.to_value(),
+            ContainerTracker::Counter(counter) => counter.to_value(),
         }
     }
 
@@ -70,6 +78,7 @@ impl ContainerTracker {
             ContainerTracker::MovableList(list) => list.id(),
             ContainerTracker::Text(text) => text.id(),
             ContainerTracker::Tree(tree) => tree.id(),
+            ContainerTracker::Counter(counter) => counter.id(),
         }
     }
 }
@@ -395,6 +404,10 @@ impl ContainerTracker {
                 ContainerType::Tree => {
                     value.as_tree_mut().unwrap().apply_diff(diff);
                 }
+                ContainerType::Counter => {
+                    value.as_counter_mut().unwrap().apply_diff(diff);
+                }
+                ContainerType::Unknown(_) => unreachable!(),
             }
         }
     }

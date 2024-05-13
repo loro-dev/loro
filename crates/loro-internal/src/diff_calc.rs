@@ -1,6 +1,11 @@
 use std::{num::NonZeroU16, sync::Arc};
 
+#[cfg(feature = "counter")]
+mod counter;
+#[cfg(feature = "counter")]
+pub(crate) use counter::CounterDiffCalculator;
 pub(super) mod tree;
+mod unknown;
 use itertools::Itertools;
 
 use enum_dispatch::enum_dispatch;
@@ -31,6 +36,8 @@ use crate::{
 };
 
 use self::tree::TreeDiffCalculator;
+
+use self::unknown::UnknownDiffCalculator;
 
 use super::{event::InternalContainerDiff, oplog::OpLog};
 
@@ -84,7 +91,7 @@ impl DiffCalculator {
     ) -> Vec<InternalContainerDiff> {
         let s = tracing::span!(tracing::Level::INFO, "DiffCalc");
         let _e = s.enter();
-        tracing::info!("Before: {:?} After: {:?}", &before, &after);
+
         if self.has_all {
             let include_before = self.last_vv.includes_vv(before);
             let include_after = self.last_vv.includes_vv(after);
@@ -93,6 +100,12 @@ impl DiffCalculator {
                 self.last_vv = Default::default();
             }
         }
+        tracing::info!(
+            "Before: {:?} After: {:?} has_all {}",
+            &before,
+            &after,
+            self.has_all
+        );
         let affected_set = if !self.has_all {
             // if we don't have all the ops, we need to calculate the diff by tracing back
             let mut merged = before.clone();
@@ -103,7 +116,7 @@ impl DiffCalculator {
             }
             let (lca, iter) =
                 oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
-
+            tracing::info!("LCA: {:?}", &lca);
             let mut started_set = FxHashSet::default();
             for (change, start_counter, vv) in iter {
                 if change.id.counter > 0 && self.has_all {
@@ -125,8 +138,9 @@ impl DiffCalculator {
                     .unwrap_or_else(|e| e);
                 let mut visited = FxHashSet::default();
                 for mut op in &change.ops.vec()[iter_start..] {
+                    let idx = op.container;
                     if let Some(filter) = container_filter {
-                        if !filter(op.container) {
+                        if !filter(idx) {
                             continue;
                         }
                     }
@@ -144,11 +158,9 @@ impl DiffCalculator {
                     }
                     let vv = &mut vv.borrow_mut();
                     vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
-                    let depth = oplog.arena.get_depth(op.container);
-                    let (old_depth, calculator) = {
-                        let idx = op.container;
-                        self.get_or_create_calc(idx, depth)
-                    };
+                    let container = op.container;
+                    let depth = oplog.arena.get_depth(container);
+                    let (old_depth, calculator) = self.get_or_create_calc(container, depth);
                     // checkout use the same diff_calculator, the depth of calculator is not updated
                     // That may cause the container to be considered deleted
                     if *old_depth != depth {
@@ -156,7 +168,7 @@ impl DiffCalculator {
                     }
 
                     if !started_set.contains(&op.container) {
-                        started_set.insert(op.container);
+                        started_set.insert(container);
                         calculator.start_tracking(oplog, &lca);
                     }
 
@@ -165,7 +177,7 @@ impl DiffCalculator {
                         calculator.apply_change(oplog, RichOp::new_by_change(change, op), None);
                     } else {
                         calculator.apply_change(oplog, RichOp::new_by_change(change, op), Some(vv));
-                        visited.insert(op.container);
+                        visited.insert(container);
                     }
                 }
             }
@@ -182,8 +194,9 @@ impl DiffCalculator {
                 let mut set = FxHashSet::default();
                 oplog.for_each_change_within(before, after, |change| {
                     for op in change.ops.iter() {
+                        let idx = op.container;
                         if let Some(filter) = container_filter {
-                            if !filter(op.container) {
+                            if !filter(idx) {
                                 continue;
                             }
                         }
@@ -219,20 +232,20 @@ impl DiffCalculator {
         while !all.is_empty() {
             // sort by depth and lamport, ensure we iterate from top to bottom
             all.sort_by_key(|x| x.0);
-            for (_, idx) in std::mem::take(&mut all) {
-                if ans.contains_key(&idx) {
+            for (_, container_idx) in std::mem::take(&mut all) {
+                if ans.contains_key(&container_idx) {
                     continue;
                 }
-                let (depth, calc) = self.calculators.get_mut(&idx).unwrap();
+                let (depth, calc) = self.calculators.get_mut(&container_idx).unwrap();
                 if depth.is_none() {
-                    let d = oplog.arena.get_depth(idx);
+                    let d = oplog.arena.get_depth(container_idx);
                     if d != *depth {
                         *depth = d;
-                        all.push((*depth, idx));
+                        all.push((*depth, container_idx));
                         continue;
                     }
                 }
-                let id = oplog.arena.idx_to_id(idx).unwrap();
+                let id = oplog.arena.idx_to_id(container_idx).unwrap();
                 let bring_back = new_containers.remove(&id);
 
                 let diff = calc.calculate_diff(oplog, before, after, |c| {
@@ -242,11 +255,11 @@ impl DiffCalculator {
                 });
                 if !diff.is_empty() || bring_back {
                     ans.insert(
-                        idx,
+                        container_idx,
                         (
                             *depth,
                             InternalContainerDiff {
-                                idx,
+                                idx: container_idx,
                                 bring_back,
                                 is_container_deleted: false,
                                 diff: diff.into(),
@@ -262,6 +275,7 @@ impl DiffCalculator {
                 let Some(idx) = oplog.arena.id_to_idx(&id) else {
                     continue;
                 };
+
                 if ans.contains_key(&idx) {
                     continue;
                 }
@@ -309,9 +323,18 @@ impl DiffCalculator {
                     depth,
                     ContainerDiffCalculator::Tree(TreeDiffCalculator::new(idx)),
                 ),
+                crate::ContainerType::Unknown(_) => (
+                    depth,
+                    ContainerDiffCalculator::Unknown(unknown::UnknownDiffCalculator),
+                ),
                 crate::ContainerType::MovableList => (
                     depth,
                     ContainerDiffCalculator::MovableList(MovableListDiffCalculator::new(idx)),
+                ),
+                #[cfg(feature = "counter")]
+                crate::ContainerType::Counter => (
+                    depth,
+                    ContainerDiffCalculator::Counter(CounterDiffCalculator::new(idx)),
                 ),
             })
     }
@@ -351,6 +374,9 @@ pub(crate) enum ContainerDiffCalculator {
     Richtext(RichtextDiffCalculator),
     Tree(TreeDiffCalculator),
     MovableList(MovableListDiffCalculator),
+    #[cfg(feature = "counter")]
+    Counter(counter::CounterDiffCalculator),
+    Unknown(UnknownDiffCalculator),
 }
 
 #[derive(Debug)]
@@ -509,8 +535,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                 }
                 _ => unreachable!(),
             },
-            crate::op::InnerContent::Map(_) => unreachable!(),
-            crate::op::InnerContent::Tree(_) => unreachable!(),
+            _ => unreachable!(),
         }
     }
 
@@ -736,8 +761,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     );
                 }
             },
-            crate::op::InnerContent::Map(_) => unreachable!(),
-            crate::op::InnerContent::Tree(_) => unreachable!(),
+            _ => unreachable!(),
         }
     }
 

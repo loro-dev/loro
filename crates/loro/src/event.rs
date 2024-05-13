@@ -36,6 +36,8 @@ pub struct ContainerDiff<'a> {
     pub target: &'a ContainerID,
     /// The path of the diff.
     pub path: &'a [(ContainerID, Index)],
+    /// Whether the diff is from unknown container.
+    pub is_unknown: bool,
     /// The diff
     pub diff: Diff<'a>,
 }
@@ -51,6 +53,11 @@ pub enum Diff<'a> {
     Map(MapDelta<'a>),
     /// A tree diff.
     Tree(&'a TreeDiff),
+    #[cfg(feature = "counter")]
+    /// A counter diff.
+    Counter(i64),
+    /// An unknown diff.
+    Unknown,
 }
 
 /// A list diff item.
@@ -112,6 +119,7 @@ impl<'a> From<&'a ContainerDiffInner> for ContainerDiff<'a> {
         ContainerDiff {
             target: &value.id,
             path: &value.path,
+            is_unknown: value.is_unknown,
             diff: (&value.diff).into(),
         }
     }
@@ -162,6 +170,9 @@ impl<'a> From<&'a DiffInner> for Diff<'a> {
                 Diff::Text(text)
             }
             DiffInner::Tree(t) => Diff::Tree(t),
+            #[cfg(feature = "counter")]
+            DiffInner::Counter(c) => Diff::Counter(*c),
+            DiffInner::Unknown => Diff::Unknown,
             _ => todo!(),
         }
     }

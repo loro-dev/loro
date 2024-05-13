@@ -39,11 +39,7 @@ impl ToJson for LoroValue {
 
     #[allow(unused)]
     fn from_json(s: &str) -> Self {
-        #[cfg(feature = "json")]
-        let ans = serde_json::from_str(s).unwrap();
-        #[cfg(not(feature = "json"))]
-        let ans = LoroValue::Null;
-        ans
+        serde_json::from_str(s).unwrap()
     }
 }
 
@@ -246,6 +242,8 @@ enum TypeHint {
     Text,
     List,
     Tree,
+    #[cfg(feature = "counter")]
+    Counter,
 }
 
 pub trait ApplyDiff {
@@ -457,6 +455,9 @@ impl ApplyDiff for LoroValue {
             Diff::Text(_) => TypeHint::Text,
             Diff::Map(_) => TypeHint::Map,
             Diff::Tree(_) => TypeHint::Tree,
+            #[cfg(feature = "counter")]
+            Diff::Counter(_) => TypeHint::Counter,
+            Diff::Unknown => unreachable!(),
         };
         let value = {
             let mut hints = Vec::with_capacity(path.len());
@@ -480,6 +481,8 @@ impl ApplyDiff for LoroValue {
                             TypeHint::Text => LoroValue::String(Default::default()),
                             TypeHint::List => LoroValue::List(Default::default()),
                             TypeHint::Tree => LoroValue::List(Default::default()),
+                            #[cfg(feature = "counter")]
+                            TypeHint::Counter => LoroValue::I64(0),
                         })
                     }
                     Index::Seq(index) => {
