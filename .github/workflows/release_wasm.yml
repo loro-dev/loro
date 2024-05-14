@@ -13,6 +13,10 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
       - name: Setup Node.js 20.x
         uses: actions/setup-node@v4
         with:
@@ -25,9 +29,6 @@ jobs:
         with:
           deno-version: v1.x
 
-      - uses: pnpm/action-setup@v2
-        with:
-          version: 8
       - name: Install wasm-opt
         run: npm i wasm-opt -g
       - uses: jetli/wasm-pack-action@v0.4.0
@@ -51,10 +52,9 @@ jobs:
         id: changesets
         uses: changesets/action@v1
         with:
-          title: 'chore: version packages'
-          commit: 'chore: version packages'
+          title: "chore: version packages"
+          commit: "chore: version packages"
           publish: pnpm changeset publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-
