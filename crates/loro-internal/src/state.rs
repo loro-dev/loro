@@ -21,6 +21,7 @@ use crate::{
     handler::ValueOrHandler,
     id::PeerID,
     op::{Op, RawOp},
+    oplog::TemporaryHistoryRecord,
     txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue, OpLog,
@@ -1257,6 +1258,16 @@ impl DocState {
         };
 
         Some(value)
+    }
+
+    pub(crate) fn remove_temp_history_states(
+        &mut self,
+        temp_history_record: TemporaryHistoryRecord,
+    ) {
+        for cid in temp_history_record.new_containers {
+            let idx = self.arena.id_to_idx(&cid).unwrap();
+            self.states.remove(&idx);
+        }
     }
 }
 

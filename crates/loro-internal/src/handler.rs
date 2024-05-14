@@ -1071,7 +1071,9 @@ impl Handler {
                         Some(ValueOrHandler::Value(v)) => {
                             x.insert(&key, v)?;
                         }
-                        None => todo!(),
+                        None => {
+                            x.delete(&key)?;
+                        }
                     }
                 }
             }

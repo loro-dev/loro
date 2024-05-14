@@ -25,46 +25,10 @@ impl OpLog {
     pub(super) fn register_container_and_parent_link(&self, change: &Change) {
         let arena = &self.arena;
         for op in change.ops.iter() {
-            match &op.content {
-                crate::op::InnerContent::List(l) => match l {
-                    list_op::InnerListOp::Insert { slice, .. } => {
-                        for v in arena.iter_value_slice(slice.to_range()) {
-                            if let LoroValue::Container(c) = v {
-                                let idx = arena.register_container(&c);
-                                arena.set_parent(idx, Some(op.container));
-                            }
-                        }
-                    }
-                    list_op::InnerListOp::Set { value, .. } => {
-                        if let LoroValue::Container(c) = value {
-                            let idx = arena.register_container(c);
-                            arena.set_parent(idx, Some(op.container));
-                        }
-                    }
-
-                    list_op::InnerListOp::Move { .. } => {}
-                    list_op::InnerListOp::InsertText { .. } => {}
-                    list_op::InnerListOp::Delete(_) => {}
-                    list_op::InnerListOp::StyleStart { .. } => {}
-                    list_op::InnerListOp::StyleEnd => {}
-                },
-                crate::op::InnerContent::Map(m) => {
-                    if let Some(LoroValue::Container(c)) = &m.value {
-                        let idx = arena.register_container(c);
-                        arena.set_parent(idx, Some(op.container));
-                    }
-                }
-                crate::op::InnerContent::Tree(t) => {
-                    let id = t.target.associated_meta_container();
-                    let idx = arena.register_container(&id);
-                    arena.set_parent(idx, Some(op.container));
-                }
-                crate::op::InnerContent::Future(f) => match &f {
-                    #[cfg(feature = "counter")]
-                    crate::op::FutureInnerContent::Counter(_) => {}
-                    crate::op::FutureInnerContent::Unknown { .. } => {}
-                },
-            }
+            op.content.visit_created_children(arena, &mut |c| {
+                let idx = arena.register_container(&c);
+                arena.set_parent(idx, Some(op.container));
+            });
         }
     }
 }

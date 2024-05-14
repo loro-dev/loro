@@ -1,30 +1,18 @@
 use std::{cmp::Ordering, sync::Arc};
 
 use loro::{
-    awareness::Awareness, Frontiers, FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap,
-    LoroText, ToJson,
+    awareness::Awareness, FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText,
+    ToJson,
 };
 use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
 use serde_json::json;
 use tracing::trace_span;
 
+mod integration_test;
+
 #[ctor::ctor]
 fn init() {
     dev_utils::setup_test_log();
-}
-
-#[test]
-fn undo() -> Result<(), LoroError> {
-    let doc = LoroDoc::new();
-    doc.set_peer_id(1)?;
-    let text = doc.get_text("text");
-    text.insert(0, "123")?;
-    doc.commit();
-    doc.undo(ID::new(1, 1).into())?;
-    assert_eq!(doc.get_deep_value().to_json_value(), json!({"text": "13"}));
-    assert_eq!(doc.oplog_frontiers(), Frontiers::from(ID::new(1, 3)));
-    assert_eq!(doc.state_frontiers(), Frontiers::from(ID::new(1, 3)));
-    Ok(())
 }
 
 #[test]

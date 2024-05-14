@@ -14,7 +14,7 @@ use loro_common::{
     ContainerID, ContainerType, HasId, HasIdSpan, IdSpan, LoroResult, LoroValue, ID,
 };
 use rle::HasLength;
-use tracing::{instrument, trace_span};
+use tracing::{debug, instrument, trace_span};
 
 use crate::{
     arena::SharedArena,
@@ -33,7 +33,7 @@ use crate::{
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     op::InnerContent,
-    oplog::dag::FrontiersNotIncluded,
+    oplog::{dag::FrontiersNotIncluded, TemporaryHistoryMarker},
     version::Frontiers,
     DocDiff, HandlerTrait, InternalString, LoroError, VersionVector,
 };
@@ -718,6 +718,7 @@ impl LoroDoc {
     /// This implementation is kinda slow, but it's simple and maintainable. We can optimize it
     /// further when it's needed. The time complexity is O(n + m), n is the ops in the id_span, m is the
     /// distance from id_span to the current latest version.
+    #[instrument(level = "info", skip(self))]
     pub fn undo(&self, id_span: IdSpan) -> LoroResult<()> {
         if self.is_detached() {
             return Err(LoroError::UndoWhenDetached);
@@ -733,6 +734,7 @@ impl LoroDoc {
             return Err(LoroError::UndoInvalidIdSpan(id_span.id_last()));
         }
 
+        debug!("Started old state {:?}", self.get_deep_value());
         // The process of performing undo is:
         //
         // 1. Commit the current state
@@ -753,7 +755,7 @@ impl LoroDoc {
 
             // Checkout to the last id of the id_span
             let v_last = Frontiers::from_id(id_span.id_last());
-            self.checkout_without_emiting(&v_last).unwrap();
+            self.checkout_without_emitting(&v_last).unwrap();
             let start_version: Frontiers = self
                 .oplog
                 .lock()
@@ -761,7 +763,7 @@ impl LoroDoc {
                 .get_deps_of(id_span.id_start())
                 .unwrap();
             self.state.lock().unwrap().start_recording();
-            self.checkout_without_emiting(&start_version).unwrap();
+            self.checkout_without_emitting(&start_version).unwrap();
 
             // The ops needed to convert the diff from id_span end to id_span start
             let undo_events = {
@@ -772,23 +774,32 @@ impl LoroDoc {
             };
 
             let temp_peer = DefaultRandom.next_u64();
+            let old_peer = self.peer_id();
             // Creating temp ops to undo the operations
-            {
-                let old_peer = self.peer_id();
-                self.checkout_without_emiting(&v_last).unwrap();
+            let temp_history = {
+                self.checkout_without_emitting(&v_last).unwrap();
+                let (temp_history, f) = self
+                    .oplog
+                    .lock()
+                    .unwrap()
+                    .enter_temp_history_mode(temp_peer, id_span.id_last());
+                if let Some(f) = f {
+                    self.checkout_without_emitting(&f).unwrap();
+                }
                 self.set_peer_id(temp_peer).unwrap();
                 self.apply_events(undo_events);
                 self.commit_then_stop();
                 self.set_peer_id(old_peer).unwrap();
-            }
+                temp_history
+            };
 
-            self.checkout_without_emiting(&old_frontiers).unwrap();
+            self.checkout_without_emitting(&old_frontiers).unwrap();
 
             // TODO: can be optimize further by removing the ops from temp_peer
             // and converting its ops into the ops from the current peer
-            let undo_events_on_lastest_state = {
+            let undo_events_on_latest_state = {
                 self.state.lock().unwrap().start_recording();
-                self.checkout_without_emiting(&self.oplog_frontiers())
+                self.checkout_without_emitting(&self.oplog_frontiers())
                     .unwrap();
                 let mut state = self.state.lock().unwrap();
                 let e = state.take_events();
@@ -796,14 +807,21 @@ impl LoroDoc {
                 e
             };
 
-            self.checkout_without_emiting(&old_frontiers).unwrap();
-            self.dangerours_remove_ops_from_temp_peer(temp_peer);
+            debug!(
+                "Before checking out to old state {:?}",
+                self.get_deep_value()
+            );
+            dbg!(self.oplog.lock().unwrap().changes());
+            debug!("Calculated undo events: {:?}", &undo_events_on_latest_state);
+            self.checkout_without_emitting(&old_frontiers).unwrap();
+            debug!("Back to old state {:?}", self.get_deep_value());
+            self.remove_temp_history(temp_history);
             self.detached.store(false, Release);
             if was_recording {
                 self.state.lock().unwrap().start_recording();
             }
             self.start_auto_commit();
-            self.apply_events(undo_events_on_lastest_state);
+            self.apply_events(undo_events_on_latest_state);
             self.commit_then_stop();
         }
         self.renew_txn_if_auto_commit();
@@ -942,13 +960,13 @@ impl LoroDoc {
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
-        self.checkout_without_emiting(frontiers)?;
+        self.checkout_without_emitting(frontiers)?;
         self.emit_events();
         Ok(())
     }
 
     #[instrument(level = "info", skip(self))]
-    fn checkout_without_emiting(&self, frontiers: &Frontiers) -> Result<(), LoroError> {
+    fn checkout_without_emitting(&self, frontiers: &Frontiers) -> Result<(), LoroError> {
         self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
         let mut state = self.state.lock().unwrap();
@@ -1209,11 +1227,15 @@ impl LoroDoc {
 
     // This method will remove the ops from the temp peer
     // Users should never call this method directly
-    fn dangerours_remove_ops_from_temp_peer(&self, temp_peer: u64) {
-        self.oplog()
+    fn remove_temp_history(&self, temp: TemporaryHistoryMarker) {
+        let temp_history_record = self
+            .oplog()
             .lock()
             .unwrap()
-            .dangerours_remove_ops_from_temp_peer(temp_peer);
+            .dangerous_remove_ops_from_temp_peer(temp);
+        let mut state = self.state.lock().unwrap();
+        state.remove_temp_history_states(temp_history_record);
+        // need to reset the diff calculator to clean the ops from the temp peer
         let mut diff_calc = self.diff_calculator.lock().unwrap();
         *diff_calc = DiffCalculator::new();
     }
