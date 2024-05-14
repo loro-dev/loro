@@ -1,6 +1,7 @@
 use std::{fmt::Debug, ops::Range};
 
 use generic_btree::{rle::Sliceable, Cursor};
+use tracing::trace;
 
 use crate::{
     delta_rope::rle_tree::LengthFinder,
@@ -232,6 +233,65 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                 _ => return,
             }
         }
+    }
+
+    /// Transforms operation `self` against another operation `other` in such a way that the
+    /// impact of `other` is effectively included in `self`.
+    pub fn transform(&mut self, other: &Self, left_priority: bool) {
+        let mut this_iter = self.iter_with_len();
+        let mut other_iter = other.iter_with_len();
+        let mut transformed_delta = DeltaRope::new();
+
+        while this_iter.peek().is_some() || other_iter.peek().is_some() {
+            trace!(
+                "this_iter: {:?}, other_iter: {:?}",
+                this_iter.peek(),
+                other_iter.peek()
+            );
+            if this_iter.peek_is_insert() && (left_priority || !other_iter.peek_is_insert()) {
+                let insert_length;
+                match this_iter.peek().unwrap() {
+                    DeltaItem::Replace {
+                        value,
+                        attr,
+                        delete,
+                    } => {
+                        insert_length = value.rle_len();
+                        transformed_delta.push_insert(value.clone(), attr.clone());
+                    }
+                    DeltaItem::Retain { len, attr } => unreachable!(),
+                }
+                this_iter.next_with(insert_length).unwrap();
+            } else if other_iter.peek_is_insert() {
+                let insert_length = other_iter.peek_insert_length();
+                transformed_delta.push_retain(insert_length, Default::default());
+                other_iter.next_with(insert_length).unwrap();
+            } else {
+                // It's now either retains or deletes
+                let length = this_iter.peek_length().min(other_iter.peek_length());
+                let this_op_peek = this_iter.peek().cloned();
+                let other_op_peek = other_iter.peek().cloned();
+                let _ = this_iter.next_with(length);
+                let _ = other_iter.next_with(length);
+                if other_op_peek.map(|x| x.is_delete()).unwrap_or(false) {
+                    // It makes our deletes or retains redundant
+                    continue;
+                } else if this_op_peek
+                    .as_ref()
+                    .map(|x| x.is_delete())
+                    .unwrap_or(false)
+                {
+                    transformed_delta.push_delete(length);
+                } else {
+                    transformed_delta
+                        .push_retain(length, this_op_peek.unwrap().into_retain().unwrap().1);
+                    // FIXME: transform the attributes
+                }
+            }
+        }
+
+        transformed_delta.chop();
+        *self = transformed_delta;
     }
 }
 

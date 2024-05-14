@@ -42,6 +42,10 @@ impl TreeDiff {
         self.diff.extend(other);
         self
     }
+
+    pub(crate) fn transform(&self, b: &TreeDiff, left_priority: bool) {
+        unimplemented!("Transform tree diff")
+    }
 }
 
 /// Representation of differences in movable tree. It's an ordered list of [`TreeDiff`].

@@ -4,7 +4,7 @@ use super::*;
 use generic_btree::rle::{CanRemove, TryInsert};
 
 impl<V: DeltaValue, Attr> DeltaItem<V, Attr> {
-    /// The real length of the item in the delta
+    /// Including the delete length
     pub fn delta_len(&self) -> usize {
         match self {
             DeltaItem::Retain { len, .. } => *len,
@@ -16,6 +16,7 @@ impl<V: DeltaValue, Attr> DeltaItem<V, Attr> {
         }
     }
 
+    /// The real length of the item in the delta, excluding the delete length
     pub fn data_len(&self) -> usize {
         match self {
             DeltaItem::Retain { len, .. } => *len,

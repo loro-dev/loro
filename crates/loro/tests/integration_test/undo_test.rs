@@ -35,6 +35,30 @@ fn basic_text_undo() -> Result<(), LoroError> {
 }
 
 #[test]
+fn text_undo_insert_should_only_delete_once() -> Result<(), LoroError> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let text = doc.get_text("text");
+    text.insert(0, "123")?;
+    doc.commit();
+    text.delete(1, 2)?;
+    doc.commit();
+    assert_eq!(doc.get_deep_value().to_json_value(), json!({"text": "1"}));
+
+    // nothing should happen here, because the delete has already happened
+    doc.undo(ID::new(1, 1).into())?;
+    assert_eq!(doc.get_deep_value().to_json_value(), json!({"text": "1"}));
+
+    // nothing should happen here, because the delete has already happened
+    doc.undo(ID::new(1, 2).into())?;
+    assert_eq!(doc.get_deep_value().to_json_value(), json!({"text": "1"}));
+
+    doc.undo(ID::new(1, 0).into())?;
+    assert_eq!(doc.get_deep_value().to_json_value(), json!({"text": ""}));
+    Ok(())
+}
+
+#[test]
 fn collaborative_text_undo() -> Result<(), LoroError> {
     let doc_a = LoroDoc::new();
     doc_a.set_peer_id(1)?;
@@ -141,6 +165,27 @@ fn basic_map_undo() -> Result<(), LoroError> {
         }})
     );
 
+    Ok(())
+}
+
+#[test]
+fn map_collaborative_undo() -> Result<(), LoroError> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    doc_a.get_map("map").insert("a", "a")?;
+    doc_a.commit();
+
+    let doc_b = LoroDoc::new();
+    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    doc_b.get_map("map").insert("b", "b")?;
+    doc_b.commit();
+
+    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    doc_a.undo(ID::new(1, 0).into())?;
+    assert_eq!(
+        doc_a.get_deep_value().to_json_value(),
+        json!({"map": {"b": "b"}})
+    );
     Ok(())
 }
 

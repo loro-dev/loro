@@ -10,10 +10,12 @@ use std::{
     },
 };
 
+use fxhash::FxHashMap;
 use loro_common::{
     ContainerID, ContainerType, HasId, HasIdSpan, IdSpan, LoroResult, LoroValue, ID,
 };
 use rle::HasLength;
+use smallvec::SmallVec;
 use tracing::{debug, instrument, trace_span};
 
 use crate::{
@@ -29,13 +31,13 @@ use crate::{
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    event::{str_to_path, EventTriggerKind, Index},
+    event::{str_to_path, Diff, EventTriggerKind, Index},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     op::InnerContent,
     oplog::{dag::FrontiersNotIncluded, TemporaryHistoryMarker},
     version::Frontiers,
-    DocDiff, HandlerTrait, InternalString, LoroError, VersionVector,
+    ContainerDiff, DocDiff, HandlerTrait, InternalString, LoroError, VersionVector,
 };
 
 use super::{
@@ -737,22 +739,25 @@ impl LoroDoc {
         debug!("Started old state {:?}", self.get_deep_value());
         // The process of performing undo is:
         //
-        // 1. Commit the current state
-        // 2. Checkout to the last id of the id_span
-        // 3. Checkout to the start version(before `id_span.id_start` is applied), store the undo events that can undo the change by `id_span`
-        // 4. Checkout to the last id, use a new peer id to apply the undo events
-        // 5. Calculate the effect of the undo events on the current state, then remove the ops from the temp peer
-        // 6. Checkout to the latest version, reset the peer id
-        // 7. Apply the undo events
+        // 1. Calculate the event of checkout from id_span.last to before id_span.start, call it A
+        // 2. Calculate the event of checkout from id_span.last to the latest version, call it B
+        // 3. Transform event A based on event B, call it C
+        // 4. Apply event C directly on the latest version
+
         self.commit_then_stop();
         {
-            let (was_recording, old_frontiers) = {
+            let (was_recording, frontiers) = {
                 let mut state = self.state.lock().unwrap();
                 let was_recording = state.is_recording();
                 state.stop_and_clear_recording();
                 (was_recording, state.frontiers.clone())
             };
 
+            // ---------------------------------------
+            //  1. Calc event A, last -> before start
+            // ---------------------------------------
+
+            debug!("Undo 1");
             // Checkout to the last id of the id_span
             let v_last = Frontiers::from_id(id_span.id_last());
             self.checkout_without_emitting(&v_last).unwrap();
@@ -764,67 +769,72 @@ impl LoroDoc {
                 .unwrap();
             self.state.lock().unwrap().start_recording();
             self.checkout_without_emitting(&start_version).unwrap();
-
-            // The ops needed to convert the diff from id_span end to id_span start
-            let undo_events = {
+            let mut event_a = {
                 let mut state = self.state.lock().unwrap();
                 let e = state.take_events();
                 state.stop_and_clear_recording();
                 e
             };
 
-            let temp_peer = DefaultRandom.next_u64();
-            let old_peer = self.peer_id();
-            // Creating temp ops to undo the operations
-            let temp_history = {
-                self.checkout_without_emitting(&v_last).unwrap();
-                let (temp_history, f) = self
-                    .oplog
-                    .lock()
-                    .unwrap()
-                    .enter_temp_history_mode(temp_peer, id_span.id_last());
-                if let Some(f) = f {
-                    self.checkout_without_emitting(&f).unwrap();
-                }
-                self.set_peer_id(temp_peer).unwrap();
-                self.apply_events(undo_events);
-                self.commit_then_stop();
-                self.set_peer_id(old_peer).unwrap();
-                temp_history
-            };
+            // ---------------------------------------------
+            //  2. Calc event B, last -> the latest version
+            // ---------------------------------------------
+            debug!("Undo 2");
 
-            self.checkout_without_emitting(&old_frontiers).unwrap();
-
-            // TODO: can be optimize further by removing the ops from temp_peer
-            // and converting its ops into the ops from the current peer
-            let undo_events_on_latest_state = {
-                self.state.lock().unwrap().start_recording();
-                self.checkout_without_emitting(&self.oplog_frontiers())
-                    .unwrap();
-                let mut state = self.state.lock().unwrap();
-                let e = state.take_events();
-                state.stop_and_clear_recording();
-                e
-            };
-
-            debug!(
-                "Before checking out to old state {:?}",
-                self.get_deep_value()
-            );
-            dbg!(self.oplog.lock().unwrap().changes());
-            debug!("Calculated undo events: {:?}", &undo_events_on_latest_state);
-            self.checkout_without_emitting(&old_frontiers).unwrap();
-            debug!("Back to old state {:?}", self.get_deep_value());
-            self.remove_temp_history(temp_history);
+            self.checkout_without_emitting(&v_last).unwrap();
+            self.state.lock().unwrap().start_recording();
+            self.checkout_without_emitting(&frontiers).unwrap();
             self.detached.store(false, Release);
+            let event_b = {
+                let mut state = self.state.lock().unwrap();
+                let e = state.take_events();
+                state.stop_and_clear_recording();
+                e
+            };
+
+            // -----------------------------------------
+            //  3. Transform event A based on event B
+            // -----------------------------------------
+
+            debug!("Undo 3");
+            'outer: {
+                if event_b.is_empty() {
+                    break 'outer;
+                }
+
+                let mut b_container_diffs: FxHashMap<ContainerIdx, SmallVec<[&Diff; 3]>> =
+                    Default::default();
+                for diff in event_b.iter() {
+                    for d in diff.diff.iter() {
+                        b_container_diffs.entry(d.idx).or_default().push(&d.diff)
+                    }
+                }
+
+                for event in event_a.iter_mut() {
+                    for a_diff in event.diff.iter_mut() {
+                        if let Some(b_diffs) = b_container_diffs.get(&a_diff.idx) {
+                            for b_diff in b_diffs.iter() {
+                                a_diff.diff.transform(b_diff, true);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // -------------------------------------------------
+            //  4. Apply event C directly on the latest version
+            // -------------------------------------------------
+            debug!("Undo 4");
             if was_recording {
                 self.state.lock().unwrap().start_recording();
             }
             self.start_auto_commit();
-            self.apply_events(undo_events_on_latest_state);
+            self.apply_events(event_a);
             self.commit_then_stop();
         }
+
         self.renew_txn_if_auto_commit();
+        debug!("Undo done");
         Ok(())
     }
 

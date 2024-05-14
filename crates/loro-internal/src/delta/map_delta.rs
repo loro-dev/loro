@@ -134,6 +134,18 @@ impl ResolvedMapDelta {
         self.updated.insert(key, map_value);
         self
     }
+
+    pub(crate) fn transform(&mut self, b: &ResolvedMapDelta, left_priority: bool) {
+        for (k, v) in b.updated.iter() {
+            if let Some(old) = self.updated.get_mut(k) {
+                if !left_priority || old.value.is_none() {
+                    self.updated.remove(k);
+                }
+            } else {
+                self.updated.insert(k.clone(), v.clone());
+            }
+        }
+    }
 }
 
 impl Hash for MapValue {
