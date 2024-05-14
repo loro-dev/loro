@@ -18,7 +18,7 @@ impl FractionalIndex {
             (Some(lower), Some(upper)) => Self::new_between_jitter(lower, upper, rng, jitter),
             (Some(lower), None) => Self::new_after_jitter(lower, rng, jitter).into(),
             (None, Some(upper)) => Self::new_before_jitter(upper, rng, jitter).into(),
-            (None, None) => FractionalIndex::default().into(),
+            (None, None) => FractionalIndex::jitter_default(rng, jitter).into(),
         }
     }
 
