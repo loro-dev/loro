@@ -528,6 +528,16 @@ impl OpLog {
         None
     }
 
+    pub fn get_deps_of(&self, id: ID) -> Option<Frontiers> {
+        self.get_change_at(id).map(|c| {
+            if c.id.counter == id.counter {
+                c.deps.clone()
+            } else {
+                Frontiers::from_id(id.inc(-1))
+            }
+        })
+    }
+
     pub fn get_remote_change_at(&self, id: ID) -> Option<Change<RemoteOp>> {
         let change = self.get_change_at(id)?;
         Some(self.convert_change_to_remote(change))
@@ -931,6 +941,18 @@ impl OpLog {
     pub(crate) fn get_op(&self, id: ID) -> Option<&Op> {
         let change = self.get_change_at(id)?;
         change.ops.get_by_atom_index(id.counter).map(|x| x.element)
+    }
+
+    /// This needs to be used cautiously, because it will remove the ops from the temp peer.
+    /// It might break the internal invariants.
+    ///
+    /// No change should depend on a change from the temporary peer.
+    pub(crate) fn dangerours_remove_ops_from_temp_peer(&mut self, temp_peer: u64) {
+        // TODO: recalculate next lamport?
+        self.dag.vv.remove(&temp_peer);
+        self.dag.frontiers.retain(|x| x.peer != temp_peer);
+        self.changes.remove(&temp_peer);
+        self.dag.map.remove(&temp_peer);
     }
 }
 

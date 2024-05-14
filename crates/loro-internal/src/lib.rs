@@ -17,6 +17,7 @@ pub use handler::{
     TreeHandler, UnknownHandler,
 };
 pub use loro::LoroDoc;
+pub use loro_common;
 pub use oplog::OpLog;
 pub use state::DocState;
 pub mod awareness;

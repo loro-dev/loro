@@ -12,6 +12,7 @@ use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
+use loro_internal::loro_common::IdSpan;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 
@@ -470,6 +471,10 @@ impl LoroDoc {
         cursor: &Cursor,
     ) -> Result<PosQueryResult, CannotFindRelativePosition> {
         self.doc.query_pos(cursor)
+    }
+
+    pub fn undo(&self, id_span: IdSpan) -> LoroResult<()> {
+        self.doc.undo(id_span)
     }
 }
 

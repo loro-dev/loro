@@ -13,11 +13,13 @@ use crate::{
     state::{ContainerState, IndexType, State},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
+    ContainerDiff,
 };
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
+use itertools::Itertools;
 use loro_common::{
     ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, ID,
 };
@@ -1055,6 +1057,40 @@ impl Handler {
             Self::Counter(x) => x.get_deep_value(),
             Self::Unknown(x) => x.get_deep_value(),
         }
+    }
+
+    pub(crate) fn apply_event(&self, event: ContainerDiff) -> LoroResult<()> {
+        match self {
+            Self::Map(x) => {
+                let diff = event.diff.into_map().unwrap();
+                for (key, value) in diff.updated.into_iter() {
+                    match value.value {
+                        Some(ValueOrHandler::Handler(h)) => {
+                            x.insert_container(&key, h)?;
+                        }
+                        Some(ValueOrHandler::Value(v)) => {
+                            x.insert(&key, v)?;
+                        }
+                        None => todo!(),
+                    }
+                }
+            }
+            Self::Text(x) => {
+                let delta = event.diff.into_text().unwrap();
+                x.apply_delta(&TextDelta::from_text_diff(delta.iter()))?;
+            }
+            Self::List(x) => todo!(),
+            Self::MovableList(x) => todo!(),
+            Self::Tree(x) => todo!(),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => {
+                unimplemented!("Counter handler")
+            }
+            Self::Unknown(x) => {
+                unimplemented!("Unknown handler")
+            }
+        }
+        Ok(())
     }
 }
 

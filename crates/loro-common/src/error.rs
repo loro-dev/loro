@@ -56,6 +56,10 @@ pub enum LoroError {
     NotImplemented(&'static str),
     #[error("Reattach a container that is already attached")]
     ReattachAttachedContainer,
+    #[error("Undo is not allowed when the doc is in the detached mode.")]
+    UndoWhenDetached,
+    #[error("The given ID ({0}) is not contained by the doc")]
+    UndoInvalidIdSpan(ID),
 }
 
 #[derive(Error, Debug)]
