@@ -251,15 +251,11 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
             if this_iter.peek_is_insert() && (left_priority || !other_iter.peek_is_insert()) {
                 let insert_length;
                 match this_iter.peek().unwrap() {
-                    DeltaItem::Replace {
-                        value,
-                        attr,
-                        delete,
-                    } => {
+                    DeltaItem::Replace { value, attr, .. } => {
                         insert_length = value.rle_len();
                         transformed_delta.push_insert(value.clone(), attr.clone());
                     }
-                    DeltaItem::Retain { len, attr } => unreachable!(),
+                    DeltaItem::Retain { .. } => unreachable!(),
                 }
                 this_iter.next_with(insert_length).unwrap();
             } else if other_iter.peek_is_insert() {
@@ -283,8 +279,12 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                 {
                     transformed_delta.push_delete(length);
                 } else {
-                    transformed_delta
-                        .push_retain(length, this_op_peek.unwrap().into_retain().unwrap().1);
+                    transformed_delta.push_retain(
+                        length,
+                        this_op_peek
+                            .map(|x| x.into_retain().unwrap().1)
+                            .unwrap_or_default(),
+                    );
                     // FIXME: transform the attributes
                 }
             }

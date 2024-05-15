@@ -1,6 +1,10 @@
 use loro::{Frontiers, LoroDoc, LoroError, ToJson};
-use loro_internal::{id::ID, loro_common::IdSpan};
+use loro_internal::{
+    id::{Counter, ID},
+    loro_common::IdSpan,
+};
 use serde_json::json;
+use tracing::trace;
 
 #[test]
 fn basic_text_undo() -> Result<(), LoroError> {
@@ -114,6 +118,74 @@ fn collaborative_text_undo() -> Result<(), LoroError> {
 }
 
 #[test]
+fn basic_list_undo_insertion() -> Result<(), LoroError> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let list = doc.get_list("list");
+    list.push("12")?;
+    list.push("34")?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": ["12", "34"]
+        })
+    );
+    doc.undo(ID::new(1, 1).into())?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": ["12"]
+        })
+    );
+    doc.undo(ID::new(1, 0).into())?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": []
+        })
+    );
+
+    Ok(())
+}
+
+#[test]
+fn basic_list_undo_deletion() -> Result<(), LoroError> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let list = doc.get_list("list");
+    list.push("12")?; // op 0
+    list.push("34")?; // op 1
+    list.delete(1, 1)?; // op 2
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": ["12"]
+        })
+    );
+    doc.undo(ID::new(1, 2).into())?; // op 3
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": ["12", "34"]
+        })
+    );
+
+    // Now, to undo "34" correctly we need to include the latest change
+    // If we only undo op 1, op 3 will create "34" again.
+    doc.undo(IdSpan::new(1, 1, 4))?; // op 4
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": ["12"]
+        })
+    );
+
+    assert_eq!(doc.oplog_frontiers()[0].counter, 4);
+
+    Ok(())
+}
+
+#[test]
 fn basic_map_undo() -> Result<(), LoroError> {
     let doc_a = LoroDoc::new();
     doc_a.set_peer_id(1)?;
@@ -191,5 +263,100 @@ fn map_collaborative_undo() -> Result<(), LoroError> {
 
 #[test]
 fn map_container_undo() -> Result<(), LoroError> {
+    Ok(())
+}
+
+fn sync(a: &LoroDoc, b: &LoroDoc) {
+    a.import(&b.export_from(&a.oplog_vv())).unwrap();
+    b.import(&a.export_from(&b.oplog_vv())).unwrap();
+}
+
+#[test]
+fn undo_id_span_that_contains_remote_deps_inside() -> Result<(), LoroError> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+
+    //                                      ┌──────────────┐
+    //                                      │              │
+    // Op from B            ┌───────────────┤  Delete "A"  │◄─────────────────────┐
+    //                      │               │  Insert "B"  │                      │
+    //                      │               │              │                      │
+    //                      │               └──────────────┘                      │
+    //                      │                                                     │
+    //                      ▼                                                     │
+    //             ┌────────────────┐       ┌──────────────────┐          ┌───────┴──────────┐
+    //             │                │       │                  │          │                  │
+    // Ops from A  │   Insert "A"   │◄──────┤ Insert " rules"  │◄─────────┤   Insert "."     │
+    //             │                │       │                  │          │                  │
+    //             └────────────────┘       └──────────────────┘          └──────────────────┘
+
+    doc_a.get_text("text").insert(0, "A")?;
+    sync(&doc_a, &doc_b);
+    doc_b.get_text("text").insert(0, "B")?;
+    doc_b.get_text("text").delete(1, 1)?;
+    doc_a.get_text("text").insert(1, " rules")?;
+    sync(&doc_a, &doc_b);
+    doc_a.get_text("text").insert(7, ".")?;
+    //                                     ┌──────────────┐
+    //                                     │              │
+    //  Op from B          ┌───────────────┤  Delete "A"  │◄─────────────────────┐
+    //  should not be      │               │  Insert "B"  │                      │
+    //  undone             │               │              │                      │
+    //                     │               ├──────────────┤                      │
+    //        ┌────────────┴───────────────┴──────────────┴──────────────────────┼──────────────┐
+    //        │            │                                                     │              │
+    //        │   ┌────────────────┐       ┌──────────────────┐          ┌───────┴──────────┐   │
+    //        │   │                │       │                  │          │                  │   │
+    //  Undo  │   │   Insert "A"   │◄──────┤ Insert " rules"  │◄─────────┤   Insert "."     │   │
+    // These  │   │                │       │                  │          │                  │   │
+    //        │   └────────────────┘       └──────────────────┘          └──────────────────┘   │
+    //        │                                                                                 │
+    //        └─────────────────────────────────────────────────────────────────────────────────┘
+    assert_eq!(
+        doc_a.get_deep_value().to_json_value(),
+        json!({
+            "text": "B rules."
+        })
+    );
+    doc_a.undo(IdSpan::new(1, 0, 8))?;
+    assert_eq!(
+        doc_a.get_deep_value().to_json_value(),
+        json!({
+            "text": "B"
+        })
+    );
+    assert_eq!(doc_a.oplog_frontiers()[0].counter, 14);
+    Ok(())
+}
+
+#[test]
+fn undo_id_span_that_contains_remote_deps_inside_many_times() -> Result<(), LoroError> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+
+    const TIMES: usize = 10;
+    // Replay 10 times
+    for _ in 0..TIMES {
+        doc_a.get_text("text").insert(0, "A")?;
+        sync(&doc_a, &doc_b);
+        doc_b.get_text("text").insert(0, "B")?;
+        doc_b.get_text("text").delete(1, 1)?;
+        doc_a.get_text("text").insert(1, " rules")?;
+        sync(&doc_a, &doc_b);
+        doc_a.get_text("text").insert(7, ".")?;
+    }
+
+    // Undo all ops from A
+    doc_a.undo(IdSpan::new(1, 0, (TIMES * 8) as Counter))?;
+    assert_eq!(
+        doc_a.get_deep_value().to_json_value(),
+        json!({
+            "text": "B".repeat(TIMES )
+        })
+    );
     Ok(())
 }

@@ -8,7 +8,7 @@ use crate::{
     },
     cursor::{Cursor, Side},
     delta::{DeltaItem, StyleMeta},
-    event::TextDiffItem,
+    event::{Diff, TextDiffItem},
     op::ListSlice,
     state::{ContainerState, IndexType, State},
     txn::EventHint,
@@ -19,7 +19,6 @@ use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
-use itertools::Itertools;
 use loro_common::{
     ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, ID,
 };
@@ -30,7 +29,7 @@ use std::{
     ops::Deref,
     sync::{Arc, Mutex, Weak},
 };
-use tracing::{info, instrument};
+use tracing::{error, info, instrument, trace};
 
 mod tree;
 pub use tree::TreeHandler;
@@ -1059,10 +1058,10 @@ impl Handler {
         }
     }
 
-    pub(crate) fn apply_event(&self, event: ContainerDiff) -> LoroResult<()> {
+    pub(crate) fn apply_event(&self, diff: Diff) -> LoroResult<()> {
         match self {
             Self::Map(x) => {
-                let diff = event.diff.into_map().unwrap();
+                let diff = diff.into_map().unwrap();
                 for (key, value) in diff.updated.into_iter() {
                     match value.value {
                         Some(ValueOrHandler::Handler(h)) => {
@@ -1078,11 +1077,17 @@ impl Handler {
                 }
             }
             Self::Text(x) => {
-                let delta = event.diff.into_text().unwrap();
+                let delta = diff.into_text().unwrap();
                 x.apply_delta(&TextDelta::from_text_diff(delta.iter()))?;
             }
-            Self::List(x) => todo!(),
-            Self::MovableList(x) => todo!(),
+            Self::List(x) => {
+                let delta = diff.into_list().unwrap();
+                x.apply_delta(delta)?;
+            }
+            Self::MovableList(x) => {
+                let delta = diff.into_list().unwrap();
+                x.apply_delta(delta)?;
+            }
             Self::Tree(x) => todo!(),
             #[cfg(feature = "counter")]
             Self::Counter(x) => {
@@ -1375,6 +1380,7 @@ impl TextHandler {
         }
 
         if pos + len > self.len_event() {
+            error!("pos={} len={} len_event={}", pos, len, self.len_event());
             return Err(LoroError::OutOfBound {
                 pos: pos + len,
                 len: self.len_event(),
@@ -1382,7 +1388,7 @@ impl TextHandler {
         }
 
         let inner = self.inner.try_attached_state()?;
-        let s = tracing::span!(tracing::Level::INFO, "delete pos={} len={}", pos, len);
+        let s = tracing::span!(tracing::Level::INFO, "delete", "pos={} len={}", pos, len);
         let _e = s.enter();
         let ranges = inner.with_state(|state| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
@@ -2115,6 +2121,48 @@ impl ListHandler {
             }
         }
     }
+
+    fn apply_delta(
+        &self,
+        delta: loro_delta::DeltaRope<
+            loro_delta::array_vec::ArrayVec<ValueOrHandler, 8>,
+            crate::event::ListDeltaMeta,
+        >,
+    ) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(d) => unimplemented!(),
+            MaybeDetached::Attached(a) => {
+                let mut index = 0;
+                for item in delta.iter() {
+                    match item {
+                        loro_delta::DeltaItem::Retain { len, .. } => {
+                            index += len;
+                        }
+                        loro_delta::DeltaItem::Replace { value, delete, .. } => {
+                            if *delete > 0 {
+                                self.delete(index, *delete)?;
+                            }
+
+                            for v in value.iter() {
+                                match v {
+                                    ValueOrHandler::Value(v) => {
+                                        self.insert(index, v.clone())?;
+                                    }
+                                    ValueOrHandler::Handler(h) => {
+                                        self.insert_container(index, h.clone())?;
+                                    }
+                                }
+
+                                index += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl MovableListHandler {
@@ -2728,6 +2776,52 @@ impl MovableListHandler {
                         .unwrap_or(l.len());
                 });
                 pos
+            }
+        }
+    }
+
+    fn apply_delta(
+        &self,
+        delta: loro_delta::DeltaRope<
+            loro_delta::array_vec::ArrayVec<ValueOrHandler, 8>,
+            crate::event::ListDeltaMeta,
+        >,
+    ) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unimplemented!();
+            }
+            MaybeDetached::Attached(_) => {
+                let mut index = 0;
+                for d in delta.iter() {
+                    match d {
+                        loro_delta::DeltaItem::Retain { len, .. } => {
+                            index += len;
+                        }
+                        loro_delta::DeltaItem::Replace {
+                            value,
+                            delete,
+                            attr: _attr,
+                        } => {
+                            // TODO: handle move error
+                            self.delete(index, *delete)?;
+                            for v in value.iter() {
+                                match v {
+                                    ValueOrHandler::Value(v) => {
+                                        self.insert(index, v.clone())?;
+                                    }
+                                    ValueOrHandler::Handler(h) => {
+                                        self.insert_container(index, h.clone())?;
+                                    }
+                                }
+
+                                index += 1;
+                            }
+                        }
+                    }
+                }
+
+                Ok(())
             }
         }
     }
