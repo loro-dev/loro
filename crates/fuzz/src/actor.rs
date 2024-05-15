@@ -21,7 +21,7 @@ use super::{
     container::MapActor,
 };
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct UndoLength {
     last: u32,
     now: u32,
@@ -113,9 +113,10 @@ impl Actor {
         let ty = action.ty();
         let actor = self.targets.get_mut(&ty).unwrap();
         self.loro.attach();
-        let before_counter = self.loro.oplog_vv().get_last(self.peer).unwrap_or(0) as u32;
+        let before_counter = self.loro.state_vv().get_last(self.peer).unwrap_or(0) as u32;
         let idx = action.apply(actor, container as usize);
-        let after_counter = self.loro.oplog_vv().get_last(self.peer).unwrap_or(0) as u32;
+        self.loro.commit();
+        let after_counter = self.loro.state_vv().get_last(self.peer).unwrap_or(0) as u32;
         self.can_fuzz_undo_length.now += after_counter - before_counter;
         if let Some(idx) = idx {
             self.add_new_container(idx);

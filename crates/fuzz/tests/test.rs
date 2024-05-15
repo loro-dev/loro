@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
 use fuzz::{
-    actions::{ActionWrapper::*, GenericAction},
+    actions::{
+        ActionWrapper::{self, *},
+        GenericAction,
+    },
+    container::{TreeAction, TreeActionInner},
     crdt_fuzzer::{test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
 };
 use loro::{ContainerType::*, LoroCounter, LoroDoc};
@@ -5586,4 +5590,58 @@ fn unknown_container() {
     counter.increment(2).unwrap();
 
     doc.import(&doc2.export_snapshot()).unwrap();
+}
+
+#[test]
+fn undo_tree() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Tree],
+        &mut [
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: ActionWrapper::Action(fuzz::actions::ActionInner::Tree(TreeAction {
+                    target: (0, 0),
+                    action: TreeActionInner::Create { index: 0 },
+                })),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: ActionWrapper::Action(fuzz::actions::ActionInner::Tree(TreeAction {
+                    target: (0, 1),
+                    action: TreeActionInner::Create { index: 1 },
+                })),
+            },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: ActionWrapper::Action(fuzz::actions::ActionInner::Tree(TreeAction {
+                    target: (0, 0),
+                    action: TreeActionInner::Move {
+                        parent: (0, 1),
+                        index: 0,
+                    },
+                })),
+            },
+            Handle {
+                site: 1,
+                target: 0,
+                container: 0,
+                action: ActionWrapper::Action(fuzz::actions::ActionInner::Tree(TreeAction {
+                    target: (0, 1),
+                    action: TreeActionInner::Move {
+                        parent: (0, 0),
+                        index: 0,
+                    },
+                })),
+            },
+            SyncAllUndo { site: 0, op_len: 2 },
+        ],
+    )
 }

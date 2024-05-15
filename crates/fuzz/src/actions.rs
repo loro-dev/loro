@@ -70,6 +70,11 @@ pub enum Action {
         site: u8,
         op_len: u32,
     },
+    // For concurrent undo
+    SyncAllUndo {
+        site: u8,
+        op_len: u32,
+    },
     Sync {
         from: u8,
         to: u8,
@@ -157,6 +162,12 @@ impl Tabled for Action {
             }
             Action::Undo { site, op_len } => vec![
                 "undo".into(),
+                format!("{}", site).into(),
+                format!("{} op len", op_len).into(),
+                "".into(),
+            ],
+            Action::SyncAllUndo { site, op_len } => vec![
+                "sync all undo".into(),
                 format!("{}", site).into(),
                 format!("{} op len", op_len).into(),
                 "".into(),

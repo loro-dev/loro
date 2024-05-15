@@ -193,3 +193,23 @@ fn map_collaborative_undo() -> Result<(), LoroError> {
 fn map_container_undo() -> Result<(), LoroError> {
     Ok(())
 }
+
+#[test]
+fn tree_undo() -> Result<(), LoroError> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let tree_a = doc_a.get_tree("tree");
+    let root = tree_a.create(None)?;
+    let root2 = tree_a.create(None)?;
+    let doc_b = LoroDoc::new();
+    let tree_b = doc_b.get_tree("tree");
+    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    tree_a.mov(root, root2)?;
+    tree_b.mov(root2, root)?;
+    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    doc_b.import(&doc_a.export_from(&Default::default()))?;
+
+    doc_a.undo(ID::new(1, 1).into())?;
+
+    Ok(())
+}
