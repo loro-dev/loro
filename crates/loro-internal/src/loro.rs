@@ -32,7 +32,7 @@ use crate::{
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     op::InnerContent,
-    oplog::{dag::FrontiersNotIncluded, TemporaryHistoryMarker},
+    oplog::dag::FrontiersNotIncluded,
     version::Frontiers,
     DocDiff, HandlerTrait, InternalString, LoroError, VersionVector,
 };
@@ -1287,21 +1287,6 @@ impl LoroDoc {
                 }
             }
         }
-    }
-
-    // This method will remove the ops from the temp peer
-    // Users should never call this method directly
-    fn remove_temp_history(&self, temp: TemporaryHistoryMarker) {
-        let temp_history_record = self
-            .oplog()
-            .lock()
-            .unwrap()
-            .dangerous_remove_ops_from_temp_peer(temp);
-        let mut state = self.state.lock().unwrap();
-        state.remove_temp_history_states(temp_history_record);
-        // need to reset the diff calculator to clean the ops from the temp peer
-        let mut diff_calc = self.diff_calculator.lock().unwrap();
-        *diff_calc = DiffCalculator::new();
     }
 }
 

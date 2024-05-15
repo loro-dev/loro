@@ -1,14 +1,12 @@
 pub(crate) mod dag;
 mod iter;
 mod pending_changes;
-mod temp_history;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::mem::take;
 use std::rc::Rc;
-pub(crate) use temp_history::{TemporaryHistoryMarker, TemporaryHistoryRecord};
 use tracing::debug;
 
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
@@ -58,12 +56,6 @@ pub struct OpLog {
     /// If so the Dag's frontiers won't be updated until the batch is finished.
     pub(crate) batch_importing: bool,
     pub(crate) configure: Configure,
-
-    /// The temporary history is the history going to be removed after a continuous calculation.
-    /// There will be no dependency between the new history and the temp history.
-    /// There should be no new change imported to OpLog when the temp history is active.
-    /// It's used to implement the undo feature.
-    temp_history: Option<temp_history::TemporaryHistoryRecord>,
 }
 
 /// [AppDag] maintains the causal graph of the app.
@@ -90,10 +82,6 @@ pub struct AppDagNode {
 
 impl Clone for OpLog {
     fn clone(&self) -> Self {
-        if self.temp_history.is_some() {
-            panic!("temp history should be None");
-        }
-
         Self {
             dag: self.dag.clone(),
             arena: self.arena.clone(),
@@ -104,7 +92,6 @@ impl Clone for OpLog {
             pending_changes: Default::default(),
             batch_importing: false,
             configure: self.configure.clone(),
-            temp_history: None,
         }
     }
 }
@@ -196,7 +183,6 @@ impl OpLog {
             pending_changes: Default::default(),
             batch_importing: false,
             configure: Configure::default(),
-            temp_history: None,
         }
     }
 
@@ -260,11 +246,6 @@ impl OpLog {
         debug!("Inserting new change {:?}", &change);
         self.op_groups.insert_by_change(&change);
         self.register_container_and_parent_link(&change);
-        if let Some(temp_history) = self.temp_history.as_mut() {
-            debug_assert!(temp_history.peer == change.id.peer);
-            temp_history.on_new_change(&self.arena, &change);
-        }
-
         let entry = self.changes.entry(change.id.peer).or_default();
         match entry.last_mut() {
             Some(last) => {
