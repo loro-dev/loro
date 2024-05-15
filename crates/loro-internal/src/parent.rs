@@ -9,7 +9,7 @@ use loro_common::LoroValue;
 use crate::{
     change::Change,
     container::{
-        list::list_op::{self, ListOp},
+        list::list_op::{ListOp},
         map::MapSet,
         tree::tree_op::TreeOp,
     },
@@ -26,7 +26,7 @@ impl OpLog {
         let arena = &self.arena;
         for op in change.ops.iter() {
             op.content.visit_created_children(arena, &mut |c| {
-                let idx = arena.register_container(&c);
+                let idx = arena.register_container(c);
                 arena.set_parent(idx, Some(op.container));
             });
         }

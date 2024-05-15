@@ -11,17 +11,14 @@ use std::{
 };
 
 use fxhash::FxHashMap;
-use loro_common::{
-    ContainerID, ContainerType, HasId, HasIdSpan, IdSpan, LoroResult, LoroValue, ID,
-};
+use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
 use rle::HasLength;
-use smallvec::SmallVec;
 use tracing::{debug, debug_span, instrument, trace, trace_span};
 
 use crate::{
     arena::SharedArena,
     change::Timestamp,
-    configure::{Configure, DefaultRandom, SecureRandomGenerator},
+    configure::Configure,
     container::{
         idx::ContainerIdx, list::list_op::InnerListOp, richtext::config::StyleConfigMap,
         IntoContainerId,
@@ -31,13 +28,13 @@ use crate::{
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    event::{str_to_path, Diff, DiffVariant, EventTriggerKind, Index},
+    event::{str_to_path, Diff, EventTriggerKind, Index},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     op::InnerContent,
     oplog::{dag::FrontiersNotIncluded, TemporaryHistoryMarker},
     version::Frontiers,
-    ContainerDiff, DocDiff, HandlerTrait, InternalString, LoroError, VersionVector,
+    DocDiff, HandlerTrait, InternalString, LoroError, VersionVector,
 };
 
 use super::{
@@ -159,7 +156,7 @@ impl LoroDoc {
     /// Create a doc with auto commit enabled.
     #[inline]
     pub fn new_auto_commit() -> Self {
-        let mut doc = Self::new();
+        let doc = Self::new();
         doc.start_auto_commit();
         doc
     }
@@ -761,7 +758,7 @@ impl LoroDoc {
                 }
 
                 for (idx, diff) in self.0.iter_mut() {
-                    if let Some(b_diff) = other.0.get(&idx) {
+                    if let Some(b_diff) = other.0.get(idx) {
                         diff.compose_ref(b_diff);
                     }
                 }
@@ -773,7 +770,7 @@ impl LoroDoc {
                 }
 
                 for (idx, diff) in self.0.iter_mut() {
-                    if let Some(b_diff) = other.0.get(&idx) {
+                    if let Some(b_diff) = other.0.get(idx) {
                         diff.transform(b_diff, left_priority);
                     }
                 }

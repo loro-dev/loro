@@ -359,10 +359,10 @@ impl Diff {
         // PERF: avoid clone
         match (self, diff) {
             (Diff::List(a), Diff::List(b)) => {
-                a.compose(&b);
+                a.compose(b);
             }
             (Diff::Text(a), Diff::Text(b)) => {
-                a.compose(&b);
+                a.compose(b);
             }
             (Diff::Map(a), Diff::Map(b)) => {
                 *a = a.clone().compose(b.clone());

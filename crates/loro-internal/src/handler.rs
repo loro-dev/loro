@@ -13,7 +13,6 @@ use crate::{
     state::{ContainerState, IndexType, State},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
-    ContainerDiff,
 };
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
@@ -29,7 +28,7 @@ use std::{
     ops::Deref,
     sync::{Arc, Mutex, Weak},
 };
-use tracing::{error, info, instrument, trace};
+use tracing::{error, info, instrument};
 
 mod tree;
 pub use tree::TreeHandler;

@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 use std::mem::take;
 use std::rc::Rc;
 pub(crate) use temp_history::{TemporaryHistoryMarker, TemporaryHistoryRecord};
-use tracing::{debug, trace};
+use tracing::debug;
 
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;

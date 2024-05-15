@@ -4,7 +4,6 @@ use loro_internal::{
     loro_common::IdSpan,
 };
 use serde_json::json;
-use tracing::trace;
 
 #[test]
 fn basic_text_undo() -> Result<(), LoroError> {
