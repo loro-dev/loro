@@ -7,8 +7,8 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
 use loro::{Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, ID};
-use rand::SeedableRng;
-use rand::{rngs::StdRng, Rng};
+use loro_common::IdSpan;
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use tracing::info_span;
 
 use crate::{
@@ -98,6 +98,12 @@ impl Actor {
         if let Some(idx) = idx {
             self.add_new_container(idx);
         }
+    }
+
+    pub fn undo(&mut self, undo_length: u32) {
+        let vv = self.loro.oplog_vv().get_last(self.peer).unwrap_or(0);
+        let id_span = IdSpan::new(self.peer, vv - undo_length as i32, vv);
+        self.loro.undo(id_span).unwrap();
     }
 
     pub fn check_tracker(&self) {

@@ -85,6 +85,12 @@ impl CRDTFuzzer {
                 action.convert_to_inner(target);
                 actor.pre_process(action.as_action_mut().unwrap(), container);
             }
+            Action::Undo { site, op_len } => {
+                *site %= max_users;
+                let actor = &mut self.actors[*site as usize];
+                let vv = actor.loro.oplog_vv().get_last(*site as u64).unwrap_or(0) as u32;
+                *op_len %= vv + 1;
+            }
         }
     }
 
@@ -140,6 +146,12 @@ impl CRDTFuzzer {
                 let action = action.as_action().unwrap();
                 actor.apply(action, *container);
                 // actor.loro.commit();
+            }
+            Action::Undo { site, op_len } => {
+                let actor = &mut self.actors[*site as usize];
+                if *op_len != 0 {
+                    actor.undo(*op_len);
+                }
             }
         }
     }

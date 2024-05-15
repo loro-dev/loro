@@ -66,6 +66,10 @@ pub enum Action {
         site: u8,
         to: u32,
     },
+    Undo {
+        site: u8,
+        op_len: u32,
+    },
     Sync {
         from: u8,
         to: u8,
@@ -151,6 +155,12 @@ impl Tabled for Action {
                 fields.extend(action.as_action().unwrap().table_fields());
                 fields
             }
+            Action::Undo { site, op_len } => vec![
+                "undo".into(),
+                format!("{}", site).into(),
+                format!("{} op len", op_len).into(),
+                "".into(),
+            ],
         }
     }
 
