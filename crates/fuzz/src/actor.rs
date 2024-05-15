@@ -21,12 +21,30 @@ use super::{
     container::MapActor,
 };
 
+#[derive(Default)]
+pub struct UndoLength {
+    last: u32,
+    now: u32,
+}
+
+impl UndoLength {
+    pub fn after_merge(&mut self) {
+        self.last = self.now;
+        self.now = 0;
+    }
+
+    pub fn can_undo_length(&self) -> u32 {
+        self.last + self.now
+    }
+}
+
 pub struct Actor {
     pub peer: PeerID,
     pub loro: Arc<LoroDoc>,
     pub targets: FxHashMap<ContainerType, ActionExecutor>,
     pub tracker: Arc<Mutex<ContainerTracker>>,
     pub history: FxHashMap<Vec<ID>, LoroValue>,
+    pub can_fuzz_undo_length: UndoLength,
     pub rng: StdRng,
 }
 
@@ -52,6 +70,7 @@ impl Actor {
             tracker,
             targets: FxHashMap::default(),
             history: default_history,
+            can_fuzz_undo_length: Default::default(),
             rng: StdRng::from_seed({
                 let mut seed = [0u8; 32];
                 let bytes = id.to_be_bytes(); // Convert u64 to [u8; 8]
@@ -94,16 +113,29 @@ impl Actor {
         let ty = action.ty();
         let actor = self.targets.get_mut(&ty).unwrap();
         self.loro.attach();
+        let before_counter = self.loro.oplog_vv().get_last(self.peer).unwrap_or(0) as u32;
         let idx = action.apply(actor, container as usize);
+        let after_counter = self.loro.oplog_vv().get_last(self.peer).unwrap_or(0) as u32;
+        self.can_fuzz_undo_length.now += after_counter - before_counter;
         if let Some(idx) = idx {
             self.add_new_container(idx);
         }
     }
 
     pub fn undo(&mut self, undo_length: u32) {
-        let vv = self.loro.oplog_vv().get_last(self.peer).unwrap_or(0);
-        let id_span = IdSpan::new(self.peer, vv - undo_length as i32, vv);
+        let mut vv = self.loro.oplog_vv();
+        let counter = self.loro.oplog_vv().get_last(self.peer).unwrap_or(0) + 1;
+        let id_span = IdSpan::new(self.peer, counter - undo_length as i32, counter);
+
+        vv.insert(self.peer, counter - undo_length as i32);
+        let f = self.loro.vv_to_frontiers(&vv);
+
+        self.loro.checkout(&f).unwrap();
+        let before_undo = self.loro.get_deep_value();
+        self.loro.attach();
         self.loro.undo(id_span).unwrap();
+        let after_undo = self.loro.get_deep_value();
+        assert_value_eq(&before_undo, &after_undo);
     }
 
     pub fn check_tracker(&self) {

@@ -647,7 +647,7 @@ dependencies = [
 [[package]]
 name = "fractional_index"
 version = "0.1.0"
-source = "git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo#92746b95dc77223f2252398598544178dc3906ec"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo#aa632f8fd13c2f642428c70689ad7ae80cce6082"
 dependencies = [
  "imbl",
  "rand",
@@ -678,9 +678,8 @@ dependencies = [
  "fxhash",
  "itertools 0.12.1",
  "loro 0.5.1",
- "loro 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo)",
- "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo)",
- "loro-internal 0.5.1",
+ "loro 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo)",
+ "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo)",
  "rand",
  "tabled 0.10.0",
  "tracing",
@@ -1015,13 +1014,13 @@ dependencies = [
 [[package]]
 name = "loro"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo#92746b95dc77223f2252398598544178dc3906ec"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo#aa632f8fd13c2f642428c70689ad7ae80cce6082"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
  "generic-btree",
- "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo)",
- "loro-internal 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo)",
+ "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo)",
+ "loro-internal 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo)",
  "tracing",
 ]
 
@@ -1045,12 +1044,12 @@ dependencies = [
 [[package]]
 name = "loro-common"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo#92746b95dc77223f2252398598544178dc3906ec"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo#aa632f8fd13c2f642428c70689ad7ae80cce6082"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
  "fxhash",
- "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo)",
+ "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo)",
  "nonmax",
  "serde",
  "serde_columnar",
@@ -1077,7 +1076,7 @@ dependencies = [
 [[package]]
 name = "loro-delta"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo#92746b95dc77223f2252398598544178dc3906ec"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo#aa632f8fd13c2f642428c70689ad7ae80cce6082"
 dependencies = [
  "arrayvec",
  "enum-as-inner 0.5.1",
@@ -1140,23 +1139,23 @@ dependencies = [
 [[package]]
 name = "loro-internal"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo#92746b95dc77223f2252398598544178dc3906ec"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo#aa632f8fd13c2f642428c70689ad7ae80cce6082"
 dependencies = [
  "append-only-bytes",
  "arref",
  "either",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
- "fractional_index 0.1.0 (git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo)",
+ "fractional_index 0.1.0 (git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo)",
  "fxhash",
  "generic-btree",
  "getrandom",
  "im",
  "itertools 0.12.1",
  "leb128",
- "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo)",
- "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo)",
- "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo)",
+ "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo)",
+ "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo)",
+ "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo)",
  "md5",
  "num",
  "num-derive",
@@ -1192,7 +1191,7 @@ dependencies = [
 [[package]]
 name = "loro-rle"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=zxch3n/loro-560-undoredo#92746b95dc77223f2252398598544178dc3906ec"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo#aa632f8fd13c2f642428c70689ad7ae80cce6082"
 dependencies = [
  "append-only-bytes",
  "arref",

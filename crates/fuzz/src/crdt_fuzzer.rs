@@ -88,8 +88,7 @@ impl CRDTFuzzer {
             Action::Undo { site, op_len } => {
                 *site %= max_users;
                 let actor = &mut self.actors[*site as usize];
-                let vv = actor.loro.oplog_vv().get_last(*site as u64).unwrap_or(0) as u32;
-                *op_len %= vv + 1;
+                *op_len %= actor.can_fuzz_undo_length.can_undo_length() + 1;
             }
         }
     }
@@ -114,7 +113,10 @@ impl CRDTFuzzer {
                             .unwrap();
                     });
                 }
-                self.actors.iter_mut().for_each(|a| a.record_history());
+                self.actors.iter_mut().for_each(|a| {
+                    a.can_fuzz_undo_length.after_merge();
+                    a.record_history()
+                });
                 // for i in 0..self.site_num() {
                 //     self.actors[i].loro.check_state_correctness_slow();
                 // }
@@ -127,6 +129,8 @@ impl CRDTFuzzer {
                 b.loro
                     .import(&a.loro.export_from(&b.loro.oplog_vv()))
                     .unwrap();
+                a.can_fuzz_undo_length.after_merge();
+                b.can_fuzz_undo_length.after_merge();
                 a.record_history();
                 b.record_history();
             }
