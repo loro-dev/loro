@@ -5641,7 +5641,7 @@ fn undo_tree() {
                     },
                 })),
             },
-            SyncAllUndo { site: 0, op_len: 2 },
+            SyncAllUndo { site: 0, op_len: 1 },
         ],
     )
 }
