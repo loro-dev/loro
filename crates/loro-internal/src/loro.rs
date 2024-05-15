@@ -11,17 +11,14 @@ use std::{
 };
 
 use fxhash::FxHashMap;
-use loro_common::{
-    ContainerID, ContainerType, HasId, HasIdSpan, IdSpan, LoroResult, LoroValue, ID,
-};
+use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
 use rle::HasLength;
-use smallvec::SmallVec;
-use tracing::{debug, instrument, trace_span};
+use tracing::{debug, debug_span, instrument, trace, trace_span};
 
 use crate::{
     arena::SharedArena,
     change::Timestamp,
-    configure::{Configure, DefaultRandom, SecureRandomGenerator},
+    configure::Configure,
     container::{
         idx::ContainerIdx, list::list_op::InnerListOp, richtext::config::StyleConfigMap,
         IntoContainerId,
@@ -37,7 +34,7 @@ use crate::{
     op::InnerContent,
     oplog::{dag::FrontiersNotIncluded, TemporaryHistoryMarker},
     version::Frontiers,
-    ContainerDiff, DocDiff, HandlerTrait, InternalString, LoroError, VersionVector,
+    DocDiff, HandlerTrait, InternalString, LoroError, VersionVector,
 };
 
 use super::{
@@ -159,7 +156,7 @@ impl LoroDoc {
     /// Create a doc with auto commit enabled.
     #[inline]
     pub fn new_auto_commit() -> Self {
-        let mut doc = Self::new();
+        let doc = Self::new();
         doc.start_auto_commit();
         doc
     }
@@ -726,6 +723,7 @@ impl LoroDoc {
             return Err(LoroError::UndoWhenDetached);
         }
 
+        self.commit_then_stop();
         if !self
             .oplog()
             .lock()
@@ -733,118 +731,174 @@ impl LoroDoc {
             .vv()
             .includes_id(id_span.id_last())
         {
+            self.renew_txn_if_auto_commit();
             return Err(LoroError::UndoInvalidIdSpan(id_span.id_last()));
         }
 
         debug!("Started old state {:?}", self.get_deep_value());
-        // The process of performing undo is:
-        //
-        // 1. Calculate the event of checkout from id_span.last to before id_span.start, call it A
-        // 2. Calculate the event of checkout from id_span.last to the latest version, call it B
-        // 3. Transform event A based on event B, call it C
-        // 4. Apply event C directly on the latest version
 
-        self.commit_then_stop();
-        {
-            let (was_recording, frontiers) = {
-                let mut state = self.state.lock().unwrap();
-                let was_recording = state.is_recording();
-                state.stop_and_clear_recording();
-                (was_recording, state.frontiers.clone())
-            };
+        struct DiffBatch(FxHashMap<ContainerIdx, Diff>);
 
-            // ---------------------------------------
-            //  1. Calc event A, last -> before start
-            // ---------------------------------------
-
-            debug!("Undo 1");
-            // Checkout to the last id of the id_span
-            let v_last = Frontiers::from_id(id_span.id_last());
-            self.checkout_without_emitting(&v_last).unwrap();
-            let start_version: Frontiers = self
-                .oplog
-                .lock()
-                .unwrap()
-                .get_deps_of(id_span.id_start())
-                .unwrap();
-            self.state.lock().unwrap().start_recording();
-            self.checkout_without_emitting(&start_version).unwrap();
-            let mut event_a = {
-                let mut state = self.state.lock().unwrap();
-                let e = state.take_events();
-                state.stop_and_clear_recording();
-                e
-            };
-
-            // ---------------------------------------------
-            //  2. Calc event B, last -> the latest version
-            // ---------------------------------------------
-            debug!("Undo 2");
-
-            self.checkout_without_emitting(&v_last).unwrap();
-            self.state.lock().unwrap().start_recording();
-            self.checkout_without_emitting(&frontiers).unwrap();
-            self.detached.store(false, Release);
-            let event_b = {
-                let mut state = self.state.lock().unwrap();
-                let e = state.take_events();
-                state.stop_and_clear_recording();
-                e
-            };
-
-            // -----------------------------------------
-            //  3. Transform event A based on event B
-            // -----------------------------------------
-
-            debug!("Undo 3");
-            'outer: {
-                if event_b.is_empty() {
-                    break 'outer;
-                }
-
-                let mut b_container_diffs: FxHashMap<ContainerIdx, SmallVec<[&Diff; 3]>> =
-                    Default::default();
-                for diff in event_b.iter() {
-                    for d in diff.diff.iter() {
-                        b_container_diffs.entry(d.idx).or_default().push(&d.diff)
+        impl DiffBatch {
+            fn new(diff: Vec<DocDiff>) -> Self {
+                let mut map: FxHashMap<ContainerIdx, Diff> = Default::default();
+                for d in diff.into_iter() {
+                    for item in d.diff.into_iter() {
+                        let old = map.insert(item.idx, item.diff);
+                        assert!(old.is_none());
                     }
                 }
 
-                for event in event_a.iter_mut() {
-                    for a_diff in event.diff.iter_mut() {
-                        if let Some(b_diffs) = b_container_diffs.get(&a_diff.idx) {
-                            for b_diff in b_diffs.iter() {
-                                a_diff.diff.transform(b_diff, true);
-                            }
-                        }
+                Self(map)
+            }
+
+            fn compose(&mut self, other: &Self) {
+                if other.0.is_empty() {
+                    return;
+                }
+
+                for (idx, diff) in self.0.iter_mut() {
+                    if let Some(b_diff) = other.0.get(idx) {
+                        diff.compose_ref(b_diff);
                     }
                 }
             }
 
-            // -------------------------------------------------
-            //  4. Apply event C directly on the latest version
-            // -------------------------------------------------
-            debug!("Undo 4");
-            if was_recording {
-                self.state.lock().unwrap().start_recording();
+            fn transform(&mut self, other: &Self, left_priority: bool) {
+                if other.0.is_empty() {
+                    return;
+                }
+
+                for (idx, diff) in self.0.iter_mut() {
+                    if let Some(b_diff) = other.0.get(idx) {
+                        diff.transform(b_diff, left_priority);
+                    }
+                }
             }
-            self.start_auto_commit();
-            self.apply_events(event_a);
-            self.commit_then_stop();
+
+            fn filter(&mut self, container_filter: &[ContainerIdx]) {
+                unimplemented!()
+            }
         }
 
+        let (was_recording, latest_frontiers) = {
+            let mut state = self.state.lock().unwrap();
+            let was_recording = state.is_recording();
+            state.stop_and_clear_recording();
+            (was_recording, state.frontiers.clone())
+        };
+
+        // The process of performing undo is:
+        //
+        // 0. Split the span into a series of continuous spans. There is no external dep within each continuous span.
+        //
+        // For each continuous span_i:
+        //
+        // 1. a. Calculate the event of checkout from id_span.last to id_span.deps, call it Ai. It undo the ops in the current span.
+        //    b. Calculate A'i = Ai + T(Ci-1, Ai) if i > 0, otherwise A'i = Ai.
+        //       NOTE: A'i can undo the ops in the current span and the previous spans, if it's applied on the id_span.last version.
+        // 2. Calculate the event of checkout from id_span.last to [the next span's last id] or [the latest version], call it Bi.
+        // 3. Transform event A'i based on Bi, call it Ci
+        // 4. If span_i is the last span, apply Ci to the current state.
+
+        // -------------------------------------------------------
+        // 0. Split the span into a series of continuous spans
+        // -------------------------------------------------------
+
+        let spans = self.oplog.lock().unwrap().split_span_based_on_deps(id_span);
+        trace!("0. spans={:#?}", &spans);
+        let mut last_ci: Option<DiffBatch> = None;
+
+        for i in 0..spans.len() {
+            debug_span!("Undo", ?i, "Undo span {:?}", &spans[i]).in_scope(|| {
+                let (this_id_span, start_version) = &spans[i];
+                // ---------------------------------------
+                // 1.a Calc event A_i
+                // ---------------------------------------
+                let mut event_a_i = debug_span!("1. Calc event A_i").in_scope(|| {
+                    // Checkout to the last id of the id_span
+                    let this_last = Frontiers::from_id(this_id_span.id_last());
+                    self.checkout_without_emitting(&this_last).unwrap();
+                    self.state.lock().unwrap().start_recording();
+                    self.checkout_without_emitting(start_version).unwrap();
+                    let mut state = self.state.lock().unwrap();
+                    let e = state.take_events();
+                    state.stop_and_clear_recording();
+                    DiffBatch::new(e)
+                });
+
+                trace!("Event A_i {:#?}", &event_a_i.0);
+                // ---------------------------------------
+                // 2. Calc event B_i
+                // ---------------------------------------
+                let event_b_i = debug_span!("2. Calc event B_i").in_scope(|| {
+                    let next = if i + 1 < spans.len() {
+                        spans[i + 1].0.id_last().into()
+                    } else {
+                        // TODO: avoid clone
+                        latest_frontiers.clone()
+                    };
+
+                    self.checkout_without_emitting(&this_id_span.id_last().into())
+                        .unwrap();
+                    self.state.lock().unwrap().start_recording();
+                    self.checkout_without_emitting(&next).unwrap();
+                    trace!("next state {:?}", self.get_deep_value());
+                    let mut state = self.state.lock().unwrap();
+                    let e = state.take_events();
+                    state.stop_and_clear_recording();
+                    DiffBatch::new(e)
+                });
+                trace!("Event B_i {:#?}", &event_b_i.0);
+
+                // event_a_prime can undo the ops in the current span and the previous spans
+                let mut event_a_prime = if let Some(mut last_ci) = last_ci.take() {
+                    // ------------------------------------------------------------------------------
+                    // 1.b Transform and apply Ci-1 based on Ai, call it A'i
+                    // ------------------------------------------------------------------------------
+                    trace!("last_ci {:#?}", last_ci.0);
+                    trace!("event_a_i {:#?}", &event_a_i.0);
+                    last_ci.transform(&event_a_i, true);
+                    trace!("transformed last_ci {:#?}", last_ci.0);
+                    event_a_i.compose(&last_ci);
+                    event_a_i
+                } else {
+                    event_a_i
+                };
+                trace!("Event A'_i {:#?}", &event_a_prime.0);
+
+                // --------------------------------------------------
+                // 3. Transform event A'_i based on B_i, call it C_i
+                // --------------------------------------------------
+                event_a_prime.transform(&event_b_i, true);
+                let c_i = event_a_prime;
+                trace!("Event C_i {:#?}", &c_i.0);
+                last_ci = Some(c_i);
+            });
+        }
+
+        self.detached.store(false, Release);
+        if was_recording {
+            self.state.lock().unwrap().start_recording();
+        }
+        self.start_auto_commit();
+
+        // ----------------------------------------
+        // 4 Apply C_n to the current state
+        // ----------------------------------------
+        for (idx, diff) in last_ci.take().unwrap().0.into_iter() {
+            let id = self.arena.idx_to_id(idx).unwrap();
+            self.apply_event(id, diff);
+        }
+        self.commit_then_stop();
         self.renew_txn_if_auto_commit();
         debug!("Undo done");
         Ok(())
     }
 
-    pub fn apply_events(&self, events: Vec<DocDiff>) {
-        for event in events {
-            for diff in event.diff {
-                let h = self.get_handler(diff.id.clone());
-                h.apply_event(diff).unwrap();
-            }
-        }
+    pub fn apply_event(&self, id: ContainerID, diff: Diff) {
+        let h = self.get_handler(id);
+        h.apply_event(diff).unwrap();
     }
 
     /// This is for debugging purpose. It will travel the whole oplog

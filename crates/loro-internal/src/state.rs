@@ -550,7 +550,7 @@ impl DocState {
         }
 
         diff.diff = diffs.into();
-        self.frontiers = (*diff.new_version).to_owned();
+        (*diff.new_version).clone_into(&mut self.frontiers);
         if self.is_recording() {
             self.record_diff(diff)
         }

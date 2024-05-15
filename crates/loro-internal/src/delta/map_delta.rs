@@ -136,13 +136,11 @@ impl ResolvedMapDelta {
     }
 
     pub(crate) fn transform(&mut self, b: &ResolvedMapDelta, left_priority: bool) {
-        for (k, v) in b.updated.iter() {
-            if let Some(old) = self.updated.get_mut(k) {
-                if !left_priority || old.value.is_none() {
+        for (k, _) in b.updated.iter() {
+            if let Some(_) = self.updated.get_mut(k) {
+                if !left_priority {
                     self.updated.remove(k);
                 }
-            } else {
-                self.updated.insert(k.clone(), v.clone());
             }
         }
     }

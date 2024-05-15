@@ -7,7 +7,7 @@ use loro_internal::{
 };
 
 fn main() {
-    let mut doc = LoroDoc::new();
+    let doc = LoroDoc::new();
     doc.start_auto_commit();
     let list = doc.get_list("list");
     doc.subscribe_root(Arc::new(|e| {

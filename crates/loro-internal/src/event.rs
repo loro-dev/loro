@@ -355,6 +355,27 @@ impl InternalDiff {
 }
 
 impl Diff {
+    pub(crate) fn compose_ref(&mut self, diff: &Diff) {
+        // PERF: avoid clone
+        match (self, diff) {
+            (Diff::List(a), Diff::List(b)) => {
+                a.compose(b);
+            }
+            (Diff::Text(a), Diff::Text(b)) => {
+                a.compose(b);
+            }
+            (Diff::Map(a), Diff::Map(b)) => {
+                *a = a.clone().compose(b.clone());
+            }
+            (Diff::Tree(a), Diff::Tree(b)) => {
+                *a = a.clone().compose(b.clone());
+            }
+            #[cfg(feature = "counter")]
+            (Diff::Counter(a), Diff::Counter(b)) => *a += b,
+            (_, _) => unreachable!(),
+        }
+    }
+
     pub(crate) fn compose(self, diff: Diff) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {

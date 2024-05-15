@@ -66,7 +66,7 @@ impl Default for LoroDoc {
 impl LoroDoc {
     /// Create a new `LoroDoc` instance.
     pub fn new() -> Self {
-        let mut doc = InnerLoroDoc::default();
+        let doc = InnerLoroDoc::default();
         doc.start_auto_commit();
 
         LoroDoc { doc }
@@ -241,7 +241,7 @@ impl LoroDoc {
 
     #[cfg(feature = "counter")]
     /// Get a [LoroCounter] by container id.
-    ///  
+    ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_counter<I: IntoContainerId>(&self, id: I) -> LoroCounter {
         LoroCounter {

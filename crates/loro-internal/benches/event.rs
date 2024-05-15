@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 #[cfg(feature = "test_utils")]
 mod event {
     use super::*;
-    
+
     use loro_internal::{ListHandler, LoroDoc};
     use std::sync::Arc;
 
@@ -24,7 +24,7 @@ mod event {
             let children_num = 80;
             let deep = 3;
             b.iter(|| {
-                let mut loro = LoroDoc::default();
+                let loro = LoroDoc::default();
                 loro.start_auto_commit();
                 loro.subscribe_root(Arc::new(|_e| {}));
                 let mut handlers = vec![loro.get_list("list")];

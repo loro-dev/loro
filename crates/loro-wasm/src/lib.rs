@@ -274,7 +274,7 @@ impl Loro {
     /// New document will have random peer id.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        let mut doc = LoroDoc::new();
+        let doc = LoroDoc::new();
         doc.start_auto_commit();
         Self(Arc::new(doc))
     }
@@ -391,7 +391,7 @@ impl Loro {
     ///
     #[wasm_bindgen(js_name = "fromSnapshot")]
     pub fn from_snapshot(snapshot: &[u8]) -> JsResult<Loro> {
-        let mut doc = LoroDoc::from_snapshot(snapshot)?;
+        let doc = LoroDoc::from_snapshot(snapshot)?;
         doc.start_auto_commit();
         Ok(Self(Arc::new(doc)))
     }
