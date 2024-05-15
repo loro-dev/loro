@@ -7,7 +7,7 @@ use crate::{
         richtext::{richtext_state::PosType, RichtextState, StyleOp, TextStyleInfoFlag},
     },
     cursor::{Cursor, Side},
-    delta::{DeltaItem, StyleMeta},
+    delta::{DeltaItem, StyleMeta, TreeExternalDiff},
     event::{Diff, TextDiffItem},
     op::ListSlice,
     state::{ContainerState, IndexType, State},
@@ -1087,12 +1087,32 @@ impl Handler {
                 let delta = diff.into_list().unwrap();
                 x.apply_delta(delta)?;
             }
-            Self::Tree(x) => todo!(),
+            Self::Tree(x) => {
+                // TODO: can reuse position?
+                for diff in diff.into_tree().unwrap().diff {
+                    let target = diff.target;
+                    match diff.action {
+                        TreeExternalDiff::Create {
+                            parent,
+                            index,
+                            position: _,
+                        } => {
+                            x.create_at(parent, index)?;
+                        }
+                        TreeExternalDiff::Delete => x.delete(target)?,
+                        TreeExternalDiff::Move {
+                            parent,
+                            index,
+                            position: _,
+                        } => x.move_to(target, parent, index)?,
+                    }
+                }
+            }
             #[cfg(feature = "counter")]
             Self::Counter(x) => {
                 unimplemented!("Counter handler")
             }
-            Self::Unknown(x) => {
+            Self::Unknown(_) => {
                 unimplemented!("Unknown handler")
             }
         }

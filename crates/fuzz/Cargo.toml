@@ -10,8 +10,10 @@ publish = false
 loro-without-counter = { path = "../loro", package = "loro" }
 loro = { git = "https://github.com/loro-dev/loro.git", features = [
     "counter",
-], branch = "leon/feat-encode-forward" }
-loro-internal = { path = "../loro-internal", features = ["test_utils"] }
+], branch = "leon/fuzz-undo" }
+loro-common = { git = "https://github.com/loro-dev/loro.git", features = [
+    "counter",
+], branch = "leon/fuzz-undo" }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
 enum-as-inner = { workspace = true }
