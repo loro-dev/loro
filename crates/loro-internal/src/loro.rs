@@ -721,7 +721,7 @@ impl LoroDoc {
     #[instrument(level = "info", skip(self))]
     pub fn undo(&self, id_span: IdSpan) -> LoroResult<()> {
         if self.is_detached() {
-            return Err(LoroError::UndoWhenDetached);
+            return Err(LoroError::EditWhenDetached);
         }
 
         self.commit_then_stop();
@@ -746,7 +746,7 @@ impl LoroDoc {
         };
 
         let spans = self.oplog.lock().unwrap().split_span_based_on_deps(id_span);
-        let last_ci = crate::undo::undo(spans, latest_frontiers, |from, to| {
+        let diff = crate::undo::undo(spans, latest_frontiers, |from, to| {
             self.checkout_without_emitting(from).unwrap();
             self.state.lock().unwrap().start_recording();
             self.checkout_without_emitting(to).unwrap();
@@ -761,22 +761,62 @@ impl LoroDoc {
             self.state.lock().unwrap().start_recording();
         }
         self.start_auto_commit();
-
-        // ----------------------------------------
-        // 4 Apply C_n to the current state
-        // ----------------------------------------
-        self.apply_diff(&mut last_ci.0.into_iter().map(|(idx, diff)| {
-            let id = self.arena.idx_to_id(idx).unwrap();
-            (id, diff)
-        }));
+        self.apply_diff(diff).unwrap();
         self.commit_then_stop();
         self.renew_txn_if_auto_commit();
         Ok(())
     }
 
-    pub fn apply_diff(&self, diff: &mut dyn Iterator<Item = (ContainerID, Diff)>) {
+    /// Calculate the diff between the current state and the target state, and apply the diff to the current state.
+    pub fn diff_and_apply(&self, target: &Frontiers) -> LoroResult<()> {
+        let f = self.state_frontiers();
+        let diff = self.diff(&f, target)?;
+        self.apply_diff(diff)
+    }
+
+    /// Calculate the diff between two versions so that apply diff on a will make the state same as b.
+    ///
+    /// NOTE: This method will make the doc enter the **detached mode**.
+    pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
+        {
+            // check whether a and b are valid
+            let oplog = self.oplog.lock().unwrap();
+            for &id in a.iter() {
+                if !oplog.dag.contains(id) {
+                    return Err(LoroError::FrontiersNotFound(id));
+                }
+            }
+            for &id in b.iter() {
+                if !oplog.dag.contains(id) {
+                    return Err(LoroError::FrontiersNotFound(id));
+                }
+            }
+        }
+
+        self.commit_then_stop();
+
+        let ans = {
+            self.state.lock().unwrap().stop_and_clear_recording();
+            self.checkout_without_emitting(a).unwrap();
+            self.state.lock().unwrap().start_recording();
+            self.checkout_without_emitting(b).unwrap();
+            let mut state = self.state.lock().unwrap();
+            let e = state.take_events();
+            state.stop_and_clear_recording();
+            DiffBatch::new(e)
+        };
+
+        Ok(ans)
+    }
+
+    /// Apply diff to the current state.
+    pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
+        if self.is_detached() {
+            return Err(LoroError::EditWhenDetached);
+        }
+
         let mut container_remap: FxHashMap<ContainerID, ContainerID> = FxHashMap::default();
-        for (id, diff) in diff {
+        for (id, diff) in diff.0 {
             let id = if let Some(id) = container_remap.get(&id) {
                 id.clone()
             } else {
@@ -788,6 +828,8 @@ impl LoroDoc {
             })
             .unwrap();
         }
+
+        Ok(())
     }
 
     /// This is for debugging purpose. It will travel the whole oplog
@@ -925,9 +967,9 @@ impl LoroDoc {
         let mut state = self.state.lock().unwrap();
         self.detached.store(true, Release);
         let mut calc = self.diff_calculator.lock().unwrap();
-        for &f in frontiers.iter() {
-            if !oplog.dag.contains(f) {
-                return Err(LoroError::InvalidFrontierIdNotFound(f));
+        for &i in frontiers.iter() {
+            if !oplog.dag.contains(i) {
+                return Err(LoroError::FrontiersNotFound(i));
             }
         }
 

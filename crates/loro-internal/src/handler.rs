@@ -73,7 +73,7 @@ pub trait HandlerTrait: Clone + Sized {
     fn with_state<R>(&self, f: impl FnOnce(&mut State) -> LoroResult<R>) -> LoroResult<R> {
         let inner = self
             .attached_handler()
-            .ok_or(LoroError::MisuseDettachedContainer {
+            .ok_or(LoroError::MisuseDetachedContainer {
                 method: "with_state",
             })?;
         let state = inner.state.upgrade().unwrap();
@@ -151,7 +151,7 @@ impl<T> MaybeDetached<T> {
 
     fn try_attached_state(&self) -> LoroResult<&BasicHandler> {
         match self {
-            MaybeDetached::Detached(_) => Err(LoroError::MisuseDettachedContainer {
+            MaybeDetached::Detached(_) => Err(LoroError::MisuseDetachedContainer {
                 method: "inner_state",
             }),
             MaybeDetached::Attached(a) => Ok(a),
@@ -3047,7 +3047,7 @@ impl MapHandler {
 
     pub fn get_deep_value_with_id(&self) -> LoroResult<LoroValue> {
         match &self.inner {
-            MaybeDetached::Detached(_) => Err(LoroError::MisuseDettachedContainer {
+            MaybeDetached::Detached(_) => Err(LoroError::MisuseDetachedContainer {
                 method: "get_deep_value_with_id",
             }),
             MaybeDetached::Attached(inner) => Ok(inner.with_doc_state(|state| {

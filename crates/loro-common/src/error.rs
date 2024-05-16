@@ -47,17 +47,17 @@ pub enum LoroError {
     #[error("Unknown Error ({0})")]
     Unknown(Box<str>),
     #[error("The given ID ({0}) is not contained by the doc")]
-    InvalidFrontierIdNotFound(ID),
+    FrontiersNotFound(ID),
     #[error("Cannot import when the doc is in a transaction")]
     ImportWhenInTxn,
     #[error("The given method ({method}) is not allowed when the container is detached. You should insert the container to the doc first.")]
-    MisuseDettachedContainer { method: &'static str },
+    MisuseDetachedContainer { method: &'static str },
     #[error("Not implemented: {0}")]
     NotImplemented(&'static str),
     #[error("Reattach a container that is already attached")]
     ReattachAttachedContainer,
-    #[error("Undo is not allowed when the doc is in the detached mode.")]
-    UndoWhenDetached,
+    #[error("Edit is not allowed when the doc is in the detached mode.")]
+    EditWhenDetached,
     #[error("The given ID ({0}) is not contained by the doc")]
     UndoInvalidIdSpan(ID),
 }

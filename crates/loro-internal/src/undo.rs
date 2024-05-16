@@ -1,17 +1,18 @@
 use fxhash::FxHashMap;
-use loro_common::{HasIdSpan, IdSpan};
+use loro_common::{ContainerID, HasIdSpan, IdSpan};
 use tracing::{debug_span, trace};
 
 use crate::{container::idx::ContainerIdx, event::Diff, version::Frontiers, DocDiff};
 
-pub(crate) struct DiffBatch(pub(crate) FxHashMap<ContainerIdx, Diff>);
+#[derive(Debug)]
+pub struct DiffBatch(pub(crate) FxHashMap<ContainerID, Diff>);
 
 impl DiffBatch {
     pub fn new(diff: Vec<DocDiff>) -> Self {
-        let mut map: FxHashMap<ContainerIdx, Diff> = Default::default();
+        let mut map: FxHashMap<ContainerID, Diff> = Default::default();
         for d in diff.into_iter() {
             for item in d.diff.into_iter() {
-                let old = map.insert(item.idx, item.diff);
+                let old = map.insert(item.id.clone(), item.diff);
                 assert!(old.is_none());
             }
         }
