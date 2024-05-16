@@ -1181,7 +1181,7 @@ mod encode {
             crate::op::InnerContent::Tree(op) => {
                 if let Some(position) = &op.position {
                     if let either::Either::Left(position_register) = &mut registers.position {
-                        position_register.insert(position.as_bytes_without_terminated());
+                        position_register.insert(position.as_bytes());
                     } else {
                         unreachable!()
                     }

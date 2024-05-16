@@ -504,7 +504,7 @@ impl EncodedTreeMove {
             None
         } else {
             let bytes = &positions[self.position];
-            Some(FractionalIndex::from_vec_unterminated(bytes.clone()))
+            Some(FractionalIndex::from_bytes(bytes.clone()))
         };
         let EncodedTreeID { peer_idx, counter } = tree_ids[self.subject_idx];
         Ok(TreeOp {
@@ -521,7 +521,7 @@ impl EncodedTreeMove {
 
     pub fn from_tree_op<'p, 'a: 'p>(op: &'a TreeOp, registers: &mut EncodedRegisters) -> Self {
         let position = if let Some(position) = &op.position {
-            let bytes = position.as_bytes_without_terminated();
+            let bytes = position.as_bytes();
             let either::Right(position_register) = &mut registers.position else {
                 unreachable!()
             };

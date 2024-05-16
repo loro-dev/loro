@@ -107,7 +107,7 @@ impl LoroDoc {
     /// Set the jitter of the tree position(Fractional Index).
     ///
     /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
-    /// value 1 is default, which means no jitter, any value larger than 1 will enable jitter.
+    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
     /// Generally speaking, jitter will affect the growth rate of document size.
     #[inline]
     pub fn set_fractional_index_jitter(&self, jitter: u8) {
