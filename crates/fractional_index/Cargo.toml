@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 imbl = "^3.0"
-smallvec = "^1.13"
+smallvec = {workspace=true}
 serde = { version = "^1.0", features = ["derive", "rc"], optional = true }
 rand = { version = "^0.8" }
 
