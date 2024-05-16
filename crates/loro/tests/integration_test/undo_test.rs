@@ -559,3 +559,39 @@ fn undo_manager_with_sub_container() -> Result<(), LoroError> {
 
     Ok::<(), loro::LoroError>(())
 }
+
+#[test]
+fn test_undo_container_deletion() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let mut undo = UndoManager::new(1, &doc);
+
+    let map = doc.get_map("map");
+    let text = map.insert_container("text", LoroText::new())?;
+    undo.record_new_checkpoint(&doc);
+    text.insert(0, "T")?;
+    undo.record_new_checkpoint(&doc);
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({"map": {"text": "T"}})
+    );
+    map.delete("text")?;
+    assert_eq!(doc.get_deep_value().to_json_value(), json!({"map": {}}));
+    undo.record_new_checkpoint(&doc);
+    undo.undo(&doc)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({"map": {"text": "T"}})
+    );
+    undo.redo(&doc)?;
+    assert_eq!(doc.get_deep_value().to_json_value(), json!({"map": {}}));
+    undo.undo(&doc)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({"map": {"text": "T"}})
+    );
+    undo.redo(&doc)?;
+    assert_eq!(doc.get_deep_value().to_json_value(), json!({"map": {}}));
+    doc.commit();
+    Ok(())
+}

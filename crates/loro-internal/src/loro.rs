@@ -824,14 +824,14 @@ impl LoroDoc {
             return Err(LoroError::EditWhenDetached);
         }
 
-        let mut containers = diff.0.keys().cloned().collect_vec();
-        // Sort container from the top to the bottom, so that we can have correct container remap
-        containers.sort_by_cached_key(|cid| {
+        let containers = diff.0.keys().cloned().sorted_by_cached_key(|cid| {
             let idx = self.arena.id_to_idx(cid).unwrap();
             self.arena.get_depth(idx).unwrap().get()
         });
+        // Sort container from the top to the bottom, so that we can have correct container remap
         for mut id in containers {
             let diff = diff.0.remove(&id).unwrap();
+            trace!("apply_diff {} {:#?}", &id, &diff);
             while let Some(rid) = container_remap.get(&id) {
                 id = rid.clone();
             }
