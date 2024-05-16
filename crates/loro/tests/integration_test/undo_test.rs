@@ -1,12 +1,16 @@
+use std::sync::Arc;
+
 use loro::{
-    Frontiers, LoroDoc, LoroError, LoroList, LoroMap, LoroResult, LoroText, ToJson, UndoManager,
+    Frontiers, LoroDoc, LoroError, LoroList, LoroMap, LoroResult, LoroText, LoroValue,
+    StyleConfigMap, ToJson, UndoManager,
 };
 use loro_internal::{
+    configure::StyleConfig,
     id::{Counter, ID},
     loro_common::IdSpan,
 };
 use serde_json::json;
-use tracing::{info_span, Instrument};
+use tracing::{debug_span, info_span, Instrument};
 
 #[test]
 fn basic_text_undo() -> Result<(), LoroError> {
@@ -294,10 +298,10 @@ fn map_container_undo() -> Result<(), LoroError> {
 /// https://youtu.be/uP7AKExkMGU?si=TR2JHRdmAitOVaMw&t=768
 ///
 ///
-///      ┌─A-Set───┐ ┌─B-set   ┌──A-undo   ┌─A-redo   
-///      │         │ │     │   │        │  │      │   
-///      │         │ │     │   │        │  │      │   
-///      │         ▼ │     ▼   │        ▼  │      ▼   
+///      ┌─A-Set───┐ ┌─B-set   ┌──A-undo   ┌─A-redo
+///      │         │ │     │   │        │  │      │
+///      │         │ │     │   │        │  │      │
+///      │         ▼ │     ▼   │        ▼  │      ▼
 /// ┌────┴────┐ ┌────┴─┐ ┌─────┴──┐ ┌──────┴┐ ┌──────┐
 /// │         │ │      │ │        │ │       │ │      │
 /// │  Black  │ │ Red  │ │  Green │ │ Black │ │Green │
@@ -593,5 +597,204 @@ fn test_undo_container_deletion() -> LoroResult<()> {
     undo.redo(&doc)?;
     assert_eq!(doc.get_deep_value().to_json_value(), json!({"map": {}}));
     doc.commit();
+    Ok(())
+}
+
+#[test]
+fn test_richtext_checkout() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let text = doc.get_text("text");
+    text.insert(0, "Hello")?; // op 0-5
+    text.mark(0..5, "bold", true)?; // op 5-7
+    text.unmark(0..5, "bold")?; // op 7-9
+    text.delete(0, 5)?;
+    doc.commit();
+
+    doc.subscribe_root(Arc::new(|event| {
+        dbg!(&event);
+        let t = event.events[0].diff.as_text().unwrap();
+        let i = t[0].as_insert().unwrap();
+        let style = i.1.as_ref().unwrap().get("bold").unwrap();
+        assert_eq!(style, &LoroValue::Bool(true));
+    }));
+    doc.checkout(&ID::new(1, 6).into())?;
+    assert_eq!(
+        text.to_delta().to_json_value(),
+        json!([{"insert": "Hello", "attributes": {"bold": true}}])
+    );
+    Ok(())
+}
+
+#[test]
+fn undo_richtext_editing() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let mut undo = UndoManager::new(1, &doc);
+    let text = doc.get_text("text");
+    text.insert(0, "Hello")?;
+    undo.record_new_checkpoint(&doc);
+    text.mark(0..5, "bold", true)?;
+    undo.record_new_checkpoint(&doc);
+    assert_eq!(
+        text.to_delta().to_json_value(),
+        json!([
+            {"insert": "Hello", "attributes": {"bold": true}}
+        ])
+    );
+    for i in 0..10 {
+        debug_span!("round", i).in_scope(|| {
+            undo.undo(&doc)?;
+            assert_eq!(
+                text.to_delta().to_json_value(),
+                json!([
+                    {"insert": "Hello", }
+                ])
+            );
+            undo.undo(&doc)?;
+            assert_eq!(text.to_delta().to_json_value(), json!([]));
+            debug_span!("redo 1").in_scope(|| {
+                undo.redo(&doc).unwrap();
+            });
+            assert_eq!(
+                text.to_delta().to_json_value(),
+                json!([
+                    {"insert": "Hello", }
+                ])
+            );
+            debug_span!("redo 2").in_scope(|| {
+                undo.redo(&doc).unwrap();
+            });
+            assert_eq!(
+                text.to_delta().to_json_value(),
+                json!([
+                    {"insert": "Hello", "attributes": {"bold": true}}
+                ])
+            );
+
+            Ok::<(), loro::LoroError>(())
+        })?;
+    }
+    Ok(())
+}
+
+#[test]
+fn undo_richtext_editing_collab() -> LoroResult<()> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let mut undo = UndoManager::new(1, &doc_a);
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+    doc_a.get_text("text").insert(0, "A fox jumped")?;
+    undo.record_new_checkpoint(&doc_a);
+    sync(&doc_a, &doc_b);
+    doc_b.get_text("text").mark(2..12, "italic", true)?;
+    sync(&doc_a, &doc_b);
+    doc_a.get_text("text").mark(0..5, "bold", true)?;
+    undo.record_new_checkpoint(&doc_a);
+    sync(&doc_a, &doc_b);
+    assert_eq!(
+        doc_a.get_text("text").to_delta().to_json_value(),
+        json!([
+            {"insert": "A ", "attributes": {"bold": true}},
+            {"insert": "fox", "attributes": {"bold": true, "italic": true}},
+            {"insert": " jumped", "attributes": {"italic": true}}
+        ])
+    );
+    for _ in 0..10 {
+        undo.undo(&doc_a)?;
+        assert_eq!(
+            doc_a.get_text("text").to_delta().to_json_value(),
+            json!([
+                {"insert": "A " },
+                {"insert": "fox jumped", "attributes": {"italic": true}}
+            ])
+        );
+        // FIXME: right now redo/undo like this is wasteful
+        undo.redo(&doc_a)?;
+        assert_eq!(
+            doc_a.get_text("text").to_delta().to_json_value(),
+            json!([
+                {"insert": "A ", "attributes": {"bold": true}},
+                {"insert": "fox", "attributes": {"bold": true, "italic": true}},
+                {"insert": " jumped", "attributes": {"italic": true}}
+            ])
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn undo_richtext_conflict_set_style() -> LoroResult<()> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let mut config = StyleConfigMap::new();
+    config.insert(
+        "color".into(),
+        StyleConfig {
+            expand: loro::ExpandType::After,
+        },
+    );
+    doc_a.config_text_style(config.clone());
+    let mut undo = UndoManager::new(1, &doc_a);
+    let doc_b = LoroDoc::new();
+    doc_b.config_text_style(config.clone());
+    doc_b.set_peer_id(2)?;
+
+    doc_a.get_text("text").insert(0, "A fox jumped")?;
+    undo.record_new_checkpoint(&doc_a);
+    sync(&doc_a, &doc_b);
+    doc_b.get_text("text").mark(2..12, "color", "red")?;
+    sync(&doc_a, &doc_b);
+    doc_a.get_text("text").mark(0..5, "color", "green")?;
+    undo.record_new_checkpoint(&doc_a);
+    sync(&doc_a, &doc_b);
+    assert_eq!(
+        doc_a.get_text("text").to_delta().to_json_value(),
+        json!([
+            {"insert": "A fox", "attributes": {"color": "green"}},
+            {"insert": " jumped", "attributes": {"color": "red"}}
+        ])
+    );
+    for _ in 0..10 {
+        undo.undo(&doc_a)?;
+        assert_eq!(
+            doc_a.get_text("text").to_delta().to_json_value(),
+            json!([
+                {"insert": "A " },
+                {"insert": "fox jumped", "attributes": {"color": "red"}}
+            ])
+        );
+        undo.undo(&doc_a)?;
+        assert_eq!(doc_a.get_text("text").to_delta().to_json_value(), json!([]));
+        undo.redo(&doc_a)?;
+        assert_eq!(
+            doc_a.get_text("text").to_delta().to_json_value(),
+            json!([
+                {"insert": "A " },
+                {"insert": "fox jumped", "attributes": {"color": "red"}}
+            ])
+        );
+        undo.redo(&doc_a)?;
+        assert_eq!(
+            doc_a.get_text("text").to_delta().to_json_value(),
+            json!([
+                {"insert": "A fox", "attributes": {"color": "green"}},
+                {"insert": " jumped", "attributes": {"color": "red"}}
+            ])
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn undo_list_move() -> LoroResult<()> {
+    Ok(())
+}
+
+#[test]
+fn undo_collab_list_move() -> LoroResult<()> {
     Ok(())
 }

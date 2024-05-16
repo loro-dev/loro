@@ -158,14 +158,7 @@ impl ToJson for StyleMeta {
 impl DeltaAttr for StyleMeta {
     fn compose(&mut self, other: &Self) {
         for (key, value) in other.map.iter() {
-            match self.map.get_mut(key) {
-                Some(old_value) => {
-                    old_value.try_replace(value);
-                }
-                None => {
-                    self.map.insert(key.clone(), value.clone());
-                }
-            }
+            self.map.insert(key.clone(), value.clone());
         }
     }
 

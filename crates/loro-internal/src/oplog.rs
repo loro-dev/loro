@@ -243,7 +243,7 @@ impl OpLog {
 
     /// This is the **only** place to update the `OpLog.changes`
     pub(crate) fn insert_new_change(&mut self, mut change: Change, _: EnsureChangeDepsAreAtTheEnd) {
-        debug!("Inserting new change {:?}", &change);
+        debug!("Inserting new change {:#?}", &change);
         self.op_groups.insert_by_change(&change);
         self.register_container_and_parent_link(&change);
         let entry = self.changes.entry(change.id.peer).or_default();

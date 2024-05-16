@@ -1,5 +1,3 @@
-
-
 use super::*;
 
 struct DeltaReplace<'a, V, Attr> {
@@ -37,6 +35,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                         self.push_retain(index + len - self.len(), Default::default());
                     }
                     if !attr.attr_is_empty() {
+                        trace!("update attr in range {}, {}", index, index + len);
                         self.update_attr_in_range(index..index + len, attr);
                     }
                     index += len;

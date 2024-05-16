@@ -411,7 +411,7 @@ impl Diff {
                     *a -= b;
                 }
             }
-            _ => unreachable!(),
+            _ => {}
         }
     }
 

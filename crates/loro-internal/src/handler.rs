@@ -1120,10 +1120,11 @@ impl Handler {
             }
             #[cfg(feature = "counter")]
             Self::Counter(x) => {
-                unimplemented!("Counter handler")
+                let delta = diff.into_counter().unwrap();
+                x.increment(delta)?;
             }
             Self::Unknown(_) => {
-                unimplemented!("Unknown handler")
+                // do nothing
             }
         }
         Ok(())

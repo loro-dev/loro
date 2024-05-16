@@ -290,6 +290,8 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
             }
         }
 
+        trace!("transform self={:#?} other={:#?}", self, other);
+        trace!("transformed={:#?}", transformed_delta);
         transformed_delta.chop();
         *self = transformed_delta;
     }

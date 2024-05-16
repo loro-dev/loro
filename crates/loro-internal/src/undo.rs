@@ -97,20 +97,21 @@ impl UndoManager {
     #[instrument(skip_all)]
     pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
         self.record_new_checkpoint(doc);
-        let latest_counter = get_counter_end(doc, self.peer);
+        let end_counter = get_counter_end(doc, self.peer);
         if let Some(span) = self.undo_stack.pop() {
             trace!("Undo {:?}", span);
             doc.undo(
                 IdSpan {
                     peer: self.peer,
-                    counter: span,
+                    // counter: span,
+                    counter: CounterSpan::new(span.start, end_counter),
                 },
                 &mut self.container_remap,
             )?;
             let new_counter = get_counter_end(doc, self.peer);
-            if latest_counter != new_counter {
+            if end_counter != new_counter {
                 self.redo_stack
-                    .push(CounterSpan::new(latest_counter, new_counter));
+                    .push(CounterSpan::new(end_counter, new_counter));
             }
             self.latest_counter = new_counter;
         }
@@ -118,21 +119,23 @@ impl UndoManager {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
         self.record_new_checkpoint(doc);
-        let latest_counter = get_counter_end(doc, self.peer);
+        let end_counter = get_counter_end(doc, self.peer);
         if let Some(span) = self.redo_stack.pop() {
             doc.undo(
                 IdSpan {
                     peer: self.peer,
-                    counter: span,
+                    // counter: span,
+                    counter: CounterSpan::new(span.start, end_counter),
                 },
                 &mut self.container_remap,
             )?;
             let new_counter = get_counter_end(doc, self.peer);
-            if latest_counter != new_counter {
+            if end_counter != new_counter {
                 self.undo_stack
-                    .push(CounterSpan::new(latest_counter, new_counter));
+                    .push(CounterSpan::new(end_counter, new_counter));
             }
             self.latest_counter = new_counter;
         }
