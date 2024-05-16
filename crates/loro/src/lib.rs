@@ -42,6 +42,7 @@ pub use loro_internal::id::{PeerID, TreeID, ID};
 pub use loro_internal::obs::SubID;
 pub use loro_internal::oplog::FrontiersNotIncluded;
 pub use loro_internal::version::{Frontiers, VersionVector};
+pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
 
@@ -53,6 +54,7 @@ pub use counter::LoroCounter;
 /// `LoroDoc` is the entry for the whole document.
 /// When it's dropped, all the associated [`Handler`]s will be invalidated.
 #[derive(Debug)]
+#[repr(transparent)]
 pub struct LoroDoc {
     doc: InnerLoroDoc,
 }
@@ -475,7 +477,7 @@ impl LoroDoc {
 
     /// Undo the operations between the given id_span. It can be used even in a collaborative environment.
     pub fn undo(&self, id_span: IdSpan) -> LoroResult<()> {
-        self.doc.undo(id_span)
+        self.doc.undo(id_span, &mut Default::default())
     }
 }
 
@@ -1815,4 +1817,31 @@ pub enum ValueOrContainer {
     Value(LoroValue),
     /// A container.
     Container(Container),
+}
+
+/// UndoManager can be used to undo and redo the changes made to the document with a certain peer.
+#[derive(Debug)]
+#[repr(transparent)]
+pub struct UndoManager(InnerUndoManager);
+
+impl UndoManager {
+    /// Create a new UndoManager.
+    pub fn new(peer: PeerID, doc: &LoroDoc) -> Self {
+        Self(InnerUndoManager::new(peer, &doc.doc))
+    }
+
+    /// Undo the last change made by the peer.
+    pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
+        self.0.undo(&doc.doc)
+    }
+
+    /// Redo the last change made by the peer.
+    pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
+        self.0.redo(&doc.doc)
+    }
+
+    /// Record a new checkpoint.
+    pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) {
+        self.0.record_new_checkpoint(&doc.doc)
+    }
 }

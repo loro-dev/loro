@@ -1069,7 +1069,10 @@ impl Handler {
                     match value.value {
                         Some(ValueOrHandler::Handler(h)) => {
                             let old_id = h.id();
-                            let new_h = x.insert_container(&key, h)?;
+                            let new_h = x.insert_container(
+                                &key,
+                                Handler::new_unattached(old_id.container_type()),
+                            )?;
                             let new_id = new_h.id();
                             on_container_remap(old_id, new_id);
                         }
@@ -2177,7 +2180,10 @@ impl ListHandler {
                                     }
                                     ValueOrHandler::Handler(h) => {
                                         let old_id = h.id();
-                                        let new_h = self.insert_container(index, h.clone())?;
+                                        let new_h = self.insert_container(
+                                            index,
+                                            Handler::new_unattached(old_id.container_type()),
+                                        )?;
                                         let new_id = new_h.id();
                                         on_container_remap(old_id, new_id);
                                     }
@@ -2843,7 +2849,10 @@ impl MovableListHandler {
                                     }
                                     ValueOrHandler::Handler(h) => {
                                         let old_id = h.id();
-                                        let new_h = self.insert_container(index, h.clone())?;
+                                        let new_h = self.insert_container(
+                                            index,
+                                            Handler::new_unattached(old_id.container_type()),
+                                        )?;
                                         let new_id = new_h.id();
                                         on_container_remap(old_id, new_id);
                                     }

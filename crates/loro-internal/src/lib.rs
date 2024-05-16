@@ -20,6 +20,7 @@ pub use loro::LoroDoc;
 pub use loro_common;
 pub use oplog::OpLog;
 pub use state::DocState;
+pub use undo::UndoManager;
 pub mod awareness;
 pub mod cursor;
 pub mod loro;

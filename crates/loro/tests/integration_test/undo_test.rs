@@ -1,9 +1,12 @@
-use loro::{Frontiers, LoroDoc, LoroError, LoroText, ToJson};
+use loro::{
+    Frontiers, LoroDoc, LoroError, LoroList, LoroMap, LoroResult, LoroText, ToJson, UndoManager,
+};
 use loro_internal::{
     id::{Counter, ID},
     loro_common::IdSpan,
 };
 use serde_json::json;
+use tracing::{info_span, Instrument};
 
 #[test]
 fn basic_text_undo() -> Result<(), LoroError> {
@@ -276,7 +279,7 @@ fn map_container_undo() -> Result<(), LoroError> {
     doc.undo(ID::new(1, 1).into())?; // op 4
     doc.undo(ID::new(1, 0).into())?; // op 5
     assert_eq!(doc.get_deep_value().to_json_value(), json!({"map": {}}));
-    doc.undo(IdSpan::new(1, 3, 6))?;
+    doc.undo(IdSpan::new(1, 3, 6))?; // redo all
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({"map": {"text": "T", "number": 0}})
@@ -397,4 +400,111 @@ fn tree_undo() -> Result<(), LoroError> {
     doc_a.undo(ID::new(1, 1).into())?;
 
     Ok(())
+}
+
+#[test]
+fn undo_manager() -> Result<(), LoroError> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let mut undo = UndoManager::new(1, &doc);
+    doc.get_text("text").insert(0, "123")?;
+    undo.record_new_checkpoint(&doc);
+    doc.get_text("text").insert(3, "456")?;
+    undo.record_new_checkpoint(&doc);
+    doc.get_text("text").insert(6, "789")?;
+    undo.record_new_checkpoint(&doc);
+    for i in 0..10 {
+        assert_eq!(doc.get_text("text").to_string(), "123456789");
+        undo.undo(&doc)?;
+        assert_eq!(doc.get_text("text").to_string(), "123456");
+        undo.undo(&doc)?;
+        assert_eq!(doc.get_text("text").to_string(), "123");
+        undo.undo(&doc)?;
+        assert_eq!(doc.get_text("text").to_string(), "");
+        undo.redo(&doc)?;
+        assert_eq!(doc.get_text("text").to_string(), "123");
+        undo.redo(&doc)?;
+        assert_eq!(doc.get_text("text").to_string(), "123456");
+        undo.redo(&doc)?;
+        assert_eq!(doc.get_text("text").to_string(), "123456789");
+    }
+
+    Ok(())
+}
+
+#[test]
+fn undo_manager_with_sub_container() -> Result<(), LoroError> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let mut undo = UndoManager::new(1, &doc);
+    let map = doc.get_list("list").insert_container(0, LoroMap::new())?;
+    undo.record_new_checkpoint(&doc);
+    let text = map.insert_container("text", LoroText::new())?;
+    undo.record_new_checkpoint(&doc);
+    text.insert(0, "123")?;
+    undo.record_new_checkpoint(&doc);
+    for i in 0..10 {
+        info_span!("round", ?i).in_scope(|| {
+            assert_eq!(
+                doc.get_deep_value().to_json_value(),
+                json!({
+                    "list": [{
+                        "text": "123"
+                    }]
+                })
+            );
+            undo.undo(&doc)?;
+            assert_eq!(
+                doc.get_deep_value().to_json_value(),
+                json!({
+                    "list": [{
+                        "text": ""
+                    }]
+                })
+            );
+            undo.undo(&doc)?;
+            assert_eq!(
+                doc.get_deep_value().to_json_value(),
+                json!({
+                    "list": [{}]
+                })
+            );
+            undo.undo(&doc)?;
+            assert_eq!(
+                doc.get_deep_value().to_json_value(),
+                json!({
+                    "list": []
+                })
+            );
+            undo.redo(&doc)?;
+            assert_eq!(
+                doc.get_deep_value().to_json_value(),
+                json!({
+                    "list": [{}]
+                })
+            );
+            undo.redo(&doc)?;
+            assert_eq!(
+                doc.get_deep_value().to_json_value(),
+                json!({
+                    "list": [{
+                        "text": ""
+                    }]
+                })
+            );
+            undo.redo(&doc)?;
+            assert_eq!(
+                doc.get_deep_value().to_json_value(),
+                json!({
+                    "list": [{
+                        "text": "123"
+                    }]
+                })
+            );
+
+            Ok::<(), loro::LoroError>(())
+        })?;
+    }
+
+    Ok::<(), loro::LoroError>(())
 }

@@ -11,6 +11,7 @@ use std::{
 };
 
 use fxhash::{FxHashMap, FxHasher};
+use itertools::Itertools;
 use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
 use rle::HasLength;
 use tracing::{debug, debug_span, instrument, trace, trace_span};
@@ -719,7 +720,11 @@ impl LoroDoc {
     /// further when it's needed. The time complexity is O(n + m), n is the ops in the id_span, m is the
     /// distance from id_span to the current latest version.
     #[instrument(level = "info", skip(self))]
-    pub fn undo(&self, id_span: IdSpan) -> LoroResult<()> {
+    pub fn undo(
+        &self,
+        id_span: IdSpan,
+        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
+    ) -> LoroResult<()> {
         if self.is_detached() {
             return Err(LoroError::EditWhenDetached);
         }
@@ -761,7 +766,7 @@ impl LoroDoc {
             self.state.lock().unwrap().start_recording();
         }
         self.start_auto_commit();
-        self.apply_diff(diff).unwrap();
+        self.apply_diff(diff, container_remap).unwrap();
         self.commit_then_stop();
         self.renew_txn_if_auto_commit();
         Ok(())
@@ -771,7 +776,7 @@ impl LoroDoc {
     pub fn diff_and_apply(&self, target: &Frontiers) -> LoroResult<()> {
         let f = self.state_frontiers();
         let diff = self.diff(&f, target)?;
-        self.apply_diff(diff)
+        self.apply_diff(diff, &mut Default::default())
     }
 
     /// Calculate the diff between two versions so that apply diff on a will make the state same as b.
@@ -810,18 +815,26 @@ impl LoroDoc {
     }
 
     /// Apply diff to the current state.
-    pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
+    pub fn apply_diff(
+        &self,
+        mut diff: DiffBatch,
+        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
+    ) -> LoroResult<()> {
         if self.is_detached() {
             return Err(LoroError::EditWhenDetached);
         }
 
-        let mut container_remap: FxHashMap<ContainerID, ContainerID> = FxHashMap::default();
-        for (id, diff) in diff.0 {
-            let id = if let Some(id) = container_remap.get(&id) {
-                id.clone()
-            } else {
-                id
-            };
+        let mut containers = diff.0.keys().cloned().collect_vec();
+        // Sort container from the top to the bottom, so that we can have correct container remap
+        containers.sort_by_cached_key(|cid| {
+            let idx = self.arena.id_to_idx(cid).unwrap();
+            self.arena.get_depth(idx).unwrap().get()
+        });
+        for mut id in containers {
+            let diff = diff.0.remove(&id).unwrap();
+            while let Some(rid) = container_remap.get(&id) {
+                id = rid.clone();
+            }
             let h = self.get_handler(id);
             h.apply_diff(diff, &mut |old_id, new_id| {
                 container_remap.insert(old_id, new_id);

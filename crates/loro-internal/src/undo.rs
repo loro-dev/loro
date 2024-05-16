@@ -1,11 +1,22 @@
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, HasIdSpan, IdSpan};
-use tracing::{debug_span, trace};
+use loro_common::{
+    ContainerID, Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroResult, PeerID, ID,
+};
+use tracing::{debug_span, instrument, trace};
 
-use crate::{container::idx::ContainerIdx, event::Diff, version::Frontiers, DocDiff};
+use crate::{container::idx::ContainerIdx, event::Diff, version::Frontiers, DocDiff, LoroDoc};
 
 #[derive(Debug)]
 pub struct DiffBatch(pub(crate) FxHashMap<ContainerID, Diff>);
+
+#[derive(Debug)]
+pub struct UndoManager {
+    peer: PeerID,
+    latest_counter: Counter,
+    undo_stack: Vec<CounterSpan>,
+    redo_stack: Vec<CounterSpan>,
+    container_remap: FxHashMap<ContainerID, ContainerID>,
+}
 
 impl DiffBatch {
     pub fn new(diff: Vec<DocDiff>) -> Self {
@@ -46,6 +57,87 @@ impl DiffBatch {
 
     pub fn filter(&mut self, container_filter: &[ContainerIdx]) {
         unimplemented!()
+    }
+}
+
+fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
+    doc.oplog()
+        .lock()
+        .unwrap()
+        .get_peer_changes(peer)
+        .and_then(|x| x.last().map(|x| x.ctr_end()))
+        .unwrap_or(0)
+}
+
+impl UndoManager {
+    pub fn new(peer: PeerID, doc: &LoroDoc) -> Self {
+        UndoManager {
+            peer,
+            latest_counter: get_counter_end(doc, peer),
+            undo_stack: Default::default(),
+            redo_stack: Default::default(),
+            container_remap: Default::default(),
+        }
+    }
+
+    pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) {
+        doc.commit_then_renew();
+        let counter = get_counter_end(doc, self.peer);
+        if counter == self.latest_counter {
+            return;
+        }
+
+        assert!(self.latest_counter < counter);
+        let span = CounterSpan::new(self.latest_counter, counter);
+        self.latest_counter = counter;
+        self.undo_stack.push(span);
+        self.redo_stack.clear();
+    }
+
+    #[instrument(skip_all)]
+    pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
+        self.record_new_checkpoint(doc);
+        let latest_counter = get_counter_end(doc, self.peer);
+        if let Some(span) = self.undo_stack.pop() {
+            trace!("Undo {:?}", span);
+            doc.undo(
+                IdSpan {
+                    peer: self.peer,
+                    counter: span,
+                },
+                &mut self.container_remap,
+            )?;
+            let new_counter = get_counter_end(doc, self.peer);
+            if latest_counter != new_counter {
+                self.redo_stack
+                    .push(CounterSpan::new(latest_counter, new_counter));
+            }
+            self.latest_counter = new_counter;
+        }
+
+        Ok(())
+    }
+
+    pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
+        self.record_new_checkpoint(doc);
+        let latest_counter = get_counter_end(doc, self.peer);
+        if let Some(span) = self.redo_stack.pop() {
+            doc.undo(
+                IdSpan {
+                    peer: self.peer,
+                    counter: span,
+                },
+                &mut self.container_remap,
+            )?;
+            let new_counter = get_counter_end(doc, self.peer);
+            if latest_counter != new_counter {
+                self.undo_stack
+                    .push(CounterSpan::new(latest_counter, new_counter));
+            }
+            self.latest_counter = new_counter;
+        }
+
+        Ok(())
     }
 }
 
