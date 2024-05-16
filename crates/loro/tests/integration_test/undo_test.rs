@@ -1,4 +1,4 @@
-use loro::{Frontiers, LoroDoc, LoroError, ToJson};
+use loro::{Frontiers, LoroDoc, LoroError, LoroText, ToJson};
 use loro_internal::{
     id::{Counter, ID},
     loro_common::IdSpan,
@@ -262,6 +262,25 @@ fn map_collaborative_undo() -> Result<(), LoroError> {
 
 #[test]
 fn map_container_undo() -> Result<(), LoroError> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let map = doc.get_map("map");
+    let text = map.insert_container("text", LoroText::new())?; // op 0
+    text.insert(0, "T")?; // op 1
+    map.insert("number", 0)?; // op 2
+    doc.undo(ID::new(1, 2).into())?; // op 3
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({"map": {"text": "T"}})
+    );
+    doc.undo(ID::new(1, 1).into())?; // op 4
+    doc.undo(ID::new(1, 0).into())?; // op 5
+    assert_eq!(doc.get_deep_value().to_json_value(), json!({"map": {}}));
+    doc.undo(IdSpan::new(1, 3, 6))?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({"map": {"text": "T", "number": 0}})
+    );
     Ok(())
 }
 

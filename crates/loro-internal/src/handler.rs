@@ -1057,14 +1057,21 @@ impl Handler {
         }
     }
 
-    pub(crate) fn apply_diff(&self, diff: Diff) -> LoroResult<()> {
+    pub(crate) fn apply_diff(
+        &self,
+        diff: Diff,
+        on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
+    ) -> LoroResult<()> {
         match self {
             Self::Map(x) => {
                 let diff = diff.into_map().unwrap();
                 for (key, value) in diff.updated.into_iter() {
                     match value.value {
                         Some(ValueOrHandler::Handler(h)) => {
-                            x.insert_container(&key, h)?;
+                            let old_id = h.id();
+                            let new_h = x.insert_container(&key, h)?;
+                            let new_id = new_h.id();
+                            on_container_remap(old_id, new_id);
                         }
                         Some(ValueOrHandler::Value(v)) => {
                             x.insert(&key, v)?;
@@ -1081,11 +1088,11 @@ impl Handler {
             }
             Self::List(x) => {
                 let delta = diff.into_list().unwrap();
-                x.apply_delta(delta)?;
+                x.apply_delta(delta, on_container_remap)?;
             }
             Self::MovableList(x) => {
                 let delta = diff.into_list().unwrap();
-                x.apply_delta(delta)?;
+                x.apply_delta(delta, on_container_remap)?;
             }
             Self::Tree(x) => {
                 // TODO: can reuse position?
@@ -2147,6 +2154,7 @@ impl ListHandler {
             loro_delta::array_vec::ArrayVec<ValueOrHandler, 8>,
             crate::event::ListDeltaMeta,
         >,
+        on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
     ) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(d) => unimplemented!(),
@@ -2168,7 +2176,10 @@ impl ListHandler {
                                         self.insert(index, v.clone())?;
                                     }
                                     ValueOrHandler::Handler(h) => {
-                                        self.insert_container(index, h.clone())?;
+                                        let old_id = h.id();
+                                        let new_h = self.insert_container(index, h.clone())?;
+                                        let new_id = new_h.id();
+                                        on_container_remap(old_id, new_id);
                                     }
                                 }
 
@@ -2805,6 +2816,7 @@ impl MovableListHandler {
             loro_delta::array_vec::ArrayVec<ValueOrHandler, 8>,
             crate::event::ListDeltaMeta,
         >,
+        on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
     ) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(_) => {
@@ -2830,7 +2842,10 @@ impl MovableListHandler {
                                         self.insert(index, v.clone())?;
                                     }
                                     ValueOrHandler::Handler(h) => {
-                                        self.insert_container(index, h.clone())?;
+                                        let old_id = h.id();
+                                        let new_h = self.insert_container(index, h.clone())?;
+                                        let new_id = new_h.id();
+                                        on_container_remap(old_id, new_id);
                                     }
                                 }
 
@@ -2905,10 +2920,6 @@ impl MapHandler {
     }
 
     pub fn insert_container<T: HandlerTrait>(&self, key: &str, handler: T) -> LoroResult<T> {
-        if handler.is_attached() {
-            return Err(LoroError::ReattachAttachedContainer);
-        }
-
         match &self.inner {
             MaybeDetached::Detached(m) => {
                 let mut m = m.try_lock().unwrap();

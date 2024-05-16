@@ -10,7 +10,7 @@ use std::{
     },
 };
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHasher};
 use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
 use rle::HasLength;
 use tracing::{debug, debug_span, instrument, trace, trace_span};
@@ -765,18 +765,29 @@ impl LoroDoc {
         // ----------------------------------------
         // 4 Apply C_n to the current state
         // ----------------------------------------
-        for (idx, diff) in last_ci.0.into_iter() {
+        self.apply_diff(&mut last_ci.0.into_iter().map(|(idx, diff)| {
             let id = self.arena.idx_to_id(idx).unwrap();
-            self.apply_diff(id, diff);
-        }
+            (id, diff)
+        }));
         self.commit_then_stop();
         self.renew_txn_if_auto_commit();
         Ok(())
     }
 
-    pub fn apply_diff(&self, id: ContainerID, diff: Diff) {
-        let h = self.get_handler(id);
-        h.apply_diff(diff).unwrap();
+    pub fn apply_diff(&self, diff: &mut dyn Iterator<Item = (ContainerID, Diff)>) {
+        let mut container_remap: FxHashMap<ContainerID, ContainerID> = FxHashMap::default();
+        for (id, diff) in diff {
+            let id = if let Some(id) = container_remap.get(&id) {
+                id.clone()
+            } else {
+                id
+            };
+            let h = self.get_handler(id);
+            h.apply_diff(diff, &mut |old_id, new_id| {
+                container_remap.insert(old_id, new_id);
+            })
+            .unwrap();
+        }
     }
 
     /// This is for debugging purpose. It will travel the whole oplog
