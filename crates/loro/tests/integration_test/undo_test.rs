@@ -287,6 +287,57 @@ fn map_container_undo() -> Result<(), LoroError> {
     Ok(())
 }
 
+/// This test case matches the example given here
+///
+/// [PLF23] Extending Automerge: Undo, Redo, and Move
+/// Leo Stewen, Martin Kleppmann, Liangrun Da
+/// https://youtu.be/uP7AKExkMGU?si=TR2JHRdmAitOVaMw&t=768
+///
+///
+///      ┌─A-Set───┐ ┌─B-set   ┌──A-undo   ┌─A-redo   
+///      │         │ │     │   │        │  │      │   
+///      │         │ │     │   │        │  │      │   
+///      │         ▼ │     ▼   │        ▼  │      ▼   
+/// ┌────┴────┐ ┌────┴─┐ ┌─────┴──┐ ┌──────┴┐ ┌──────┐
+/// │         │ │      │ │        │ │       │ │      │
+/// │  Black  │ │ Red  │ │  Green │ │ Black │ │Green │
+/// │         │ │      │ │        │ │       │ │      │
+/// └─────────┘ └──────┘ └────────┘ └───────┘ └──────┘
+///
+/// It's also how the following products implement undo/redo
+/// - Google Sheet
+/// - Google Slides
+/// - Figma
+/// - Microsoft Powerpoint
+/// - Excel
+#[test]
+fn one_register_collaborative_undo() -> Result<(), LoroError> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+    doc_a.get_map("map").insert("color", "black")?;
+    sync(&doc_a, &doc_b);
+    let mut undo = UndoManager::new(1, &doc_a);
+    doc_a.get_map("map").insert("color", "red")?;
+    undo.record_new_checkpoint(&doc_a);
+    sync(&doc_a, &doc_b);
+    doc_b.get_map("map").insert("color", "green")?;
+    sync(&doc_a, &doc_b);
+    undo.record_new_checkpoint(&doc_a);
+    undo.undo(&doc_a)?;
+    assert_eq!(
+        doc_a.get_deep_value().to_json_value(),
+        json!({"map": {"color": "black"}})
+    );
+    undo.redo(&doc_a)?;
+    assert_eq!(
+        doc_a.get_deep_value().to_json_value(),
+        json!({"map": {"color": "green"}})
+    );
+    Ok(())
+}
+
 fn sync(a: &LoroDoc, b: &LoroDoc) {
     a.import(&b.export_from(&a.oplog_vv())).unwrap();
     b.import(&a.export_from(&b.oplog_vv())).unwrap();
