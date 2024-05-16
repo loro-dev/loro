@@ -54,6 +54,7 @@ pub use error::{LoroError, LoroResult};
 pub(crate) mod group;
 pub(crate) mod macros;
 pub(crate) mod state;
+pub(crate) mod undo;
 pub(crate) mod value;
 pub(crate) use id::{PeerID, ID};
 

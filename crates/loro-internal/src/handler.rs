@@ -1057,7 +1057,7 @@ impl Handler {
         }
     }
 
-    pub(crate) fn apply_event(&self, diff: Diff) -> LoroResult<()> {
+    pub(crate) fn apply_diff(&self, diff: Diff) -> LoroResult<()> {
         match self {
             Self::Map(x) => {
                 let diff = diff.into_map().unwrap();

@@ -33,6 +33,7 @@ use crate::{
     id::PeerID,
     op::InnerContent,
     oplog::dag::FrontiersNotIncluded,
+    undo::DiffBatch,
     version::Frontiers,
     DocDiff, HandlerTrait, InternalString, LoroError, VersionVector,
 };
@@ -737,50 +738,6 @@ impl LoroDoc {
 
         debug!("Started old state {:?}", self.get_deep_value());
 
-        struct DiffBatch(FxHashMap<ContainerIdx, Diff>);
-
-        impl DiffBatch {
-            fn new(diff: Vec<DocDiff>) -> Self {
-                let mut map: FxHashMap<ContainerIdx, Diff> = Default::default();
-                for d in diff.into_iter() {
-                    for item in d.diff.into_iter() {
-                        let old = map.insert(item.idx, item.diff);
-                        assert!(old.is_none());
-                    }
-                }
-
-                Self(map)
-            }
-
-            fn compose(&mut self, other: &Self) {
-                if other.0.is_empty() {
-                    return;
-                }
-
-                for (idx, diff) in self.0.iter_mut() {
-                    if let Some(b_diff) = other.0.get(idx) {
-                        diff.compose_ref(b_diff);
-                    }
-                }
-            }
-
-            fn transform(&mut self, other: &Self, left_priority: bool) {
-                if other.0.is_empty() {
-                    return;
-                }
-
-                for (idx, diff) in self.0.iter_mut() {
-                    if let Some(b_diff) = other.0.get(idx) {
-                        diff.transform(b_diff, left_priority);
-                    }
-                }
-            }
-
-            fn filter(&mut self, container_filter: &[ContainerIdx]) {
-                unimplemented!()
-            }
-        }
-
         let (was_recording, latest_frontiers) = {
             let mut state = self.state.lock().unwrap();
             let was_recording = state.is_recording();
@@ -788,94 +745,16 @@ impl LoroDoc {
             (was_recording, state.frontiers.clone())
         };
 
-        // The process of performing undo is:
-        //
-        // 0. Split the span into a series of continuous spans. There is no external dep within each continuous span.
-        //
-        // For each continuous span_i:
-        //
-        // 1. a. Calculate the event of checkout from id_span.last to id_span.deps, call it Ai. It undo the ops in the current span.
-        //    b. Calculate A'i = Ai + T(Ci-1, Ai) if i > 0, otherwise A'i = Ai.
-        //       NOTE: A'i can undo the ops in the current span and the previous spans, if it's applied on the id_span.last version.
-        // 2. Calculate the event of checkout from id_span.last to [the next span's last id] or [the latest version], call it Bi.
-        // 3. Transform event A'i based on Bi, call it Ci
-        // 4. If span_i is the last span, apply Ci to the current state.
-
-        // -------------------------------------------------------
-        // 0. Split the span into a series of continuous spans
-        // -------------------------------------------------------
-
         let spans = self.oplog.lock().unwrap().split_span_based_on_deps(id_span);
-        trace!("0. spans={:#?}", &spans);
-        let mut last_ci: Option<DiffBatch> = None;
-
-        for i in 0..spans.len() {
-            debug_span!("Undo", ?i, "Undo span {:?}", &spans[i]).in_scope(|| {
-                let (this_id_span, start_version) = &spans[i];
-                // ---------------------------------------
-                // 1.a Calc event A_i
-                // ---------------------------------------
-                let mut event_a_i = debug_span!("1. Calc event A_i").in_scope(|| {
-                    // Checkout to the last id of the id_span
-                    let this_last = Frontiers::from_id(this_id_span.id_last());
-                    self.checkout_without_emitting(&this_last).unwrap();
-                    self.state.lock().unwrap().start_recording();
-                    self.checkout_without_emitting(start_version).unwrap();
-                    let mut state = self.state.lock().unwrap();
-                    let e = state.take_events();
-                    state.stop_and_clear_recording();
-                    DiffBatch::new(e)
-                });
-
-                trace!("Event A_i {:#?}", &event_a_i.0);
-                // ---------------------------------------
-                // 2. Calc event B_i
-                // ---------------------------------------
-                let event_b_i = debug_span!("2. Calc event B_i").in_scope(|| {
-                    let next = if i + 1 < spans.len() {
-                        spans[i + 1].0.id_last().into()
-                    } else {
-                        // TODO: avoid clone
-                        latest_frontiers.clone()
-                    };
-
-                    self.checkout_without_emitting(&this_id_span.id_last().into())
-                        .unwrap();
-                    self.state.lock().unwrap().start_recording();
-                    self.checkout_without_emitting(&next).unwrap();
-                    trace!("next state {:?}", self.get_deep_value());
-                    let mut state = self.state.lock().unwrap();
-                    let e = state.take_events();
-                    state.stop_and_clear_recording();
-                    DiffBatch::new(e)
-                });
-                trace!("Event B_i {:#?}", &event_b_i.0);
-
-                // event_a_prime can undo the ops in the current span and the previous spans
-                let mut event_a_prime = if let Some(mut last_ci) = last_ci.take() {
-                    // ------------------------------------------------------------------------------
-                    // 1.b Transform and apply Ci-1 based on Ai, call it A'i
-                    // ------------------------------------------------------------------------------
-                    trace!("last_ci {:#?}", last_ci.0);
-                    trace!("event_a_i {:#?}", &event_a_i.0);
-                    last_ci.transform(&event_a_i, true);
-                    trace!("transformed last_ci {:#?}", last_ci.0);
-                    event_a_i.compose(&last_ci);
-                    event_a_i
-                } else {
-                    event_a_i
-                };
-                trace!("Event A'_i {:#?}", &event_a_prime.0);
-
-                // --------------------------------------------------
-                // 3. Transform event A'_i based on B_i, call it C_i
-                // --------------------------------------------------
-                event_a_prime.transform(&event_b_i, true);
-                let c_i = event_a_prime;
-                trace!("Event C_i {:#?}", &c_i.0);
-                last_ci = Some(c_i);
-            });
-        }
+        let last_ci = crate::undo::undo(spans, latest_frontiers, |from, to| {
+            self.checkout_without_emitting(from).unwrap();
+            self.state.lock().unwrap().start_recording();
+            self.checkout_without_emitting(to).unwrap();
+            let mut state = self.state.lock().unwrap();
+            let e = state.take_events();
+            state.stop_and_clear_recording();
+            DiffBatch::new(e)
+        });
 
         self.detached.store(false, Release);
         if was_recording {
@@ -886,19 +765,18 @@ impl LoroDoc {
         // ----------------------------------------
         // 4 Apply C_n to the current state
         // ----------------------------------------
-        for (idx, diff) in last_ci.take().unwrap().0.into_iter() {
+        for (idx, diff) in last_ci.0.into_iter() {
             let id = self.arena.idx_to_id(idx).unwrap();
-            self.apply_event(id, diff);
+            self.apply_diff(id, diff);
         }
         self.commit_then_stop();
         self.renew_txn_if_auto_commit();
-        debug!("Undo done");
         Ok(())
     }
 
-    pub fn apply_event(&self, id: ContainerID, diff: Diff) {
+    pub fn apply_diff(&self, id: ContainerID, diff: Diff) {
         let h = self.get_handler(id);
-        h.apply_event(diff).unwrap();
+        h.apply_diff(diff).unwrap();
     }
 
     /// This is for debugging purpose. It will travel the whole oplog
