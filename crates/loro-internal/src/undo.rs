@@ -13,27 +13,8 @@ use crate::{
     DocDiff, LoroDoc,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DiffBatch(pub(crate) FxHashMap<ContainerID, Diff>);
-
-#[derive(Debug)]
-struct Generation(usize);
-
-/// UndoManager is responsible for managing undo/redo from the current peer's perspective.
-///
-/// Undo/local is local: it cannot be used to undone the changes made by other peers.
-/// If you want to undo changes made by other peers, you may need to use the time travel feature.
-///
-/// PeerID cannot be changed during the lifetime of the UndoManager
-#[derive(Debug)]
-pub struct UndoManager {
-    peer: PeerID,
-    latest_counter: Counter,
-    undo_stack: Vec<(CounterSpan, Generation)>,
-    redo_stack: Vec<(CounterSpan, Generation)>,
-    container_remap: FxHashMap<ContainerID, ContainerID>,
-    remote_diffs: Arc<Mutex<Vec<DiffBatch>>>,
-}
 
 impl DiffBatch {
     pub fn new(diff: Vec<DocDiff>) -> Self {
@@ -73,6 +54,67 @@ impl DiffBatch {
     }
 }
 
+#[derive(Debug)]
+struct Generation(usize);
+
+/// UndoManager is responsible for managing undo/redo from the current peer's perspective.
+///
+/// Undo/local is local: it cannot be used to undone the changes made by other peers.
+/// If you want to undo changes made by other peers, you may need to use the time travel feature.
+///
+/// PeerID cannot be changed during the lifetime of the UndoManager
+#[derive(Debug)]
+pub struct UndoManager {
+    peer: PeerID,
+    container_remap: FxHashMap<ContainerID, ContainerID>,
+    inner: Arc<Mutex<UndoManagerInner>>,
+}
+
+#[derive(Debug)]
+struct UndoManagerInner {
+    latest_counter: Counter,
+    undo_stack: Vec<(CounterSpan, Generation)>,
+    redo_stack: Vec<(CounterSpan, Generation)>,
+    remote_diffs: Vec<DiffBatch>,
+    processing_undo: bool,
+}
+
+impl UndoManagerInner {
+    fn new(last_counter: Counter) -> Self {
+        UndoManagerInner {
+            latest_counter: last_counter,
+            undo_stack: Default::default(),
+            redo_stack: Default::default(),
+            remote_diffs: vec![DiffBatch::default()],
+            processing_undo: false,
+        }
+    }
+
+    fn get_next_gen(&mut self) -> Generation {
+        if !self.remote_diffs.last().unwrap().0.is_empty() {
+            self.remote_diffs.push(DiffBatch::new(Default::default()));
+        }
+        Generation(self.remote_diffs.len() - 1)
+    }
+
+    fn record_checkpoint(&mut self, latest_counter: Counter) {
+        if latest_counter == self.latest_counter {
+            return;
+        }
+
+        trace!("record_checkpoint {}", latest_counter);
+        trace!("undo_stack {:#?}", &self.undo_stack);
+
+        let gen = self.get_next_gen();
+        assert!(self.latest_counter < latest_counter);
+        let span = CounterSpan::new(self.latest_counter, latest_counter);
+        self.latest_counter = latest_counter;
+        self.undo_stack.push((span, gen));
+        trace!("undo_stack {:#?}", &self.undo_stack);
+        self.redo_stack.clear();
+    }
+}
+
 fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
     doc.oplog()
         .lock()
@@ -85,13 +127,23 @@ fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
 impl UndoManager {
     pub fn new(doc: &LoroDoc) -> Self {
         let peer = doc.peer_id();
-        let remote_diff = Arc::new(Mutex::new(vec![DiffBatch::new(Default::default())]));
-        let remote_diff_clone = remote_diff.clone();
-        doc.subscribe_root(Arc::new(move |event| {
-            if matches!(event.event_meta.by, EventTriggerKind::Import) {
-                let mut remote_diffs = remote_diff_clone.lock().unwrap();
-                assert!(!remote_diffs.is_empty());
-                for remote_diff in remote_diffs.iter_mut() {
+        let inner = Arc::new(Mutex::new(UndoManagerInner::new(get_counter_end(
+            doc, peer,
+        ))));
+        let inner_clone = inner.clone();
+        doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
+            EventTriggerKind::Local => {
+                let mut inner = inner_clone.try_lock().unwrap();
+                if !inner.processing_undo {
+                    if let Some(id) = event.event_meta.to.iter().find(|x| x.peer == peer) {
+                        inner.record_checkpoint(id.counter + 1);
+                    }
+                }
+            }
+            EventTriggerKind::Import => {
+                let mut inner = inner_clone.try_lock().unwrap();
+                assert!(!inner.remote_diffs.is_empty());
+                for remote_diff in inner.remote_diffs.iter_mut() {
                     for e in event.events {
                         if let Some(d) = remote_diff.0.get_mut(&e.id) {
                             d.compose_ref(&e.diff);
@@ -101,24 +153,14 @@ impl UndoManager {
                     }
                 }
             }
+            EventTriggerKind::Checkout => {}
         }));
 
         UndoManager {
             peer,
-            latest_counter: get_counter_end(doc, peer),
-            undo_stack: vec![],
-            redo_stack: vec![],
             container_remap: Default::default(),
-            remote_diffs: remote_diff,
+            inner,
         }
-    }
-
-    fn get_next_gen(&mut self) -> Generation {
-        let mut remote_diffs = self.remote_diffs.lock().unwrap();
-        if !remote_diffs.last().unwrap().0.is_empty() {
-            remote_diffs.push(DiffBatch::new(Default::default()));
-        }
-        Generation(remote_diffs.len() - 1)
     }
 
     pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) {
@@ -128,34 +170,27 @@ impl UndoManager {
 
         doc.commit_then_renew();
         let counter = get_counter_end(doc, self.peer);
-        if counter == self.latest_counter {
-            return;
-        }
-
-        let gen = self.get_next_gen();
-        assert!(self.latest_counter < counter);
-        let span = CounterSpan::new(self.latest_counter, counter);
-        self.latest_counter = counter;
-        self.undo_stack.push((span, gen));
-        self.redo_stack.clear();
+        self.inner.lock().unwrap().record_checkpoint(counter);
     }
 
     #[instrument(skip_all)]
     pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
         self.record_new_checkpoint(doc);
         let end_counter = get_counter_end(doc, self.peer);
-
-        while let Some((span, gen)) = self.undo_stack.pop() {
+        let mut top = {
+            let mut inner = self.inner.lock().unwrap();
+            inner.processing_undo = true;
+            inner.undo_stack.pop()
+        };
+        while let Some((span, gen)) = top {
             trace!("Undo {:?}", span);
             {
-                let diffs = self.remote_diffs.lock().unwrap();
                 // TODO: we can avoid this clone
-                let e = diffs[gen.0].clone();
-                doc.undo(
+                let e = self.inner.lock().unwrap().remote_diffs[gen.0].clone();
+                doc.undo_internal(
                     IdSpan {
                         peer: self.peer,
                         counter: span,
-                        // counter: CounterSpan::new(span.start, end_counter),
                     },
                     &mut self.container_remap,
                     Some(&e),
@@ -163,17 +198,21 @@ impl UndoManager {
             }
             let new_counter = get_counter_end(doc, self.peer);
             if end_counter != new_counter {
-                let gen = self.get_next_gen();
-                self.redo_stack
+                let mut inner = self.inner.lock().unwrap();
+                let gen = inner.get_next_gen();
+                inner
+                    .redo_stack
                     .push((CounterSpan::new(end_counter, new_counter), gen));
-                self.latest_counter = new_counter;
+                inner.latest_counter = new_counter;
                 break;
             } else {
                 // continue to pop the undo item as this undo is a no-op
+                top = self.inner.lock().unwrap().undo_stack.pop();
                 continue;
             }
         }
 
+        self.inner.lock().unwrap().processing_undo = false;
         Ok(())
     }
 
@@ -181,39 +220,49 @@ impl UndoManager {
     pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
         self.record_new_checkpoint(doc);
         let end_counter = get_counter_end(doc, self.peer);
-        while let Some((span, gen)) = self.redo_stack.pop() {
-            let e = self.remote_diffs.lock().unwrap()[gen.0].clone();
-            doc.undo(
+
+        let mut top = {
+            let mut inner = self.inner.lock().unwrap();
+            inner.processing_undo = true;
+            inner.redo_stack.pop()
+        };
+        while let Some((span, gen)) = top {
+            let e = self.inner.lock().unwrap().remote_diffs[gen.0].clone();
+            doc.undo_internal(
                 IdSpan {
                     peer: self.peer,
                     counter: span,
-                    // counter: CounterSpan::new(span.start, end_counter),
                 },
                 &mut self.container_remap,
                 Some(&e),
             )?;
             let new_counter = get_counter_end(doc, self.peer);
             if end_counter != new_counter {
-                let gen = self.get_next_gen();
-                self.undo_stack
+                let mut inner = self.inner.lock().unwrap();
+                let gen = inner.get_next_gen();
+
+                inner
+                    .undo_stack
                     .push((CounterSpan::new(end_counter, new_counter), gen));
-                self.latest_counter = new_counter;
+                inner.latest_counter = new_counter;
                 break;
             } else {
                 // continue to pop the redo item as this redo is a no-op
+                top = self.inner.lock().unwrap().redo_stack.pop();
                 continue;
             }
         }
 
+        self.inner.lock().unwrap().processing_undo = false;
         Ok(())
     }
 
     pub fn can_undo(&self) -> bool {
-        !self.undo_stack.is_empty()
+        !self.inner.lock().unwrap().undo_stack.is_empty()
     }
 
     pub fn can_redo(&self) -> bool {
-        !self.redo_stack.is_empty()
+        !self.inner.lock().unwrap().redo_stack.is_empty()
     }
 }
 

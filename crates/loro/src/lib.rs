@@ -12,6 +12,7 @@ use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
+use loro_internal::loro::CommitWhenDrop;
 use loro_internal::loro_common::IdSpan;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
@@ -476,8 +477,9 @@ impl LoroDoc {
     }
 
     /// Undo the operations between the given id_span. It can be used even in a collaborative environment.
-    pub fn undo(&self, id_span: IdSpan) -> LoroResult<()> {
-        self.doc.undo(id_span, &mut Default::default(), None)
+    pub fn undo(&self, id_span: IdSpan) -> LoroResult<CommitWhenDrop> {
+        self.doc
+            .undo_internal(id_span, &mut Default::default(), None)
     }
 }
 

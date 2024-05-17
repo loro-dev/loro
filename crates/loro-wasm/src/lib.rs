@@ -1,6 +1,7 @@
 //! Loro WASM bindings.
 #![allow(non_snake_case)]
 #![warn(missing_docs)]
+
 use convert::resolved_diff_to_js;
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
@@ -17,7 +18,7 @@ use loro_internal::{
     obs::SubID,
     version::Frontiers,
     ContainerType, DiffEvent, HandlerTrait, LoroDoc, LoroValue, MovableListHandler,
-    VersionVector as InternalVersionVector,
+    UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
@@ -3270,6 +3271,55 @@ fn loro_value_to_js_value_or_container(
             let handler: JsValue = handler_to_js_value(c, doc.clone());
             handler
         }
+    }
+}
+
+/// UndoManager is a manager that manages the undo and redo operations.
+///
+/// Undo/local is local: it cannot be used to undone the changes made by other peers.
+/// If you want to undo changes made by other peers, you may need to use the time travel feature.
+///
+/// PeerID cannot be changed during the lifetime of the UndoManager
+#[wasm_bindgen]
+#[derive(Debug)]
+pub struct UndoManager {
+    undo: InnerUndoManager,
+    doc: Arc<LoroDoc>,
+}
+
+#[wasm_bindgen]
+impl UndoManager {
+    /// Create a new undo manager. It will bind on the current PeerID.
+    /// PeerID cannot be changed during the lifetime of the UndoManager.
+    #[wasm_bindgen(constructor)]
+    pub fn new(doc: Loro) -> Self {
+        let undo = InnerUndoManager::new(&doc.0);
+        UndoManager {
+            undo,
+            doc: doc.0.clone(),
+        }
+    }
+
+    /// Undo the last operation.
+    pub fn undo(&mut self) -> JsResult<()> {
+        self.undo.undo(&self.doc)?;
+        Ok(())
+    }
+
+    /// Redo the last undone operation.
+    pub fn redo(&mut self) -> JsResult<()> {
+        self.undo.redo(&self.doc)?;
+        Ok(())
+    }
+
+    /// Can undo the last operation.
+    pub fn can_undo(&self) -> bool {
+        self.undo.can_undo()
+    }
+
+    /// Can redo the last operation.
+    pub fn can_redo(&self) -> bool {
+        self.undo.can_redo()
     }
 }
 

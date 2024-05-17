@@ -711,7 +711,7 @@ impl LoroDoc {
 
     /// Undo the operations between the given id_span. It can be used even in a collaborative environment.
     ///
-    /// This is an internal API.
+    /// This is an internal API. You should NOT use it directly.
     ///
     /// # Internal
     ///
@@ -723,12 +723,12 @@ impl LoroDoc {
     /// further when it's needed. The time complexity is O(n + m), n is the ops in the id_span, m is the
     /// distance from id_span to the current latest version.
     #[instrument(level = "info", skip(self))]
-    pub fn undo(
+    pub fn undo_internal(
         &self,
         id_span: IdSpan,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
         post_transform_base: Option<&DiffBatch>,
-    ) -> LoroResult<()> {
+    ) -> LoroResult<CommitWhenDrop> {
         if self.is_detached() {
             return Err(LoroError::EditWhenDetached);
         }
@@ -780,9 +780,7 @@ impl LoroDoc {
         }
         self.start_auto_commit();
         self.apply_diff(diff, container_remap).unwrap();
-        self.commit_then_stop();
-        self.renew_txn_if_auto_commit();
-        Ok(())
+        Ok(CommitWhenDrop { doc: self })
     }
 
     /// Calculate the diff between the current state and the target state, and apply the diff to the current state.
@@ -1263,6 +1261,17 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
     }
 
     None
+}
+
+#[derive(Debug)]
+pub struct CommitWhenDrop<'a> {
+    doc: &'a LoroDoc,
+}
+
+impl<'a> Drop for CommitWhenDrop<'a> {
+    fn drop(&mut self) {
+        self.doc.commit_then_renew()
+    }
 }
 
 #[cfg(test)]

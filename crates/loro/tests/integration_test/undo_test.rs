@@ -468,20 +468,23 @@ fn undo_manager() -> Result<(), LoroError> {
     undo.record_new_checkpoint(&doc);
     doc.get_text("text").insert(6, "789")?;
     undo.record_new_checkpoint(&doc);
-    for _ in 0..10 {
-        assert_eq!(doc.get_text("text").to_string(), "123456789");
-        undo.undo(&doc)?;
-        assert_eq!(doc.get_text("text").to_string(), "123456");
-        undo.undo(&doc)?;
-        assert_eq!(doc.get_text("text").to_string(), "123");
-        undo.undo(&doc)?;
-        assert_eq!(doc.get_text("text").to_string(), "");
-        undo.redo(&doc)?;
-        assert_eq!(doc.get_text("text").to_string(), "123");
-        undo.redo(&doc)?;
-        assert_eq!(doc.get_text("text").to_string(), "123456");
-        undo.redo(&doc)?;
-        assert_eq!(doc.get_text("text").to_string(), "123456789");
+    for i in 0..10 {
+        info_span!("round", i).in_scope(|| {
+            assert_eq!(doc.get_text("text").to_string(), "123456789");
+            undo.undo(&doc)?;
+            assert_eq!(doc.get_text("text").to_string(), "123456");
+            undo.undo(&doc)?;
+            assert_eq!(doc.get_text("text").to_string(), "123");
+            undo.undo(&doc)?;
+            assert_eq!(doc.get_text("text").to_string(), "");
+            undo.redo(&doc)?;
+            assert_eq!(doc.get_text("text").to_string(), "123");
+            undo.redo(&doc)?;
+            assert_eq!(doc.get_text("text").to_string(), "123456");
+            undo.redo(&doc)?;
+            assert_eq!(doc.get_text("text").to_string(), "123456789");
+            Ok::<(), loro::LoroError>(())
+        })?;
     }
 
     Ok(())
