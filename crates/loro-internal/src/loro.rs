@@ -30,14 +30,14 @@ use crate::{
     encoding::{
         decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    event::{str_to_path, Diff, EventTriggerKind, Index},
+    event::{str_to_path, EventTriggerKind, Index},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     op::InnerContent,
     oplog::dag::FrontiersNotIncluded,
     undo::DiffBatch,
     version::Frontiers,
-    DocDiff, HandlerTrait, InternalString, LoroError, VersionVector,
+    HandlerTrait, InternalString, LoroError, VersionVector,
 };
 
 use super::{

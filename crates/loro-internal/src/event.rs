@@ -415,6 +415,7 @@ impl Diff {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn is_empty(&self) -> bool {
         match self {
             Diff::List(s) => s.is_empty(),

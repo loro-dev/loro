@@ -2161,8 +2161,8 @@ impl ListHandler {
         on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
     ) -> LoroResult<()> {
         match &self.inner {
-            MaybeDetached::Detached(d) => unimplemented!(),
-            MaybeDetached::Attached(a) => {
+            MaybeDetached::Detached(_) => unimplemented!(),
+            MaybeDetached::Attached(_) => {
                 let mut index = 0;
                 for item in delta.iter() {
                     match item {

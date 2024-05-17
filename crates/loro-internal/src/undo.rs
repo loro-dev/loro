@@ -8,7 +8,6 @@ use loro_common::{
 use tracing::{debug_span, instrument, trace};
 
 use crate::{
-    container::idx::ContainerIdx,
     event::{Diff, EventTriggerKind},
     version::Frontiers,
     DocDiff, LoroDoc,
@@ -20,6 +19,12 @@ pub struct DiffBatch(pub(crate) FxHashMap<ContainerID, Diff>);
 #[derive(Debug)]
 struct Generation(usize);
 
+/// UndoManager is responsible for managing undo/redo from the current peer's perspective.
+///
+/// Undo/local is local: it cannot be used to undone the changes made by other peers.
+/// If you want to undo changes made by other peers, you may need to use the time travel feature.
+///
+/// PeerID cannot be changed during the lifetime of the UndoManager
 #[derive(Debug)]
 pub struct UndoManager {
     peer: PeerID,
@@ -66,10 +71,6 @@ impl DiffBatch {
             }
         }
     }
-
-    pub fn filter(&mut self, container_filter: &[ContainerIdx]) {
-        unimplemented!()
-    }
 }
 
 fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
@@ -82,7 +83,8 @@ fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
 }
 
 impl UndoManager {
-    pub fn new(peer: PeerID, doc: &LoroDoc) -> Self {
+    pub fn new(doc: &LoroDoc) -> Self {
+        let peer = doc.peer_id();
         let remote_diff = Arc::new(Mutex::new(vec![DiffBatch::new(Default::default())]));
         let remote_diff_clone = remote_diff.clone();
         doc.subscribe_root(Arc::new(move |event| {
@@ -100,6 +102,7 @@ impl UndoManager {
                 }
             }
         }));
+
         UndoManager {
             peer,
             latest_counter: get_counter_end(doc, peer),
@@ -119,6 +122,10 @@ impl UndoManager {
     }
 
     pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) {
+        if doc.peer_id() != self.peer {
+            panic!("PeerID cannot be changed during the lifetime of the UndoManager")
+        }
+
         doc.commit_then_renew();
         let counter = get_counter_end(doc, self.peer);
         if counter == self.latest_counter {
@@ -296,7 +303,7 @@ pub(crate) fn undo(
             // --------------------------------------------------
             // 3. Transform event A'_i based on B_i, call it C_i
             // --------------------------------------------------
-            event_a_prime.transform(&event_b_i, true);
+            event_a_prime.transform(event_b_i, true);
             let c_i = event_a_prime;
             trace!("Event C_i {:#?}", &c_i.0);
             last_ci = Some(c_i);

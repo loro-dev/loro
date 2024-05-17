@@ -440,7 +440,7 @@ mod btree {
             target: &Self::QueryArg,
             caches: &[generic_btree::Child<ChildTreeTrait>],
         ) -> FindResult {
-            match caches.binary_search_by(|x| {
+            let result = caches.binary_search_by(|x| {
                 let range = x.cache.range.as_ref().unwrap();
                 if target < &range.start {
                     core::cmp::Ordering::Greater
@@ -449,7 +449,9 @@ mod btree {
                 } else {
                     core::cmp::Ordering::Equal
                 }
-            }) {
+            });
+
+            match result {
                 Ok(i) => FindResult::new_found(i, 0),
                 Err(i) => FindResult::new_missing(
                     i.min(caches.len() - 1),

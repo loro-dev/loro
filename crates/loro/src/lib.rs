@@ -1826,8 +1826,8 @@ pub struct UndoManager(InnerUndoManager);
 
 impl UndoManager {
     /// Create a new UndoManager.
-    pub fn new(peer: PeerID, doc: &LoroDoc) -> Self {
-        Self(InnerUndoManager::new(peer, &doc.doc))
+    pub fn new(doc: &LoroDoc) -> Self {
+        Self(InnerUndoManager::new(&doc.doc))
     }
 
     /// Undo the last change made by the peer.

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use loro::{
-    Frontiers, LoroDoc, LoroError, LoroList, LoroMap, LoroResult, LoroText, LoroValue,
-    StyleConfigMap, ToJson, UndoManager,
+    Frontiers, LoroDoc, LoroError, LoroMap, LoroResult, LoroText, LoroValue, StyleConfigMap,
+    ToJson, UndoManager,
 };
 use loro_internal::{
     configure::StyleConfig,
@@ -10,7 +10,7 @@ use loro_internal::{
     loro_common::IdSpan,
 };
 use serde_json::json;
-use tracing::{debug_span, info_span, Instrument};
+use tracing::{debug_span, info_span};
 
 #[test]
 fn basic_text_undo() -> Result<(), LoroError> {
@@ -322,7 +322,7 @@ fn one_register_collaborative_undo() -> Result<(), LoroError> {
     doc_b.set_peer_id(2)?;
     doc_a.get_map("map").insert("color", "black")?;
     sync(&doc_a, &doc_b);
-    let mut undo = UndoManager::new(1, &doc_a);
+    let mut undo = UndoManager::new(&doc_a);
     doc_a.get_map("map").insert("color", "red")?;
     undo.record_new_checkpoint(&doc_a);
     sync(&doc_a, &doc_b);
@@ -461,14 +461,14 @@ fn tree_undo() -> Result<(), LoroError> {
 fn undo_manager() -> Result<(), LoroError> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
-    let mut undo = UndoManager::new(1, &doc);
+    let mut undo = UndoManager::new(&doc);
     doc.get_text("text").insert(0, "123")?;
     undo.record_new_checkpoint(&doc);
     doc.get_text("text").insert(3, "456")?;
     undo.record_new_checkpoint(&doc);
     doc.get_text("text").insert(6, "789")?;
     undo.record_new_checkpoint(&doc);
-    for i in 0..10 {
+    for _ in 0..10 {
         assert_eq!(doc.get_text("text").to_string(), "123456789");
         undo.undo(&doc)?;
         assert_eq!(doc.get_text("text").to_string(), "123456");
@@ -491,7 +491,7 @@ fn undo_manager() -> Result<(), LoroError> {
 fn undo_manager_with_sub_container() -> Result<(), LoroError> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
-    let mut undo = UndoManager::new(1, &doc);
+    let mut undo = UndoManager::new(&doc);
     let map = doc.get_list("list").insert_container(0, LoroMap::new())?;
     undo.record_new_checkpoint(&doc);
     let text = map.insert_container("text", LoroText::new())?;
@@ -568,7 +568,7 @@ fn undo_manager_with_sub_container() -> Result<(), LoroError> {
 fn test_undo_container_deletion() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
-    let mut undo = UndoManager::new(1, &doc);
+    let mut undo = UndoManager::new(&doc);
 
     let map = doc.get_map("map");
     let text = map.insert_container("text", LoroText::new())?;
@@ -630,7 +630,7 @@ fn test_richtext_checkout() -> LoroResult<()> {
 fn undo_richtext_editing() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
-    let mut undo = UndoManager::new(1, &doc);
+    let mut undo = UndoManager::new(&doc);
     let text = doc.get_text("text");
     text.insert(0, "Hello")?;
     undo.record_new_checkpoint(&doc);
@@ -682,7 +682,7 @@ fn undo_richtext_editing() -> LoroResult<()> {
 fn undo_richtext_editing_collab() -> LoroResult<()> {
     let doc_a = LoroDoc::new();
     doc_a.set_peer_id(1)?;
-    let mut undo = UndoManager::new(1, &doc_a);
+    let mut undo = UndoManager::new(&doc_a);
     let doc_b = LoroDoc::new();
     doc_b.set_peer_id(2)?;
     doc_a.get_text("text").insert(0, "A fox jumped")?;
@@ -737,7 +737,7 @@ fn undo_richtext_conflict_set_style() -> LoroResult<()> {
         },
     );
     doc_a.config_text_style(config.clone());
-    let mut undo = UndoManager::new(1, &doc_a);
+    let mut undo = UndoManager::new(&doc_a);
     let doc_b = LoroDoc::new();
     doc_b.config_text_style(config.clone());
     doc_b.set_peer_id(2)?;
@@ -793,7 +793,7 @@ fn undo_richtext_conflict_set_style() -> LoroResult<()> {
 fn undo_text_collab_delete() -> LoroResult<()> {
     let doc_a = LoroDoc::new();
     doc_a.set_peer_id(1)?;
-    let mut undo = UndoManager::new(1, &doc_a);
+    let mut undo = UndoManager::new(&doc_a);
     let doc_b = LoroDoc::new();
     doc_b.set_peer_id(2)?;
     doc_a.get_text("text").insert(0, "A ")?;
@@ -808,7 +808,7 @@ fn undo_text_collab_delete() -> LoroResult<()> {
     sync(&doc_a, &doc_b);
     doc_a.get_text("text").insert(0, "123!")?;
     undo.record_new_checkpoint(&doc_a);
-    for i in 0..3 {
+    for _ in 0..3 {
         assert_eq!(doc_a.get_text("text").to_string(), "123!A jumped");
         undo.undo(&doc_a)?;
         assert_eq!(doc_a.get_text("text").to_string(), "A jumped");

@@ -43,7 +43,7 @@ impl TreeDiff {
         self
     }
 
-    pub(crate) fn transform(&self, b: &TreeDiff, left_priority: bool) {
+    pub(crate) fn transform(&self, _b: &TreeDiff, _left_priority: bool) {
         unimplemented!("Transform tree diff")
     }
 }
