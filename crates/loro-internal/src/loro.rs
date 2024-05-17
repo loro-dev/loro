@@ -561,6 +561,26 @@ impl LoroDoc {
         ans
     }
 
+    pub fn import_json(&self, json: &str) -> LoroResult<()> {
+        self.commit_then_stop();
+        self.update_oplog_and_apply_delta_to_state_if_needed(
+            |oplog| crate::encoding::json_schema::import_json(oplog, json),
+            Default::default(),
+        )?;
+        self.emit_events();
+        self.renew_txn_if_auto_commit();
+        Ok(())
+    }
+
+    pub fn export_json(&self, vv: &VersionVector) -> String {
+        self.commit_then_stop();
+        let oplog = self.oplog.lock().unwrap();
+        let json = crate::encoding::json_schema::export_json(&oplog, vv);
+        drop(oplog);
+        self.renew_txn_if_auto_commit();
+        json
+    }
+
     /// Get the version vector of the current OpLog
     #[inline]
     pub fn oplog_vv(&self) -> VersionVector {

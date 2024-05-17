@@ -368,9 +368,23 @@ mod container {
                 "Text" | "text" => Ok(ContainerType::Text),
                 "Tree" | "tree" => Ok(ContainerType::Tree),
                 "MovableList" | "movableList" => Ok(ContainerType::MovableList),
-                _ => Err(LoroError::DecodeError(
+                a => {
+                    if a.starts_with("Unknown(") {
+                        let k = a[8..a.len() - 1].parse().map_err(|_| {
+                            LoroError::DecodeError(
                     format!("Unknown container type \"{}\". The valid options are Map|List|Text|Tree|MovableList.", value).into(),
-                )),
+                )
+                        })?;
+                        match ContainerType::try_from_u8(k) {
+                            Ok(k) => Ok(k),
+                            Err(_) => Ok(ContainerType::Unknown(k)),
+                        }
+                    } else {
+                        Err(LoroError::DecodeError(
+                    format!("Unknown container type \"{}\". The valid options are Map|List|Text|Tree|MovableList.", value).into(),
+                ))
+                    }
+                }
             }
         }
     }

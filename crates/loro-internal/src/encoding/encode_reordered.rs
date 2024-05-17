@@ -226,7 +226,7 @@ pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
     })
 }
 
-fn import_changes_to_oplog(
+pub(crate) fn import_changes_to_oplog(
     changes: Vec<Change>,
     oplog: &mut OpLog,
 ) -> Result<(Vec<ID>, Vec<Change>), LoroError> {
@@ -375,8 +375,9 @@ fn extract_ops(
         }
         let peer = peer_ids.peer_ids[peer_idx as usize];
         let cid = &containers[container_index as usize];
-        let c_idx = arena.register_container(cid);
-        let kind = ValueKind::from_u8(value_type).expect("Unknown value type");
+        let kind = ValueKind::from_u8(value_type);
+        let value = Value::decode(kind, &mut value_reader, arenas, ID::new(peer, counter))?;
+
         let content = decode_op(
             cid,
             kind,
