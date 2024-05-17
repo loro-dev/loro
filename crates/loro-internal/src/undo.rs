@@ -138,7 +138,7 @@ impl UndoManager {
         self.record_new_checkpoint(doc);
         let end_counter = get_counter_end(doc, self.peer);
 
-        if let Some((span, gen)) = self.undo_stack.pop() {
+        while let Some((span, gen)) = self.undo_stack.pop() {
             trace!("Undo {:?}", span);
             {
                 let diffs = self.remote_diffs.lock().unwrap();
@@ -159,8 +159,12 @@ impl UndoManager {
                 let gen = self.get_next_gen();
                 self.redo_stack
                     .push((CounterSpan::new(end_counter, new_counter), gen));
+                self.latest_counter = new_counter;
+                break;
+            } else {
+                // continue to pop the undo item as this undo is a no-op
+                continue;
             }
-            self.latest_counter = new_counter;
         }
 
         Ok(())
@@ -170,7 +174,7 @@ impl UndoManager {
     pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
         self.record_new_checkpoint(doc);
         let end_counter = get_counter_end(doc, self.peer);
-        if let Some((span, gen)) = self.redo_stack.pop() {
+        while let Some((span, gen)) = self.redo_stack.pop() {
             let e = self.remote_diffs.lock().unwrap()[gen.0].clone();
             doc.undo(
                 IdSpan {
@@ -186,8 +190,12 @@ impl UndoManager {
                 let gen = self.get_next_gen();
                 self.undo_stack
                     .push((CounterSpan::new(end_counter, new_counter), gen));
+                self.latest_counter = new_counter;
+                break;
+            } else {
+                // continue to pop the redo item as this redo is a no-op
+                continue;
             }
-            self.latest_counter = new_counter;
         }
 
         Ok(())

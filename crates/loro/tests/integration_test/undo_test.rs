@@ -808,15 +808,21 @@ fn undo_text_collab_delete() -> LoroResult<()> {
     sync(&doc_a, &doc_b);
     doc_a.get_text("text").insert(0, "123!")?;
     undo.record_new_checkpoint(&doc_a);
-    assert_eq!(doc_a.get_text("text").to_string(), "123!A jumped");
-    undo.undo(&doc_a)?;
-    assert_eq!(doc_a.get_text("text").to_string(), "A jumped");
-    undo.undo(&doc_a)?;
-    assert_eq!(doc_a.get_text("text").to_string(), "A ");
-    undo.undo(&doc_a)?;
-    assert_eq!(doc_a.get_text("text").to_string(), "A ");
-    undo.undo(&doc_a)?;
-    assert_eq!(doc_a.get_text("text").to_string(), "");
+    for i in 0..3 {
+        assert_eq!(doc_a.get_text("text").to_string(), "123!A jumped");
+        undo.undo(&doc_a)?;
+        assert_eq!(doc_a.get_text("text").to_string(), "A jumped");
+        undo.undo(&doc_a)?;
+        assert_eq!(doc_a.get_text("text").to_string(), "A ");
+        undo.undo(&doc_a)?;
+        assert_eq!(doc_a.get_text("text").to_string(), "");
+        undo.redo(&doc_a)?;
+        assert_eq!(doc_a.get_text("text").to_string(), "A ");
+        undo.redo(&doc_a)?;
+        assert_eq!(doc_a.get_text("text").to_string(), "A jumped");
+        undo.redo(&doc_a)?;
+        assert_eq!(doc_a.get_text("text").to_string(), "123!A jumped");
+    }
     Ok(())
 }
 
