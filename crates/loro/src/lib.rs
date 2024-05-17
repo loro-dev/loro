@@ -477,7 +477,7 @@ impl LoroDoc {
 
     /// Undo the operations between the given id_span. It can be used even in a collaborative environment.
     pub fn undo(&self, id_span: IdSpan) -> LoroResult<()> {
-        self.doc.undo(id_span, &mut Default::default())
+        self.doc.undo(id_span, &mut Default::default(), None)
     }
 }
 

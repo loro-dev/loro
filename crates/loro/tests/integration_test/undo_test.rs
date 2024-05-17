@@ -790,6 +790,37 @@ fn undo_richtext_conflict_set_style() -> LoroResult<()> {
 }
 
 #[test]
+fn undo_text_collab_delete() -> LoroResult<()> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let mut undo = UndoManager::new(1, &doc_a);
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+    doc_a.get_text("text").insert(0, "A ")?;
+    undo.record_new_checkpoint(&doc_a);
+    doc_a.get_text("text").insert(2, "fox ")?;
+    undo.record_new_checkpoint(&doc_a);
+    doc_a.get_text("text").insert(6, "jumped")?;
+    undo.record_new_checkpoint(&doc_a);
+    sync(&doc_a, &doc_b);
+
+    doc_b.get_text("text").delete(2, 4)?;
+    sync(&doc_a, &doc_b);
+    doc_a.get_text("text").insert(0, "123!")?;
+    undo.record_new_checkpoint(&doc_a);
+    assert_eq!(doc_a.get_text("text").to_string(), "123!A jumped");
+    undo.undo(&doc_a)?;
+    assert_eq!(doc_a.get_text("text").to_string(), "A jumped");
+    undo.undo(&doc_a)?;
+    assert_eq!(doc_a.get_text("text").to_string(), "A ");
+    undo.undo(&doc_a)?;
+    assert_eq!(doc_a.get_text("text").to_string(), "A ");
+    undo.undo(&doc_a)?;
+    assert_eq!(doc_a.get_text("text").to_string(), "");
+    Ok(())
+}
+
+#[test]
 fn undo_list_move() -> LoroResult<()> {
     Ok(())
 }

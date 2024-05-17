@@ -10,11 +10,12 @@ use std::{
     },
 };
 
-use fxhash::{FxHashMap, FxHasher};
+use either::Either;
+use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
 use rle::HasLength;
-use tracing::{debug, debug_span, instrument, trace, trace_span};
+use tracing::{debug, instrument, trace, trace_span};
 
 use crate::{
     arena::SharedArena,
@@ -710,6 +711,8 @@ impl LoroDoc {
 
     /// Undo the operations between the given id_span. It can be used even in a collaborative environment.
     ///
+    /// This is an internal API.
+    ///
     /// # Internal
     ///
     /// This method will use the diff calculator to calculate the diff required to time travel
@@ -724,6 +727,7 @@ impl LoroDoc {
         &self,
         id_span: IdSpan,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
+        post_transform_base: Option<&DiffBatch>,
     ) -> LoroResult<()> {
         if self.is_detached() {
             return Err(LoroError::EditWhenDetached);
@@ -742,6 +746,7 @@ impl LoroDoc {
         }
 
         debug!("Started old state {:?}", self.get_deep_value());
+        debug!("last_bi {:#?}", &post_transform_base);
 
         let (was_recording, latest_frontiers) = {
             let mut state = self.state.lock().unwrap();
@@ -751,16 +756,24 @@ impl LoroDoc {
         };
 
         let spans = self.oplog.lock().unwrap().split_span_based_on_deps(id_span);
-        let diff = crate::undo::undo(spans, latest_frontiers, |from, to| {
-            self.checkout_without_emitting(from).unwrap();
-            self.state.lock().unwrap().start_recording();
-            self.checkout_without_emitting(to).unwrap();
-            let mut state = self.state.lock().unwrap();
-            let e = state.take_events();
-            state.stop_and_clear_recording();
-            DiffBatch::new(e)
-        });
+        let diff = crate::undo::undo(
+            spans,
+            match post_transform_base {
+                Some(d) => Either::Right(d),
+                None => Either::Left(&latest_frontiers),
+            },
+            |from, to| {
+                self.checkout_without_emitting(from).unwrap();
+                self.state.lock().unwrap().start_recording();
+                self.checkout_without_emitting(to).unwrap();
+                let mut state = self.state.lock().unwrap();
+                let e = state.take_events();
+                state.stop_and_clear_recording();
+                DiffBatch::new(e)
+            },
+        );
 
+        self.checkout_without_emitting(&latest_frontiers)?;
         self.detached.store(false, Release);
         if was_recording {
             self.state.lock().unwrap().start_recording();
