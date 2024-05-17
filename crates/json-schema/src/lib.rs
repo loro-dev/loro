@@ -1,4 +1,4 @@
-use loro_common::{Lamport, ID};
+use loro_common::{ContainerID, Lamport, ID};
 use smallvec::SmallVec;
 
 pub struct LoroJsonSchema {
@@ -12,12 +12,22 @@ pub struct Change {
     id: ID,
     timestamp: u64,
     deps: SmallVec<[ID; 2]>,
-    lamport: Lamport,
+    lamport: u32,
     msg: String,
     ops: Vec<Op>,
 }
 
-pub struct Op{
-    id: ID,
-    
+pub struct Op {
+    counter: i32,
+    container: ContainerID,
+    content: OpContent,
 }
+
+pub enum OpContent {
+    List(ListOp),
+    Map(MapOp),
+    Text(TextOp),
+    Tree(TreeOp),
+}
+
+struct 
