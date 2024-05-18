@@ -722,12 +722,13 @@ impl LoroDoc {
     /// This implementation is kinda slow, but it's simple and maintainable. We can optimize it
     /// further when it's needed. The time complexity is O(n + m), n is the ops in the id_span, m is the
     /// distance from id_span to the current latest version.
-    #[instrument(level = "info", skip(self))]
+    #[instrument(level = "info", skip_all)]
     pub fn undo_internal(
         &self,
         id_span: IdSpan,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
         post_transform_base: Option<&DiffBatch>,
+        before_diff: &mut dyn FnMut(&DiffBatch),
     ) -> LoroResult<CommitWhenDrop> {
         if self.is_detached() {
             return Err(LoroError::EditWhenDetached);
@@ -771,6 +772,7 @@ impl LoroDoc {
                 state.stop_and_clear_recording();
                 DiffBatch::new(e)
             },
+            before_diff,
         );
 
         self.checkout_without_emitting(&latest_frontiers)?;

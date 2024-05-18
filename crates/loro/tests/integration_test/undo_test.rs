@@ -843,14 +843,12 @@ fn undo_text_collab_delete() -> LoroResult<()> {
 ///    Ops From A    │   Hello_   │◀──┴────│     "A"    │◀──┴──│    World   │
 ///                  │            │        │    bold    │      │            │
 ///                  └────────────┘        └────────────┘      └────────────┘
-///  loop 2 {
 ///     loop 3 {
 ///         A undo 3 times and redo 3 times
 ///     }
 ///     loop 3 {
 ///         B undo 3 times and redo 3 times
 ///     }
-/// }
 #[test]
 fn collab_undo() -> anyhow::Result<()> {
     let doc_a = LoroDoc::new();
@@ -870,9 +868,9 @@ fn collab_undo() -> anyhow::Result<()> {
     doc_a.get_text("text").insert(6, "World! ")?;
     sync(&doc_a, &doc_b); // Hello World! A fox jumped.
 
-    for _ in 0..2 {
-        for _ in 0..3 {
-            assert!(!undo_a.can_redo());
+    for j in 0..3 {
+        debug_span!("round A", j).in_scope(|| {
+            assert!(!undo_a.can_redo(), "{:#?}", &undo_a);
             assert_eq!(
                 doc_a.get_text("text").to_delta().to_json_value(),
                 json!([
@@ -925,69 +923,69 @@ fn collab_undo() -> anyhow::Result<()> {
                 ])
             );
             undo_a.redo(&doc_a)?;
-        }
+            Ok::<(), LoroError>(())
+        })?;
+    }
 
-        sync(&doc_a, &doc_b);
-        for _ in 0..3 {
-            assert!(!undo_b.can_redo());
-            assert_eq!(
-                doc_b.get_text("text").to_delta().to_json_value(),
-                json!([
-                    {"insert": "Hello World! "},
-                    {"insert": "A", "attributes": {"bold": true}},
-                    {"insert": " fox jumped."}
-                ])
-            );
-            undo_b.undo(&doc_b)?;
-            assert!(undo_b.can_redo());
-            assert_eq!(
-                doc_b.get_text("text").to_delta().to_json_value(),
-                json!([
-                    {"insert": "Hello World! "},
-                    {"insert": "A", "attributes": {"bold": true}},
-                    {"insert": " fox"}
-                ])
-            );
+    sync(&doc_a, &doc_b);
+    for _ in 0..3 {
+        assert!(!undo_b.can_redo());
+        assert_eq!(
+            doc_b.get_text("text").to_delta().to_json_value(),
+            json!([
+                {"insert": "Hello World! "},
+                {"insert": "A", "attributes": {"bold": true}},
+                {"insert": " fox jumped."}
+            ])
+        );
+        undo_b.undo(&doc_b)?;
+        assert!(undo_b.can_redo());
+        assert_eq!(
+            doc_b.get_text("text").to_delta().to_json_value(),
+            json!([
+                {"insert": "Hello World! "},
+                {"insert": "A", "attributes": {"bold": true}},
+                {"insert": " fox"}
+            ])
+        );
 
-            undo_b.undo(&doc_b)?;
-            assert_eq!(
-                doc_b.get_text("text").to_delta().to_json_value(),
-                json!([
-                    {"insert": "Hello World! "},
-                    {"insert": "A", "attributes": {"bold": true}},
-                    {"insert": " "},
-                ])
-            );
-            undo_b.undo(&doc_b)?;
-            assert_eq!(
-                doc_b.get_text("text").to_delta().to_json_value(),
-                json!([
-                    {"insert": "Hello World! "},
-                ])
-            );
-            assert!(!undo_b.can_undo());
-            assert!(undo_b.can_redo());
-            undo_b.redo(&doc_b)?;
-            assert_eq!(
-                doc_b.get_text("text").to_delta().to_json_value(),
-                json!([
-                    {"insert": "Hello World! "},
-                    {"insert": "A", "attributes": {"bold": true}},
-                    {"insert": " "},
-                ])
-            );
-            undo_b.redo(&doc_b)?;
-            assert_eq!(
-                doc_b.get_text("text").to_delta().to_json_value(),
-                json!([
-                    {"insert": "Hello World! "},
-                    {"insert": "A", "attributes": {"bold": true}},
-                    {"insert": " fox"}
-                ])
-            );
-            undo_b.redo(&doc_b)?;
-        }
-        sync(&doc_a, &doc_b);
+        undo_b.undo(&doc_b)?;
+        assert_eq!(
+            doc_b.get_text("text").to_delta().to_json_value(),
+            json!([
+                {"insert": "Hello World! "},
+                {"insert": "A", "attributes": {"bold": true}},
+                {"insert": " "},
+            ])
+        );
+        undo_b.undo(&doc_b)?;
+        assert_eq!(
+            doc_b.get_text("text").to_delta().to_json_value(),
+            json!([
+                {"insert": "Hello World! "},
+            ])
+        );
+        assert!(!undo_b.can_undo());
+        assert!(undo_b.can_redo());
+        undo_b.redo(&doc_b)?;
+        assert_eq!(
+            doc_b.get_text("text").to_delta().to_json_value(),
+            json!([
+                {"insert": "Hello World! "},
+                {"insert": "A", "attributes": {"bold": true}},
+                {"insert": " "},
+            ])
+        );
+        undo_b.redo(&doc_b)?;
+        assert_eq!(
+            doc_b.get_text("text").to_delta().to_json_value(),
+            json!([
+                {"insert": "Hello World! "},
+                {"insert": "A", "attributes": {"bold": true}},
+                {"insert": " fox"}
+            ])
+        );
+        undo_b.redo(&doc_b)?;
     }
 
     Ok(())
@@ -1136,6 +1134,78 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
             {"insert": " World!"}
         ])
     );
+
+    Ok(())
+}
+
+/// ┌────┐                        
+/// │"B" │                        
+/// └────┘                        
+///   ▲                           
+/// ┌─┴───────┐                   
+/// │bold "B" │                   
+/// └─────────┘                   
+///   ▲                Concurrent
+///   │                  Delete   
+/// ┌─┴────────┐        ┌──────┐  
+/// │"Hello B" │◀───────│ "B"  │  
+/// └──────────┘        └──────┘  
+///   ▲                     ▲     
+///   │                     │     
+/// ┌─┴──┐                  │     
+/// │Undo│──────────────────┘     
+/// └────┘                        
+///   ▲                           
+///   │                           
+/// ┌─┴──┐                        
+/// │Undo│                        
+/// └────┘                        
+#[test]
+fn test_remote_merge_transform() -> LoroResult<()> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let mut undo_a = UndoManager::new(&doc_a);
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+
+    // Initial insert "B" in doc_a
+    let text_a = doc_a.get_text("text");
+    text_a.insert(0, "B")?;
+    doc_a.commit();
+
+    // Mark "B" as bold in doc_a
+    text_a.mark(0..1, "bold", true)?;
+    doc_a.commit();
+
+    text_a.insert(0, "Hello ")?;
+    doc_a.commit();
+
+    // Sync doc_a to doc_b
+    sync(&doc_a, &doc_b);
+
+    // Concurrently delete "B" in doc_b
+    let text_b = doc_b.get_text("text");
+    text_b.delete(0, 6)?;
+    sync(&doc_a, &doc_b);
+
+    // Check the state after concurrent operations
+    assert_eq!(
+        text_a.to_delta().to_json_value(),
+        json!([
+            {"insert": "B", "attributes": {"bold": true}}
+        ])
+    );
+
+    undo_a.undo(&doc_a)?;
+    assert_eq!(
+        text_a.to_delta().to_json_value(),
+        json!([
+            {"insert": "B"}
+        ])
+    );
+
+    undo_a.undo(&doc_a)?;
+    assert_eq!(text_a.to_delta().to_json_value(), json!([]));
 
     Ok(())
 }

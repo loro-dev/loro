@@ -243,11 +243,6 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         let mut transformed_delta = DeltaRope::new();
 
         while this_iter.peek().is_some() || other_iter.peek().is_some() {
-            trace!(
-                "this_iter: {:?}, other_iter: {:?}",
-                this_iter.peek(),
-                other_iter.peek()
-            );
             if this_iter.peek_is_insert() && (left_prior || !other_iter.peek_is_insert()) {
                 let insert_length;
                 match this_iter.peek().unwrap() {
