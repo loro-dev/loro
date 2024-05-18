@@ -237,7 +237,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
 
     /// Transforms operation `self` against another operation `other` in such a way that the
     /// impact of `other` is effectively included in `self`.
-    pub fn transform(&mut self, other: &Self, left_priority: bool) {
+    pub fn transform(&mut self, other: &Self, left_prior: bool) {
         let mut this_iter = self.iter_with_len();
         let mut other_iter = other.iter_with_len();
         let mut transformed_delta = DeltaRope::new();
@@ -248,7 +248,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                 this_iter.peek(),
                 other_iter.peek()
             );
-            if this_iter.peek_is_insert() && (left_priority || !other_iter.peek_is_insert()) {
+            if this_iter.peek_is_insert() && (left_prior || !other_iter.peek_is_insert()) {
                 let insert_length;
                 match this_iter.peek().unwrap() {
                     DeltaItem::Replace { value, attr, .. } => {

@@ -990,13 +990,8 @@ impl DocState {
     fn get_path(&self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
         let mut ans = Vec::new();
         let mut idx = idx;
-        let id = self.arena.idx_to_id(idx).unwrap();
-        let s = tracing::span!(tracing::Level::INFO, "GET PATH ", ?id);
-        let _e = s.enter();
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
-            let s = tracing::span!(tracing::Level::INFO, "GET PATH ", ?id);
-            let _e = s.enter();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
                 let parent_state = self.states.get(&parent_idx)?;
                 let Some(prop) = parent_state.get_child_index(&id) else {

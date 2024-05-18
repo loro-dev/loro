@@ -397,15 +397,15 @@ impl Diff {
     }
 
     // Transform this diff based on the other diff
-    pub(crate) fn transform(&mut self, other: &Self, left_priority: bool) {
+    pub(crate) fn transform(&mut self, other: &Self, left_prior: bool) {
         match (self, other) {
-            (Diff::List(a), Diff::List(b)) => a.transform(b, left_priority),
-            (Diff::Text(a), Diff::Text(b)) => a.transform(b, left_priority),
-            (Diff::Map(a), Diff::Map(b)) => a.transform(b, left_priority),
-            (Diff::Tree(a), Diff::Tree(b)) => a.transform(b, left_priority),
+            (Diff::List(a), Diff::List(b)) => a.transform(b, left_prior),
+            (Diff::Text(a), Diff::Text(b)) => a.transform(b, left_prior),
+            (Diff::Map(a), Diff::Map(b)) => a.transform(b, left_prior),
+            (Diff::Tree(a), Diff::Tree(b)) => a.transform(b, left_prior),
             #[cfg(feature = "counter")]
             (Diff::Counter(a), Diff::Counter(b)) => {
-                if left_priority {
+                if left_prior {
                     *a += b;
                 } else {
                     *a -= b;

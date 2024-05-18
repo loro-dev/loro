@@ -825,7 +825,17 @@ impl LoroDoc {
         Ok(ans)
     }
 
-    /// Apply diff to the current state.
+    /// Apply a diff to the current state.
+    ///
+    /// This method will not recreate containers with the same [ContainerID]s.
+    /// While this can be convenient in certain cases, it can break several internal invariants:
+    ///
+    /// 1. Each container should appear only once in the document. Allowing containers with the same ID
+    ///    would result in multiple instances of the same container in the document.
+    /// 2. Unreachable containers should be removable from the state when necessary.
+    ///
+    /// However, the diff may contain operations that depend on container IDs.
+    /// Therefore, users need to provide a `container_remap` to record and retrieve the container ID remapping.
     pub fn apply_diff(
         &self,
         mut diff: DiffBatch,
@@ -835,11 +845,11 @@ impl LoroDoc {
             return Err(LoroError::EditWhenDetached);
         }
 
+        // Sort container from the top to the bottom, so that we can have correct container remap
         let containers = diff.0.keys().cloned().sorted_by_cached_key(|cid| {
             let idx = self.arena.id_to_idx(cid).unwrap();
             self.arena.get_depth(idx).unwrap().get()
         });
-        // Sort container from the top to the bottom, so that we can have correct container remap
         for mut id in containers {
             let diff = diff.0.remove(&id).unwrap();
             trace!("apply_diff {} {:#?}", &id, &diff);

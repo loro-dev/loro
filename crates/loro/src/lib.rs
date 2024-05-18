@@ -1846,4 +1846,14 @@ impl UndoManager {
     pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) {
         self.0.record_new_checkpoint(&doc.doc)
     }
+
+    /// Whether the undo manager can undo.
+    pub fn can_undo(&self) -> bool {
+        self.0.can_undo()
+    }
+
+    /// Whether the undo manager can redo.
+    pub fn can_redo(&self) -> bool {
+        self.0.can_redo()
+    }
 }
