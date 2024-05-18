@@ -59,9 +59,6 @@ impl DiffBatch {
     }
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-struct Generation(usize);
-
 /// UndoManager is responsible for managing undo/redo from the current peer's perspective.
 ///
 /// Undo/local is local: it cannot be used to undone the changes made by other peers.
@@ -256,12 +253,26 @@ impl UndoManager {
 
     #[instrument(skip_all)]
     pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
+        self.perform(doc, |x| &mut x.undo_stack, |x| &mut x.redo_stack)
+    }
+
+    #[instrument(skip_all)]
+    pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
+        self.perform(doc, |x| &mut x.redo_stack, |x| &mut x.undo_stack)
+    }
+
+    fn perform(
+        &mut self,
+        doc: &LoroDoc,
+        get_stack: impl Fn(&mut UndoManagerInner) -> &mut Stack,
+        get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
+    ) -> LoroResult<()> {
         self.record_new_checkpoint(doc);
         let end_counter = get_counter_end(doc, self.peer);
         let mut top = {
             let mut inner = self.inner.try_lock().unwrap();
             inner.processing_undo = true;
-            inner.undo_stack.pop()
+            get_stack(&mut inner).pop()
         };
         while let Some((span, e)) = top {
             trace_span!("Undo", "{:?}@{}", span, self.peer).in_scope(|| {
@@ -279,7 +290,7 @@ impl UndoManager {
                         &mut |diff| {
                             info_span!("transform remote diff").in_scope(|| {
                                 let mut inner = inner.try_lock().unwrap();
-                                inner.undo_stack.transform_based_on_this_delta(diff);
+                                get_stack(&mut inner).transform_based_on_this_delta(diff);
                             });
                         },
                     )?;
@@ -289,64 +300,12 @@ impl UndoManager {
             let new_counter = get_counter_end(doc, self.peer);
             if end_counter != new_counter {
                 let mut inner = self.inner.try_lock().unwrap();
-                inner
-                    .redo_stack
-                    .push(CounterSpan::new(end_counter, new_counter));
+                get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter));
                 inner.latest_counter = new_counter;
                 break;
             } else {
                 // continue to pop the undo item as this undo is a no-op
-                top = self.inner.try_lock().unwrap().undo_stack.pop();
-                continue;
-            }
-        }
-
-        self.inner.try_lock().unwrap().processing_undo = false;
-        Ok(())
-    }
-
-    #[instrument(skip_all)]
-    pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
-        self.record_new_checkpoint(doc);
-        let end_counter = get_counter_end(doc, self.peer);
-
-        let mut top = {
-            let mut inner = self.inner.try_lock().unwrap();
-            inner.processing_undo = true;
-            inner.redo_stack.pop()
-        };
-        while let Some((span, e)) = top {
-            let inner = self.inner.clone();
-            {
-                // TODO: Perf we can try to avoid this clone
-                let e = e.try_lock().unwrap().clone();
-                doc.undo_internal(
-                    IdSpan {
-                        peer: self.peer,
-                        counter: span,
-                    },
-                    &mut self.container_remap,
-                    Some(&e),
-                    &mut |diff| {
-                        info_span!("transform remote diff").in_scope(|| {
-                            let mut inner = inner.try_lock().unwrap();
-                            inner.redo_stack.transform_based_on_this_delta(diff);
-                        });
-                    },
-                )?;
-            }
-            let new_counter = get_counter_end(doc, self.peer);
-            if end_counter != new_counter {
-                let mut inner = self.inner.try_lock().unwrap();
-
-                inner
-                    .undo_stack
-                    .push(CounterSpan::new(end_counter, new_counter));
-                inner.latest_counter = new_counter;
-                break;
-            } else {
-                // continue to pop the redo item as this redo is a no-op
-                top = self.inner.try_lock().unwrap().redo_stack.pop();
+                top = get_stack(&mut self.inner.try_lock().unwrap()).pop();
                 continue;
             }
         }
