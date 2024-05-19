@@ -75,6 +75,30 @@ impl TreeDiff {
             }
         }
         let mut b_parent = FxHashMap::default();
+
+        fn reset_index(
+            b_parent: &FxHashMap<TreeParentId, Vec<i32>>,
+            index: &mut usize,
+            parent: &TreeParentId,
+            left_priority: bool,
+        ) {
+            if let Some(b_indices) = b_parent.get(parent) {
+                for i in b_indices.iter() {
+                    if (i.unsigned_abs() as usize) < *index
+                        || (i.unsigned_abs() as usize == *index && !left_priority)
+                    {
+                        if i > &0 {
+                            *index += 1;
+                        } else {
+                            *index = index.saturating_sub(1);
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
         for diff in b.diff.iter() {
             match &diff.action {
                 TreeExternalDiff::Create {
@@ -123,23 +147,12 @@ impl TreeDiff {
                     parent,
                     index,
                     position: _,
-                } => {
-                    if let Some(b_indices) = b_parent.get(&TreeParentId::from(*parent)) {
-                        for i in b_indices.iter() {
-                            if (i.unsigned_abs() as usize) < *index {
-                                if i > &0 {
-                                    *index += 1;
-                                } else {
-                                    *index -= 1;
-                                }
-                            } else if i.unsigned_abs() as usize == *index && !left_priority {
-                                todo!()
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                }
+                } => reset_index(
+                    &b_parent,
+                    index,
+                    &TreeParentId::from(*parent),
+                    left_priority,
+                ),
                 TreeExternalDiff::Move {
                     parent,
                     index,
@@ -147,56 +160,19 @@ impl TreeDiff {
                     old_parent,
                     old_index,
                 } => {
-                    if let Some(b_indices) = b_parent.get(&TreeParentId::from(*parent)) {
-                        for i in b_indices.iter() {
-                            if (i.unsigned_abs() as usize) < *index {
-                                if i > &0 {
-                                    *index += 1;
-                                } else {
-                                    *index -= 1;
-                                }
-                            } else if i.unsigned_abs() as usize == *index && !left_priority {
-                                todo!()
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    if let Some(b_indices) = b_parent.get(old_parent) {
-                        for i in b_indices.iter() {
-                            if (i.unsigned_abs() as usize) < *old_index {
-                                if i > &0 {
-                                    *old_index += 1;
-                                } else {
-                                    *old_index -= 1;
-                                }
-                            } else if i.unsigned_abs() as usize == *old_index && !left_priority {
-                                todo!()
-                            } else {
-                                break;
-                            }
-                        }
-                    }
+                    reset_index(
+                        &b_parent,
+                        index,
+                        &TreeParentId::from(*parent),
+                        left_priority,
+                    );
+                    reset_index(&b_parent, old_index, old_parent, left_priority);
                 }
                 TreeExternalDiff::Delete {
                     old_index,
                     old_parent,
                 } => {
-                    if let Some(b_indices) = b_parent.get(old_parent) {
-                        for i in b_indices.iter() {
-                            if (i.unsigned_abs() as usize) < *old_index {
-                                if i > &0 {
-                                    *old_index += 1;
-                                } else {
-                                    *old_index -= 1;
-                                }
-                            } else if i.unsigned_abs() as usize == *old_index && !left_priority {
-                                todo!()
-                            } else {
-                                break;
-                            }
-                        }
-                    }
+                    reset_index(&b_parent, old_index, old_parent, left_priority);
                 }
             }
         }
