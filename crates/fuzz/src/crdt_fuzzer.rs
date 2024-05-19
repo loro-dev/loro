@@ -287,6 +287,7 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
     let mut applied = Vec::new();
     for action in actions.iter_mut() {
         fuzzer.pre_process(action);
+
         info_span!("ApplyAction", ?action).in_scope(|| {
             applied.push(action.clone());
             info!("OptionsTable \n{}", (&applied).table());

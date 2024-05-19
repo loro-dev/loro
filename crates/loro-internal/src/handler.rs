@@ -1107,6 +1107,7 @@ impl Handler {
                             position: _,
                         } => {
                             x.create_at_with_target(parent, index, target)?;
+                            // create map event
                         }
                         TreeExternalDiff::Delete { .. } => x.delete(target)?,
                         TreeExternalDiff::Move { parent, index, .. } => {
@@ -2906,10 +2907,10 @@ impl MapHandler {
             ));
         }
 
-        if self.get(key).map(|x| x == value).unwrap_or(false) {
-            // skip if the value is already set
-            return Ok(());
-        }
+        // if self.get(key).map(|x| x == value).unwrap_or(false) {
+        //     // skip if the value is already set
+        //     return Ok(());
+        // }
 
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
