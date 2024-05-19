@@ -1333,11 +1333,107 @@ fn undo_redo_when_collab() -> anyhow::Result<()> {
 }
 
 #[test]
-fn undo_list_move() -> LoroResult<()> {
+fn undo_list_move() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("list");
+    let mut undo = UndoManager::new(&doc);
+    list.insert(0, "0")?;
+    doc.commit();
+    list.insert(1, "1")?;
+    doc.commit();
+    list.insert(2, "2")?;
+    doc.commit();
+
+    list.mov(0, 2)?;
+    doc.commit();
+    list.mov(1, 0)?;
+    doc.commit();
+    for _ in 0..3 {
+        assert!(!undo.can_redo());
+        assert_eq!(
+            doc.get_deep_value().to_json_value(),
+            json!({
+                "list": ["2", "1", "0"]
+            })
+        );
+        undo.undo(&doc)?;
+        assert!(undo.can_redo());
+        assert_eq!(
+            doc.get_deep_value().to_json_value(),
+            json!({
+                "list": ["1", "2", "0"]
+            })
+        );
+        undo.undo(&doc)?;
+        assert_eq!(
+            doc.get_deep_value().to_json_value(),
+            json!({
+                "list": ["0", "1", "2"]
+            })
+        );
+        undo.undo(&doc)?;
+        assert_eq!(
+            doc.get_deep_value().to_json_value(),
+            json!({
+                "list": ["0", "1"]
+            })
+        );
+
+        undo.undo(&doc)?;
+        undo.undo(&doc)?;
+        assert!(!undo.can_undo());
+        undo.redo(&doc)?;
+        assert!(undo.can_undo());
+        undo.redo(&doc)?;
+
+        undo.redo(&doc)?;
+        assert_eq!(
+            doc.get_deep_value().to_json_value(),
+            json!({
+                "list": ["0", "1", "2"]
+            })
+        );
+        undo.redo(&doc)?;
+        assert_eq!(
+            doc.get_deep_value().to_json_value(),
+            json!({
+                "list": ["1", "2", "0"]
+            })
+        );
+        undo.redo(&doc)?;
+        assert_eq!(
+            doc.get_deep_value().to_json_value(),
+            json!({
+                "list": ["2", "1", "0"]
+            })
+        );
+        assert!(!undo.can_redo());
+    }
     Ok(())
 }
 
+#[ignore]
 #[test]
 fn undo_collab_list_move() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let list = doc.get_movable_list("list");
+    list.insert(0, "0")?;
+    list.insert(1, "1")?;
+    list.insert(2, "2")?;
+    doc.commit();
+    let mut undo = UndoManager::new(&doc);
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+    doc_b.import(&doc.export_snapshot())?;
+    list.mov(0, 2)?;
+    assert_eq!(list.get_value().to_json_value(), json!(["1", "2", "0"]));
+    doc.commit();
+    doc_b.get_movable_list("list").mov(0, 1)?;
+    sync(&doc, &doc_b);
+    assert_eq!(list.get_value().to_json_value(), json!(["1", "0", "2"]));
+    undo.undo(&doc)?;
+    // FIXME: cannot infer move correctly for now
+    assert_eq!(list.get_value().to_json_value(), json!(["0", "1", "2"]));
     Ok(())
 }
