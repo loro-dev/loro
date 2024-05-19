@@ -1190,6 +1190,69 @@ fn test_remote_merge_transform() -> LoroResult<()> {
     Ok(())
 }
 
+#[test]
+fn undo_tree_move() -> LoroResult<()> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+    let mut undo = UndoManager::new(&doc_a);
+    let mut undo2 = UndoManager::new(&doc_b);
+    let tree_a = doc_a.get_tree("tree");
+    let tree_b = doc_b.get_tree("tree");
+    let root = tree_a.create(None)?;
+    let root2 = tree_b.create(None)?;
+    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    tree_a.mov(root, root2)?;
+    tree_b.mov(root2, root)?;
+    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    // a
+    undo.undo(&doc_a)?;
+    let a_value = tree_a.get_value().as_list().unwrap().clone();
+    assert_eq!(a_value.len(), 2);
+    assert!(a_value[0]
+        .as_map()
+        .unwrap()
+        .get("parent")
+        .unwrap()
+        .is_null());
+    assert!(a_value[1]
+        .as_map()
+        .unwrap()
+        .get("parent")
+        .unwrap()
+        .is_null());
+    // b
+    println!("\n\n\n######b");
+    undo2.undo(&doc_b)?;
+    let b_value = tree_b.get_value().as_list().unwrap().clone();
+    assert_eq!(b_value.len(), 2);
+    assert!(b_value[0]
+        .as_map()
+        .unwrap()
+        .get("parent")
+        .unwrap()
+        .is_null());
+    assert!(b_value[1]
+        .as_map()
+        .unwrap()
+        .get("parent")
+        .unwrap()
+        .is_null());
+    undo.undo(&doc_a)?;
+    let a_value = tree_a.get_value().as_list().unwrap().clone();
+    println!("{:?}", a_value);
+    assert_eq!(a_value.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn undo_tree_concurrent_delete() -> LoroResult<()> {
+    Ok(())
+}
+
 ///                    ┌ ─ ─ ─ ─            ┌ ─ ─ ─ ─
 ///                      Peer 1 │             Peer 2 │
 ///                    └ ─ ─ ─ ─            └ ─ ─ ─ ─

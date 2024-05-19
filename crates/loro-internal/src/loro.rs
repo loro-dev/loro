@@ -781,6 +781,7 @@ impl LoroDoc {
             self.state.lock().unwrap().start_recording();
         }
         self.start_auto_commit();
+
         self.apply_diff(diff, container_remap).unwrap();
         Ok(CommitWhenDrop { doc: self })
     }
