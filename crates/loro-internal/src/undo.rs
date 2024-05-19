@@ -188,9 +188,6 @@ impl UndoManagerInner {
             return;
         }
 
-        trace!("record_checkpoint {}", latest_counter);
-        trace!("undo_stack {:#?}", &self.undo_stack);
-
         assert!(self.latest_counter < latest_counter);
         let span = CounterSpan::new(self.latest_counter, latest_counter);
         self.latest_counter = latest_counter;
@@ -241,14 +238,18 @@ impl UndoManager {
         }
     }
 
-    pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) {
+    pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) -> LoroResult<()> {
         if doc.peer_id() != self.peer {
-            panic!("PeerID cannot be changed during the lifetime of the UndoManager")
+            return Err(LoroError::UndoWithDifferentPeerId {
+                expected: self.peer,
+                actual: doc.peer_id(),
+            });
         }
 
         doc.commit_then_renew();
         let counter = get_counter_end(doc, self.peer);
         self.inner.try_lock().unwrap().record_checkpoint(counter);
+        Ok(())
     }
 
     #[instrument(skip_all)]
@@ -267,13 +268,14 @@ impl UndoManager {
         get_stack: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
     ) -> LoroResult<()> {
-        self.record_new_checkpoint(doc);
+        self.record_new_checkpoint(doc)?;
         let end_counter = get_counter_end(doc, self.peer);
         let mut top = {
             let mut inner = self.inner.try_lock().unwrap();
             inner.processing_undo = true;
             get_stack(&mut inner).pop()
         };
+
         while let Some((span, e)) = top {
             trace_span!("Undo", "{:?}@{}", span, self.peer).in_scope(|| {
                 {

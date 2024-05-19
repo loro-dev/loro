@@ -60,6 +60,8 @@ pub enum LoroError {
     EditWhenDetached,
     #[error("The given ID ({0}) is not contained by the doc")]
     UndoInvalidIdSpan(ID),
+    #[error("PeerID cannot be changed. Expected: {expected:?}, Actual: {actual:?}")]
+    UndoWithDifferentPeerId { expected: PeerID, actual: PeerID },
 }
 
 #[derive(Error, Debug)]

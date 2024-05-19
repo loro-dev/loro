@@ -324,11 +324,11 @@ fn one_register_collaborative_undo() -> Result<(), LoroError> {
     sync(&doc_a, &doc_b);
     let mut undo = UndoManager::new(&doc_a);
     doc_a.get_map("map").insert("color", "red")?;
-    undo.record_new_checkpoint(&doc_a);
+    undo.record_new_checkpoint(&doc_a)?;
     sync(&doc_a, &doc_b);
     doc_b.get_map("map").insert("color", "green")?;
     sync(&doc_a, &doc_b);
-    undo.record_new_checkpoint(&doc_a);
+    undo.record_new_checkpoint(&doc_a)?;
     undo.undo(&doc_a)?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
@@ -463,11 +463,11 @@ fn undo_manager() -> Result<(), LoroError> {
     doc.set_peer_id(1)?;
     let mut undo = UndoManager::new(&doc);
     doc.get_text("text").insert(0, "123")?;
-    undo.record_new_checkpoint(&doc);
+    undo.record_new_checkpoint(&doc)?;
     doc.get_text("text").insert(3, "456")?;
-    undo.record_new_checkpoint(&doc);
+    undo.record_new_checkpoint(&doc)?;
     doc.get_text("text").insert(6, "789")?;
-    undo.record_new_checkpoint(&doc);
+    undo.record_new_checkpoint(&doc)?;
     for i in 0..10 {
         info_span!("round", i).in_scope(|| {
             assert_eq!(doc.get_text("text").to_string(), "123456789");
@@ -496,11 +496,11 @@ fn undo_manager_with_sub_container() -> Result<(), LoroError> {
     doc.set_peer_id(1)?;
     let mut undo = UndoManager::new(&doc);
     let map = doc.get_list("list").insert_container(0, LoroMap::new())?;
-    undo.record_new_checkpoint(&doc);
+    undo.record_new_checkpoint(&doc)?;
     let text = map.insert_container("text", LoroText::new())?;
-    undo.record_new_checkpoint(&doc);
+    undo.record_new_checkpoint(&doc)?;
     text.insert(0, "123")?;
-    undo.record_new_checkpoint(&doc);
+    undo.record_new_checkpoint(&doc)?;
     for i in 0..10 {
         info_span!("round", ?i).in_scope(|| {
             assert_eq!(
@@ -575,16 +575,16 @@ fn test_undo_container_deletion() -> LoroResult<()> {
 
     let map = doc.get_map("map");
     let text = map.insert_container("text", LoroText::new())?;
-    undo.record_new_checkpoint(&doc);
+    undo.record_new_checkpoint(&doc)?;
     text.insert(0, "T")?;
-    undo.record_new_checkpoint(&doc);
+    undo.record_new_checkpoint(&doc)?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({"map": {"text": "T"}})
     );
     map.delete("text")?;
     assert_eq!(doc.get_deep_value().to_json_value(), json!({"map": {}}));
-    undo.record_new_checkpoint(&doc);
+    undo.record_new_checkpoint(&doc)?;
     undo.undo(&doc)?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
@@ -636,9 +636,9 @@ fn undo_richtext_editing() -> LoroResult<()> {
     let mut undo = UndoManager::new(&doc);
     let text = doc.get_text("text");
     text.insert(0, "Hello")?;
-    undo.record_new_checkpoint(&doc);
+    undo.record_new_checkpoint(&doc)?;
     text.mark(0..5, "bold", true)?;
-    undo.record_new_checkpoint(&doc);
+    undo.record_new_checkpoint(&doc)?;
     assert_eq!(
         text.to_delta().to_json_value(),
         json!([
@@ -689,12 +689,12 @@ fn undo_richtext_editing_collab() -> LoroResult<()> {
     let doc_b = LoroDoc::new();
     doc_b.set_peer_id(2)?;
     doc_a.get_text("text").insert(0, "A fox jumped")?;
-    undo.record_new_checkpoint(&doc_a);
+    undo.record_new_checkpoint(&doc_a)?;
     sync(&doc_a, &doc_b);
     doc_b.get_text("text").mark(2..12, "italic", true)?;
     sync(&doc_a, &doc_b);
     doc_a.get_text("text").mark(0..5, "bold", true)?;
-    undo.record_new_checkpoint(&doc_a);
+    undo.record_new_checkpoint(&doc_a)?;
     sync(&doc_a, &doc_b);
     assert_eq!(
         doc_a.get_text("text").to_delta().to_json_value(),
@@ -746,12 +746,12 @@ fn undo_richtext_conflict_set_style() -> LoroResult<()> {
     doc_b.set_peer_id(2)?;
 
     doc_a.get_text("text").insert(0, "A fox jumped")?;
-    undo.record_new_checkpoint(&doc_a);
+    undo.record_new_checkpoint(&doc_a)?;
     sync(&doc_a, &doc_b);
     doc_b.get_text("text").mark(2..12, "color", "red")?;
     sync(&doc_a, &doc_b);
     doc_a.get_text("text").mark(0..5, "color", "green")?;
-    undo.record_new_checkpoint(&doc_a);
+    undo.record_new_checkpoint(&doc_a)?;
     sync(&doc_a, &doc_b);
     assert_eq!(
         doc_a.get_text("text").to_delta().to_json_value(),
@@ -800,17 +800,17 @@ fn undo_text_collab_delete() -> LoroResult<()> {
     let doc_b = LoroDoc::new();
     doc_b.set_peer_id(2)?;
     doc_a.get_text("text").insert(0, "A ")?;
-    undo.record_new_checkpoint(&doc_a);
+    undo.record_new_checkpoint(&doc_a)?;
     doc_a.get_text("text").insert(2, "fox ")?;
-    undo.record_new_checkpoint(&doc_a);
+    undo.record_new_checkpoint(&doc_a)?;
     doc_a.get_text("text").insert(6, "jumped")?;
-    undo.record_new_checkpoint(&doc_a);
+    undo.record_new_checkpoint(&doc_a)?;
     sync(&doc_a, &doc_b);
 
     doc_b.get_text("text").delete(2, 4)?;
     sync(&doc_a, &doc_b);
     doc_a.get_text("text").insert(0, "123!")?;
-    undo.record_new_checkpoint(&doc_a);
+    undo.record_new_checkpoint(&doc_a)?;
     for _ in 0..3 {
         assert_eq!(doc_a.get_text("text").to_string(), "123!A jumped");
         undo.undo(&doc_a)?;
@@ -1138,28 +1138,28 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// ┌────┐                        
-/// │"B" │                        
-/// └────┘                        
-///   ▲                           
-/// ┌─┴───────┐                   
-/// │bold "B" │                   
-/// └─────────┘                   
+/// ┌────┐
+/// │"B" │
+/// └────┘
+///   ▲
+/// ┌─┴───────┐
+/// │bold "B" │
+/// └─────────┘
 ///   ▲                Concurrent
-///   │                  Delete   
-/// ┌─┴────────┐        ┌──────┐  
-/// │"Hello B" │◀───────│ "B"  │  
-/// └──────────┘        └──────┘  
-///   ▲                     ▲     
-///   │                     │     
-/// ┌─┴──┐                  │     
-/// │Undo│──────────────────┘     
-/// └────┘                        
-///   ▲                           
-///   │                           
-/// ┌─┴──┐                        
-/// │Undo│                        
-/// └────┘                        
+///   │                  Delete
+/// ┌─┴────────┐        ┌──────┐
+/// │"Hello B" │◀───────│ "B"  │
+/// └──────────┘        └──────┘
+///   ▲                     ▲
+///   │                     │
+/// ┌─┴──┐                  │
+/// │Undo│──────────────────┘
+/// └────┘
+///   ▲
+///   │
+/// ┌─┴──┐
+/// │Undo│
+/// └────┘
 #[test]
 fn test_remote_merge_transform() -> LoroResult<()> {
     let doc_a = LoroDoc::new();

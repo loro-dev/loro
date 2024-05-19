@@ -1843,7 +1843,7 @@ impl UndoManager {
     }
 
     /// Record a new checkpoint.
-    pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) {
+    pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) -> LoroResult<()> {
         self.0.record_new_checkpoint(&doc.doc)
     }
 

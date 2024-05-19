@@ -1,5 +1,6 @@
 //! Loro WASM bindings.
 #![allow(non_snake_case)]
+#![allow(clippy::empty_docs)]
 #![warn(missing_docs)]
 
 use convert::resolved_diff_to_js;
