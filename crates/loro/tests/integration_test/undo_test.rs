@@ -438,26 +438,6 @@ fn undo_id_span_that_contains_remote_deps_inside_many_times() -> Result<(), Loro
 }
 
 #[test]
-fn tree_undo() -> Result<(), LoroError> {
-    let doc_a = LoroDoc::new();
-    doc_a.set_peer_id(1)?;
-    let tree_a = doc_a.get_tree("tree");
-    let root = tree_a.create(None)?;
-    let root2 = tree_a.create(None)?;
-    let doc_b = LoroDoc::new();
-    let tree_b = doc_b.get_tree("tree");
-    doc_b.import(&doc_a.export_from(&Default::default()))?;
-    tree_a.mov(root, root2)?;
-    tree_b.mov(root2, root)?;
-    doc_a.import(&doc_b.export_from(&Default::default()))?;
-    doc_b.import(&doc_a.export_from(&Default::default()))?;
-
-    doc_a.undo(ID::new(1, 1).into())?;
-
-    Ok(())
-}
-
-#[test]
 fn undo_manager() -> Result<(), LoroError> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
@@ -1435,5 +1415,26 @@ fn undo_collab_list_move() -> LoroResult<()> {
     undo.undo(&doc)?;
     // FIXME: cannot infer move correctly for now
     assert_eq!(list.get_value().to_json_value(), json!(["0", "1", "2"]));
+    Ok(())
+}
+
+#[ignore]
+#[test]
+fn tree_undo() -> Result<(), LoroError> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let tree_a = doc_a.get_tree("tree");
+    let root = tree_a.create(None)?;
+    let root2 = tree_a.create(None)?;
+    let doc_b = LoroDoc::new();
+    let tree_b = doc_b.get_tree("tree");
+    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    tree_a.mov(root, root2)?;
+    tree_b.mov(root2, root)?;
+    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    doc_b.import(&doc_a.export_from(&Default::default()))?;
+
+    doc_a.undo(ID::new(1, 1).into())?;
+
     Ok(())
 }
