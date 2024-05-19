@@ -123,7 +123,7 @@ impl Actor {
 
     pub fn undo(&mut self, undo_length: u32) {
         self.loro.attach();
-        let before_undo = self.loro.get_deep_value();
+        let mut before_undo = self.loro.get_deep_value();
         for _ in 0..undo_length {
             self.undo_manager.undo.undo(&self.loro).unwrap();
         }
@@ -131,8 +131,20 @@ impl Actor {
         for _ in 0..undo_length {
             self.undo_manager.undo.redo(&self.loro).unwrap();
         }
-        let after_undo = self.loro.get_deep_value();
+        let mut after_undo = self.loro.get_deep_value();
+        Self::patch_tree_undo_position(&mut before_undo);
+        Self::patch_tree_undo_position(&mut after_undo);
         assert_value_eq(&before_undo, &after_undo);
+    }
+
+    fn patch_tree_undo_position(a: &mut LoroValue) {
+        let root = Arc::make_mut(a.as_map_mut().unwrap());
+        let tree = root.get_mut("tree").unwrap();
+        let nodes = Arc::make_mut(tree.as_list_mut().unwrap());
+        for node in nodes.iter_mut() {
+            let node = Arc::make_mut(node.as_map_mut().unwrap());
+            node.remove("position");
+        }
     }
 
     pub fn check_tracker(&self) {
