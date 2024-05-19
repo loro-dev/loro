@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
 
 use either::Either;
 use fxhash::FxHashMap;
@@ -9,6 +12,7 @@ use loro_common::{
 use tracing::{debug_span, info_span, instrument, trace, trace_span};
 
 use crate::{
+    change::get_sys_timestamp,
     event::{Diff, EventTriggerKind},
     version::Frontiers,
     ContainerDiff, DocDiff, LoroDoc,
@@ -78,27 +82,31 @@ struct UndoManagerInner {
     undo_stack: Stack,
     redo_stack: Stack,
     processing_undo: bool,
+    last_undo_time: i64,
+    merge_interval: i64,
+    max_stack_size: usize,
 }
 
 #[derive(Debug)]
 struct Stack {
-    stack: Vec<(Vec<CounterSpan>, Arc<Mutex<DiffBatch>>)>,
+    stack: VecDeque<(VecDeque<CounterSpan>, Arc<Mutex<DiffBatch>>)>,
+    size: usize,
 }
 
 impl Stack {
     pub fn new() -> Self {
-        Stack {
-            stack: vec![(vec![], Arc::new(Mutex::new(Default::default())))],
-        }
+        let mut stack = VecDeque::new();
+        stack.push_back((VecDeque::new(), Arc::new(Mutex::new(Default::default()))));
+        Stack { stack, size: 0 }
     }
 
     pub fn pop(&mut self) -> Option<(CounterSpan, Arc<Mutex<DiffBatch>>)> {
-        while self.stack.last().unwrap().0.is_empty() && self.stack.len() > 1 {
-            let (_, diff) = self.stack.pop().unwrap();
+        while self.stack.back().unwrap().0.is_empty() && self.stack.len() > 1 {
+            let (_, diff) = self.stack.pop_back().unwrap();
             let diff = diff.try_lock().unwrap();
             if !diff.0.is_empty() {
                 self.stack
-                    .last_mut()
+                    .back_mut()
                     .unwrap()
                     .1
                     .try_lock()
@@ -107,29 +115,50 @@ impl Stack {
             }
         }
 
-        if self.stack.len() == 1 && self.stack.last().unwrap().0.is_empty() {
-            self.stack.last_mut().unwrap().1.try_lock().unwrap().clear();
+        if self.stack.len() == 1 && self.stack.back().unwrap().0.is_empty() {
+            self.stack.back_mut().unwrap().1.try_lock().unwrap().clear();
             return None;
         }
 
-        let last = self.stack.last_mut().unwrap();
-        last.0.pop().map(|x| (x, last.1.clone()))
+        self.size -= 1;
+        let last = self.stack.back_mut().unwrap();
+        last.0.pop_back().map(|x| (x, last.1.clone()))
     }
 
     pub fn push(&mut self, span: CounterSpan) {
-        let last = self.stack.last_mut().unwrap();
+        self.push_with_merge(span, false)
+    }
+
+    pub fn push_with_merge(&mut self, span: CounterSpan, can_merge: bool) {
+        let last = self.stack.back_mut().unwrap();
         let mut last_remote_diff = last.1.try_lock().unwrap();
         if !last_remote_diff.0.is_empty() {
+            // If the remote diff is not empty, we cannot merge
             if last.0.is_empty() {
-                last.0.push(span);
+                last.0.push_back(span);
                 last_remote_diff.clear();
             } else {
                 drop(last_remote_diff);
+                let mut v = VecDeque::new();
+                v.push_back(span);
                 self.stack
-                    .push((vec![span], Arc::new(Mutex::new(DiffBatch::default()))));
+                    .push_back((v, Arc::new(Mutex::new(DiffBatch::default()))));
             }
+
+            self.size += 1;
         } else {
-            last.0.push(span);
+            if can_merge {
+                if let Some(last_span) = last.0.back_mut() {
+                    if last_span.end == span.start {
+                        // merge the span
+                        last_span.end = span.end;
+                        return;
+                    }
+                }
+            }
+
+            self.size += 1;
+            last.0.push_back(span);
         }
     }
 
@@ -138,7 +167,7 @@ impl Stack {
             return;
         }
 
-        let remote_diff = &mut self.stack.last_mut().unwrap().1;
+        let remote_diff = &mut self.stack.back_mut().unwrap().1;
         let mut remote_diff = remote_diff.try_lock().unwrap();
         for e in diff {
             if let Some(d) = remote_diff.0.get_mut(&e.id) {
@@ -154,16 +183,36 @@ impl Stack {
             return;
         }
 
-        let remote_diff = &mut self.stack.last_mut().unwrap().1;
+        let remote_diff = &mut self.stack.back_mut().unwrap().1;
         remote_diff.try_lock().unwrap().transform(diff, true);
     }
 
     pub fn clear(&mut self) {
-        self.stack = vec![(vec![], Default::default())];
+        self.stack = VecDeque::new();
+        self.stack.push_back((VecDeque::new(), Default::default()));
+        self.size = 0;
     }
 
-    fn is_empty(&self) -> bool {
-        self.stack.len() == 1 && self.stack[0].0.is_empty()
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
+    pub fn len(&self) -> usize {
+        self.size
+    }
+
+    fn pop_front(&mut self) {
+        if self.is_empty() {
+            return;
+        }
+
+        self.size -= 1;
+        let first = self.stack.front_mut().unwrap();
+        let f = first.0.pop_front();
+        assert!(f.is_some());
+        if first.0.is_empty() {
+            self.stack.pop_front();
+        }
     }
 }
 
@@ -180,6 +229,9 @@ impl UndoManagerInner {
             undo_stack: Default::default(),
             redo_stack: Default::default(),
             processing_undo: false,
+            merge_interval: 0,
+            last_undo_time: 0,
+            max_stack_size: usize::MAX,
         }
     }
 
@@ -189,10 +241,20 @@ impl UndoManagerInner {
         }
 
         assert!(self.latest_counter < latest_counter);
+        let now = get_sys_timestamp();
         let span = CounterSpan::new(self.latest_counter, latest_counter);
+        if !self.undo_stack.is_empty() && now - self.last_undo_time < self.merge_interval {
+            self.undo_stack.push_with_merge(span, true);
+        } else {
+            self.last_undo_time = now;
+            self.undo_stack.push(span);
+        }
+
         self.latest_counter = latest_counter;
-        self.undo_stack.push(span);
         self.redo_stack.clear();
+        while self.undo_stack.len() > self.max_stack_size {
+            self.undo_stack.pop_front();
+        }
     }
 }
 
@@ -236,6 +298,14 @@ impl UndoManager {
             container_remap: Default::default(),
             inner,
         }
+    }
+
+    pub fn set_merge_interval(&mut self, interval: i64) {
+        self.inner.try_lock().unwrap().merge_interval = interval;
+    }
+
+    pub fn set_max_undo_steps(&mut self, size: usize) {
+        self.inner.try_lock().unwrap().max_stack_size = size;
     }
 
     pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) -> LoroResult<()> {

@@ -3275,12 +3275,16 @@ fn loro_value_to_js_value_or_container(
     }
 }
 
-/// UndoManager is a manager that manages the undo and redo operations.
+/// `UndoManager` is responsible for handling undo and redo operations.
 ///
-/// Undo/local is local: it cannot be used to undone the changes made by other peers.
-/// If you want to undo changes made by other peers, you may need to use the time travel feature.
+/// Each commit made by the current peer is recorded as an undo step in the `UndoManager`.
+/// Undo steps can be merged if they occur within a specified merge interval.
 ///
-/// PeerID cannot be changed during the lifetime of the UndoManager
+/// Note that undo operations are local and cannot revert changes made by other peers.
+/// To undo changes made by other peers, consider using the time travel feature.
+///
+/// Once the `peerId` is bound to the `UndoManager` in the document, it cannot be changed.
+/// Otherwise, the `UndoManager` may not function correctly.
 #[wasm_bindgen]
 #[derive(Debug)]
 pub struct UndoManager {
@@ -3314,13 +3318,26 @@ impl UndoManager {
     }
 
     /// Can undo the last operation.
-    pub fn can_undo(&self) -> bool {
+    pub fn canUndo(&self) -> bool {
         self.undo.can_undo()
     }
 
     /// Can redo the last operation.
-    pub fn can_redo(&self) -> bool {
+    pub fn canRedo(&self) -> bool {
         self.undo.can_redo()
+    }
+
+    /// The number of max undo steps.
+    /// If the number of undo steps exceeds this number, the oldest undo step will be removed.
+    pub fn setMaxUndoSteps(&mut self, steps: usize) {
+        self.undo.set_max_undo_steps(steps);
+    }
+
+    /// Set the merge interval (in ms).
+    /// If the interval is set to 0, the undo steps will not be merged.
+    /// Otherwise, the undo steps will be merged if the interval between the two steps is less than the given interval.
+    pub fn setMergeInterval(&mut self, interval: f64) {
+        self.undo.set_merge_interval(interval as i64);
     }
 }
 
