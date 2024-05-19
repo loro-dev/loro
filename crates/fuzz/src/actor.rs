@@ -42,8 +42,8 @@ pub struct Actor {
 impl Actor {
     pub fn new(id: PeerID) -> Self {
         let loro = LoroDoc::new();
-        let undo = UndoManager::new(&loro);
         loro.set_peer_id(id).unwrap();
+        let undo = UndoManager::new(&loro);
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(MapTracker::empty(
             ContainerID::new_root("sys:root", ContainerType::Map),
         ))));

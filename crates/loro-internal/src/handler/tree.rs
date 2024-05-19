@@ -49,6 +49,19 @@ impl TreeInner {
         id
     }
 
+    fn create_with_target(
+        &mut self,
+        parent: Option<TreeID>,
+        index: usize,
+        target: TreeID,
+    ) -> TreeID {
+        self.map.insert(target, MapHandler::new_detached());
+        self.parent_links.insert(target, parent);
+        let children = self.children_links.entry(parent).or_default();
+        children.insert(index, target);
+        target
+    }
+
     fn mov(&mut self, target: TreeID, new_parent: Option<TreeID>, index: usize) -> LoroResult<()> {
         let old_parent = self
             .parent_links
@@ -325,6 +338,45 @@ impl TreeHandler {
             MaybeDetached::Attached(a) => {
                 a.with_txn(|txn| self.create_with_txn(txn, parent, index))
             }
+        }
+    }
+
+    /// For undo/redo, Specify the TreeID of the created node
+    pub(crate) fn create_at_with_target(
+        &self,
+        parent: Option<TreeID>,
+        index: usize,
+        target: TreeID,
+    ) -> LoroResult<()> {
+        if let Some(p) = parent {
+            if !self.contains(p) {
+                return Ok(());
+            }
+        }
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = &mut t.try_lock().unwrap().value;
+                t.create_with_target(parent, index, target);
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| {
+                let inner = self.inner.try_attached_state()?;
+                match self.generate_position_at(&target, parent, index) {
+                    FractionalIndexGenResult::Ok(position) => {
+                        self.create_with_position(inner, txn, target, parent, index, position)?;
+                    }
+                    FractionalIndexGenResult::Rearrange(ids) => {
+                        for (i, (id, position)) in ids.into_iter().enumerate() {
+                            if i == 0 {
+                                self.create_with_position(inner, txn, id, parent, index, position)?;
+                                continue;
+                            }
+                            self.mov_with_position(inner, txn, id, parent, index + i, position)?;
+                        }
+                    }
+                };
+                Ok(())
+            }),
         }
     }
 
