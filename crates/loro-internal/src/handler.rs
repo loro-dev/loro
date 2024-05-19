@@ -1098,6 +1098,7 @@ impl Handler {
                 x.apply_delta(delta, on_container_remap)?;
             }
             Self::Tree(x) => {
+                println!("apply diff {:?}", diff);
                 for diff in diff.into_tree().unwrap().diff {
                     let target = diff.target;
                     match diff.action {
@@ -1106,7 +1107,12 @@ impl Handler {
                             index,
                             position: _,
                         } => {
-                            x.create_at(parent, index)?;
+                            if let Some(p) = parent {
+                                if !x.contains(p) {
+                                    return Ok(());
+                                }
+                            }
+                            x.move_to(target, parent, index)?
                         }
                         TreeExternalDiff::Delete { .. } => x.delete(target)?,
                         TreeExternalDiff::Move { parent, index, .. } => {

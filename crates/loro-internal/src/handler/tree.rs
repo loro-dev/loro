@@ -295,8 +295,11 @@ impl TreeHandler {
             EventHint::Tree(TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Delete {
-                    old_parent: self.get_node_parent(&target).unwrap(),
-                    old_index: self.get_index_by_tree_id(&target).unwrap(),
+                    old_parent: self
+                        .get_node_parent(&target)
+                        .map(TreeParentId::from)
+                        .unwrap_or(TreeParentId::Unexist),
+                    old_index: self.get_index_by_tree_id(&target).unwrap_or(0),
                 },
             }),
             &inner.state,
@@ -513,8 +516,11 @@ impl TreeHandler {
                     parent,
                     index,
                     position,
-                    old_parent: self.get_node_parent(&target).unwrap(),
-                    old_index: self.get_index_by_tree_id(&target).unwrap(),
+                    old_parent: self
+                        .get_node_parent(&target)
+                        .map(TreeParentId::from)
+                        .unwrap_or(TreeParentId::Unexist),
+                    old_index: self.get_index_by_tree_id(&target).unwrap_or(0),
                 },
             }),
             &inner.state,

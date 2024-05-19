@@ -29,11 +29,11 @@ pub enum TreeExternalDiff {
         parent: Option<TreeID>,
         index: usize,
         position: FractionalIndex,
-        old_parent: Option<TreeID>,
+        old_parent: TreeParentId,
         old_index: usize,
     },
     Delete {
-        old_parent: Option<TreeID>,
+        old_parent: TreeParentId,
         old_index: usize,
     },
 }
@@ -83,7 +83,7 @@ impl TreeDiff {
                     position: _,
                 } => {
                     b_parent
-                        .entry(parent)
+                        .entry(TreeParentId::from(*parent))
                         .or_insert_with(Vec::new)
                         .push(*index as i32);
                 }
@@ -95,11 +95,11 @@ impl TreeDiff {
                     old_index,
                 } => {
                     b_parent
-                        .entry(old_parent)
+                        .entry(*old_parent)
                         .or_insert_with(Vec::new)
                         .push(-(*old_index as i32));
                     b_parent
-                        .entry(parent)
+                        .entry(TreeParentId::from(*parent))
                         .or_insert_with(Vec::new)
                         .push(*index as i32);
                 }
@@ -108,7 +108,7 @@ impl TreeDiff {
                     old_parent,
                 } => {
                     b_parent
-                        .entry(old_parent)
+                        .entry(*old_parent)
                         .or_insert_with(Vec::new)
                         .push(-(*old_index as i32));
                 }
@@ -124,7 +124,7 @@ impl TreeDiff {
                     index,
                     position: _,
                 } => {
-                    if let Some(b_indices) = b_parent.get(parent) {
+                    if let Some(b_indices) = b_parent.get(&TreeParentId::from(*parent)) {
                         for i in b_indices.iter() {
                             if (i.unsigned_abs() as usize) < *index {
                                 if i > &0 {
@@ -147,7 +147,7 @@ impl TreeDiff {
                     old_parent,
                     old_index,
                 } => {
-                    if let Some(b_indices) = b_parent.get(parent) {
+                    if let Some(b_indices) = b_parent.get(&TreeParentId::from(*parent)) {
                         for i in b_indices.iter() {
                             if (i.unsigned_abs() as usize) < *index {
                                 if i > &0 {

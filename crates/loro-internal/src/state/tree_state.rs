@@ -834,7 +834,7 @@ impl ContainerState for TreeState {
                         });
                     }
                     TreeInternalDiff::Move { parent, position } => {
-                        let old_parent = self.trees.get(&target).unwrap().parent.into_node().ok();
+                        let old_parent = self.trees.get(&target).unwrap().parent;
                         let old_index = self.get_index_by_tree_id(&target).unwrap();
                         self.mov(target, *parent, last_move_op, Some(position.clone()), false)
                             .unwrap();
@@ -851,7 +851,7 @@ impl ContainerState for TreeState {
                         });
                     }
                     TreeInternalDiff::Delete { parent, position } => {
-                        let old_parent = self.trees.get(&target).unwrap().parent.into_node().ok();
+                        let old_parent = self.trees.get(&target).unwrap().parent;
                         let old_index = self.get_index_by_tree_id(&target).unwrap();
                         self.mov(target, *parent, last_move_op, position.clone(), false)
                             .unwrap();
@@ -868,7 +868,7 @@ impl ContainerState for TreeState {
                             .unwrap();
                     }
                     TreeInternalDiff::UnCreate => {
-                        let old_parent = self.trees.get(&target).unwrap().parent.into_node().ok();
+                        let old_parent = self.trees.get(&target).unwrap().parent;
                         let old_index = self.get_index_by_tree_id(&target).unwrap();
                         ans.push(TreeDiffItem {
                             target,

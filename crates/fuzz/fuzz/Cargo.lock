@@ -238,7 +238,7 @@ dependencies = [
  "itertools 0.12.1",
  "loro 0.5.1",
  "loro 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo)",
- "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/fuzz-undo)",
+ "loro-common 0.5.1",
  "rand",
  "tabled",
  "tracing",
