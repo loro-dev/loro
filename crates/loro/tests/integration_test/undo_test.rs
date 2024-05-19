@@ -1210,6 +1210,128 @@ fn test_remote_merge_transform() -> LoroResult<()> {
     Ok(())
 }
 
+///                    ┌ ─ ─ ─ ─            ┌ ─ ─ ─ ─
+///                      Peer 1 │             Peer 2 │
+///                    └ ─ ─ ─ ─            └ ─ ─ ─ ─
+///                    ┌────────┐
+///                    │ Hello  │
+///                    └────▲───┘
+///                         │               ┌────────┐
+///                    ┌────┴───┐           │ Delete │
+///                    │ World  │◀──────────│ Hello  │
+///                    └────▲───┘           └────▲───┘
+///                         │                    │
+///                    ┌────┴───┐           ┌────┴───┐
+///                    │Insert 0│           │Insert  │
+///                    │Alice   ◀────┐┌────▶│Hi      │
+///                    └────▲───┘    ││     └────▲───┘
+///                         │        ││          │
+/// ┌ ─ ─ ─ ─ ─ ─ ─ ─  ┌────┴───┐    ││     ┌────┴───┐
+///      Hi World    │ │  Undo  │────┼┘     │Delete  │
+/// └ ─ ─ ─ ─ ─ ─ ─ ─  └────▲───┘    └──────│Alice   │
+///                         │        ┌─────▶└────▲───┘
+/// ┌ ─ ─ ─ ─ ─ ─ ─ ─  ┌────┴───┐    │           │
+///         Hi       │ │  Undo  ├────┘      ┌────┴───┐
+/// └ ─ ─ ─ ─ ─ ─ ─ ─  └────▲───┘           │Insert  │
+///                         │        ┌─────▶│Bob     │
+/// ┌ ─ ─ ─ ─ ─ ─ ─ ─  ┌────┴───┐    │      └────────┘
+///       Bob Hi     │ │  Undo  ├────┘
+/// └ ─ ─ ─ ─ ─ ─ ─ ─  └────▲───┘
+///                         │
+/// ┌ ─ ─ ─ ─ ─ ─ ─ ─  ┌────┴───┐
+///      Bob Hi_     │ │  Redo  │
+/// └ ─ ─ ─ ─ ─ ─ ─ ─  └────▲───┘
+///                         │
+/// ┌ ─ ─ ─ ─ ─ ─ ─ ─  ┌────┴───┐
+///    Bob Hi World  │ │  Redo  │
+/// └ ─ ─ ─ ─ ─ ─ ─ ─  └────▲───┘
+///                         │
+/// - ─ ─ ─ ─ ─ ─ ─ ─  ┌────┴───┐
+/// Bob AliceHi World  │  Redo  │ It will reinsert "Alice" even if they were deleted by peer 2
+/// - ─ ─ ─ ─ ─ ─ ─ ─  └────▲───┘
+///                         │
+///                    ┌ ─ ─ ─ ─
+///                      Cannot │
+///                    │  Redo
+///                     ─ ─ ─ ─ ┘
+#[test]
+fn undo_redo_when_collab() -> anyhow::Result<()> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1).unwrap();
+    let mut undo_a = UndoManager::new(&doc_a);
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2).unwrap();
+
+    let text_a = doc_a.get_text("text");
+    text_a.insert(0, "Hello ")?;
+    doc_a.commit();
+    text_a.insert(6, "World")?;
+    doc_a.commit();
+
+    sync(&doc_a, &doc_b);
+
+    let text_b = doc_b.get_text("text");
+    text_b.delete(0, 5)?;
+    doc_b.commit();
+    text_b.insert(0, "Hi")?;
+    doc_b.commit();
+
+    text_a.insert(0, "Alice")?;
+    sync(&doc_a, &doc_b);
+    text_b.delete(0, 5)?;
+    undo_a.undo(&doc_a)?;
+    assert_eq!(
+        doc_a.get_deep_value().to_json_value(),
+        json!({
+            "text": "Hi World"
+        })
+    );
+    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    undo_a.undo(&doc_a)?;
+    assert_eq!(
+        doc_a.get_deep_value().to_json_value(),
+        json!({
+            "text": "Hi "
+        })
+    );
+    text_b.insert(0, "Bob ")?;
+    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    undo_a.undo(&doc_a)?;
+    assert_eq!(
+        doc_a.get_deep_value().to_json_value(),
+        json!({
+            "text": "Bob Hi"
+        })
+    );
+
+    assert!(undo_a.can_redo());
+    undo_a.redo(&doc_a)?;
+    assert_eq!(
+        doc_a.get_deep_value().to_json_value(),
+        json!({
+            "text": "Bob Hi "
+        })
+    );
+    undo_a.redo(&doc_a)?;
+    assert_eq!(
+        doc_a.get_deep_value().to_json_value(),
+        json!({
+            "text": "Bob Hi World"
+        })
+    );
+    undo_a.redo(&doc_a)?;
+    assert_eq!(
+        doc_a.get_deep_value().to_json_value(),
+        json!({
+            "text": "Bob AliceHi World"
+        })
+    );
+
+    assert!(!undo_a.can_redo());
+
+    Ok(())
+}
+
 #[test]
 fn undo_list_move() -> LoroResult<()> {
     Ok(())
