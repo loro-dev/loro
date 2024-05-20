@@ -746,9 +746,6 @@ impl LoroDoc {
             return Err(LoroError::UndoInvalidIdSpan(id_span.id_last()));
         }
 
-        debug!("Started old state {:?}", self.get_deep_value());
-        debug!("last_bi {:#?}", &post_transform_base);
-
         let (was_recording, latest_frontiers) = {
             let mut state = self.state.lock().unwrap();
             let was_recording = state.is_recording();
