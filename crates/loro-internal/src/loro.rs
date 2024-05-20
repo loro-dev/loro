@@ -372,11 +372,11 @@ impl LoroDoc {
     /// The origin will be propagated to the events.
     /// There can only be one active transaction at a time for a [LoroDoc].
     pub fn txn_with_origin(&self, origin: &str) -> Result<Transaction, LoroError> {
-        // if self.is_detached() {
-        //     return Err(LoroError::TransactionError(
-        //         String::from("LoroDoc is in detached mode. OpLog and AppState are using different version. So it's readonly.").into_boxed_str(),
-        //     ));
-        // }
+        if self.is_detached() {
+            return Err(LoroError::TransactionError(
+                String::from("LoroDoc is in detached mode. OpLog and AppState are using different version. So it's readonly.").into_boxed_str(),
+            ));
+        }
 
         let mut txn = Transaction::new_with_origin(
             self.state.clone(),

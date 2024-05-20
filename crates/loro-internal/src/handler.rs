@@ -1077,7 +1077,7 @@ impl Handler {
                             on_container_remap(old_id, new_id);
                         }
                         Some(ValueOrHandler::Value(v)) => {
-                            x.insert(&key, v)?;
+                            x.insert_without_skipping(&key, v)?;
                         }
                         None => {
                             x.delete(&key)?;
@@ -2893,6 +2893,43 @@ impl MapHandler {
         }
     }
 
+    /// This method will insert the value even if the same value is already in the given entry.
+    fn insert_without_skipping(&self, key: &str, value: impl Into<LoroValue>) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(m) => {
+                let mut m = m.try_lock().unwrap();
+                m.value
+                    .insert(key.into(), ValueOrHandler::Value(value.into()));
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| {
+                let this = &self;
+                let value = value.into();
+                if let Some(_value) = value.as_container() {
+                    return Err(LoroError::ArgErr(
+                        INSERT_CONTAINER_VALUE_ARG_ERROR
+                            .to_string()
+                            .into_boxed_str(),
+                    ));
+                }
+
+                let inner = this.inner.try_attached_state()?;
+                txn.apply_local_op(
+                    inner.container_idx,
+                    crate::op::RawOpContent::Map(crate::container::map::MapSet {
+                        key: key.into(),
+                        value: Some(value.clone()),
+                    }),
+                    EventHint::Map {
+                        key: key.into(),
+                        value: Some(value.clone()),
+                    },
+                    &inner.state,
+                )
+            }),
+        }
+    }
+
     pub fn insert_with_txn(
         &self,
         txn: &mut Transaction,
@@ -2907,10 +2944,10 @@ impl MapHandler {
             ));
         }
 
-        // if self.get(key).map(|x| x == value).unwrap_or(false) {
-        //     // skip if the value is already set
-        //     return Ok(());
-        // }
+        if self.get(key).map(|x| x == value).unwrap_or(false) {
+            // skip if the value is already set
+            return Ok(());
+        }
 
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
