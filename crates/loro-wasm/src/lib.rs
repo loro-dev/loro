@@ -155,6 +155,10 @@ extern "C" {
     pub type JsSide;
     #[wasm_bindgen(typescript_type = "{ update?: Cursor, offset: number, side: Side }")]
     pub type JsCursorQueryAns;
+    #[wasm_bindgen(
+        typescript_type = "{ mergeInterval?: number, maxUndoSteps?: number } | undefined"
+    )]
+    pub type JsUndoConfig;
 }
 
 mod observer {
@@ -3277,6 +3281,8 @@ fn loro_value_to_js_value_or_container(
 
 /// `UndoManager` is responsible for handling undo and redo operations.
 ///
+/// By default, the maxUndoSteps is set to 100, mergeInterval is set to 1000 ms.
+///
 /// Each commit made by the current peer is recorded as an undo step in the `UndoManager`.
 /// Undo steps can be merged if they occur within a specified merge interval.
 ///
@@ -3297,8 +3303,18 @@ impl UndoManager {
     /// Create a new undo manager. It will bind on the current PeerID.
     /// PeerID cannot be changed during the lifetime of the UndoManager.
     #[wasm_bindgen(constructor)]
-    pub fn new(doc: Loro) -> Self {
-        let undo = InnerUndoManager::new(&doc.0);
+    pub fn new(doc: &Loro, config: JsUndoConfig) -> Self {
+        let max_undo_steps = Reflect::get(&config, &JsValue::from_str("maxUndoSteps"))
+            .unwrap_or(JsValue::from_f64(100.0))
+            .as_f64()
+            .unwrap_or(100.0) as usize;
+        let merge_interval = Reflect::get(&config, &JsValue::from_str("mergeInterval"))
+            .unwrap_or(JsValue::from_f64(1000.0))
+            .as_f64()
+            .unwrap_or(1000.0) as i64;
+        let mut undo = InnerUndoManager::new(&doc.0);
+        undo.set_max_undo_steps(max_undo_steps);
+        undo.set_merge_interval(merge_interval);
         UndoManager {
             undo,
             doc: doc.0.clone(),
