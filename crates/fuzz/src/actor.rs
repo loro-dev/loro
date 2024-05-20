@@ -128,6 +128,8 @@ impl Actor {
             self.undo_manager.undo.undo(&self.loro).unwrap();
         }
 
+        println!("start redo");
+
         for _ in 0..undo_length {
             self.undo_manager.undo.redo(&self.loro).unwrap();
         }

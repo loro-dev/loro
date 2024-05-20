@@ -50,12 +50,7 @@ impl TreeDiff {
         self
     }
 
-    pub(crate) fn transform(&mut self, b: &TreeDiff, left_priority: bool) {
-        // println!("transforming {:?} with {:?}", self, b);
-        // We need to cooperate with handler's apply_diff
-        // 1. If the node is created/moved in the left, and the parent is removed in the right (maybe an ancestor), we should remove the creation
-        // 2. If the movement of left causes the cycle, we should remove the movement
-
+    pub(crate) fn transform(&mut self, b: &TreeDiff, left_prior: bool) {
         let b_update: FxHashMap<_, _> = b.diff.iter().map(|d| (d.target, &d.action)).collect();
         let mut self_update: FxHashMap<_, _> = self
             .diff
@@ -63,7 +58,7 @@ impl TreeDiff {
             .enumerate()
             .map(|(i, d)| (d.target, (&d.action, i)))
             .collect();
-        if !left_priority {
+        if left_prior {
             let mut removes = Vec::new();
             for (target, _) in b_update {
                 if let Some((_, i)) = self_update.remove(&target) {
@@ -85,7 +80,7 @@ impl TreeDiff {
             if let Some(b_indices) = b_parent.get(parent) {
                 for i in b_indices.iter() {
                     if (i.unsigned_abs() as usize) < *index
-                        || (i.unsigned_abs() as usize == *index && !left_priority)
+                        || (i.unsigned_abs() as usize == *index && left_priority)
                     {
                         if i > &0 {
                             *index += 1;
@@ -147,12 +142,7 @@ impl TreeDiff {
                     parent,
                     index,
                     position: _,
-                } => reset_index(
-                    &b_parent,
-                    index,
-                    &TreeParentId::from(*parent),
-                    left_priority,
-                ),
+                } => reset_index(&b_parent, index, &TreeParentId::from(*parent), left_prior),
                 TreeExternalDiff::Move {
                     parent,
                     index,
@@ -160,19 +150,14 @@ impl TreeDiff {
                     old_parent,
                     old_index,
                 } => {
-                    reset_index(
-                        &b_parent,
-                        index,
-                        &TreeParentId::from(*parent),
-                        left_priority,
-                    );
-                    reset_index(&b_parent, old_index, old_parent, left_priority);
+                    reset_index(&b_parent, index, &TreeParentId::from(*parent), left_prior);
+                    reset_index(&b_parent, old_index, old_parent, left_prior);
                 }
                 TreeExternalDiff::Delete {
                     old_index,
                     old_parent,
                 } => {
-                    reset_index(&b_parent, old_index, old_parent, left_priority);
+                    reset_index(&b_parent, old_index, old_parent, left_prior);
                 }
             }
         }

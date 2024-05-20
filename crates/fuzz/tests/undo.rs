@@ -2,6 +2,7 @@ use fuzz::{
     actions::{ActionWrapper::*, GenericAction},
     crdt_fuzzer::{test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
 };
+use loro_common::ContainerType::*;
 
 // #[ctor::ctor]
 // fn init() {
@@ -58,6 +59,63 @@ fn undo_tree_with_map() {
             SyncAllUndo {
                 site: 149,
                 op_len: 65533,
+            },
+        ],
+    );
+}
+
+#[test]
+fn redo_tree_id_diff() {
+    test_multi_sites(
+        2,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 51,
+                target: 60,
+                container: 197,
+                action: Generic(GenericAction {
+                    value: I32(-296905323),
+                    bool: false,
+                    key: 2395151462,
+                    pos: 6335698875578771752,
+                    length: 1716855125946684615,
+                    prop: 2807457672376879961,
+                }),
+            },
+            Handle {
+                site: 162,
+                target: 167,
+                container: 90,
+                action: Generic(GenericAction {
+                    value: Container(Tree),
+                    bool: true,
+                    key: 929442508,
+                    pos: 4887648083275096983,
+                    length: 8237173174339417107,
+                    prop: 1571041097810100079,
+                }),
+            },
+            Checkout {
+                site: 56,
+                to: 1826343396,
+            },
+            SyncAllUndo {
+                site: 10,
+                op_len: 998370061,
+            },
+            Handle {
+                site: 112,
+                target: 78,
+                container: 159,
+                action: Generic(GenericAction {
+                    value: Container(MovableList),
+                    bool: false,
+                    key: 1978700208,
+                    pos: 15377364763518525973,
+                    length: 13205966979381542996,
+                    prop: 5155832222345785212,
+                }),
             },
         ],
     );
