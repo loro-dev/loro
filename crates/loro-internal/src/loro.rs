@@ -15,7 +15,7 @@ use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
 use rle::HasLength;
-use tracing::{debug, instrument, trace, trace_span};
+use tracing::{debug, info_span, instrument};
 
 use crate::{
     arena::SharedArena,
@@ -855,7 +855,7 @@ impl LoroDoc {
         });
         for mut id in containers {
             let diff = diff.0.remove(&id).unwrap();
-            trace!("apply_diff {} {:#?}", &id, &diff);
+
             while let Some(rid) = container_remap.get(&id) {
                 id = rid.clone();
             }
@@ -1087,7 +1087,7 @@ impl LoroDoc {
 
             IS_CHECKING.store(true, std::sync::atomic::Ordering::Release);
             let peer_id = self.peer_id();
-            let s = trace_span!("CheckStateDiffCalcConsistencySlow", ?peer_id);
+            let s = info_span!("CheckStateDiffCalcConsistencySlow", ?peer_id);
             let _g = s.enter();
             self.commit_then_stop();
             let bytes = self.export_from(&Default::default());

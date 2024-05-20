@@ -10,7 +10,7 @@ use loro_internal::{
     loro_common::IdSpan,
 };
 use serde_json::json;
-use tracing::{debug_span, info_span, trace};
+use tracing::{debug_span, info_span};
 
 #[test]
 fn basic_text_undo() -> Result<(), LoroError> {
@@ -1085,9 +1085,9 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
         ])
     );
     undo_a.redo(&doc_a)?; // 1.5 -> 2
-    trace!("{:?}", doc_a.get_deep_value().to_json_value());
+
     undo_a.redo(&doc_a)?; // 2 -> 3
-    trace!("{:?}", doc_a.get_deep_value().to_json_value());
+
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({

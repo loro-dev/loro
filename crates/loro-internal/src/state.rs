@@ -8,7 +8,7 @@ use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
-use tracing::{info, instrument, trace_span};
+use tracing::{info, instrument};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -478,8 +478,6 @@ impl DocState {
                     let state = get_or_create!(self, idx);
                     if is_recording {
                         // process bring_back before apply
-                        let span = trace_span!("handle internal recording");
-                        let _g = span.enter();
                         let external_diff =
                             if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
                                 state.apply_diff(

@@ -9,7 +9,7 @@ use loro_common::{
     ContainerID, Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult,
     PeerID,
 };
-use tracing::{debug_span, info_span, instrument, trace, trace_span};
+use tracing::{debug_span, info_span, instrument};
 
 use crate::{
     change::get_sys_timestamp,
@@ -349,28 +349,25 @@ impl UndoManager {
         };
 
         while let Some((span, e)) = top {
-            trace_span!("Undo", "{:?}@{}", span, self.peer).in_scope(|| {
-                {
-                    let inner = self.inner.clone();
-                    // TODO: Perf we can try to avoid this clone
-                    let e = e.try_lock().unwrap().clone();
-                    doc.undo_internal(
-                        IdSpan {
-                            peer: self.peer,
-                            counter: span,
-                        },
-                        &mut self.container_remap,
-                        Some(&e),
-                        &mut |diff| {
-                            info_span!("transform remote diff").in_scope(|| {
-                                let mut inner = inner.try_lock().unwrap();
-                                get_stack(&mut inner).transform_based_on_this_delta(diff);
-                            });
-                        },
-                    )?;
-                }
-                Ok::<(), LoroError>(())
-            })?;
+            {
+                let inner = self.inner.clone();
+                // TODO: Perf we can try to avoid this clone
+                let e = e.try_lock().unwrap().clone();
+                doc.undo_internal(
+                    IdSpan {
+                        peer: self.peer,
+                        counter: span,
+                    },
+                    &mut self.container_remap,
+                    Some(&e),
+                    &mut |diff| {
+                        info_span!("transform remote diff").in_scope(|| {
+                            let mut inner = inner.try_lock().unwrap();
+                            get_stack(&mut inner).transform_based_on_this_delta(diff);
+                        });
+                    },
+                )?;
+            }
             let new_counter = get_counter_end(doc, self.peer);
             if end_counter != new_counter {
                 let mut inner = self.inner.try_lock().unwrap();
@@ -445,7 +442,6 @@ pub(crate) fn undo(
                 calc_diff(&this_id_span.id_last().into(), this_deps)
             });
 
-            trace!("Event A_i {:#?}", &event_a_i.0);
             // ---------------------------------------
             // 2. Calc event B_i
             // ---------------------------------------
@@ -462,17 +458,15 @@ pub(crate) fn undo(
                 stack_diff_batch = Some(calc_diff(&this_id_span.id_last().into(), &next));
                 stack_diff_batch.as_ref().unwrap()
             });
-            trace!("Event B_i {:#?}", &event_b_i.0);
 
             // event_a_prime can undo the ops in the current span and the previous spans
             let mut event_a_prime = if let Some(mut last_ci) = last_ci.take() {
                 // ------------------------------------------------------------------------------
                 // 1.b Transform and apply Ci-1 based on Ai, call it A'i
                 // ------------------------------------------------------------------------------
-                trace!("last_ci {:#?}", last_ci.0);
-                trace!("event_a_i {:#?}", &event_a_i.0);
+
                 last_ci.transform(&event_a_i, true);
-                trace!("transformed last_ci {:#?}", last_ci.0);
+
                 event_a_i.compose(&last_ci);
                 event_a_i
             } else {
@@ -481,14 +475,13 @@ pub(crate) fn undo(
             if i == spans.len() - 1 {
                 on_last_event_a(&event_a_prime);
             }
-            trace!("Event A'_i {:#?}", &event_a_prime.0);
 
             // --------------------------------------------------
             // 3. Transform event A'_i based on B_i, call it C_i
             // --------------------------------------------------
             event_a_prime.transform(event_b_i, true);
             let c_i = event_a_prime;
-            trace!("Event C_i {:#?}", &c_i.0);
+
             last_ci = Some(c_i);
         });
     }

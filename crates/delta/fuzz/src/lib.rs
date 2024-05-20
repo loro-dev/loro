@@ -32,13 +32,12 @@ fn sync(m: &mut Manager, site: usize) {
         server_ops.compose(t);
     }
 
-    trace!("Server_ops: {:#?}", server_ops);
     let client_to_apply = server_ops.transform(&actor.pending, true);
-    trace!("Client_to_apply: {:#?}", client_to_apply);
+
     let client_ops = std::mem::take(&mut actor.pending);
-    trace!("Client pending: {:#?}", client_ops);
+
     let server_to_apply = client_ops.transform(&server_ops, false);
-    trace!("Server_to_apply: {:#?}", server_to_apply);
+
     actor.rope.compose(&client_to_apply);
     m.server.compose(&server_to_apply);
     m.versions.push(server_to_apply);

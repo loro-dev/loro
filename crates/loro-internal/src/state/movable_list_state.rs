@@ -2,7 +2,7 @@ use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{instrument, trace_span, warn};
+use tracing::{instrument, warn};
 
 use fxhash::FxHashMap;
 use generic_btree::BTree;
@@ -961,10 +961,6 @@ impl ContainerState for MovableListState {
         } else {
             None
         };
-
-        let id = arena.idx_to_id(self.idx).unwrap();
-        let s = trace_span!("ListState", "ListState.id = {:?}", id);
-        let _e = s.enter();
 
         let mut event: ListDiff = DeltaRope::new();
         let mut maybe_moved: FxHashMap<CompactIdLp, (usize, LoroValue)> = FxHashMap::default();

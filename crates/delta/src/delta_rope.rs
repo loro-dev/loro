@@ -1,7 +1,6 @@
 use std::{fmt::Debug, ops::Range};
 
 use generic_btree::{rle::Sliceable, Cursor};
-use tracing::trace;
 
 use crate::{
     delta_rope::rle_tree::LengthFinder,
@@ -283,8 +282,6 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
             }
         }
 
-        trace!("transform self={:#?} other={:#?}", self, other);
-        trace!("transformed={:#?}", transformed_delta);
         transformed_delta.chop();
         transformed_delta
     }
