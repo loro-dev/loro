@@ -42,12 +42,12 @@ describe("undo", () => {
 
   test("merge", async () => {
     const doc = new Loro();
-    const undo = new UndoManager(doc, { maxUndoSteps: 100, mergeInterval: 5 });
+    const undo = new UndoManager(doc, { maxUndoSteps: 100, mergeInterval: 50 });
     for (let i = 0; i < 10; i++) {
       doc.getText("text").insert(i, i.toString());
       doc.commit();
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 100));
     for (let i = 0; i < 10; i++) {
       doc.getText("text").insert(i, i.toString());
       doc.commit();
