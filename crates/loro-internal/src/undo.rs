@@ -276,6 +276,8 @@ impl UndoManager {
         let inner_clone = inner.clone();
         doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
             EventTriggerKind::Local => {
+                // TODO: PERF undo can be significantly faster if we can get
+                // the DiffBatch for undo here
                 let Ok(mut inner) = inner_clone.try_lock() else {
                     return;
                 };
