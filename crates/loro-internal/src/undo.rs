@@ -184,7 +184,7 @@ impl Stack {
         }
 
         let remote_diff = &mut self.stack.back_mut().unwrap().1;
-        remote_diff.try_lock().unwrap().transform(diff, true);
+        remote_diff.try_lock().unwrap().transform(diff, false);
     }
 
     pub fn clear(&mut self) {
@@ -469,8 +469,7 @@ pub(crate) fn undo(
                 // ------------------------------------------------------------------------------
                 trace!("last_ci {:#?}", last_ci.0);
                 trace!("event_a_i {:#?}", &event_a_i.0);
-                // left_prior is false because event_a_i happens first
-                last_ci.transform(&event_a_i, false);
+                last_ci.transform(&event_a_i, true);
                 trace!("transformed last_ci {:#?}", last_ci.0);
                 event_a_i.compose(&last_ci);
                 event_a_i
@@ -485,8 +484,7 @@ pub(crate) fn undo(
             // --------------------------------------------------
             // 3. Transform event A'_i based on B_i, call it C_i
             // --------------------------------------------------
-            // left_prior is false because event_b_i happens first
-            event_a_prime.transform(event_b_i, false);
+            event_a_prime.transform(event_b_i, true);
             let c_i = event_a_prime;
             trace!("Event C_i {:#?}", &c_i.0);
             last_ci = Some(c_i);

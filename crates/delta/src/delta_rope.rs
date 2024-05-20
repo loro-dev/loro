@@ -292,7 +292,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     /// Transforms operation `self` against another operation `other` in such a way that the
     /// impact of `other` is effectively included in `self`.
     pub fn transform_(&mut self, other: &Self, left_prior: bool) {
-        *self = self.transform(&other, left_prior);
+        *self = self.transform(other, left_prior);
     }
 }
 

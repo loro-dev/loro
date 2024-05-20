@@ -1417,7 +1417,7 @@ fn undo_redo_when_collab() -> anyhow::Result<()> {
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
-            "text": "Bob AliceHi World"
+            "text": "AliceBob Hi World"
         })
     );
 

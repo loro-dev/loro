@@ -51,6 +51,10 @@ impl TreeDiff {
     }
 
     pub(crate) fn transform(&mut self, b: &TreeDiff, left_prior: bool) {
+        if b.is_empty() || self.is_empty() {
+            return;
+        }
+
         let b_update: FxHashMap<_, _> = b.diff.iter().map(|d| (d.target, &d.action)).collect();
         let mut self_update: FxHashMap<_, _> = self
             .diff
@@ -58,7 +62,7 @@ impl TreeDiff {
             .enumerate()
             .map(|(i, d)| (d.target, (&d.action, i)))
             .collect();
-        if left_prior {
+        if !left_prior {
             let mut removes = Vec::new();
             for (target, _) in b_update {
                 if let Some((_, i)) = self_update.remove(&target) {
@@ -80,7 +84,7 @@ impl TreeDiff {
             if let Some(b_indices) = b_parent.get(parent) {
                 for i in b_indices.iter() {
                     if (i.unsigned_abs() as usize) < *index
-                        || (i.unsigned_abs() as usize == *index && left_priority)
+                        || (i.unsigned_abs() as usize == *index && !left_priority)
                     {
                         if i > &0 {
                             *index += 1;
