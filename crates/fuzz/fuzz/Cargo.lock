@@ -410,6 +410,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "json-schema"
+version = "0.1.0"
+dependencies = [
+ "loro-common 0.5.1",
+ "serde",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
 name = "leb128"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -537,6 +547,7 @@ dependencies = [
  "getrandom",
  "im",
  "itertools 0.12.1",
+ "json-schema",
  "leb128",
  "loro-common 0.5.1",
  "loro-delta 0.5.1",

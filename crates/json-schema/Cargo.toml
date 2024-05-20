@@ -6,8 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-loro-common = {path = "../loro-common"}
-smallvec = {workspace=true}
+loro-common = { path = "../loro-common" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+smallvec = { workspace = true }
 
 [features]
 counter = ["loro-common/counter"]

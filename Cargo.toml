@@ -23,6 +23,8 @@ tracing = { version = "0.1", features = [
     "max_level_debug",
     "release_max_level_warn",
 ] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 serde_columnar = { version = "0.3.4" }
 itertools = "0.12.1"
 smallvec = { version = "1.8.0", features = ["serde"] }

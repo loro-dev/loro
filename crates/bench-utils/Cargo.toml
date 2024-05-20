@@ -13,4 +13,4 @@ loro-common = { path = "../loro-common" }
 enum-as-inner = "0.5.1"
 flate2 = "1.0.25"
 rand = "0.8.5"
-serde_json = "1.0.89"
+serde_json = { workspace = true }

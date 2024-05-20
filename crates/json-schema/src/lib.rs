@@ -1,33 +1,28 @@
-use loro_common::{ContainerID, Lamport, ID};
+mod op;
+mod serde_impl;
+
+pub use op::*;
+
+use loro_common::{ContainerID, IdLp, Lamport, LoroValue, TreeID, ID};
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LoroJsonSchema {
-    loro_version: String,
-    start_vv: String,
-    end_vv: String,
-    schema_version: u8,
+    pub loro_version: String,
+    pub start_vv: String,
+    pub end_vv: String,
+    pub changes: Vec<Change>,
 }
-
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Change {
-    id: ID,
-    timestamp: u64,
-    deps: SmallVec<[ID; 2]>,
-    lamport: u32,
-    msg: String,
-    ops: Vec<Op>,
+    pub id: ID,
+    pub timestamp: i64,
+    pub deps: SmallVec<[ID; 2]>,
+    pub lamport: Lamport,
+    pub msg: Option<String>,
+
+    pub ops: Vec<Op>,
 }
 
-pub struct Op {
-    counter: i32,
-    container: ContainerID,
-    content: OpContent,
-}
-
-pub enum OpContent {
-    List(ListOp),
-    Map(MapOp),
-    Text(TextOp),
-    Tree(TreeOp),
-}
-
-struct 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JsonLoroValue(pub LoroValue);

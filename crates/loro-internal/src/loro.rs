@@ -571,6 +571,12 @@ impl LoroDoc {
         ans
     }
 
+    pub fn export_json(&self, vv: &VersionVector) -> json_schema::LoroJsonSchema {
+        self.commit_then_stop();
+        let oplog = self.oplog.lock().unwrap();
+        crate::encoding::json::export_json(&oplog, vv)
+    }
+
     /// Get the version vector of the current OpLog
     #[inline]
     pub fn oplog_vv(&self) -> VersionVector {

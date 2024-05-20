@@ -964,6 +964,8 @@ name = "json-schema"
 version = "0.1.0"
 dependencies = [
  "loro-common 0.5.1",
+ "serde",
+ "serde_json",
  "smallvec",
 ]
 
@@ -1117,6 +1119,7 @@ dependencies = [
  "im",
  "itertools 0.12.1",
  "js-sys",
+ "json-schema",
  "leb128",
  "loro-common 0.5.1",
  "loro-delta 0.5.1",

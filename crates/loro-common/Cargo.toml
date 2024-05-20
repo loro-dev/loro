@@ -15,7 +15,7 @@ keywords = ["crdt", "local-first"]
 
 [dependencies]
 rle = { path = "../rle", version = "0.5.1", package = "loro-rle" }
-serde = { version = "1", features = ["derive"] }
+serde = { workspace = true }
 thiserror = "1.0.43"
 wasm-bindgen = { version = "=0.2.92", optional = true }
 fxhash = "0.2.1"
