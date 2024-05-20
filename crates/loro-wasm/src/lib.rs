@@ -1,6 +1,8 @@
 //! Loro WASM bindings.
 #![allow(non_snake_case)]
+#![allow(clippy::empty_docs)]
 #![warn(missing_docs)]
+
 use convert::resolved_diff_to_js;
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
@@ -17,7 +19,7 @@ use loro_internal::{
     obs::SubID,
     version::Frontiers,
     ContainerType, DiffEvent, HandlerTrait, LoroDoc, LoroValue, MovableListHandler,
-    VersionVector as InternalVersionVector,
+    UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
@@ -153,6 +155,10 @@ extern "C" {
     pub type JsSide;
     #[wasm_bindgen(typescript_type = "{ update?: Cursor, offset: number, side: Side }")]
     pub type JsCursorQueryAns;
+    #[wasm_bindgen(
+        typescript_type = "{ mergeInterval?: number, maxUndoSteps?: number } | undefined"
+    )]
+    pub type JsUndoConfig;
 }
 
 mod observer {
@@ -274,7 +280,7 @@ impl Loro {
     /// New document will have random peer id.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        let mut doc = LoroDoc::new();
+        let doc = LoroDoc::new();
         doc.start_auto_commit();
         Self(Arc::new(doc))
     }
@@ -391,7 +397,7 @@ impl Loro {
     ///
     #[wasm_bindgen(js_name = "fromSnapshot")]
     pub fn from_snapshot(snapshot: &[u8]) -> JsResult<Loro> {
-        let mut doc = LoroDoc::from_snapshot(snapshot)?;
+        let doc = LoroDoc::from_snapshot(snapshot)?;
         doc.start_auto_commit();
         Ok(Self(Arc::new(doc)))
     }
@@ -3270,6 +3276,84 @@ fn loro_value_to_js_value_or_container(
             let handler: JsValue = handler_to_js_value(c, doc.clone());
             handler
         }
+    }
+}
+
+/// `UndoManager` is responsible for handling undo and redo operations.
+///
+/// By default, the maxUndoSteps is set to 100, mergeInterval is set to 1000 ms.
+///
+/// Each commit made by the current peer is recorded as an undo step in the `UndoManager`.
+/// Undo steps can be merged if they occur within a specified merge interval.
+///
+/// Note that undo operations are local and cannot revert changes made by other peers.
+/// To undo changes made by other peers, consider using the time travel feature.
+///
+/// Once the `peerId` is bound to the `UndoManager` in the document, it cannot be changed.
+/// Otherwise, the `UndoManager` may not function correctly.
+#[wasm_bindgen]
+#[derive(Debug)]
+pub struct UndoManager {
+    undo: InnerUndoManager,
+    doc: Arc<LoroDoc>,
+}
+
+#[wasm_bindgen]
+impl UndoManager {
+    /// Create a new undo manager. It will bind on the current PeerID.
+    /// PeerID cannot be changed during the lifetime of the UndoManager.
+    #[wasm_bindgen(constructor)]
+    pub fn new(doc: &Loro, config: JsUndoConfig) -> Self {
+        let max_undo_steps = Reflect::get(&config, &JsValue::from_str("maxUndoSteps"))
+            .unwrap_or(JsValue::from_f64(100.0))
+            .as_f64()
+            .unwrap_or(100.0) as usize;
+        let merge_interval = Reflect::get(&config, &JsValue::from_str("mergeInterval"))
+            .unwrap_or(JsValue::from_f64(1000.0))
+            .as_f64()
+            .unwrap_or(1000.0) as i64;
+        let mut undo = InnerUndoManager::new(&doc.0);
+        undo.set_max_undo_steps(max_undo_steps);
+        undo.set_merge_interval(merge_interval);
+        UndoManager {
+            undo,
+            doc: doc.0.clone(),
+        }
+    }
+
+    /// Undo the last operation.
+    pub fn undo(&mut self) -> JsResult<()> {
+        self.undo.undo(&self.doc)?;
+        Ok(())
+    }
+
+    /// Redo the last undone operation.
+    pub fn redo(&mut self) -> JsResult<()> {
+        self.undo.redo(&self.doc)?;
+        Ok(())
+    }
+
+    /// Can undo the last operation.
+    pub fn canUndo(&self) -> bool {
+        self.undo.can_undo()
+    }
+
+    /// Can redo the last operation.
+    pub fn canRedo(&self) -> bool {
+        self.undo.can_redo()
+    }
+
+    /// The number of max undo steps.
+    /// If the number of undo steps exceeds this number, the oldest undo step will be removed.
+    pub fn setMaxUndoSteps(&mut self, steps: usize) {
+        self.undo.set_max_undo_steps(steps);
+    }
+
+    /// Set the merge interval (in ms).
+    /// If the interval is set to 0, the undo steps will not be merged.
+    /// Otherwise, the undo steps will be merged if the interval between the two steps is less than the given interval.
+    pub fn setMergeInterval(&mut self, interval: f64) {
+        self.undo.set_merge_interval(interval as i64);
     }
 }
 

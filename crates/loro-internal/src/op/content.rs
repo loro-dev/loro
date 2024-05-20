@@ -1,9 +1,11 @@
 use enum_as_inner::EnumAsInner;
+use loro_common::{ContainerID, LoroValue};
 use rle::{HasLength, Mergable, Sliceable};
 #[cfg(feature = "wasm")]
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    arena::SharedArena,
     container::{
         list::list_op::{InnerListOp, ListOp},
         map::MapSet,
@@ -19,6 +21,47 @@ pub enum InnerContent {
     Tree(TreeOp),
     // The future content should not use any encoded arena context.
     Future(FutureInnerContent),
+}
+
+impl InnerContent {
+    pub fn visit_created_children(&self, arena: &SharedArena, f: &mut dyn FnMut(&ContainerID)) {
+        match self {
+            InnerContent::List(l) => match l {
+                InnerListOp::Insert { slice, .. } => {
+                    for v in arena.iter_value_slice(slice.to_range()) {
+                        if let LoroValue::Container(c) = v {
+                            f(&c);
+                        }
+                    }
+                }
+                InnerListOp::Set { value, .. } => {
+                    if let LoroValue::Container(c) = value {
+                        f(c);
+                    }
+                }
+
+                InnerListOp::Move { .. } => {}
+                InnerListOp::InsertText { .. } => {}
+                InnerListOp::Delete(_) => {}
+                InnerListOp::StyleStart { .. } => {}
+                InnerListOp::StyleEnd => {}
+            },
+            crate::op::InnerContent::Map(m) => {
+                if let Some(LoroValue::Container(c)) = &m.value {
+                    f(c);
+                }
+            }
+            crate::op::InnerContent::Tree(t) => {
+                let id = t.target.associated_meta_container();
+                f(&id);
+            }
+            crate::op::InnerContent::Future(f) => match &f {
+                #[cfg(feature = "counter")]
+                crate::op::FutureInnerContent::Counter(_) => {}
+                crate::op::FutureInnerContent::Unknown { .. } => {}
+            },
+        }
+    }
 }
 
 #[derive(EnumAsInner, Debug, Clone)]

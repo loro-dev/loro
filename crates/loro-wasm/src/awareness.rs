@@ -17,8 +17,10 @@ pub struct AwarenessWasm {
 
 #[wasm_bindgen]
 extern "C" {
+    /// Awareness states
     #[wasm_bindgen(typescript_type = "{[peer in PeerID]: unknown}")]
     pub type JsAwarenessStates;
+    /// Awareness apply result
     #[wasm_bindgen(typescript_type = "{ updated: PeerID[], added: PeerID[] }")]
     pub type JsAwarenessApplyResult;
 }

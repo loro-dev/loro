@@ -355,6 +355,27 @@ impl InternalDiff {
 }
 
 impl Diff {
+    pub(crate) fn compose_ref(&mut self, diff: &Diff) {
+        // PERF: avoid clone
+        match (self, diff) {
+            (Diff::List(a), Diff::List(b)) => {
+                a.compose(b);
+            }
+            (Diff::Text(a), Diff::Text(b)) => {
+                a.compose(b);
+            }
+            (Diff::Map(a), Diff::Map(b)) => {
+                *a = a.clone().compose(b.clone());
+            }
+            (Diff::Tree(a), Diff::Tree(b)) => {
+                *a = a.clone().compose(b.clone());
+            }
+            #[cfg(feature = "counter")]
+            (Diff::Counter(a), Diff::Counter(b)) => *a += b,
+            (_, _) => unreachable!(),
+        }
+    }
+
     pub(crate) fn compose(self, diff: Diff) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {
@@ -375,6 +396,26 @@ impl Diff {
         }
     }
 
+    // Transform this diff based on the other diff
+    pub(crate) fn transform(&mut self, other: &Self, left_prior: bool) {
+        match (self, other) {
+            (Diff::List(a), Diff::List(b)) => a.transform_(b, left_prior),
+            (Diff::Text(a), Diff::Text(b)) => a.transform_(b, left_prior),
+            (Diff::Map(a), Diff::Map(b)) => a.transform(b, left_prior),
+            (Diff::Tree(a), Diff::Tree(b)) => a.transform(b, left_prior),
+            #[cfg(feature = "counter")]
+            (Diff::Counter(a), Diff::Counter(b)) => {
+                if left_prior {
+                    *a += b;
+                } else {
+                    *a -= b;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[allow(unused)]
     pub(crate) fn is_empty(&self) -> bool {
         match self {
             Diff::List(s) => s.is_empty(),

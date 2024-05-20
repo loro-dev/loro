@@ -23,6 +23,7 @@ tracing = "0.1"
 
 [dev-dependencies]
 serde_json = "1.0.87"
+anyhow = "1.0.83"
 ctor = "0.2"
 dev-utils = { path = "../dev-utils" }
 

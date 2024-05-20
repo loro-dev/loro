@@ -10,9 +10,12 @@ use std::{
     },
 };
 
-use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, ID};
+use either::Either;
+use fxhash::FxHashMap;
+use itertools::Itertools;
+use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
 use rle::HasLength;
-use tracing::{info_span, instrument, trace_span};
+use tracing::{debug, info_span, instrument};
 
 use crate::{
     arena::SharedArena,
@@ -32,6 +35,7 @@ use crate::{
     id::PeerID,
     op::InnerContent,
     oplog::dag::FrontiersNotIncluded,
+    undo::DiffBatch,
     version::Frontiers,
     HandlerTrait, InternalString, LoroError, VersionVector,
 };
@@ -155,7 +159,7 @@ impl LoroDoc {
     /// Create a doc with auto commit enabled.
     #[inline]
     pub fn new_auto_commit() -> Self {
-        let mut doc = Self::new();
+        let doc = Self::new();
         doc.start_auto_commit();
         doc
     }
@@ -274,7 +278,7 @@ impl LoroDoc {
         Ok(v)
     }
 
-    pub fn start_auto_commit(&mut self) {
+    pub fn start_auto_commit(&self) {
         self.auto_commit.store(true, Release);
         let mut self_txn = self.txn.try_lock().unwrap();
         if self_txn.is_some() || self.detached.load(Acquire) {
@@ -604,6 +608,16 @@ impl LoroDoc {
         self.get_by_path(&path)
     }
 
+    #[inline]
+    pub fn get_handler(&self, id: ContainerID) -> Handler {
+        Handler::new_attached(
+            id,
+            self.arena.clone(),
+            self.get_global_txn(),
+            Arc::downgrade(&self.state),
+        )
+    }
+
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
@@ -693,6 +707,163 @@ impl LoroDoc {
         )
         .into_counter()
         .unwrap()
+    }
+
+    /// Undo the operations between the given id_span. It can be used even in a collaborative environment.
+    ///
+    /// This is an internal API. You should NOT use it directly.
+    ///
+    /// # Internal
+    ///
+    /// This method will use the diff calculator to calculate the diff required to time travel
+    /// from the end of id_span to the beginning of the id_span. Then it will convert the diff to
+    /// operations and apply them to the OpLog with a dep on the last id of the given id_span.
+    ///
+    /// This implementation is kinda slow, but it's simple and maintainable. We can optimize it
+    /// further when it's needed. The time complexity is O(n + m), n is the ops in the id_span, m is the
+    /// distance from id_span to the current latest version.
+    #[instrument(level = "info", skip_all)]
+    pub fn undo_internal(
+        &self,
+        id_span: IdSpan,
+        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
+        post_transform_base: Option<&DiffBatch>,
+        before_diff: &mut dyn FnMut(&DiffBatch),
+    ) -> LoroResult<CommitWhenDrop> {
+        if self.is_detached() {
+            return Err(LoroError::EditWhenDetached);
+        }
+
+        self.commit_then_stop();
+        if !self
+            .oplog()
+            .lock()
+            .unwrap()
+            .vv()
+            .includes_id(id_span.id_last())
+        {
+            self.renew_txn_if_auto_commit();
+            return Err(LoroError::UndoInvalidIdSpan(id_span.id_last()));
+        }
+
+        let (was_recording, latest_frontiers) = {
+            let mut state = self.state.lock().unwrap();
+            let was_recording = state.is_recording();
+            state.stop_and_clear_recording();
+            (was_recording, state.frontiers.clone())
+        };
+
+        let spans = self.oplog.lock().unwrap().split_span_based_on_deps(id_span);
+        let diff = crate::undo::undo(
+            spans,
+            match post_transform_base {
+                Some(d) => Either::Right(d),
+                None => Either::Left(&latest_frontiers),
+            },
+            |from, to| {
+                self.checkout_without_emitting(from).unwrap();
+                self.state.lock().unwrap().start_recording();
+                self.checkout_without_emitting(to).unwrap();
+                let mut state = self.state.lock().unwrap();
+                let e = state.take_events();
+                state.stop_and_clear_recording();
+                DiffBatch::new(e)
+            },
+            before_diff,
+        );
+
+        self.checkout_without_emitting(&latest_frontiers)?;
+        self.detached.store(false, Release);
+        if was_recording {
+            self.state.lock().unwrap().start_recording();
+        }
+        self.start_auto_commit();
+
+        self.apply_diff(diff, container_remap).unwrap();
+        Ok(CommitWhenDrop { doc: self })
+    }
+
+    /// Calculate the diff between the current state and the target state, and apply the diff to the current state.
+    pub fn diff_and_apply(&self, target: &Frontiers) -> LoroResult<()> {
+        let f = self.state_frontiers();
+        let diff = self.diff(&f, target)?;
+        self.apply_diff(diff, &mut Default::default())
+    }
+
+    /// Calculate the diff between two versions so that apply diff on a will make the state same as b.
+    ///
+    /// NOTE: This method will make the doc enter the **detached mode**.
+    pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
+        {
+            // check whether a and b are valid
+            let oplog = self.oplog.lock().unwrap();
+            for &id in a.iter() {
+                if !oplog.dag.contains(id) {
+                    return Err(LoroError::FrontiersNotFound(id));
+                }
+            }
+            for &id in b.iter() {
+                if !oplog.dag.contains(id) {
+                    return Err(LoroError::FrontiersNotFound(id));
+                }
+            }
+        }
+
+        self.commit_then_stop();
+
+        let ans = {
+            self.state.lock().unwrap().stop_and_clear_recording();
+            self.checkout_without_emitting(a).unwrap();
+            self.state.lock().unwrap().start_recording();
+            self.checkout_without_emitting(b).unwrap();
+            let mut state = self.state.lock().unwrap();
+            let e = state.take_events();
+            state.stop_and_clear_recording();
+            DiffBatch::new(e)
+        };
+
+        Ok(ans)
+    }
+
+    /// Apply a diff to the current state.
+    ///
+    /// This method will not recreate containers with the same [ContainerID]s.
+    /// While this can be convenient in certain cases, it can break several internal invariants:
+    ///
+    /// 1. Each container should appear only once in the document. Allowing containers with the same ID
+    ///    would result in multiple instances of the same container in the document.
+    /// 2. Unreachable containers should be removable from the state when necessary.
+    ///
+    /// However, the diff may contain operations that depend on container IDs.
+    /// Therefore, users need to provide a `container_remap` to record and retrieve the container ID remapping.
+    pub fn apply_diff(
+        &self,
+        mut diff: DiffBatch,
+        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
+    ) -> LoroResult<()> {
+        if self.is_detached() {
+            return Err(LoroError::EditWhenDetached);
+        }
+
+        // Sort container from the top to the bottom, so that we can have correct container remap
+        let containers = diff.0.keys().cloned().sorted_by_cached_key(|cid| {
+            let idx = self.arena.id_to_idx(cid).unwrap();
+            self.arena.get_depth(idx).unwrap().get()
+        });
+        for mut id in containers {
+            let diff = diff.0.remove(&id).unwrap();
+
+            while let Some(rid) = container_remap.get(&id) {
+                id = rid.clone();
+            }
+            let h = self.get_handler(id);
+            h.apply_diff(diff, &mut |old_id, new_id| {
+                container_remap.insert(old_id, new_id);
+            })
+            .unwrap();
+        }
+
+        Ok(())
     }
 
     /// This is for debugging purpose. It will travel the whole oplog
@@ -818,25 +989,31 @@ impl LoroDoc {
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
-        let from = self.state_frontiers();
-        let span = info_span!("checkout", to=?frontiers, ?from);
-        let _g = span.enter();
+        self.checkout_without_emitting(frontiers)?;
+        self.emit_events();
+        Ok(())
+    }
+
+    #[instrument(level = "info", skip(self))]
+    fn checkout_without_emitting(&self, frontiers: &Frontiers) -> Result<(), LoroError> {
         self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
         let mut state = self.state.lock().unwrap();
         self.detached.store(true, Release);
         let mut calc = self.diff_calculator.lock().unwrap();
-        for &f in frontiers.iter() {
-            if !oplog.dag.contains(f) {
-                return Err(LoroError::InvalidFrontierIdNotFound(f));
+        for &i in frontiers.iter() {
+            if !oplog.dag.contains(i) {
+                return Err(LoroError::FrontiersNotFound(i));
             }
         }
+
         let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
         let Some(after) = &oplog.dag.frontiers_to_vv(frontiers) else {
             return Err(LoroError::NotFoundError(
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
             ));
         };
+
         let diff = calc.calc_diff_internal(
             &oplog,
             before,
@@ -851,8 +1028,6 @@ impl LoroDoc {
             by: EventTriggerKind::Checkout,
             new_version: Cow::Owned(frontiers.clone()),
         });
-        drop(state);
-        self.emit_events();
         Ok(())
     }
 
@@ -909,7 +1084,7 @@ impl LoroDoc {
 
             IS_CHECKING.store(true, std::sync::atomic::Ordering::Release);
             let peer_id = self.peer_id();
-            let s = trace_span!("CheckStateDiffCalcConsistencySlow", ?peer_id);
+            let s = info_span!("CheckStateDiffCalcConsistencySlow", ?peer_id);
             let _g = s.enter();
             self.commit_then_stop();
             let bytes = self.export_from(&Default::default());
@@ -1096,6 +1271,17 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
     }
 
     None
+}
+
+#[derive(Debug)]
+pub struct CommitWhenDrop<'a> {
+    doc: &'a LoroDoc,
+}
+
+impl<'a> Drop for CommitWhenDrop<'a> {
+    fn drop(&mut self) {
+        self.doc.commit_then_renew()
+    }
 }
 
 #[cfg(test)]

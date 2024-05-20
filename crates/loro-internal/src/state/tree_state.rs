@@ -440,7 +440,7 @@ mod btree {
             target: &Self::QueryArg,
             caches: &[generic_btree::Child<ChildTreeTrait>],
         ) -> FindResult {
-            match caches.binary_search_by(|x| {
+            let result = caches.binary_search_by(|x| {
                 let range = x.cache.range.as_ref().unwrap();
                 if target < &range.start {
                     core::cmp::Ordering::Greater
@@ -449,7 +449,9 @@ mod btree {
                 } else {
                     core::cmp::Ordering::Equal
                 }
-            }) {
+            });
+
+            match result {
                 Ok(i) => FindResult::new_found(i, 0),
                 Err(i) => FindResult::new_missing(
                     i.min(caches.len() - 1),
@@ -832,6 +834,8 @@ impl ContainerState for TreeState {
                         });
                     }
                     TreeInternalDiff::Move { parent, position } => {
+                        let old_parent = self.trees.get(&target).unwrap().parent;
+                        let old_index = self.get_index_by_tree_id(&target).unwrap();
                         self.mov(target, *parent, last_move_op, Some(position.clone()), false)
                             .unwrap();
                         let index = self.get_index_by_tree_id(&target).unwrap();
@@ -841,15 +845,22 @@ impl ContainerState for TreeState {
                                 parent: parent.into_node().ok(),
                                 index,
                                 position: position.clone(),
+                                old_parent,
+                                old_index,
                             },
                         });
                     }
                     TreeInternalDiff::Delete { parent, position } => {
+                        let old_parent = self.trees.get(&target).unwrap().parent;
+                        let old_index = self.get_index_by_tree_id(&target).unwrap();
                         self.mov(target, *parent, last_move_op, position.clone(), false)
                             .unwrap();
                         ans.push(TreeDiffItem {
                             target,
-                            action: TreeExternalDiff::Delete,
+                            action: TreeExternalDiff::Delete {
+                                old_parent,
+                                old_index,
+                            },
                         });
                     }
                     TreeInternalDiff::MoveInDelete { parent, position } => {
@@ -857,9 +868,14 @@ impl ContainerState for TreeState {
                             .unwrap();
                     }
                     TreeInternalDiff::UnCreate => {
+                        let old_parent = self.trees.get(&target).unwrap().parent;
+                        let old_index = self.get_index_by_tree_id(&target).unwrap();
                         ans.push(TreeDiffItem {
                             target,
-                            action: TreeExternalDiff::Delete,
+                            action: TreeExternalDiff::Delete {
+                                old_parent,
+                                old_index,
+                            },
                         });
                         // delete it from state
                         let parent = self.trees.remove(&target);

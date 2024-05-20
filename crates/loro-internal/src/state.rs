@@ -8,7 +8,7 @@ use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
-use tracing::{info, instrument, trace_span};
+use tracing::{info, instrument};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -478,8 +478,6 @@ impl DocState {
                     let state = get_or_create!(self, idx);
                     if is_recording {
                         // process bring_back before apply
-                        let span = trace_span!("handle internal recording");
-                        let _g = span.enter();
                         let external_diff =
                             if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
                                 state.apply_diff(
@@ -549,7 +547,7 @@ impl DocState {
         }
 
         diff.diff = diffs.into();
-        self.frontiers = (*diff.new_version).to_owned();
+        (*diff.new_version).clone_into(&mut self.frontiers);
         if self.is_recording() {
             self.record_diff(diff)
         }
@@ -990,13 +988,8 @@ impl DocState {
     fn get_path(&self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
         let mut ans = Vec::new();
         let mut idx = idx;
-        let id = self.arena.idx_to_id(idx).unwrap();
-        let s = tracing::span!(tracing::Level::INFO, "GET PATH ", ?id);
-        let _e = s.enter();
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
-            let s = tracing::span!(tracing::Level::INFO, "GET PATH ", ?id);
-            let _e = s.enter();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
                 let parent_state = self.states.get(&parent_idx)?;
                 let Some(prop) = parent_state.get_child_index(&id) else {
