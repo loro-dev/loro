@@ -6,8 +6,9 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
-use loro::{Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, ID};
-use loro_common::IdSpan;
+use loro::{
+    Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, UndoManager, ID,
+};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use tracing::info_span;
 
@@ -21,21 +22,11 @@ use super::{
     container::MapActor,
 };
 
-#[derive(Default, Debug)]
-pub struct UndoLength {
-    last: u32,
-    now: u32,
-}
-
-impl UndoLength {
-    pub fn after_merge(&mut self) {
-        self.last = self.now;
-        self.now = 0;
-    }
-
-    pub fn can_undo_length(&self) -> u32 {
-        self.last + self.now
-    }
+#[derive(Debug)]
+pub struct Undo {
+    pub undo: UndoManager,
+    pub last_container: u8,
+    pub can_undo_length: u8,
 }
 
 pub struct Actor {
@@ -44,7 +35,7 @@ pub struct Actor {
     pub targets: FxHashMap<ContainerType, ActionExecutor>,
     pub tracker: Arc<Mutex<ContainerTracker>>,
     pub history: FxHashMap<Vec<ID>, LoroValue>,
-    pub can_fuzz_undo_length: UndoLength,
+    pub undo_manager: Undo,
     pub rng: StdRng,
 }
 
@@ -52,6 +43,7 @@ impl Actor {
     pub fn new(id: PeerID) -> Self {
         let loro = LoroDoc::new();
         loro.set_peer_id(id).unwrap();
+        let undo = UndoManager::new(&loro);
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(MapTracker::empty(
             ContainerID::new_root("sys:root", ContainerType::Map),
         ))));
@@ -70,7 +62,11 @@ impl Actor {
             tracker,
             targets: FxHashMap::default(),
             history: default_history,
-            can_fuzz_undo_length: Default::default(),
+            undo_manager: Undo {
+                undo,
+                last_container: 255,
+                can_undo_length: 0,
+            },
             rng: StdRng::from_seed({
                 let mut seed = [0u8; 32];
                 let bytes = id.to_be_bytes(); // Convert u64 to [u8; 8]
@@ -113,30 +109,42 @@ impl Actor {
         let ty = action.ty();
         let actor = self.targets.get_mut(&ty).unwrap();
         self.loro.attach();
-        let before_counter = self.loro.state_vv().get_last(self.peer).unwrap_or(0) as u32;
         let idx = action.apply(actor, container as usize);
-        self.loro.commit();
-        let after_counter = self.loro.state_vv().get_last(self.peer).unwrap_or(0) as u32;
-        self.can_fuzz_undo_length.now += after_counter - before_counter;
+
+        if self.undo_manager.last_container != container {
+            self.undo_manager.last_container = container;
+            self.undo_manager.can_undo_length += 1;
+        }
+
         if let Some(idx) = idx {
             self.add_new_container(idx);
         }
     }
 
     pub fn undo(&mut self, undo_length: u32) {
-        let mut vv = self.loro.oplog_vv();
-        let counter = self.loro.oplog_vv().get_last(self.peer).unwrap_or(0) + 1;
-        let id_span = IdSpan::new(self.peer, counter - undo_length as i32, counter);
-
-        vv.insert(self.peer, counter - undo_length as i32);
-        let f = self.loro.vv_to_frontiers(&vv);
-
-        self.loro.checkout(&f).unwrap();
-        let before_undo = self.loro.get_deep_value();
         self.loro.attach();
-        self.loro.undo(id_span).unwrap();
-        let after_undo = self.loro.get_deep_value();
+        let mut before_undo = self.loro.get_deep_value();
+        for _ in 0..undo_length {
+            self.undo_manager.undo.undo(&self.loro).unwrap();
+        }
+
+        for _ in 0..undo_length {
+            self.undo_manager.undo.redo(&self.loro).unwrap();
+        }
+        let mut after_undo = self.loro.get_deep_value();
+        Self::patch_tree_undo_position(&mut before_undo);
+        Self::patch_tree_undo_position(&mut after_undo);
         assert_value_eq(&before_undo, &after_undo);
+    }
+
+    fn patch_tree_undo_position(a: &mut LoroValue) {
+        let root = Arc::make_mut(a.as_map_mut().unwrap());
+        let tree = root.get_mut("tree").unwrap();
+        let nodes = Arc::make_mut(tree.as_list_mut().unwrap());
+        for node in nodes.iter_mut() {
+            let node = Arc::make_mut(node.as_map_mut().unwrap());
+            node.remove("position");
+        }
     }
 
     pub fn check_tracker(&self) {

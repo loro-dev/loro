@@ -88,12 +88,12 @@ impl CRDTFuzzer {
             Action::Undo { site, op_len } => {
                 *site %= max_users;
                 let actor = &mut self.actors[*site as usize];
-                *op_len %= actor.can_fuzz_undo_length.can_undo_length() + 1;
+                *op_len %= actor.undo_manager.can_undo_length as u32 + 1;
             }
             Action::SyncAllUndo { site, op_len } => {
                 *site %= max_users;
                 let actor = &mut self.actors[*site as usize];
-                *op_len %= actor.can_fuzz_undo_length.can_undo_length() + 1;
+                *op_len %= actor.undo_manager.can_undo_length as u32 + 1;
             }
         }
     }
@@ -118,10 +118,7 @@ impl CRDTFuzzer {
                             .unwrap();
                     });
                 }
-                self.actors.iter_mut().for_each(|a| {
-                    a.can_fuzz_undo_length.after_merge();
-                    a.record_history()
-                });
+                self.actors.iter_mut().for_each(|a| a.record_history());
                 // for i in 0..self.site_num() {
                 //     self.actors[i].loro.check_state_correctness_slow();
                 // }
@@ -134,8 +131,6 @@ impl CRDTFuzzer {
                 b.loro
                     .import(&a.loro.export_from(&b.loro.oplog_vv()))
                     .unwrap();
-                a.can_fuzz_undo_length.after_merge();
-                b.can_fuzz_undo_length.after_merge();
                 a.record_history();
                 b.record_history();
             }
@@ -179,10 +174,7 @@ impl CRDTFuzzer {
                             .unwrap();
                     });
                 }
-                self.actors.iter_mut().for_each(|a| {
-                    a.can_fuzz_undo_length.after_merge();
-                    a.record_history()
-                });
+                self.actors.iter_mut().for_each(|a| a.record_history());
                 let actor = &mut self.actors[*site as usize];
                 if *op_len != 0 {
                     actor.undo(*op_len);
@@ -295,6 +287,7 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
     let mut applied = Vec::new();
     for action in actions.iter_mut() {
         fuzzer.pre_process(action);
+
         info_span!("ApplyAction", ?action).in_scope(|| {
             applied.push(action.clone());
             info!("OptionsTable \n{}", (&applied).table());

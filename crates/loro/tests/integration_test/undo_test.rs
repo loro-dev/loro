@@ -1190,6 +1190,120 @@ fn test_remote_merge_transform() -> LoroResult<()> {
     Ok(())
 }
 
+#[test]
+fn undo_tree_move() -> LoroResult<()> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+    let mut undo = UndoManager::new(&doc_a);
+    let mut undo2 = UndoManager::new(&doc_b);
+    let tree_a = doc_a.get_tree("tree");
+    let tree_b = doc_b.get_tree("tree");
+    let root = tree_a.create(None)?;
+    let root2 = tree_b.create(None)?;
+    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    tree_a.mov(root, root2)?;
+    tree_b.mov(root2, root)?;
+    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    let latest_value = tree_a.get_value();
+    // a
+    undo.undo(&doc_a)?;
+    let a_value = tree_a.get_value().as_list().unwrap().clone();
+    assert_eq!(a_value.len(), 2);
+    assert!(a_value[0]
+        .as_map()
+        .unwrap()
+        .get("parent")
+        .unwrap()
+        .is_null());
+    assert!(a_value[1]
+        .as_map()
+        .unwrap()
+        .get("parent")
+        .unwrap()
+        .is_null());
+
+    undo.redo(&doc_a)?;
+    assert_eq!(tree_a.get_value(), latest_value);
+    // b
+    undo2.undo(&doc_b)?;
+    let b_value = tree_b.get_value().as_list().unwrap().clone();
+    assert_eq!(b_value.len(), 0);
+    undo.undo(&doc_a)?;
+    undo.undo(&doc_a)?;
+    let a_value = tree_a.get_value().as_list().unwrap().clone();
+    assert_eq!(a_value.len(), 1);
+    assert_eq!(
+        a_value[0]
+            .as_map()
+            .unwrap()
+            .get("id")
+            .unwrap()
+            .to_json_value(),
+        json!("0@2")
+    );
+    assert!(a_value[0]
+        .as_map()
+        .unwrap()
+        .get("parent")
+        .unwrap()
+        .is_null());
+    Ok(())
+}
+
+#[test]
+fn undo_tree_concurrent_delete() -> LoroResult<()> {
+    let doc_a = LoroDoc::new();
+    let tree_a = doc_a.get_tree("tree");
+    let root = tree_a.create(None)?;
+    let child = tree_a.create(Some(root))?;
+    let doc_b = LoroDoc::new();
+    let mut undo_b = UndoManager::new(&doc_b);
+    let tree_b = doc_b.get_tree("tree");
+    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    tree_a.delete(root)?;
+    tree_b.delete(child)?;
+    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    undo_b.undo(&doc_b)?;
+    assert!(tree_b.get_value().as_list().unwrap().is_empty());
+    Ok(())
+}
+
+#[test]
+fn undo_tree_concurrent_delete2() -> LoroResult<()> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let tree_a = doc_a.get_tree("tree");
+    let root = tree_a.create(None)?;
+    let child = tree_a.create(None)?;
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+    let mut undo_b = UndoManager::new(&doc_b);
+    let tree_b = doc_b.get_tree("tree");
+    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    tree_a.mov(child, root)?;
+    tree_a.delete(root)?;
+    tree_b.delete(child)?;
+    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    undo_b.undo(&doc_b)?;
+    assert_eq!(tree_b.get_value().as_list().unwrap().len(), 1);
+    assert_eq!(
+        tree_b.get_value().as_list().unwrap()[0]
+            .as_map()
+            .unwrap()
+            .get("id")
+            .unwrap()
+            .to_json_value(),
+        json!("1@1")
+    );
+    Ok(())
+}
+
 ///                    ┌ ─ ─ ─ ─            ┌ ─ ─ ─ ─
 ///                      Peer 1 │             Peer 2 │
 ///                    └ ─ ─ ─ ─            └ ─ ─ ─ ─

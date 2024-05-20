@@ -457,7 +457,6 @@ pub(crate) fn undo(
                         Either::Right(right) => return right,
                     }
                 };
-
                 stack_diff_batch = Some(calc_diff(&this_id_span.id_last().into(), &next));
                 stack_diff_batch.as_ref().unwrap()
             });

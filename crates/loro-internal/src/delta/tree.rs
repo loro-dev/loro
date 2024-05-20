@@ -1,4 +1,6 @@
 use fractional_index::FractionalIndex;
+use fxhash::FxHashMap;
+use itertools::Itertools;
 use loro_common::{IdFull, TreeID};
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
@@ -27,8 +29,13 @@ pub enum TreeExternalDiff {
         parent: Option<TreeID>,
         index: usize,
         position: FractionalIndex,
+        old_parent: TreeParentId,
+        old_index: usize,
     },
-    Delete,
+    Delete {
+        old_parent: TreeParentId,
+        old_index: usize,
+    },
 }
 
 impl TreeDiff {
@@ -43,8 +50,132 @@ impl TreeDiff {
         self
     }
 
-    pub(crate) fn transform(&self, _b: &TreeDiff, _left_priority: bool) {
-        unimplemented!("Transform tree diff")
+    pub(crate) fn transform(&mut self, b: &TreeDiff, left_priority: bool) {
+        // println!("transforming {:?} with {:?}", self, b);
+        // We need to cooperate with handler's apply_diff
+        // 1. If the node is created/moved in the left, and the parent is removed in the right (maybe an ancestor), we should remove the creation
+        // 2. If the movement of left causes the cycle, we should remove the movement
+
+        let b_update: FxHashMap<_, _> = b.diff.iter().map(|d| (d.target, &d.action)).collect();
+        let mut self_update: FxHashMap<_, _> = self
+            .diff
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (d.target, (&d.action, i)))
+            .collect();
+        if !left_priority {
+            let mut removes = Vec::new();
+            for (target, _) in b_update {
+                if let Some((_, i)) = self_update.remove(&target) {
+                    removes.push(i);
+                }
+            }
+            for i in removes.into_iter().sorted().rev() {
+                self.diff.remove(i);
+            }
+        }
+        let mut b_parent = FxHashMap::default();
+
+        fn reset_index(
+            b_parent: &FxHashMap<TreeParentId, Vec<i32>>,
+            index: &mut usize,
+            parent: &TreeParentId,
+            left_priority: bool,
+        ) {
+            if let Some(b_indices) = b_parent.get(parent) {
+                for i in b_indices.iter() {
+                    if (i.unsigned_abs() as usize) < *index
+                        || (i.unsigned_abs() as usize == *index && !left_priority)
+                    {
+                        if i > &0 {
+                            *index += 1;
+                        } else {
+                            *index = index.saturating_sub(1);
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        for diff in b.diff.iter() {
+            match &diff.action {
+                TreeExternalDiff::Create {
+                    parent,
+                    index,
+                    position: _,
+                } => {
+                    b_parent
+                        .entry(TreeParentId::from(*parent))
+                        .or_insert_with(Vec::new)
+                        .push(*index as i32);
+                }
+                TreeExternalDiff::Move {
+                    parent,
+                    index,
+                    position: _,
+                    old_parent,
+                    old_index,
+                } => {
+                    b_parent
+                        .entry(*old_parent)
+                        .or_insert_with(Vec::new)
+                        .push(-(*old_index as i32));
+                    b_parent
+                        .entry(TreeParentId::from(*parent))
+                        .or_insert_with(Vec::new)
+                        .push(*index as i32);
+                }
+                TreeExternalDiff::Delete {
+                    old_index,
+                    old_parent,
+                } => {
+                    b_parent
+                        .entry(*old_parent)
+                        .or_insert_with(Vec::new)
+                        .push(-(*old_index as i32));
+                }
+            }
+        }
+        b_parent
+            .iter_mut()
+            .for_each(|(_, v)| v.sort_unstable_by_key(|i| i.abs()));
+        for diff in self.iter_mut() {
+            match &mut diff.action {
+                TreeExternalDiff::Create {
+                    parent,
+                    index,
+                    position: _,
+                } => reset_index(
+                    &b_parent,
+                    index,
+                    &TreeParentId::from(*parent),
+                    left_priority,
+                ),
+                TreeExternalDiff::Move {
+                    parent,
+                    index,
+                    position: _,
+                    old_parent,
+                    old_index,
+                } => {
+                    reset_index(
+                        &b_parent,
+                        index,
+                        &TreeParentId::from(*parent),
+                        left_priority,
+                    );
+                    reset_index(&b_parent, old_index, old_parent, left_priority);
+                }
+                TreeExternalDiff::Delete {
+                    old_index,
+                    old_parent,
+                } => {
+                    reset_index(&b_parent, old_index, old_parent, left_priority);
+                }
+            }
+        }
     }
 }
 

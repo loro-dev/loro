@@ -1098,7 +1098,6 @@ impl Handler {
                 x.apply_delta(delta, on_container_remap)?;
             }
             Self::Tree(x) => {
-                // TODO: can reuse position?
                 for diff in diff.into_tree().unwrap().diff {
                     let target = diff.target;
                     match diff.action {
@@ -1107,14 +1106,13 @@ impl Handler {
                             index,
                             position: _,
                         } => {
-                            x.create_at(parent, index)?;
+                            x.create_at_with_target(parent, index, target)?;
+                            // create map event
                         }
-                        TreeExternalDiff::Delete => x.delete(target)?,
-                        TreeExternalDiff::Move {
-                            parent,
-                            index,
-                            position: _,
-                        } => x.move_to(target, parent, index)?,
+                        TreeExternalDiff::Delete { .. } => x.delete(target)?,
+                        TreeExternalDiff::Move { parent, index, .. } => {
+                            x.move_to(target, parent, index)?
+                        }
                     }
                 }
             }
@@ -2909,10 +2907,10 @@ impl MapHandler {
             ));
         }
 
-        if self.get(key).map(|x| x == value).unwrap_or(false) {
-            // skip if the value is already set
-            return Ok(());
-        }
+        // if self.get(key).map(|x| x == value).unwrap_or(false) {
+        //     // skip if the value is already set
+        //     return Ok(());
+        // }
 
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
