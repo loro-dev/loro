@@ -235,9 +235,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         }
     }
 
-    /// Transforms operation `self` against another operation `other` in such a way that the
-    /// impact of `other` is effectively included in `self`.
-    pub fn transform(&mut self, other: &Self, left_prior: bool) {
+    pub fn transform(&self, other: &Self, left_prior: bool) -> Self {
         let mut this_iter = self.iter_with_len();
         let mut other_iter = other.iter_with_len();
         let mut transformed_delta = DeltaRope::new();
@@ -288,7 +286,13 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         trace!("transform self={:#?} other={:#?}", self, other);
         trace!("transformed={:#?}", transformed_delta);
         transformed_delta.chop();
-        *self = transformed_delta;
+        transformed_delta
+    }
+
+    /// Transforms operation `self` against another operation `other` in such a way that the
+    /// impact of `other` is effectively included in `self`.
+    pub fn transform_(&mut self, other: &Self, left_prior: bool) {
+        *self = self.transform(&other, left_prior);
     }
 }
 
@@ -365,7 +369,7 @@ impl<V: DeltaValue + Debug, Attr: DeltaAttr + Debug> Default for DeltaRope<V, At
 }
 
 impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
-    pub(crate) fn insert_values(
+    pub fn insert_values(
         &mut self,
         pos: usize,
         values: impl IntoIterator<Item = DeltaItem<V, Attr>>,
