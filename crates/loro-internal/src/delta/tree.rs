@@ -88,7 +88,7 @@ impl TreeDiff {
                     {
                         if i > &0 {
                             *index += 1;
-                        } else {
+                        } else if *index > (i.unsigned_abs() as usize) {
                             *index = index.saturating_sub(1);
                         }
                     } else {
