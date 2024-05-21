@@ -157,13 +157,7 @@ extern "C" {
     pub type JsSide;
     #[wasm_bindgen(typescript_type = "{ update?: Cursor, offset: number, side: Side }")]
     pub type JsCursorQueryAns;
-    #[wasm_bindgen(typescript_type = "{
-            mergeInterval?: number,
-            maxUndoSteps?: number,
-            excludeOriginPrefixes?: string[],
-            onPush?: (isUndo: boolean, counterRange: { start: number, end: number }) => Value,
-            onPop?: (isUndo: boolean, value: Value, counterRange: { start: number, end: number }) => void
-        } | undefined")]
+    #[wasm_bindgen(typescript_type = "UndoConfig")]
     pub type JsUndoConfig;
 }
 
@@ -3324,8 +3318,26 @@ pub struct UndoManager {
 
 #[wasm_bindgen]
 impl UndoManager {
-    /// Create a new undo manager. It will bind on the current PeerID.
+    /// `UndoManager` is responsible for handling undo and redo operations.
+    ///
     /// PeerID cannot be changed during the lifetime of the UndoManager.
+    ///
+    /// Note that undo operations are local and cannot revert changes made by other peers.
+    /// To undo changes made by other peers, consider using the time travel feature.
+    ///
+    /// Each commit made by the current peer is recorded as an undo step in the `UndoManager`.
+    /// Undo steps can be merged if they occur within a specified merge interval.
+    ///
+    /// ## Config
+    ///
+    /// - `mergeInterval`: Optional. The interval in milliseconds within which undo steps can be merged. Default is 1000 ms.
+    /// - `maxUndoSteps`: Optional. The maximum number of undo steps to retain. Default is 100.
+    /// - `excludeOriginPrefixes`: Optional. An array of string prefixes. Events with origins matching these prefixes will be excluded from undo steps.
+    /// - `onPush`: Optional. A callback function that is called when an undo/redo step is pushed.
+    ///    The function can return a meta data value that will be attached to the given stack item.
+    /// - `onPop`: Optional. A callback function that is called when an undo/redo step is popped.
+    ///    The function will have a meta data value that was attached to the given stack item when
+    ///   `onPush` was called.
     #[wasm_bindgen(constructor)]
     pub fn new(doc: &Loro, config: JsUndoConfig) -> Self {
         let max_undo_steps = Reflect::get(&config, &JsValue::from_str("maxUndoSteps"))
@@ -3785,6 +3797,13 @@ export type Value =
   | Uint8Array
   | Value[];
 
+export type UndoConfig = {
+    mergeInterval?: number,
+    maxUndoSteps?: number,
+    excludeOriginPrefixes?: string[],
+    onPush?: (isUndo: boolean, counterRange: { start: number, end: number }) => Value,
+    onPop?: (isUndo: boolean, value: Value, counterRange: { start: number, end: number }) => void
+};
 export type Container = LoroList | LoroMap | LoroText | LoroTree | LoroMovableList;
 
 export interface ImportBlobMetadata {

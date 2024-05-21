@@ -150,7 +150,50 @@ describe("undo", () => {
     expect(ran).toBeTruthy();
   });
 
-  test("undo event listener", () => {
+  test("undo event listener", async () => {
+    const doc = new Loro();
+    let pushReturn: null | number = null;
+    let expectedValue: null | number = null;
 
+    let pushTimes = 0;
+    let popTimes = 0;
+    const undo = new UndoManager(doc, {
+      mergeInterval: 0,
+      onPop: (isUndo, value, counterRange) => {
+        popTimes+=1;
+        expect(value).toBe(expectedValue);
+      },
+      onPush: (isUndo, counterRange) => {
+        pushTimes += 1;
+        return pushReturn
+      },
+    });
+
+    doc.getText("text").insert(0, "hello");
+    pushReturn = 1;
+    doc.commit();
+    doc.getText("text").insert(5, " world");
+    pushReturn = 2;
+    doc.commit();
+    doc.getText("text").insert(0, "alice ");
+    pushReturn = 3;
+    doc.commit();
+    expect(pushTimes).toBe(3);
+    expect(popTimes).toBe(0);
+
+    expectedValue = 3;
+    undo.undo();
+    expect(pushTimes).toBe(4);
+    expect(popTimes).toBe(1);
+
+    expectedValue = 2;
+    undo.undo();
+    expect(pushTimes).toBe(5);
+    expect(popTimes).toBe(2);
+
+    expectedValue = 1;
+    undo.undo();
+    expect(pushTimes).toBe(6);
+    expect(popTimes).toBe(3);
   })
 });
