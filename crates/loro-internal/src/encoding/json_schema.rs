@@ -43,7 +43,7 @@ pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> S
     let changes = encode_changes(&diff_changes, &oplog.arena);
     serde_json::to_string_pretty(&JsonSchema {
         changes,
-        loro_version: "0.1.0".to_string(),
+        loro_version: "0.1.0",
         // TODO:
         start_vv: format!("{:?}", actual_start_vv),
         end_vv: format!("{:?}", oplog.vv()),
@@ -241,7 +241,15 @@ fn encode_changes<'a, 'c: 'a>(
                 }
                 #[cfg(feature = "counter")]
                 ContainerType::Counter => {
-                    todo!()
+                    let InnerContent::Future(f) = content else {
+                        unreachable!()
+                    };
+                    match f {
+                        FutureInnerContent::Counter(x) => {
+                            OpContent::Future(op::FutureOp::Counter(*x))
+                        }
+                        _ => unreachable!(),
+                    }
                 }
             };
             ops.push(op::Op {
@@ -416,14 +424,27 @@ fn decode_op(op: op::Op, arena: &SharedArena) -> Op {
             },
             _ => unreachable!(),
         },
-        ContainerType::Unknown(_) => {
-            // TODO:
-            todo!()
-        }
+        ContainerType::Unknown(_) => match content {
+            OpContent::Future(op::FutureOp::Unknown { prop, value }) => {
+                InnerContent::Future(FutureInnerContent::Unknown {
+                    prop,
+                    value: value.into_owned(),
+                })
+            }
+            _ => unreachable!(),
+        },
         #[cfg(feature = "counter")]
         ContainerType::Counter => {
-            todo!()
-        }
+            let OpContent::Future(f) = content else {
+                unreachable!()
+            };
+            match f {
+                op::FutureOp::Counter(x) => InnerContent::Future(FutureInnerContent::Counter(x)),
+                op::FutureOp::Unknown { prop, value: _ } => {
+                    InnerContent::Future(FutureInnerContent::Counter(prop as i64))
+                }
+            }
+        } // Note: The Future Type need try to parse Op from the unknown content
     };
     Op {
         counter,

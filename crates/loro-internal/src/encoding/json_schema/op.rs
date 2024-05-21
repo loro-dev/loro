@@ -9,7 +9,7 @@ use crate::encoding::OwnedValue;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsonSchema<'a> {
-    pub loro_version: String,
+    pub loro_version: &'a str,
     pub start_vv: String,
     pub end_vv: String,
     pub changes: Vec<Change<'a>>,
@@ -24,16 +24,15 @@ pub struct Change<'a> {
     pub ops: Vec<Op<'a>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct Op<'a> {
     pub content: OpContent<'a>,
-    #[serde(with = "self::serde_impl::container")]
     pub container: ContainerID,
     pub counter: i32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", content = "op")]
+#[serde(untagged)]
 pub enum OpContent<'a> {
     List(ListOp),
     MovableList(MovableListOp),
@@ -45,7 +44,7 @@ pub enum OpContent<'a> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum ListOp {
     Insert {
         pos: usize,
@@ -59,7 +58,7 @@ pub enum ListOp {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum MovableListOp {
     Insert {
         pos: usize,
@@ -82,14 +81,14 @@ pub enum MovableListOp {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum MapOp {
     Insert { key: String, value: LoroValue },
     Delete { key: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum TextOp {
     Insert {
         pos: u32,
@@ -110,7 +109,7 @@ pub enum TextOp {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum TreeOp {
     // Create {
     //     target: TreeID,
@@ -128,7 +127,7 @@ pub enum TreeOp {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", content = "op")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum FutureOp<'a> {
     #[cfg(feature = "counter")]
     Counter(i64),
@@ -139,24 +138,97 @@ pub enum FutureOp<'a> {
 }
 
 mod serde_impl {
-    pub mod container {
-        use loro_common::ContainerID;
-        use serde::{Deserialize, Deserializer, Serializer};
+    use loro_common::{ContainerID, ContainerType};
+    use serde::{
+        de::Visitor, ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer,
+    };
 
-        pub fn serialize<S>(container: &ContainerID, s: S) -> Result<S::Ok, S::Error>
+    impl<'a> Serialize for super::Op<'a> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            s.serialize_str(container.to_string().as_str())
+            let mut s = serializer.serialize_struct("Op", 3)?;
+            s.serialize_field("container", &self.container.to_string())?;
+            s.serialize_field("content", &self.content)?;
+            s.serialize_field("counter", &self.counter)?;
+            s.end()
         }
+    }
 
-        pub fn deserialize<'de, D>(d: D) -> Result<ContainerID, D::Error>
+    impl<'a, 'de> Deserialize<'de> for super::Op<'a> {
+        fn deserialize<D>(deserializer: D) -> Result<super::Op<'static>, D::Error>
         where
             D: Deserializer<'de>,
         {
-            let s = String::deserialize(d)?;
-            ContainerID::try_from(s.as_str())
-                .map_err(|_| serde::de::Error::custom("invalid container id"))
+            struct __Visitor<'a> {
+                marker: std::marker::PhantomData<super::Op<'a>>,
+            }
+
+            impl<'a, 'de> Visitor<'de> for __Visitor<'a> {
+                type Value = super::Op<'a>;
+                fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    formatter.write_str("struct Op")
+                }
+
+                fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+                where
+                    A: serde::de::MapAccess<'de>,
+                {
+                    let (_key, container) = map.next_entry::<&str, &str>()?.unwrap();
+                    let is_unknown = container.ends_with(')');
+                    let container = ContainerID::try_from(container)
+                        .map_err(|_| serde::de::Error::custom("invalid container id"))?;
+                    let op = if is_unknown {
+                        let (_key, op) = map.next_entry::<&str, super::FutureOp>()?.unwrap();
+                        super::OpContent::Future(op)
+                    } else {
+                        match container.container_type() {
+                            ContainerType::List => {
+                                let (_key, op) = map.next_entry::<&str, super::ListOp>()?.unwrap();
+                                super::OpContent::List(op)
+                            }
+                            ContainerType::MovableList => {
+                                let (_key, op) =
+                                    map.next_entry::<&str, super::MovableListOp>()?.unwrap();
+                                super::OpContent::MovableList(op)
+                            }
+                            ContainerType::Map => {
+                                let (_key, op) = map.next_entry::<&str, super::MapOp>()?.unwrap();
+                                super::OpContent::Map(op)
+                            }
+                            ContainerType::Text => {
+                                let (_key, op) = map.next_entry::<&str, super::TextOp>()?.unwrap();
+                                super::OpContent::Text(op)
+                            }
+                            ContainerType::Tree => {
+                                let (_key, op) = map.next_entry::<&str, super::TreeOp>()?.unwrap();
+                                super::OpContent::Tree(op)
+                            }
+                            #[cfg(feature = "counter")]
+                            ContainerType::Counter => {
+                                let (_key, op) = map.next_entry::<&str, i64>()?.unwrap();
+                                super::OpContent::Future(super::FutureOp::Counter(op))
+                            }
+                            _ => unreachable!(),
+                        }
+                    };
+                    let (_, counter) = map.next_entry::<&str, i32>()?.unwrap();
+                    Ok(super::Op {
+                        container,
+                        content: op,
+                        counter,
+                    })
+                }
+            }
+            const FIELDS: &[&str] = &["content", "container", "counter"];
+            deserializer.deserialize_struct(
+                "Op",
+                FIELDS,
+                __Visitor {
+                    marker: Default::default(),
+                },
+            )
         }
     }
 

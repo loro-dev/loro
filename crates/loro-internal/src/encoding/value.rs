@@ -88,6 +88,7 @@ pub enum FutureValueKind {
     #[cfg(feature = "counter")]
     Counter, // 16
     Unknown(u8),
+    JsonFormatUnknown,
 }
 
 impl ValueKind {
@@ -112,6 +113,7 @@ impl ValueKind {
             ValueKind::Future(future_value_kind) => match future_value_kind {
                 #[cfg(feature = "counter")]
                 FutureValueKind::Counter => 16,
+                FutureValueKind::JsonFormatUnknown => 127,
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
             },
         }
@@ -180,9 +182,9 @@ pub enum FutureValue<'a> {
     // The future value cannot depend on the arena for encoding.
     Unknown {
         kind: u8,
-        prop: i32,
         data: &'a [u8],
     },
+    JsonFormatUnknown(&'a str),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -193,9 +195,9 @@ pub enum OwnedFutureValue {
     // The future value cannot depend on the arena for encoding.
     Unknown {
         kind: u8,
-        prop: i32,
         data: Vec<u8>,
     },
+    JsonFormatUnknown(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -266,12 +268,12 @@ impl<'a> Value<'a> {
             OwnedValue::Future(value) => match value {
                 #[cfg(feature = "counter")]
                 OwnedFutureValue::Counter => Value::Future(FutureValue::Counter),
-                OwnedFutureValue::Unknown { kind, prop, data } => {
-                    Value::Future(FutureValue::Unknown {
-                        kind: *kind,
-                        prop: *prop,
-                        data: data.as_slice(),
-                    })
+                OwnedFutureValue::Unknown { kind, data } => Value::Future(FutureValue::Unknown {
+                    kind: *kind,
+                    data: data.as_slice(),
+                }),
+                OwnedFutureValue::JsonFormatUnknown(data) => {
+                    Value::Future(FutureValue::JsonFormatUnknown(data.as_str()))
                 }
             },
         }
@@ -314,12 +316,14 @@ impl<'a> Value<'a> {
             Value::Future(value) => match value {
                 #[cfg(feature = "counter")]
                 FutureValue::Counter => OwnedValue::Future(OwnedFutureValue::Counter),
-                FutureValue::Unknown { kind, prop, data } => {
+                FutureValue::Unknown { kind, data } => {
                     OwnedValue::Future(OwnedFutureValue::Unknown {
                         kind,
-                        prop,
                         data: data.to_owned(),
                     })
+                }
+                FutureValue::JsonFormatUnknown(data) => {
+                    OwnedValue::Future(OwnedFutureValue::JsonFormatUnknown(data.to_owned()))
                 }
             },
         }
@@ -328,7 +332,6 @@ impl<'a> Value<'a> {
     fn decode_without_arena<'r: 'a>(
         future_kind: FutureValueKind,
         value_reader: &'r mut ValueReader,
-        prop: i32,
     ) -> LoroResult<Self> {
         let bytes_length = value_reader.read_usize()?;
         let value = match future_kind {
@@ -336,9 +339,11 @@ impl<'a> Value<'a> {
             FutureValueKind::Counter => FutureValue::Counter,
             FutureValueKind::Unknown(kind) => FutureValue::Unknown {
                 kind,
-                prop,
                 data: value_reader.take_bytes(bytes_length),
             },
+            FutureValueKind::JsonFormatUnknown => {
+                FutureValue::JsonFormatUnknown(value_reader.read_str()?)
+            }
         };
         Ok(Value::Future(value))
     }
@@ -348,7 +353,6 @@ impl<'a> Value<'a> {
         value_reader: &'r mut ValueReader,
         arenas: &'a DecodedArenas<'a>,
         id: ID,
-        prop: i32,
     ) -> LoroResult<Self> {
         Ok(match kind {
             ValueKind::Null => Value::Null,
@@ -390,7 +394,7 @@ impl<'a> Value<'a> {
                 }
             }
             ValueKind::Future(future_kind) => {
-                Self::decode_without_arena(future_kind, value_reader, prop)?
+                Self::decode_without_arena(future_kind, value_reader)?
             }
         })
     }
@@ -406,13 +410,13 @@ impl<'a> Value<'a> {
                 value_writer.write_u8(0);
                 (FutureValueKind::Counter, 0)
             }
-            FutureValue::Unknown {
-                kind,
-                prop: _,
-                data,
-            } => (
+            FutureValue::Unknown { kind, data } => (
                 FutureValueKind::Unknown(kind),
                 value_writer.write_binary(data),
+            ),
+            FutureValue::JsonFormatUnknown(data) => (
+                FutureValueKind::JsonFormatUnknown,
+                value_writer.write_str(data),
             ),
         }
     }

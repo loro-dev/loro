@@ -481,6 +481,8 @@ pub mod wasm {
     }
 }
 
+const LORO_CONTAINER_ID_IDENTIFIER: &str = "::container_id::";
+
 impl Serialize for LoroValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -500,8 +502,8 @@ impl Serialize for LoroValue {
                 LoroValue::Container(id) => {
                     let mut state = serializer.serialize_struct("Container", 2)?;
                     // type field should be the first field
-                    state.serialize_field("type", "loro::container_id")?;
-                    state.serialize_field("Container", id)?;
+                    state.serialize_field("type", LORO_CONTAINER_ID_IDENTIFIER)?;
+                    state.serialize_field("Container", &id.to_string())?;
                     state.end()
                 }
             }
@@ -661,12 +663,16 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
                 "type" => {
                     let v: LoroValue = map.next_value()?;
                     if let LoroValue::String(v) = &v {
-                        if v.as_str() == "loro::container_id" {
-                            let (k, container) = map.next_entry::<String, ContainerID>()?.unwrap();
-                            if &k != "Container" {
+                        if v.as_str() == LORO_CONTAINER_ID_IDENTIFIER {
+                            let (k, container) = map.next_entry::<&str, &str>()?.unwrap();
+                            if k != "Container" {
                                 return Err(serde::de::Error::custom("Invalid container key"));
                             }
-                            return Ok(LoroValue::Container(container));
+                            return Ok(LoroValue::Container(
+                                ContainerID::try_from(container).map_err(|_| {
+                                    serde::de::Error::custom("Invalid container key")
+                                })?,
+                            ));
                         }
                     }
                     ans.insert(key, v);

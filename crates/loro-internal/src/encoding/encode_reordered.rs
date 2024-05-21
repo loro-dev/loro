@@ -356,13 +356,7 @@ fn extract_ops(
         let peer = arenas.peer_ids[peer_idx as usize];
         let cid = &containers[container_index as usize];
         let kind = ValueKind::from_u8(value_type);
-        let value = Value::decode(
-            kind,
-            &mut value_reader,
-            arenas,
-            ID::new(peer, counter),
-            prop,
-        )?;
+        let value = Value::decode(kind, &mut value_reader, arenas, ID::new(peer, counter))?;
 
         let content = decode_op(
             cid,
