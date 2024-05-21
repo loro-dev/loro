@@ -1822,12 +1822,12 @@ impl UndoManager {
     }
 
     /// Undo the last change made by the peer.
-    pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
+    pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
         self.0.undo(&doc.doc)
     }
 
     /// Redo the last change made by the peer.
-    pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
+    pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
         self.0.redo(&doc.doc)
     }
 

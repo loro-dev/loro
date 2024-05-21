@@ -349,12 +349,12 @@ impl UndoManager {
     }
 
     #[instrument(skip_all)]
-    pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
+    pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
         self.perform(doc, |x| &mut x.undo_stack, |x| &mut x.redo_stack)
     }
 
     #[instrument(skip_all)]
-    pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
+    pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
         self.perform(doc, |x| &mut x.redo_stack, |x| &mut x.undo_stack)
     }
 
@@ -363,7 +363,7 @@ impl UndoManager {
         doc: &LoroDoc,
         get_stack: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
-    ) -> LoroResult<()> {
+    ) -> LoroResult<bool> {
         self.record_new_checkpoint(doc)?;
         let end_counter = get_counter_end(doc, self.peer);
         let mut top = {
@@ -372,6 +372,7 @@ impl UndoManager {
             get_stack(&mut inner).pop()
         };
 
+        let mut executed = false;
         while let Some((span, e)) = top {
             {
                 let inner = self.inner.clone();
@@ -397,6 +398,7 @@ impl UndoManager {
                 let mut inner = self.inner.try_lock().unwrap();
                 get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter));
                 inner.latest_counter = new_counter;
+                executed = true;
                 break;
             } else {
                 // continue to pop the undo item as this undo is a no-op
@@ -406,7 +408,7 @@ impl UndoManager {
         }
 
         self.inner.try_lock().unwrap().processing_undo = false;
-        Ok(())
+        Ok(executed)
     }
 
     pub fn can_undo(&self) -> bool {

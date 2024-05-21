@@ -122,10 +122,11 @@ describe("undo", () => {
     expect(doc.toJSON()).toStrictEqual({
       text: "1h2e3llo world!",
     });
-    undo.redo();
+    expect(undo.redo()).toBeTruthy();
     expect(doc.toJSON()).toStrictEqual({
       text: "Alice 1h2e3llo world!",
     });
+    expect(undo.redo()).toBeFalsy();
   });
 
   test("undo event's origin", async () => {

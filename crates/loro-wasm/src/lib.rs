@@ -3338,15 +3338,15 @@ impl UndoManager {
     }
 
     /// Undo the last operation.
-    pub fn undo(&mut self) -> JsResult<()> {
-        self.undo.undo(&self.doc)?;
-        Ok(())
+    pub fn undo(&mut self) -> JsResult<bool> {
+        let executed = self.undo.undo(&self.doc)?;
+        Ok(executed)
     }
 
     /// Redo the last undone operation.
-    pub fn redo(&mut self) -> JsResult<()> {
-        self.undo.redo(&self.doc)?;
-        Ok(())
+    pub fn redo(&mut self) -> JsResult<bool> {
+        let executed = self.undo.redo(&self.doc)?;
+        Ok(executed)
     }
 
     /// Can undo the last operation.
