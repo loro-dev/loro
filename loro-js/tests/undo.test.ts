@@ -78,4 +78,74 @@ describe("undo", () => {
     }
     expect(doc.getText("text").length).toBe(100);
   });
+
+  test("Skip chosen events", () => {
+    const doc = new Loro();
+    const undo = new UndoManager(doc, {
+      maxUndoSteps: 100,
+      mergeInterval: 0,
+      excludeOriginPrefixes: ["sys:"],
+    });
+    doc.getText("text").insert(0, "hello");
+    doc.commit();
+    doc.getText("text").insert(0, "1");
+    doc.commit("sys:test");
+    doc.getText("text").insert(2, "2");
+    doc.commit("sys:test");
+    doc.getText("text").insert(4, "3");
+    doc.commit("sys:test");
+    doc.getText("text").insert(8, " world!");
+    doc.commit();
+    doc.getText("text").insert(0, "Alice ");
+    doc.commit();
+    expect(doc.toJSON()).toStrictEqual({
+      text: "Alice 1h2e3llo world!",
+    });
+    undo.undo();
+    expect(doc.toJSON()).toStrictEqual({
+      text: "1h2e3llo world!",
+    });
+    undo.undo();
+    expect(doc.toJSON()).toStrictEqual({
+      text: "1h2e3llo",
+    });
+    undo.undo();
+    expect(doc.toJSON()).toStrictEqual({
+      text: "123",
+    });
+    expect(undo.canUndo()).toBeFalsy();
+    undo.redo();
+    expect(doc.toJSON()).toStrictEqual({
+      text: "1h2e3llo",
+    });
+    undo.redo();
+    expect(doc.toJSON()).toStrictEqual({
+      text: "1h2e3llo world!",
+    });
+    undo.redo();
+    expect(doc.toJSON()).toStrictEqual({
+      text: "Alice 1h2e3llo world!",
+    });
+  });
+
+  test("undo event's origin", async () => {
+    const doc = new Loro();
+    let undoing = false;
+    let ran = false;
+    doc.subscribe((e) => {
+      if (undoing) {
+        expect(e.origin).toBe("undo");
+        ran = true;
+      }
+    });
+
+    const undo = new UndoManager(doc, {});
+    doc.getText("text").insert(0, "hello");
+    doc.commit();
+    await new Promise((r) => setTimeout(r, 10));
+    undoing = true;
+    undo.undo();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(ran).toBeTruthy();
+  });
 });

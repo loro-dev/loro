@@ -1020,6 +1020,15 @@ impl ContainerState for TreeState {
         }
     }
 
+    fn contains_child(&self, id: &ContainerID) -> bool {
+        let id = id.as_normal().unwrap();
+        let tree_id = TreeID {
+            peer: *id.0,
+            counter: *id.1,
+        };
+        self.trees.contains_key(&tree_id) && !self.is_node_deleted(&tree_id)
+    }
+
     fn get_child_containers(&self) -> Vec<ContainerID> {
         self.trees
             .keys()

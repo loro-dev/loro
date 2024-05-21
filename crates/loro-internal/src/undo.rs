@@ -85,6 +85,7 @@ struct UndoManagerInner {
     last_undo_time: i64,
     merge_interval: i64,
     max_stack_size: usize,
+    exclude_origin_prefixes: Vec<Box<str>>,
 }
 
 #[derive(Debug)]
@@ -232,6 +233,7 @@ impl UndoManagerInner {
             merge_interval: 0,
             last_undo_time: 0,
             max_stack_size: usize::MAX,
+            exclude_origin_prefixes: vec![],
         }
     }
 
@@ -281,8 +283,22 @@ impl UndoManager {
                 let Ok(mut inner) = inner_clone.try_lock() else {
                     return;
                 };
-                if !inner.processing_undo {
-                    if let Some(id) = event.event_meta.to.iter().find(|x| x.peer == peer) {
+                if inner.processing_undo {
+                    return;
+                }
+                if let Some(id) = event.event_meta.to.iter().find(|x| x.peer == peer) {
+                    if inner
+                        .exclude_origin_prefixes
+                        .iter()
+                        .any(|x| event.event_meta.origin.starts_with(&**x))
+                    {
+                        // If the event is from the excluded origin, we don't record it
+                        // in the undo stack. But we need to record its effect like it's
+                        // a remote event.
+                        inner.undo_stack.compose_remote_event(event.events);
+                        inner.redo_stack.compose_remote_event(event.events);
+                        inner.latest_counter = id.counter + 1;
+                    } else {
                         inner.record_checkpoint(id.counter + 1);
                     }
                 }
@@ -308,6 +324,14 @@ impl UndoManager {
 
     pub fn set_max_undo_steps(&mut self, size: usize) {
         self.inner.try_lock().unwrap().max_stack_size = size;
+    }
+
+    pub fn add_exclude_origin_prefix(&mut self, prefix: &str) {
+        self.inner
+            .try_lock()
+            .unwrap()
+            .exclude_origin_prefixes
+            .push(prefix.into());
     }
 
     pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) -> LoroResult<()> {

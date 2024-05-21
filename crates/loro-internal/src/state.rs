@@ -123,6 +123,9 @@ pub(crate) trait ContainerState: Clone {
     fn get_child_index(&self, id: &ContainerID) -> Option<Index>;
 
     #[allow(unused)]
+    fn contains_child(&self, id: &ContainerID) -> bool;
+
+    #[allow(unused)]
     fn get_child_containers(&self) -> Vec<ContainerID>;
 
     /// Encode the ops and the blob that can be used to restore the state to the current state.
@@ -192,6 +195,10 @@ impl<T: ContainerState> ContainerState for Box<T> {
     #[allow(unused)]
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
         self.as_ref().get_child_index(id)
+    }
+
+    fn contains_child(&self, id: &ContainerID) -> bool {
+        self.as_ref().contains_child(id)
     }
 
     #[allow(unused)]
@@ -981,6 +988,30 @@ impl DocState {
             origin,
             by: triggered_by,
             diff,
+        }
+    }
+
+    pub(crate) fn get_reachable(&self, id: &ContainerID) -> bool {
+        let Some(mut idx) = self.arena.id_to_idx(id) else {
+            return false;
+        };
+        loop {
+            let id = self.arena.idx_to_id(idx).unwrap();
+            if let Some(parent_idx) = self.arena.get_parent(idx) {
+                let Some(parent_state) = self.states.get(&parent_idx) else {
+                    return false;
+                };
+                if !parent_state.contains_child(&id) {
+                    return false;
+                }
+                idx = parent_idx;
+            } else {
+                if id.is_root() {
+                    return true;
+                }
+
+                return false;
+            }
         }
     }
 

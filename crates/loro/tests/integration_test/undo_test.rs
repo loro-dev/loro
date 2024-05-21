@@ -1,149 +1,37 @@
 use std::sync::Arc;
 
 use loro::{
-    Frontiers, LoroDoc, LoroError, LoroList, LoroMap, LoroResult, LoroText, LoroValue,
-    StyleConfigMap, ToJson, UndoManager,
+    LoroDoc, LoroError, LoroList, LoroMap, LoroResult, LoroText, LoroValue, StyleConfigMap, ToJson,
+    UndoManager,
 };
-use loro_internal::{
-    configure::StyleConfig,
-    id::{Counter, ID},
-    loro_common::IdSpan,
-};
+use loro_internal::{configure::StyleConfig, id::ID, loro::CommitOptions};
 use serde_json::json;
 use tracing::{debug_span, info_span};
-
-#[test]
-fn basic_text_undo() -> Result<(), LoroError> {
-    let doc = LoroDoc::new();
-    doc.set_peer_id(1)?;
-    let text = doc.get_text("text");
-    text.insert(0, "123")?;
-    doc.commit();
-    doc.undo(ID::new(1, 1).into())?;
-    assert_eq!(doc.get_deep_value().to_json_value(), json!({"text": "13"}));
-    assert_eq!(doc.oplog_frontiers(), Frontiers::from(ID::new(1, 3)));
-    assert_eq!(doc.state_frontiers(), Frontiers::from(ID::new(1, 3)));
-
-    // This should not change anything, because the content is already deleted
-    doc.undo(ID::new(1, 1).into())?;
-    assert_eq!(doc.get_deep_value().to_json_value(), json!({"text": "13"}));
-    assert_eq!(doc.oplog_frontiers(), Frontiers::from(ID::new(1, 3)));
-    assert_eq!(doc.state_frontiers(), Frontiers::from(ID::new(1, 3)));
-
-    // This should remove the content
-    doc.undo(IdSpan::new(1, 0, 3))?;
-    assert_eq!(doc.get_deep_value().to_json_value(), json!({"text": ""}));
-    assert_eq!(doc.oplog_frontiers(), Frontiers::from(ID::new(1, 5)));
-    assert_eq!(doc.state_frontiers(), Frontiers::from(ID::new(1, 5)));
-
-    // Now we redo the undos
-    doc.undo(IdSpan::new(1, 3, 6))?;
-    assert_eq!(doc.get_deep_value().to_json_value(), json!({"text": "123"}));
-    assert_eq!(doc.oplog_frontiers(), Frontiers::from(ID::new(1, 8)));
-    assert_eq!(doc.state_frontiers(), Frontiers::from(ID::new(1, 8)));
-    Ok(())
-}
-
-#[test]
-fn text_undo_insert_should_only_delete_once() -> Result<(), LoroError> {
-    let doc = LoroDoc::new();
-    doc.set_peer_id(1)?;
-    let text = doc.get_text("text");
-    text.insert(0, "123")?;
-    doc.commit();
-    text.delete(1, 2)?;
-    doc.commit();
-    assert_eq!(doc.get_deep_value().to_json_value(), json!({"text": "1"}));
-
-    // nothing should happen here, because the delete has already happened
-    doc.undo(ID::new(1, 1).into())?;
-    assert_eq!(doc.get_deep_value().to_json_value(), json!({"text": "1"}));
-
-    // nothing should happen here, because the delete has already happened
-    doc.undo(ID::new(1, 2).into())?;
-    assert_eq!(doc.get_deep_value().to_json_value(), json!({"text": "1"}));
-
-    doc.undo(ID::new(1, 0).into())?;
-    assert_eq!(doc.get_deep_value().to_json_value(), json!({"text": ""}));
-    Ok(())
-}
-
-#[test]
-fn collaborative_text_undo() -> Result<(), LoroError> {
-    let doc_a = LoroDoc::new();
-    doc_a.set_peer_id(1)?;
-    let text = doc_a.get_text("text");
-    text.insert(0, "123")?;
-    doc_a.commit();
-
-    let doc_b = LoroDoc::new();
-    doc_b.import(&doc_a.export_from(&Default::default()))?;
-    doc_b.get_text("text").insert(1, "y")?;
-    doc_b.commit();
-    doc_b.get_text("text").insert(0, "x")?;
-    // doc_b = x1y23
-    doc_b.commit();
-    // doc_a = x1y23
-    doc_a.import(&doc_b.export_from(&Default::default()))?;
-
-    doc_a.undo(ID::new(1, 0).into())?;
-    assert_eq!(
-        doc_a.get_deep_value().to_json_value(),
-        json!({"text": "xy23"})
-    );
-    assert_eq!(doc_a.oplog_frontiers(), Frontiers::from(ID::new(1, 3)));
-    assert_eq!(doc_a.state_frontiers(), Frontiers::from(ID::new(1, 3)));
-
-    // This should not change anything, because the content is already deleted
-    doc_a.undo(ID::new(1, 0).into())?;
-    assert_eq!(
-        doc_a.get_deep_value().to_json_value(),
-        json!({"text": "xy23"})
-    );
-    assert_eq!(doc_a.oplog_frontiers(), Frontiers::from(ID::new(1, 3)));
-    assert_eq!(doc_a.state_frontiers(), Frontiers::from(ID::new(1, 3)));
-
-    // This should remove the content created by A
-    doc_a.undo(IdSpan::new(1, 0, 3))?;
-    assert_eq!(
-        doc_a.get_deep_value().to_json_value(),
-        json!({"text": "xy"})
-    );
-    assert_eq!(doc_a.oplog_frontiers(), Frontiers::from(ID::new(1, 5)));
-    assert_eq!(doc_a.state_frontiers(), Frontiers::from(ID::new(1, 5)));
-
-    // Now we redo the undos
-    doc_a.undo(IdSpan::new(1, 3, 6))?;
-    assert_eq!(
-        doc_a.get_deep_value().to_json_value(),
-        json!({"text": "x1y23"})
-    );
-    assert_eq!(doc_a.oplog_frontiers(), Frontiers::from(ID::new(1, 8)));
-    assert_eq!(doc_a.state_frontiers(), Frontiers::from(ID::new(1, 8)));
-    Ok(())
-}
 
 #[test]
 fn basic_list_undo_insertion() -> Result<(), LoroError> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
+    let mut undo = UndoManager::new(&doc);
     let list = doc.get_list("list");
     list.push("12")?;
+    doc.commit();
     list.push("34")?;
+    doc.commit();
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
             "list": ["12", "34"]
         })
     );
-    doc.undo(ID::new(1, 1).into())?;
+    undo.undo(&doc)?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
             "list": ["12"]
         })
     );
-    doc.undo(ID::new(1, 0).into())?;
+    undo.undo(&doc)?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
@@ -159,16 +47,20 @@ fn basic_list_undo_deletion() -> Result<(), LoroError> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
     let list = doc.get_list("list");
+    let mut undo = UndoManager::new(&doc);
     list.push("12")?; // op 0
+    doc.commit();
     list.push("34")?; // op 1
+    doc.commit();
     list.delete(1, 1)?; // op 2
+    doc.commit();
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
             "list": ["12"]
         })
     );
-    doc.undo(ID::new(1, 2).into())?; // op 3
+    undo.undo(&doc)?; // op 3
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
@@ -178,7 +70,7 @@ fn basic_list_undo_deletion() -> Result<(), LoroError> {
 
     // Now, to undo "34" correctly we need to include the latest change
     // If we only undo op 1, op 3 will create "34" again.
-    doc.undo(IdSpan::new(1, 1, 4))?; // op 4
+    undo.undo(&doc)?; // op 4
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
@@ -195,28 +87,30 @@ fn basic_list_undo_deletion() -> Result<(), LoroError> {
 fn basic_map_undo() -> Result<(), LoroError> {
     let doc_a = LoroDoc::new();
     doc_a.set_peer_id(1)?;
+    let mut undo = UndoManager::new(&doc_a);
     doc_a.get_map("map").insert("a", "a")?;
+    doc_a.commit();
     doc_a.get_map("map").insert("b", "b")?;
     doc_a.commit();
     doc_a.get_map("map").delete("a")?;
     doc_a.commit();
-    doc_a.undo(ID::new(1, 2).into())?; // op 3
+    undo.undo(&doc_a)?; // op 3
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {"a": "a", "b": "b"}})
     );
 
-    doc_a.undo(ID::new(1, 1).into())?; // op 4
+    undo.undo(&doc_a)?; // op 4
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {"a": "a"}})
     );
 
-    doc_a.undo(ID::new(1, 0).into())?; // op 5
+    undo.undo(&doc_a)?; // op 5
     assert_eq!(doc_a.get_deep_value().to_json_value(), json!({"map": {}}));
 
     // Redo
-    doc_a.undo(ID::new(1, 5).into())?;
+    undo.redo(&doc_a)?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {
@@ -225,7 +119,7 @@ fn basic_map_undo() -> Result<(), LoroError> {
     );
 
     // Redo
-    doc_a.undo(ID::new(1, 4).into())?;
+    undo.redo(&doc_a)?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {
@@ -235,7 +129,7 @@ fn basic_map_undo() -> Result<(), LoroError> {
     );
 
     // Redo
-    doc_a.undo(ID::new(1, 3).into())?;
+    undo.redo(&doc_a)?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {
@@ -250,6 +144,7 @@ fn basic_map_undo() -> Result<(), LoroError> {
 fn map_collaborative_undo() -> Result<(), LoroError> {
     let doc_a = LoroDoc::new();
     doc_a.set_peer_id(1)?;
+    let mut undo = UndoManager::new(&doc_a);
     doc_a.get_map("map").insert("a", "a")?;
     doc_a.commit();
 
@@ -259,7 +154,7 @@ fn map_collaborative_undo() -> Result<(), LoroError> {
     doc_b.commit();
 
     doc_a.import(&doc_b.export_from(&Default::default()))?;
-    doc_a.undo(ID::new(1, 0).into())?;
+    undo.undo(&doc_a)?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {"b": "b"}})
@@ -271,19 +166,25 @@ fn map_collaborative_undo() -> Result<(), LoroError> {
 fn map_container_undo() -> Result<(), LoroError> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
+    let mut undo = UndoManager::new(&doc);
     let map = doc.get_map("map");
     let text = map.insert_container("text", LoroText::new())?; // op 0
+    doc.commit();
     text.insert(0, "T")?; // op 1
+    doc.commit();
     map.insert("number", 0)?; // op 2
-    doc.undo(ID::new(1, 2).into())?; // op 3
+    doc.commit();
+    undo.undo(&doc)?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({"map": {"text": "T"}})
     );
-    doc.undo(ID::new(1, 1).into())?; // op 4
-    doc.undo(ID::new(1, 0).into())?; // op 5
+    undo.undo(&doc)?;
+    undo.undo(&doc)?;
     assert_eq!(doc.get_deep_value().to_json_value(), json!({"map": {}}));
-    doc.undo(IdSpan::new(1, 3, 6))?; // redo all
+    undo.redo(&doc)?;
+    undo.redo(&doc)?;
+    undo.redo(&doc)?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({"map": {"text": "T", "number": 0}})
@@ -351,6 +252,7 @@ fn sync(a: &LoroDoc, b: &LoroDoc) {
 fn undo_id_span_that_contains_remote_deps_inside() -> Result<(), LoroError> {
     let doc_a = LoroDoc::new();
     doc_a.set_peer_id(1)?;
+    let mut undo_a = UndoManager::new(&doc_a);
     let doc_b = LoroDoc::new();
     doc_b.set_peer_id(2)?;
 
@@ -396,7 +298,9 @@ fn undo_id_span_that_contains_remote_deps_inside() -> Result<(), LoroError> {
             "text": "B rules."
         })
     );
-    doc_a.undo(IdSpan::new(1, 0, 8))?;
+    while undo_a.can_undo() {
+        undo_a.undo(&doc_a)?;
+    }
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
@@ -411,6 +315,7 @@ fn undo_id_span_that_contains_remote_deps_inside() -> Result<(), LoroError> {
 fn undo_id_span_that_contains_remote_deps_inside_many_times() -> Result<(), LoroError> {
     let doc_a = LoroDoc::new();
     doc_a.set_peer_id(1)?;
+    let mut undo = UndoManager::new(&doc_a);
     let doc_b = LoroDoc::new();
     doc_b.set_peer_id(2)?;
 
@@ -427,7 +332,9 @@ fn undo_id_span_that_contains_remote_deps_inside_many_times() -> Result<(), Loro
     }
 
     // Undo all ops from A
-    doc_a.undo(IdSpan::new(1, 0, (TIMES * 8) as Counter))?;
+    while undo.can_undo() {
+        undo.undo(&doc_a)?;
+    }
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
@@ -1532,23 +1439,82 @@ fn undo_collab_list_move() -> LoroResult<()> {
     Ok(())
 }
 
-#[ignore]
 #[test]
-fn tree_undo() -> Result<(), LoroError> {
+fn exclude_certain_local_ops_from_undo() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    let mut undo = UndoManager::new(&doc);
+    undo.add_exclude_origin_prefix("sys:");
+    doc.get_text("text").insert(0, "123")?;
+    doc.commit();
+    doc.get_text("text").insert(0, "x")?;
+    doc.commit_with(CommitOptions::new().origin("sys:init"));
+    doc.get_text("text").insert(2, "y")?; // x1y23
+    doc.commit_with(CommitOptions::new().origin("sys:init"));
+    doc.get_text("text").insert(4, "z")?; // x1y2z3
+    doc.commit_with(CommitOptions::new().origin("sys:init"));
+    doc.get_text("text").insert(6, "abc")?; // x1y2z3abc
+    doc.commit();
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "text": "x1y2z3abc"
+        })
+    );
+    undo.undo(&doc)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "text": "x1y2z3"
+        })
+    );
+    undo.undo(&doc)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "text": "xyz"
+        })
+    );
+    assert!(!undo.can_undo());
+    undo.redo(&doc)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "text": "x1y2z3"
+        })
+    );
+    undo.redo(&doc)?;
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "text": "x1y2z3abc"
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn should_not_trigger_update_when_undo_ops_depend_on_deleted_container() -> anyhow::Result<()> {
     let doc_a = LoroDoc::new();
-    doc_a.set_peer_id(1)?;
-    let tree_a = doc_a.get_tree("tree");
-    let root = tree_a.create(None)?;
-    let root2 = tree_a.create(None)?;
     let doc_b = LoroDoc::new();
-    let tree_b = doc_b.get_tree("tree");
-    doc_b.import(&doc_a.export_from(&Default::default()))?;
-    tree_a.mov(root, root2)?;
-    tree_b.mov(root2, root)?;
-    doc_a.import(&doc_b.export_from(&Default::default()))?;
-    doc_b.import(&doc_a.export_from(&Default::default()))?;
-
-    doc_a.undo(ID::new(1, 1).into())?;
-
+    let text = doc_a
+        .get_map("map")
+        .insert_container("text", LoroText::new())?;
+    text.insert(0, "Hello")?;
+    sync(&doc_a, &doc_b);
+    let mut undo = UndoManager::new(&doc_b);
+    let text_b = doc_b
+        .get_by_str_path("map/text")
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_text()
+        .unwrap();
+    text_b.insert(0, "Hi")?;
+    doc_a.get_map("map").delete("text")?;
+    sync(&doc_a, &doc_b);
+    let f = doc_b.oplog_frontiers();
+    undo.undo(&doc_b)?;
+    // should not update doc_b, because the undo operation depends on a deleted container
+    assert_eq!(f, doc_b.oplog_frontiers());
     Ok(())
 }
