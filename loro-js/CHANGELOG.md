@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.16.1
+
+### Patch Changes
+
+- 5cd80b0: Refine undo impl
+
+  - Add "undo" origin for undo and redo event
+  - Allow users to skip certain local operations
+  - Skip undo/redo ops that are not visible to users
+  - Add returned bool value to indicate whether undo/redo is executed
+
+- Updated dependencies [5cd80b0]
+  - loro-wasm@0.16.1
+
 ## 0.16.0
 
 ### Minor Changes
