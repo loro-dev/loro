@@ -82,6 +82,10 @@ impl ContainerState for UnknownState {
         None
     }
 
+    fn contains_child(&self, _id: &ContainerID) -> bool {
+        false
+    }
+
     #[allow(unused)]
     fn get_child_containers(&self) -> Vec<ContainerID> {
         vec![]

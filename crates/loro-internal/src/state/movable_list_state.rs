@@ -467,6 +467,10 @@ mod inner {
             ans
         }
 
+        pub fn contains_child_container(&self, id: &ContainerID) -> bool {
+            self.get_child_index(id, IndexType::ForUser).is_some()
+        }
+
         #[inline]
         pub fn get_list_item_by_id(&self, id: IdLp) -> Option<&ListItem> {
             self.id_to_list_leaf
@@ -1281,6 +1285,10 @@ impl ContainerState for MovableListState {
         self.inner
             .get_child_index(id, IndexType::ForUser)
             .map(Index::Seq)
+    }
+
+    fn contains_child(&self, id: &ContainerID) -> bool {
+        self.inner.contains_child_container(id)
     }
 
     #[allow(unused)]

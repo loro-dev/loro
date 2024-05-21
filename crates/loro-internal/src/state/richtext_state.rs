@@ -594,6 +594,10 @@ impl ContainerState for RichtextState {
         Vec::new()
     }
 
+    fn contains_child(&self, _id: &ContainerID) -> bool {
+        false
+    }
+
     #[doc = " Get a list of ops that can be used to restore the state to the current state"]
     fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
         let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;

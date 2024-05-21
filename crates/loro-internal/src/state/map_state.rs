@@ -130,22 +130,27 @@ impl ContainerState for MapState {
     }
 
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
-        let s = tracing::span!(tracing::Level::INFO, "Get child index ", id = ?id);
-        let _e = s.enter();
         for (key, value) in self.map.iter() {
-            let s = tracing::span!(tracing::Level::INFO, "Key Value", key = ?key, value = ?value);
-            let _e = s.enter();
             if let Some(LoroValue::Container(x)) = &value.value {
-                tracing::info!("Cmp {:?} with {:?}", &x, &id);
                 if x == id {
-                    tracing::info!("Same");
                     return Some(Index::Key(key.clone()));
                 }
-                tracing::info!("Diff");
             }
         }
 
         None
+    }
+
+    fn contains_child(&self, id: &ContainerID) -> bool {
+        for (_, value) in self.map.iter() {
+            if let Some(LoroValue::Container(x)) = &value.value {
+                if x == id {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     fn get_child_containers(&self) -> Vec<ContainerID> {

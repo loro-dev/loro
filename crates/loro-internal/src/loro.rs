@@ -15,7 +15,7 @@ use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
 use rle::HasLength;
-use tracing::{debug, info_span, instrument};
+use tracing::{info_span, instrument};
 
 use crate::{
     arena::SharedArena,
@@ -295,26 +295,21 @@ impl LoroDoc {
     /// Afterwards, the users need to call `self.renew_txn_after_commit()` to resume the continuous transaction.
     #[inline]
     pub fn commit_then_stop(&self) {
-        self.commit_with(None, None, false)
+        self.commit_with(CommitOptions::new().immediate_renew(false))
     }
 
     /// Commit the cumulative auto commit transaction.
     /// It will start the next one immediately
     #[inline]
     pub fn commit_then_renew(&self) {
-        self.commit_with(None, None, true)
+        self.commit_with(CommitOptions::new().immediate_renew(true))
     }
 
     /// Commit the cumulative auto commit transaction.
     /// This method only has effect when `auto_commit` is true.
     /// If `immediate_renew` is true, a new transaction will be created after the old one is committed
     #[instrument(skip_all)]
-    pub fn commit_with(
-        &self,
-        origin: Option<InternalString>,
-        timestamp: Option<Timestamp>,
-        immediate_renew: bool,
-    ) {
+    pub fn commit_with(&self, config: CommitOptions) {
         if !self.auto_commit.load(Acquire) {
             // if not auto_commit, nothing should happen
             // because the global txn is not used
@@ -329,16 +324,16 @@ impl LoroDoc {
         };
 
         let on_commit = txn.take_on_commit();
-        if let Some(origin) = origin {
+        if let Some(origin) = config.origin {
             txn.set_origin(origin);
         }
 
-        if let Some(timestamp) = timestamp {
+        if let Some(timestamp) = config.timestamp {
             txn.set_timestamp(timestamp);
         }
 
         txn.commit().unwrap();
-        if immediate_renew {
+        if config.immediate_renew {
             let mut txn_guard = self.txn.try_lock().unwrap();
             assert!(!self.detached.load(std::sync::atomic::Ordering::Acquire));
             *txn_guard = Some(self.txn().unwrap());
@@ -778,16 +773,18 @@ impl LoroDoc {
             self.state.lock().unwrap().start_recording();
         }
         self.start_auto_commit();
-
-        self.apply_diff(diff, container_remap).unwrap();
-        Ok(CommitWhenDrop { doc: self })
+        self.apply_diff(diff, container_remap, true).unwrap();
+        Ok(CommitWhenDrop {
+            doc: self,
+            options: CommitOptions::new().origin("undo"),
+        })
     }
 
     /// Calculate the diff between the current state and the target state, and apply the diff to the current state.
     pub fn diff_and_apply(&self, target: &Frontiers) -> LoroResult<()> {
         let f = self.state_frontiers();
         let diff = self.diff(&f, target)?;
-        self.apply_diff(diff, &mut Default::default())
+        self.apply_diff(diff, &mut Default::default(), false)
     }
 
     /// Calculate the diff between two versions so that apply diff on a will make the state same as b.
@@ -840,6 +837,7 @@ impl LoroDoc {
         &self,
         mut diff: DiffBatch,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
+        skip_unreachable: bool,
     ) -> LoroResult<()> {
         if self.is_detached() {
             return Err(LoroError::EditWhenDetached);
@@ -850,12 +848,20 @@ impl LoroDoc {
             let idx = self.arena.id_to_idx(cid).unwrap();
             self.arena.get_depth(idx).unwrap().get()
         });
+
         for mut id in containers {
+            let mut remapped = false;
             let diff = diff.0.remove(&id).unwrap();
 
             while let Some(rid) = container_remap.get(&id) {
+                remapped = true;
                 id = rid.clone();
             }
+
+            if skip_unreachable && !remapped && !self.state.lock().unwrap().get_reachable(&id) {
+                continue;
+            }
+
             let h = self.get_handler(id);
             h.apply_diff(diff, &mut |old_id, new_id| {
                 container_remap.insert(old_id, new_id);
@@ -1276,11 +1282,65 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
 #[derive(Debug)]
 pub struct CommitWhenDrop<'a> {
     doc: &'a LoroDoc,
+    options: CommitOptions,
 }
 
 impl<'a> Drop for CommitWhenDrop<'a> {
     fn drop(&mut self) {
-        self.doc.commit_then_renew()
+        self.doc.commit_with(std::mem::take(&mut self.options));
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CommitOptions {
+    origin: Option<InternalString>,
+    immediate_renew: bool,
+    timestamp: Option<Timestamp>,
+    commit_msg: Option<Box<str>>,
+}
+
+impl CommitOptions {
+    pub fn new() -> Self {
+        Self {
+            origin: None,
+            immediate_renew: true,
+            timestamp: None,
+            commit_msg: None,
+        }
+    }
+
+    pub fn origin(mut self, origin: &str) -> Self {
+        self.origin = Some(origin.into());
+        self
+    }
+
+    pub fn immediate_renew(mut self, immediate_renew: bool) -> Self {
+        self.immediate_renew = immediate_renew;
+        self
+    }
+
+    pub fn timestamp(mut self, timestamp: Timestamp) -> Self {
+        self.timestamp = Some(timestamp);
+        self
+    }
+
+    pub fn commit_msg(mut self, commit_msg: &str) -> Self {
+        self.commit_msg = Some(commit_msg.into());
+        self
+    }
+
+    pub fn set_origin(&mut self, origin: Option<&str>) {
+        self.origin = origin.map(|x| x.into())
+    }
+
+    pub fn set_timestamp(&mut self, timestamp: Option<Timestamp>) {
+        self.timestamp = timestamp;
+    }
+}
+
+impl Default for CommitOptions {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

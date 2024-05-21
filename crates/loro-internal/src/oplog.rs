@@ -7,7 +7,6 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::mem::take;
 use std::rc::Rc;
-use tracing::debug;
 
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;

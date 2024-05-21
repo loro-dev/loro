@@ -85,6 +85,7 @@ struct UndoManagerInner {
     last_undo_time: i64,
     merge_interval: i64,
     max_stack_size: usize,
+    exclude_origin_prefixes: Vec<Box<str>>,
 }
 
 #[derive(Debug)]
@@ -232,6 +233,7 @@ impl UndoManagerInner {
             merge_interval: 0,
             last_undo_time: 0,
             max_stack_size: usize::MAX,
+            exclude_origin_prefixes: vec![],
         }
     }
 
@@ -281,8 +283,22 @@ impl UndoManager {
                 let Ok(mut inner) = inner_clone.try_lock() else {
                     return;
                 };
-                if !inner.processing_undo {
-                    if let Some(id) = event.event_meta.to.iter().find(|x| x.peer == peer) {
+                if inner.processing_undo {
+                    return;
+                }
+                if let Some(id) = event.event_meta.to.iter().find(|x| x.peer == peer) {
+                    if inner
+                        .exclude_origin_prefixes
+                        .iter()
+                        .any(|x| event.event_meta.origin.starts_with(&**x))
+                    {
+                        // If the event is from the excluded origin, we don't record it
+                        // in the undo stack. But we need to record its effect like it's
+                        // a remote event.
+                        inner.undo_stack.compose_remote_event(event.events);
+                        inner.redo_stack.compose_remote_event(event.events);
+                        inner.latest_counter = id.counter + 1;
+                    } else {
                         inner.record_checkpoint(id.counter + 1);
                     }
                 }
@@ -310,6 +326,14 @@ impl UndoManager {
         self.inner.try_lock().unwrap().max_stack_size = size;
     }
 
+    pub fn add_exclude_origin_prefix(&mut self, prefix: &str) {
+        self.inner
+            .try_lock()
+            .unwrap()
+            .exclude_origin_prefixes
+            .push(prefix.into());
+    }
+
     pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) -> LoroResult<()> {
         if doc.peer_id() != self.peer {
             return Err(LoroError::UndoWithDifferentPeerId {
@@ -325,12 +349,12 @@ impl UndoManager {
     }
 
     #[instrument(skip_all)]
-    pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
+    pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
         self.perform(doc, |x| &mut x.undo_stack, |x| &mut x.redo_stack)
     }
 
     #[instrument(skip_all)]
-    pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<()> {
+    pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
         self.perform(doc, |x| &mut x.redo_stack, |x| &mut x.undo_stack)
     }
 
@@ -339,7 +363,7 @@ impl UndoManager {
         doc: &LoroDoc,
         get_stack: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
-    ) -> LoroResult<()> {
+    ) -> LoroResult<bool> {
         self.record_new_checkpoint(doc)?;
         let end_counter = get_counter_end(doc, self.peer);
         let mut top = {
@@ -348,6 +372,7 @@ impl UndoManager {
             get_stack(&mut inner).pop()
         };
 
+        let mut executed = false;
         while let Some((span, e)) = top {
             {
                 let inner = self.inner.clone();
@@ -373,6 +398,7 @@ impl UndoManager {
                 let mut inner = self.inner.try_lock().unwrap();
                 get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter));
                 inner.latest_counter = new_counter;
+                executed = true;
                 break;
             } else {
                 // continue to pop the undo item as this undo is a no-op
@@ -382,7 +408,7 @@ impl UndoManager {
         }
 
         self.inner.try_lock().unwrap().processing_undo = false;
-        Ok(())
+        Ok(executed)
     }
 
     pub fn can_undo(&self) -> bool {
