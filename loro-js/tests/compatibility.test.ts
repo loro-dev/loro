@@ -15,7 +15,7 @@ import {
 import * as OLD from "loro-crdt-old";
 
 // TODO: This is skip because we know it will fail for the current version as we've introduced BREAKING CHANGES on the serialization format
-describe.skip("compatibility", () => {
+describe("compatibility", () => {
   it("basic forward compatibility on exportFrom", () => {
     const docA = new Loro();
     docA.getText("text").insert(0, "123");
