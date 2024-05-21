@@ -186,6 +186,7 @@ pub enum FutureValue<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
 pub enum OwnedFutureValue {
     #[cfg(feature = "counter")]
     Counter,
@@ -198,6 +199,7 @@ pub enum OwnedFutureValue {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
 pub enum OwnedValue {
     Null,
     True,

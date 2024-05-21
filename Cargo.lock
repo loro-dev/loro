@@ -647,7 +647,7 @@ dependencies = [
 [[package]]
 name = "fractional_index"
 version = "0.1.0"
-source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#e4dff51315fbb3389431516bcc69d88329c95075"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#09a501992f571cfe7e79be4089a87402e06acf87"
 dependencies = [
  "imbl",
  "rand",
@@ -679,7 +679,7 @@ dependencies = [
  "itertools 0.12.1",
  "loro 0.5.1",
  "loro 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding)",
- "loro-common 0.5.1",
+ "loro-internal 0.5.1",
  "rand",
  "tabled 0.10.0",
  "tracing",
@@ -962,19 +962,9 @@ dependencies = [
 [[package]]
 name = "json-schema"
 version = "0.1.0"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#09a501992f571cfe7e79be4089a87402e06acf87"
 dependencies = [
- "fractional_index 0.1.0",
- "loro-common 0.5.1",
- "serde",
- "serde_json",
- "smallvec",
-]
-
-[[package]]
-name = "json-schema"
-version = "0.1.0"
-source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#e4dff51315fbb3389431516bcc69d88329c95075"
-dependencies = [
+ "fractional_index 0.1.0 (git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding)",
  "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding)",
  "serde",
  "serde_json",
@@ -1036,7 +1026,7 @@ dependencies = [
 [[package]]
 name = "loro"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#e4dff51315fbb3389431516bcc69d88329c95075"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#09a501992f571cfe7e79be4089a87402e06acf87"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
@@ -1066,7 +1056,7 @@ dependencies = [
 [[package]]
 name = "loro-common"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#e4dff51315fbb3389431516bcc69d88329c95075"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#09a501992f571cfe7e79be4089a87402e06acf87"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
@@ -1098,7 +1088,7 @@ dependencies = [
 [[package]]
 name = "loro-delta"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#e4dff51315fbb3389431516bcc69d88329c95075"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#09a501992f571cfe7e79be4089a87402e06acf87"
 dependencies = [
  "arrayvec",
  "enum-as-inner 0.5.1",
@@ -1131,7 +1121,6 @@ dependencies = [
  "im",
  "itertools 0.12.1",
  "js-sys",
- "json-schema 0.1.0",
  "leb128",
  "loro-common 0.5.1",
  "loro-delta 0.5.1",
@@ -1162,7 +1151,7 @@ dependencies = [
 [[package]]
 name = "loro-internal"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#e4dff51315fbb3389431516bcc69d88329c95075"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#09a501992f571cfe7e79be4089a87402e06acf87"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -1175,7 +1164,7 @@ dependencies = [
  "getrandom",
  "im",
  "itertools 0.12.1",
- "json-schema 0.1.0 (git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding)",
+ "json-schema",
  "leb128",
  "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding)",
  "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding)",
@@ -1215,7 +1204,7 @@ dependencies = [
 [[package]]
 name = "loro-rle"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#e4dff51315fbb3389431516bcc69d88329c95075"
+source = "git+https://github.com/loro-dev/loro.git?branch=leon/loro-635-json-encoding#09a501992f571cfe7e79be4089a87402e06acf87"
 dependencies = [
  "append-only-bytes",
  "arref",
