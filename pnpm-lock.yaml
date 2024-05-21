@@ -83,8 +83,8 @@ importers:
         specifier: ^8.46.0
         version: 8.57.0
       loro-crdt-old:
-        specifier: npm:loro-crdt@0.15.4
-        version: /loro-crdt@0.15.4
+        specifier: npm:loro-crdt@=0.16.0
+        version: /loro-crdt@0.16.0
       prettier:
         specifier: ^3.0.0
         version: 3.2.5
@@ -2957,14 +2957,14 @@ packages:
     resolution: {integrity: sha512-+WKqsK294HMSc2jEbNgpHpd0JfIBhp7rEV4aqXWqFr6AlXov+SlcgB1Fv01y2kGe3Gc8nMW7VA0SrGuSkRfIEg==}
     dev: true
 
-  /loro-crdt@0.15.4:
-    resolution: {integrity: sha512-F/c6SVQWsXDmcfwjJE1Gwoj7N3pgn7PHk6fUjBNoFs/niahB3lAvepqnbdzLeKjthZo4r4jopbhlRf5kG8V4VQ==}
+  /loro-crdt@0.16.0:
+    resolution: {integrity: sha512-U/fwXPfe3GjE96tP97qzIjGoDOz5K/zSNPs1QZ7ZO4pqOAkjkLhBifSYZWW2v1t7ufFgUa4XqXpS1pn7Hyze2A==}
     dependencies:
-      loro-wasm: 0.15.4
+      loro-wasm: 0.16.0
     dev: true
 
-  /loro-wasm@0.15.4:
-    resolution: {integrity: sha512-EDK+hh+KMCuzMotHmN/9+hMSH3SW0xzLxdJm3vAiV00DQYzFwN6w1IaSkGdEhGV5QZFspOn/6GKLEgJHgYF2zg==}
+  /loro-wasm@0.16.0:
+    resolution: {integrity: sha512-2puF09ppACoUwMf9+6BkuYlogY+qZqqStq6RbYYXMhL8Uxrf8DXJdmLA+XGgI4suxXh39jvt6XfwdafqcUuu4A==}
     dev: true
 
   /loupe@2.3.7:

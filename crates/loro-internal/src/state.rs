@@ -8,7 +8,7 @@ use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
-use tracing::{info, instrument, trace_span};
+use tracing::{info, instrument};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -123,6 +123,9 @@ pub(crate) trait ContainerState: Clone {
     fn get_child_index(&self, id: &ContainerID) -> Option<Index>;
 
     #[allow(unused)]
+    fn contains_child(&self, id: &ContainerID) -> bool;
+
+    #[allow(unused)]
     fn get_child_containers(&self) -> Vec<ContainerID>;
 
     /// Encode the ops and the blob that can be used to restore the state to the current state.
@@ -192,6 +195,10 @@ impl<T: ContainerState> ContainerState for Box<T> {
     #[allow(unused)]
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
         self.as_ref().get_child_index(id)
+    }
+
+    fn contains_child(&self, id: &ContainerID) -> bool {
+        self.as_ref().contains_child(id)
     }
 
     #[allow(unused)]
@@ -478,8 +485,6 @@ impl DocState {
                     let state = get_or_create!(self, idx);
                     if is_recording {
                         // process bring_back before apply
-                        let span = trace_span!("handle internal recording");
-                        let _g = span.enter();
                         let external_diff =
                             if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
                                 state.apply_diff(
@@ -549,7 +554,7 @@ impl DocState {
         }
 
         diff.diff = diffs.into();
-        self.frontiers = (*diff.new_version).to_owned();
+        (*diff.new_version).clone_into(&mut self.frontiers);
         if self.is_recording() {
             self.record_diff(diff)
         }
@@ -986,17 +991,36 @@ impl DocState {
         }
     }
 
+    pub(crate) fn get_reachable(&self, id: &ContainerID) -> bool {
+        let Some(mut idx) = self.arena.id_to_idx(id) else {
+            return false;
+        };
+        loop {
+            let id = self.arena.idx_to_id(idx).unwrap();
+            if let Some(parent_idx) = self.arena.get_parent(idx) {
+                let Some(parent_state) = self.states.get(&parent_idx) else {
+                    return false;
+                };
+                if !parent_state.contains_child(&id) {
+                    return false;
+                }
+                idx = parent_idx;
+            } else {
+                if id.is_root() {
+                    return true;
+                }
+
+                return false;
+            }
+        }
+    }
+
     // the container may be override, so it may return None
     fn get_path(&self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
         let mut ans = Vec::new();
         let mut idx = idx;
-        let id = self.arena.idx_to_id(idx).unwrap();
-        let s = tracing::span!(tracing::Level::INFO, "GET PATH ", ?id);
-        let _e = s.enter();
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
-            let s = tracing::span!(tracing::Level::INFO, "GET PATH ", ?id);
-            let _e = s.enter();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
                 let parent_state = self.states.get(&parent_idx)?;
                 let Some(prop) = parent_state.get_child_index(&id) else {

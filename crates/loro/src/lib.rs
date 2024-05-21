@@ -3,7 +3,6 @@
 #![warn(missing_debug_implementations)]
 use either::Either;
 use event::{DiffEvent, Subscriber};
-use loro_internal::change::Timestamp;
 use loro_internal::container::IntoContainerId;
 use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
@@ -12,6 +11,7 @@ use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
+use loro_internal::loro::CommitOptions;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 
@@ -41,6 +41,7 @@ pub use loro_internal::id::{PeerID, TreeID, ID};
 pub use loro_internal::obs::SubID;
 pub use loro_internal::oplog::FrontiersNotIncluded;
 pub use loro_internal::version::{Frontiers, VersionVector};
+pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
 
@@ -52,6 +53,7 @@ pub use counter::LoroCounter;
 /// `LoroDoc` is the entry for the whole document.
 /// When it's dropped, all the associated [`Handler`]s will be invalidated.
 #[derive(Debug)]
+#[repr(transparent)]
 pub struct LoroDoc {
     doc: InnerLoroDoc,
 }
@@ -65,7 +67,7 @@ impl Default for LoroDoc {
 impl LoroDoc {
     /// Create a new `LoroDoc` instance.
     pub fn new() -> Self {
-        let mut doc = InnerLoroDoc::default();
+        let doc = InnerLoroDoc::default();
         doc.start_auto_commit();
 
         LoroDoc { doc }
@@ -240,7 +242,7 @@ impl LoroDoc {
 
     #[cfg(feature = "counter")]
     /// Get a [LoroCounter] by container id.
-    ///  
+    ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_counter<I: IntoContainerId>(&self, id: I) -> LoroCounter {
         LoroCounter {
@@ -262,17 +264,12 @@ impl LoroDoc {
     /// There is a transaction behind every operation.
     /// It will automatically commit when users invoke export or import.
     /// The event will be sent after a transaction is committed
-    pub fn commit_with(
-        &self,
-        origin: Option<&str>,
-        timestamp: Option<Timestamp>,
-        immediate_renew: bool,
-    ) {
-        self.doc
-            .commit_with(origin.map(|x| x.into()), timestamp, immediate_renew)
+    pub fn commit_with(&self, options: CommitOptions) {
+        self.doc.commit_with(options)
     }
 
-    /// Whether the document is in detached mode, where the [loro_internal::DocState] is not synchronized with the latest version of the [loro_internal::OpLog].
+    /// Whether the document is in detached mode, where the [loro_internal::DocState] is not
+    /// synchronized with the latest version of the [loro_internal::OpLog].
     pub fn is_detached(&self) -> bool {
         self.doc.is_detached()
     }
@@ -1819,4 +1816,59 @@ pub enum ValueOrContainer {
     Value(LoroValue),
     /// A container.
     Container(Container),
+}
+
+/// UndoManager can be used to undo and redo the changes made to the document with a certain peer.
+#[derive(Debug)]
+#[repr(transparent)]
+pub struct UndoManager(InnerUndoManager);
+
+impl UndoManager {
+    /// Create a new UndoManager.
+    pub fn new(doc: &LoroDoc) -> Self {
+        let mut inner = InnerUndoManager::new(&doc.doc);
+        inner.set_max_undo_steps(100);
+        Self(inner)
+    }
+
+    /// Undo the last change made by the peer.
+    pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
+        self.0.undo(&doc.doc)
+    }
+
+    /// Redo the last change made by the peer.
+    pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
+        self.0.redo(&doc.doc)
+    }
+
+    /// Record a new checkpoint.
+    pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) -> LoroResult<()> {
+        self.0.record_new_checkpoint(&doc.doc)
+    }
+
+    /// Whether the undo manager can undo.
+    pub fn can_undo(&self) -> bool {
+        self.0.can_undo()
+    }
+
+    /// Whether the undo manager can redo.
+    pub fn can_redo(&self) -> bool {
+        self.0.can_redo()
+    }
+
+    /// If a local event's origin matches the given prefix, it will not be recorded in the
+    /// undo stack.
+    pub fn add_exclude_origin_prefix(&mut self, prefix: &str) {
+        self.0.add_exclude_origin_prefix(prefix)
+    }
+
+    /// Set the maximum number of undo steps. The default value is 100.
+    pub fn set_max_undo_steps(&mut self, size: usize) {
+        self.0.set_max_undo_steps(size)
+    }
+
+    /// Set the merge interval in ms. The default value is 0, which means no merge.
+    pub fn set_merge_interval(&mut self, interval: i64) {
+        self.0.set_merge_interval(interval)
+    }
 }

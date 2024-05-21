@@ -1,0 +1,6 @@
+{
+  "rust-analyzer.runnableEnv": {
+    "RUST_BACKTRACE": "full",
+    "DEBUG": "*"
+  },
+}

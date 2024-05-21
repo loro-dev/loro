@@ -82,9 +82,21 @@ export type MapDiff = {
 };
 
 export type TreeDiffItem =
-  | { target: TreeID; action: "create"; parent: TreeID | undefined; index: number; position: string }
+  | {
+      target: TreeID;
+      action: "create";
+      parent: TreeID | undefined;
+      index: number;
+      position: string;
+    }
   | { target: TreeID; action: "delete" }
-  | { target: TreeID; action: "move"; parent: TreeID | undefined;  index: number; position: string };
+  | {
+      target: TreeID;
+      action: "move";
+      parent: TreeID | undefined;
+      index: number;
+      position: string;
+    };
 
 export type TreeDiff = {
   type: "tree";
@@ -153,11 +165,15 @@ export function isContainer(value: any): value is Container {
  */
 export function getType<T>(
   value: T,
-): T extends LoroText ? "Text"
-  : T extends LoroMap<any> ? "Map"
-  : T extends LoroTree<any> ? "Tree"
-  : T extends LoroList<any> ? "List"
-  : "Json" {
+): T extends LoroText
+  ? "Text"
+  : T extends LoroMap<any>
+    ? "Map"
+    : T extends LoroTree<any>
+      ? "Tree"
+      : T extends LoroList<any>
+        ? "List"
+        : "Json" {
   if (isContainer(value)) {
     return value.kind() as unknown as any;
   }
@@ -187,7 +203,7 @@ declare module "loro-wasm" {
      * const map = doc.getMap("map");
      * ```
      */
-    getMap<Key extends (keyof T) | ContainerID>(
+    getMap<Key extends keyof T | ContainerID>(
       name: Key,
     ): T[Key] extends LoroMap ? T[Key] : LoroMap;
     /**
@@ -204,7 +220,7 @@ declare module "loro-wasm" {
      * const list = doc.getList("list");
      * ```
      */
-    getList<Key extends (keyof T) | ContainerID>(
+    getList<Key extends keyof T | ContainerID>(
       name: Key,
     ): T[Key] extends LoroList ? T[Key] : LoroList;
     /**
@@ -221,7 +237,7 @@ declare module "loro-wasm" {
      * const list = doc.getList("list");
      * ```
      */
-    getMovableList<Key extends (keyof T) | ContainerID>(
+    getMovableList<Key extends keyof T | ContainerID>(
       name: Key,
     ): T[Key] extends LoroMovableList ? T[Key] : LoroMovableList;
     /**
@@ -238,7 +254,7 @@ declare module "loro-wasm" {
      *  const tree = doc.getTree("tree");
      *  ```
      */
-    getTree<Key extends (keyof T) | ContainerID>(
+    getTree<Key extends keyof T | ContainerID>(
       name: Key,
     ): T[Key] extends LoroTree ? T[Key] : LoroTree;
     getText(key: string | ContainerID): LoroText;
@@ -531,7 +547,7 @@ declare module "loro-wasm" {
     T extends Record<string, unknown> = Record<string, unknown>,
   > {
     new (): LoroTree<T>;
-    createNode(parent?: TreeID, index?: number ): LoroTreeNode<T>;
+    createNode(parent?: TreeID, index?: number): LoroTreeNode<T>;
     move(target: TreeID, parent?: TreeID, index?: number): void;
     delete(target: TreeID): void;
     has(target: TreeID): boolean;
@@ -552,9 +568,7 @@ declare module "loro-wasm" {
     children(): Array<LoroTreeNode<T>>;
   }
 
-  interface AwarenessWasm<
-    T extends Value = Value,
-  > {
+  interface AwarenessWasm<T extends Value = Value> {
     getState(peer: PeerID): T | undefined;
     getTimestamp(peer: PeerID): number | undefined;
     getAllStates(): Record<PeerID, T>;

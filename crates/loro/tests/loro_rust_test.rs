@@ -8,6 +8,8 @@ use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
 use serde_json::json;
 use tracing::trace_span;
 
+mod integration_test;
+
 #[ctor::ctor]
 fn init() {
     dev_utils::setup_test_log();

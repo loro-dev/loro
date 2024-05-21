@@ -528,6 +528,16 @@ impl OpLog {
         None
     }
 
+    pub fn get_deps_of(&self, id: ID) -> Option<Frontiers> {
+        self.get_change_at(id).map(|c| {
+            if c.id.counter == id.counter {
+                c.deps.clone()
+            } else {
+                Frontiers::from_id(id.inc(-1))
+            }
+        })
+    }
+
     pub fn get_remote_change_at(&self, id: ID) -> Option<Change<RemoteOp>> {
         let change = self.get_change_at(id)?;
         Some(self.convert_change_to_remote(change))
@@ -931,6 +941,33 @@ impl OpLog {
     pub(crate) fn get_op(&self, id: ID) -> Option<&Op> {
         let change = self.get_change_at(id)?;
         change.ops.get_by_atom_index(id.counter).map(|x| x.element)
+    }
+
+    pub(crate) fn split_span_based_on_deps(&self, id_span: IdSpan) -> Vec<(IdSpan, Frontiers)> {
+        let peer = id_span.peer;
+        let mut counter = id_span.counter.min();
+        let span_end = id_span.counter.norm_end();
+        let mut ans = Vec::new();
+
+        while counter < span_end {
+            let id = ID::new(peer, counter);
+            let node = self.dag.get(id).unwrap();
+
+            let f = if node.cnt == counter {
+                node.deps.clone()
+            } else if counter > 0 {
+                id.inc(-1).into()
+            } else {
+                unreachable!()
+            };
+
+            let cur_end = node.cnt + node.len as Counter;
+            let len = cur_end.min(span_end) - counter;
+            ans.push((id.to_span(len as usize), f));
+            counter += len;
+        }
+
+        ans
     }
 }
 

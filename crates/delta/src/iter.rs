@@ -30,6 +30,35 @@ impl<'a, V: DeltaValue, Attr: DeltaAttr> Iter<'a, V, Attr> {
         self.current.as_ref()
     }
 
+    pub fn peek_is_replace(&self) -> bool {
+        self.peek().map(|x| x.is_replace()).unwrap_or(false)
+    }
+
+    pub fn peek_is_insert(&self) -> bool {
+        self.peek().map(|x| x.is_insert()).unwrap_or(false)
+    }
+
+    pub fn peek_is_delete(&self) -> bool {
+        self.peek().map(|x| x.is_delete()).unwrap_or(false)
+    }
+
+    pub fn peek_is_retain(&self) -> bool {
+        self.peek().map(|x| x.is_retain()).unwrap_or(false)
+    }
+
+    pub fn peek_length(&self) -> usize {
+        self.peek().map(|x| x.delta_len()).unwrap_or(usize::MAX)
+    }
+
+    pub fn peek_insert_length(&self) -> usize {
+        self.peek()
+            .map(|x| match x {
+                DeltaItem::Retain { .. } => 0,
+                DeltaItem::Replace { value, .. } => value.rle_len(),
+            })
+            .unwrap_or(0)
+    }
+
     pub fn next_with(&mut self, mut len: usize) -> Result<(), usize> {
         while len > 0 {
             let Some(current) = self.current.as_mut() else {

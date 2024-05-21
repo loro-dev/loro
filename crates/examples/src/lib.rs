@@ -201,7 +201,7 @@ pub fn minify_failed_tests_in_async_mode<T: ActorTrait>(
         actions.drain(num..);
         if let Some(min_actions) = min_actions.as_mut() {
             if actions.len() < min_actions.len() {
-                *min_actions = actions.clone();
+                min_actions.clone_from(&actions);
             }
         } else {
             min_actions = Some(actions.clone());

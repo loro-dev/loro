@@ -233,6 +233,64 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
             }
         }
     }
+
+    pub fn transform(&self, other: &Self, left_prior: bool) -> Self {
+        let mut this_iter = self.iter_with_len();
+        let mut other_iter = other.iter_with_len();
+        let mut transformed_delta = DeltaRope::new();
+
+        while this_iter.peek().is_some() || other_iter.peek().is_some() {
+            if this_iter.peek_is_insert() && (left_prior || !other_iter.peek_is_insert()) {
+                let insert_length;
+                match this_iter.peek().unwrap() {
+                    DeltaItem::Replace { value, attr, .. } => {
+                        insert_length = value.rle_len();
+                        transformed_delta.push_insert(value.clone(), attr.clone());
+                    }
+                    DeltaItem::Retain { .. } => unreachable!(),
+                }
+                this_iter.next_with(insert_length).unwrap();
+            } else if other_iter.peek_is_insert() {
+                let insert_length = other_iter.peek_insert_length();
+                transformed_delta.push_retain(insert_length, Default::default());
+                other_iter.next_with(insert_length).unwrap();
+            } else {
+                // It's now either retains or deletes
+                let length = this_iter.peek_length().min(other_iter.peek_length());
+                let this_op_peek = this_iter.peek().cloned();
+                let other_op_peek = other_iter.peek().cloned();
+                let _ = this_iter.next_with(length);
+                let _ = other_iter.next_with(length);
+                if other_op_peek.map(|x| x.is_delete()).unwrap_or(false) {
+                    // It makes our deletes or retains redundant
+                    continue;
+                } else if this_op_peek
+                    .as_ref()
+                    .map(|x| x.is_delete())
+                    .unwrap_or(false)
+                {
+                    transformed_delta.push_delete(length);
+                } else {
+                    transformed_delta.push_retain(
+                        length,
+                        this_op_peek
+                            .map(|x| x.into_retain().unwrap().1)
+                            .unwrap_or_default(),
+                    );
+                    // FIXME: transform the attributes
+                }
+            }
+        }
+
+        transformed_delta.chop();
+        transformed_delta
+    }
+
+    /// Transforms operation `self` against another operation `other` in such a way that the
+    /// impact of `other` is effectively included in `self`.
+    pub fn transform_(&mut self, other: &Self, left_prior: bool) {
+        *self = self.transform(other, left_prior);
+    }
 }
 
 impl<V: DeltaValue + PartialEq, Attr: DeltaAttr + PartialEq> PartialEq for DeltaRope<V, Attr> {
@@ -308,7 +366,7 @@ impl<V: DeltaValue + Debug, Attr: DeltaAttr + Debug> Default for DeltaRope<V, At
 }
 
 impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
-    pub(crate) fn insert_values(
+    pub fn insert_values(
         &mut self,
         pos: usize,
         values: impl IntoIterator<Item = DeltaItem<V, Attr>>,

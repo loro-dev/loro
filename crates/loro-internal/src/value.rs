@@ -568,13 +568,14 @@ pub mod wasm {
                         )
                         .unwrap();
                     }
-                    TreeExternalDiff::Delete => {
+                    TreeExternalDiff::Delete { .. } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"delete".into()).unwrap();
                     }
                     TreeExternalDiff::Move {
                         parent,
                         index,
                         position,
+                        ..
                     } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"move".into()).unwrap();
                         js_sys::Reflect::set(&obj, &"parent".into(), &JsValue::from(*parent))

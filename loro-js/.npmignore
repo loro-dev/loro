@@ -1,4 +1,10 @@
 tests/
 .vscode/
+deno/
+src/
 node_modules/
 pnpm-lock.yaml
+rollup.config.mjs
+tsconfig.json
+vite.config.ts
+CHANGELOG.md

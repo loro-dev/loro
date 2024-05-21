@@ -2,7 +2,7 @@ use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{instrument, trace_span, warn};
+use tracing::{instrument, warn};
 
 use fxhash::FxHashMap;
 use generic_btree::BTree;
@@ -465,6 +465,10 @@ mod inner {
             });
 
             ans
+        }
+
+        pub fn contains_child_container(&self, id: &ContainerID) -> bool {
+            self.get_child_index(id, IndexType::ForUser).is_some()
         }
 
         #[inline]
@@ -962,10 +966,6 @@ impl ContainerState for MovableListState {
             None
         };
 
-        let id = arena.idx_to_id(self.idx).unwrap();
-        let s = trace_span!("ListState", "ListState.id = {:?}", id);
-        let _e = s.enter();
-
         let mut event: ListDiff = DeltaRope::new();
         let mut maybe_moved: FxHashMap<CompactIdLp, (usize, LoroValue)> = FxHashMap::default();
 
@@ -1285,6 +1285,10 @@ impl ContainerState for MovableListState {
         self.inner
             .get_child_index(id, IndexType::ForUser)
             .map(Index::Seq)
+    }
+
+    fn contains_child(&self, id: &ContainerID) -> bool {
+        self.inner.contains_child_container(id)
     }
 
     #[allow(unused)]

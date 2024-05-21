@@ -134,6 +134,14 @@ impl ResolvedMapDelta {
         self.updated.insert(key, map_value);
         self
     }
+
+    pub(crate) fn transform(&mut self, b: &ResolvedMapDelta, left_prior: bool) {
+        for (k, _) in b.updated.iter() {
+            if !left_prior {
+                self.updated.remove(k);
+            }
+        }
+    }
 }
 
 impl Hash for MapValue {
