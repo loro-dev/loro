@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 loro-common = { path = "../loro-common" }
+fractional_index = { path = "../fractional_index", features = ["serde"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 smallvec = { workspace = true }

@@ -207,7 +207,7 @@ pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
     })
 }
 
-fn import_changes_to_oplog(
+pub(crate) fn import_changes_to_oplog(
     changes: Vec<Change>,
     oplog: &mut OpLog,
 ) -> Result<(Vec<ID>, Vec<Change>), LoroError> {

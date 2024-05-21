@@ -1,3 +1,4 @@
+use fractional_index::FractionalIndex;
 use loro_common::{ContainerID, IdLp, TreeID, ID};
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +30,7 @@ pub enum ListOp {
         value: JsonLoroValue,
     },
     Delete {
-        pos: usize,
+        pos: isize,
         len: isize,
         delete_start_id: ID,
     },
@@ -43,7 +44,7 @@ pub enum MovableListOp {
         value: JsonLoroValue,
     },
     Delete {
-        pos: usize,
+        pos: isize,
         len: isize,
         delete_start_id: ID,
     },
@@ -69,17 +70,19 @@ pub enum MapOp {
 #[serde(tag = "type")]
 pub enum TextOp {
     Insert {
-        pos: usize,
+        pos: u32,
         text: String,
     },
     Delete {
-        pos: usize,
-        len: usize,
+        pos: isize,
+        len: isize,
+        id_start: ID,
     },
     Mark {
         start: u32,
         end: u32,
         style: (String, JsonLoroValue),
+        info: u8,
     },
     MarkEnd,
 }
@@ -95,7 +98,7 @@ pub enum TreeOp {
     Move {
         target: TreeID,
         parent: Option<TreeID>,
-        fractional_index: String,
+        fractional_index: FractionalIndex,
     },
     Delete {
         target: TreeID,

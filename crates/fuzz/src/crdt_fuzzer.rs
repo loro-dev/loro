@@ -94,8 +94,11 @@ impl CRDTFuzzer {
                 for i in 1..self.site_num() {
                     info_span!("Importing", "importing to 0 from {}", i).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
+                        // a.loro
+                        //     .import(&b.loro.export_from(&a.loro.oplog_vv()))
+                        //     .unwrap();
                         a.loro
-                            .import(&b.loro.export_from(&a.loro.oplog_vv()))
+                            .import_json(&b.loro.export_json(&a.loro.oplog_vv()))
                             .unwrap();
                     });
                 }
@@ -103,8 +106,11 @@ impl CRDTFuzzer {
                 for i in 1..self.site_num() {
                     info_span!("Importing", "importing to {} from {}", i, 0).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
+                        // b.loro
+                        //     .import(&a.loro.export_from(&b.loro.oplog_vv()))
+                        //     .unwrap();
                         b.loro
-                            .import(&a.loro.export_from(&b.loro.oplog_vv()))
+                            .import_json(&a.loro.export_json(&b.loro.oplog_vv()))
                             .unwrap();
                     });
                 }
@@ -115,11 +121,17 @@ impl CRDTFuzzer {
             }
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(&mut self.actors, [*from as usize, *to as usize]);
+                // a.loro
+                //     .import(&b.loro.export_from(&a.loro.oplog_vv()))
+                //     .unwrap();
+                // b.loro
+                //     .import(&a.loro.export_from(&b.loro.oplog_vv()))
+                //     .unwrap();
                 a.loro
-                    .import(&b.loro.export_from(&a.loro.oplog_vv()))
+                    .import_json(&b.loro.export_json(&a.loro.oplog_vv()))
                     .unwrap();
                 b.loro
-                    .import(&a.loro.export_from(&b.loro.oplog_vv()))
+                    .import_json(&a.loro.export_json(&b.loro.oplog_vv()))
                     .unwrap();
                 a.record_history();
                 b.record_history();

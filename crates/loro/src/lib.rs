@@ -290,6 +290,16 @@ impl LoroDoc {
         self.doc.import_with(bytes, origin.into())
     }
 
+    /// Import json-string.
+    pub fn import_json(&self, json: &str) -> Result<(), LoroError> {
+        self.doc.import_json(json)
+    }
+
+    /// Export the current state with json-string format of the document.
+    pub fn export_json(&self, vv: &VersionVector) -> String {
+        self.doc.export_json(vv)
+    }
+
     /// Export all the ops not included in the given `VersionVector`
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
         self.doc.export_from(vv)

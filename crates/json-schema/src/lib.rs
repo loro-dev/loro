@@ -3,7 +3,7 @@ mod serde_impl;
 
 pub use op::*;
 
-use loro_common::{ContainerID, IdLp, Lamport, LoroValue, TreeID, ID};
+use loro_common::{Lamport, LoroValue, ID};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 #[derive(Debug, Serialize, Deserialize)]
