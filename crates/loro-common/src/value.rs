@@ -498,7 +498,9 @@ impl Serialize for LoroValue {
                 LoroValue::List(l) => serializer.collect_seq(l.iter()),
                 LoroValue::Map(m) => serializer.collect_map(m.iter()),
                 LoroValue::Container(id) => {
-                    let mut state = serializer.serialize_struct("Container", 1)?;
+                    let mut state = serializer.serialize_struct("Container", 2)?;
+                    // type field should be the first field
+                    state.serialize_field("type", "loro::container_id")?;
                     state.serialize_field("Container", id)?;
                     state.end()
                 }
@@ -653,6 +655,29 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
     {
         let mut ans: FxHashMap<String, _> = FxHashMap::default();
         let mut last_key = None;
+
+        if let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "type" => {
+                    let v: LoroValue = map.next_value()?;
+                    if let LoroValue::String(v) = &v {
+                        if v.as_str() == "loro::container_id" {
+                            let (k, container) = map.next_entry::<String, ContainerID>()?.unwrap();
+                            if &k != "Container" {
+                                return Err(serde::de::Error::custom("Invalid container key"));
+                            }
+                            return Ok(LoroValue::Container(container));
+                        }
+                    }
+                    ans.insert(key, v);
+                }
+                _ => {
+                    let v: LoroValue = map.next_value()?;
+                    ans.insert(key, v);
+                }
+            }
+        }
+
         while let Some((key, value)) = map.next_entry::<String, _>()? {
             last_key.get_or_insert_with(|| key.clone());
             ans.insert(key, value);

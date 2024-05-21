@@ -94,11 +94,8 @@ impl CRDTFuzzer {
                 for i in 1..self.site_num() {
                     info_span!("Importing", "importing to 0 from {}", i).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
-                        // a.loro
-                        //     .import(&b.loro.export_from(&a.loro.oplog_vv()))
-                        //     .unwrap();
                         a.loro
-                            .import_json(&b.loro.export_json(&a.loro.oplog_vv()))
+                            .import(&b.loro.export_from(&a.loro.oplog_vv()))
                             .unwrap();
                     });
                 }
@@ -106,11 +103,8 @@ impl CRDTFuzzer {
                 for i in 1..self.site_num() {
                     info_span!("Importing", "importing to {} from {}", i, 0).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
-                        // b.loro
-                        //     .import(&a.loro.export_from(&b.loro.oplog_vv()))
-                        //     .unwrap();
                         b.loro
-                            .import_json(&a.loro.export_json(&b.loro.oplog_vv()))
+                            .import(&a.loro.export_from(&b.loro.oplog_vv()))
                             .unwrap();
                     });
                 }
@@ -121,17 +115,11 @@ impl CRDTFuzzer {
             }
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(&mut self.actors, [*from as usize, *to as usize]);
-                // a.loro
-                //     .import(&b.loro.export_from(&a.loro.oplog_vv()))
-                //     .unwrap();
-                // b.loro
-                //     .import(&a.loro.export_from(&b.loro.oplog_vv()))
-                //     .unwrap();
                 a.loro
-                    .import_json(&b.loro.export_json(&a.loro.oplog_vv()))
+                    .import(&b.loro.export_from(&a.loro.oplog_vv()))
                     .unwrap();
                 b.loro
-                    .import_json(&a.loro.export_json(&b.loro.oplog_vv()))
+                    .import(&a.loro.export_from(&b.loro.oplog_vv()))
                     .unwrap();
                 a.record_history();
                 b.record_history();
@@ -170,20 +158,33 @@ impl CRDTFuzzer {
                 info_span!("Attach", peer = j).in_scope(|| {
                     b_doc.attach();
                 });
-                if (i + j) % 2 == 0 {
-                    info_span!("Updates", from = j, to = i).in_scope(|| {
-                        a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
-                    });
-                    info_span!("Updates", from = i, to = j).in_scope(|| {
-                        b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
-                    });
-                } else {
-                    info_span!("Snapshot", from = i, to = j).in_scope(|| {
-                        b_doc.import(&a_doc.export_snapshot()).unwrap();
-                    });
-                    info_span!("Snapshot", from = j, to = i).in_scope(|| {
-                        a_doc.import(&b_doc.export_snapshot()).unwrap();
-                    });
+                match (i + j) % 3 {
+                    0 => {
+                        info_span!("Updates", from = j, to = i).in_scope(|| {
+                            a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
+                        });
+                        info_span!("Updates", from = i, to = j).in_scope(|| {
+                            b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
+                        });
+                    }
+                    1 => {
+                        info_span!("Snapshot", from = i, to = j).in_scope(|| {
+                            b_doc.import(&a_doc.export_snapshot()).unwrap();
+                        });
+                        info_span!("Snapshot", from = j, to = i).in_scope(|| {
+                            a_doc.import(&b_doc.export_snapshot()).unwrap();
+                        });
+                    }
+                    _ => {
+                        info_span!("Snapshot", from = i, to = j).in_scope(|| {
+                            let a_json = a_doc.export_json(&b_doc.oplog_vv());
+                            b_doc.import_json(&a_json).unwrap();
+                        });
+                        info_span!("Snapshot", from = j, to = i).in_scope(|| {
+                            let b_json = b_doc.export_json(&a_doc.oplog_vv());
+                            a_doc.import_json(&b_json).unwrap();
+                        });
+                    }
                 }
                 a.check_eq(b);
                 a.record_history();
