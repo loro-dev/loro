@@ -149,4 +149,8 @@ describe("undo", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(ran).toBeTruthy();
   });
+
+  test("undo event listener", () => {
+
+  })
 });

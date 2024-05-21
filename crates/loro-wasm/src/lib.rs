@@ -18,6 +18,7 @@ use loro_internal::{
     id::{Counter, TreeID, ID},
     loro::CommitOptions,
     obs::SubID,
+    undo::UndoOrRedo,
     version::Frontiers,
     ContainerType, DiffEvent, HandlerTrait, LoroDoc, LoroValue, MovableListHandler,
     UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
@@ -156,9 +157,13 @@ extern "C" {
     pub type JsSide;
     #[wasm_bindgen(typescript_type = "{ update?: Cursor, offset: number, side: Side }")]
     pub type JsCursorQueryAns;
-    #[wasm_bindgen(
-        typescript_type = "{ mergeInterval?: number, maxUndoSteps?: number, excludeOriginPrefixes?: string[] } | undefined"
-    )]
+    #[wasm_bindgen(typescript_type = "{
+            mergeInterval?: number,
+            maxUndoSteps?: number,
+            excludeOriginPrefixes?: string[],
+            onPush?: (isUndo: boolean, counterRange: { start: number, end: number }) => Value,
+            onPop?: (isUndo: boolean, value: Value, counterRange: { start: number, end: number }) => void
+        } | undefined")]
     pub type JsUndoConfig;
 }
 
@@ -188,6 +193,22 @@ mod observer {
         pub fn call1(&self, arg: &JsValue) -> JsResult<JsValue> {
             if std::thread::current().id() == self.thread {
                 self.f.call1(&JsValue::NULL, arg)
+            } else {
+                panic!("Observer called from different thread")
+            }
+        }
+
+        pub fn call2(&self, arg1: &JsValue, arg2: &JsValue) -> JsResult<JsValue> {
+            if std::thread::current().id() == self.thread {
+                self.f.call2(&JsValue::NULL, arg1, arg2)
+            } else {
+                panic!("Observer called from different thread")
+            }
+        }
+
+        pub fn call3(&self, arg1: &JsValue, arg2: &JsValue, arg3: &JsValue) -> JsResult<JsValue> {
+            if std::thread::current().id() == self.thread {
+                self.f.call3(&JsValue::NULL, arg1, arg2, arg3)
             } else {
                 panic!("Observer called from different thread")
             }
@@ -3325,16 +3346,28 @@ impl UndoManager {
                         .collect::<Vec<String>>()
                 })
                 .unwrap_or_default();
+        let on_push = Reflect::get(&config, &JsValue::from_str("onPush")).ok();
+        let on_pop = Reflect::get(&config, &JsValue::from_str("onPop")).ok();
+
         let mut undo = InnerUndoManager::new(&doc.0);
         undo.set_max_undo_steps(max_undo_steps);
         undo.set_merge_interval(merge_interval);
         for prefix in exclude_origin_prefixes {
             undo.add_exclude_origin_prefix(&prefix);
         }
-        UndoManager {
+
+        let mut ans = UndoManager {
             undo,
             doc: doc.0.clone(),
+        };
+
+        if let Some(on_push) = on_push {
+            ans.setOnPush(on_push);
         }
+        if let Some(on_pop) = on_pop {
+            ans.setOnPop(on_pop);
+        }
+        ans
     }
 
     /// Undo the last operation.
@@ -3381,6 +3414,72 @@ impl UndoManager {
     /// Check if the undo manager is bound to the given document.
     pub fn checkBinding(&self, doc: &Loro) -> bool {
         Arc::ptr_eq(&self.doc, &doc.0)
+    }
+
+    /// Set the on push event listener.
+    ///
+    /// Every time an undo step or redo step is pushed, the on push event listener will be called.
+    #[wasm_bindgen(skip_typescript)]
+    pub fn setOnPush(&mut self, on_push: JsValue) {
+        let on_push = on_push.dyn_into::<js_sys::Function>().ok();
+        if let Some(on_push) = on_push {
+            let on_push = observer::Observer::new(on_push);
+            self.undo
+                .set_on_push(Some(Box::new(move |kind, span, value| {
+                    let is_undo = JsValue::from_bool(matches!(kind, UndoOrRedo::Undo));
+                    let counter_range = js_sys::Object::new();
+                    js_sys::Reflect::set(
+                        &counter_range,
+                        &JsValue::from_str("start"),
+                        &JsValue::from_f64(span.start as f64),
+                    )
+                    .unwrap();
+                    js_sys::Reflect::set(
+                        &counter_range,
+                        &JsValue::from_str("end"),
+                        &JsValue::from_f64(span.end as f64),
+                    )
+                    .unwrap();
+                    if let Ok(v) = on_push.call2(&is_undo, &counter_range) {
+                        let v: LoroValue = v.into();
+                        *value = v;
+                    }
+                })));
+        } else {
+            self.undo.set_on_push(None);
+        }
+    }
+
+    /// Set the on pop event listener.
+    ///
+    /// Every time an undo step or redo step is popped, the on pop event listener will be called.
+    #[wasm_bindgen(skip_typescript)]
+    pub fn setOnPop(&mut self, on_pop: JsValue) {
+        let on_pop = on_pop.dyn_into::<js_sys::Function>().ok();
+        if let Some(on_pop) = on_pop {
+            let on_pop = observer::Observer::new(on_pop);
+            self.undo
+                .set_on_pop(Some(Box::new(move |kind, span, value| {
+                    let is_undo = JsValue::from_bool(matches!(kind, UndoOrRedo::Undo));
+                    let value: JsValue = value.into();
+                    let counter_range = js_sys::Object::new();
+                    js_sys::Reflect::set(
+                        &counter_range,
+                        &JsValue::from_str("start"),
+                        &JsValue::from_f64(span.start as f64),
+                    )
+                    .unwrap();
+                    js_sys::Reflect::set(
+                        &counter_range,
+                        &JsValue::from_str("end"),
+                        &JsValue::from_f64(span.end as f64),
+                    )
+                    .unwrap();
+                    on_pop.call3(&is_undo, &value, &counter_range).ok();
+                })));
+        } else {
+            self.undo.set_on_pop(None);
+        }
     }
 }
 

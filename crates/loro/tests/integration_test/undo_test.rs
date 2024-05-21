@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    atomic::{self, AtomicUsize},
+    Arc, Mutex,
+};
 
 use loro::{
     LoroDoc, LoroError, LoroList, LoroMap, LoroResult, LoroText, LoroValue, StyleConfigMap, ToJson,
@@ -1516,5 +1519,52 @@ fn should_not_trigger_update_when_undo_ops_depend_on_deleted_container() -> anyh
     undo.undo(&doc_b)?;
     // should not update doc_b, because the undo operation depends on a deleted container
     assert_eq!(f, doc_b.oplog_frontiers());
+    Ok(())
+}
+
+#[test]
+fn undo_manager_events() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    let mut undo = UndoManager::new(&doc);
+    let push_count = Arc::new(AtomicUsize::new(0));
+    let push_count_clone = push_count.clone();
+    let pop_count = Arc::new(AtomicUsize::new(0));
+    let pop_count_clone = pop_count.clone();
+    let popped_value = Arc::new(Mutex::new(LoroValue::Null));
+    let popped_value_clone = popped_value.clone();
+    undo.set_on_push(Some(Box::new(move |_source, span, v| {
+        push_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
+        *v = LoroValue::I64(span.start as i64);
+    })));
+    undo.set_on_pop(Some(Box::new(move |_source, _span, v| {
+        pop_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
+        *popped_value_clone.lock().unwrap() = v;
+    })));
+    text.insert(0, "Hello")?;
+    assert_eq!(push_count.load(atomic::Ordering::SeqCst), 0);
+    doc.commit();
+    assert_eq!(push_count.load(atomic::Ordering::SeqCst), 1);
+    text.insert(0, "A")?;
+    text.insert(1, "B")?;
+    assert_eq!(pop_count.load(atomic::Ordering::SeqCst), 0);
+    assert_eq!(push_count.load(atomic::Ordering::SeqCst), 1);
+    doc.commit();
+    assert_eq!(push_count.load(atomic::Ordering::SeqCst), 2);
+
+    undo.undo(&doc)?;
+    assert_eq!(&*popped_value.lock().unwrap(), &LoroValue::I64(5));
+    assert_eq!(pop_count.load(atomic::Ordering::SeqCst), 1);
+    assert_eq!(push_count.load(atomic::Ordering::SeqCst), 3);
+    undo.undo(&doc)?;
+    assert_eq!(&*popped_value.lock().unwrap(), &LoroValue::I64(0));
+    assert_eq!(pop_count.load(atomic::Ordering::SeqCst), 2);
+    assert_eq!(push_count.load(atomic::Ordering::SeqCst), 4);
+    undo.redo(&doc)?;
+    assert_eq!(pop_count.load(atomic::Ordering::SeqCst), 3);
+    assert_eq!(push_count.load(atomic::Ordering::SeqCst), 5);
+    undo.redo(&doc)?;
+    assert_eq!(pop_count.load(atomic::Ordering::SeqCst), 4);
+    assert_eq!(push_count.load(atomic::Ordering::SeqCst), 6);
     Ok(())
 }

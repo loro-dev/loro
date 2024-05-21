@@ -7,7 +7,7 @@ use either::Either;
 use fxhash::FxHashMap;
 use loro_common::{
     ContainerID, Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult,
-    PeerID,
+    LoroValue, PeerID,
 };
 use tracing::{debug_span, info_span, instrument};
 
@@ -76,7 +76,23 @@ pub struct UndoManager {
     inner: Arc<Mutex<UndoManagerInner>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UndoOrRedo {
+    Undo,
+    Redo,
+}
+impl UndoOrRedo {
+    fn opposite(&self) -> UndoOrRedo {
+        match self {
+            Self::Undo => Self::Redo,
+            Self::Redo => Self::Undo,
+        }
+    }
+}
+
+pub type OnPush = Box<dyn Fn(UndoOrRedo, CounterSpan, &mut LoroValue) + Send + Sync>;
+pub type OnPop = Box<dyn Fn(UndoOrRedo, CounterSpan, LoroValue) + Send + Sync>;
+
 struct UndoManagerInner {
     latest_counter: Counter,
     undo_stack: Stack,
@@ -86,12 +102,35 @@ struct UndoManagerInner {
     merge_interval: i64,
     max_stack_size: usize,
     exclude_origin_prefixes: Vec<Box<str>>,
+    on_push: Option<OnPush>,
+    on_pop: Option<OnPop>,
+}
+
+impl std::fmt::Debug for UndoManagerInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UndoManagerInner")
+            .field("latest_counter", &self.latest_counter)
+            .field("undo_stack", &self.undo_stack)
+            .field("redo_stack", &self.redo_stack)
+            .field("processing_undo", &self.processing_undo)
+            .field("last_undo_time", &self.last_undo_time)
+            .field("merge_interval", &self.merge_interval)
+            .field("max_stack_size", &self.max_stack_size)
+            .field("exclude_origin_prefixes", &self.exclude_origin_prefixes)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
 struct Stack {
-    stack: VecDeque<(VecDeque<CounterSpan>, Arc<Mutex<DiffBatch>>)>,
+    stack: VecDeque<(VecDeque<StackItem>, Arc<Mutex<DiffBatch>>)>,
     size: usize,
+}
+
+#[derive(Debug)]
+struct StackItem {
+    span: CounterSpan,
+    meta: LoroValue,
 }
 
 impl Stack {
@@ -101,7 +140,7 @@ impl Stack {
         Stack { stack, size: 0 }
     }
 
-    pub fn pop(&mut self) -> Option<(CounterSpan, Arc<Mutex<DiffBatch>>)> {
+    pub fn pop(&mut self) -> Option<(StackItem, Arc<Mutex<DiffBatch>>)> {
         while self.stack.back().unwrap().0.is_empty() && self.stack.len() > 1 {
             let (_, diff) = self.stack.pop_back().unwrap();
             let diff = diff.try_lock().unwrap();
@@ -126,22 +165,22 @@ impl Stack {
         last.0.pop_back().map(|x| (x, last.1.clone()))
     }
 
-    pub fn push(&mut self, span: CounterSpan) {
-        self.push_with_merge(span, false)
+    pub fn push(&mut self, span: CounterSpan, meta: LoroValue) {
+        self.push_with_merge(span, meta, false)
     }
 
-    pub fn push_with_merge(&mut self, span: CounterSpan, can_merge: bool) {
+    pub fn push_with_merge(&mut self, span: CounterSpan, meta: LoroValue, can_merge: bool) {
         let last = self.stack.back_mut().unwrap();
         let mut last_remote_diff = last.1.try_lock().unwrap();
         if !last_remote_diff.0.is_empty() {
             // If the remote diff is not empty, we cannot merge
             if last.0.is_empty() {
-                last.0.push_back(span);
+                last.0.push_back(StackItem { span, meta });
                 last_remote_diff.clear();
             } else {
                 drop(last_remote_diff);
                 let mut v = VecDeque::new();
-                v.push_back(span);
+                v.push_back(StackItem { span, meta });
                 self.stack
                     .push_back((v, Arc::new(Mutex::new(DiffBatch::default()))));
             }
@@ -150,16 +189,16 @@ impl Stack {
         } else {
             if can_merge {
                 if let Some(last_span) = last.0.back_mut() {
-                    if last_span.end == span.start {
+                    if last_span.span.end == span.start {
                         // merge the span
-                        last_span.end = span.end;
+                        last_span.span.end = span.end;
                         return;
                     }
                 }
             }
 
             self.size += 1;
-            last.0.push_back(span);
+            last.0.push_back(StackItem { span, meta });
         }
     }
 
@@ -234,6 +273,8 @@ impl UndoManagerInner {
             last_undo_time: 0,
             max_stack_size: usize::MAX,
             exclude_origin_prefixes: vec![],
+            on_pop: None,
+            on_push: None,
         }
     }
 
@@ -245,11 +286,20 @@ impl UndoManagerInner {
         assert!(self.latest_counter < latest_counter);
         let now = get_sys_timestamp();
         let span = CounterSpan::new(self.latest_counter, latest_counter);
+        let meta = self
+            .on_push
+            .as_ref()
+            .map(|x| {
+                let mut v = LoroValue::Null;
+                x(UndoOrRedo::Undo, span, &mut v);
+                v
+            })
+            .unwrap_or_default();
         if !self.undo_stack.is_empty() && now - self.last_undo_time < self.merge_interval {
-            self.undo_stack.push_with_merge(span, true);
+            self.undo_stack.push_with_merge(span, meta, true);
         } else {
             self.last_undo_time = now;
-            self.undo_stack.push(span);
+            self.undo_stack.push(span, meta);
         }
 
         self.latest_counter = latest_counter;
@@ -318,6 +368,10 @@ impl UndoManager {
         }
     }
 
+    pub fn peer(&self) -> PeerID {
+        self.peer
+    }
+
     pub fn set_merge_interval(&mut self, interval: i64) {
         self.inner.try_lock().unwrap().merge_interval = interval;
     }
@@ -350,12 +404,22 @@ impl UndoManager {
 
     #[instrument(skip_all)]
     pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
-        self.perform(doc, |x| &mut x.undo_stack, |x| &mut x.redo_stack)
+        self.perform(
+            doc,
+            |x| &mut x.undo_stack,
+            |x| &mut x.redo_stack,
+            UndoOrRedo::Undo,
+        )
     }
 
     #[instrument(skip_all)]
     pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
-        self.perform(doc, |x| &mut x.redo_stack, |x| &mut x.undo_stack)
+        self.perform(
+            doc,
+            |x| &mut x.redo_stack,
+            |x| &mut x.undo_stack,
+            UndoOrRedo::Redo,
+        )
     }
 
     fn perform(
@@ -363,6 +427,7 @@ impl UndoManager {
         doc: &LoroDoc,
         get_stack: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
+        kind: UndoOrRedo,
     ) -> LoroResult<bool> {
         self.record_new_checkpoint(doc)?;
         let end_counter = get_counter_end(doc, self.peer);
@@ -376,12 +441,15 @@ impl UndoManager {
         while let Some((span, e)) = top {
             {
                 let inner = self.inner.clone();
+                if let Some(x) = inner.try_lock().unwrap().on_pop.as_ref() {
+                    x(kind, span.span, span.meta)
+                }
                 // TODO: Perf we can try to avoid this clone
                 let e = e.try_lock().unwrap().clone();
                 doc.undo_internal(
                     IdSpan {
                         peer: self.peer,
-                        counter: span,
+                        counter: span.span,
                     },
                     &mut self.container_remap,
                     Some(&e),
@@ -396,7 +464,20 @@ impl UndoManager {
             let new_counter = get_counter_end(doc, self.peer);
             if end_counter != new_counter {
                 let mut inner = self.inner.try_lock().unwrap();
-                get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter));
+                let meta = inner
+                    .on_push
+                    .as_ref()
+                    .map(|x| {
+                        let mut v = LoroValue::Null;
+                        x(
+                            kind.opposite(),
+                            CounterSpan::new(end_counter, new_counter),
+                            &mut v,
+                        );
+                        v
+                    })
+                    .unwrap_or_default();
+                get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter), meta);
                 inner.latest_counter = new_counter;
                 executed = true;
                 break;
@@ -417,6 +498,14 @@ impl UndoManager {
 
     pub fn can_redo(&self) -> bool {
         !self.inner.try_lock().unwrap().redo_stack.is_empty()
+    }
+
+    pub fn set_on_push(&self, on_push: Option<OnPush>) {
+        self.inner.try_lock().unwrap().on_push = on_push;
+    }
+
+    pub fn set_on_pop(&self, on_pop: Option<OnPop>) {
+        self.inner.try_lock().unwrap().on_pop = on_pop;
     }
 }
 
