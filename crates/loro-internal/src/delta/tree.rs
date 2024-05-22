@@ -20,7 +20,7 @@ pub struct TreeDiffItem {
     pub action: TreeExternalDiff,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, PartialEq, Copy, Serialize)]
 pub enum TreeExternalDiff {
     Create(Option<TreeID>),
     Move(Option<TreeID>),

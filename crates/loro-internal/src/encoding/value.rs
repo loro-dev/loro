@@ -14,7 +14,10 @@ use crate::{
     encoding::encode_reordered::MAX_COLLECTION_SIZE,
 };
 
-use super::arena::{DecodedArenas, EncodedRegisters, EncodedTreeID};
+use super::{
+    arena::{DecodedArenas, EncodedRegisters, EncodedTreeID},
+    future_value::OwnedFutureValue,
+};
 
 #[derive(Debug)]
 pub enum ValueKind {
@@ -88,7 +91,7 @@ pub enum FutureValueKind {
     #[cfg(feature = "counter")]
     Counter, // 16
     Unknown(u8),
-    JsonFormatUnknown,
+    JsonUnknown,
 }
 
 impl ValueKind {
@@ -113,8 +116,8 @@ impl ValueKind {
             ValueKind::Future(future_value_kind) => match future_value_kind {
                 #[cfg(feature = "counter")]
                 FutureValueKind::Counter => 16,
-                FutureValueKind::JsonFormatUnknown => 127,
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
+                FutureValueKind::JsonUnknown => 127,
             },
         }
     }
@@ -184,24 +187,14 @@ pub enum FutureValue<'a> {
         kind: u8,
         data: &'a [u8],
     },
-    JsonFormatUnknown(&'a str),
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value")]
-pub enum OwnedFutureValue {
-    #[cfg(feature = "counter")]
-    Counter,
-    // The future value cannot depend on the arena for encoding.
-    Unknown {
-        kind: u8,
-        data: Vec<u8>,
+    JsonUnknown {
+        value_type: &'a str,
+        value: &'a str,
     },
-    JsonFormatUnknown(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value")]
+#[serde(tag = "value_type", content = "value", rename_all = "snake_case")]
 pub enum OwnedValue {
     Null,
     True,
@@ -227,6 +220,7 @@ pub enum OwnedValue {
         lamport: Lamport,
         value: LoroValue,
     },
+    #[serde(untagged)]
     Future(OwnedFutureValue),
 }
 
@@ -268,13 +262,16 @@ impl<'a> Value<'a> {
             OwnedValue::Future(value) => match value {
                 #[cfg(feature = "counter")]
                 OwnedFutureValue::Counter => Value::Future(FutureValue::Counter),
-                OwnedFutureValue::Unknown { kind, data } => Value::Future(FutureValue::Unknown {
-                    kind: *kind,
-                    data: data.as_slice(),
-                }),
-                OwnedFutureValue::JsonFormatUnknown(data) => {
-                    Value::Future(FutureValue::JsonFormatUnknown(data.as_str()))
+                OwnedFutureValue::Unknown(super::future_value::Unknown { kind, data }) => {
+                    Value::Future(FutureValue::Unknown {
+                        kind: *kind,
+                        data: data.as_slice(),
+                    })
                 }
+                OwnedFutureValue::JsonUnknown(super::future_value::JsonUnknown {
+                    value_type,
+                    value,
+                }) => Value::Future(FutureValue::JsonUnknown { value_type, value }),
             },
         }
     }
@@ -317,14 +314,17 @@ impl<'a> Value<'a> {
                 #[cfg(feature = "counter")]
                 FutureValue::Counter => OwnedValue::Future(OwnedFutureValue::Counter),
                 FutureValue::Unknown { kind, data } => {
-                    OwnedValue::Future(OwnedFutureValue::Unknown {
+                    OwnedValue::Future(OwnedFutureValue::Unknown(super::future_value::Unknown {
                         kind,
                         data: data.to_owned(),
-                    })
+                    }))
                 }
-                FutureValue::JsonFormatUnknown(data) => {
-                    OwnedValue::Future(OwnedFutureValue::JsonFormatUnknown(data.to_owned()))
-                }
+                FutureValue::JsonUnknown { value_type, value } => OwnedValue::Future(
+                    OwnedFutureValue::JsonUnknown(super::future_value::JsonUnknown {
+                        value_type: value_type.to_owned(),
+                        value: value.to_owned(),
+                    }),
+                ),
             },
         }
     }
@@ -341,8 +341,10 @@ impl<'a> Value<'a> {
                 kind,
                 data: value_reader.take_bytes(bytes_length),
             },
-            FutureValueKind::JsonFormatUnknown => {
-                FutureValue::JsonFormatUnknown(value_reader.read_str()?)
+            FutureValueKind::JsonUnknown => {
+                let value_type = value_reader.read_str()?;
+                let value = value_reader.read_str()?;
+                FutureValue::JsonUnknown { value_type, value }
             }
         };
         Ok(Value::Future(value))
@@ -414,10 +416,11 @@ impl<'a> Value<'a> {
                 FutureValueKind::Unknown(kind),
                 value_writer.write_binary(data),
             ),
-            FutureValue::JsonFormatUnknown(data) => (
-                FutureValueKind::JsonFormatUnknown,
-                value_writer.write_str(data),
-            ),
+            FutureValue::JsonUnknown { value_type, value } => {
+                let mut len = value_writer.write_str(value_type);
+                len += value_writer.write_str(value);
+                (FutureValueKind::JsonUnknown, len)
+            }
         }
     }
 

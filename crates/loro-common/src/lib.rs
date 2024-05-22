@@ -257,6 +257,8 @@ mod container {
                 ContainerType::MovableList => "MovableList",
                 ContainerType::Text => "Text",
                 ContainerType::Tree => "Tree",
+
+                ContainerType::Unknown(k) => return f.write_fmt(format_args!("Unknown({})", k)),
             })
         }
     }
@@ -369,7 +371,7 @@ mod container {
                 "Tree" | "tree" => Ok(ContainerType::Tree),
                 "MovableList" | "movableList" => Ok(ContainerType::MovableList),
                 a => {
-                    if a.starts_with("Unknown(") {
+                    if a.ends_with(')') {
                         let k = a[8..a.len() - 1].parse().map_err(|_| {
                             LoroError::DecodeError(
                     format!("Unknown container type \"{}\". The valid options are Map|List|Text|Tree|MovableList.", value).into(),

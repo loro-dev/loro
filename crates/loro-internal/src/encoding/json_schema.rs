@@ -1,10 +1,12 @@
 mod op;
 
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 use self::op::{JsonSchema, OpContent};
 
-use loro_common::{ContainerType, LoroError, LoroResult, TreeID};
+use loro_common::{
+    ContainerID, ContainerType, IdLp, LoroError, LoroResult, LoroValue, PeerID, TreeID, ID,
+};
 use rle::{HasLength, Sliceable};
 
 use crate::{
@@ -21,7 +23,7 @@ use crate::{
     OpLog, VersionVector,
 };
 
-use super::encode_reordered::import_changes_to_oplog;
+use super::encode_reordered::{import_changes_to_oplog, ValueRegister};
 
 pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> String {
     let actual_start_vv: VersionVector = vv
@@ -39,14 +41,17 @@ pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> S
             Some((peer, end_counter))
         })
         .collect();
+
+    let mut peer_register = ValueRegister::<PeerID>::new();
     let diff_changes = init_encode(oplog, &actual_start_vv);
-    let changes = encode_changes(&diff_changes, &oplog.arena);
+    let changes = encode_changes(&diff_changes, &oplog.arena, &mut peer_register);
     serde_json::to_string_pretty(&JsonSchema {
         changes,
-        loro_version: "0.1.0",
+        schema_version: 1,
+        peers: peer_register.unwrap_vec(),
         // TODO:
-        start_vv: format!("{:?}", actual_start_vv),
-        end_vv: format!("{:?}", oplog.vv()),
+        start_vv: actual_start_vv,
+        end_vv: oplog.vv().clone(),
     })
     .unwrap()
 }
@@ -54,7 +59,7 @@ pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> S
 pub(crate) fn import_json(oplog: &mut OpLog, json: &str) -> LoroResult<()> {
     let json: JsonSchema = serde_json::from_str(json)
         .map_err(|e| LoroError::DecodeError(format!("cannot decode json {}", e).into()))?;
-    let changes = decode_changes(json.changes, &oplog.arena);
+    let changes = decode_changes(json, &oplog.arena);
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
@@ -80,9 +85,83 @@ fn init_encode<'a>(oplog: &'a OpLog, vv: &'_ VersionVector) -> Vec<Cow<'a, Chang
     diff_changes
 }
 
+fn register_id(id: &ID, peer_register: &mut ValueRegister<PeerID>) -> ID {
+    let peer = peer_register.register(&id.peer);
+    ID::new(peer as PeerID, id.counter)
+}
+
+fn register_idlp(idlp: &IdLp, peer_register: &mut ValueRegister<PeerID>) -> IdLp {
+    IdLp {
+        peer: peer_register.register(&idlp.peer) as PeerID,
+        lamport: idlp.lamport,
+    }
+}
+
+fn register_tree_id(tree: &TreeID, peer_register: &mut ValueRegister<PeerID>) -> TreeID {
+    TreeID {
+        peer: peer_register.register(&tree.peer) as PeerID,
+        counter: tree.counter,
+    }
+}
+
+fn register_container_id(
+    container: ContainerID,
+    peer_register: &mut ValueRegister<PeerID>,
+) -> ContainerID {
+    match container {
+        ContainerID::Normal {
+            peer,
+            counter,
+            container_type,
+        } => ContainerID::Normal {
+            peer: peer_register.register(&peer) as PeerID,
+            counter,
+            container_type,
+        },
+        r => r,
+    }
+}
+
+fn convert_container_id(container: ContainerID, peers: &[PeerID]) -> ContainerID {
+    match container {
+        ContainerID::Normal {
+            peer,
+            counter,
+            container_type,
+        } => ContainerID::Normal {
+            peer: peers[peer as usize],
+            counter,
+            container_type,
+        },
+        r => r,
+    }
+}
+
+fn convert_id(id: &ID, peers: &[PeerID]) -> ID {
+    ID {
+        peer: peers[id.peer as usize],
+        counter: id.counter,
+    }
+}
+
+fn convert_idlp(idlp: &IdLp, peers: &[PeerID]) -> IdLp {
+    IdLp {
+        lamport: idlp.lamport,
+        peer: peers[idlp.peer as usize],
+    }
+}
+
+fn convert_tree_id(tree: &TreeID, peers: &[PeerID]) -> TreeID {
+    TreeID {
+        peer: peers[tree.peer as usize],
+        counter: tree.counter,
+    }
+}
+
 fn encode_changes<'a, 'c: 'a>(
     diff_changes: &'c [Cow<'_, Change>],
     arena: &SharedArena,
+    peer_register: &mut ValueRegister<PeerID>,
 ) -> Vec<op::Change<'a>> {
     let mut changes = Vec::with_capacity(diff_changes.len());
     for change in diff_changes.iter() {
@@ -93,13 +172,23 @@ fn encode_changes<'a, 'c: 'a>(
             content,
         } in change.ops().iter()
         {
-            let container = arena.get_container_id(*container).unwrap();
+            let mut container = arena.get_container_id(*container).unwrap();
+            if container.is_normal() {
+                container = register_container_id(container, peer_register);
+            }
             let op = match container.container_type() {
                 ContainerType::List => match content {
                     InnerContent::List(list) => OpContent::List(match list {
                         InnerListOp::Insert { slice, pos } => {
-                            let value =
+                            let mut value =
                                 arena.get_values(slice.0.start as usize..slice.0.end as usize);
+                            value.iter_mut().for_each(|x| {
+                                if let LoroValue::Container(id) = x {
+                                    if id.is_normal() {
+                                        *id = register_container_id(id.clone(), peer_register);
+                                    }
+                                }
+                            });
                             op::ListOp::Insert {
                                 pos: *pos,
                                 value: value.into(),
@@ -111,7 +200,7 @@ fn encode_changes<'a, 'c: 'a>(
                         }) => op::ListOp::Delete {
                             pos: *pos,
                             len: *signed_len,
-                            delete_start_id: *id_start,
+                            delete_start_id: register_id(id_start, peer_register),
                         },
                         _ => unreachable!(),
                     }),
@@ -120,8 +209,15 @@ fn encode_changes<'a, 'c: 'a>(
                 ContainerType::MovableList => match content {
                     InnerContent::List(list) => OpContent::MovableList(match list {
                         InnerListOp::Insert { slice, pos } => {
-                            let value =
+                            let mut value =
                                 arena.get_values(slice.0.start as usize..slice.0.end as usize);
+                            value.iter_mut().for_each(|x| {
+                                if let LoroValue::Container(id) = x {
+                                    if id.is_normal() {
+                                        *id = register_container_id(id.clone(), peer_register);
+                                    }
+                                }
+                            });
                             op::MovableListOp::Insert {
                                 pos: *pos,
                                 value: value.into(),
@@ -133,17 +229,31 @@ fn encode_changes<'a, 'c: 'a>(
                         }) => op::MovableListOp::Delete {
                             pos: *pos,
                             len: *signed_len,
-                            delete_start_id: *id_start,
+                            delete_start_id: register_id(id_start, peer_register),
                         },
                         InnerListOp::Move { from, from_id, to } => op::MovableListOp::Move {
                             from: *from,
                             to: *to,
-                            from_id: *from_id,
+                            from_id: register_idlp(from_id, peer_register),
                         },
-                        InnerListOp::Set { elem_id, value } => op::MovableListOp::Set {
-                            elem_id: *elem_id,
-                            value: value.clone(),
-                        },
+                        InnerListOp::Set { elem_id, value } => {
+                            let value = if let LoroValue::Container(id) = value {
+                                if id.is_normal() {
+                                    LoroValue::Container(register_container_id(
+                                        id.clone(),
+                                        peer_register,
+                                    ))
+                                } else {
+                                    value.clone()
+                                }
+                            } else {
+                                value.clone()
+                            };
+                            op::MovableListOp::Set {
+                                elem_id: register_idlp(elem_id, peer_register),
+                                value,
+                            }
+                        }
                         _ => unreachable!(),
                     }),
                     _ => unreachable!(),
@@ -165,7 +275,7 @@ fn encode_changes<'a, 'c: 'a>(
                         }) => op::TextOp::Delete {
                             pos: *pos,
                             len: *signed_len,
-                            id_start: *id_start,
+                            id_start: register_id(id_start, peer_register),
                         },
                         InnerListOp::StyleStart {
                             start,
@@ -187,9 +297,21 @@ fn encode_changes<'a, 'c: 'a>(
                 ContainerType::Map => match content {
                     InnerContent::Map(MapSet { key, value }) => {
                         OpContent::Map(if let Some(v) = value {
+                            let value = if let LoroValue::Container(id) = v {
+                                if id.is_normal() {
+                                    LoroValue::Container(register_container_id(
+                                        id.clone(),
+                                        peer_register,
+                                    ))
+                                } else {
+                                    v.clone()
+                                }
+                            } else {
+                                v.clone()
+                            };
                             op::MapOp::Insert {
                                 key: key.to_string(),
-                                value: v.clone(),
+                                value,
                             }
                         } else {
                             op::MapOp::Delete {
@@ -210,17 +332,19 @@ fn encode_changes<'a, 'c: 'a>(
                     }) => OpContent::Tree({
                         if let Some(p) = parent {
                             if TreeID::is_deleted_root(p) {
-                                op::TreeOp::Delete { target: *target }
+                                op::TreeOp::Delete {
+                                    target: register_tree_id(target, peer_register),
+                                }
                             } else {
                                 op::TreeOp::Move {
-                                    target: *target,
-                                    parent: *parent,
+                                    target: register_tree_id(target, peer_register),
+                                    parent: Some(register_tree_id(p, peer_register)),
                                     fractional_index: position.as_ref().unwrap().clone(),
                                 }
                             }
                         } else {
                             op::TreeOp::Move {
-                                target: *target,
+                                target: register_tree_id(target, peer_register),
                                 parent: None,
                                 fractional_index: position.as_ref().unwrap().clone(),
                             }
@@ -234,9 +358,9 @@ fn encode_changes<'a, 'c: 'a>(
                     else {
                         unreachable!();
                     };
-                    OpContent::Future(op::FutureOp::Unknown {
+                    OpContent::Future(op::FutureOpWrapper {
                         prop: *prop,
-                        value: Cow::Borrowed(value),
+                        value: op::FutureOp::Unknown(Cow::Borrowed(value)),
                     })
                 }
                 #[cfg(feature = "counter")]
@@ -245,9 +369,14 @@ fn encode_changes<'a, 'c: 'a>(
                         unreachable!()
                     };
                     match f {
-                        FutureInnerContent::Counter(x) => {
-                            OpContent::Future(op::FutureOp::Counter(*x))
-                        }
+                        FutureInnerContent::Counter(x) => OpContent::Future(op::FutureOpWrapper {
+                            prop: *x as i32,
+                            value: op::FutureOp::Counter(std::borrow::Cow::Owned(
+                                super::value::OwnedValue::Future(
+                                    super::future_value::OwnedFutureValue::Counter,
+                                ),
+                            )),
+                        }),
                         _ => unreachable!(),
                     }
                 }
@@ -259,9 +388,13 @@ fn encode_changes<'a, 'c: 'a>(
             });
         }
         let c = op::Change {
-            id: change.id,
+            id: register_id(&change.id, peer_register),
             ops,
-            deps: change.deps.iter().copied().collect(),
+            deps: change
+                .deps
+                .iter()
+                .map(|id| register_id(id, peer_register))
+                .collect(),
             lamport: change.lamport,
             timestamp: change.timestamp,
             msg: None,
@@ -271,8 +404,9 @@ fn encode_changes<'a, 'c: 'a>(
     changes
 }
 
-fn decode_changes(json_changes: Vec<op::Change>, arena: &SharedArena) -> Vec<Change> {
-    let mut ans = Vec::with_capacity(json_changes.len());
+fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
+    let JsonSchema { peers, changes, .. } = json;
+    let mut ans = Vec::with_capacity(changes.len());
     for op::Change {
         id,
         timestamp,
@@ -280,13 +414,17 @@ fn decode_changes(json_changes: Vec<op::Change>, arena: &SharedArena) -> Vec<Cha
         lamport,
         msg: _,
         ops,
-    } in json_changes
+    } in changes
     {
-        let ops = ops.into_iter().map(|op| decode_op(op, arena)).collect();
+        let id = convert_id(&id, &peers);
+        let ops = ops
+            .into_iter()
+            .map(|op| decode_op(op, arena, &peers))
+            .collect();
         let change = Change {
             id,
             timestamp,
-            deps: Frontiers::from_iter(deps.into_iter()),
+            deps: Frontiers::from_iter(deps.into_iter().map(|id| convert_id(&id, &peers))),
             lamport,
             ops,
             has_dependents: false,
@@ -296,12 +434,13 @@ fn decode_changes(json_changes: Vec<op::Change>, arena: &SharedArena) -> Vec<Cha
     ans
 }
 
-fn decode_op(op: op::Op, arena: &SharedArena) -> Op {
+fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
     let op::Op {
         counter,
         container,
         content,
     } = op;
+    let container = convert_container_id(container, peers);
     let idx = arena.register_container(&container);
     let content = match container.container_type() {
         ContainerType::Text => match content {
@@ -316,6 +455,7 @@ fn decode_op(op: op::Op, arena: &SharedArena) -> Op {
                     })
                 }
                 op::TextOp::Delete { pos, len, id_start } => {
+                    let id_start = convert_id(&id_start, peers);
                     InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
                         id_start,
                         span: DeleteSpan {
@@ -343,7 +483,15 @@ fn decode_op(op: op::Op, arena: &SharedArena) -> Op {
         ContainerType::List => match content {
             OpContent::List(list) => match list {
                 op::ListOp::Insert { pos, value } => {
-                    let range = arena.alloc_values(value.into_list().unwrap().iter().cloned());
+                    let mut values = value.into_list().unwrap();
+                    Arc::make_mut(&mut values).iter_mut().for_each(|v| {
+                        if let LoroValue::Container(id) = v {
+                            if id.is_normal() {
+                                *id = convert_container_id(id.clone(), peers);
+                            }
+                        }
+                    });
+                    let range = arena.alloc_values(values.iter().cloned());
                     InnerContent::List(InnerListOp::Insert {
                         slice: SliceRange::new(range.start as u32..range.end as u32),
                         pos,
@@ -354,7 +502,7 @@ fn decode_op(op: op::Op, arena: &SharedArena) -> Op {
                     len,
                     delete_start_id,
                 } => InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
-                    id_start: delete_start_id,
+                    id_start: convert_id(&delete_start_id, peers),
                     span: DeleteSpan {
                         pos,
                         signed_len: len,
@@ -366,7 +514,15 @@ fn decode_op(op: op::Op, arena: &SharedArena) -> Op {
         ContainerType::MovableList => match content {
             OpContent::MovableList(list) => match list {
                 op::MovableListOp::Insert { pos, value } => {
-                    let range = arena.alloc_values(value.into_list().unwrap().iter().cloned());
+                    let mut values = value.into_list().unwrap();
+                    Arc::make_mut(&mut values).iter_mut().for_each(|v| {
+                        if let LoroValue::Container(id) = v {
+                            if id.is_normal() {
+                                *id = convert_container_id(id.clone(), peers);
+                            }
+                        }
+                    });
+                    let range = arena.alloc_values(values.iter().cloned());
                     InnerContent::List(InnerListOp::Insert {
                         slice: SliceRange::new(range.start as u32..range.end as u32),
                         pos,
@@ -377,16 +533,21 @@ fn decode_op(op: op::Op, arena: &SharedArena) -> Op {
                     len,
                     delete_start_id,
                 } => InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
-                    id_start: delete_start_id,
+                    id_start: convert_id(&delete_start_id, peers),
                     span: DeleteSpan {
                         pos,
                         signed_len: len,
                     },
                 })),
                 op::MovableListOp::Move { from, from_id, to } => {
+                    let from_id = convert_idlp(&from_id, peers);
                     InnerContent::List(InnerListOp::Move { from, from_id, to })
                 }
-                op::MovableListOp::Set { elem_id, value } => {
+                op::MovableListOp::Set { elem_id, mut value } => {
+                    let elem_id = convert_idlp(&elem_id, peers);
+                    if let LoroValue::Container(id) = &mut value {
+                        *id = convert_container_id(id.clone(), peers);
+                    }
                     InnerContent::List(InnerListOp::Set { elem_id, value })
                 }
             },
@@ -394,10 +555,15 @@ fn decode_op(op: op::Op, arena: &SharedArena) -> Op {
         },
         ContainerType::Map => match content {
             OpContent::Map(map) => match map {
-                op::MapOp::Insert { key, value } => InnerContent::Map(MapSet {
-                    key: key.into(),
-                    value: Some(value),
-                }),
+                op::MapOp::Insert { key, mut value } => {
+                    if let LoroValue::Container(id) = &mut value {
+                        *id = convert_container_id(id.clone(), peers);
+                    }
+                    InnerContent::Map(MapSet {
+                        key: key.into(),
+                        value: Some(value),
+                    })
+                }
                 op::MapOp::Delete { key } => InnerContent::Map(MapSet {
                     key: key.into(),
                     value: None,
@@ -412,12 +578,12 @@ fn decode_op(op: op::Op, arena: &SharedArena) -> Op {
                     parent,
                     fractional_index,
                 } => InnerContent::Tree(TreeOp {
-                    target,
-                    parent,
+                    target: convert_tree_id(&target, peers),
+                    parent: parent.map(|p| convert_tree_id(&p, peers)),
                     position: Some(fractional_index),
                 }),
                 op::TreeOp::Delete { target } => InnerContent::Tree(TreeOp {
-                    target,
+                    target: convert_tree_id(&target, peers),
                     parent: Some(TreeID::delete_root()),
                     position: None,
                 }),
@@ -425,22 +591,25 @@ fn decode_op(op: op::Op, arena: &SharedArena) -> Op {
             _ => unreachable!(),
         },
         ContainerType::Unknown(_) => match content {
-            OpContent::Future(op::FutureOp::Unknown { prop, value }) => {
-                InnerContent::Future(FutureInnerContent::Unknown {
-                    prop,
-                    value: value.into_owned(),
-                })
-            }
+            OpContent::Future(op::FutureOpWrapper {
+                prop,
+                value: op::FutureOp::Unknown(value),
+            }) => InnerContent::Future(FutureInnerContent::Unknown {
+                prop,
+                value: value.into_owned(),
+            }),
             _ => unreachable!(),
         },
         #[cfg(feature = "counter")]
         ContainerType::Counter => {
-            let OpContent::Future(f) = content else {
+            let OpContent::Future(op::FutureOpWrapper { prop, value }) = content else {
                 unreachable!()
             };
-            match f {
-                op::FutureOp::Counter(x) => InnerContent::Future(FutureInnerContent::Counter(x)),
-                op::FutureOp::Unknown { prop, value: _ } => {
+            match value {
+                op::FutureOp::Counter(_) => {
+                    InnerContent::Future(FutureInnerContent::Counter(prop as i64))
+                }
+                op::FutureOp::Unknown(_) => {
                     InnerContent::Future(FutureInnerContent::Counter(prop as i64))
                 }
             }
