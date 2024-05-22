@@ -1,21 +1,23 @@
 use std::borrow::Cow;
 
 use fractional_index::FractionalIndex;
-use loro_common::{ContainerID, IdLp, Lamport, LoroValue, TreeID, ID};
+use loro_common::{ContainerID, IdLp, Lamport, LoroValue, PeerID, TreeID, ID};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
-use crate::encoding::OwnedValue;
+use crate::{encoding::OwnedValue, VersionVector};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsonSchema<'a> {
-    pub loro_version: &'a str,
-    pub start_vv: String,
-    pub end_vv: String,
+    pub schema_version: u8,
+    pub start_vv: VersionVector,
+    pub end_vv: VersionVector,
+    pub peers: Vec<PeerID>,
     pub changes: Vec<Change<'a>>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Change<'a> {
+    #[serde(with = "self::serde_impl::id")]
     pub id: ID,
     pub timestamp: i64,
     pub deps: SmallVec<[ID; 2]>,
@@ -39,12 +41,19 @@ pub enum OpContent<'a> {
     Map(MapOp),
     Text(TextOp),
     Tree(TreeOp),
-    #[serde(with = "self::serde_impl::future_op")]
-    Future(FutureOp<'a>),
+    // #[serde(with = "self::serde_impl::future_op")]
+    Future(FutureOpWrapper<'a>),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+pub struct FutureOpWrapper<'a> {
+    #[serde(flatten)]
+    pub value: FutureOp<'a>,
+    pub prop: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum ListOp {
     Insert {
         pos: usize,
@@ -53,12 +62,13 @@ pub enum ListOp {
     Delete {
         pos: isize,
         len: isize,
+        #[serde(with = "self::serde_impl::id")]
         delete_start_id: ID,
     },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum MovableListOp {
     Insert {
         pos: usize,
@@ -67,28 +77,31 @@ pub enum MovableListOp {
     Delete {
         pos: isize,
         len: isize,
+        #[serde(with = "self::serde_impl::id")]
         delete_start_id: ID,
     },
     Move {
         from: u32,
         to: u32,
+        #[serde(with = "self::serde_impl::idlp")]
         from_id: IdLp,
     },
     Set {
+        #[serde(with = "self::serde_impl::idlp")]
         elem_id: IdLp,
         value: LoroValue,
     },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum MapOp {
     Insert { key: String, value: LoroValue },
     Delete { key: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum TextOp {
     Insert {
         pos: u32,
@@ -97,6 +110,7 @@ pub enum TextOp {
     Delete {
         pos: isize,
         len: isize,
+        #[serde(with = "self::serde_impl::id")]
         id_start: ID,
     },
     Mark {
@@ -109,7 +123,7 @@ pub enum TextOp {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum TreeOp {
     // Create {
     //     target: TreeID,
@@ -119,6 +133,7 @@ pub enum TreeOp {
     Move {
         target: TreeID,
         parent: Option<TreeID>,
+        #[serde(default)]
         fractional_index: FractionalIndex,
     },
     Delete {
@@ -126,21 +141,21 @@ pub enum TreeOp {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum FutureOp<'a> {
     #[cfg(feature = "counter")]
-    Counter(i64),
-    Unknown {
-        prop: i32,
-        value: Cow<'a, OwnedValue>,
-    },
+    Counter(Cow<'a, OwnedValue>),
+    Unknown(Cow<'a, OwnedValue>),
 }
 
 mod serde_impl {
+
     use loro_common::{ContainerID, ContainerType};
     use serde::{
-        de::Visitor, ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer,
+        de::{MapAccess, Visitor},
+        ser::SerializeStruct,
+        Deserialize, Deserializer, Serialize, Serializer,
     };
 
     impl<'a> Serialize for super::Op<'a> {
@@ -173,14 +188,14 @@ mod serde_impl {
 
                 fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
                 where
-                    A: serde::de::MapAccess<'de>,
+                    A: MapAccess<'de>,
                 {
                     let (_key, container) = map.next_entry::<&str, &str>()?.unwrap();
                     let is_unknown = container.ends_with(')');
                     let container = ContainerID::try_from(container)
                         .map_err(|_| serde::de::Error::custom("invalid container id"))?;
                     let op = if is_unknown {
-                        let (_key, op) = map.next_entry::<&str, super::FutureOp>()?.unwrap();
+                        let (_key, op) = map.next_entry::<&str, super::FutureOpWrapper>()?.unwrap();
                         super::OpContent::Future(op)
                     } else {
                         match container.container_type() {
@@ -207,8 +222,15 @@ mod serde_impl {
                             }
                             #[cfg(feature = "counter")]
                             ContainerType::Counter => {
-                                let (_key, op) = map.next_entry::<&str, i64>()?.unwrap();
-                                super::OpContent::Future(super::FutureOp::Counter(op))
+                                let (_key, v) = map.next_entry::<&str, i64>()?.unwrap();
+                                super::OpContent::Future(super::FutureOpWrapper {
+                                    prop: v as i32,
+                                    value: super::FutureOp::Counter(std::borrow::Cow::Owned(
+                                        crate::encoding::value::OwnedValue::Future(
+                                            crate::encoding::future_value::OwnedFutureValue::Counter,
+                                        ),
+                                    )),
+                                })
                             }
                             _ => unreachable!(),
                         }
@@ -234,26 +256,106 @@ mod serde_impl {
 
     pub mod future_op {
 
-        use serde::{Deserialize, Deserializer, Serializer};
+        use serde::{Deserialize, Deserializer};
 
         use crate::encoding::json_schema::op::FutureOp;
 
-        pub fn serialize<S>(op: &FutureOp<'_>, s: S) -> Result<S::Ok, S::Error>
+        impl<'de, 'a> Deserialize<'de> for FutureOp<'a> {
+            fn deserialize<D>(d: D) -> Result<FutureOp<'a>, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                enum Field {
+                    #[cfg(feature = "counter")]
+                    Counter,
+                    Unknown,
+                }
+                struct FieldVisitor;
+                impl<'de> serde::de::Visitor<'de> for FieldVisitor {
+                    type Value = Field;
+                    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        f.write_str("field identifier")
+                    }
+                    fn visit_str<E>(self, value: &str) -> Result<Field, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            #[cfg(feature = "counter")]
+                            "counter" => Ok(Field::Counter),
+                            _ => Ok(Field::Unknown),
+                        }
+                    }
+                }
+                impl<'de> Deserialize<'de> for Field {
+                    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+                    where
+                        D: Deserializer<'de>,
+                    {
+                        deserializer.deserialize_identifier(FieldVisitor)
+                    }
+                }
+                let (tag, content) =
+                    d.deserialize_any(serde::__private::de::TaggedContentVisitor::<Field>::new(
+                        "type",
+                        "internally tagged enum FutureOp",
+                    ))?;
+                let __deserializer =
+                    serde::__private::de::ContentDeserializer::<D::Error>::new(content);
+                match tag {
+                    #[cfg(feature = "counter")]
+                    Field::Counter => {
+                        let v = serde::Deserialize::deserialize(__deserializer)?;
+                        Ok(FutureOp::Counter(v))
+                    }
+                    _ => {
+                        let v = serde::Deserialize::deserialize(__deserializer)?;
+                        Ok(FutureOp::Unknown(v))
+                    }
+                }
+            }
+        }
+    }
+
+    pub mod id {
+        use loro_common::ID;
+        use serde::{Deserialize, Deserializer, Serializer};
+
+        pub fn serialize<S>(id: &ID, s: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            let json_str = serde_json::to_string_pretty(op).unwrap();
-            s.serialize_str(&json_str)
+            s.serialize_str(&id.to_string())
         }
 
-        pub fn deserialize<'de, 'a, D>(d: D) -> Result<FutureOp<'a>, D::Error>
+        pub fn deserialize<'de, 'a, D>(d: D) -> Result<ID, D::Error>
         where
             D: Deserializer<'de>,
         {
             let str: &str = Deserialize::deserialize(d)?;
-            let future_op: FutureOp =
-                serde_json::from_str(str).map_err(serde::de::Error::custom)?;
-            Ok(future_op)
+            let id: ID = ID::try_from(str).unwrap();
+            Ok(id)
+        }
+    }
+
+    pub mod idlp {
+        use loro_common::IdLp;
+        use serde::{Deserialize, Deserializer, Serializer};
+
+        pub fn serialize<S>(idlp: &IdLp, s: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            s.serialize_str(&idlp.to_string())
+        }
+
+        pub fn deserialize<'de, 'a, D>(d: D) -> Result<IdLp, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let str: &str = Deserialize::deserialize(d)?;
+            let id: IdLp = IdLp::try_from(str).unwrap();
+            Ok(id)
         }
     }
 }

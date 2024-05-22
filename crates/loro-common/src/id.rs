@@ -57,6 +57,32 @@ impl TryFrom<&str> for ID {
     }
 }
 
+impl TryFrom<&str> for IdLp {
+    type Error = LoroError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        if value.split('@').count() != 2 || !value.starts_with('L') {
+            return Err(LoroError::DecodeError("Invalid ID format".into()));
+        }
+
+        let mut iter = value[1..].split('@');
+        let lamport = iter
+            .next()
+            .unwrap()
+            .parse::<Lamport>()
+            .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
+        let client_id = iter
+            .next()
+            .unwrap()
+            .parse::<u64>()
+            .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
+        Ok(IdLp {
+            peer: client_id,
+            lamport,
+        })
+    }
+}
+
 impl PartialOrd for ID {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))

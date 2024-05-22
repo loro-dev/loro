@@ -120,3 +120,47 @@ fn redo_tree_id_diff() {
         ],
     );
 }
+
+#[test]
+fn tree_delete() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 33,
+                target: 147,
+                container: 2,
+                action: Generic(GenericAction {
+                    value: I32(2071690107),
+                    bool: true,
+                    key: 2223278715,
+                    pos: 11357407135578037636,
+                    length: 11357407135578037661,
+                    prop: 11357407135578037661,
+                }),
+            },
+            SyncAllUndo {
+                site: 223,
+                op_len: 33721747,
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: I32(-1971618949),
+                    bool: false,
+                    key: 2644345988,
+                    pos: 11357407135578037661,
+                    length: 11357407135578037661,
+                    prop: 11357407135578037661,
+                }),
+            },
+            SyncAllUndo {
+                site: 157,
+                op_len: 2644352413,
+            },
+        ],
+    )
+}
