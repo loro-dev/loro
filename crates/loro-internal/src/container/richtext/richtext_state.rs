@@ -1907,7 +1907,10 @@ impl RichtextState {
             return index;
         }
 
-        let cursor = self.tree.query::<EventIndexQuery>(&index).unwrap();
+        let Some(cursor) = self.tree.query::<EventIndexQuery>(&index) else {
+            return 0;
+        };
+
         self.cursor_to_unicode_index(cursor.cursor)
     }
 

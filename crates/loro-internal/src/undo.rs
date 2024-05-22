@@ -64,15 +64,25 @@ impl DiffBatch {
     }
 }
 
-fn transform_cursor(cursor_with_pos: &mut CursorWithPos, remote_diff: &DiffBatch, doc: &LoroDoc) {
-    if let Some(diff) = remote_diff.0.get(&cursor_with_pos.cursor.container) {
+fn transform_cursor(
+    cursor_with_pos: &mut CursorWithPos,
+    remote_diff: &DiffBatch,
+    doc: &LoroDoc,
+    container_remap: &FxHashMap<ContainerID, ContainerID>,
+) {
+    let mut cid = &cursor_with_pos.cursor.container;
+    while let Some(new_cid) = container_remap.get(&cid) {
+        cid = new_cid;
+    }
+
+    if let Some(diff) = remote_diff.0.get(cid) {
         let new_pos = diff.transform_cursor(cursor_with_pos.pos.pos, false);
         cursor_with_pos.pos.pos = new_pos;
     };
 
     let new_pos = cursor_with_pos.pos.pos;
     trace!("new_pos: {:?}", new_pos);
-    match doc.get_handler(cursor_with_pos.cursor.container.clone()) {
+    match doc.get_handler(cid.clone()) {
         crate::handler::Handler::Text(h) => {
             let Some(new_cursor) = h.get_cursor_internal(new_pos, cursor_with_pos.pos.side, false)
             else {
@@ -547,7 +557,12 @@ impl UndoManager {
                         // <cursor_transform> We need to transform cursor here.
                         // Note that right now <transform_delta> is already done,
                         // remote_diff is also transformed by it now (that's what we need).
-                        transform_cursor(cursor, &remote_diff.try_lock().unwrap(), doc);
+                        transform_cursor(
+                            cursor,
+                            &remote_diff.try_lock().unwrap(),
+                            doc,
+                            &self.container_remap,
+                        );
                     }
                     x(kind, span.span, span.meta)
                 }
@@ -677,7 +692,7 @@ pub(crate) fn undo(
             // --------------------------------------------------
             // 3. Transform event A'_i based on B_i, call it C_i
             // --------------------------------------------------
-            event_a_prime.transform(&event_b_i, true);
+            event_a_prime.transform(event_b_i, true);
             trace!("Event C_i: {:?}", &event_a_prime);
             let c_i = event_a_prime;
 

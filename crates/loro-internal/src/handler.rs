@@ -1768,7 +1768,7 @@ impl TextHandler {
                         } else {
                             side
                         },
-                        origin_pos,
+                        origin_pos: 0,
                     });
                 }
 
@@ -2153,7 +2153,7 @@ impl ListHandler {
                         } else {
                             side
                         },
-                        origin_pos: pos,
+                        origin_pos: 0,
                     });
                 }
 
@@ -2805,7 +2805,7 @@ impl MovableListHandler {
                         } else {
                             side
                         },
-                        origin_pos: pos,
+                        origin_pos: 0,
                     });
                 }
 
