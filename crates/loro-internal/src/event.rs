@@ -457,13 +457,11 @@ impl Diff {
 
     /// Transform the cursor based on this diff
     pub(crate) fn transform_cursor(&self, pos: usize, left_prior: bool) -> usize {
-        trace!("Transofrm cursor {:#?} {} {}", self, pos, left_prior);
         let ans = match self {
             Diff::List(list) => list.transform_pos(pos, left_prior),
             Diff::Text(text) => text.transform_pos(pos, left_prior),
             _ => pos,
         };
-        trace!("Transform cursor result: {}", ans);
         ans
     }
 }

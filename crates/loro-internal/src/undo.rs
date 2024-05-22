@@ -81,7 +81,6 @@ fn transform_cursor(
     };
 
     let new_pos = cursor_with_pos.pos.pos;
-    trace!("new_pos: {:?}", new_pos);
     match doc.get_handler(cid.clone()) {
         crate::handler::Handler::Text(h) => {
             let Some(new_cursor) = h.get_cursor_internal(new_pos, cursor_with_pos.pos.side, false)
@@ -89,7 +88,6 @@ fn transform_cursor(
                 return;
             };
 
-            trace!("new cursor {:#?}", &new_cursor);
             cursor_with_pos.cursor = new_cursor;
         }
         crate::handler::Handler::List(h) => {
@@ -693,7 +691,6 @@ pub(crate) fn undo(
             // 3. Transform event A'_i based on B_i, call it C_i
             // --------------------------------------------------
             event_a_prime.transform(event_b_i, true);
-            trace!("Event C_i: {:?}", &event_a_prime);
             let c_i = event_a_prime;
 
             last_ci = Some(c_i);
