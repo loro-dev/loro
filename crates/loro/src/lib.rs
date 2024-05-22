@@ -29,12 +29,12 @@ use std::sync::Arc;
 use tracing::info;
 
 pub mod event;
-
 pub use loro_internal::awareness;
 pub use loro_internal::configure::Configure;
 pub use loro_internal::configure::StyleConfigMap;
 pub use loro_internal::container::richtext::ExpandType;
 pub use loro_internal::container::{ContainerID, ContainerType};
+pub use loro_internal::cursor;
 pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
 pub use loro_internal::event::Index;
 pub use loro_internal::handler::TextDelta;
@@ -469,6 +469,11 @@ impl LoroDoc {
         cursor: &Cursor,
     ) -> Result<PosQueryResult, CannotFindRelativePosition> {
         self.doc.query_pos(cursor)
+    }
+
+    /// Get the inner LoroDoc ref.
+    pub fn inner(&self) -> &InnerLoroDoc {
+        &self.doc
     }
 }
 

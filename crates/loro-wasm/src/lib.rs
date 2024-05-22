@@ -18,7 +18,7 @@ use loro_internal::{
     id::{Counter, TreeID, ID},
     loro::CommitOptions,
     obs::SubID,
-    undo::UndoOrRedo,
+    undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
     ContainerType, DiffEvent, HandlerTrait, LoroDoc, LoroValue, MovableListHandler,
     UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
@@ -26,13 +26,13 @@ use loro_internal::{
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
-use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
+use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 
 mod awareness;
 mod log;
 
-use crate::convert::{handler_to_js_value, js_to_container};
+use crate::convert::{handler_to_js_value, js_to_container, js_to_cursor};
 pub use awareness::AwarenessWasm;
 
 mod convert;
@@ -188,7 +188,7 @@ mod observer {
             if std::thread::current().id() == self.thread {
                 self.f.call1(&JsValue::NULL, arg)
             } else {
-                panic!("Observer called from different thread")
+                Err(JsValue::from_str("Observer called from different thread"))
             }
         }
 
@@ -196,7 +196,7 @@ mod observer {
             if std::thread::current().id() == self.thread {
                 self.f.call2(&JsValue::NULL, arg1, arg2)
             } else {
-                panic!("Observer called from different thread")
+                Err(JsValue::from_str("Observer called from different thread"))
             }
         }
 
@@ -204,7 +204,7 @@ mod observer {
             if std::thread::current().id() == self.thread {
                 self.f.call3(&JsValue::NULL, arg1, arg2, arg3)
             } else {
-                panic!("Observer called from different thread")
+                Err(JsValue::from_str("Observer called from different thread"))
             }
         }
     }
@@ -1256,7 +1256,9 @@ fn call_subscriber(ob: observer::Observer, e: DiffEvent, doc: &Arc<LoroDoc>) {
     // [1]: https://caniuse.com/?search=FinalizationRegistry
     // [2]: https://rustwasm.github.io/wasm-bindgen/reference/weak-references.html
     let event = diff_event_to_js_value(e, doc);
-    ob.call1(&event).unwrap_throw();
+    if let Err(e) = ob.call1(&event) {
+        throw_error_after_micro_task(e);
+    }
 }
 
 #[allow(unused)]
@@ -1270,7 +1272,7 @@ fn call_after_micro_task(ob: observer::Observer, event: DiffEvent, doc: &Arc<Lor
         let ans = ob.call1(&event);
         drop(copy);
         if let Err(e) = ans {
-            console_error!("Error when calling observer: {:#?}", e);
+            throw_error_after_micro_task(e)
         }
     });
 
@@ -3279,6 +3281,11 @@ impl Cursor {
         let pos = cursor::Cursor::decode(data).map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Cursor { pos })
     }
+
+    /// "Cursor"
+    pub fn kind(&self) -> JsValue {
+        JsValue::from_str("Cursor")
+    }
 }
 
 fn loro_value_to_js_value_or_container(
@@ -3436,27 +3443,50 @@ impl UndoManager {
         let on_push = on_push.dyn_into::<js_sys::Function>().ok();
         if let Some(on_push) = on_push {
             let on_push = observer::Observer::new(on_push);
-            self.undo
-                .set_on_push(Some(Box::new(move |kind, span, value| {
-                    let is_undo = JsValue::from_bool(matches!(kind, UndoOrRedo::Undo));
-                    let counter_range = js_sys::Object::new();
-                    js_sys::Reflect::set(
-                        &counter_range,
-                        &JsValue::from_str("start"),
-                        &JsValue::from_f64(span.start as f64),
-                    )
-                    .unwrap();
-                    js_sys::Reflect::set(
-                        &counter_range,
-                        &JsValue::from_str("end"),
-                        &JsValue::from_f64(span.end as f64),
-                    )
-                    .unwrap();
-                    if let Ok(v) = on_push.call2(&is_undo, &counter_range) {
-                        let v: LoroValue = v.into();
-                        *value = v;
+            self.undo.set_on_push(Some(Box::new(move |kind, span| {
+                let is_undo = JsValue::from_bool(matches!(kind, UndoOrRedo::Undo));
+                let counter_range = js_sys::Object::new();
+                js_sys::Reflect::set(
+                    &counter_range,
+                    &JsValue::from_str("start"),
+                    &JsValue::from_f64(span.start as f64),
+                )
+                .unwrap();
+                js_sys::Reflect::set(
+                    &counter_range,
+                    &JsValue::from_str("end"),
+                    &JsValue::from_f64(span.end as f64),
+                )
+                .unwrap();
+
+                let mut undo_item_meta = UndoItemMeta::new();
+                match on_push.call2(&is_undo, &counter_range) {
+                    Ok(v) => {
+                        if let Ok(obj) = v.dyn_into::<js_sys::Object>() {
+                            if let Ok(value) =
+                                js_sys::Reflect::get(&obj, &JsValue::from_str("value"))
+                            {
+                                let value: LoroValue = value.into();
+                                undo_item_meta.value = value;
+                            }
+                            if let Ok(cursors) =
+                                js_sys::Reflect::get(&obj, &JsValue::from_str("cursors"))
+                            {
+                                let cursors: js_sys::Array = cursors.into();
+                                for cursor in cursors.iter() {
+                                    let cursor = js_to_cursor(cursor).unwrap_throw();
+                                    undo_item_meta.add_cursor(&cursor.pos);
+                                }
+                            }
+                        }
                     }
-                })));
+                    Err(e) => {
+                        throw_error_after_micro_task(e);
+                    }
+                }
+
+                undo_item_meta
+            })));
         } else {
             self.undo.set_on_push(None);
         }
@@ -3473,7 +3503,16 @@ impl UndoManager {
             self.undo
                 .set_on_pop(Some(Box::new(move |kind, span, value| {
                     let is_undo = JsValue::from_bool(matches!(kind, UndoOrRedo::Undo));
-                    let value: JsValue = value.into();
+                    let meta = js_sys::Object::new();
+                    js_sys::Reflect::set(&meta, &JsValue::from_str("value"), &value.value.into())
+                        .unwrap();
+                    let cursors_array = js_sys::Array::new();
+                    for cursor in value.cursors {
+                        let c = Cursor { pos: cursor.cursor };
+                        cursors_array.push(&c.into());
+                    }
+                    js_sys::Reflect::set(&meta, &JsValue::from_str("cursors"), &cursors_array)
+                        .unwrap();
                     let counter_range = js_sys::Object::new();
                     js_sys::Reflect::set(
                         &counter_range,
@@ -3487,12 +3526,33 @@ impl UndoManager {
                         &JsValue::from_f64(span.end as f64),
                     )
                     .unwrap();
-                    on_pop.call3(&is_undo, &value, &counter_range).ok();
+                    match on_pop.call3(&is_undo, &meta.into(), &counter_range) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            throw_error_after_micro_task(e);
+                        }
+                    }
                 })));
         } else {
             self.undo.set_on_pop(None);
         }
     }
+}
+
+/// Use this function to throw an error after the micro task.
+///
+/// We should avoid panic or use js_throw directly inside a event listener as it might
+/// break the internal invariants.
+fn throw_error_after_micro_task(error: JsValue) {
+    let drop_handler = Rc::new(RefCell::new(None));
+    let drop_handler_clone = drop_handler.clone();
+    let closure = Closure::once(Box::new(move |_| {
+        drop(drop_handler_clone);
+        throw_val(error);
+    }));
+    let promise = Promise::resolve(&JsValue::NULL);
+    let _ = promise.then(&closure);
+    drop_handler.borrow_mut().replace(closure);
 }
 
 /// [VersionVector](https://en.wikipedia.org/wiki/Version_vector)
@@ -3801,8 +3861,8 @@ export type UndoConfig = {
     mergeInterval?: number,
     maxUndoSteps?: number,
     excludeOriginPrefixes?: string[],
-    onPush?: (isUndo: boolean, counterRange: { start: number, end: number }) => Value,
-    onPop?: (isUndo: boolean, value: Value, counterRange: { start: number, end: number }) => void
+    onPush?: (isUndo: boolean, counterRange: { start: number, end: number }) => { value: Value, cursors: Cursor[] },
+    onPop?: (isUndo: boolean, value: { value: Value, cursors: Cursor[] }, counterRange: { start: number, end: number }) => void
 };
 export type Container = LoroList | LoroMap | LoroText | LoroTree | LoroMovableList;
 

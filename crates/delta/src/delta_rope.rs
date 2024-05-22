@@ -291,6 +291,55 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     pub fn transform_(&mut self, other: &Self, left_prior: bool) {
         *self = self.transform(other, left_prior);
     }
+
+    /// Transforms the position based on self
+    pub fn transform_pos(&self, mut pos: usize, left_prior: bool) -> usize {
+        let mut index = 0;
+        let mut iter = self.iter_with_len();
+        while iter.peek().is_some() {
+            if iter.peek_is_retain() {
+                let DeltaItem::Retain { len, attr: _ } = iter.next().unwrap() else {
+                    unreachable!()
+                };
+                index += len;
+                if index > pos || (index == pos && !left_prior) {
+                    return pos;
+                }
+            } else if iter.peek_is_insert() {
+                if index == pos && !left_prior {
+                    return pos;
+                }
+
+                let insert_len;
+                match iter.peek().unwrap() {
+                    DeltaItem::Replace { value, .. } => {
+                        insert_len = value.rle_len();
+                    }
+                    _ => {
+                        unreachable!()
+                    }
+                }
+
+                pos += insert_len;
+                index += insert_len;
+                iter.next_with(insert_len).unwrap();
+            } else {
+                // Delete
+                match iter.next().unwrap() {
+                    DeltaItem::Replace { delete, .. } => {
+                        pos = pos.saturating_sub(delete);
+                        if pos < index {
+                            pos = index;
+                            return pos;
+                        }
+                    }
+                    DeltaItem::Retain { .. } => unreachable!(),
+                }
+            }
+        }
+
+        pos
+    }
 }
 
 impl<V: DeltaValue + PartialEq, Attr: DeltaAttr + PartialEq> PartialEq for DeltaRope<V, Attr> {

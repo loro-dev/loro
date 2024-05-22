@@ -1,4 +1,4 @@
-import { Loro, UndoManager } from "../src";
+import { Cursor, Loro, UndoManager } from "../src";
 import { describe, expect, test } from "vitest";
 
 describe("undo", () => {
@@ -160,12 +160,13 @@ describe("undo", () => {
     const undo = new UndoManager(doc, {
       mergeInterval: 0,
       onPop: (isUndo, value, counterRange) => {
-        popTimes+=1;
-        expect(value).toBe(expectedValue);
+        expect(value.value).toBe(expectedValue);
+        expect(value.cursors).toStrictEqual([]);
+        popTimes += 1;
       },
       onPush: (isUndo, counterRange) => {
         pushTimes += 1;
-        return pushReturn
+        return { value: pushReturn, cursors: [] };
       },
     });
 
@@ -195,5 +196,37 @@ describe("undo", () => {
     undo.undo();
     expect(pushTimes).toBe(6);
     expect(popTimes).toBe(3);
-  })
+  });
+
+  test("undo cursor transform", async () => {
+    const doc = new Loro();
+    let cursors: Cursor[] = [];
+    let poppedCursors: Cursor[] = [];
+    const undo = new UndoManager(doc , {
+      mergeInterval: 0,
+      onPop: (isUndo, value, counterRange) => {
+        poppedCursors = value.cursors
+      },
+      onPush: () => {
+        return { value: null, cursors: cursors };
+      }
+    });
+
+    doc.getText("text").insert(0, "hello world");
+    doc.commit();
+    cursors = [
+      doc.getText("text").getCursor(0)!,
+      doc.getText("text").getCursor(5)!,
+    ];
+    doc.getText("text").delete(0, 6);
+    doc.commit();
+    expect(poppedCursors.length).toBe(0);
+    undo.undo();
+    expect(poppedCursors.length).toBe(2);
+    expect(doc.toJSON()).toStrictEqual({
+      text: "hello world",
+    });
+    expect(doc.getCursorPos(poppedCursors[0]).offset).toBe(0);
+    expect(doc.getCursorPos(poppedCursors[1]).offset).toBe(5);
+  });
 });

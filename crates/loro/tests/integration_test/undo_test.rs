@@ -4,8 +4,8 @@ use std::sync::{
 };
 
 use loro::{
-    LoroDoc, LoroError, LoroList, LoroMap, LoroResult, LoroText, LoroValue, StyleConfigMap, ToJson,
-    UndoManager,
+    undo::UndoItemMeta, LoroDoc, LoroError, LoroList, LoroMap, LoroResult, LoroText, LoroValue,
+    StyleConfigMap, ToJson, UndoManager,
 };
 use loro_internal::{configure::StyleConfig, id::ID, loro::CommitOptions};
 use serde_json::json;
@@ -1533,13 +1533,16 @@ fn undo_manager_events() -> anyhow::Result<()> {
     let pop_count_clone = pop_count.clone();
     let popped_value = Arc::new(Mutex::new(LoroValue::Null));
     let popped_value_clone = popped_value.clone();
-    undo.set_on_push(Some(Box::new(move |_source, span, v| {
+    undo.set_on_push(Some(Box::new(move |_source, span| {
         push_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
-        *v = LoroValue::I64(span.start as i64);
+        UndoItemMeta {
+            value: LoroValue::I64(span.start as i64),
+            cursors: Default::default(),
+        }
     })));
     undo.set_on_pop(Some(Box::new(move |_source, _span, v| {
         pop_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
-        *popped_value_clone.lock().unwrap() = v;
+        *popped_value_clone.lock().unwrap() = v.value;
     })));
     text.insert(0, "Hello")?;
     assert_eq!(push_count.load(atomic::Ordering::SeqCst), 0);
@@ -1566,5 +1569,70 @@ fn undo_manager_events() -> anyhow::Result<()> {
     undo.redo(&doc)?;
     assert_eq!(pop_count.load(atomic::Ordering::SeqCst), 4);
     assert_eq!(push_count.load(atomic::Ordering::SeqCst), 6);
+    Ok(())
+}
+
+#[test]
+fn undo_transform_cursor_position() -> anyhow::Result<()> {
+    use loro::cursor::Cursor;
+    let doc = Arc::new(LoroDoc::new());
+    let text = doc.get_text("text");
+    let mut undo = UndoManager::new(&doc);
+    let cursors: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
+    let cursors_clone = cursors.clone();
+    undo.set_on_push(Some(Box::new(move |_, _| {
+        let mut ans = UndoItemMeta::new();
+        let cursors = cursors_clone.lock().unwrap();
+        for c in cursors.iter() {
+            ans.add_cursor(c)
+        }
+        ans
+    })));
+    let popped_cursors = Arc::new(Mutex::new(Vec::new()));
+    let popped_cursors_clone = popped_cursors.clone();
+    undo.set_on_pop(Some(Box::new(move |_, _, meta| {
+        *popped_cursors_clone.lock().unwrap() = meta.cursors;
+    })));
+    text.insert(0, "Hello world!")?;
+    doc.commit();
+    cursors
+        .lock()
+        .unwrap()
+        .push(text.get_cursor(1, loro::cursor::Side::Left).unwrap());
+    cursors
+        .lock()
+        .unwrap()
+        .push(text.get_cursor(4, loro::cursor::Side::Right).unwrap());
+    text.delete(1, 4)?;
+    doc.commit();
+    {
+        let doc_b = LoroDoc::new();
+        doc_b.import(&doc.export_snapshot())?;
+        doc_b.get_text("text").insert(0, "Hi ")?;
+        doc_b.get_text("text").insert(4, "ii")?;
+        doc.import(&doc_b.export_snapshot())?;
+        assert_eq!(text.to_string(), "Hi Hii world!");
+    }
+    assert_eq!(popped_cursors.lock().unwrap().len(), 0);
+    undo.undo(&doc)?;
+
+    // Undo will create new "Hello". They have different IDs than the original ones.
+    // But the original cursors are binded on the original deleted text.
+    // So internally, the cursor positions are transformed.
+
+    // The transformation should also consider the effect of the remote changes.
+    assert_eq!(text.to_string(), "Hi Helloii world!");
+    {
+        let cursors = popped_cursors.lock().unwrap();
+        assert_eq!(cursors.len(), 2);
+        assert_eq!(cursors[0].pos.pos, 4);
+        assert_eq!(cursors[1].pos.pos, 7);
+        let q = doc.get_cursor_pos(&cursors[0].cursor)?;
+        dbg!(&cursors);
+        assert_eq!(q.current.pos, 4);
+        let q = doc.get_cursor_pos(&cursors[1].cursor)?;
+        assert_eq!(q.current.pos, 7);
+    }
+
     Ok(())
 }
