@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.16.2
+
+### Patch Changes
+
+- 34f6064: Better undo events & transform cursors by undo manager (#369)
+
+  #### 🧪 Testing
+
+  - Enable compatibility test (#367)
+
 ## 0.16.1
 
 ### Patch Changes
