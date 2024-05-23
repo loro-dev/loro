@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.16.2
+
+### Patch Changes
+
+- 34f6064: Better undo events & transform cursors by undo manager (#369)
+
+  #### 🧪 Testing
+
+  - Enable compatibility test (#367)
+
+- Updated dependencies [34f6064]
+  - loro-wasm@0.16.2
+
 ## 0.16.1
 
 ### Patch Changes
