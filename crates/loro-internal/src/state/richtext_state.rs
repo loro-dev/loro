@@ -143,7 +143,7 @@ impl RichtextState {
         None
     }
 
-    pub fn get_event_index_of_id(&self, id: ID) -> Option<usize> {
+    pub fn get_text_index_of_id(&self, id: ID, use_event_index: bool) -> Option<usize> {
         let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;
         let mut a;
         let mut b;
@@ -164,10 +164,14 @@ impl RichtextState {
             if span.contains(id) {
                 match elem {
                     RichtextStateChunk::Text(t) => {
-                        let event_offset = t.convert_unicode_offset_to_event_offset(
-                            (id.counter - span.counter.start) as usize,
-                        );
-                        return Some(index + event_offset);
+                        if use_event_index {
+                            let event_offset = t.convert_unicode_offset_to_event_offset(
+                                (id.counter - span.counter.start) as usize,
+                            );
+                            return Some(index + event_offset);
+                        } else {
+                            return Some(index + (id.counter - span.counter.start) as usize);
+                        }
                     }
                     RichtextStateChunk::Style { .. } => {
                         return Some(index);
@@ -176,7 +180,13 @@ impl RichtextState {
             }
 
             index += match elem {
-                RichtextStateChunk::Text(t) => t.event_len() as usize,
+                RichtextStateChunk::Text(t) => {
+                    if use_event_index {
+                        t.event_len() as usize
+                    } else {
+                        t.unicode_len() as usize
+                    }
+                }
                 RichtextStateChunk::Style { .. } => 0,
             };
         }
@@ -749,16 +759,31 @@ impl RichtextState {
     }
 
     #[inline]
-    pub(crate) fn get_stable_position(&mut self, event_index: usize) -> Option<ID> {
-        self.state
-            .get_mut()
-            .get_stable_position_at_event_index(event_index, PosType::Event)
+    pub(crate) fn get_stable_position(
+        &mut self,
+        event_index: usize,
+        get_by_event_index: bool,
+    ) -> Option<ID> {
+        self.state.get_mut().get_stable_position_at_event_index(
+            event_index,
+            if get_by_event_index {
+                PosType::Event
+            } else {
+                PosType::Unicode
+            },
+        )
     }
 
     pub(crate) fn entity_index_to_event_index(&mut self, entity_index: usize) -> usize {
         self.state
             .get_mut()
             .entity_index_to_event_index(entity_index)
+    }
+
+    pub(crate) fn event_index_to_unicode_index(&mut self, event_index: usize) -> usize {
+        self.state
+            .get_mut()
+            .event_index_to_unicode_index(event_index)
     }
 }
 

@@ -9,7 +9,7 @@ use loro_internal::{ListDiffItem, LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
 use crate::{
-    frontiers_to_ids, Container, JsContainer, JsImportBlobMetadata, LoroList, LoroMap,
+    frontiers_to_ids, Container, Cursor, JsContainer, JsImportBlobMetadata, LoroList, LoroMap,
     LoroMovableList, LoroText, LoroTree,
 };
 use wasm_bindgen::__rt::IntoJsResult;
@@ -196,6 +196,38 @@ fn delta_item_to_js(item: ListDiffItem, doc: &Arc<LoroDoc>) -> (JsValue, Option<
             (a.unwrap(), b)
         }
     }
+}
+
+pub(crate) fn js_to_cursor(js: JsValue) -> Result<Cursor, JsValue> {
+    if !js.is_object() {
+        return Err(JsValue::from_str(&format!(
+            "Value supplied is not an object, but {:?}",
+            js
+        )));
+    }
+
+    let kind_method = Reflect::get(&js, &JsValue::from_str("kind"));
+    let kind = match kind_method {
+        Ok(kind_method) if kind_method.is_function() => {
+            let kind_string = js_sys::Function::from(kind_method).call0(&js);
+            match kind_string {
+                Ok(kind_string) if kind_string.is_string() => kind_string.as_string().unwrap(),
+                _ => return Err(JsValue::from_str("kind() did not return a string")),
+            }
+        }
+        _ => return Err(JsValue::from_str("No kind method found or not a function")),
+    };
+
+    if kind.as_str() != "Cursor" {
+        return Err(JsValue::from_str("Value is not a Cursor"));
+    }
+
+    let Ok(ptr) = Reflect::get(&js, &JsValue::from_str("__wbg_ptr")) else {
+        return Err(JsValue::from_str("Cannot find pointer field"));
+    };
+    let ptr_u32: u32 = ptr.as_f64().unwrap() as u32;
+    let cursor = unsafe { Cursor::ref_from_abi(ptr_u32) };
+    Ok(cursor.clone())
 }
 
 pub fn convert(value: LoroValue) -> JsValue {

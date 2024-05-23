@@ -12,6 +12,7 @@ use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::loro::CommitOptions;
+use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 
@@ -28,18 +29,19 @@ use std::sync::Arc;
 use tracing::info;
 
 pub mod event;
-
 pub use loro_internal::awareness;
 pub use loro_internal::configure::Configure;
 pub use loro_internal::configure::StyleConfigMap;
 pub use loro_internal::container::richtext::ExpandType;
 pub use loro_internal::container::{ContainerID, ContainerType};
+pub use loro_internal::cursor;
 pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
 pub use loro_internal::event::Index;
 pub use loro_internal::handler::TextDelta;
 pub use loro_internal::id::{PeerID, TreeID, ID};
 pub use loro_internal::obs::SubID;
 pub use loro_internal::oplog::FrontiersNotIncluded;
+pub use loro_internal::undo;
 pub use loro_internal::version::{Frontiers, VersionVector};
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
@@ -467,6 +469,11 @@ impl LoroDoc {
         cursor: &Cursor,
     ) -> Result<PosQueryResult, CannotFindRelativePosition> {
         self.doc.query_pos(cursor)
+    }
+
+    /// Get the inner LoroDoc ref.
+    pub fn inner(&self) -> &InnerLoroDoc {
+        &self.doc
     }
 }
 
@@ -1860,5 +1867,17 @@ impl UndoManager {
     /// Set the merge interval in ms. The default value is 0, which means no merge.
     pub fn set_merge_interval(&mut self, interval: i64) {
         self.0.set_merge_interval(interval)
+    }
+
+    /// Set the listener for push events.
+    /// The listener will be called when a new undo/redo item is pushed into the stack.
+    pub fn set_on_push(&mut self, on_push: Option<OnPush>) {
+        self.0.set_on_push(on_push)
+    }
+
+    /// Set the listener for pop events.
+    /// The listener will be called when an undo/redo item is popped from the stack.
+    pub fn set_on_pop(&mut self, on_pop: Option<OnPop>) {
+        self.0.set_on_pop(on_pop)
     }
 }

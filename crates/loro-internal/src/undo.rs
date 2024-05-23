@@ -7,12 +7,13 @@ use either::Either;
 use fxhash::FxHashMap;
 use loro_common::{
     ContainerID, Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult,
-    PeerID,
+    LoroValue, PeerID,
 };
-use tracing::{debug_span, info_span, instrument};
+use tracing::{debug_span, info_span, instrument, trace};
 
 use crate::{
     change::get_sys_timestamp,
+    cursor::{AbsolutePosition, Cursor},
     event::{Diff, EventTriggerKind},
     version::Frontiers,
     ContainerDiff, DocDiff, LoroDoc,
@@ -47,7 +48,7 @@ impl DiffBatch {
     }
 
     pub fn transform(&mut self, other: &Self, left_priority: bool) {
-        if other.0.is_empty() {
+        if other.0.is_empty() || self.0.is_empty() {
             return;
         }
 
@@ -60,6 +61,52 @@ impl DiffBatch {
 
     pub fn clear(&mut self) {
         self.0.clear();
+    }
+}
+
+fn transform_cursor(
+    cursor_with_pos: &mut CursorWithPos,
+    remote_diff: &DiffBatch,
+    doc: &LoroDoc,
+    container_remap: &FxHashMap<ContainerID, ContainerID>,
+) {
+    let mut cid = &cursor_with_pos.cursor.container;
+    while let Some(new_cid) = container_remap.get(&cid) {
+        cid = new_cid;
+    }
+
+    if let Some(diff) = remote_diff.0.get(cid) {
+        let new_pos = diff.transform_cursor(cursor_with_pos.pos.pos, false);
+        cursor_with_pos.pos.pos = new_pos;
+    };
+
+    let new_pos = cursor_with_pos.pos.pos;
+    match doc.get_handler(cid.clone()) {
+        crate::handler::Handler::Text(h) => {
+            let Some(new_cursor) = h.get_cursor_internal(new_pos, cursor_with_pos.pos.side, false)
+            else {
+                return;
+            };
+
+            cursor_with_pos.cursor = new_cursor;
+        }
+        crate::handler::Handler::List(h) => {
+            let Some(new_cursor) = h.get_cursor(new_pos, cursor_with_pos.pos.side) else {
+                return;
+            };
+
+            cursor_with_pos.cursor = new_cursor;
+        }
+        crate::handler::Handler::MovableList(h) => {
+            let Some(new_cursor) = h.get_cursor(new_pos, cursor_with_pos.pos.side) else {
+                return;
+            };
+
+            cursor_with_pos.cursor = new_cursor;
+        }
+        crate::handler::Handler::Map(_) => {}
+        crate::handler::Handler::Tree(_) => {}
+        crate::handler::Handler::Unknown(_) => {}
     }
 }
 
@@ -76,7 +123,24 @@ pub struct UndoManager {
     inner: Arc<Mutex<UndoManagerInner>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UndoOrRedo {
+    Undo,
+    Redo,
+}
+
+impl UndoOrRedo {
+    fn opposite(&self) -> UndoOrRedo {
+        match self {
+            Self::Undo => Self::Redo,
+            Self::Redo => Self::Undo,
+        }
+    }
+}
+
+pub type OnPush = Box<dyn Fn(UndoOrRedo, CounterSpan) -> UndoItemMeta + Send + Sync>;
+pub type OnPop = Box<dyn Fn(UndoOrRedo, CounterSpan, UndoItemMeta) + Send + Sync>;
+
 struct UndoManagerInner {
     latest_counter: Counter,
     undo_stack: Stack,
@@ -86,12 +150,78 @@ struct UndoManagerInner {
     merge_interval: i64,
     max_stack_size: usize,
     exclude_origin_prefixes: Vec<Box<str>>,
+    on_push: Option<OnPush>,
+    on_pop: Option<OnPop>,
+}
+
+impl std::fmt::Debug for UndoManagerInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UndoManagerInner")
+            .field("latest_counter", &self.latest_counter)
+            .field("undo_stack", &self.undo_stack)
+            .field("redo_stack", &self.redo_stack)
+            .field("processing_undo", &self.processing_undo)
+            .field("last_undo_time", &self.last_undo_time)
+            .field("merge_interval", &self.merge_interval)
+            .field("max_stack_size", &self.max_stack_size)
+            .field("exclude_origin_prefixes", &self.exclude_origin_prefixes)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
 struct Stack {
-    stack: VecDeque<(VecDeque<CounterSpan>, Arc<Mutex<DiffBatch>>)>,
+    stack: VecDeque<(VecDeque<StackItem>, Arc<Mutex<DiffBatch>>)>,
     size: usize,
+}
+
+#[derive(Debug)]
+struct StackItem {
+    span: CounterSpan,
+    meta: UndoItemMeta,
+}
+
+/// The metadata of an undo item.
+///
+/// The cursors inside the metadata will be transformed by remote operations as well.
+/// So that when the item is popped, users can restore the cursors position correctly.
+#[derive(Debug, Default)]
+pub struct UndoItemMeta {
+    pub value: LoroValue,
+    pub cursors: Vec<CursorWithPos>,
+}
+
+#[derive(Debug)]
+pub struct CursorWithPos {
+    pub cursor: Cursor,
+    pub pos: AbsolutePosition,
+}
+
+impl UndoItemMeta {
+    pub fn new() -> Self {
+        Self {
+            value: LoroValue::Null,
+            cursors: Default::default(),
+        }
+    }
+
+    /// It's assumed that the cursor is just acqured before the ops that
+    /// need to be undo/redo.
+    ///
+    /// We need to rely on the validity of the original pos value
+    pub fn add_cursor(&mut self, cursor: &Cursor) {
+        self.cursors.push(CursorWithPos {
+            cursor: cursor.clone(),
+            pos: AbsolutePosition {
+                pos: cursor.origin_pos,
+                side: cursor.side,
+            },
+        });
+    }
+
+    pub fn set_value(&mut self, value: LoroValue) {
+        self.value = value;
+    }
 }
 
 impl Stack {
@@ -101,7 +231,7 @@ impl Stack {
         Stack { stack, size: 0 }
     }
 
-    pub fn pop(&mut self) -> Option<(CounterSpan, Arc<Mutex<DiffBatch>>)> {
+    pub fn pop(&mut self) -> Option<(StackItem, Arc<Mutex<DiffBatch>>)> {
         while self.stack.back().unwrap().0.is_empty() && self.stack.len() > 1 {
             let (_, diff) = self.stack.pop_back().unwrap();
             let diff = diff.try_lock().unwrap();
@@ -117,6 +247,7 @@ impl Stack {
         }
 
         if self.stack.len() == 1 && self.stack.back().unwrap().0.is_empty() {
+            // If the stack is empty, we need to clear the remote diff
             self.stack.back_mut().unwrap().1.try_lock().unwrap().clear();
             return None;
         }
@@ -124,24 +255,27 @@ impl Stack {
         self.size -= 1;
         let last = self.stack.back_mut().unwrap();
         last.0.pop_back().map(|x| (x, last.1.clone()))
+        // If this row in stack is empty, we don't pop it right away
+        // Because we still need the remote diff to be available.
+        // Cursor position transformation relies on the remote diff in the same row.
     }
 
-    pub fn push(&mut self, span: CounterSpan) {
-        self.push_with_merge(span, false)
+    pub fn push(&mut self, span: CounterSpan, meta: UndoItemMeta) {
+        self.push_with_merge(span, meta, false)
     }
 
-    pub fn push_with_merge(&mut self, span: CounterSpan, can_merge: bool) {
+    pub fn push_with_merge(&mut self, span: CounterSpan, meta: UndoItemMeta, can_merge: bool) {
         let last = self.stack.back_mut().unwrap();
         let mut last_remote_diff = last.1.try_lock().unwrap();
         if !last_remote_diff.0.is_empty() {
             // If the remote diff is not empty, we cannot merge
             if last.0.is_empty() {
-                last.0.push_back(span);
+                last.0.push_back(StackItem { span, meta });
                 last_remote_diff.clear();
             } else {
                 drop(last_remote_diff);
                 let mut v = VecDeque::new();
-                v.push_back(span);
+                v.push_back(StackItem { span, meta });
                 self.stack
                     .push_back((v, Arc::new(Mutex::new(DiffBatch::default()))));
             }
@@ -150,16 +284,16 @@ impl Stack {
         } else {
             if can_merge {
                 if let Some(last_span) = last.0.back_mut() {
-                    if last_span.end == span.start {
+                    if last_span.span.end == span.start {
                         // merge the span
-                        last_span.end = span.end;
+                        last_span.span.end = span.end;
                         return;
                     }
                 }
             }
 
             self.size += 1;
-            last.0.push_back(span);
+            last.0.push_back(StackItem { span, meta });
         }
     }
 
@@ -234,6 +368,8 @@ impl UndoManagerInner {
             last_undo_time: 0,
             max_stack_size: usize::MAX,
             exclude_origin_prefixes: vec![],
+            on_pop: None,
+            on_push: None,
         }
     }
 
@@ -245,11 +381,16 @@ impl UndoManagerInner {
         assert!(self.latest_counter < latest_counter);
         let now = get_sys_timestamp();
         let span = CounterSpan::new(self.latest_counter, latest_counter);
+        let meta = self
+            .on_push
+            .as_ref()
+            .map(|x| x(UndoOrRedo::Undo, span))
+            .unwrap_or_default();
         if !self.undo_stack.is_empty() && now - self.last_undo_time < self.merge_interval {
-            self.undo_stack.push_with_merge(span, true);
+            self.undo_stack.push_with_merge(span, meta, true);
         } else {
             self.last_undo_time = now;
-            self.undo_stack.push(span);
+            self.undo_stack.push(span, meta);
         }
 
         self.latest_counter = latest_counter;
@@ -318,6 +459,10 @@ impl UndoManager {
         }
     }
 
+    pub fn peer(&self) -> PeerID {
+        self.peer
+    }
+
     pub fn set_merge_interval(&mut self, interval: i64) {
         self.inner.try_lock().unwrap().merge_interval = interval;
     }
@@ -350,12 +495,22 @@ impl UndoManager {
 
     #[instrument(skip_all)]
     pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
-        self.perform(doc, |x| &mut x.undo_stack, |x| &mut x.redo_stack)
+        self.perform(
+            doc,
+            |x| &mut x.undo_stack,
+            |x| &mut x.redo_stack,
+            UndoOrRedo::Undo,
+        )
     }
 
     #[instrument(skip_all)]
     pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
-        self.perform(doc, |x| &mut x.redo_stack, |x| &mut x.undo_stack)
+        self.perform(
+            doc,
+            |x| &mut x.redo_stack,
+            |x| &mut x.undo_stack,
+            UndoOrRedo::Redo,
+        )
     }
 
     fn perform(
@@ -363,6 +518,7 @@ impl UndoManager {
         doc: &LoroDoc,
         get_stack: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
+        kind: UndoOrRedo,
     ) -> LoroResult<bool> {
         self.record_new_checkpoint(doc)?;
         let end_counter = get_counter_end(doc, self.peer);
@@ -373,30 +529,51 @@ impl UndoManager {
         };
 
         let mut executed = false;
-        while let Some((span, e)) = top {
+        while let Some((mut span, remote_diff)) = top {
             {
                 let inner = self.inner.clone();
-                // TODO: Perf we can try to avoid this clone
-                let e = e.try_lock().unwrap().clone();
-                doc.undo_internal(
+                // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
+                let remote_change_clone = remote_diff.try_lock().unwrap().clone();
+                let commit = doc.undo_internal(
                     IdSpan {
                         peer: self.peer,
-                        counter: span,
+                        counter: span.span,
                     },
                     &mut self.container_remap,
-                    Some(&e),
+                    Some(&remote_change_clone),
                     &mut |diff| {
                         info_span!("transform remote diff").in_scope(|| {
                             let mut inner = inner.try_lock().unwrap();
+                            // <transform_delta>
                             get_stack(&mut inner).transform_based_on_this_delta(diff);
                         });
                     },
                 )?;
+                drop(commit);
+                if let Some(x) = self.inner.try_lock().unwrap().on_pop.as_ref() {
+                    for cursor in span.meta.cursors.iter_mut() {
+                        // <cursor_transform> We need to transform cursor here.
+                        // Note that right now <transform_delta> is already done,
+                        // remote_diff is also transformed by it now (that's what we need).
+                        transform_cursor(
+                            cursor,
+                            &remote_diff.try_lock().unwrap(),
+                            doc,
+                            &self.container_remap,
+                        );
+                    }
+                    x(kind, span.span, span.meta)
+                }
             }
             let new_counter = get_counter_end(doc, self.peer);
             if end_counter != new_counter {
                 let mut inner = self.inner.try_lock().unwrap();
-                get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter));
+                let meta = inner
+                    .on_push
+                    .as_ref()
+                    .map(|x| x(kind.opposite(), CounterSpan::new(end_counter, new_counter)))
+                    .unwrap_or_default();
+                get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter), meta);
                 inner.latest_counter = new_counter;
                 executed = true;
                 break;
@@ -417,6 +594,14 @@ impl UndoManager {
 
     pub fn can_redo(&self) -> bool {
         !self.inner.try_lock().unwrap().redo_stack.is_empty()
+    }
+
+    pub fn set_on_push(&self, on_push: Option<OnPush>) {
+        self.inner.try_lock().unwrap().on_push = on_push;
+    }
+
+    pub fn set_on_pop(&self, on_pop: Option<OnPop>) {
+        self.inner.try_lock().unwrap().on_pop = on_pop;
     }
 }
 
@@ -471,19 +656,19 @@ pub(crate) fn undo(
             // ---------------------------------------
             // 2. Calc event B_i
             // ---------------------------------------
-            let mut stack_diff_batch = None;
-            let event_b_i = debug_span!("2. Calc event B_i").in_scope(|| {
+            let stack_diff_batch;
+            let event_b_i = 'block: {
                 let next = if i + 1 < spans.len() {
                     spans[i + 1].0.id_last().into()
                 } else {
-                    match last_frontiers_or_last_bi {
+                    match last_frontiers_or_last_bi.clone() {
                         Either::Left(last_frontiers) => last_frontiers.clone(),
-                        Either::Right(right) => return right,
+                        Either::Right(right) => break 'block right,
                     }
                 };
                 stack_diff_batch = Some(calc_diff(&this_id_span.id_last().into(), &next));
                 stack_diff_batch.as_ref().unwrap()
-            });
+            };
 
             // event_a_prime can undo the ops in the current span and the previous spans
             let mut event_a_prime = if let Some(mut last_ci) = last_ci.take() {

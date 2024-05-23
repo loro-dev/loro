@@ -1388,8 +1388,6 @@ impl RichtextState {
     ///
     /// - If feature="wasm", index is utf16 index,
     /// - If feature!="wasm", index is unicode index,
-    ///
-    // PERF: this is slow
     pub(crate) fn cursor_to_event_index(&self, cursor: Cursor) -> usize {
         if cfg!(feature = "wasm") {
             let mut ans = 0;
@@ -1416,29 +1414,31 @@ impl RichtextState {
 
             ans
         } else {
-            let mut ans = 0;
-            self.tree
-                .visit_previous_caches(cursor, |cache| match cache {
-                    generic_btree::PreviousCache::NodeCache(c) => {
-                        ans += c.unicode_len;
-                    }
-                    generic_btree::PreviousCache::PrevSiblingElem(c) => match c {
-                        RichtextStateChunk::Text(s) => {
-                            ans += s.unicode_len();
-                        }
-                        RichtextStateChunk::Style { .. } => {}
-                    },
-                    generic_btree::PreviousCache::ThisElemAndOffset { elem, offset } => {
-                        match elem {
-                            RichtextStateChunk::Text { .. } => {
-                                ans += offset as i32;
-                            }
-                            RichtextStateChunk::Style { .. } => {}
-                        }
-                    }
-                });
-            ans as usize
+            self.cursor_to_unicode_index(cursor)
         }
+    }
+
+    pub(crate) fn cursor_to_unicode_index(&self, cursor: Cursor) -> usize {
+        let mut ans = 0;
+        self.tree
+            .visit_previous_caches(cursor, |cache| match cache {
+                generic_btree::PreviousCache::NodeCache(c) => {
+                    ans += c.unicode_len;
+                }
+                generic_btree::PreviousCache::PrevSiblingElem(c) => match c {
+                    RichtextStateChunk::Text(s) => {
+                        ans += s.unicode_len();
+                    }
+                    RichtextStateChunk::Style { .. } => {}
+                },
+                generic_btree::PreviousCache::ThisElemAndOffset { elem, offset } => match elem {
+                    RichtextStateChunk::Text { .. } => {
+                        ans += offset as i32;
+                    }
+                    RichtextStateChunk::Style { .. } => {}
+                },
+            });
+        ans as usize
     }
 
     /// This method only updates `style_ranges`.
@@ -1900,6 +1900,18 @@ impl RichtextState {
     pub fn entity_index_to_event_index(&self, index: usize) -> usize {
         let cursor = self.tree.query::<EntityQuery>(&index).unwrap();
         self.cursor_to_event_index(cursor.cursor)
+    }
+
+    pub fn event_index_to_unicode_index(&self, index: usize) -> usize {
+        if !cfg!(feature = "wasm") {
+            return index;
+        }
+
+        let Some(cursor) = self.tree.query::<EventIndexQuery>(&index) else {
+            return 0;
+        };
+
+        self.cursor_to_unicode_index(cursor.cursor)
     }
 
     #[allow(unused)]
