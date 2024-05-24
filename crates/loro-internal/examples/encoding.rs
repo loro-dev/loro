@@ -1,4 +1,4 @@
-use std::{fs::File, io::Write, time::Instant};
+use std::time::Instant;
 
 use bench_utils::TextAction;
 use loro_internal::LoroDoc;
@@ -61,12 +61,6 @@ fn main() {
         updates.len(),
         output.len(),
     );
-
-    let json = loro.export_json(&Default::default());
-    File::create(std::path::Path::new("loro.json"))
-        .unwrap()
-        .write_all(json.as_bytes())
-        .unwrap();
 
     // {
     //     // Delta encoding
