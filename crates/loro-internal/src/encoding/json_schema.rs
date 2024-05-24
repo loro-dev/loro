@@ -1,4 +1,4 @@
-mod op;
+// mod op;
 
 use std::{borrow::Cow, sync::Arc};
 
@@ -18,7 +18,7 @@ use crate::{
         richtext::TextStyleInfoFlag,
         tree::tree_op::TreeOp,
     },
-    op::{FutureInnerContent, InnerContent, Op, SliceRange},
+    op::{InnerContent, Op, SliceRange},
     version::Frontiers,
     OpLog, VersionVector,
 };
@@ -158,11 +158,11 @@ fn convert_tree_id(tree: &TreeID, peers: &[PeerID]) -> TreeID {
     }
 }
 
-fn encode_changes<'a, 'c: 'a>(
-    diff_changes: &'c [Cow<'_, Change>],
+fn encode_changes(
+    diff_changes: &[Cow<'_, Change>],
     arena: &SharedArena,
     peer_register: &mut ValueRegister<PeerID>,
-) -> Vec<op::Change<'a>> {
+) -> Vec<op::Change> {
     let mut changes = Vec::with_capacity(diff_changes.len());
     for change in diff_changes.iter() {
         let mut ops = Vec::with_capacity(change.ops().len());
@@ -325,11 +325,7 @@ fn encode_changes<'a, 'c: 'a>(
 
                 ContainerType::Tree => match content {
                     // TODO: how to determine the type of the tree op?
-                    InnerContent::Tree(TreeOp {
-                        target,
-                        parent,
-                        position,
-                    }) => OpContent::Tree({
+                    InnerContent::Tree(TreeOp { target, parent }) => OpContent::Tree({
                         if let Some(p) = parent {
                             if TreeID::is_deleted_root(p) {
                                 op::TreeOp::Delete {
@@ -339,47 +335,17 @@ fn encode_changes<'a, 'c: 'a>(
                                 op::TreeOp::Move {
                                     target: register_tree_id(target, peer_register),
                                     parent: Some(register_tree_id(p, peer_register)),
-                                    fractional_index: position.as_ref().unwrap().clone(),
                                 }
                             }
                         } else {
                             op::TreeOp::Move {
                                 target: register_tree_id(target, peer_register),
                                 parent: None,
-                                fractional_index: position.as_ref().unwrap().clone(),
                             }
                         }
                     }),
                     _ => unreachable!(),
                 },
-                ContainerType::Unknown(_) => {
-                    // TODO:
-                    let InnerContent::Future(FutureInnerContent::Unknown { prop, value }) = content
-                    else {
-                        unreachable!();
-                    };
-                    OpContent::Future(op::FutureOpWrapper {
-                        prop: *prop,
-                        value: op::FutureOp::Unknown(Cow::Borrowed(value)),
-                    })
-                }
-                #[cfg(feature = "counter")]
-                ContainerType::Counter => {
-                    let InnerContent::Future(f) = content else {
-                        unreachable!()
-                    };
-                    match f {
-                        FutureInnerContent::Counter(x) => OpContent::Future(op::FutureOpWrapper {
-                            prop: *x as i32,
-                            value: op::FutureOp::Counter(std::borrow::Cow::Owned(
-                                super::value::OwnedValue::Future(
-                                    super::future_value::OwnedFutureValue::Counter,
-                                ),
-                            )),
-                        }),
-                        _ => unreachable!(),
-                    }
-                }
             };
             ops.push(op::Op {
                 counter: *counter,
@@ -573,51 +539,281 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
         },
         ContainerType::Tree => match content {
             OpContent::Tree(tree) => match tree {
-                op::TreeOp::Move {
-                    target,
-                    parent,
-                    fractional_index,
-                } => InnerContent::Tree(TreeOp {
+                op::TreeOp::Move { target, parent } => InnerContent::Tree(TreeOp {
                     target: convert_tree_id(&target, peers),
                     parent: parent.map(|p| convert_tree_id(&p, peers)),
-                    position: Some(fractional_index),
                 }),
                 op::TreeOp::Delete { target } => InnerContent::Tree(TreeOp {
                     target: convert_tree_id(&target, peers),
                     parent: Some(TreeID::delete_root()),
-                    position: None,
                 }),
             },
             _ => unreachable!(),
         },
-        ContainerType::Unknown(_) => match content {
-            OpContent::Future(op::FutureOpWrapper {
-                prop,
-                value: op::FutureOp::Unknown(value),
-            }) => InnerContent::Future(FutureInnerContent::Unknown {
-                prop,
-                value: value.into_owned(),
-            }),
-            _ => unreachable!(),
-        },
-        #[cfg(feature = "counter")]
-        ContainerType::Counter => {
-            let OpContent::Future(op::FutureOpWrapper { prop, value }) = content else {
-                unreachable!()
-            };
-            match value {
-                op::FutureOp::Counter(_) => {
-                    InnerContent::Future(FutureInnerContent::Counter(prop as i64))
-                }
-                op::FutureOp::Unknown(_) => {
-                    InnerContent::Future(FutureInnerContent::Counter(prop as i64))
-                }
-            }
-        } // Note: The Future Type need try to parse Op from the unknown content
     };
     Op {
         counter,
         container: idx,
         content,
+    }
+}
+
+pub mod op {
+    use loro_common::{ContainerID, IdLp, Lamport, LoroValue, PeerID, TreeID, ID};
+    use serde::{Deserialize, Serialize};
+    use smallvec::SmallVec;
+
+    use crate::VersionVector;
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct JsonSchema {
+        pub schema_version: u8,
+        pub start_vv: VersionVector,
+        pub end_vv: VersionVector,
+        pub peers: Vec<PeerID>,
+        pub changes: Vec<Change>,
+    }
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct Change {
+        #[serde(with = "self::serde_impl::id")]
+        pub id: ID,
+        pub timestamp: i64,
+        pub deps: SmallVec<[ID; 2]>,
+        pub lamport: Lamport,
+        pub msg: Option<String>,
+        pub ops: Vec<Op>,
+    }
+
+    #[derive(Debug)]
+    pub struct Op {
+        pub content: OpContent,
+        pub container: ContainerID,
+        pub counter: i32,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    #[serde(untagged)]
+    pub enum OpContent {
+        List(ListOp),
+        MovableList(MovableListOp),
+        Map(MapOp),
+        Text(TextOp),
+        Tree(TreeOp),
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    pub enum ListOp {
+        Insert {
+            pos: usize,
+            value: LoroValue,
+        },
+        Delete {
+            pos: isize,
+            len: isize,
+            #[serde(with = "self::serde_impl::id")]
+            delete_start_id: ID,
+        },
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    pub enum MovableListOp {
+        Insert {
+            pos: usize,
+            value: LoroValue,
+        },
+        Delete {
+            pos: isize,
+            len: isize,
+            #[serde(with = "self::serde_impl::id")]
+            delete_start_id: ID,
+        },
+        Move {
+            from: u32,
+            to: u32,
+            #[serde(with = "self::serde_impl::idlp")]
+            from_id: IdLp,
+        },
+        Set {
+            #[serde(with = "self::serde_impl::idlp")]
+            elem_id: IdLp,
+            value: LoroValue,
+        },
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    pub enum MapOp {
+        Insert { key: String, value: LoroValue },
+        Delete { key: String },
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    pub enum TextOp {
+        Insert {
+            pos: u32,
+            text: String,
+        },
+        Delete {
+            pos: isize,
+            len: isize,
+            #[serde(with = "self::serde_impl::id")]
+            id_start: ID,
+        },
+        Mark {
+            start: u32,
+            end: u32,
+            style: (String, LoroValue),
+            info: u8,
+        },
+        MarkEnd,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    pub enum TreeOp {
+        // Create {
+        //     target: TreeID,
+        //     parent: Option<TreeID>,
+        //     fractional_index: String,
+        // },
+        Move {
+            target: TreeID,
+            parent: Option<TreeID>,
+        },
+        Delete {
+            target: TreeID,
+        },
+    }
+
+    mod serde_impl {
+
+        use loro_common::{ContainerID, ContainerType};
+        use serde::{
+            de::{MapAccess, Visitor},
+            ser::SerializeStruct,
+            Deserialize, Deserializer, Serialize, Serializer,
+        };
+
+        impl Serialize for super::Op {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                let mut s = serializer.serialize_struct("Op", 3)?;
+                s.serialize_field("container", &self.container.to_string())?;
+                s.serialize_field("content", &self.content)?;
+                s.serialize_field("counter", &self.counter)?;
+                s.end()
+            }
+        }
+
+        impl<'de> Deserialize<'de> for super::Op {
+            fn deserialize<D>(deserializer: D) -> Result<super::Op, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                struct __Visitor<'a> {
+                    marker: std::marker::PhantomData<&'a ()>,
+                }
+
+                impl<'a, 'de> Visitor<'de> for __Visitor<'a> {
+                    type Value = super::Op;
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        formatter.write_str("struct Op")
+                    }
+
+                    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+                    where
+                        A: MapAccess<'de>,
+                    {
+                        let (_key, container) = map.next_entry::<&str, &str>()?.unwrap();
+                        let container = ContainerID::try_from(container)
+                            .map_err(|_| serde::de::Error::custom("invalid container id"))?;
+                        let op = match container.container_type() {
+                            ContainerType::List => {
+                                let (_key, op) = map.next_entry::<&str, super::ListOp>()?.unwrap();
+                                super::OpContent::List(op)
+                            }
+                            ContainerType::MovableList => {
+                                let (_key, op) =
+                                    map.next_entry::<&str, super::MovableListOp>()?.unwrap();
+                                super::OpContent::MovableList(op)
+                            }
+                            ContainerType::Map => {
+                                let (_key, op) = map.next_entry::<&str, super::MapOp>()?.unwrap();
+                                super::OpContent::Map(op)
+                            }
+                            ContainerType::Text => {
+                                let (_key, op) = map.next_entry::<&str, super::TextOp>()?.unwrap();
+                                super::OpContent::Text(op)
+                            }
+                            ContainerType::Tree => {
+                                let (_key, op) = map.next_entry::<&str, super::TreeOp>()?.unwrap();
+                                super::OpContent::Tree(op)
+                            }
+                        };
+                        let (_, counter) = map.next_entry::<&str, i32>()?.unwrap();
+                        Ok(super::Op {
+                            container,
+                            content: op,
+                            counter,
+                        })
+                    }
+                }
+                const FIELDS: &[&str] = &["content", "container", "counter"];
+                deserializer.deserialize_struct(
+                    "Op",
+                    FIELDS,
+                    __Visitor {
+                        marker: Default::default(),
+                    },
+                )
+            }
+        }
+
+        pub mod id {
+            use loro_common::ID;
+            use serde::{Deserialize, Deserializer, Serializer};
+
+            pub fn serialize<S>(id: &ID, s: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                s.serialize_str(&id.to_string())
+            }
+
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<ID, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let str: &str = Deserialize::deserialize(d)?;
+                let id: ID = ID::try_from(str).unwrap();
+                Ok(id)
+            }
+        }
+
+        pub mod idlp {
+            use loro_common::IdLp;
+            use serde::{Deserialize, Deserializer, Serializer};
+
+            pub fn serialize<S>(idlp: &IdLp, s: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                s.serialize_str(&idlp.to_string())
+            }
+
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<IdLp, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let str: &str = Deserialize::deserialize(d)?;
+                let id: IdLp = IdLp::try_from(str).unwrap();
+                Ok(id)
+            }
+        }
     }
 }

@@ -1,5 +1,4 @@
 mod encode_reordered;
-mod future_value;
 pub(crate) mod json_schema;
 
 use crate::op::OpWithId;

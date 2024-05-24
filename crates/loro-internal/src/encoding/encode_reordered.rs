@@ -28,9 +28,11 @@ use crate::{
 
 use self::{
     arena::{decode_arena, encode_arena, ContainerArena, DecodedArenas, PeerIdArena},
-    encode::{encode_changes, encode_ops, init_encode, TempOp, ValueRegister},
+    encode::{encode_changes, encode_ops, init_encode, TempOp},
     value::ValueReader,
 };
+
+pub(super) use self::encode::ValueRegister;
 
 use super::{parse_header_and_body, ImportBlobMetadata};
 
@@ -226,7 +228,7 @@ pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
     })
 }
 
-pub(crate) fn import_changes_to_oplog(
+pub(super) fn import_changes_to_oplog(
     changes: Vec<Change>,
     oplog: &mut OpLog,
 ) -> Result<(Vec<ID>, Vec<Change>), LoroError> {
@@ -375,9 +377,8 @@ fn extract_ops(
         }
         let peer = peer_ids.peer_ids[peer_idx as usize];
         let cid = &containers[container_index as usize];
-        let kind = ValueKind::from_u8(value_type);
-        let value = Value::decode(kind, &mut value_reader, arenas, ID::new(peer, counter))?;
-
+        let c_idx = arena.register_container(cid);
+        let kind = ValueKind::from_u8(value_type).expect("Unknown value type");
         let content = decode_op(
             cid,
             kind,
@@ -853,7 +854,7 @@ fn decode_snapshot_states(
     Ok(())
 }
 
-mod encode {
+pub(super) mod encode {
     use fxhash::FxHashMap;
     use loro_common::{ContainerID, ContainerType, HasId, PeerID, ID};
     use num_traits::ToPrimitive;
@@ -1036,13 +1037,13 @@ mod encode {
     }
 
     use crate::{OpLog, VersionVector};
-    pub(super) use value_register::ValueRegister;
+    pub(crate) use value_register::ValueRegister;
 
     use super::{
         value::{MarkStart, Value, ValueKind},
         EncodedChange, EncodedDeleteStartId, EncodedOp,
     };
-    mod value_register {
+    pub(super) mod value_register {
         use fxhash::FxHashMap;
 
         pub struct ValueRegister<T> {
