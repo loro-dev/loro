@@ -18,7 +18,7 @@ pub struct TreeDiffItem {
     pub action: TreeExternalDiff,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TreeExternalDiff {
     Create {
         parent: Option<TreeID>,
@@ -62,16 +62,22 @@ impl TreeDiff {
             .enumerate()
             .map(|(i, d)| (d.target, (&d.action, i)))
             .collect();
-        if !left_prior {
-            let mut removes = Vec::new();
-            for (target, _) in b_update {
+
+        let mut removes = Vec::new();
+        for (target, diff) in b_update {
+            if self_update.contains_key(&target) && diff == self_update.get(&target).unwrap().0 {
+                let (_, i) = self_update.remove(&target).unwrap();
+                removes.push(i);
+                continue;
+            }
+            if !left_prior {
                 if let Some((_, i)) = self_update.remove(&target) {
                     removes.push(i);
                 }
             }
-            for i in removes.into_iter().sorted().rev() {
-                self.diff.remove(i);
-            }
+        }
+        for i in removes.into_iter().sorted().rev() {
+            self.diff.remove(i);
         }
         let mut b_parent = FxHashMap::default();
 
