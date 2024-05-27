@@ -1,5 +1,6 @@
 use std::{borrow::Cow, cell::RefCell, cmp::Ordering, mem::take, rc::Rc};
 
+pub(crate) use encode::{encode_op, get_op_prop};
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
 use itertools::Itertools;
@@ -15,13 +16,12 @@ use crate::{
     arena::SharedArena,
     change::{Change, Lamport, Timestamp},
     container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
-    encoding::StateSnapshotDecodeContext,
+    encoding::{value_register::ValueRegister, StateSnapshotDecodeContext},
     op::{FutureInnerContent, Op, OpWithId, SliceRange},
     state::ContainerState,
     version::Frontiers,
     DocState, LoroDoc, OpLog, VersionVector,
 };
-pub(super) use encode::ValueRegister;
 
 use self::encode::{encode_changes, encode_ops, init_encode, TempOp};
 
@@ -887,7 +887,12 @@ mod encode {
         arena::SharedArena,
         change::{Change, Lamport},
         container::idx::ContainerIdx,
-        encoding::value::{EncodedTreeMove, MarkStart, Value, ValueKind, ValueWriter},
+        encoding::{
+            value::{
+                EncodedTreeMove, MarkStart, Value, ValueEncodeRegister, ValueKind, ValueWriter,
+            },
+            value_register::ValueRegister,
+        },
         op::{FutureInnerContent, Op},
     };
 
@@ -1047,70 +1052,8 @@ mod encode {
     }
 
     use crate::{OpLog, VersionVector};
-    pub(crate) use value_register::ValueRegister;
 
     use super::{EncodedChange, EncodedDeleteStartId, EncodedOp, EncodedRegisters};
-    mod value_register {
-        use fxhash::FxHashMap;
-
-        #[derive(Debug)]
-        pub struct ValueRegister<T> {
-            map_value_to_index: FxHashMap<T, usize>,
-            vec: Vec<T>,
-        }
-
-        impl<T: std::hash::Hash + Clone + PartialEq + Eq> Default for ValueRegister<T> {
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-
-        impl<T: std::hash::Hash + Clone + PartialEq + Eq> ValueRegister<T> {
-            pub fn new() -> Self {
-                Self {
-                    map_value_to_index: FxHashMap::default(),
-                    vec: Vec::new(),
-                }
-            }
-
-            pub fn from_existing(vec: Vec<T>) -> Self {
-                let mut map = FxHashMap::with_capacity_and_hasher(vec.len(), Default::default());
-                for (i, value) in vec.iter().enumerate() {
-                    map.insert(value.clone(), i);
-                }
-
-                Self {
-                    map_value_to_index: map,
-                    vec,
-                }
-            }
-
-            /// Return the index of the given value. If it does not exist,
-            /// insert it and return the new index.
-            pub fn register(&mut self, key: &T) -> usize {
-                if let Some(index) = self.map_value_to_index.get(key) {
-                    *index
-                } else {
-                    let idx = self.vec.len();
-                    self.vec.push(key.clone());
-                    self.map_value_to_index.insert(key.clone(), idx);
-                    idx
-                }
-            }
-
-            pub fn get(&self, key: &T) -> Option<usize> {
-                self.map_value_to_index.get(key).copied()
-            }
-
-            pub fn contains(&self, key: &T) -> bool {
-                self.map_value_to_index.contains_key(key)
-            }
-
-            pub fn unwrap_vec(self) -> Vec<T> {
-                self.vec
-            }
-        }
-    }
 
     pub(super) fn init_encode<'a>(
         oplog: &'a OpLog,
@@ -1148,7 +1091,7 @@ mod encode {
         }
     }
 
-    fn get_op_prop(op: &Op, registers: &mut EncodedRegisters) -> i32 {
+    pub(crate) fn get_op_prop(op: &Op, registers: &mut dyn ValueEncodeRegister) -> i32 {
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
                 crate::container::list::list_op::InnerListOp::Move { to, .. } => *to as i32,
@@ -1162,7 +1105,7 @@ mod encode {
                 crate::container::list::list_op::InnerListOp::StyleEnd => 0,
             },
             crate::op::InnerContent::Map(map) => {
-                let key = registers.key.register(&map.key);
+                let key = registers.key_mut().register(&map.key);
                 key as i32
             }
             crate::op::InnerContent::Tree(_) => 0,
@@ -1199,12 +1142,12 @@ mod encode {
     }
 
     #[inline]
-    fn encode_op<'p, 'a: 'p>(
+    pub(crate) fn encode_op<'p, 'a: 'p>(
         op: &'a Op,
         arena: &SharedArena,
         delete_start: &mut Vec<EncodedDeleteStartId>,
         value_writer: &mut ValueWriter,
-        registers: &mut EncodedRegisters<'p>,
+        registers: &mut dyn ValueEncodeRegister,
     ) -> ValueKind {
         let value = match &op.content {
             crate::op::InnerContent::List(list) => match list {
@@ -1227,7 +1170,7 @@ mod encode {
                 }
                 crate::container::list::list_op::InnerListOp::Delete(span) => {
                     delete_start.push(EncodedDeleteStartId {
-                        peer_idx: registers.peer.register(&span.id_start.peer),
+                        peer_idx: registers.peer_mut().register(&span.id_start.peer),
                         counter: span.id_start.counter,
                         len: span.span.signed_len,
                     });
@@ -1247,7 +1190,7 @@ mod encode {
                 }),
                 crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
                     Value::ListSet {
-                        peer_idx: registers.peer.register(&elem_id.peer),
+                        peer_idx: registers.peer_mut().register(&elem_id.peer),
                         lamport: elem_id.lamport,
                         value: value.clone(),
                     }
@@ -1259,7 +1202,7 @@ mod encode {
                     to: _,
                 } => Value::ListMove {
                     from: *from as usize,
-                    from_idx: registers.peer.register(&from_id.peer),
+                    from_idx: registers.peer_mut().register(&from_id.peer),
                     lamport: from_id.lamport as usize,
                 },
             },
@@ -1272,7 +1215,7 @@ mod encode {
             }
             crate::op::InnerContent::Tree(t) => {
                 assert_eq!(op.container.get_type(), ContainerType::Tree);
-                Value::TreeMove(EncodedTreeMove::from_tree_op(t, registers))
+                registers.encode_tree_op(t)
             }
             crate::op::InnerContent::Future(f) => match f {
                 #[cfg(feature = "counter")]
@@ -1572,7 +1515,7 @@ struct EncodedOp {
 
 #[columnar(vec, ser, de, iterable)]
 #[derive(Debug, Clone)]
-struct EncodedDeleteStartId {
+pub(crate) struct EncodedDeleteStartId {
     #[columnar(strategy = "DeltaRle")]
     peer_idx: usize,
     #[columnar(strategy = "DeltaRle")]
@@ -1617,7 +1560,7 @@ mod test {
 
     use loro_common::LoroValue;
 
-    use crate::fx_map;
+    use crate::{encoding::value_register::ValueRegister, fx_map};
 
     use super::*;
 

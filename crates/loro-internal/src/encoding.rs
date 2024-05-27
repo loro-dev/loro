@@ -1,7 +1,8 @@
-mod arena;
+pub(crate) mod arena;
 mod encode_reordered;
-mod value;
-pub(crate) use value::OwnedValue;
+pub(crate) mod value;
+pub(crate) mod value_register;
+pub(crate) use encode_reordered::{encode_op, get_op_prop};
 
 use crate::op::OpWithId;
 use crate::version::Frontiers;
@@ -11,6 +12,7 @@ use loro_common::{IdLpSpan, LoroResult, PeerID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 use serde::{Deserialize, Serialize};
+pub(crate) use value::OwnedValue;
 const MAGIC_BYTES: [u8; 4] = *b"loro";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

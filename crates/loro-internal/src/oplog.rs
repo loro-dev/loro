@@ -1,3 +1,4 @@
+mod change_store;
 pub(crate) mod dag;
 mod iter;
 mod pending_changes;

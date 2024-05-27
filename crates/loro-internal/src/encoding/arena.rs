@@ -7,7 +7,11 @@ use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, Pe
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, ColumnarError};
 
-use super::encode_reordered::{PeerIdx, ValueRegister, MAX_DECODED_SIZE};
+use super::{
+    encode_reordered::{PeerIdx, MAX_DECODED_SIZE},
+    value::{Value, ValueDecodedArenasTrait, ValueEncodeRegister},
+    value_register::ValueRegister,
+};
 
 pub(super) fn encode_arena(
     registers: EncodedRegisters,
@@ -62,6 +66,23 @@ pub struct EncodedRegisters<'a> {
     pub(super) position: either::Either<FxHashSet<&'a [u8]>, ValueRegister<&'a [u8]>>,
 }
 
+impl<'a> ValueEncodeRegister for EncodedRegisters<'a> {
+    fn key_mut(&mut self) -> &mut ValueRegister<InternalString> {
+        &mut self.key
+    }
+
+    fn peer_mut(&mut self) -> &mut ValueRegister<PeerID> {
+        &mut self.peer
+    }
+
+    fn encode_tree_op(
+        &mut self,
+        op: &crate::container::tree::tree_op::TreeOp,
+    ) -> super::value::Value<'static> {
+        Value::TreeMove(super::value::EncodedTreeMove::from_tree_op(op, self))
+    }
+}
+
 impl<'a> EncodedRegisters<'a> {
     pub(crate) fn sort_fractional_index(&mut self) {
         let position_register =
@@ -82,6 +103,12 @@ pub struct DecodedArenas<'a> {
     pub(super) positions: PositionArena<'a>,
     pub(super) tree_ids: TreeIDArena,
     pub state_blob_arena: &'a [u8],
+}
+
+impl<'a> ValueDecodedArenasTrait for DecodedArenas<'a> {
+    fn keys(&self) -> &KeyArena {
+        &self.keys
+    }
 }
 
 pub fn decode_arena(bytes: &[u8]) -> LoroResult<DecodedArenas> {
@@ -197,7 +224,7 @@ impl PeerIdArena {
 
 #[columnar(vec, ser, de, iterable)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(super) struct EncodedContainer {
+pub(crate) struct EncodedContainer {
     #[columnar(strategy = "BoolRle")]
     is_root: bool,
     #[columnar(strategy = "Rle")]
@@ -236,7 +263,7 @@ impl EncodedContainer {
 
 #[columnar(ser, de)]
 #[derive(Default)]
-pub(super) struct ContainerArena {
+pub(crate) struct ContainerArena {
     #[columnar(class = "vec", iter = "EncodedContainer")]
     pub(super) containers: Vec<EncodedContainer>,
 }
@@ -250,11 +277,11 @@ impl Deref for ContainerArena {
 }
 
 impl ContainerArena {
-    fn encode(&self) -> Vec<u8> {
+    pub fn encode(&self) -> Vec<u8> {
         serde_columnar::to_vec(&self.containers).unwrap()
     }
 
-    fn decode(bytes: &[u8]) -> LoroResult<Self> {
+    pub fn decode(bytes: &[u8]) -> LoroResult<Self> {
         Ok(ContainerArena {
             containers: serde_columnar::from_bytes(bytes)?,
         })
