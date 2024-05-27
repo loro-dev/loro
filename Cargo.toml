@@ -23,5 +23,5 @@ tracing = { version = "0.1", features = [
     "max_level_debug",
     "release_max_level_warn",
 ] }
-serde_columnar = { version = "0.3.4" }
+serde_columnar = { version = "0.3.5" }
 itertools = "0.12.1"

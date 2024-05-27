@@ -7,12 +7,20 @@ mod delta_rle_encode;
 mod ops_encode;
 use crate::{arena::SharedArena, change::Change, version::Frontiers};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChangeStore {
     kv: BTreeMap<Bytes, ChangesBlock>,
 }
 
-#[derive(Debug)]
+impl ChangeStore {
+    pub fn new() -> Self {
+        Self {
+            kv: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ChangesBlock {
     arena: SharedArena,
     peer: PeerID,
@@ -68,6 +76,7 @@ impl ChangesBlock {
     }
 }
 
+#[derive(Clone)]
 enum ChangesBlockContent {
     Changes(Vec<Change>),
     Bytes(ChangesBlockBytes),

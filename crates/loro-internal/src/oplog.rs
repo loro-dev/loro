@@ -21,6 +21,7 @@ use crate::op::{FutureInnerContent, ListSlice, Op, RawOpContent, RemoteOp, RichO
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
+use change_store::ChangeStore;
 use fxhash::FxHashMap;
 use loro_common::{HasCounter, HasId, IdLp, IdSpan};
 use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
@@ -44,6 +45,7 @@ pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
     changes: ClientChanges,
+    change_store: ChangeStore,
     pub(crate) op_groups: OpGroups,
     /// **lamport starts from 0**
     pub(crate) next_lamport: Lamport,
@@ -87,6 +89,7 @@ impl Clone for OpLog {
             arena: self.arena.clone(),
             changes: self.changes.clone(),
             op_groups: self.op_groups.clone(),
+            change_store: self.change_store.clone(),
             next_lamport: self.next_lamport,
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
@@ -177,6 +180,7 @@ impl OpLog {
             dag: AppDag::default(),
             op_groups: OpGroups::new(arena.clone()),
             changes: ClientChanges::default(),
+            change_store: ChangeStore::new(),
             arena,
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
