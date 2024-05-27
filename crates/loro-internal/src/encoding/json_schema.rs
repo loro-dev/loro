@@ -752,12 +752,15 @@ pub(super) mod op {
         //     fractional_index: String,
         // },
         Move {
+            #[serde(with = "self::serde_impl::tree_id")]
             target: TreeID,
+            #[serde(with = "self::serde_impl::option_tree_id")]
             parent: Option<TreeID>,
             #[serde(default)]
             fractional_index: FractionalIndex,
         },
         Delete {
+            #[serde(with = "self::serde_impl::tree_id")]
             target: TreeID,
         },
     }
@@ -985,6 +988,56 @@ pub(super) mod op {
                 let str: &str = Deserialize::deserialize(d)?;
                 let id: IdLp = IdLp::try_from(str).unwrap();
                 Ok(id)
+            }
+        }
+
+        pub mod tree_id {
+            use loro_common::TreeID;
+            use serde::{Deserialize, Deserializer, Serializer};
+
+            pub fn serialize<S>(id: &TreeID, s: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                s.serialize_str(&id.to_string())
+            }
+
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<TreeID, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let str: &str = Deserialize::deserialize(d)?;
+                let id: TreeID = TreeID::try_from(str).unwrap();
+                Ok(id)
+            }
+        }
+
+        pub mod option_tree_id {
+            use loro_common::TreeID;
+            use serde::{Deserialize, Deserializer, Serializer};
+
+            pub fn serialize<S>(id: &Option<TreeID>, s: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                match id {
+                    Some(id) => s.serialize_str(&id.to_string()),
+                    None => s.serialize_none(),
+                }
+            }
+
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<Option<TreeID>, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let str: Option<&str> = Deserialize::deserialize(d)?;
+                match str {
+                    Some(str) => {
+                        let id: TreeID = TreeID::try_from(str).unwrap();
+                        Ok(Some(id))
+                    }
+                    None => Ok(None),
+                }
             }
         }
     }

@@ -481,7 +481,7 @@ pub mod wasm {
     }
 }
 
-const LORO_CONTAINER_ID_PREFIX: &str = "🦜::container_id::";
+const LORO_CONTAINER_ID_PREFIX: &str = "🦜:";
 
 impl Serialize for LoroValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
