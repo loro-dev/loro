@@ -856,6 +856,24 @@ impl Loro {
         }
     }
 
+    /// Export updates from the specific version to the current version with JSON format.
+    #[wasm_bindgen(js_name = "exportJSON")]
+    pub fn export_json(&self, vv: Option<VersionVector>) -> JsResult<String> {
+        if let Some(vv) = vv {
+            // `version` may be null or undefined
+            Ok(self.0.export_json(&vv.0))
+        } else {
+            Ok(self.0.export_json(&Default::default()))
+        }
+    }
+
+    /// Import updates from the JSON format.
+    #[wasm_bindgen(js_name = "importJSON")]
+    pub fn import_json(&self, json: &str) -> JsResult<()> {
+        self.0.import_json(json)?;
+        Ok(())
+    }
+
     /// Import a snapshot or a update to current doc.
     ///
     /// Note:
