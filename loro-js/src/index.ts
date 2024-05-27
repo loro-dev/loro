@@ -551,7 +551,7 @@ declare module "loro-wasm" {
     move(target: TreeID, parent?: TreeID, index?: number): void;
     delete(target: TreeID): void;
     has(target: TreeID): boolean;
-    getNodeByID(target: TreeID): LoroTreeNode;
+    getNodeByID(target: TreeID): LoroTreeNode<T>;
     subscribe(listener: Listener): number;
   }
 
