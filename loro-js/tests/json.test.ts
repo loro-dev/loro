@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { Loro, LoroMap, LoroTree, LoroTreeNode } from "../src";
+import { Container, Loro, LoroMap, LoroTree, LoroTreeNode } from "../src";
 
 it("json encoding", () => {
     const doc = new Loro();

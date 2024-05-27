@@ -2714,7 +2714,7 @@ impl LoroTreeNode {
     /// //    /  \
     /// // node2 node
     /// ```
-    #[wasm_bindgen(js_name = "createNode")]
+    #[wasm_bindgen(js_name = "createNode", skip_typescript)]
     pub fn create_node(&self, index: Option<usize>) -> JsResult<LoroTreeNode> {
         let id = if let Some(index) = index {
             self.tree.create_at(Some(self.id), index)?
@@ -2852,7 +2852,7 @@ impl LoroTreeNode {
     ///
     /// The objects returned are new js objects each time because they need to cross
     /// the WASM boundary.
-    #[wasm_bindgen]
+    #[wasm_bindgen(skip_typescript)]
     pub fn children(&self) -> Array {
         let children = self.tree.children(Some(self.id));
         let children = children.into_iter().map(|c| {
@@ -2900,7 +2900,7 @@ impl LoroTree {
     /// //    /   \
     /// // node  root
     /// ```
-    #[wasm_bindgen(js_name = "createNode")]
+    #[wasm_bindgen(js_name = "createNode", skip_typescript)]
     pub fn create_node(
         &mut self,
         parent: &JsParentTreeID,
@@ -2971,7 +2971,7 @@ impl LoroTree {
     }
 
     /// Get LoroTreeNode by the TreeID.
-    #[wasm_bindgen(js_name = "getNodeByID")]
+    #[wasm_bindgen(js_name = "getNodeByID", skip_typescript)]
     pub fn get_node_by_id(&self, target: &JsTreeID) -> Option<LoroTreeNode> {
         let target: JsValue = target.into();
         let target = TreeID::try_from(target).ok()?;
