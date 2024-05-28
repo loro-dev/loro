@@ -7,7 +7,7 @@ use self::op::{JsonSchema, OpContent};
 use loro_common::{
     ContainerID, ContainerType, IdLp, LoroError, LoroResult, LoroValue, PeerID, TreeID, ID,
 };
-use rle::{HasLength, Sliceable};
+use rle::{HasLength, RleVec, Sliceable};
 
 use crate::{
     arena::SharedArena,
@@ -59,7 +59,7 @@ pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> S
 pub(crate) fn import_json(oplog: &mut OpLog, json: &str) -> LoroResult<()> {
     let json: JsonSchema = serde_json::from_str(json)
         .map_err(|e| LoroError::DecodeError(format!("cannot decode json {}", e).into()))?;
-    let changes = decode_changes(json, &oplog.arena);
+    let changes = decode_changes(json, &oplog.arena)?;
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
@@ -335,12 +335,16 @@ fn encode_changes(
                                 op::TreeOp::Move {
                                     target: register_tree_id(target, peer_register),
                                     parent: Some(register_tree_id(p, peer_register)),
+                                    // PATCH: A temporary solution to deal with FI for v0.15.x
+                                    fractional_index: Some(vec![128]),
                                 }
                             }
                         } else {
                             op::TreeOp::Move {
                                 target: register_tree_id(target, peer_register),
                                 parent: None,
+                                // PATCH: A temporary solution to deal with FI for v0.15.x
+                                fractional_index: Some(vec![128]),
                             }
                         }
                     }),
@@ -370,7 +374,7 @@ fn encode_changes(
     changes
 }
 
-fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
+fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Change>> {
     let JsonSchema { peers, changes, .. } = json;
     let mut ans = Vec::with_capacity(changes.len());
     for op::Change {
@@ -379,14 +383,14 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
         deps,
         lamport,
         msg: _,
-        ops,
+        ops: json_ops,
     } in changes
     {
         let id = convert_id(&id, &peers);
-        let ops = ops
-            .into_iter()
-            .map(|op| decode_op(op, arena, &peers))
-            .collect();
+        let mut ops = RleVec::with_capacity(json_ops.len());
+        for op in json_ops {
+            ops.push(decode_op(op, arena, &peers)?)
+        }
         let change = Change {
             id,
             timestamp,
@@ -397,10 +401,10 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
         };
         ans.push(change);
     }
-    ans
+    Ok(ans)
 }
 
-fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
+fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op> {
     let op::Op {
         counter,
         container,
@@ -539,10 +543,19 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
         },
         ContainerType::Tree => match content {
             OpContent::Tree(tree) => match tree {
-                op::TreeOp::Move { target, parent } => InnerContent::Tree(TreeOp {
-                    target: convert_tree_id(&target, peers),
-                    parent: parent.map(|p| convert_tree_id(&p, peers)),
-                }),
+                op::TreeOp::Move {
+                    target,
+                    parent,
+                    fractional_index,
+                } => {
+                    if fractional_index.is_some() {
+                        return Err(LoroError::DecodeError("To maintain data accuracy, Tree Op from v0.16 and later do not support downgrading back to v0.15".into()));
+                    }
+                    InnerContent::Tree(TreeOp {
+                        target: convert_tree_id(&target, peers),
+                        parent: parent.map(|p| convert_tree_id(&p, peers)),
+                    })
+                }
                 op::TreeOp::Delete { target } => InnerContent::Tree(TreeOp {
                     target: convert_tree_id(&target, peers),
                     parent: Some(TreeID::delete_root()),
@@ -551,14 +564,15 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
             _ => unreachable!(),
         },
     };
-    Op {
+    Ok(Op {
         counter,
         container: idx,
         content,
-    }
+    })
 }
 
 pub mod op {
+
     use loro_common::{ContainerID, IdLp, Lamport, LoroValue, PeerID, TreeID, ID};
     use serde::{Deserialize, Serialize};
     use smallvec::SmallVec;
@@ -684,6 +698,9 @@ pub mod op {
             target: TreeID,
             #[serde(with = "self::serde_impl::option_tree_id")]
             parent: Option<TreeID>,
+            // PATCH: A temporary solution to deal with FI for v0.15.x
+            #[serde(default)]
+            fractional_index: Option<Vec<u8>>,
         },
         Delete {
             #[serde(with = "self::serde_impl::tree_id")]
