@@ -1,6 +1,7 @@
 use crate::{
     change::{Change, Lamport, Timestamp},
     container::{idx::ContainerIdx, ContainerID},
+    estimated_size::EstimatedSize,
     id::{Counter, PeerID, ID},
     span::{HasCounter, HasId, HasLamport},
 };
@@ -23,6 +24,17 @@ pub struct Op {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerIdx,
     pub(crate) content: InnerContent,
+}
+
+impl EstimatedSize for Op {
+    fn estimate_storage_size(&self) -> usize {
+        let counter_size = 4;
+        let container_size = 2;
+        let content_size = self
+            .content
+            .estimate_storage_size(self.container.get_type());
+        counter_size + container_size + content_size
+    }
 }
 
 #[derive(Debug, Clone)]

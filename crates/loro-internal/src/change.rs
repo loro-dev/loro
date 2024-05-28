@@ -6,6 +6,7 @@
 
 use crate::{
     dag::DagNode,
+    estimated_size::EstimatedSize,
     id::{Counter, ID},
     op::Op,
     span::{HasId, HasLamport},
@@ -89,6 +90,23 @@ impl<O> Change<O> {
     #[inline]
     pub fn deps_on_self(&self) -> bool {
         self.deps.len() == 1 && self.deps[0].peer == self.id.peer
+    }
+}
+
+impl<O: EstimatedSize> EstimatedSize for Change<O> {
+    /// Estimate the storage size of the change in bytes
+    #[inline]
+    fn estimate_storage_size(&self) -> usize {
+        let id_size = 5;
+        let lamport_size = 3;
+        let timestamp_size = 4;
+        let deps_size = (self.deps.len().max(1) - 1) * 5;
+        let ops_size = self
+            .ops
+            .iter()
+            .map(|op| op.estimate_storage_size())
+            .sum::<usize>();
+        id_size + lamport_size + timestamp_size + ops_size + deps_size
     }
 }
 

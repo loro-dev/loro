@@ -121,7 +121,7 @@ struct EncodedDoc<'a> {
 const VERSION: u16 = 0;
 
 /// It's assume that every change in the block share the same peer.
-pub fn encode(block: &[Change], arena: &SharedArena) -> Vec<u8> {
+pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     if block.is_empty() {
         panic!("Empty block")
     }
@@ -316,14 +316,18 @@ impl ValueEncodeRegister for Registers {
 
 #[derive(Clone)]
 pub(crate) struct ChangesBlockHeader {
-    peer: PeerID,
-    counter: Counter,
-    n_changes: usize,
-    peers: Vec<PeerID>,
+    pub peer: PeerID,
+    pub counter: Counter,
+    pub n_changes: usize,
+    pub peers: Vec<PeerID>,
     /// This has n + 1 elements, where counters[n] is the end counter of the
     /// last change in the block.
-    counters: Vec<Counter>,
-    deps: Vec<Frontiers>,
+    ///
+    /// You can infer the size of kth change by taking counters[k + 1] - counters[k]
+    pub counters: Vec<Counter>,
+    /// This has n elements
+    pub lamports: Vec<Lamport>,
+    pub deps: Vec<Frontiers>,
 }
 
 pub fn decode_header(m_bytes: &[u8]) -> LoroResult<ChangesBlockHeader> {
@@ -409,6 +413,11 @@ pub fn decode_header(m_bytes: &[u8]) -> LoroResult<ChangesBlockHeader> {
         last += lengths[i];
     }
     counters.push(last);
+    let mut lamport_decoder = UnsignedDeltaDecoder::new(&lamports, n_changes);
+    let mut lamports = Vec::with_capacity(n_changes);
+    for _ in 0..n_changes {
+        lamports.push(lamport_decoder.next().unwrap() as Lamport);
+    }
     Ok(ChangesBlockHeader {
         peer: peers[0],
         counter: first_counter,
@@ -416,6 +425,7 @@ pub fn decode_header(m_bytes: &[u8]) -> LoroResult<ChangesBlockHeader> {
         peers,
         counters,
         deps,
+        lamports,
     })
 }
 
@@ -471,7 +481,7 @@ impl<'a> ValueDecodedArenasTrait for ValueDecodeArena<'a> {
 pub fn decode_block(
     m_bytes: &[u8],
     shared_arena: &SharedArena,
-    header: ChangesBlockHeader,
+    header: &ChangesBlockHeader,
 ) -> LoroResult<Vec<Change>> {
     let mut changes = Vec::with_capacity(header.n_changes);
     let EncodedDoc {
@@ -498,9 +508,8 @@ pub fn decode_block(
     if version != VERSION {
         return Err(LoroError::IncompatibleFutureEncodingError(version as usize));
     }
-    let mut lamport_decoder = UnsignedDeltaDecoder::new(&lamports, header.n_changes);
     let mut timestamp_decoder: DeltaRleDecoder<i64> = DeltaRleDecoder::new(&timestamps);
-    let commit_msg_len_decoder = AnyRleDecoder::<u32>::new(&commit_msg_lengths);
+    let _commit_msg_len_decoder = AnyRleDecoder::<u32>::new(&commit_msg_lengths);
     let keys = decode_keys(&keys);
     let decode_arena = ValueDecodeArena {
         peers: &header.peers,
@@ -514,14 +523,14 @@ pub fn decode_block(
     let mut value_reader = ValueReader::new(&values);
     let encoded_ops_iters =
         serde_columnar::iter_from_bytes::<EncodedOpsAndDeleteStarts>(&ops).unwrap();
-    let mut op_iter = encoded_ops_iters.ops;
+    let op_iter = encoded_ops_iters.ops;
     let mut del_iter = encoded_ops_iters.delete_start_ids;
     for i in 0..(n_changes as usize) {
         changes.push(Change {
             ops: Default::default(),
             deps: header.deps[i].clone(),
             id: ID::new(header.peer, header.counters[i]),
-            lamport: lamport_decoder.next().unwrap() as Lamport,
+            lamport: header.lamports[i],
             timestamp: timestamp_decoder.next().unwrap().unwrap() as Timestamp,
             has_dependents: true, // FIXME: this field
         })

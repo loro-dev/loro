@@ -1,15 +1,18 @@
 use bytes::Bytes;
-use loro_common::{Counter, Lamport, LoroResult, PeerID, ID};
+use loro_common::{Counter, HasLamportSpan, Lamport, LoroResult, PeerID, ID};
+use rle::{HasLength, RlePush};
 use std::{cmp::Ordering, collections::BTreeMap};
 mod block_encode;
 mod delta_rle_encode;
-use crate::{arena::SharedArena, change::Change, version::Frontiers};
+use crate::{
+    arena::SharedArena, change::Change, estimated_size::EstimatedSize, version::Frontiers,
+};
 
-use self::block_encode::{decode_header, ChangesBlockHeader};
+use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
 
 #[derive(Debug, Clone)]
 pub struct ChangeStore {
-    kv: BTreeMap<Bytes, ChangesBlock>,
+    kv: BTreeMap<ID, ChangesBlock>,
 }
 
 impl ChangeStore {
@@ -26,17 +29,16 @@ pub struct ChangesBlock {
     peer: PeerID,
     counter_range: (Counter, Counter),
     lamport_range: (Lamport, Lamport),
+    /// Estimated size of the block in bytes
+    estimated_size: usize,
     content: ChangesBlockContent,
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum ChangesBlockError {
-    #[error("Invalid changes block bytes")]
-    DecodeError,
-}
+const MAX_BLOCK_SIZE: usize = 1024 * 4;
 
 impl ChangesBlock {
     pub fn from_bytes(bytes: Bytes, arena: SharedArena) -> LoroResult<Self> {
+        let len = bytes.len();
         let bytes = ChangesBlockBytes::new(bytes)?;
         let peer = bytes.peer();
         let counter_range = bytes.counter_range();
@@ -45,6 +47,7 @@ impl ChangesBlock {
         Ok(Self {
             arena,
             peer,
+            estimated_size: len,
             counter_range,
             lamport_range,
             content,
@@ -74,6 +77,24 @@ impl ChangesBlock {
             }
         })
     }
+
+    fn is_full(&self) -> bool {
+        self.estimated_size > MAX_BLOCK_SIZE
+    }
+
+    pub fn push_change(&mut self, change: Change) -> Result<(), Change> {
+        if self.is_full() {
+            Err(change)
+        } else {
+            let atom_len = change.atom_len();
+            self.lamport_range.1 = change.lamport + atom_len as Lamport;
+            self.counter_range.1 = change.id.counter + atom_len as Counter;
+            self.estimated_size += change.estimate_storage_size();
+            let changes = self.content.changes_mut().unwrap();
+            changes.push_rle_element(change);
+            Ok(())
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -84,7 +105,7 @@ enum ChangesBlockContent {
 }
 
 impl ChangesBlockContent {
-    pub fn changes(&mut self) -> Result<&Vec<Change>, ChangesBlockError> {
+    pub fn changes(&mut self) -> LoroResult<&Vec<Change>> {
         match self {
             ChangesBlockContent::Changes(changes) => Ok(changes),
             ChangesBlockContent::Both(changes, _) => Ok(changes),
@@ -109,7 +130,7 @@ impl ChangesBlockContent {
     }
 
     /// Note that this method will invalidate the stored bytes
-    pub fn changes_mut(&mut self) -> Result<&mut Vec<Change>, ChangesBlockError> {
+    fn changes_mut(&mut self) -> LoroResult<&mut Vec<Change>> {
         match self {
             ChangesBlockContent::Changes(changes) => Ok(changes),
             ChangesBlockContent::Both(changes, _) => {
@@ -157,29 +178,34 @@ impl ChangesBlockBytes {
         })
     }
 
-    fn parse(&self, a: &SharedArena) -> Result<Vec<Change>, ChangesBlockError> {
-        unimplemented!()
+    fn parse(&self, a: &SharedArena) -> LoroResult<Vec<Change>> {
+        decode_block(&self.bytes, a, &self.header)
     }
 
     fn serialize(changes: &[Change], a: &SharedArena) -> Self {
-        unimplemented!()
+        let bytes = encode_block(changes, a);
+        // TODO: Perf we can calculate header directly without parsing the bytes
+        Self::new(Bytes::from(bytes)).unwrap()
     }
 
     fn peer(&self) -> PeerID {
-        unimplemented!()
+        self.header.peer
     }
 
     fn counter_range(&self) -> (Counter, Counter) {
-        unimplemented!()
+        (self.header.counter, *self.header.counters.last().unwrap())
     }
 
     fn lamport_range(&self) -> (Lamport, Lamport) {
-        unimplemented!()
+        (
+            self.header.lamports[0],
+            *self.header.lamports.last().unwrap(),
+        )
     }
 
     /// Length of the changes
     fn len_changes(&self) -> usize {
-        unimplemented!()
+        self.header.n_changes
     }
 
     fn find_deps_for(&self, id: ID) -> Frontiers {

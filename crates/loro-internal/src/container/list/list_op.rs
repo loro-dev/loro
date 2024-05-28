@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
-use loro_common::{HasId, HasIdSpan, IdLp, LoroValue, ID};
+use loro_common::{ContainerType, HasId, HasIdSpan, IdLp, LoroValue, ID};
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
@@ -102,6 +102,33 @@ impl InnerListOp {
         Self::Insert {
             slice: SliceRange(slice),
             pos,
+        }
+    }
+
+    pub(crate) fn estimate_storage_size(&self, container_type: ContainerType) -> usize {
+        match self {
+            InnerListOp::Insert { slice, pos } => match container_type {
+                ContainerType::MovableList | ContainerType::List => 4 * slice.atom_len() + 3,
+                ContainerType::Text => 1 * slice.atom_len() + 3,
+                _ => unreachable!(),
+            },
+            InnerListOp::InsertText {
+                slice,
+                unicode_start,
+                unicode_len,
+                pos,
+            } => slice.len() + 3,
+            InnerListOp::Delete(d) => 8,
+            InnerListOp::Move { from, from_id, to } => 8,
+            InnerListOp::Set { elem_id, value } => 7,
+            InnerListOp::StyleStart {
+                start,
+                end,
+                key,
+                value,
+                info,
+            } => 10,
+            InnerListOp::StyleEnd => 1,
         }
     }
 }

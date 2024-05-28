@@ -34,6 +34,14 @@ impl TreeOp {
             None => TreeParentId::Root,
         }
     }
+
+    pub(crate) fn estimate_storage_size(&self) -> usize {
+        8 + self
+            .position
+            .as_ref()
+            .map(|x| x.as_bytes().len())
+            .unwrap_or_default()
+    }
 }
 
 impl HasLength for TreeOp {
