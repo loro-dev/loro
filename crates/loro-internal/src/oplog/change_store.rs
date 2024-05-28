@@ -10,6 +10,8 @@ use crate::{
 
 use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
 
+const MAX_BLOCK_SIZE: usize = 1024 * 4;
+
 #[derive(Debug, Clone)]
 pub struct ChangeStore {
     arena: SharedArena,
@@ -56,7 +58,7 @@ impl ChangeStore {
         println!("block num {}", self.kv.len());
         let mut bytes = Vec::new();
         for (_, block) in self.iter_bytes() {
-            // println!("block size {}", block.bytes.len());
+            println!("block size {}", block.bytes.len());
             leb128::write::unsigned(&mut bytes, block.bytes.len() as u64).unwrap();
             bytes.extend(&block.bytes);
         }
@@ -90,12 +92,10 @@ pub struct ChangesBlock {
     content: ChangesBlockContent,
 }
 
-const MAX_BLOCK_SIZE: usize = 1024 * 4;
-
 impl ChangesBlock {
     pub fn from_bytes(bytes: Bytes, arena: &SharedArena) -> LoroResult<Self> {
         let len = bytes.len();
-        let bytes = ChangesBlockBytes::new(bytes)?;
+        let mut bytes = ChangesBlockBytes::new(bytes);
         let peer = bytes.peer();
         let counter_range = bytes.counter_range();
         let lamport_range = bytes.lamport_range();
@@ -156,25 +156,41 @@ impl ChangesBlock {
     }
 
     pub fn push_change(&mut self, change: Change) -> Result<(), Change> {
-        if self.is_full() {
-            Err(change)
-        } else {
-            let atom_len = change.atom_len();
-            self.lamport_range.1 = change.lamport + atom_len as Lamport;
-            self.counter_range.1 = change.id.counter + atom_len as Counter;
+        let atom_len = change.atom_len();
+        let next_lamport = change.lamport + atom_len as Lamport;
+        let next_counter = change.id.counter + atom_len as Counter;
 
-            let changes = self.content.changes_mut().unwrap();
-            match changes.last_mut() {
-                Some(last) if last.is_mergable(&change, &()) => {
-                    last.merge(&change, &());
+        let is_full = self.is_full();
+        let changes = self.content.changes_mut().unwrap();
+        let merge_interval = 10000; // TODO: FIXME: Use configure
+        match changes.last_mut() {
+            Some(last)
+                if change.deps_on_self()
+                    && change.timestamp - last.timestamp < merge_interval
+                    && (!is_full
+                        || (change.ops.len() == 1
+                            && last.ops.last().unwrap().is_mergable(&change.ops[0], &()))) =>
+            {
+                for op in change.ops.into_iter() {
+                    let size = op.estimate_storage_size();
+                    if !last.ops.push(op) {
+                        self.estimated_size += size;
+                    }
                 }
-                _ => {
+            }
+            _ => {
+                if is_full {
+                    return Err(change);
+                } else {
                     self.estimated_size += change.estimate_storage_size();
                     changes.push(change);
                 }
             }
-            Ok(())
         }
+
+        self.counter_range.1 = next_counter;
+        self.lamport_range.1 = next_lamport;
+        Ok(())
     }
 
     fn id(&self) -> ID {
@@ -252,48 +268,65 @@ impl std::fmt::Debug for ChangesBlockContent {
 #[derive(Clone)]
 pub(crate) struct ChangesBlockBytes {
     bytes: Bytes,
-    header: ChangesBlockHeader,
+    header: Option<ChangesBlockHeader>,
 }
 
 impl ChangesBlockBytes {
-    fn new(bytes: Bytes) -> LoroResult<Self> {
-        Ok(Self {
-            header: decode_header(&bytes)?,
+    fn new(bytes: Bytes) -> Self {
+        Self {
+            header: None,
             bytes,
-        })
+        }
     }
 
-    fn parse(&self, a: &SharedArena) -> LoroResult<Vec<Change>> {
-        decode_block(&self.bytes, a, &self.header)
+    fn ensure_header(&mut self) -> LoroResult<()> {
+        if self.header.is_none() {
+            self.header = Some(decode_header(&self.bytes)?);
+        }
+        Ok(())
+    }
+
+    fn parse(&mut self, a: &SharedArena) -> LoroResult<Vec<Change>> {
+        self.ensure_header()?;
+        decode_block(&self.bytes, a, self.header.as_ref())
     }
 
     fn serialize(changes: &[Change], a: &SharedArena) -> Self {
         let bytes = encode_block(changes, a);
         // TODO: Perf we can calculate header directly without parsing the bytes
-        Self::new(Bytes::from(bytes)).unwrap()
+        let mut bytes = ChangesBlockBytes::new(Bytes::from(bytes));
+        bytes.ensure_header().unwrap();
+        bytes
     }
 
-    fn peer(&self) -> PeerID {
-        self.header.peer
+    fn peer(&mut self) -> PeerID {
+        self.ensure_header().unwrap();
+        self.header.as_ref().unwrap().peer
     }
 
-    fn counter_range(&self) -> (Counter, Counter) {
-        (self.header.counter, *self.header.counters.last().unwrap())
-    }
-
-    fn lamport_range(&self) -> (Lamport, Lamport) {
+    fn counter_range(&mut self) -> (Counter, Counter) {
+        self.ensure_header().unwrap();
         (
-            self.header.lamports[0],
-            *self.header.lamports.last().unwrap(),
+            self.header.as_ref().unwrap().counter,
+            *self.header.as_ref().unwrap().counters.last().unwrap(),
+        )
+    }
+
+    fn lamport_range(&mut self) -> (Lamport, Lamport) {
+        self.ensure_header().unwrap();
+        (
+            self.header.as_ref().unwrap().lamports[0],
+            *self.header.as_ref().unwrap().lamports.last().unwrap(),
         )
     }
 
     /// Length of the changes
-    fn len_changes(&self) -> usize {
-        self.header.n_changes
+    fn len_changes(&mut self) -> usize {
+        self.ensure_header().unwrap();
+        self.header.as_ref().unwrap().n_changes
     }
 
-    fn find_deps_for(&self, id: ID) -> Frontiers {
+    fn find_deps_for(&mut self, id: ID) -> Frontiers {
         unimplemented!()
     }
 }

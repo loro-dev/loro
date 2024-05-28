@@ -233,6 +233,7 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     //      │          │          │       │                                │
     //      └──────────┴──────────┴───────┴────────────────────────────────┘
 
+    println!("ops num {}", encoded_ops.len());
     let ops_bytes = serde_columnar::to_vec(&EncodedOpsAndDeleteStarts {
         ops: encoded_ops,
         delete_start_ids: del_starts,
@@ -331,8 +332,15 @@ pub(crate) struct ChangesBlockHeader {
 }
 
 pub fn decode_header(m_bytes: &[u8]) -> LoroResult<ChangesBlockHeader> {
+    let doc = postcard::from_bytes(m_bytes).map_err(|e| {
+        LoroError::DecodeError(format!("Decode block error {}", e).into_boxed_str())
+    })?;
+
+    decode_header_from_doc(&doc)
+}
+
+fn decode_header_from_doc(doc: &EncodedDoc) -> Result<ChangesBlockHeader, LoroError> {
     let EncodedDoc {
-        version,
         n_changes,
         first_counter,
         peers: peers_bytes,
@@ -342,22 +350,18 @@ pub fn decode_header(m_bytes: &[u8]) -> LoroResult<ChangesBlockHeader> {
         dep_peer_idxs,
         dep_counters,
         lamports,
-        timestamps,
-        commit_msg_lengths,
-        commit_msgs,
-        cids,
-        keys,
-        ops,
-        values,
-    } = postcard::from_bytes(m_bytes).map_err(|e| {
-        LoroError::DecodeError(format!("Decode block error {}", e).into_boxed_str())
-    })?;
-    if version != VERSION {
-        return Err(LoroError::IncompatibleFutureEncodingError(version as usize));
+        version,
+        ..
+    } = doc;
+
+    if *version != VERSION {
+        return Err(LoroError::IncompatibleFutureEncodingError(
+            *version as usize,
+        ));
     }
 
-    let first_counter = first_counter as Counter;
-    let n_changes = n_changes as usize;
+    let first_counter = *first_counter as Counter;
+    let n_changes = *n_changes as usize;
     let peer_num = peers_bytes.len() / 8;
     let mut peers = Vec::with_capacity(peer_num as usize);
     for i in 0..peer_num as usize {
@@ -481,15 +485,22 @@ impl<'a> ValueDecodedArenasTrait for ValueDecodeArena<'a> {
 pub fn decode_block(
     m_bytes: &[u8],
     shared_arena: &SharedArena,
-    header: &ChangesBlockHeader,
+    header: Option<&ChangesBlockHeader>,
 ) -> LoroResult<Vec<Change>> {
-    let mut changes = Vec::with_capacity(header.n_changes);
+    let doc = postcard::from_bytes(m_bytes).map_err(|e| {
+        LoroError::DecodeError(format!("Decode block error {}", e).into_boxed_str())
+    })?;
+    let mut header_on_stack = None;
+    let header = header.unwrap_or_else(|| {
+        header_on_stack = Some(decode_header_from_doc(&doc).unwrap());
+        &header_on_stack.as_ref().unwrap()
+    });
     let EncodedDoc {
         version,
         n_changes,
         first_counter,
-        peers: peers_bytes,
-        lengths: lengths_bytes,
+        peers,
+        lengths,
         dep_on_self,
         dep_len,
         dep_peer_idxs,
@@ -502,9 +513,8 @@ pub fn decode_block(
         keys,
         ops,
         values,
-    } = postcard::from_bytes(m_bytes).map_err(|e| {
-        LoroError::DecodeError(format!("Decode block error {}", e).into_boxed_str())
-    })?;
+    } = doc;
+    let mut changes = Vec::with_capacity(n_changes as usize);
     if version != VERSION {
         return Err(LoroError::IncompatibleFutureEncodingError(version as usize));
     }

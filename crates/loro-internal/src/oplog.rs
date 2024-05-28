@@ -258,11 +258,13 @@ impl OpLog {
                     last.ctr_end(),
                     "change id is not continuous"
                 );
+                let merge_interval = self.configure.merge_interval();
+
                 let timestamp_change = change.timestamp - last.timestamp;
                 // TODO: make this a config
                 if !last.has_dependents
                     && change.deps_on_self()
-                    && timestamp_change < self.configure.merge_interval()
+                    && timestamp_change < merge_interval
                 {
                     for op in take(change.ops.vec_mut()) {
                         last.ops.push(op);
