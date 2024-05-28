@@ -1,13 +1,7 @@
-// mod op;
-
 use std::{borrow::Cow, sync::Arc};
 
-use self::op::{JsonSchema, OpContent};
-
-use loro_common::{
-    ContainerID, ContainerType, IdLp, LoroError, LoroResult, LoroValue, PeerID, TreeID, ID,
-};
-use rle::{HasLength, RleVec, Sliceable};
+use loro_common::{ContainerID, ContainerType, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID};
+use rle::{HasLength, Sliceable};
 
 use crate::{
     arena::SharedArena,
@@ -24,8 +18,9 @@ use crate::{
 };
 
 use super::encode_reordered::{import_changes_to_oplog, ValueRegister};
+use op::{JsonOpContent, JsonSchema};
 
-pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> String {
+pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> JsonSchema {
     let actual_start_vv: VersionVector = vv
         .iter()
         .filter_map(|(&peer, &end_counter)| {
@@ -45,21 +40,17 @@ pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> S
     let mut peer_register = ValueRegister::<PeerID>::new();
     let diff_changes = init_encode(oplog, &actual_start_vv);
     let changes = encode_changes(&diff_changes, &oplog.arena, &mut peer_register);
-    serde_json::to_string_pretty(&JsonSchema {
+    JsonSchema {
         changes,
         schema_version: 1,
         peers: peer_register.unwrap_vec(),
-        // TODO:
         start_vv: actual_start_vv,
         end_vv: oplog.vv().clone(),
-    })
-    .unwrap()
+    }
 }
 
-pub(crate) fn import_json(oplog: &mut OpLog, json: &str) -> LoroResult<()> {
-    let json: JsonSchema = serde_json::from_str(json)
-        .map_err(|e| LoroError::DecodeError(format!("cannot decode json {}", e).into()))?;
-    let changes = decode_changes(json, &oplog.arena)?;
+pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<()> {
+    let changes = decode_changes(json, &oplog.arena);
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
@@ -68,7 +59,7 @@ pub(crate) fn import_json(oplog: &mut OpLog, json: &str) -> LoroResult<()> {
     Ok(())
 }
 
-fn init_encode<'a>(oplog: &'a OpLog, vv: &'_ VersionVector) -> Vec<Cow<'a, Change>> {
+fn init_encode<'s, 'a: 's>(oplog: &'a OpLog, vv: &'_ VersionVector) -> Vec<Cow<'s, Change>> {
     let self_vv = oplog.vv();
     let start_vv = vv.trim(oplog.vv());
     let mut diff_changes: Vec<Cow<'a, Change>> = Vec::new();
@@ -178,7 +169,7 @@ fn encode_changes(
             }
             let op = match container.container_type() {
                 ContainerType::List => match content {
-                    InnerContent::List(list) => OpContent::List(match list {
+                    InnerContent::List(list) => JsonOpContent::List(match list {
                         InnerListOp::Insert { slice, pos } => {
                             let mut value =
                                 arena.get_values(slice.0.start as usize..slice.0.end as usize);
@@ -207,7 +198,7 @@ fn encode_changes(
                     _ => unreachable!(),
                 },
                 ContainerType::MovableList => match content {
-                    InnerContent::List(list) => OpContent::MovableList(match list {
+                    InnerContent::List(list) => JsonOpContent::MovableList(match list {
                         InnerListOp::Insert { slice, pos } => {
                             let mut value =
                                 arena.get_values(slice.0.start as usize..slice.0.end as usize);
@@ -259,7 +250,7 @@ fn encode_changes(
                     _ => unreachable!(),
                 },
                 ContainerType::Text => match content {
-                    InnerContent::List(list) => OpContent::Text(match list {
+                    InnerContent::List(list) => JsonOpContent::Text(match list {
                         InnerListOp::InsertText {
                             slice,
                             unicode_start: _,
@@ -286,7 +277,8 @@ fn encode_changes(
                         } => op::TextOp::Mark {
                             start: *start,
                             end: *end,
-                            style: (key.to_string(), value.clone()),
+                            style_key: key.to_string(),
+                            style_value: value.clone(),
                             info: info.to_byte(),
                         },
                         InnerListOp::StyleEnd => op::TextOp::MarkEnd,
@@ -296,7 +288,7 @@ fn encode_changes(
                 },
                 ContainerType::Map => match content {
                     InnerContent::Map(MapSet { key, value }) => {
-                        OpContent::Map(if let Some(v) = value {
+                        JsonOpContent::Map(if let Some(v) = value {
                             let value = if let LoroValue::Container(id) = v {
                                 if id.is_normal() {
                                     LoroValue::Container(register_container_id(
@@ -325,7 +317,7 @@ fn encode_changes(
 
                 ContainerType::Tree => match content {
                     // TODO: how to determine the type of the tree op?
-                    InnerContent::Tree(TreeOp { target, parent }) => OpContent::Tree({
+                    InnerContent::Tree(TreeOp { target, parent }) => JsonOpContent::Tree({
                         if let Some(p) = parent {
                             if TreeID::is_deleted_root(p) {
                                 op::TreeOp::Delete {
@@ -351,7 +343,7 @@ fn encode_changes(
                     _ => unreachable!(),
                 },
             };
-            ops.push(op::Op {
+            ops.push(op::JsonOp {
                 counter: *counter,
                 container,
                 content: op,
@@ -404,8 +396,8 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
     Ok(ans)
 }
 
-fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op> {
-    let op::Op {
+fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op>  {
+    let op::JsonOp {
         counter,
         container,
         content,
@@ -414,7 +406,7 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op
     let idx = arena.register_container(&container);
     let content = match container.container_type() {
         ContainerType::Text => match content {
-            OpContent::Text(text) => match text {
+            JsonOpContent::Text(text) => match text {
                 op::TextOp::Insert { pos, text } => {
                     let (slice, result) = arena.alloc_str_with_slice(&text);
                     InnerContent::List(InnerListOp::InsertText {
@@ -437,13 +429,14 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op
                 op::TextOp::Mark {
                     start,
                     end,
-                    style: (key, value),
+                    style_key,
+                    style_value,
                     info,
                 } => InnerContent::List(InnerListOp::StyleStart {
                     start,
                     end,
-                    key: key.into(),
-                    value,
+                    key: style_key.into(),
+                    value: style_value,
                     info: TextStyleInfoFlag::from_byte(info),
                 }),
                 op::TextOp::MarkEnd => InnerContent::List(InnerListOp::StyleEnd),
@@ -451,7 +444,7 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op
             _ => unreachable!(),
         },
         ContainerType::List => match content {
-            OpContent::List(list) => match list {
+            JsonOpContent::List(list) => match list {
                 op::ListOp::Insert { pos, value } => {
                     let mut values = value.into_list().unwrap();
                     Arc::make_mut(&mut values).iter_mut().for_each(|v| {
@@ -482,7 +475,7 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op
             _ => unreachable!(),
         },
         ContainerType::MovableList => match content {
-            OpContent::MovableList(list) => match list {
+            JsonOpContent::MovableList(list) => match list {
                 op::MovableListOp::Insert { pos, value } => {
                     let mut values = value.into_list().unwrap();
                     Arc::make_mut(&mut values).iter_mut().for_each(|v| {
@@ -524,7 +517,7 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op
             _ => unreachable!(),
         },
         ContainerType::Map => match content {
-            OpContent::Map(map) => match map {
+            JsonOpContent::Map(map) => match map {
                 op::MapOp::Insert { key, mut value } => {
                     if let LoroValue::Container(id) = &mut value {
                         *id = convert_container_id(id.clone(), peers);
@@ -542,7 +535,7 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op
             _ => unreachable!(),
         },
         ContainerType::Tree => match content {
-            OpContent::Tree(tree) => match tree {
+            JsonOpContent::Tree(tree) => match tree {
                 op::TreeOp::Move {
                     target,
                     parent,
@@ -571,6 +564,30 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op
     })
 }
 
+impl TryFrom<&str> for JsonSchema {
+    type Error = serde_json::Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        serde_json::from_str(value)
+    }
+}
+
+impl TryFrom<&String> for JsonSchema {
+    type Error = serde_json::Error;
+
+    fn try_from(value: &String) -> Result<Self, Self::Error> {
+        serde_json::from_str(value)
+    }
+}
+
+impl TryFrom<String> for JsonSchema {
+    type Error = serde_json::Error;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        serde_json::from_str(&value)
+    }
+}
+
 pub mod op {
 
     use loro_common::{ContainerID, IdLp, Lamport, LoroValue, PeerID, TreeID, ID};
@@ -579,35 +596,39 @@ pub mod op {
 
     use crate::VersionVector;
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct JsonSchema {
         pub schema_version: u8,
+        #[serde(with = "self::serde_impl::vv")]
         pub start_vv: VersionVector,
+        #[serde(with = "self::serde_impl::vv")]
         pub end_vv: VersionVector,
+        #[serde(with = "self::serde_impl::peer_id")]
         pub peers: Vec<PeerID>,
         pub changes: Vec<Change>,
     }
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct Change {
         #[serde(with = "self::serde_impl::id")]
         pub id: ID,
         pub timestamp: i64,
+        #[serde(with = "self::serde_impl::deps")]
         pub deps: SmallVec<[ID; 2]>,
         pub lamport: Lamport,
         pub msg: Option<String>,
-        pub ops: Vec<Op>,
+        pub ops: Vec<JsonOp>,
     }
 
-    #[derive(Debug)]
-    pub struct Op {
-        pub content: OpContent,
+    #[derive(Debug, Clone)]
+    pub struct JsonOp {
+        pub content: JsonOpContent,
         pub container: ContainerID,
         pub counter: i32,
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(untagged)]
-    pub enum OpContent {
+    pub enum JsonOpContent {
         List(ListOp),
         MovableList(MovableListOp),
         Map(MapOp),
@@ -615,7 +636,14 @@ pub mod op {
         Tree(TreeOp),
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct FutureOpWrapper {
+        #[serde(flatten)]
+        pub value: FutureOp,
+        pub prop: i32,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum ListOp {
         Insert {
@@ -630,7 +658,7 @@ pub mod op {
         },
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum MovableListOp {
         Insert {
@@ -656,14 +684,14 @@ pub mod op {
         },
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum MapOp {
         Insert { key: String, value: LoroValue },
         Delete { key: String },
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum TextOp {
         Insert {
@@ -679,13 +707,14 @@ pub mod op {
         Mark {
             start: u32,
             end: u32,
-            style: (String, LoroValue),
+            style_key: String,
+            style_value: LoroValue,
             info: u8,
         },
         MarkEnd,
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum TreeOp {
         // Create {
@@ -708,6 +737,14 @@ pub mod op {
         },
     }
 
+    #[derive(Debug, Clone, Serialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    pub enum FutureOp {
+        #[cfg(feature = "counter")]
+        Counter(OwnedValue),
+        Unknown(OwnedValue),
+    }
+
     mod serde_impl {
 
         use loro_common::{ContainerID, ContainerType};
@@ -717,7 +754,7 @@ pub mod op {
             Deserialize, Deserializer, Serialize, Serializer,
         };
 
-        impl Serialize for super::Op {
+        impl Serialize for super::JsonOp {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
                 S: Serializer,
@@ -730,17 +767,15 @@ pub mod op {
             }
         }
 
-        impl<'de> Deserialize<'de> for super::Op {
-            fn deserialize<D>(deserializer: D) -> Result<super::Op, D::Error>
+        impl<'de> Deserialize<'de> for super::JsonOp {
+            fn deserialize<D>(deserializer: D) -> Result<super::JsonOp, D::Error>
             where
                 D: Deserializer<'de>,
             {
-                struct __Visitor<'a> {
-                    marker: std::marker::PhantomData<&'a ()>,
-                }
+                struct __Visitor;
 
-                impl<'a, 'de> Visitor<'de> for __Visitor<'a> {
-                    type Value = super::Op;
+                impl<'de> Visitor<'de> for __Visitor {
+                    type Value = super::JsonOp;
                     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                         formatter.write_str("struct Op")
                     }
@@ -754,43 +789,37 @@ pub mod op {
                             .map_err(|_| serde::de::Error::custom("invalid container id"))?;
                         let op = match container.container_type() {
                             ContainerType::List => {
-                                let (_key, op) = map.next_entry::<&str, super::ListOp>()?.unwrap();
+                                let (_key, op) = map.next_entry::<String, super::ListOp>()?.unwrap();
                                 super::OpContent::List(op)
                             }
                             ContainerType::MovableList => {
                                 let (_key, op) =
-                                    map.next_entry::<&str, super::MovableListOp>()?.unwrap();
+                                    map.next_entry::<String, super::MovableListOp>()?.unwrap();
                                 super::OpContent::MovableList(op)
                             }
                             ContainerType::Map => {
-                                let (_key, op) = map.next_entry::<&str, super::MapOp>()?.unwrap();
+                                let (_key, op) = map.next_entry::<String, super::MapOp>()?.unwrap();
                                 super::OpContent::Map(op)
                             }
                             ContainerType::Text => {
-                                let (_key, op) = map.next_entry::<&str, super::TextOp>()?.unwrap();
+                                let (_key, op) = map.next_entry::<String, super::TextOp>()?.unwrap();
                                 super::OpContent::Text(op)
                             }
                             ContainerType::Tree => {
-                                let (_key, op) = map.next_entry::<&str, super::TreeOp>()?.unwrap();
+                                let (_key, op) = map.next_entry::<String, super::TreeOp>()?.unwrap();
                                 super::OpContent::Tree(op)
                             }
                         };
-                        let (_, counter) = map.next_entry::<&str, i32>()?.unwrap();
-                        Ok(super::Op {
+                        let (_, counter) = map.next_entry::<String, i32>()?.unwrap();
+                        Ok(super::JsonOp {
                             container,
                             content: op,
                             counter,
                         })
                     }
                 }
-                const FIELDS: &[&str] = &["content", "container", "counter"];
-                deserializer.deserialize_struct(
-                    "Op",
-                    FIELDS,
-                    __Visitor {
-                        marker: Default::default(),
-                    },
-                )
+                const FIELDS: &[&str] = &["container", "content", "counter"];
+                deserializer.deserialize_struct("JsonOp", FIELDS, __Visitor)
             }
         }
 
@@ -809,9 +838,95 @@ pub mod op {
             where
                 D: Deserializer<'de>,
             {
-                let str: &str = Deserialize::deserialize(d)?;
-                let id: ID = ID::try_from(str).unwrap();
+                // NOTE: https://github.com/serde-rs/serde/issues/2467    we use String here
+                let str: String = Deserialize::deserialize(d)?;
+                let id: ID = ID::try_from(str.as_str()).unwrap();
                 Ok(id)
+            }
+        }
+
+        pub mod vv {
+            use serde::{ser::SerializeMap, Deserializer, Serializer};
+
+            use crate::VersionVector;
+
+            pub fn serialize<S>(vv: &VersionVector, s: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                let mut map = s.serialize_map(Some(vv.len()))?;
+                for (k, v) in vv.iter() {
+                    map.serialize_entry(&k.to_string(), v)?;
+                }
+                map.end()
+            }
+
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<VersionVector, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                struct __Visitor;
+                impl<'de> serde::de::Visitor<'de> for __Visitor {
+                    type Value = VersionVector;
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        formatter.write_str("a vv")
+                    }
+
+                    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+                    where
+                        A: serde::de::MapAccess<'de>,
+                    {
+                        let mut vv = VersionVector::new();
+                        while let Some((k, v)) = map.next_entry::<String, i32>()? {
+                            vv.insert(k.parse().unwrap(), v);
+                        }
+                        Ok(vv)
+                    }
+                }
+                d.deserialize_map(__Visitor)
+            }
+        }
+
+        pub mod deps {
+            use loro_common::ID;
+            use serde::{Deserialize, Deserializer, Serializer};
+
+            pub fn serialize<S>(deps: &[ID], s: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                s.collect_seq(deps.iter().map(|x| x.to_string()))
+            }
+
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<smallvec::SmallVec<[ID; 2]>, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let deps: Vec<String> = Deserialize::deserialize(d)?;
+                Ok(deps
+                    .into_iter()
+                    .map(|x| ID::try_from(x.as_str()).unwrap())
+                    .collect())
+            }
+        }
+
+        pub mod peer_id {
+            use loro_common::PeerID;
+            use serde::{Deserialize, Deserializer, Serializer};
+
+            pub fn serialize<S>(peers: &[PeerID], s: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                s.collect_seq(peers.iter().map(|x| x.to_string()))
+            }
+
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<Vec<PeerID>, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let peers: Vec<String> = Deserialize::deserialize(d)?;
+                Ok(peers.into_iter().map(|x| x.parse().unwrap()).collect())
             }
         }
 
@@ -830,8 +945,8 @@ pub mod op {
             where
                 D: Deserializer<'de>,
             {
-                let str: &str = Deserialize::deserialize(d)?;
-                let id: IdLp = IdLp::try_from(str).unwrap();
+                let str: String = Deserialize::deserialize(d)?;
+                let id: IdLp = IdLp::try_from(str.as_str()).unwrap();
                 Ok(id)
             }
         }
@@ -851,8 +966,8 @@ pub mod op {
             where
                 D: Deserializer<'de>,
             {
-                let str: &str = Deserialize::deserialize(d)?;
-                let id: TreeID = TreeID::try_from(str).unwrap();
+                let str: String = Deserialize::deserialize(d)?;
+                let id: TreeID = TreeID::try_from(str.as_str()).unwrap();
                 Ok(id)
             }
         }
@@ -875,10 +990,10 @@ pub mod op {
             where
                 D: Deserializer<'de>,
             {
-                let str: Option<&str> = Deserialize::deserialize(d)?;
+                let str: Option<String> = Deserialize::deserialize(d)?;
                 match str {
                     Some(str) => {
-                        let id: TreeID = TreeID::try_from(str).unwrap();
+                        let id: TreeID = TreeID::try_from(str.as_str()).unwrap();
                         Ok(Some(id))
                     }
                     None => Ok(None),

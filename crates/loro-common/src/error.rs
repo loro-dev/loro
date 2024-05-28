@@ -31,7 +31,7 @@ pub enum LoroError {
     OutOfBound { pos: usize, len: usize },
     #[error("Every op id should be unique. ID {id} has been used. You should use a new PeerID to edit the content. ")]
     UsedOpID { id: ID },
-    #[error("Movable Tree Error")]
+    #[error("Movable Tree Error: {0}")]
     TreeError(#[from] LoroTreeError),
     #[error("Invalid argument ({0})")]
     ArgErr(Box<str>),
@@ -51,6 +51,14 @@ pub enum LoroError {
     NotImplemented(&'static str),
     #[error("Reattach a container that is already attached")]
     ReattachAttachedContainer,
+    #[error("Edit is not allowed when the doc is in the detached mode.")]
+    EditWhenDetached,
+    #[error("The given ID ({0}) is not contained by the doc")]
+    UndoInvalidIdSpan(ID),
+    #[error("PeerID cannot be changed. Expected: {expected:?}, Actual: {actual:?}")]
+    UndoWithDifferentPeerId { expected: PeerID, actual: PeerID },
+    #[error("The input JSON schema is invalid")]
+    InvalidJsonSchema,
 }
 
 #[derive(Error, Debug)]

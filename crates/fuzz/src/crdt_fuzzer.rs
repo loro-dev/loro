@@ -174,12 +174,12 @@ impl CRDTFuzzer {
                     }
                     _ => {
                         info_span!("JsonFormat", from = i, to = j).in_scope(|| {
-                            let a_json = a_doc.export_json(&b_doc.oplog_vv());
-                            b_doc.import_json(&a_json).unwrap();
+                            let a_json = a_doc.export_json_updates(&b_doc.oplog_vv());
+                            b_doc.import_json_updates(a_json).unwrap();
                         });
                         info_span!("JsonFormat", from = j, to = i).in_scope(|| {
-                            let b_json = b_doc.export_json(&a_doc.oplog_vv());
-                            a_doc.import_json(&b_json).unwrap();
+                            let b_json = b_doc.export_json_updates(&a_doc.oplog_vv());
+                            a_doc.import_json_updates(b_json).unwrap();
                         });
                     }
                 }
