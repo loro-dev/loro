@@ -360,7 +360,7 @@ pub fn decode_header(m_bytes: &[u8]) -> LoroResult<ChangesBlockHeader> {
     let n_changes = n_changes as usize;
     let peer_num = peers_bytes.len() / 8;
     let mut peers = Vec::with_capacity(peer_num as usize);
-    for i in 0..(n_changes as usize) {
+    for i in 0..peer_num as usize {
         let peer_id =
             PeerID::from_le_bytes((&peers_bytes[(8 * i)..(8 * (i + 1))]).try_into().unwrap());
         peers.push(peer_id);

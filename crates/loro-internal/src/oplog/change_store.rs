@@ -1,7 +1,7 @@
 use bytes::Bytes;
-use loro_common::{Counter, HasLamportSpan, Lamport, LoroResult, PeerID, ID};
-use rle::{HasLength, RlePush};
-use std::{cmp::Ordering, collections::BTreeMap};
+use loro_common::{Counter, HasLamportSpan, Lamport, LoroError, LoroResult, PeerID, ID};
+use rle::{HasLength, Mergable, RlePush};
+use std::{cmp::Ordering, collections::BTreeMap, io::Read, sync::Arc};
 mod block_encode;
 mod delta_rle_encode;
 use crate::{
@@ -12,14 +12,70 @@ use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlock
 
 #[derive(Debug, Clone)]
 pub struct ChangeStore {
+    arena: SharedArena,
     kv: BTreeMap<ID, ChangesBlock>,
 }
 
 impl ChangeStore {
-    pub fn new() -> Self {
+    pub fn new(a: &SharedArena) -> Self {
         Self {
+            arena: a.clone(),
             kv: BTreeMap::new(),
         }
+    }
+
+    pub fn insert_change(&mut self, mut change: Change) {
+        let id = change.id;
+        if let Some((_id, block)) = self.kv.range_mut(..id).next_back() {
+            match block.push_change(change) {
+                Ok(_) => {
+                    return;
+                }
+                Err(c) => change = c,
+            }
+        }
+
+        self.kv.insert(id, ChangesBlock::new(change, &self.arena));
+    }
+
+    pub fn insert_block(&mut self, block: ChangesBlock) {
+        unimplemented!()
+    }
+
+    pub fn block_num(&self) -> usize {
+        self.kv.len()
+    }
+
+    pub(crate) fn iter_bytes(&mut self) -> impl Iterator<Item = (ID, &'_ ChangesBlockBytes)> + '_ {
+        self.kv
+            .iter_mut()
+            .map(|(id, block)| (*id, block.content.bytes(&self.arena)))
+    }
+
+    pub(crate) fn encode_all(&mut self) -> Vec<u8> {
+        println!("block num {}", self.kv.len());
+        let mut bytes = Vec::new();
+        for (_, block) in self.iter_bytes() {
+            // println!("block size {}", block.bytes.len());
+            leb128::write::unsigned(&mut bytes, block.bytes.len() as u64).unwrap();
+            bytes.extend(&block.bytes);
+        }
+
+        bytes
+    }
+
+    pub(crate) fn decode_all(&mut self, blocks: &[u8]) -> Result<(), LoroError> {
+        assert!(self.kv.is_empty());
+        let mut reader = blocks;
+        while !reader.is_empty() {
+            let size = leb128::read::unsigned(&mut reader).unwrap();
+            let block_bytes = &reader[0..size as usize];
+            let block = ChangesBlock::from_bytes(Bytes::copy_from_slice(block_bytes), &self.arena)?;
+            self.kv.insert(block.id(), block);
+            reader = &reader[size as usize..];
+        }
+
+        Ok(())
     }
 }
 
@@ -37,7 +93,7 @@ pub struct ChangesBlock {
 const MAX_BLOCK_SIZE: usize = 1024 * 4;
 
 impl ChangesBlock {
-    pub fn from_bytes(bytes: Bytes, arena: SharedArena) -> LoroResult<Self> {
+    pub fn from_bytes(bytes: Bytes, arena: &SharedArena) -> LoroResult<Self> {
         let len = bytes.len();
         let bytes = ChangesBlockBytes::new(bytes)?;
         let peer = bytes.peer();
@@ -45,13 +101,30 @@ impl ChangesBlock {
         let lamport_range = bytes.lamport_range();
         let content = ChangesBlockContent::Bytes(bytes);
         Ok(Self {
-            arena,
+            arena: arena.clone(),
             peer,
             estimated_size: len,
             counter_range,
             lamport_range,
             content,
         })
+    }
+
+    pub fn new(change: Change, a: &SharedArena) -> Self {
+        let atom_len = change.atom_len();
+        let counter_range = (change.id.counter, change.id.counter + atom_len as Counter);
+        let lamport_range = (change.lamport, change.lamport + atom_len as Lamport);
+        let estimated_size = change.estimate_storage_size();
+        let peer = change.id.peer;
+        let content = ChangesBlockContent::Changes(vec![change]);
+        Self {
+            arena: a.clone(),
+            peer,
+            counter_range,
+            lamport_range,
+            estimated_size,
+            content,
+        }
     }
 
     pub fn cmp_id(&self, id: ID) -> Ordering {
@@ -89,11 +162,23 @@ impl ChangesBlock {
             let atom_len = change.atom_len();
             self.lamport_range.1 = change.lamport + atom_len as Lamport;
             self.counter_range.1 = change.id.counter + atom_len as Counter;
-            self.estimated_size += change.estimate_storage_size();
+
             let changes = self.content.changes_mut().unwrap();
-            changes.push_rle_element(change);
+            match changes.last_mut() {
+                Some(last) if last.is_mergable(&change, &()) => {
+                    last.merge(&change, &());
+                }
+                _ => {
+                    self.estimated_size += change.estimate_storage_size();
+                    changes.push(change);
+                }
+            }
             Ok(())
         }
+    }
+
+    fn id(&self) -> ID {
+        ID::new(self.peer, self.counter_range.0)
     }
 }
 
@@ -117,14 +202,14 @@ impl ChangesBlockContent {
         }
     }
 
-    pub fn bytes(&mut self) -> &ChangesBlockBytes {
+    pub fn bytes(&mut self, a: &SharedArena) -> &ChangesBlockBytes {
         match self {
             ChangesBlockContent::Bytes(bytes) => bytes,
             ChangesBlockContent::Both(_, bytes) => bytes,
             ChangesBlockContent::Changes(changes) => {
-                let bytes = ChangesBlockBytes::serialize(changes, &SharedArena::new());
+                let bytes = ChangesBlockBytes::serialize(changes, a);
                 *self = ChangesBlockContent::Both(std::mem::take(changes), bytes);
-                self.bytes()
+                self.bytes(a)
             }
         }
     }
@@ -165,7 +250,7 @@ impl std::fmt::Debug for ChangesBlockContent {
 }
 
 #[derive(Clone)]
-struct ChangesBlockBytes {
+pub(crate) struct ChangesBlockBytes {
     bytes: Bytes,
     header: ChangesBlockHeader,
 }

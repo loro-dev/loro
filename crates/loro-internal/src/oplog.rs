@@ -177,10 +177,10 @@ impl OpLog {
     pub(crate) fn new() -> Self {
         let arena = SharedArena::new();
         Self {
+            change_store: ChangeStore::new(&arena),
             dag: AppDag::default(),
             op_groups: OpGroups::new(arena.clone()),
             changes: ClientChanges::default(),
-            change_store: ChangeStore::new(),
             arena,
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
@@ -248,6 +248,7 @@ impl OpLog {
     /// This is the **only** place to update the `OpLog.changes`
     pub(crate) fn insert_new_change(&mut self, mut change: Change, _: EnsureChangeDepsAreAtTheEnd) {
         self.op_groups.insert_by_change(&change);
+        self.change_store.insert_change(change.clone());
         self.register_container_and_parent_link(&change);
         let entry = self.changes.entry(change.id.peer).or_default();
         match entry.last_mut() {
@@ -973,6 +974,14 @@ impl OpLog {
         }
 
         ans
+    }
+
+    pub(crate) fn export_blocks(&mut self) -> Vec<u8> {
+        self.change_store.encode_all()
+    }
+
+    pub(crate) fn import_blocks(&mut self, blocks: &[u8]) -> Result<(), LoroError> {
+        self.change_store.decode_all(blocks)
     }
 }
 

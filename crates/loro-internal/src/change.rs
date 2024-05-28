@@ -97,10 +97,10 @@ impl<O: EstimatedSize> EstimatedSize for Change<O> {
     /// Estimate the storage size of the change in bytes
     #[inline]
     fn estimate_storage_size(&self) -> usize {
-        let id_size = 5;
-        let lamport_size = 3;
-        let timestamp_size = 4;
-        let deps_size = (self.deps.len().max(1) - 1) * 5;
+        let id_size = 2;
+        let lamport_size = 1;
+        let timestamp_size = 1;
+        let deps_size = (self.deps.len().max(1) - 1) * 4;
         let ops_size = self
             .ops
             .iter()
