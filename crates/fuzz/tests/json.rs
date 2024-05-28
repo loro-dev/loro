@@ -17,10 +17,12 @@ fn unknown_json() {
     counter.increment(5).unwrap();
     counter.increment(1).unwrap();
     // json format with counter
-    let json = doc.export_json(&Default::default());
+    let json = doc.export_json_updates(&Default::default());
     let value = doc.get_deep_value();
     // Test1: old version import newer version json
-    doc_with_unknown.import_json(&json).unwrap();
+    doc_with_unknown
+        .import_json_updates(serde_json::to_string(&json).unwrap())
+        .unwrap();
     // older version export json format with unknown
     //   {
     //   ...
@@ -42,7 +44,7 @@ fn unknown_json() {
     //     }
     //   ]
     // }
-    let unknown_json = doc_with_unknown.export_json(&Default::default());
+    let unknown_json = doc_with_unknown.export_json_updates(&Default::default());
     // older version export snapshot with json-unknown
     let snapshot_with_unknown_json = doc_with_unknown.export_snapshot();
     let doc2_with_unknown = loro_without_counter::LoroDoc::new();
@@ -54,7 +56,9 @@ fn unknown_json() {
 
     let new_doc = loro::LoroDoc::new();
     // Test3: newer version import older version json with json-unknown
-    new_doc.import_json(&unknown_json).unwrap();
+    new_doc
+        .import_json_updates(serde_json::to_string(&unknown_json).unwrap())
+        .unwrap();
     let new_doc_value = new_doc.get_deep_value();
     let new_doc2 = loro::LoroDoc::new();
     // Test4: newer version import older version snapshot with json-unknown
@@ -68,7 +72,7 @@ fn unknown_json() {
     let doc3_without_counter = loro_without_counter::LoroDoc::new();
     // Test5: older version import newer version snapshot with counter
     doc3_without_counter.import(&snapshot_with_counter).unwrap();
-    let unknown_json_from_snapshot = doc3_without_counter.export_json(&Default::default());
+    let unknown_json_from_snapshot = doc3_without_counter.export_json_updates(&Default::default());
     // {
     //       "container": "cid:root-counter:Unknown(5)",
     //       "content": {
@@ -80,10 +84,12 @@ fn unknown_json() {
     //       "counter": 0
     //     }
     // Test6: older version export json with binary unknown
-    let _json_with_binary_unknown = doc3_without_counter.export_json(&Default::default());
+    let _json_with_binary_unknown = doc3_without_counter.export_json_updates(&Default::default());
     let new_doc = loro::LoroDoc::new();
     // Test7: newer version import older version json with binary unknown
-    new_doc.import_json(&unknown_json_from_snapshot).unwrap();
+    new_doc
+        .import_json_updates(serde_json::to_string(&unknown_json_from_snapshot).unwrap())
+        .unwrap();
     let new_doc_value = new_doc.get_deep_value();
     assert_eq!(value, new_doc_value);
 }

@@ -1,10 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
-use self::op::{JsonSchema, OpContent};
-
-use loro_common::{
-    ContainerID, ContainerType, IdLp, LoroError, LoroResult, LoroValue, PeerID, TreeID, ID,
-};
+use loro_common::{ContainerID, ContainerType, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID};
 use rle::{HasLength, Sliceable};
 
 use crate::{
@@ -22,8 +18,9 @@ use crate::{
 };
 
 use super::encode_reordered::{import_changes_to_oplog, ValueRegister};
+use op::{JsonOpContent, JsonSchema};
 
-pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> String {
+pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> JsonSchema {
     let actual_start_vv: VersionVector = vv
         .iter()
         .filter_map(|(&peer, &end_counter)| {
@@ -43,19 +40,16 @@ pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> S
     let mut peer_register = ValueRegister::<PeerID>::new();
     let diff_changes = init_encode(oplog, &actual_start_vv);
     let changes = encode_changes(&diff_changes, &oplog.arena, &mut peer_register);
-    serde_json::to_string_pretty(&JsonSchema {
+    JsonSchema {
         changes,
         schema_version: 1,
         peers: peer_register.unwrap_vec(),
         start_vv: actual_start_vv,
         end_vv: oplog.vv().clone(),
-    })
-    .unwrap()
+    }
 }
 
-pub(crate) fn import_json(oplog: &mut OpLog, json: &str) -> LoroResult<()> {
-    let json: JsonSchema = serde_json::from_str(json)
-        .map_err(|e| LoroError::DecodeError(format!("cannot decode json {}", e).into()))?;
+pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<()> {
     let changes = decode_changes(json, &oplog.arena);
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
@@ -65,7 +59,7 @@ pub(crate) fn import_json(oplog: &mut OpLog, json: &str) -> LoroResult<()> {
     Ok(())
 }
 
-fn init_encode<'a>(oplog: &'a OpLog, vv: &'_ VersionVector) -> Vec<Cow<'a, Change>> {
+fn init_encode<'s, 'a: 's>(oplog: &'a OpLog, vv: &'_ VersionVector) -> Vec<Cow<'s, Change>> {
     let self_vv = oplog.vv();
     let start_vv = vv.trim(oplog.vv());
     let mut diff_changes: Vec<Cow<'a, Change>> = Vec::new();
@@ -155,11 +149,11 @@ fn convert_tree_id(tree: &TreeID, peers: &[PeerID]) -> TreeID {
     }
 }
 
-fn encode_changes<'a, 'c: 'a>(
-    diff_changes: &'c [Cow<'_, Change>],
+fn encode_changes(
+    diff_changes: &[Cow<'_, Change>],
     arena: &SharedArena,
     peer_register: &mut ValueRegister<PeerID>,
-) -> Vec<op::Change<'a>> {
+) -> Vec<op::Change> {
     let mut changes = Vec::with_capacity(diff_changes.len());
     for change in diff_changes.iter() {
         let mut ops = Vec::with_capacity(change.ops().len());
@@ -175,7 +169,7 @@ fn encode_changes<'a, 'c: 'a>(
             }
             let op = match container.container_type() {
                 ContainerType::List => match content {
-                    InnerContent::List(list) => OpContent::List(match list {
+                    InnerContent::List(list) => JsonOpContent::List(match list {
                         InnerListOp::Insert { slice, pos } => {
                             let mut value =
                                 arena.get_values(slice.0.start as usize..slice.0.end as usize);
@@ -204,7 +198,7 @@ fn encode_changes<'a, 'c: 'a>(
                     _ => unreachable!(),
                 },
                 ContainerType::MovableList => match content {
-                    InnerContent::List(list) => OpContent::MovableList(match list {
+                    InnerContent::List(list) => JsonOpContent::MovableList(match list {
                         InnerListOp::Insert { slice, pos } => {
                             let mut value =
                                 arena.get_values(slice.0.start as usize..slice.0.end as usize);
@@ -256,7 +250,7 @@ fn encode_changes<'a, 'c: 'a>(
                     _ => unreachable!(),
                 },
                 ContainerType::Text => match content {
-                    InnerContent::List(list) => OpContent::Text(match list {
+                    InnerContent::List(list) => JsonOpContent::Text(match list {
                         InnerListOp::InsertText {
                             slice,
                             unicode_start: _,
@@ -283,7 +277,8 @@ fn encode_changes<'a, 'c: 'a>(
                         } => op::TextOp::Mark {
                             start: *start,
                             end: *end,
-                            style: (key.to_string(), value.clone()),
+                            style_key: key.to_string(),
+                            style_value: value.clone(),
                             info: info.to_byte(),
                         },
                         InnerListOp::StyleEnd => op::TextOp::MarkEnd,
@@ -293,7 +288,7 @@ fn encode_changes<'a, 'c: 'a>(
                 },
                 ContainerType::Map => match content {
                     InnerContent::Map(MapSet { key, value }) => {
-                        OpContent::Map(if let Some(v) = value {
+                        JsonOpContent::Map(if let Some(v) = value {
                             let value = if let LoroValue::Container(id) = v {
                                 if id.is_normal() {
                                     LoroValue::Container(register_container_id(
@@ -326,7 +321,7 @@ fn encode_changes<'a, 'c: 'a>(
                         target,
                         parent,
                         position,
-                    }) => OpContent::Tree({
+                    }) => JsonOpContent::Tree({
                         if let Some(p) = parent {
                             if TreeID::is_deleted_root(p) {
                                 op::TreeOp::Delete {
@@ -354,9 +349,9 @@ fn encode_changes<'a, 'c: 'a>(
                     else {
                         unreachable!();
                     };
-                    OpContent::Future(op::FutureOpWrapper {
+                    JsonOpContent::Future(op::FutureOpWrapper {
                         prop: *prop,
-                        value: op::FutureOp::Unknown(Cow::Borrowed(value)),
+                        value: op::FutureOp::Unknown(value.clone()),
                     })
                 }
                 #[cfg(feature = "counter")]
@@ -365,19 +360,19 @@ fn encode_changes<'a, 'c: 'a>(
                         unreachable!()
                     };
                     match f {
-                        FutureInnerContent::Counter(x) => OpContent::Future(op::FutureOpWrapper {
-                            prop: *x as i32,
-                            value: op::FutureOp::Counter(std::borrow::Cow::Owned(
-                                super::value::OwnedValue::Future(
+                        FutureInnerContent::Counter(x) => {
+                            JsonOpContent::Future(op::FutureOpWrapper {
+                                prop: *x as i32,
+                                value: op::FutureOp::Counter(super::value::OwnedValue::Future(
                                     super::future_value::OwnedFutureValue::Counter,
-                                ),
-                            )),
-                        }),
+                                )),
+                            })
+                        }
                         _ => unreachable!(),
                     }
                 }
             };
-            ops.push(op::Op {
+            ops.push(op::JsonOp {
                 counter: *counter,
                 container,
                 content: op,
@@ -430,8 +425,8 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
     ans
 }
 
-fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
-    let op::Op {
+fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> Op {
+    let op::JsonOp {
         counter,
         container,
         content,
@@ -440,7 +435,7 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
     let idx = arena.register_container(&container);
     let content = match container.container_type() {
         ContainerType::Text => match content {
-            OpContent::Text(text) => match text {
+            JsonOpContent::Text(text) => match text {
                 op::TextOp::Insert { pos, text } => {
                     let (slice, result) = arena.alloc_str_with_slice(&text);
                     InnerContent::List(InnerListOp::InsertText {
@@ -463,13 +458,14 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
                 op::TextOp::Mark {
                     start,
                     end,
-                    style: (key, value),
+                    style_key,
+                    style_value,
                     info,
                 } => InnerContent::List(InnerListOp::StyleStart {
                     start,
                     end,
-                    key: key.into(),
-                    value,
+                    key: style_key.into(),
+                    value: style_value,
                     info: TextStyleInfoFlag::from_byte(info),
                 }),
                 op::TextOp::MarkEnd => InnerContent::List(InnerListOp::StyleEnd),
@@ -477,7 +473,7 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
             _ => unreachable!(),
         },
         ContainerType::List => match content {
-            OpContent::List(list) => match list {
+            JsonOpContent::List(list) => match list {
                 op::ListOp::Insert { pos, value } => {
                     let mut values = value.into_list().unwrap();
                     Arc::make_mut(&mut values).iter_mut().for_each(|v| {
@@ -508,7 +504,7 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
             _ => unreachable!(),
         },
         ContainerType::MovableList => match content {
-            OpContent::MovableList(list) => match list {
+            JsonOpContent::MovableList(list) => match list {
                 op::MovableListOp::Insert { pos, value } => {
                     let mut values = value.into_list().unwrap();
                     Arc::make_mut(&mut values).iter_mut().for_each(|v| {
@@ -550,7 +546,7 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
             _ => unreachable!(),
         },
         ContainerType::Map => match content {
-            OpContent::Map(map) => match map {
+            JsonOpContent::Map(map) => match map {
                 op::MapOp::Insert { key, mut value } => {
                     if let LoroValue::Container(id) = &mut value {
                         *id = convert_container_id(id.clone(), peers);
@@ -568,7 +564,7 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
             _ => unreachable!(),
         },
         ContainerType::Tree => match content {
-            OpContent::Tree(tree) => match tree {
+            JsonOpContent::Tree(tree) => match tree {
                 op::TreeOp::Move {
                     target,
                     parent,
@@ -587,18 +583,15 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
             _ => unreachable!(),
         },
         ContainerType::Unknown(_) => match content {
-            OpContent::Future(op::FutureOpWrapper {
+            JsonOpContent::Future(op::FutureOpWrapper {
                 prop,
                 value: op::FutureOp::Unknown(value),
-            }) => InnerContent::Future(FutureInnerContent::Unknown {
-                prop,
-                value: value.into_owned(),
-            }),
+            }) => InnerContent::Future(FutureInnerContent::Unknown { prop, value }),
             _ => unreachable!(),
         },
         #[cfg(feature = "counter")]
         ContainerType::Counter => {
-            let OpContent::Future(op::FutureOpWrapper { prop, value }) = content else {
+            let JsonOpContent::Future(op::FutureOpWrapper { prop, value }) = content else {
                 unreachable!()
             };
             match value {
@@ -618,8 +611,31 @@ fn decode_op(op: op::Op, arena: &SharedArena, peers: &[PeerID]) -> Op {
     }
 }
 
-pub(super) mod op {
-    use std::borrow::Cow;
+impl TryFrom<&str> for JsonSchema {
+    type Error = serde_json::Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        serde_json::from_str(value)
+    }
+}
+
+impl TryFrom<&String> for JsonSchema {
+    type Error = serde_json::Error;
+
+    fn try_from(value: &String) -> Result<Self, Self::Error> {
+        serde_json::from_str(value)
+    }
+}
+
+impl TryFrom<String> for JsonSchema {
+    type Error = serde_json::Error;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        serde_json::from_str(&value)
+    }
+}
+
+pub mod op {
 
     use fractional_index::FractionalIndex;
     use loro_common::{ContainerID, IdLp, Lamport, LoroValue, PeerID, TreeID, ID};
@@ -628,52 +644,56 @@ pub(super) mod op {
 
     use crate::{encoding::OwnedValue, VersionVector};
 
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct JsonSchema<'a> {
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct JsonSchema {
         pub schema_version: u8,
+        #[serde(with = "self::serde_impl::vv")]
         pub start_vv: VersionVector,
+        #[serde(with = "self::serde_impl::vv")]
         pub end_vv: VersionVector,
+        #[serde(with = "self::serde_impl::peer_id")]
         pub peers: Vec<PeerID>,
-        pub changes: Vec<Change<'a>>,
+        pub changes: Vec<Change>,
     }
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct Change<'a> {
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct Change {
         #[serde(with = "self::serde_impl::id")]
         pub id: ID,
         pub timestamp: i64,
+        #[serde(with = "self::serde_impl::deps")]
         pub deps: SmallVec<[ID; 2]>,
         pub lamport: Lamport,
         pub msg: Option<String>,
-        pub ops: Vec<Op<'a>>,
+        pub ops: Vec<JsonOp>,
     }
 
-    #[derive(Debug)]
-    pub struct Op<'a> {
-        pub content: OpContent<'a>,
+    #[derive(Debug, Clone)]
+    pub struct JsonOp {
+        pub content: JsonOpContent,
         pub container: ContainerID,
         pub counter: i32,
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(untagged)]
-    pub enum OpContent<'a> {
+    pub enum JsonOpContent {
         List(ListOp),
         MovableList(MovableListOp),
         Map(MapOp),
         Text(TextOp),
         Tree(TreeOp),
         // #[serde(with = "self::serde_impl::future_op")]
-        Future(FutureOpWrapper<'a>),
+        Future(FutureOpWrapper),
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct FutureOpWrapper<'a> {
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct FutureOpWrapper {
         #[serde(flatten)]
-        pub value: FutureOp<'a>,
+        pub value: FutureOp,
         pub prop: i32,
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum ListOp {
         Insert {
@@ -688,7 +708,7 @@ pub(super) mod op {
         },
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum MovableListOp {
         Insert {
@@ -714,14 +734,14 @@ pub(super) mod op {
         },
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum MapOp {
         Insert { key: String, value: LoroValue },
         Delete { key: String },
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum TextOp {
         Insert {
@@ -737,13 +757,14 @@ pub(super) mod op {
         Mark {
             start: u32,
             end: u32,
-            style: (String, LoroValue),
+            style_key: String,
+            style_value: LoroValue,
             info: u8,
         },
         MarkEnd,
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum TreeOp {
         // Create {
@@ -765,14 +786,12 @@ pub(super) mod op {
         },
     }
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Clone, Serialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
-    pub enum FutureOp<'a> {
+    pub enum FutureOp {
         #[cfg(feature = "counter")]
-        #[serde(borrow)]
-        Counter(Cow<'a, OwnedValue>),
-        #[serde(borrow)]
-        Unknown(Cow<'a, OwnedValue>),
+        Counter(OwnedValue),
+        Unknown(OwnedValue),
     }
 
     mod serde_impl {
@@ -784,7 +803,7 @@ pub(super) mod op {
             Deserialize, Deserializer, Serialize, Serializer,
         };
 
-        impl<'a> Serialize for super::Op<'a> {
+        impl Serialize for super::JsonOp {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
                 S: Serializer,
@@ -797,17 +816,15 @@ pub(super) mod op {
             }
         }
 
-        impl<'a, 'de> Deserialize<'de> for super::Op<'a> {
-            fn deserialize<D>(deserializer: D) -> Result<super::Op<'static>, D::Error>
+        impl<'de> Deserialize<'de> for super::JsonOp {
+            fn deserialize<D>(deserializer: D) -> Result<super::JsonOp, D::Error>
             where
                 D: Deserializer<'de>,
             {
-                struct __Visitor<'a> {
-                    marker: std::marker::PhantomData<super::Op<'a>>,
-                }
+                struct __Visitor;
 
-                impl<'a, 'de> Visitor<'de> for __Visitor<'a> {
-                    type Value = super::Op<'a>;
+                impl<'de> Visitor<'de> for __Visitor {
+                    type Value = super::JsonOp;
                     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                         formatter.write_str("struct Op")
                     }
@@ -816,72 +833,66 @@ pub(super) mod op {
                     where
                         A: MapAccess<'de>,
                     {
-                        let (_key, container) = map.next_entry::<&str, &str>()?.unwrap();
+                        let (_key, container) = map.next_entry::<String, String>()?.unwrap();
                         let is_unknown = container.ends_with(')');
-                        let container = ContainerID::try_from(container)
+                        let container = ContainerID::try_from(container.as_str())
                             .map_err(|_| serde::de::Error::custom("invalid container id"))?;
                         let op = if is_unknown {
                             let (_key, op) =
-                                map.next_entry::<&str, super::FutureOpWrapper>()?.unwrap();
-                            super::OpContent::Future(op)
+                                map.next_entry::<String, super::FutureOpWrapper>()?.unwrap();
+                            super::JsonOpContent::Future(op)
                         } else {
                             match container.container_type() {
                                 ContainerType::List => {
                                     let (_key, op) =
-                                        map.next_entry::<&str, super::ListOp>()?.unwrap();
-                                    super::OpContent::List(op)
+                                        map.next_entry::<String, super::ListOp>()?.unwrap();
+                                    super::JsonOpContent::List(op)
                                 }
                                 ContainerType::MovableList => {
                                     let (_key, op) =
-                                        map.next_entry::<&str, super::MovableListOp>()?.unwrap();
-                                    super::OpContent::MovableList(op)
+                                        map.next_entry::<String, super::MovableListOp>()?.unwrap();
+                                    super::JsonOpContent::MovableList(op)
                                 }
                                 ContainerType::Map => {
                                     let (_key, op) =
-                                        map.next_entry::<&str, super::MapOp>()?.unwrap();
-                                    super::OpContent::Map(op)
+                                        map.next_entry::<String, super::MapOp>()?.unwrap();
+                                    super::JsonOpContent::Map(op)
                                 }
                                 ContainerType::Text => {
                                     let (_key, op) =
-                                        map.next_entry::<&str, super::TextOp>()?.unwrap();
-                                    super::OpContent::Text(op)
+                                        map.next_entry::<String, super::TextOp>()?.unwrap();
+                                    super::JsonOpContent::Text(op)
                                 }
                                 ContainerType::Tree => {
                                     let (_key, op) =
-                                        map.next_entry::<&str, super::TreeOp>()?.unwrap();
-                                    super::OpContent::Tree(op)
+                                        map.next_entry::<String, super::TreeOp>()?.unwrap();
+                                    super::JsonOpContent::Tree(op)
                                 }
                                 #[cfg(feature = "counter")]
                                 ContainerType::Counter => {
-                                    let (_key, v) = map.next_entry::<&str, i64>()?.unwrap();
-                                    super::OpContent::Future(super::FutureOpWrapper {
+                                    let (_key, v) = map.next_entry::<String, i64>()?.unwrap();
+                                    super::JsonOpContent::Future(super::FutureOpWrapper {
                                     prop: v as i32,
-                                    value: super::FutureOp::Counter(std::borrow::Cow::Owned(
+                                    value: super::FutureOp::Counter(
                                         crate::encoding::value::OwnedValue::Future(
                                             crate::encoding::future_value::OwnedFutureValue::Counter,
-                                        ),
-                                    )),
+                                        )
+                                    )
                                 })
                                 }
                                 _ => unreachable!(),
                             }
                         };
-                        let (_, counter) = map.next_entry::<&str, i32>()?.unwrap();
-                        Ok(super::Op {
+                        let (_, counter) = map.next_entry::<String, i32>()?.unwrap();
+                        Ok(super::JsonOp {
                             container,
                             content: op,
                             counter,
                         })
                     }
                 }
-                const FIELDS: &[&str] = &["content", "container", "counter"];
-                deserializer.deserialize_struct(
-                    "Op",
-                    FIELDS,
-                    __Visitor {
-                        marker: Default::default(),
-                    },
-                )
+                const FIELDS: &[&str] = &["container", "content", "counter"];
+                deserializer.deserialize_struct("JsonOp", FIELDS, __Visitor)
             }
         }
 
@@ -891,8 +902,8 @@ pub(super) mod op {
 
             use crate::encoding::json_schema::op::FutureOp;
 
-            impl<'de, 'a> Deserialize<'de> for FutureOp<'a> {
-                fn deserialize<D>(d: D) -> Result<FutureOp<'a>, D::Error>
+            impl<'de> Deserialize<'de> for FutureOp {
+                fn deserialize<D>(d: D) -> Result<FutureOp, D::Error>
                 where
                     D: Deserializer<'de>,
                 {
@@ -964,9 +975,95 @@ pub(super) mod op {
             where
                 D: Deserializer<'de>,
             {
-                let str: &str = Deserialize::deserialize(d)?;
-                let id: ID = ID::try_from(str).unwrap();
+                // NOTE: https://github.com/serde-rs/serde/issues/2467    we use String here
+                let str: String = Deserialize::deserialize(d)?;
+                let id: ID = ID::try_from(str.as_str()).unwrap();
                 Ok(id)
+            }
+        }
+
+        pub mod vv {
+            use serde::{ser::SerializeMap, Deserializer, Serializer};
+
+            use crate::VersionVector;
+
+            pub fn serialize<S>(vv: &VersionVector, s: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                let mut map = s.serialize_map(Some(vv.len()))?;
+                for (k, v) in vv.iter() {
+                    map.serialize_entry(&k.to_string(), v)?;
+                }
+                map.end()
+            }
+
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<VersionVector, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                struct __Visitor;
+                impl<'de> serde::de::Visitor<'de> for __Visitor {
+                    type Value = VersionVector;
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        formatter.write_str("a vv")
+                    }
+
+                    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+                    where
+                        A: serde::de::MapAccess<'de>,
+                    {
+                        let mut vv = VersionVector::new();
+                        while let Some((k, v)) = map.next_entry::<String, i32>()? {
+                            vv.insert(k.parse().unwrap(), v);
+                        }
+                        Ok(vv)
+                    }
+                }
+                d.deserialize_map(__Visitor)
+            }
+        }
+
+        pub mod deps {
+            use loro_common::ID;
+            use serde::{Deserialize, Deserializer, Serializer};
+
+            pub fn serialize<S>(deps: &[ID], s: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                s.collect_seq(deps.iter().map(|x| x.to_string()))
+            }
+
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<smallvec::SmallVec<[ID; 2]>, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let deps: Vec<String> = Deserialize::deserialize(d)?;
+                Ok(deps
+                    .into_iter()
+                    .map(|x| ID::try_from(x.as_str()).unwrap())
+                    .collect())
+            }
+        }
+
+        pub mod peer_id {
+            use loro_common::PeerID;
+            use serde::{Deserialize, Deserializer, Serializer};
+
+            pub fn serialize<S>(peers: &[PeerID], s: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                s.collect_seq(peers.iter().map(|x| x.to_string()))
+            }
+
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<Vec<PeerID>, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let peers: Vec<String> = Deserialize::deserialize(d)?;
+                Ok(peers.into_iter().map(|x| x.parse().unwrap()).collect())
             }
         }
 
@@ -985,8 +1082,8 @@ pub(super) mod op {
             where
                 D: Deserializer<'de>,
             {
-                let str: &str = Deserialize::deserialize(d)?;
-                let id: IdLp = IdLp::try_from(str).unwrap();
+                let str: String = Deserialize::deserialize(d)?;
+                let id: IdLp = IdLp::try_from(str.as_str()).unwrap();
                 Ok(id)
             }
         }
@@ -1006,8 +1103,8 @@ pub(super) mod op {
             where
                 D: Deserializer<'de>,
             {
-                let str: &str = Deserialize::deserialize(d)?;
-                let id: TreeID = TreeID::try_from(str).unwrap();
+                let str: String = Deserialize::deserialize(d)?;
+                let id: TreeID = TreeID::try_from(str.as_str()).unwrap();
                 Ok(id)
             }
         }
@@ -1030,10 +1127,10 @@ pub(super) mod op {
             where
                 D: Deserializer<'de>,
             {
-                let str: Option<&str> = Deserialize::deserialize(d)?;
+                let str: Option<String> = Deserialize::deserialize(d)?;
                 match str {
                     Some(str) => {
-                        let id: TreeID = TreeID::try_from(str).unwrap();
+                        let id: TreeID = TreeID::try_from(str.as_str()).unwrap();
                         Ok(Some(id))
                     }
                     None => Ok(None),

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::{de::Visitor, ser::SerializeMap, Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -12,13 +14,13 @@ pub enum OwnedFutureValue {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Unknown {
     pub kind: u8,
-    pub data: Vec<u8>,
+    pub data: Arc<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JsonUnknown {
-    pub value_type: String,
-    pub value: String,
+    pub value_type: Arc<String>,
+    pub value: Arc<String>,
 }
 
 impl Serialize for OwnedFutureValue {
@@ -98,8 +100,8 @@ impl<'de> Deserialize<'de> for OwnedFutureValue {
                     _ => {
                         let value = value.unwrap_or_default();
                         Ok(OwnedFutureValue::JsonUnknown(JsonUnknown {
-                            value_type: value_type.to_owned(),
-                            value: value.to_owned(),
+                            value_type: Arc::new(value_type.to_owned()),
+                            value: Arc::new(value.to_owned()),
                         }))
                     }
                 }

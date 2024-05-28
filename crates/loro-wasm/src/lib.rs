@@ -19,7 +19,7 @@ use loro_internal::{
     loro::CommitOptions,
     obs::SubID,
     version::Frontiers,
-    ContainerType, DiffEvent, HandlerTrait, LoroDoc, LoroValue, MovableListHandler,
+    ContainerType, DiffEvent, HandlerTrait, JsonSchema, LoroDoc, LoroValue, MovableListHandler,
     UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
@@ -160,6 +160,9 @@ extern "C" {
         typescript_type = "{ mergeInterval?: number, maxUndoSteps?: number, excludeOriginPrefixes?: string[] } | undefined"
     )]
     pub type JsUndoConfig;
+    pub type JsJsonSchema;
+    #[wasm_bindgen(typescript_type = "string | JsJsonSchema")]
+    pub type JsJsonSchemaOrString;
 }
 
 mod observer {
@@ -857,20 +860,30 @@ impl Loro {
     }
 
     /// Export updates from the specific version to the current version with JSON format.
-    #[wasm_bindgen(js_name = "exportJSON")]
-    pub fn export_json(&self, vv: Option<VersionVector>) -> JsResult<String> {
+    #[wasm_bindgen(js_name = "exportJsonUpdates")]
+    pub fn export_json_updates(&self, vv: Option<VersionVector>) -> JsResult<JsValue> {
+        let mut json_vv = Default::default();
         if let Some(vv) = vv {
-            // `version` may be null or undefined
-            Ok(self.0.export_json(&vv.0))
-        } else {
-            Ok(self.0.export_json(&Default::default()))
+            json_vv = vv.0;
         }
+        let json_schema = self.0.export_json_updates(&json_vv);
+        let s = serde_wasm_bindgen::Serializer::new();
+        json_schema.serialize(&s).map_err(|e| e.into())
     }
 
     /// Import updates from the JSON format.
-    #[wasm_bindgen(js_name = "importJSON")]
-    pub fn import_json(&self, json: &str) -> JsResult<()> {
-        self.0.import_json(json)?;
+    #[wasm_bindgen(js_name = "importJsonUpdates")]
+    pub fn import_json_updates(&self, json: JsJsonSchemaOrString) -> JsResult<()> {
+        let json: JsValue = json.into();
+        if JsValue::is_string(&json) {
+            let json_str = json.as_string().unwrap();
+            return self
+                .0
+                .import_json_updates(json_str.as_str())
+                .map_err(|e| e.into());
+        }
+        let json_schema: JsonSchema = serde_wasm_bindgen::from_value(json)?;
+        self.0.import_json_updates(json_schema)?;
         Ok(())
     }
 

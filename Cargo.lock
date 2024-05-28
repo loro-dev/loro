@@ -653,7 +653,7 @@ dependencies = [
 [[package]]
 name = "fractional_index"
 version = "0.1.0"
-source = "git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d#ed0c64352993460c4a0006482d7bda92efbe9c5d"
+source = "git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8#013ff52a9e12add2d29c1695b42ecb87fdd30ff8"
 dependencies = [
  "imbl",
  "rand",
@@ -684,9 +684,10 @@ dependencies = [
  "fxhash",
  "itertools 0.12.1",
  "loro 0.5.1",
- "loro 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d)",
- "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d)",
+ "loro 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8)",
+ "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8)",
  "rand",
+ "serde_json",
  "tabled 0.10.0",
  "tracing",
  "tracing-chrome",
@@ -958,9 +959,9 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.63"
+version = "0.3.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f37a4a5928311ac501dee68b3c7613a1037d0edb30c8e5427bd832d55d1b790"
+checksum = "29c15563dc2726973df627357ce0c9ddddbea194836909d655df6a75d2cf296d"
 dependencies = [
  "wasm-bindgen",
 ]
@@ -1021,13 +1022,13 @@ dependencies = [
 [[package]]
 name = "loro"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d#ed0c64352993460c4a0006482d7bda92efbe9c5d"
+source = "git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8#013ff52a9e12add2d29c1695b42ecb87fdd30ff8"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
  "generic-btree",
- "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d)",
- "loro-internal 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d)",
+ "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8)",
+ "loro-internal 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8)",
  "tracing",
 ]
 
@@ -1051,12 +1052,12 @@ dependencies = [
 [[package]]
 name = "loro-common"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d#ed0c64352993460c4a0006482d7bda92efbe9c5d"
+source = "git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8#013ff52a9e12add2d29c1695b42ecb87fdd30ff8"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
  "fxhash",
- "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d)",
+ "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8)",
  "nonmax",
  "serde",
  "serde_columnar",
@@ -1083,7 +1084,7 @@ dependencies = [
 [[package]]
 name = "loro-delta"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d#ed0c64352993460c4a0006482d7bda92efbe9c5d"
+source = "git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8#013ff52a9e12add2d29c1695b42ecb87fdd30ff8"
 dependencies = [
  "arrayvec",
  "enum-as-inner 0.5.1",
@@ -1131,7 +1132,7 @@ dependencies = [
  "proptest-derive",
  "rand",
  "serde",
- "serde-wasm-bindgen",
+ "serde-wasm-bindgen 0.5.0",
  "serde_columnar",
  "serde_json",
  "smallvec",
@@ -1146,23 +1147,23 @@ dependencies = [
 [[package]]
 name = "loro-internal"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d#ed0c64352993460c4a0006482d7bda92efbe9c5d"
+source = "git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8#013ff52a9e12add2d29c1695b42ecb87fdd30ff8"
 dependencies = [
  "append-only-bytes",
  "arref",
  "either",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
- "fractional_index 0.1.0 (git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d)",
+ "fractional_index 0.1.0 (git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8)",
  "fxhash",
  "generic-btree",
  "getrandom",
  "im",
  "itertools 0.12.1",
  "leb128",
- "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d)",
- "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d)",
- "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d)",
+ "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8)",
+ "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8)",
+ "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8)",
  "md5",
  "num",
  "num-derive",
@@ -1198,7 +1199,7 @@ dependencies = [
 [[package]]
 name = "loro-rle"
 version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=ed0c64352993460c4a0006482d7bda92efbe9c5d#ed0c64352993460c4a0006482d7bda92efbe9c5d"
+source = "git+https://github.com/loro-dev/loro.git?rev=013ff52a9e12add2d29c1695b42ecb87fdd30ff8#013ff52a9e12add2d29c1695b42ecb87fdd30ff8"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -1224,7 +1225,8 @@ dependencies = [
  "loro-internal 0.5.1",
  "loro-rle 0.5.1",
  "serde",
- "serde-wasm-bindgen",
+ "serde-wasm-bindgen 0.6.5",
+ "serde_json",
  "tracing",
  "tracing-wasm",
  "wasm-bindgen",
@@ -1838,6 +1840,17 @@ name = "serde-wasm-bindgen"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3b143e2833c57ab9ad3ea280d21fd34e285a42837aeb0ee301f4f41890fa00e"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
 dependencies = [
  "js-sys",
  "serde",

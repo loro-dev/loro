@@ -201,8 +201,8 @@ pub enum OwnedValue {
     False,
     I64(i64),
     F64(f64),
-    Str(String),
-    Binary(Vec<u8>),
+    Str(Arc<String>),
+    Binary(Arc<Vec<u8>>),
     ContainerIdx(usize),
     DeleteOnce,
     DeleteSeq,
@@ -285,12 +285,12 @@ impl<'a> Value<'a> {
             Value::I64(x) => OwnedValue::I64(x),
             Value::ContainerIdx(x) => OwnedValue::ContainerIdx(x),
             Value::F64(x) => OwnedValue::F64(x),
-            Value::Str(x) => OwnedValue::Str(x.to_owned()),
+            Value::Str(x) => OwnedValue::Str(Arc::new(x.to_owned())),
             Value::DeleteSeq => OwnedValue::DeleteSeq,
             Value::DeltaInt(x) => OwnedValue::DeltaInt(x),
             Value::LoroValue(x) => OwnedValue::LoroValue(x),
             Value::MarkStart(x) => OwnedValue::MarkStart(x),
-            Value::Binary(x) => OwnedValue::Binary(x.to_owned()),
+            Value::Binary(x) => OwnedValue::Binary(Arc::new(x.to_owned())),
             Value::TreeMove(x) => OwnedValue::TreeMove(x),
             Value::ListMove {
                 from,
@@ -316,13 +316,13 @@ impl<'a> Value<'a> {
                 FutureValue::Unknown { kind, data } => {
                     OwnedValue::Future(OwnedFutureValue::Unknown(super::future_value::Unknown {
                         kind,
-                        data: data.to_owned(),
+                        data: Arc::new(data.to_owned()),
                     }))
                 }
                 FutureValue::JsonUnknown { value_type, value } => OwnedValue::Future(
                     OwnedFutureValue::JsonUnknown(super::future_value::JsonUnknown {
-                        value_type: value_type.to_owned(),
-                        value: value.to_owned(),
+                        value_type: Arc::new(value_type.to_owned()),
+                        value: Arc::new(value.to_owned()),
                     }),
                 ),
             },
@@ -485,7 +485,7 @@ pub struct MarkStart {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EncodedTreeMove {
-    pub subject_idx: usize,
+    pub target_idx: usize,
     pub is_parent_null: bool,
     pub parent_idx: usize,
     pub position: usize,
@@ -515,7 +515,7 @@ impl EncodedTreeMove {
             let bytes = &positions[self.position];
             Some(FractionalIndex::from_bytes(bytes.clone()))
         };
-        let EncodedTreeID { peer_idx, counter } = tree_ids[self.subject_idx];
+        let EncodedTreeID { peer_idx, counter } = tree_ids[self.target_idx];
         Ok(TreeOp {
             target: TreeID::new(
                 *(peer_ids
@@ -554,7 +554,7 @@ impl EncodedTreeMove {
         });
 
         EncodedTreeMove {
-            subject_idx: target_idx,
+            target_idx,
             is_parent_null: op.parent.is_none(),
             parent_idx: parent_idx.unwrap_or(0),
             position,
@@ -924,7 +924,7 @@ impl<'a> ValueReader<'a> {
             parent_idx = self.read_usize()?;
         }
         Ok(EncodedTreeMove {
-            subject_idx,
+            target_idx: subject_idx,
             is_parent_null,
             parent_idx,
             position,
@@ -1048,7 +1048,7 @@ impl ValueWriter {
 
     fn write_tree_move(&mut self, op: &EncodedTreeMove) -> usize {
         let len = self.buffer.len();
-        self.write_usize(op.subject_idx);
+        self.write_usize(op.target_idx);
         self.write_u8(op.is_parent_null as u8);
         self.write_usize(op.position);
         if op.is_parent_null {
