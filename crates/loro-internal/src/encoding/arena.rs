@@ -1,6 +1,6 @@
 use std::{borrow::Cow, ops::Deref};
 
-use crate::InternalString;
+use crate::{container::tree::tree_op::TreeOp, InternalString};
 use fxhash::FxHashSet;
 use itertools::Itertools;
 use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, PeerID};
@@ -106,8 +106,20 @@ pub struct DecodedArenas<'a> {
 }
 
 impl<'a> ValueDecodedArenasTrait for DecodedArenas<'a> {
-    fn keys(&self) -> &KeyArena {
-        &self.keys
+    fn keys(&self) -> &[InternalString] {
+        &self.keys.keys
+    }
+
+    fn peers(&self) -> &[PeerID] {
+        &self.peer_ids.peer_ids
+    }
+
+    fn decode_tree_op(
+        &self,
+        positions: &[Vec<u8>],
+        op: super::value::EncodedTreeMove,
+    ) -> LoroResult<crate::container::tree::tree_op::TreeOp> {
+        op.as_tree_op(&self.peer_ids.peer_ids, positions, &self.tree_ids.tree_ids)
     }
 }
 
@@ -236,13 +248,13 @@ pub(crate) struct EncodedContainer {
 }
 
 impl EncodedContainer {
-    pub fn as_container_id(&self, arenas: &DecodedArenas) -> LoroResult<ContainerID> {
+    pub fn as_container_id(&self, arenas: &dyn ValueDecodedArenasTrait) -> LoroResult<ContainerID> {
         if self.is_root {
             Ok(ContainerID::Root {
                 container_type: ContainerType::try_from_u8(self.kind)
                     .unwrap_or(ContainerType::Unknown(self.kind)),
                 name: arenas
-                    .keys
+                    .keys()
                     .get(self.key_idx_or_counter as usize)
                     .ok_or(LoroError::DecodeDataCorruptionError)?
                     .clone(),
@@ -252,7 +264,7 @@ impl EncodedContainer {
                 container_type: ContainerType::try_from_u8(self.kind)
                     .unwrap_or(ContainerType::Unknown(self.kind)),
                 peer: *(arenas
-                    .peer_ids
+                    .peers()
                     .get(self.peer_idx)
                     .ok_or(LoroError::DecodeDataCorruptionError)?),
                 counter: self.key_idx_or_counter,

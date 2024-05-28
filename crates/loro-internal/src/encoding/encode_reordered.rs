@@ -28,7 +28,7 @@ use self::encode::{encode_changes, encode_ops, init_encode, TempOp};
 use super::{
     arena::*,
     parse_header_and_body,
-    value::{Value, ValueKind, ValueReader, ValueWriter},
+    value::{Value, ValueDecodedArenasTrait, ValueKind, ValueReader, ValueWriter},
     ImportBlobMetadata,
 };
 
@@ -1229,12 +1229,12 @@ mod encode {
 }
 
 #[inline]
-fn decode_op(
+pub(crate) fn decode_op(
     cid: &ContainerID,
     value: Value<'_>,
     del_iter: &mut impl Iterator<Item = Result<EncodedDeleteStartId, ColumnarError>>,
     shared_arena: &SharedArena,
-    arenas: &DecodedArenas<'_>,
+    arenas: &dyn ValueDecodedArenasTrait,
     positions: &[Vec<u8>],
     prop: i32,
 ) -> LoroResult<crate::op::InnerContent> {
@@ -1258,7 +1258,7 @@ fn decode_op(
                 let len = del_start.len;
                 crate::op::InnerContent::List(crate::container::list::list_op::InnerListOp::Delete(
                     DeleteSpanWithId::new(
-                        ID::new(arenas.peer_ids.peer_ids[peer_idx], cnt as Counter),
+                        ID::new(arenas.peers()[peer_idx], cnt as Counter),
                         prop as isize,
                         len,
                     ),
@@ -1280,8 +1280,7 @@ fn decode_op(
         },
         ContainerType::Map => {
             let key = arenas
-                .keys
-                .keys
+                .keys()
                 .get(prop as usize)
                 .ok_or(LoroError::DecodeDataCorruptionError)?
                 .clone();
@@ -1318,7 +1317,7 @@ fn decode_op(
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Delete(
                             DeleteSpanWithId::new(
-                                ID::new(arenas.peer_ids[peer_idx], cnt as Counter),
+                                ID::new(arenas.peers()[peer_idx], cnt as Counter),
                                 pos as isize,
                                 len,
                             ),
@@ -1329,11 +1328,9 @@ fn decode_op(
             }
         }
         ContainerType::Tree => match value {
-            Value::TreeMove(op) => crate::op::InnerContent::Tree(op.as_tree_op(
-                &arenas.peer_ids,
-                positions,
-                &arenas.tree_ids.tree_ids,
-            )?),
+            Value::TreeMove(op) => {
+                crate::op::InnerContent::Tree(arenas.decode_tree_op(positions, op)?)
+            }
             _ => {
                 unreachable!()
             }
@@ -1358,7 +1355,7 @@ fn decode_op(
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Delete(
                             DeleteSpanWithId::new(
-                                ID::new(arenas.peer_ids[peer_idx], cnt as Counter),
+                                ID::new(arenas.peers()[peer_idx], cnt as Counter),
                                 pos as isize,
                                 len,
                             ),
@@ -1372,7 +1369,7 @@ fn decode_op(
                 } => crate::op::InnerContent::List(
                     crate::container::list::list_op::InnerListOp::Move {
                         from: from as u32,
-                        from_id: IdLp::new(arenas.peer_ids[from_idx], lamport as Lamport),
+                        from_id: IdLp::new(arenas.peers()[from_idx], lamport as Lamport),
                         to: prop as u32,
                     },
                 ),
@@ -1382,7 +1379,7 @@ fn decode_op(
                     value,
                 } => crate::op::InnerContent::List(
                     crate::container::list::list_op::InnerListOp::Set {
-                        elem_id: IdLp::new(arenas.peer_ids[peer_idx], lamport as Lamport),
+                        elem_id: IdLp::new(arenas.peers()[peer_idx], lamport as Lamport),
                         value,
                     },
                 ),

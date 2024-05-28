@@ -2,7 +2,9 @@ pub(crate) mod arena;
 mod encode_reordered;
 pub(crate) mod value;
 pub(crate) mod value_register;
-pub(crate) use encode_reordered::{encode_op, get_op_prop};
+pub(crate) use encode_reordered::{
+    decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
+};
 
 use crate::op::OpWithId;
 use crate::version::Frontiers;

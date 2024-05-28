@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::{
-    change::Lamport, container::tree::tree_op::TreeOp,
+    arena::SharedArena, change::Lamport, container::tree::tree_op::TreeOp,
     encoding::encode_reordered::MAX_COLLECTION_SIZE,
 };
 
@@ -19,7 +19,13 @@ use super::{
 };
 
 pub trait ValueDecodedArenasTrait {
-    fn keys(&self) -> &KeyArena;
+    fn keys(&self) -> &[InternalString];
+    fn peers(&self) -> &[PeerID];
+    fn decode_tree_op(
+        &self,
+        positions: &[Vec<u8>],
+        op: super::value::EncodedTreeMove,
+    ) -> LoroResult<crate::container::tree::tree_op::TreeOp>;
 }
 
 pub trait ValueEncodeRegister {
@@ -361,7 +367,7 @@ impl<'a> Value<'a> {
         Ok(Value::Future(value))
     }
 
-    pub(super) fn decode<'r: 'a>(
+    pub(crate) fn decode<'r: 'a>(
         kind: ValueKind,
         value_reader: &'r mut ValueReader,
         arenas: &'a dyn ValueDecodedArenasTrait,
@@ -383,9 +389,7 @@ impl<'a> Value<'a> {
             ValueKind::LoroValue => {
                 Value::LoroValue(value_reader.read_value_type_and_content(&arenas.keys(), id)?)
             }
-            ValueKind::MarkStart => {
-                Value::MarkStart(value_reader.read_mark(&arenas.keys().keys, id)?)
-            }
+            ValueKind::MarkStart => Value::MarkStart(value_reader.read_mark(&arenas.keys(), id)?),
             ValueKind::TreeMove => Value::TreeMove(value_reader.read_tree_move()?),
             ValueKind::RawTreeMove => Value::RawTreeMove(value_reader.read_raw_tree_move(arenas)?),
             ValueKind::ListMove => {
@@ -401,7 +405,7 @@ impl<'a> Value<'a> {
             ValueKind::ListSet => {
                 let peer_idx = value_reader.read_usize()?;
                 let lamport = value_reader.read_usize()? as u32;
-                let value = value_reader.read_value_type_and_content(&arenas.keys().keys, id)?;
+                let value = value_reader.read_value_type_and_content(&arenas.keys(), id)?;
                 Value::ListSet {
                     peer_idx,
                     lamport,

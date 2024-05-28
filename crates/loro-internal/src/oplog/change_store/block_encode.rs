@@ -60,21 +60,63 @@
 use std::borrow::Cow;
 use std::io::Write;
 
-use loro_common::{ContainerID, Counter, LoroError, LoroResult, PeerID, ID};
+use loro_common::{
+    ContainerID, Counter, InternalString, Lamport, LoroError, LoroResult, PeerID, ID,
+};
 use num::complex::ParseComplexError;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use serde_columnar::{columnar, Itertools};
+use serde_columnar::{columnar, DeltaRleDecoder, Itertools};
 
-use super::delta_rle_encode::UnsignedDeltaEncoder;
+use super::delta_rle_encode::{UnsignedDeltaDecoder, UnsignedDeltaEncoder};
+use super::ChangesBlock;
 use crate::arena::SharedArena;
-use crate::change::Change;
+use crate::change::{Change, Timestamp};
 use crate::encoding::arena::ContainerArena;
 use crate::encoding::value_register::ValueRegister;
-use crate::encoding::{encode_op, get_op_prop};
+use crate::encoding::{
+    decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
+};
+use crate::op::Op;
 use serde_columnar::{
     AnyRleDecoder, AnyRleEncoder, BoolRleDecoder, BoolRleEncoder, DeltaRleEncoder,
 };
+
+#[derive(Serialize, Deserialize)]
+struct EncodedDoc<'a> {
+    version: u16,
+    n_changes: u32,
+    first_counter: u32,
+    #[serde(borrow)]
+    peers: Cow<'a, [u8]>,
+    #[serde(borrow)]
+    lengths: Cow<'a, [u8]>,
+    #[serde(borrow)]
+    dep_on_self: Cow<'a, [u8]>,
+    #[serde(borrow)]
+    dep_len: Cow<'a, [u8]>,
+    #[serde(borrow)]
+    dep_peer_idxs: Cow<'a, [u8]>,
+    #[serde(borrow)]
+    dep_counters: Cow<'a, [u8]>,
+    #[serde(borrow)]
+    lamports: Cow<'a, [u8]>,
+    #[serde(borrow)]
+    timestamps: Cow<'a, [u8]>,
+    #[serde(borrow)]
+    commit_msg_lengths: Cow<'a, [u8]>,
+    #[serde(borrow)]
+    commit_msgs: Cow<'a, [u8]>,
+    // ---------------------- Ops ----------------------
+    #[serde(borrow)]
+    cids: Cow<'a, [u8]>,
+    #[serde(borrow)]
+    keys: Cow<'a, [u8]>,
+    #[serde(borrow)]
+    ops: Cow<'a, [u8]>,
+    #[serde(borrow)]
+    values: Cow<'a, [u8]>,
+}
 
 const VERSION: u16 = 0;
 
@@ -89,7 +131,7 @@ pub fn encode(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     peer_register.register(&peer);
 
     let cid_register: ValueRegister<ContainerID> = ValueRegister::new();
-    let mut timestamp_encoder = UnsignedDeltaEncoder::new(block.len() * 3 + 8);
+    let mut timestamp_encoder = DeltaRleEncoder::new();
     let mut lamport_encoder = UnsignedDeltaEncoder::new(block.len() * 2 + 4);
     let mut commit_msg_len_encoder = AnyRleEncoder::<u32>::new();
     let mut dep_self_encoder = BoolRleEncoder::new();
@@ -99,9 +141,9 @@ pub fn encode(block: &[Change], arena: &SharedArena) -> Vec<u8> {
         counter: AnyRleEncoder::new(),
     };
     for c in block {
-        timestamp_encoder.push(c.timestamp() as u64);
+        timestamp_encoder.append(c.timestamp()).unwrap();
         lamport_encoder.push(c.lamport() as u64);
-        commit_msg_len_encoder.append(0);
+        commit_msg_len_encoder.append(0).unwrap();
 
         let mut dep_on_self = false;
         for dep in c.deps().iter() {
@@ -109,17 +151,19 @@ pub fn encode(block: &[Change], arena: &SharedArena) -> Vec<u8> {
                 dep_on_self = true;
             } else {
                 let peer_idx = peer_register.register(&dep.peer);
-                encoded_deps.peer_idx.append(peer_idx as u32);
-                encoded_deps.counter.append(dep.counter as u32);
+                encoded_deps.peer_idx.append(peer_idx as u32).unwrap();
+                encoded_deps.counter.append(dep.counter as u32).unwrap();
             }
         }
 
-        dep_self_encoder.append(dep_on_self);
-        dep_len_encoder.append(if dep_on_self {
-            c.deps().len() as u64 - 1
-        } else {
-            c.deps().len() as u64
-        });
+        dep_self_encoder.append(dep_on_self).unwrap();
+        dep_len_encoder
+            .append(if dep_on_self {
+                c.deps().len() as u64 - 1
+            } else {
+                c.deps().len() as u64
+            })
+            .unwrap();
     }
 
     let mut encoded_ops = Vec::new();
@@ -163,9 +207,9 @@ pub fn encode(block: &[Change], arena: &SharedArena) -> Vec<u8> {
 
     // PeerIDs
     let peers = registers.peer_register.unwrap_vec();
-    let peer_bytes: Vec<u8> = peers.iter().map(|p| p.to_le_bytes()).flatten().collect();
+    let peer_bytes: Vec<u8> = peers.iter().flat_map(|p| p.to_le_bytes()).collect();
 
-    // Frist Counter + Change Len
+    // First Counter + Change Len
     let mut lengths_bytes = Vec::new();
     for c in block {
         leb128::write::unsigned(&mut lengths_bytes, c.atom_len() as u64).unwrap();
@@ -175,12 +219,7 @@ pub fn encode(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     //      │  Key Strings Size  │               Key Strings               │
     //      └────────────────────┴─────────────────────────────────────────┘
     let keys = registers.key_register.unwrap_vec();
-    let mut keys_bytes = Vec::new();
-    for key in keys {
-        let bytes = key.as_bytes();
-        leb128::write::unsigned(&mut keys_bytes, bytes.len() as u64).unwrap();
-        keys_bytes.write_all(bytes).unwrap();
-    }
+    let keys_bytes = encode_keys(keys);
 
     //      ┌──────────┬──────────┬───────┬────────────────────────────────┐
     //      │          │          │       │                                │
@@ -194,7 +233,11 @@ pub fn encode(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     //      │          │          │       │                                │
     //      └──────────┴──────────┴───────┴────────────────────────────────┘
 
-    let ops_bytes = serde_columnar::to_vec(&encoded_ops).unwrap();
+    let ops_bytes = serde_columnar::to_vec(&EncodedOpsAndDeleteStarts {
+        ops: encoded_ops,
+        delete_start_ids: del_starts,
+    })
+    .unwrap();
     //      ┌────────────────┬─────────────────────────────────────────────┐
     //      │Value Bytes Size│                Value Bytes                  │
     //      └────────────────┴─────────────────────────────────────────────┘
@@ -211,16 +254,37 @@ pub fn encode(block: &[Change], arena: &SharedArena) -> Vec<u8> {
         dep_peer_idxs: encoded_deps.peer_idx.finish().unwrap().into(),
         dep_counters: encoded_deps.counter.finish().unwrap().into(),
         lamports: lamport_encoder.finish().0.into(),
-        timestamps: timestamp_encoder.finish().0.into(),
+        timestamps: timestamp_encoder.finish().unwrap().into(),
         commit_msg_lengths: commit_msg_len_encoder.finish().unwrap().into(),
         commit_msgs: Cow::Owned(vec![]),
         cids: container_arena.encode().into(),
         keys: keys_bytes.into(),
         ops: ops_bytes.into(),
         values: value_bytes.into(),
-        delete_start_ids: serde_columnar::to_vec(&del_starts).unwrap().into(),
     };
     postcard::to_allocvec(&out).unwrap()
+}
+
+fn encode_keys(keys: Vec<loro_common::InternalString>) -> Vec<u8> {
+    let mut keys_bytes = Vec::new();
+    for key in keys {
+        let bytes = key.as_bytes();
+        leb128::write::unsigned(&mut keys_bytes, bytes.len() as u64).unwrap();
+        keys_bytes.write_all(bytes).unwrap();
+    }
+    keys_bytes
+}
+
+fn decode_keys(mut bytes: &[u8]) -> Vec<InternalString> {
+    let mut keys = Vec::new();
+    while !bytes.is_empty() {
+        let len = leb128::read::unsigned(&mut bytes).unwrap();
+        let key = std::str::from_utf8(&bytes[..len as usize]).unwrap();
+        keys.push(key.into());
+        bytes = &bytes[len as usize..];
+    }
+
+    keys
 }
 
 struct Registers {
@@ -229,7 +293,9 @@ struct Registers {
     cid_register: ValueRegister<ContainerID>,
 }
 
-use crate::encoding::value::{ValueEncodeRegister, ValueWriter};
+use crate::encoding::value::{
+    Value, ValueDecodedArenasTrait, ValueEncodeRegister, ValueKind, ValueReader, ValueWriter,
+};
 use crate::version::Frontiers;
 impl ValueEncodeRegister for Registers {
     fn key_mut(&mut self) -> &mut ValueRegister<loro_common::InternalString> {
@@ -248,7 +314,8 @@ impl ValueEncodeRegister for Registers {
     }
 }
 
-pub(crate) struct BlockHeader {
+#[derive(Clone)]
+pub(crate) struct ChangesBlockHeader {
     peer: PeerID,
     counter: Counter,
     n_changes: usize,
@@ -259,7 +326,7 @@ pub(crate) struct BlockHeader {
     deps: Vec<Frontiers>,
 }
 
-pub fn decode_header(m_bytes: &[u8]) -> LoroResult<BlockHeader> {
+pub fn decode_header(m_bytes: &[u8]) -> LoroResult<ChangesBlockHeader> {
     let EncodedDoc {
         version,
         n_changes,
@@ -278,7 +345,6 @@ pub fn decode_header(m_bytes: &[u8]) -> LoroResult<BlockHeader> {
         keys,
         ops,
         values,
-        delete_start_ids,
     } = postcard::from_bytes(m_bytes).map_err(|e| {
         LoroError::DecodeError(format!("Decode block error {}", e).into_boxed_str())
     })?;
@@ -343,7 +409,7 @@ pub fn decode_header(m_bytes: &[u8]) -> LoroResult<BlockHeader> {
         last += lengths[i];
     }
     counters.push(last);
-    Ok(BlockHeader {
+    Ok(ChangesBlockHeader {
         peer: peers[0],
         counter: first_counter,
         n_changes,
@@ -371,40 +437,138 @@ struct EncodedOp {
     len: u32,
 }
 
-#[derive(Serialize, Deserialize)]
-struct EncodedDoc<'a> {
-    version: u16,
-    n_changes: u32,
-    first_counter: u32,
-    #[serde(borrow)]
-    peers: Cow<'a, [u8]>,
-    #[serde(borrow)]
-    lengths: Cow<'a, [u8]>,
-    #[serde(borrow)]
-    dep_on_self: Cow<'a, [u8]>,
-    #[serde(borrow)]
-    dep_len: Cow<'a, [u8]>,
-    #[serde(borrow)]
-    dep_peer_idxs: Cow<'a, [u8]>,
-    #[serde(borrow)]
-    dep_counters: Cow<'a, [u8]>,
-    #[serde(borrow)]
-    lamports: Cow<'a, [u8]>,
-    #[serde(borrow)]
-    timestamps: Cow<'a, [u8]>,
-    #[serde(borrow)]
-    commit_msg_lengths: Cow<'a, [u8]>,
-    #[serde(borrow)]
-    commit_msgs: Cow<'a, [u8]>,
-    // ---------------------- Ops ----------------------
-    #[serde(borrow)]
-    cids: Cow<'a, [u8]>,
-    #[serde(borrow)]
-    keys: Cow<'a, [u8]>,
-    #[serde(borrow)]
-    ops: Cow<'a, [u8]>,
-    #[serde(borrow)]
-    values: Cow<'a, [u8]>,
-    #[serde(borrow)]
-    delete_start_ids: Cow<'a, [u8]>,
+#[columnar(ser, de)]
+struct EncodedOpsAndDeleteStarts {
+    #[columnar(class = "vec", iter = "EncodedOp")]
+    ops: Vec<EncodedOp>,
+    #[columnar(class = "vec", iter = "EncodedDeleteStartId")]
+    delete_start_ids: Vec<EncodedDeleteStartId>,
+}
+
+struct ValueDecodeArena<'a> {
+    peers: &'a [PeerID],
+    keys: &'a [InternalString],
+}
+
+impl<'a> ValueDecodedArenasTrait for ValueDecodeArena<'a> {
+    fn keys(&self) -> &[InternalString] {
+        self.keys
+    }
+
+    fn peers(&self) -> &[PeerID] {
+        self.peers
+    }
+
+    fn decode_tree_op(
+        &self,
+        positions: &[Vec<u8>],
+        op: crate::encoding::value::EncodedTreeMove,
+    ) -> LoroResult<crate::container::tree::tree_op::TreeOp> {
+        unreachable!()
+    }
+}
+
+pub fn decode_block(
+    m_bytes: &[u8],
+    shared_arena: &SharedArena,
+    header: ChangesBlockHeader,
+) -> LoroResult<Vec<Change>> {
+    let mut changes = Vec::with_capacity(header.n_changes);
+    let EncodedDoc {
+        version,
+        n_changes,
+        first_counter,
+        peers: peers_bytes,
+        lengths: lengths_bytes,
+        dep_on_self,
+        dep_len,
+        dep_peer_idxs,
+        dep_counters,
+        lamports,
+        timestamps,
+        commit_msg_lengths,
+        commit_msgs,
+        cids,
+        keys,
+        ops,
+        values,
+    } = postcard::from_bytes(m_bytes).map_err(|e| {
+        LoroError::DecodeError(format!("Decode block error {}", e).into_boxed_str())
+    })?;
+    if version != VERSION {
+        return Err(LoroError::IncompatibleFutureEncodingError(version as usize));
+    }
+    let mut lamport_decoder = UnsignedDeltaDecoder::new(&lamports, header.n_changes);
+    let mut timestamp_decoder: DeltaRleDecoder<i64> = DeltaRleDecoder::new(&timestamps);
+    let commit_msg_len_decoder = AnyRleDecoder::<u32>::new(&commit_msg_lengths);
+    let keys = decode_keys(&keys);
+    let decode_arena = ValueDecodeArena {
+        peers: &header.peers,
+        keys: &keys,
+    };
+    let cids: Vec<ContainerID> = ContainerArena::decode(&cids)
+        .unwrap()
+        .iter()
+        .map(|x| x.as_container_id(&decode_arena))
+        .try_collect()?;
+    let mut value_reader = ValueReader::new(&values);
+    let encoded_ops_iters =
+        serde_columnar::iter_from_bytes::<EncodedOpsAndDeleteStarts>(&ops).unwrap();
+    let mut op_iter = encoded_ops_iters.ops;
+    let mut del_iter = encoded_ops_iters.delete_start_ids;
+    for i in 0..(n_changes as usize) {
+        changes.push(Change {
+            ops: Default::default(),
+            deps: header.deps[i].clone(),
+            id: ID::new(header.peer, header.counters[i]),
+            lamport: lamport_decoder.next().unwrap() as Lamport,
+            timestamp: timestamp_decoder.next().unwrap().unwrap() as Timestamp,
+            has_dependents: true, // FIXME: this field
+        })
+    }
+
+    let mut counter = first_counter as Counter;
+    let mut change_index = 0;
+    let peer = header.peer;
+    for op in op_iter {
+        let EncodedOp {
+            container_index,
+            prop,
+            value_type,
+            len,
+        } = op?;
+        let value = Value::decode(
+            ValueKind::from_u8(value_type),
+            &mut value_reader,
+            &decode_arena,
+            ID::new(peer, counter),
+            prop,
+        )?;
+
+        let cid = &cids[container_index as usize];
+        let content = decode_op(
+            cid,
+            value,
+            &mut del_iter,
+            shared_arena,
+            &decode_arena,
+            &[],
+            prop,
+        )?;
+
+        let c_idx = shared_arena.register_container(cid);
+        let op = Op {
+            counter,
+            container: c_idx,
+            content,
+        };
+
+        changes[change_index].ops.push(op);
+        counter += len as Counter;
+        if counter >= header.counters[change_index + 1] {
+            change_index += 1;
+        }
+    }
+
+    Ok(changes)
 }

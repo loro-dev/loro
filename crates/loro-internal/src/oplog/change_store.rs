@@ -1,11 +1,11 @@
 use bytes::Bytes;
-use loro_common::{Counter, CounterSpan, IdLp, Lamport, LoroResult, PeerID, ID};
-use num::iter::Range;
+use loro_common::{Counter, Lamport, LoroResult, PeerID, ID};
 use std::{cmp::Ordering, collections::BTreeMap};
 mod block_encode;
 mod delta_rle_encode;
-mod ops_encode;
 use crate::{arena::SharedArena, change::Change, version::Frontiers};
+
+use self::block_encode::{decode_header, ChangesBlockHeader};
 
 #[derive(Debug, Clone)]
 pub struct ChangeStore {
@@ -36,19 +36,19 @@ pub enum ChangesBlockError {
 }
 
 impl ChangesBlock {
-    pub fn from_bytes(bytes: Bytes, arena: SharedArena) -> Self {
-        let bytes = ChangesBlockBytes::new(bytes);
+    pub fn from_bytes(bytes: Bytes, arena: SharedArena) -> LoroResult<Self> {
+        let bytes = ChangesBlockBytes::new(bytes)?;
         let peer = bytes.peer();
         let counter_range = bytes.counter_range();
         let lamport_range = bytes.lamport_range();
         let content = ChangesBlockContent::Bytes(bytes);
-        Self {
+        Ok(Self {
             arena,
             peer,
             counter_range,
             lamport_range,
             content,
-        }
+        })
     }
 
     pub fn cmp_id(&self, id: ID) -> Ordering {
@@ -146,11 +146,15 @@ impl std::fmt::Debug for ChangesBlockContent {
 #[derive(Clone)]
 struct ChangesBlockBytes {
     bytes: Bytes,
+    header: ChangesBlockHeader,
 }
 
 impl ChangesBlockBytes {
-    fn new(bytes: Bytes) -> Self {
-        Self { bytes }
+    fn new(bytes: Bytes) -> LoroResult<Self> {
+        Ok(Self {
+            header: decode_header(&bytes)?,
+            bytes,
+        })
     }
 
     fn parse(&self, a: &SharedArena) -> Result<Vec<Change>, ChangesBlockError> {
