@@ -641,18 +641,6 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fractional_index"
 version = "0.1.0"
-dependencies = [
- "criterion 0.5.1",
- "fractional_index 2.0.1",
- "imbl",
- "rand",
- "serde",
- "smallvec",
-]
-
-[[package]]
-name = "fractional_index"
-version = "0.1.0"
 source = "git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125#0dade6bc0fb574a8190db2aa80c83a479f62e125"
 dependencies = [
  "imbl",
@@ -1102,7 +1090,7 @@ dependencies = [
  "either",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
- "fractional_index 0.1.0 (git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125)",
+ "fractional_index 0.1.0",
  "fxhash",
  "generic-btree",
  "getrandom",
@@ -1144,7 +1132,6 @@ dependencies = [
  "either",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
- "fractional_index 0.1.0",
  "fxhash",
  "generic-btree",
  "getrandom",
@@ -1155,6 +1142,7 @@ dependencies = [
  "loro-common 0.16.2",
  "loro-delta 0.16.2",
  "loro-rle 0.16.2",
+ "loro_fractional_index",
  "md5",
  "miniz_oxide 0.7.1",
  "num",
@@ -1229,6 +1217,18 @@ dependencies = [
  "tracing-wasm",
  "wasm-bindgen",
  "wasm-bindgen-derive",
+]
+
+[[package]]
+name = "loro_fractional_index"
+version = "0.16.2"
+dependencies = [
+ "criterion 0.5.1",
+ "fractional_index 2.0.1",
+ "imbl",
+ "rand",
+ "serde",
+ "smallvec",
 ]
 
 [[package]]

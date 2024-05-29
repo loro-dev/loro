@@ -17,7 +17,9 @@ keywords = ["crdt", "local-first"]
 loro-delta = { path = "../delta", version = "0.16.2", package = "loro-delta" }
 rle = { path = "../rle", version = "0.16.2", package = "loro-rle" }
 loro-common = { path = "../loro-common", version = "0.16.2" }
-fractional_index = { path = "../fractional_index", features = ["serde"] }
+fractional_index = { path = "../fractional_index", features = [
+  "serde",
+], version = "0.16.2", package = "loro_fractional_index" }
 smallvec = { version = "1.8.0", features = ["serde"] }
 postcard = "1"
 fxhash = { workspace = true }
