@@ -107,6 +107,8 @@ fn transform_cursor(
         crate::handler::Handler::Map(_) => {}
         crate::handler::Handler::Tree(_) => {}
         crate::handler::Handler::Unknown(_) => {}
+        #[cfg(feature = "counter")]
+        crate::handler::Handler::Counter(_) => {}
     }
 }
 
