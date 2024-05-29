@@ -3,7 +3,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 pub fn criterion_benchmark(c: &mut Criterion) {
     use criterion::{AxisScale, BenchmarkId, PlotConfiguration};
     use fraction_index::FractionalIndex as MyIndex;
-    use fractional_index::FractionalIndex;
+    use loro_fractional_index::FractionalIndex;
     let mut group = c.benchmark_group("FractionalIndex");
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     group.plot_config(plot_config);
