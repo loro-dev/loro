@@ -28,7 +28,7 @@ it("json encoding", () => {
 })
 
 it("json decoding", () => {
-    const v15Json = `{
+    const v16Json = `{
     "schema_version": 1,
     "start_vv": {},
     "end_vv": {
@@ -89,7 +89,8 @@ it("json decoding", () => {
             "content": {
               "type": "move",
               "target": "7@0",
-              "parent": null
+              "parent": null,
+              "fractional_index": [128]
             },
             "counter": 7
           },
@@ -98,7 +99,8 @@ it("json decoding", () => {
             "content": {
               "type": "move",
               "target": "8@0",
-              "parent": "7@0"
+              "parent": "7@0",
+              "fractional_index": [128, 129]
             },
             "counter": 8
           },
@@ -136,6 +138,6 @@ it("json decoding", () => {
   }`;
     const doc = new Loro();
     // should not decode v16 json
-    expect(() => doc.importJsonUpdates(v16JSON)).toThrow();
+    expect(() => doc.importJsonUpdates(v16Json)).toThrow();
     // console.log(doc.exportJsonUpdates());
 })

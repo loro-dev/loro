@@ -1,7 +1,9 @@
 use std::{borrow::Cow, sync::Arc};
 
-use loro_common::{ContainerID, ContainerType, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID};
-use rle::{HasLength, Sliceable};
+use loro_common::{
+    ContainerID, ContainerType, IdLp, LoroError, LoroResult, LoroValue, PeerID, TreeID, ID,
+};
+use rle::{HasLength, RleVec, Sliceable};
 
 use crate::{
     arena::SharedArena,
@@ -50,7 +52,7 @@ pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> J
 }
 
 pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<()> {
-    let changes = decode_changes(json, &oplog.arena);
+    let changes = decode_changes(json, &oplog.arena)?;
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
@@ -396,7 +398,7 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
     Ok(ans)
 }
 
-fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op>  {
+fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op> {
     let op::JsonOp {
         counter,
         container,
@@ -541,7 +543,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                     parent,
                     fractional_index,
                 } => {
-                    if fractional_index.is_some() {
+                    if fractional_index.is_some() && fractional_index.as_ref().unwrap() != &[128] {
                         return Err(LoroError::DecodeError("To maintain data accuracy, Tree Op from v0.16 and later do not support downgrading back to v0.15".into()));
                     }
                     InnerContent::Tree(TreeOp {
@@ -634,13 +636,6 @@ pub mod op {
         Map(MapOp),
         Text(TextOp),
         Tree(TreeOp),
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct FutureOpWrapper {
-        #[serde(flatten)]
-        pub value: FutureOp,
-        pub prop: i32,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -737,14 +732,6 @@ pub mod op {
         },
     }
 
-    #[derive(Debug, Clone, Serialize)]
-    #[serde(tag = "type", rename_all = "snake_case")]
-    pub enum FutureOp {
-        #[cfg(feature = "counter")]
-        Counter(OwnedValue),
-        Unknown(OwnedValue),
-    }
-
     mod serde_impl {
 
         use loro_common::{ContainerID, ContainerType};
@@ -784,30 +771,33 @@ pub mod op {
                     where
                         A: MapAccess<'de>,
                     {
-                        let (_key, container) = map.next_entry::<&str, &str>()?.unwrap();
-                        let container = ContainerID::try_from(container)
+                        let (_key, container) = map.next_entry::<String, String>()?.unwrap();
+                        let container = ContainerID::try_from(container.as_str())
                             .map_err(|_| serde::de::Error::custom("invalid container id"))?;
                         let op = match container.container_type() {
                             ContainerType::List => {
-                                let (_key, op) = map.next_entry::<String, super::ListOp>()?.unwrap();
-                                super::OpContent::List(op)
+                                let (_key, op) =
+                                    map.next_entry::<String, super::ListOp>()?.unwrap();
+                                super::JsonOpContent::List(op)
                             }
                             ContainerType::MovableList => {
                                 let (_key, op) =
                                     map.next_entry::<String, super::MovableListOp>()?.unwrap();
-                                super::OpContent::MovableList(op)
+                                super::JsonOpContent::MovableList(op)
                             }
                             ContainerType::Map => {
                                 let (_key, op) = map.next_entry::<String, super::MapOp>()?.unwrap();
-                                super::OpContent::Map(op)
+                                super::JsonOpContent::Map(op)
                             }
                             ContainerType::Text => {
-                                let (_key, op) = map.next_entry::<String, super::TextOp>()?.unwrap();
-                                super::OpContent::Text(op)
+                                let (_key, op) =
+                                    map.next_entry::<String, super::TextOp>()?.unwrap();
+                                super::JsonOpContent::Text(op)
                             }
                             ContainerType::Tree => {
-                                let (_key, op) = map.next_entry::<String, super::TreeOp>()?.unwrap();
-                                super::OpContent::Tree(op)
+                                let (_key, op) =
+                                    map.next_entry::<String, super::TreeOp>()?.unwrap();
+                                super::JsonOpContent::Tree(op)
                             }
                         };
                         let (_, counter) = map.next_entry::<String, i32>()?.unwrap();
