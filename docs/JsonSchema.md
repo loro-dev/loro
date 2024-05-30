@@ -4,11 +4,12 @@
 
 Loro is diligently going towards the v1.0 stable version, during which the encoding format of Loro will inevitably bring some changes. In order to allow early trial users to smoothly migrate their historical data, Loro needs to add a more universal, and even human-readable, self-describing encoding format. This can also serve as the data source for future Loro dev-tools for visualization.
 
-The following is a introduction of this specification.
 
 ## Document
 
-The document is the highest level of the specification. It consist of all `Changes` and `Operations` and some metadata that describes the document such as the start/end version, the schema version, etc. The global context will also be at this level. the role of the global context is to reduce the document's encoding size and enhance its readability. For example, a `PeerID` of `u64` not only interferes with vision but is also completely unhelpful in distinguishing multiple peers. It is more intuitive to use simple numbers such as the index 0, 1, and 2.
+`Document` is the highest level of the specification. It consists of all `Change`s and `Op`s and some metadata that describes the document, such as the start/end version, the schema version, etc. 
+
+We will also extract the 64-bit integer PeerID to the beginning of the document and replace it internally with incrementing numbers starting from zero: 0, 1, 2, 3... This significantly reduces the document size and enhances readability.
 
 ```ts
 {
@@ -27,9 +28,9 @@ The document is the highest level of the specification. It consist of all `Chang
 
 ## Changes
 
-The Change is an important part of the document. A REG([Replay event graph](https://www.loro.dev/docs/advanced/replayable_event_graph)) is a directed graph where each node is a `Change` and each edge is a causal dependency between `Changes`. Except for the first Change of each peer, all Changes have one or more causal dependencies, we can use all the `Change` information to reconstruct the event graph between the start and end versions of the document.
+The Change is an important part of the document. A REG([Replay event graph](https://www.loro.dev/docs/advanced/replayable_event_graph)) is a directed acyclic graph where each node is a `Change`, and each edge is a causal dependency between `Change`s. The metadata of the `Change`s helps us reconstruct the graph.
 
-At the same time, a `Change` represents a transaction of a document. If you are familiar with VCS (version control systems) like [git](https://git-scm.com/), this is also equivalent to a commit. You can attach a commit message to each `Change` to describe the effect of this `Change`, that is the effect of all `Operation`s in `Change`.
+You can also attach a commit message to a `Change` like you usually do with Git's commit.
 
 ```ts
 {
@@ -267,7 +268,7 @@ The following is the **content** of each container。
 
 ### Unknown
 
-To support backward and forward compatibility of encoding, we have an unknonw type. When an `Op` from newer version is decoded into the older version, it will be treated as an unknown type which is in a more general form, such as binary and string. Conversely, when the new version decodes an unknown `Op`, Loro will know its true type and perform the proper decoding process.
+To support backward and forward compatibility of encoding, we have an unknown type. When an `Op` with a newly supported Container from a newer version is decoded into the older version, it will be treated as an unknown type in a more general form, such as binary and string. When the new version decodes an unknown `Op`, the newer version of Loro will know its true type and decode correctly.
 
 So there are two kind of unknown format, binary format and json-string format.
 
