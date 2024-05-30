@@ -4,6 +4,7 @@ use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, delta_trait::DeltaAttr, DeltaItem, DeltaRope};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
+use tracing::trace;
 
 use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
@@ -452,6 +453,16 @@ impl Diff {
             (Diff::Counter(a), Diff::Counter(b)) => Diff::Counter(a + b),
             _ => unreachable!(),
         }
+    }
+
+    /// Transform the cursor based on this diff
+    pub(crate) fn transform_cursor(&self, pos: usize, left_prior: bool) -> usize {
+        let ans = match self {
+            Diff::List(list) => list.transform_pos(pos, left_prior),
+            Diff::Text(text) => text.transform_pos(pos, left_prior),
+            _ => pos,
+        };
+        ans
     }
 }
 

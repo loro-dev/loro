@@ -1728,14 +1728,35 @@ impl TextHandler {
         }
     }
 
-    /// Get the stable position representation for the target pos
     pub fn get_cursor(&self, event_index: usize, side: Side) -> Option<Cursor> {
+        self.get_cursor_internal(event_index, side, true)
+    }
+
+    /// Get the stable position representation for the target pos
+    pub(crate) fn get_cursor_internal(
+        &self,
+        index: usize,
+        side: Side,
+        get_by_event_index: bool,
+    ) -> Option<Cursor> {
         match &self.inner {
             MaybeDetached::Detached(_) => None,
             MaybeDetached::Attached(a) => {
-                let (id, len) = a.with_state(|s| {
+                let (id, len, origin_pos) = a.with_state(|s| {
                     let s = s.as_richtext_state_mut().unwrap();
-                    (s.get_stable_position(event_index), s.len_event())
+                    (
+                        s.get_stable_position(index, get_by_event_index),
+                        if get_by_event_index {
+                            s.len_event()
+                        } else {
+                            s.len_unicode()
+                        },
+                        if get_by_event_index {
+                            s.event_index_to_unicode_index(index)
+                        } else {
+                            index
+                        },
+                    )
                 });
 
                 if len == 0 {
@@ -1747,14 +1768,16 @@ impl TextHandler {
                         } else {
                             side
                         },
+                        origin_pos: 0,
                     });
                 }
 
-                if len <= event_index {
+                if len <= index {
                     return Some(Cursor {
                         id: None,
                         container: self.id(),
                         side: Side::Right,
+                        origin_pos: len,
                     });
                 }
 
@@ -1763,6 +1786,7 @@ impl TextHandler {
                     id: Some(id),
                     container: self.id(),
                     side,
+                    origin_pos,
                 })
             }
         }
@@ -2129,6 +2153,7 @@ impl ListHandler {
                         } else {
                             side
                         },
+                        origin_pos: 0,
                     });
                 }
 
@@ -2137,6 +2162,7 @@ impl ListHandler {
                         id: None,
                         container: self.id(),
                         side: Side::Right,
+                        origin_pos: len,
                     });
                 }
 
@@ -2145,6 +2171,7 @@ impl ListHandler {
                     id: Some(id.id()),
                     container: self.id(),
                     side,
+                    origin_pos: pos,
                 })
             }
         }
@@ -2778,6 +2805,7 @@ impl MovableListHandler {
                         } else {
                             side
                         },
+                        origin_pos: 0,
                     });
                 }
 
@@ -2786,6 +2814,7 @@ impl MovableListHandler {
                         id: None,
                         container: self.id(),
                         side: Side::Right,
+                        origin_pos: len,
                     });
                 }
 
@@ -2794,6 +2823,7 @@ impl MovableListHandler {
                     id: Some(id.id()),
                     container: self.id(),
                     side,
+                    origin_pos: pos,
                 })
             }
         }

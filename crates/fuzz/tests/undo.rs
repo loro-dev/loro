@@ -4,10 +4,10 @@ use fuzz::{
 };
 use loro_common::ContainerType::*;
 
-// #[ctor::ctor]
-// fn init() {
-//     dev_utils::setup_test_log();
-// }
+#[ctor::ctor]
+fn init() {
+    dev_utils::setup_test_log();
+}
 
 #[test]
 fn undo_tree_with_map() {

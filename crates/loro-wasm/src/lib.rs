@@ -18,6 +18,7 @@ use loro_internal::{
     id::{Counter, TreeID, ID},
     loro::CommitOptions,
     obs::SubID,
+    undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
     ContainerType, DiffEvent, HandlerTrait, JsonSchema, LoroDoc, LoroValue, MovableListHandler,
     UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
@@ -25,13 +26,13 @@ use loro_internal::{
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
-use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
+use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 
 mod awareness;
 mod log;
 
-use crate::convert::{handler_to_js_value, js_to_container};
+use crate::convert::{handler_to_js_value, js_to_container, js_to_cursor};
 pub use awareness::AwarenessWasm;
 
 mod convert;
@@ -156,9 +157,7 @@ extern "C" {
     pub type JsSide;
     #[wasm_bindgen(typescript_type = "{ update?: Cursor, offset: number, side: Side }")]
     pub type JsCursorQueryAns;
-    #[wasm_bindgen(
-        typescript_type = "{ mergeInterval?: number, maxUndoSteps?: number, excludeOriginPrefixes?: string[] } | undefined"
-    )]
+    #[wasm_bindgen(typescript_type = "UndoConfig")]
     pub type JsUndoConfig;
     pub type JsJsonSchema;
     #[wasm_bindgen(typescript_type = "string | JsJsonSchema")]
@@ -192,7 +191,23 @@ mod observer {
             if std::thread::current().id() == self.thread {
                 self.f.call1(&JsValue::NULL, arg)
             } else {
-                panic!("Observer called from different thread")
+                Err(JsValue::from_str("Observer called from different thread"))
+            }
+        }
+
+        pub fn call2(&self, arg1: &JsValue, arg2: &JsValue) -> JsResult<JsValue> {
+            if std::thread::current().id() == self.thread {
+                self.f.call2(&JsValue::NULL, arg1, arg2)
+            } else {
+                Err(JsValue::from_str("Observer called from different thread"))
+            }
+        }
+
+        pub fn call3(&self, arg1: &JsValue, arg2: &JsValue, arg3: &JsValue) -> JsResult<JsValue> {
+            if std::thread::current().id() == self.thread {
+                self.f.call3(&JsValue::NULL, arg1, arg2, arg3)
+            } else {
+                Err(JsValue::from_str("Observer called from different thread"))
             }
         }
     }
@@ -1272,7 +1287,9 @@ fn call_subscriber(ob: observer::Observer, e: DiffEvent, doc: &Arc<LoroDoc>) {
     // [1]: https://caniuse.com/?search=FinalizationRegistry
     // [2]: https://rustwasm.github.io/wasm-bindgen/reference/weak-references.html
     let event = diff_event_to_js_value(e, doc);
-    ob.call1(&event).unwrap_throw();
+    if let Err(e) = ob.call1(&event) {
+        throw_error_after_micro_task(e);
+    }
 }
 
 #[allow(unused)]
@@ -1286,7 +1303,7 @@ fn call_after_micro_task(ob: observer::Observer, event: DiffEvent, doc: &Arc<Lor
         let ans = ob.call1(&event);
         drop(copy);
         if let Err(e) = ans {
-            console_error!("Error when calling observer: {:#?}", e);
+            throw_error_after_micro_task(e)
         }
     });
 
@@ -3295,6 +3312,11 @@ impl Cursor {
         let pos = cursor::Cursor::decode(data).map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Cursor { pos })
     }
+
+    /// "Cursor"
+    pub fn kind(&self) -> JsValue {
+        JsValue::from_str("Cursor")
+    }
 }
 
 fn loro_value_to_js_value_or_container(
@@ -3334,8 +3356,26 @@ pub struct UndoManager {
 
 #[wasm_bindgen]
 impl UndoManager {
-    /// Create a new undo manager. It will bind on the current PeerID.
+    /// `UndoManager` is responsible for handling undo and redo operations.
+    ///
     /// PeerID cannot be changed during the lifetime of the UndoManager.
+    ///
+    /// Note that undo operations are local and cannot revert changes made by other peers.
+    /// To undo changes made by other peers, consider using the time travel feature.
+    ///
+    /// Each commit made by the current peer is recorded as an undo step in the `UndoManager`.
+    /// Undo steps can be merged if they occur within a specified merge interval.
+    ///
+    /// ## Config
+    ///
+    /// - `mergeInterval`: Optional. The interval in milliseconds within which undo steps can be merged. Default is 1000 ms.
+    /// - `maxUndoSteps`: Optional. The maximum number of undo steps to retain. Default is 100.
+    /// - `excludeOriginPrefixes`: Optional. An array of string prefixes. Events with origins matching these prefixes will be excluded from undo steps.
+    /// - `onPush`: Optional. A callback function that is called when an undo/redo step is pushed.
+    ///    The function can return a meta data value that will be attached to the given stack item.
+    /// - `onPop`: Optional. A callback function that is called when an undo/redo step is popped.
+    ///    The function will have a meta data value that was attached to the given stack item when
+    ///   `onPush` was called.
     #[wasm_bindgen(constructor)]
     pub fn new(doc: &Loro, config: JsUndoConfig) -> Self {
         let max_undo_steps = Reflect::get(&config, &JsValue::from_str("maxUndoSteps"))
@@ -3356,16 +3396,28 @@ impl UndoManager {
                         .collect::<Vec<String>>()
                 })
                 .unwrap_or_default();
+        let on_push = Reflect::get(&config, &JsValue::from_str("onPush")).ok();
+        let on_pop = Reflect::get(&config, &JsValue::from_str("onPop")).ok();
+
         let mut undo = InnerUndoManager::new(&doc.0);
         undo.set_max_undo_steps(max_undo_steps);
         undo.set_merge_interval(merge_interval);
         for prefix in exclude_origin_prefixes {
             undo.add_exclude_origin_prefix(&prefix);
         }
-        UndoManager {
+
+        let mut ans = UndoManager {
             undo,
             doc: doc.0.clone(),
+        };
+
+        if let Some(on_push) = on_push {
+            ans.setOnPush(on_push);
         }
+        if let Some(on_pop) = on_pop {
+            ans.setOnPop(on_pop);
+        }
+        ans
     }
 
     /// Undo the last operation.
@@ -3413,6 +3465,125 @@ impl UndoManager {
     pub fn checkBinding(&self, doc: &Loro) -> bool {
         Arc::ptr_eq(&self.doc, &doc.0)
     }
+
+    /// Set the on push event listener.
+    ///
+    /// Every time an undo step or redo step is pushed, the on push event listener will be called.
+    #[wasm_bindgen(skip_typescript)]
+    pub fn setOnPush(&mut self, on_push: JsValue) {
+        let on_push = on_push.dyn_into::<js_sys::Function>().ok();
+        if let Some(on_push) = on_push {
+            let on_push = observer::Observer::new(on_push);
+            self.undo.set_on_push(Some(Box::new(move |kind, span| {
+                let is_undo = JsValue::from_bool(matches!(kind, UndoOrRedo::Undo));
+                let counter_range = js_sys::Object::new();
+                js_sys::Reflect::set(
+                    &counter_range,
+                    &JsValue::from_str("start"),
+                    &JsValue::from_f64(span.start as f64),
+                )
+                .unwrap();
+                js_sys::Reflect::set(
+                    &counter_range,
+                    &JsValue::from_str("end"),
+                    &JsValue::from_f64(span.end as f64),
+                )
+                .unwrap();
+
+                let mut undo_item_meta = UndoItemMeta::new();
+                match on_push.call2(&is_undo, &counter_range) {
+                    Ok(v) => {
+                        if let Ok(obj) = v.dyn_into::<js_sys::Object>() {
+                            if let Ok(value) =
+                                js_sys::Reflect::get(&obj, &JsValue::from_str("value"))
+                            {
+                                let value: LoroValue = value.into();
+                                undo_item_meta.value = value;
+                            }
+                            if let Ok(cursors) =
+                                js_sys::Reflect::get(&obj, &JsValue::from_str("cursors"))
+                            {
+                                let cursors: js_sys::Array = cursors.into();
+                                for cursor in cursors.iter() {
+                                    let cursor = js_to_cursor(cursor).unwrap_throw();
+                                    undo_item_meta.add_cursor(&cursor.pos);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        throw_error_after_micro_task(e);
+                    }
+                }
+
+                undo_item_meta
+            })));
+        } else {
+            self.undo.set_on_push(None);
+        }
+    }
+
+    /// Set the on pop event listener.
+    ///
+    /// Every time an undo step or redo step is popped, the on pop event listener will be called.
+    #[wasm_bindgen(skip_typescript)]
+    pub fn setOnPop(&mut self, on_pop: JsValue) {
+        let on_pop = on_pop.dyn_into::<js_sys::Function>().ok();
+        if let Some(on_pop) = on_pop {
+            let on_pop = observer::Observer::new(on_pop);
+            self.undo
+                .set_on_pop(Some(Box::new(move |kind, span, value| {
+                    let is_undo = JsValue::from_bool(matches!(kind, UndoOrRedo::Undo));
+                    let meta = js_sys::Object::new();
+                    js_sys::Reflect::set(&meta, &JsValue::from_str("value"), &value.value.into())
+                        .unwrap();
+                    let cursors_array = js_sys::Array::new();
+                    for cursor in value.cursors {
+                        let c = Cursor { pos: cursor.cursor };
+                        cursors_array.push(&c.into());
+                    }
+                    js_sys::Reflect::set(&meta, &JsValue::from_str("cursors"), &cursors_array)
+                        .unwrap();
+                    let counter_range = js_sys::Object::new();
+                    js_sys::Reflect::set(
+                        &counter_range,
+                        &JsValue::from_str("start"),
+                        &JsValue::from_f64(span.start as f64),
+                    )
+                    .unwrap();
+                    js_sys::Reflect::set(
+                        &counter_range,
+                        &JsValue::from_str("end"),
+                        &JsValue::from_f64(span.end as f64),
+                    )
+                    .unwrap();
+                    match on_pop.call3(&is_undo, &meta.into(), &counter_range) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            throw_error_after_micro_task(e);
+                        }
+                    }
+                })));
+        } else {
+            self.undo.set_on_pop(None);
+        }
+    }
+}
+
+/// Use this function to throw an error after the micro task.
+///
+/// We should avoid panic or use js_throw directly inside a event listener as it might
+/// break the internal invariants.
+fn throw_error_after_micro_task(error: JsValue) {
+    let drop_handler = Rc::new(RefCell::new(None));
+    let drop_handler_clone = drop_handler.clone();
+    let closure = Closure::once(Box::new(move |_| {
+        drop(drop_handler_clone);
+        throw_val(error);
+    }));
+    let promise = Promise::resolve(&JsValue::NULL);
+    let _ = promise.then(&closure);
+    drop_handler.borrow_mut().replace(closure);
 }
 
 /// [VersionVector](https://en.wikipedia.org/wiki/Version_vector)
@@ -3717,6 +3888,13 @@ export type Value =
   | Uint8Array
   | Value[];
 
+export type UndoConfig = {
+    mergeInterval?: number,
+    maxUndoSteps?: number,
+    excludeOriginPrefixes?: string[],
+    onPush?: (isUndo: boolean, counterRange: { start: number, end: number }) => { value: Value, cursors: Cursor[] },
+    onPop?: (isUndo: boolean, value: { value: Value, cursors: Cursor[] }, counterRange: { start: number, end: number }) => void
+};
 export type Container = LoroList | LoroMap | LoroText | LoroTree | LoroMovableList;
 
 export interface ImportBlobMetadata {

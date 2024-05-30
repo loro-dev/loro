@@ -1181,13 +1181,13 @@ impl DocState {
         State::UnknownState(Box::new(UnknownState::new(idx)))
     }
 
-    pub fn get_relative_position(&mut self, pos: &Cursor) -> Option<usize> {
+    pub fn get_relative_position(&mut self, pos: &Cursor, use_event_index: bool) -> Option<usize> {
         let idx = self.arena.register_container(&pos.container);
         let state = self.states.get_mut(&idx)?;
         if let Some(id) = pos.id {
             match state {
                 State::ListState(s) => s.get_index_of_id(id),
-                State::RichtextState(s) => s.get_event_index_of_id(id),
+                State::RichtextState(s) => s.get_text_index_of_id(id, use_event_index),
                 State::MovableListState(s) => s.get_index_of_id(id),
                 State::MapState(_) | State::TreeState(_) | State::UnknownState(_) => unreachable!(),
                 #[cfg(feature = "counter")]
@@ -1200,7 +1200,11 @@ impl DocState {
 
             match state {
                 State::ListState(s) => Some(s.len()),
-                State::RichtextState(s) => Some(s.len_event()),
+                State::RichtextState(s) => Some(if use_event_index {
+                    s.len_event()
+                } else {
+                    s.len_unicode()
+                }),
                 State::MovableListState(s) => Some(s.len()),
                 State::MapState(_) | State::TreeState(_) | State::UnknownState(_) => unreachable!(),
                 #[cfg(feature = "counter")]

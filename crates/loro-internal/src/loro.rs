@@ -1134,10 +1134,18 @@ impl LoroDoc {
         state.log_estimated_size();
     }
 
-    /// Get position in a seq container
     pub fn query_pos(&self, pos: &Cursor) -> Result<PosQueryResult, CannotFindRelativePosition> {
+        self.query_pos_internal(pos, true)
+    }
+
+    /// Get position in a seq container
+    pub(crate) fn query_pos_internal(
+        &self,
+        pos: &Cursor,
+        ret_event_index: bool,
+    ) -> Result<PosQueryResult, CannotFindRelativePosition> {
         let mut state = self.state.lock().unwrap();
-        if let Some(ans) = state.get_relative_position(pos) {
+        if let Some(ans) = state.get_relative_position(pos, ret_event_index) {
             Ok(PosQueryResult {
                 update: None,
                 current: AbsolutePosition {
@@ -1237,6 +1245,7 @@ impl LoroDoc {
                                 id: None,
                                 container: text.id(),
                                 side: pos.side,
+                                origin_pos: text.len_unicode(),
                             }),
                             current: AbsolutePosition {
                                 pos: text.len_event(),
@@ -1251,6 +1260,7 @@ impl LoroDoc {
                                 id: None,
                                 container: list.id(),
                                 side: pos.side,
+                                origin_pos: list.len(),
                             }),
                             current: AbsolutePosition {
                                 pos: list.len(),
@@ -1265,6 +1275,7 @@ impl LoroDoc {
                                 id: None,
                                 container: list.id(),
                                 side: pos.side,
+                                origin_pos: list.len(),
                             }),
                             current: AbsolutePosition {
                                 pos: list.len(),

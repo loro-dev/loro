@@ -186,6 +186,23 @@ declare module "loro-wasm" {
     subscribe(listener: Listener): number;
   }
 
+  interface UndoManager {
+    /**
+     * Set the callback function that is called when an undo/redo step is pushed.
+     * The function can return a meta data value that will be attached to the given stack item.
+     *
+     * @param listener - The callback function.
+     */
+    setOnPush(listener?: UndoConfig["onPush"]): void;
+    /**
+     * Set the callback function that is called when an undo/redo step is popped.
+     * The function will have a meta data value that was attached to the given stack item when `onPush` was called.
+     *
+     * @param listener - The callback function.
+     */
+    setOnPop(listener?: UndoConfig["onPop"]): void;
+  }
+
   interface Loro<
     T extends Record<string, Container> = Record<string, Container>,
   > {

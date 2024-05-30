@@ -10,6 +10,10 @@ pub struct Cursor {
     ///
     /// Side info can help to model the selection
     pub side: Side,
+    /// The position of the cursor in the container when the cursor is created.
+    /// For text, this is the unicode codepoint index
+    /// This value is not encoded
+    pub(crate) origin_pos: usize,
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -59,11 +63,12 @@ pub enum CannotFindRelativePosition {
 }
 
 impl Cursor {
-    pub fn new(id: Option<ID>, container: ContainerID, side: Side) -> Self {
+    pub fn new(id: Option<ID>, container: ContainerID, side: Side, origin_pos: usize) -> Self {
         Self {
             id,
             container,
             side,
+            origin_pos,
         }
     }
 
