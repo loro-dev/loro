@@ -51,4 +51,25 @@ At the same time, a `Change` represents a transaction of a document. If you are 
 
 ## Operations
 
-Operation (abbreviated as Op) 
+Operation (abbreviated as `Op`) is the most complex part of the document. Loro currently supports multiple containers `List`, `Map`, `RichText`, `Movable List` and `Movable Tree`. Each data structure has several different semantic `Op`s.
+
+But in general, each `Op` is composed of the `ContainerID` of the container that created it, a counter, and the corresponding content of the `Op`.
+
+```ts
+{
+    "container": string,
+    "counter": number,
+    "content": object
+}
+```
+
+- `container`: the `ContainerID` of the container that created this `Op`, represented by a string starts with `cid:`.
+- `counter`: a part of lamport timestamp, when equal, `PeerID` is used as the tie-breaker.
+- `content`: the semantic content of the `Op`, it is different for each field depending on the `Container`.
+
+The following is the **content** of each container。
+
+### List
+
+```ts
+```
