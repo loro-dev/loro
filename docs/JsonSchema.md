@@ -71,5 +71,260 @@ The following is the **content** of each container。
 
 ### List
 
+#### Insert
+
 ```ts
+{
+    "type": "insert",
+    "pos": number,
+    "value": LoroValue
+}
 ```
+
+- `type`: `insert` or `delete`.
+- `pos`: the index of the insert operation.
+- `value`: the insert content which is a list of `LoroValue`
+
+#### Delete
+
+```ts
+{
+    "type": "delete",
+    "pos": number,
+    "len": number,
+    "delete_start_id": string
+}
+```
+
+- `type`: `insert` or `delete`.
+- `pos`: the start index of the deletion.
+- `len`: the length of deleted content.
+- `delete_start_id`: the string id of start element.
+
+### MovableList
+
+#### Insert
+
+```ts
+{
+    "type": "insert",
+    "pos": number,
+    "value": LoroValue
+}
+```
+
+- `type`: `insert`, `delete`, `move` or `set`.
+- `pos`: the index of the insert operation.
+- `value`: the insert content which is a list of `LoroValue`
+
+#### Delete
+
+```ts
+{
+    "type": "delete",
+    "pos": number,
+    "len": number,
+    "delete_start_id": string
+}
+```
+
+- `type`:`insert`, `delete`, `move` or `set`.
+- `pos`: the start index of the deletion.
+- `len`: the length of deleted content.
+- `delete_start_id`: the string id of start element.
+
+#### Move
+
+```ts
+{
+    "type": "move",
+    "from": number,
+    "to": number,
+    "from_id": string
+}
+```
+
+- `type`:`insert`, `delete`, `move` or `set`.
+- `from`: the index of the element before is moved.
+- `to`: the index of the index moved to after moving out the element
+- `from_id`: the string id of the element moved.
+
+#### Set
+
+```ts
+{
+    "type": "set",
+    "elem_id": string,
+    "value": LoroValue
+}
+```
+
+- `type`:`insert`, `delete`, `move` or `set`.
+- `elem_id`: the string id of the element replaced.
+- `value`: the value setted.
+
+### Map
+
+#### Insert
+
+```ts
+{
+    "type": "insert",
+    "key": string,
+    "value": LoroValue
+}
+```
+
+- `type`: `insert` or `delete`.
+- `key`: the key of the insertion.
+- `value`: the value of the insertion.
+
+#### Delete
+
+```ts
+{
+    "type": "delete",
+    "key": string
+}
+```
+
+- `type`: `insert` or `delete`.
+- `key`: the key of the deletion
+
+### Text
+
+#### Insert
+
+```ts
+{
+    "type": "insert",
+    "pos": number,
+    "text": string
+}
+```
+
+#### Delete
+
+```ts
+{
+    "type": "delete",
+    "pos": number,
+    "len": number,
+    "id_start": string
+}
+```
+
+#### Mark
+
+```ts
+{
+    "type": "mark",
+    "start": number,
+    "end": number,
+    "style_key": string,
+    "style_value": LoroValue,
+    "info": number
+}
+```
+
+#### MarkEnd
+
+```ts
+{
+    "type": "mark_end"
+}
+```
+
+### Tree
+
+#### Move
+
+```ts
+{
+    "type": "move",
+    "target": string,
+    "parent": string | null,
+    "fractional_index": UInt8Array
+}
+```
+
+- `type`: `move` or `delete`.
+- `target`: the string format of target `TreeID` moved.
+- `parent`: the string format of `TreeID` or `null`. If it is `null`, the target node will be a root node.
+- `fractional_index`: the fractional index of the target node.
+
+#### Delete
+
+```ts
+{
+    "type": "delete",
+    "target": string
+}
+```
+
+- `type`: `move` or `delete`.
+- `target`: the string format of target `TreeID` deleted.
+
+### Unknown
+
+To support backward and forward compatibility of encoding, we have an unknonw type. When an `Op` from newer version is decoded into the older version, it will be treated as an unknown type which is in a more general form, such as binary and string. Conversely, when the new version decodes an unknown `Op`, Loro will know its true type and perform the proper decoding process.
+
+So there are two kind of unknown format, binary format and json-string format.
+
+#### Binary Unknown
+
+```ts
+{
+    "type": "unknown",
+    "prop": number,
+    "value_type:": "unknown",
+    "value": OwnedValue
+}
+```
+
+- `type`: just an unknown type.
+- `prop`: a property of the encoded op, it's a number.
+- `value_type`: unknown.
+- `value`: 
+
+#### Json Unknown
+
+```ts
+{
+    "type": "unknown",
+    "prop": number,
+    "value_type": "json_unknown",
+    "value": string
+}
+```
+
+- `type`: just an unknown type.
+- `prop`: a property of the encoded op, it's a number.
+- `value_type`: json_unknown.
+- `value`: a string json format of `OwnedEncodeValue`
+
+## Value
+
+In this section, we will introduction two *Value* in Loro. One is `LoroValue`, it's an enum of data types supported by Loro, such as the value inserted by `List` or `Map`. 
+
+The another is `OwnedEnodeValue`, it's just used in encoding module for unknown type.
+
+
+### LoroValue
+
+These are data types supported by Loro and its json format:
+
+- `null`: `null` or `undefined`
+- `Bool`: `true` or `false`
+- `F64`: `number`(float)
+- `I64`: `number`(signed)
+- `Binary`: `UInt8Array`
+- `String`: `string`
+- `List`: `Array<LoroValue>`
+- `Map`: `Map<string, LoroValue>`
+- `Container`: the id of container. `🦜:cid:{Counter}@{PeerID}:{ContainerType}` or `🦜:cid:root-{Name}:{ContainerType}`
+
+Note: Compared with the string format, we add a prefix `🦜:` when encoding the json format of `ContainerID` to prevent users from saving the string format of `ContainerID` and misinterpreting it as `ContainerID` when decoding.
+
+### OwnedEncodeValue
+

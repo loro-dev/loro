@@ -220,7 +220,7 @@ fn encode_changes(
                         }) => op::MovableListOp::Delete {
                             pos: *pos,
                             len: *signed_len,
-                            delete_start_id: register_id(id_start, peer_register),
+                            start_id: register_id(id_start, peer_register),
                         },
                         InnerListOp::Move { from, from_id, to } => op::MovableListOp::Move {
                             from: *from,
@@ -523,7 +523,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> Op {
                 op::MovableListOp::Delete {
                     pos,
                     len,
-                    delete_start_id,
+                    start_id: delete_start_id,
                 } => InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
                     id_start: convert_id(&delete_start_id, peers),
                     span: DeleteSpan {
@@ -719,7 +719,7 @@ pub mod op {
             pos: isize,
             len: isize,
             #[serde(with = "self::serde_impl::id")]
-            delete_start_id: ID,
+            start_id: ID,
         },
         Move {
             from: u32,
