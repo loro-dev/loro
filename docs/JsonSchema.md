@@ -278,14 +278,14 @@ So there are two kind of unknown format, binary format and json-string format.
     "type": "unknown",
     "prop": number,
     "value_type:": "unknown",
-    "value": OwnedValue
+    "value": OwnedEncodeValue
 }
 ```
 
 - `type`: just an unknown type.
 - `prop`: a property of the encoded op, it's a number.
 - `value_type`: unknown.
-- `value`: 
+- `value`: common data types used in encoding.
 
 #### Json Unknown
 
@@ -305,7 +305,7 @@ So there are two kind of unknown format, binary format and json-string format.
 
 ## Value
 
-In this section, we will introduction two *Value* in Loro. One is `LoroValue`, it's an enum of data types supported by Loro, such as the value inserted by `List` or `Map`. 
+In this section, we will introduction two *Value* in Loro. One is `LoroValue`, it's an enum of data types supported by Loro, such as the value inserted by `List` or `Map`.
 
 The another is `OwnedEnodeValue`, it's just used in encoding module for unknown type.
 
@@ -328,3 +328,4 @@ Note: Compared with the string format, we add a prefix `🦜:` when encoding the
 
 ### OwnedEncodeValue
 
+The `OwnedEncodeValue` is the specific type used by Loro when encoding, it's an internal value, users do not need to get it clear. It is specially designed to handle the schema mismatch due to forward and backward compatibility. In json encoding format, the `OwnedEncodeValue` will be encoded as an object.
