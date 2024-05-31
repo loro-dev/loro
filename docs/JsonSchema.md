@@ -1,13 +1,20 @@
-# JSON Representation of Loro's OpLog
+# JSON Schema for Loro's OpLog
 
-## Motivation
+## Introduction 
 
-Loro supports many data structure semantics and abstracts some concepts such as [OpLog](https://www.loro.dev/docs/advanced/doc_state_and_oplog), [`Change`, `Operation`](https://www.loro.dev/docs/advanced/op_and_change) or [`REG`](https://www.loro.dev/docs/advanced/replayable_event_graph), etc. We hope to provide a more universal, human-readable and self-describing encoding format than the binary encoding format to better help users understand, lookup and modify Loro documents. This can also serve as the data source for future Loro dev-tools for visualization.
+Loro supports multiple data structures and introduces many new concepts. Having only binary export formats would make it difficult for developers to understand the underlying processes. Better transparency leads to better developer experience. A human-readable JSON representation enables users to better understand and operate the document and to develop related tools.
 
+To better understand this document, you may first need to understand how Loro stores historical editing data:
 
-## Document
+- [OpLog](https://www.loro.dev/docs/advanced/doc_state_and_oplog)
+- [`Change`, `Operation`](https://www.loro.dev/docs/advanced/op_and_change)
+- [`Replayable Event Graph (REG)`](https://www.loro.dev/docs/advanced/replayable_event_graph)
 
-`Document` is the highest level of the specification. It consists of all `Change`s and `Op`s and some metadata that describes the document, such as the start/end version, the schema version, etc. 
+# Specification
+
+## Root object
+
+The root object contains all `Change`s, `Op`s, and critical metadata like start/end versions and schema version.
 
 We will also extract the 64-bit integer PeerID to the beginning of the document and replace it internally with incrementing numbers starting from zero: 0, 1, 2, 3... This significantly reduces the document size and enhances readability.
 
@@ -21,14 +28,14 @@ We will also extract the 64-bit integer PeerID to the beginning of the document 
 }
 ```
 
-- `schema_version`: the version of the schema that the document is encoded with. In case for need, we can add a new schema and decode the document with the old schema.
+- `schema_version`: the version of the schema that the document is encoded with. It's 1 for the current specification.
 - `start_version` and `end_version`: the start and end version of the document. They are represented as a map from the decimal string representation of `PeerID` to `Counter`.
-- `peers`: the list of peers in the document. Here we use a decimal string to represent.
+- `peers`: the list of peers in the document. We represent all PeerIDs as decimal strings to avoid exceeding JavaScript's number limit.
 - `changes`: the list of changes in the document.
 
 ## Changes
 
-The Change is an important part of the document. A REG([Replay event graph](https://www.loro.dev/docs/advanced/replayable_event_graph)) is a directed acyclic graph where each node is a `Change`, and each edge is a causal dependency between `Change`s. The metadata of the `Change`s helps us reconstruct the graph.
+`Change`s are crucial in the OpLog. A REG([Replay event graph](https://www.loro.dev/docs/advanced/replayable_event_graph)) is a directed acyclic graph where each node is a `Change`, and each edge is a causal dependency between `Change`s. The metadata of the `Change`s helps us reconstruct the graph.
 
 You can also attach a commit message to a `Change` like you usually do with Git's commit.
 
@@ -54,44 +61,53 @@ type OpID = `${number}@${PeerID}`;
 
 ## Operations
 
-Operation (abbreviated as `Op`) is the most complex part of the document. Loro currently supports multiple containers `List`, `Map`, `RichText`, `Movable List` and `Movable Tree`. Each data structure has several different semantic `Op`s.
+Operation (abbreviated as `Op`) is the most complex part of the document. Loro currently supports multiple containers `List`, `Map`, `RichText`, `Movable List` and `Movable Tree`. Each data structure has several different `Op`s.
 
 But in general, each `Op` is composed of the `ContainerID` of the container that created it, a counter, and the corresponding content of the `Op`.
 
 ```ts
-{
-    "container": string,
+type Op = {
+    "container": ContainerID,
     "counter": number,
-    "content": object
-}
+    "content": OpContent // Its detailed definition is elaborated below, with different types for different Containers.
+};
+
+type OpContent = ListOp | TextOp | MapOp | TreeOp | MovableListOp | UnknownOp;
+type ContainerID =
+  | `cid:root-${string}:${ContainerType}`
+  | `cid:${number}@${PeerID}:${ContainerType}`;
 ```
 
 - `container`: the `ContainerID` of the container that created this `Op`, represented by a string starts with `cid:`.
-- `counter`: a part of lamport timestamp, when equal, `PeerID` is used as the tie-breaker.
+- `counter`: the counter part of the OpID
 - `content`: the semantic content of the `Op`, it is different for each field depending on the `Container`.
 
 The following is the **content** of each container。
 
 ### List
 
+```ts
+type ListOp = ListInsertOp | ListDeleteOp;
+```
+
 #### Insert
 
 ```ts
-{
+type ListInsertOp = {
     "type": "insert",
     "pos": number,
     "value": LoroValue
 }
 ```
 
-- `type`: `insert` or `delete`.
+- `type`: `insert`.
 - `pos`: the index of the insert operation.
 - `value`: the insert content which is a list of `LoroValue`
 
 #### Delete
 
 ```ts
-{
+type ListDeleteOp = {
     "type": "delete",
     "pos": number,
     "len": number,
@@ -99,31 +115,35 @@ The following is the **content** of each container。
 }
 ```
 
-- `type`: `insert` or `delete`.
+- `type`: `delete`.
 - `pos`: the start index of the deletion.
 - `len`: the length of deleted content.
 - `start_id`: the string id of start element deleted.
 
 ### MovableList
 
+```ts
+type MovableListOp = ListInsertOp | ListDeleteOp | MovableListMoveOp | MovableListSetOp;
+```
+
 #### Insert
 
 ```ts
-{
+type ListInsertOp = {
     "type": "insert",
     "pos": number,
     "value": LoroValue
 }
 ```
 
-- `type`: `insert`, `delete`, `move` or `set`.
+- `type`: `insert`,
 - `pos`: the index of the insert operation.
 - `value`: the insert content which is a list of `LoroValue`
 
 #### Delete
 
 ```ts
-{
+type ListDeleteOp = {
     "type": "delete",
     "pos": number,
     "len": number,
@@ -131,7 +151,7 @@ The following is the **content** of each container。
 }
 ```
 
-- `type`:`insert`, `delete`, `move` or `set`.
+- `type`: `delete`
 - `pos`: the start index of the deletion.
 - `len`: the length of deleted content.
 - `start_id`: the string id of start element deleted.
@@ -139,7 +159,7 @@ The following is the **content** of each container。
 #### Move
 
 ```ts
-{
+type MovableListMoveOp = {
     "type": "move",
     "from": number,
     "to": number,
@@ -152,12 +172,12 @@ type ElemID = `L${number}@${PeerID}`
 - `type`:`insert`, `delete`, `move` or `set`.
 - `from`: the index of the element before is moved.
 - `to`: the index of the index moved to after moving out the element
-- `from_id`: the string id of the element moved.
+- `from_id`: the ID (described by lamport@peer) of the element moved.
 
 #### Set
 
 ```ts
-{
+type MovableListSetOp = {
     "type": "set",
     "elem_id": ElemID,
     "value": LoroValue
@@ -167,57 +187,65 @@ type ElemID = `L${number}@${PeerID}`
 ```
 
 - `type`:`insert`, `delete`, `move` or `set`.
-- `elem_id`: the string id of the element replaced.
-- `value`: the value setted.
+- `elem_id`: the ID (described by lamport@peer) of the element replaced.
+- `value`: the value set.
 
 ### Map
+
+```ts
+type MapOp = MapInsertOp | MapDeleteOp;
+```
 
 #### Insert
 
 ```ts
-{
+type MapInsertOp = {
     "type": "insert",
     "key": string,
     "value": LoroValue
 }
 ```
 
-- `type`: `insert` or `delete`.
+- `type`: `insert`.
 - `key`: the key of the insertion.
 - `value`: the value of the insertion.
 
 #### Delete
 
 ```ts
-{
+type MapDeleteOp = {
     "type": "delete",
     "key": string
 }
 ```
 
-- `type`: `insert` or `delete`.
+- `type`: `delete`.
 - `key`: the key of the deletion
 
 ### Text
 
+```ts
+type TextOp = TextInsertOp | TextDeleteOp | TextMarkOp | TextMarkEndOp;
+```
+
 #### Insert
 
 ```ts
-{
+type TextInsertOp = {
     "type": "insert",
     "pos": number,
     "text": string
 }
 ```
 
-`type`: `insert`, `delete`, `mark` or `mark_end`.
+`type`: `insert`.
 `pos`: the index of the insert operation. The position is based on the Unicode code point length.
 `text`: the string of the insertion.
 
 #### Delete
 
 ```ts
-{
+type TextDeleteOp = {
     "type": "delete",
     "pos": number,
     "len": number,
@@ -225,7 +253,7 @@ type ElemID = `L${number}@${PeerID}`
 }
 ```
 
-`type`: `insert`, `delete`, `mark` or `mark_end`.
+`type`: `delete`.
 `pos`: the index of the deletion. The position is based on the Unicode code point length.
 `len`: the length of the text deleted.
 `id_start`: the string id of the beginning element deleted.
@@ -234,7 +262,7 @@ type ElemID = `L${number}@${PeerID}`
 #### Mark
 
 ```ts
-{
+type TextMarkOp = {
     "type": "mark",
     "start": number,
     "end": number,
@@ -244,7 +272,7 @@ type ElemID = `L${number}@${PeerID}`
 }
 ```
 
-`type`: `insert`, `delete`, `mark` or `mark_end`.
+`type`: `mark`
 `start`: the start index of text need to mark. The position is based on the Unicode code point length.
 `end`: the end index of text need to mark. The position is based on the Unicode code point length.
 `style_key`: the key of style, it is customizable.
@@ -254,19 +282,23 @@ type ElemID = `L${number}@${PeerID}`
 #### MarkEnd
 
 ```ts
-{
+type TextMarkEndOp = {
     "type": "mark_end"
 }
 ```
 
-`type`: `insert`, `delete`, `mark` or `mark_end`.
+`type`: `mark_end`.
 
 ### Tree
+
+```ts
+type TreeOp = TreeCreateOp | TreeMoveOp | TreeDeleteOp;
+```
 
 #### Create
 
 ```ts
-{
+type TreeCreateOp = {
     "type": "create",
     "target": string,
     "parent": string | null,
@@ -274,7 +306,7 @@ type ElemID = `L${number}@${PeerID}`
 }
 ```
 
-- `type`: `create`, `move` or `delete`.
+- `type`: `create`.
 - `target`: the string format of target `TreeID` moved.
 - `parent`: the string format of `TreeID` or `null`. If it is `null`, the target node will be a root node.
 - `fractional_index`: the fractional index of the target node.
@@ -282,7 +314,7 @@ type ElemID = `L${number}@${PeerID}`
 #### Move
 
 ```ts
-{
+type TreeMoveOp = {
     "type": "move",
     "target": string,
     "parent": string | null,
@@ -290,7 +322,7 @@ type ElemID = `L${number}@${PeerID}`
 }
 ```
 
-- `type`: `create`, `move` or `delete`.
+- `type`: `move`.
 - `target`: the string format of target `TreeID` moved.
 - `parent`: the string format of `TreeID` or `null`. If it is `null`, the target node will be a root node.
 - `fractional_index`: the fractional index of the target node.
@@ -298,18 +330,18 @@ type ElemID = `L${number}@${PeerID}`
 #### Delete
 
 ```ts
-{
+type TreeDeleteOp = {
     "type": "delete",
     "target": string
 }
 ```
 
-- `type`: `create`, `move` or `delete`.
+- `type`: `delete`.
 - `target`: the string format of target `TreeID` deleted.
 
 ### Unknown
 
-To support backward and forward compatibility of encoding, we have an unknown type. When an `Op` with a newly supported Container from a newer version is decoded into the older version, it will be treated as an unknown type in a more general form, such as binary and string. When the new version decodes an unknown `Op`, the newer version of Loro will know its true type and decode correctly.
+To support forward compatibility, we have an unknown type. When an `Op` with a newly supported Container from a newer version is decoded into the older version, it will be treated as an unknown type in a more general form, such as binary and string. When the new version decodes an unknown `Op`, the newer version of Loro will know its true type and decode correctly.
 
 So there are two kind of unknown format, binary format and json-string format.
 
@@ -319,8 +351,8 @@ So there are two kind of unknown format, binary format and json-string format.
 {
     "type": "unknown",
     "prop": number,
-    "value_type:": "unknown",
-    "value": EncodeValue
+    "value_type": "unknown",
+    "value": EncodedValue
 }
 ```
 
@@ -343,13 +375,13 @@ So there are two kind of unknown format, binary format and json-string format.
 - `type`: just an unknown type.
 - `prop`: a property of the encoded op, it's a number.
 - `value_type`: json_unknown.
-- `value`: a string json format of `EncodeValue`
+- `value`: a string json format of `EncodedValue`
 
 ## Value
 
 In this section, we will introduction two *Value* in Loro. One is `LoroValue`, it's an enum of data types supported by Loro, such as the value inserted by `List` or `Map`.
 
-The another is `EncodeValue`, it's just used in encoding module for unknown type.
+The another is `EncodedValue`, it's just used in encoding module for unknown type.
 
 ### LoroValue
 
@@ -367,6 +399,6 @@ These are data types supported by Loro and its json format:
 
 Note: Compared with the string format, we add a prefix `🦜:` when encoding the json format of `ContainerID` to prevent users from saving the string format of `ContainerID` and misinterpreting it as `ContainerID` when decoding.
 
-### EncodeValue
+### EncodedValue
 
-The `EncodeValue` is the specific type used by Loro when encoding, it's an internal value, users do not need to get it clear. It is specially designed to handle the schema mismatch due to forward and backward compatibility. In json encoding format, the `EncodeValue` will be encoded as an object.
+The `EncodedValue` is the specific type used by Loro when encoding, it's an internal value, users do not need to get it clear. It is specially designed to handle the schema mismatch due to forward and backward compatibility. In JSON encoding schema, the `EncodedValue` will be encoded as an object.
