@@ -143,8 +143,10 @@ The following is the **content** of each container。
     "type": "move",
     "from": number,
     "to": number,
-    "from_id": OpID
+    "from_id": ElemID
 }
+
+type ElemID = `L${number}@${PeerID}`
 ```
 
 - `type`:`insert`, `delete`, `move` or `set`.
@@ -157,9 +159,11 @@ The following is the **content** of each container。
 ```ts
 {
     "type": "set",
-    "elem_id": OpID,
+    "elem_id": ElemID,
     "value": LoroValue
 }
+
+type ElemID = `L${number}@${PeerID}`
 ```
 
 - `type`:`insert`, `delete`, `move` or `set`.
