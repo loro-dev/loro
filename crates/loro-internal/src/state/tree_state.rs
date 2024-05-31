@@ -1,7 +1,9 @@
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{ContainerID, IdFull, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID};
+use loro_common::{
+    ContainerID, IdFull, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID, ID,
+};
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -318,6 +320,19 @@ impl ContainerState for TreeState {
                 ans.push(t.into());
             }
         }
+        ans.sort_by_key(|x| {
+            let id: ID = x
+                .as_map()
+                .unwrap()
+                .get("id")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .as_str()
+                .try_into()
+                .unwrap();
+            id
+        });
         ans.into()
     }
 
