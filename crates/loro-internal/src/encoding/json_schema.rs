@@ -318,29 +318,28 @@ fn encode_changes(
                 },
 
                 ContainerType::Tree => match content {
-                    // TODO: how to determine the type of the tree op?
-                    InnerContent::Tree(TreeOp { target, parent }) => JsonOpContent::Tree({
-                        if let Some(p) = parent {
-                            if TreeID::is_deleted_root(p) {
-                                op::TreeOp::Delete {
-                                    target: register_tree_id(target, peer_register),
-                                }
-                            } else {
-                                op::TreeOp::Move {
-                                    target: register_tree_id(target, peer_register),
-                                    parent: Some(register_tree_id(p, peer_register)),
-                                    // PATCH: A temporary solution to deal with FI for v0.15.x
-                                    fractional_index: Some(vec![128]),
-                                }
-                            }
-                        } else {
-                            op::TreeOp::Move {
-                                target: register_tree_id(target, peer_register),
-                                parent: None,
-                                // PATCH: A temporary solution to deal with FI for v0.15.x
-                                fractional_index: Some(vec![128]),
-                            }
-                        }
+                    InnerContent::Tree(op) => JsonOpContent::Tree(match op {
+                        TreeOp::Create {
+                            target,
+                            parent,
+                            position,
+                        } => op::TreeOp::Create {
+                            target: register_tree_id(target, peer_register),
+                            parent: parent.map(|p| register_tree_id(&p, peer_register)),
+                            fractional_index: position.clone(),
+                        },
+                        TreeOp::Move {
+                            target,
+                            parent,
+                            position,
+                        } => op::TreeOp::Move {
+                            target: register_tree_id(target, peer_register),
+                            parent: parent.map(|p| register_tree_id(&p, peer_register)),
+                            fractional_index: position.clone(),
+                        },
+                        TreeOp::Delete { target } => op::TreeOp::Delete {
+                            target: register_tree_id(target, peer_register),
+                        },
                     }),
                     _ => unreachable!(),
                 },
@@ -538,6 +537,18 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
         },
         ContainerType::Tree => match content {
             JsonOpContent::Tree(tree) => match tree {
+                op::TreeOp::Create {
+                    target,
+                    parent,
+                    fractional_index,
+                } => {
+                    if fractional_index.is_some() && fractional_index.as_ref().unwrap() != &[128] {
+                        return Err(LoroError::DecodeError("To maintain data accuracy, Tree Op from v0.16 and later do not support downgrading back to v0.15".into()));
+                    }
+                    InnerContent::Tree(TreeOp::Create {
+                    target: convert_tree_id(&target, peers),
+                    parent: parent.map(|p| convert_tree_id(&p, peers)),
+                })},
                 op::TreeOp::Move {
                     target,
                     parent,
@@ -546,12 +557,12 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                     if fractional_index.is_some() && fractional_index.as_ref().unwrap() != &[128] {
                         return Err(LoroError::DecodeError("To maintain data accuracy, Tree Op from v0.16 and later do not support downgrading back to v0.15".into()));
                     }
-                    InnerContent::Tree(TreeOp {
-                        target: convert_tree_id(&target, peers),
-                        parent: parent.map(|p| convert_tree_id(&p, peers)),
-                    })
-                }
-                op::TreeOp::Delete { target } => InnerContent::Tree(TreeOp {
+                    InnerContent::Tree(TreeOp::Move {
+                    target: convert_tree_id(&target, peers),
+                    parent: parent.map(|p| convert_tree_id(&p, peers)),
+                    position: fractional_index,
+                })},
+                op::TreeOp::Delete { target } => InnerContent::Tree(TreeOp::Delete {
                     target: convert_tree_id(&target, peers),
                     parent: Some(TreeID::delete_root()),
                 }),
@@ -712,11 +723,14 @@ pub mod op {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum TreeOp {
-        // Create {
-        //     target: TreeID,
-        //     parent: Option<TreeID>,
-        //     fractional_index: String,
-        // },
+        Create {
+            #[serde(with = "self::serde_impl::tree_id")]
+            target: TreeID,
+            #[serde(with = "self::serde_impl::option_tree_id")]
+            parent: Option<TreeID>,
+            #[serde(default)]
+            fractional_index: FractionalIndex,
+        },
         Move {
             #[serde(with = "self::serde_impl::tree_id")]
             target: TreeID,
