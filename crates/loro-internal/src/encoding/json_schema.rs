@@ -227,7 +227,7 @@ fn encode_changes(
                         InnerListOp::Move { from, from_id, to } => op::MovableListOp::Move {
                             from: *from,
                             to: *to,
-                            from_id: register_idlp(from_id, peer_register),
+                            elem_id: register_idlp(from_id, peer_register),
                         },
                         InnerListOp::Set { elem_id, value } => {
                             let value = if let LoroValue::Container(id) = value {
@@ -491,8 +491,8 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                         },
                     }))
                 }
-                op::MovableListOp::Move { from, from_id, to } => {
-                    let from_id = convert_idlp(&from_id, peers);
+                op::MovableListOp::Move { from, elem_id, to } => {
+                    let from_id = convert_idlp(&elem_id, peers);
                     InnerContent::List(InnerListOp::Move { from, from_id, to })
                 }
                 op::MovableListOp::Set { elem_id, mut value } => {
@@ -669,7 +669,7 @@ pub mod op {
             from: u32,
             to: u32,
             #[serde(with = "self::serde_impl::idlp")]
-            from_id: IdLp,
+            elem_id: IdLp,
         },
         Set {
             #[serde(with = "self::serde_impl::idlp")]

@@ -831,7 +831,9 @@ impl Loro {
             json_vv = vv.0;
         }
         let json_schema = self.0.export_json_updates(&json_vv);
-        let s = serde_wasm_bindgen::Serializer::new();
+        let s = serde_wasm_bindgen::Serializer::new()
+            .serialize_large_number_types_as_bigints(true)
+            .serialize_missing_as_null(true);
         json_schema.serialize(&s).map_err(|e| e.into())
     }
 
