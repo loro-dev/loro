@@ -191,7 +191,7 @@ fn encode_changes(
                         }) => op::ListOp::Delete {
                             pos: *pos,
                             len: *signed_len,
-                            delete_start_id: register_id(id_start, peer_register),
+                            start_id: register_id(id_start, peer_register),
                         },
                         _ => unreachable!(),
                     }),
@@ -486,17 +486,15 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> Op {
                         pos,
                     })
                 }
-                op::ListOp::Delete {
-                    pos,
-                    len,
-                    delete_start_id,
-                } => InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
-                    id_start: convert_id(&delete_start_id, peers),
-                    span: DeleteSpan {
-                        pos,
-                        signed_len: len,
-                    },
-                })),
+                op::ListOp::Delete { pos, len, start_id } => {
+                    InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
+                        id_start: convert_id(&start_id, peers),
+                        span: DeleteSpan {
+                            pos,
+                            signed_len: len,
+                        },
+                    }))
+                }
             },
             _ => unreachable!(),
         },
@@ -517,17 +515,15 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> Op {
                         pos,
                     })
                 }
-                op::MovableListOp::Delete {
-                    pos,
-                    len,
-                    start_id: delete_start_id,
-                } => InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
-                    id_start: convert_id(&delete_start_id, peers),
-                    span: DeleteSpan {
-                        pos,
-                        signed_len: len,
-                    },
-                })),
+                op::MovableListOp::Delete { pos, len, start_id } => {
+                    InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
+                        id_start: convert_id(&start_id, peers),
+                        span: DeleteSpan {
+                            pos,
+                            signed_len: len,
+                        },
+                    }))
+                }
                 op::MovableListOp::Move { from, from_id, to } => {
                     let from_id = convert_idlp(&from_id, peers);
                     InnerContent::List(InnerListOp::Move { from, from_id, to })
@@ -708,7 +704,7 @@ pub mod op {
             pos: isize,
             len: isize,
             #[serde(with = "self::serde_impl::id")]
-            delete_start_id: ID,
+            start_id: ID,
         },
     }
 
