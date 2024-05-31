@@ -9,7 +9,7 @@ use loro_common::{
     ContainerID, Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult,
     LoroValue, PeerID,
 };
-use tracing::{debug_span, info_span, instrument, trace};
+use tracing::{debug_span, info_span, instrument};
 
 use crate::{
     change::get_sys_timestamp,
@@ -71,7 +71,7 @@ fn transform_cursor(
     container_remap: &FxHashMap<ContainerID, ContainerID>,
 ) {
     let mut cid = &cursor_with_pos.cursor.container;
-    while let Some(new_cid) = container_remap.get(&cid) {
+    while let Some(new_cid) = container_remap.get(cid) {
         cid = new_cid;
     }
 
@@ -663,7 +663,7 @@ pub(crate) fn undo(
                 let next = if i + 1 < spans.len() {
                     spans[i + 1].0.id_last().into()
                 } else {
-                    match last_frontiers_or_last_bi.clone() {
+                    match last_frontiers_or_last_bi {
                         Either::Left(last_frontiers) => last_frontiers.clone(),
                         Either::Right(right) => break 'block right,
                     }

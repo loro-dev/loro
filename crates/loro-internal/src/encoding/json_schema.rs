@@ -316,31 +316,28 @@ fn encode_changes(
                 },
 
                 ContainerType::Tree => match content {
-                    // TODO: how to determine the type of the tree op?
-                    InnerContent::Tree(TreeOp {
-                        target,
-                        parent,
-                        position,
-                    }) => JsonOpContent::Tree({
-                        if let Some(p) = parent {
-                            if TreeID::is_deleted_root(p) {
-                                op::TreeOp::Delete {
-                                    target: register_tree_id(target, peer_register),
-                                }
-                            } else {
-                                op::TreeOp::Move {
-                                    target: register_tree_id(target, peer_register),
-                                    parent: Some(register_tree_id(p, peer_register)),
-                                    fractional_index: position.as_ref().unwrap().clone(),
-                                }
-                            }
-                        } else {
-                            op::TreeOp::Move {
-                                target: register_tree_id(target, peer_register),
-                                parent: None,
-                                fractional_index: position.as_ref().unwrap().clone(),
-                            }
-                        }
+                    InnerContent::Tree(op) => JsonOpContent::Tree(match op {
+                        TreeOp::Create {
+                            target,
+                            parent,
+                            position,
+                        } => op::TreeOp::Create {
+                            target: register_tree_id(target, peer_register),
+                            parent: parent.map(|p| register_tree_id(&p, peer_register)),
+                            fractional_index: position.clone(),
+                        },
+                        TreeOp::Move {
+                            target,
+                            parent,
+                            position,
+                        } => op::TreeOp::Move {
+                            target: register_tree_id(target, peer_register),
+                            parent: parent.map(|p| register_tree_id(&p, peer_register)),
+                            fractional_index: position.clone(),
+                        },
+                        TreeOp::Delete { target } => op::TreeOp::Delete {
+                            target: register_tree_id(target, peer_register),
+                        },
                     }),
                     _ => unreachable!(),
                 },
@@ -565,19 +562,26 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> Op {
         },
         ContainerType::Tree => match content {
             JsonOpContent::Tree(tree) => match tree {
+                op::TreeOp::Create {
+                    target,
+                    parent,
+                    fractional_index,
+                } => InnerContent::Tree(TreeOp::Create {
+                    target: convert_tree_id(&target, peers),
+                    parent: parent.map(|p| convert_tree_id(&p, peers)),
+                    position: fractional_index,
+                }),
                 op::TreeOp::Move {
                     target,
                     parent,
                     fractional_index,
-                } => InnerContent::Tree(TreeOp {
+                } => InnerContent::Tree(TreeOp::Move {
                     target: convert_tree_id(&target, peers),
                     parent: parent.map(|p| convert_tree_id(&p, peers)),
-                    position: Some(fractional_index),
+                    position: fractional_index,
                 }),
-                op::TreeOp::Delete { target } => InnerContent::Tree(TreeOp {
+                op::TreeOp::Delete { target } => InnerContent::Tree(TreeOp::Delete {
                     target: convert_tree_id(&target, peers),
-                    parent: Some(TreeID::delete_root()),
-                    position: None,
                 }),
             },
             _ => unreachable!(),
@@ -767,11 +771,14 @@ pub mod op {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum TreeOp {
-        // Create {
-        //     target: TreeID,
-        //     parent: Option<TreeID>,
-        //     fractional_index: String,
-        // },
+        Create {
+            #[serde(with = "self::serde_impl::tree_id")]
+            target: TreeID,
+            #[serde(with = "self::serde_impl::option_tree_id")]
+            parent: Option<TreeID>,
+            #[serde(default)]
+            fractional_index: FractionalIndex,
+        },
         Move {
             #[serde(with = "self::serde_impl::tree_id")]
             target: TreeID,

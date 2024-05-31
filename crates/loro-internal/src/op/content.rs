@@ -52,7 +52,7 @@ impl InnerContent {
                 }
             }
             crate::op::InnerContent::Tree(t) => {
-                let id = t.target.associated_meta_container();
+                let id = t.target().associated_meta_container();
                 f(&id);
             }
             crate::op::InnerContent::Future(f) => match &f {

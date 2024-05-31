@@ -497,6 +497,7 @@ impl EncodedTreeMove {
         peer_ids: &[u64],
         positions: &[Vec<u8>],
         tree_ids: &[EncodedTreeID],
+        op_id: ID,
     ) -> LoroResult<TreeOp> {
         let parent = if self.is_parent_null {
             None
@@ -509,55 +510,91 @@ impl EncodedTreeMove {
                 counter as Counter,
             ))
         };
-        let position = if parent.is_some_and(|x| TreeID::is_deleted_root(&x)) {
+        let is_delete = parent.is_some_and(|p| TreeID::is_deleted_root(&p));
+        let position = if is_delete {
             None
         } else {
             let bytes = &positions[self.position];
             Some(FractionalIndex::from_bytes(bytes.clone()))
         };
         let EncodedTreeID { peer_idx, counter } = tree_ids[self.target_idx];
-        Ok(TreeOp {
-            target: TreeID::new(
-                *(peer_ids
-                    .get(peer_idx)
-                    .ok_or(LoroError::DecodeDataCorruptionError)?),
-                counter as Counter,
-            ),
-            parent,
-            position,
-        })
+        let target = TreeID::new(
+            *(peer_ids
+                .get(peer_idx)
+                .ok_or(LoroError::DecodeDataCorruptionError)?),
+            counter as Counter,
+        );
+
+        let is_create = target.id() == op_id;
+        let op = if is_delete {
+            TreeOp::Delete { target }
+        } else if is_create {
+            TreeOp::Create {
+                target,
+                parent,
+                position: position.unwrap(),
+            }
+        } else {
+            TreeOp::Move {
+                target,
+                parent,
+                position: position.unwrap(),
+            }
+        };
+        Ok(op)
     }
 
     pub fn from_tree_op<'p, 'a: 'p>(op: &'a TreeOp, registers: &mut EncodedRegisters) -> Self {
-        let position = if let Some(position) = &op.position {
-            let bytes = position.as_bytes();
-            let either::Right(position_register) = &mut registers.position else {
-                unreachable!()
-            };
-            position_register.get(&bytes).unwrap()
-        } else {
-            debug_assert!(op.parent.is_some_and(|x| TreeID::is_deleted_root(&x)));
-            // placeholder
-            0
-        };
+        match op {
+            TreeOp::Create {
+                target,
+                parent,
+                position,
+            }
+            | TreeOp::Move {
+                target,
+                parent,
+                position,
+            } => {
+                let bytes = position.as_bytes();
+                let either::Right(position_register) = &mut registers.position else {
+                    unreachable!()
+                };
+                let position = position_register.get(&bytes).unwrap();
+                let target_idx = registers.tree_id.register(&EncodedTreeID {
+                    peer_idx: registers.peer.register(&target.peer),
+                    counter: target.counter,
+                });
 
-        let target_idx = registers.tree_id.register(&EncodedTreeID {
-            peer_idx: registers.peer.register(&op.target.peer),
-            counter: op.target.counter,
-        });
-
-        let parent_idx = op.parent.map(|x| {
-            registers.tree_id.register(&EncodedTreeID {
-                peer_idx: registers.peer.register(&x.peer),
-                counter: x.counter,
-            })
-        });
-
-        EncodedTreeMove {
-            target_idx,
-            is_parent_null: op.parent.is_none(),
-            parent_idx: parent_idx.unwrap_or(0),
-            position,
+                let parent_idx = parent.map(|x| {
+                    registers.tree_id.register(&EncodedTreeID {
+                        peer_idx: registers.peer.register(&x.peer),
+                        counter: x.counter,
+                    })
+                });
+                EncodedTreeMove {
+                    target_idx,
+                    is_parent_null: parent.is_none(),
+                    parent_idx: parent_idx.unwrap_or(0),
+                    position,
+                }
+            }
+            TreeOp::Delete { target } => {
+                let target_idx = registers.tree_id.register(&EncodedTreeID {
+                    peer_idx: registers.peer.register(&target.peer),
+                    counter: target.counter,
+                });
+                let parent_idx = registers.tree_id.register(&EncodedTreeID {
+                    peer_idx: registers.peer.register(&TreeID::delete_root().peer),
+                    counter: TreeID::delete_root().counter,
+                });
+                EncodedTreeMove {
+                    target_idx,
+                    is_parent_null: false,
+                    parent_idx,
+                    position: 0,
+                }
+            }
         }
     }
 }

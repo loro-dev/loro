@@ -366,6 +366,7 @@ fn extract_ops(
             arenas,
             &positions,
             prop,
+            ID::new(peer, counter),
         )?;
 
         let container = shared_arena.register_container(cid);
@@ -880,7 +881,7 @@ mod encode {
     use crate::{
         arena::SharedArena,
         change::{Change, Lamport},
-        container::idx::ContainerIdx,
+        container::{idx::ContainerIdx, tree::tree_op::TreeOp},
         encoding::value::{EncodedTreeMove, MarkStart, Value, ValueKind, ValueWriter},
         op::{FutureInnerContent, Op},
     };
@@ -1172,18 +1173,16 @@ mod encode {
                 let key = registers.key.register(&map.key);
                 key as i32
             }
-            crate::op::InnerContent::Tree(op) => {
-                if let Some(position) = &op.position {
-                    if let either::Either::Left(position_register) = &mut registers.position {
-                        position_register.insert(position.as_bytes());
-                    } else {
+            crate::op::InnerContent::Tree(op) => match op {
+                TreeOp::Create { position, .. } | TreeOp::Move { position, .. } => {
+                    let either::Either::Left(position_register) = &mut registers.position else {
                         unreachable!()
-                    }
+                    };
+                    position_register.insert(position.as_bytes());
                     0
-                } else {
-                    -1
                 }
-            }
+                TreeOp::Delete { .. } => 0,
+            },
             crate::op::InnerContent::Future(f) => match f {
                 #[cfg(feature = "counter")]
                 FutureInnerContent::Counter(_) => 0,
@@ -1280,6 +1279,7 @@ mod encode {
 }
 
 #[inline]
+#[allow(clippy::too_many_arguments)]
 fn decode_op(
     cid: &ContainerID,
     value: Value<'_>,
@@ -1288,6 +1288,7 @@ fn decode_op(
     arenas: &DecodedArenas<'_>,
     positions: &[Vec<u8>],
     prop: i32,
+    op_id: ID,
 ) -> LoroResult<crate::op::InnerContent> {
     let content = match cid.container_type() {
         ContainerType::Text => match value {
@@ -1384,6 +1385,7 @@ fn decode_op(
                 &arenas.peer_ids,
                 positions,
                 &arenas.tree_ids.tree_ids,
+                op_id,
             )?),
             _ => {
                 unreachable!()

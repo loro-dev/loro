@@ -259,6 +259,22 @@ The following is the **content** of each container。
 
 ### Tree
 
+#### Create
+
+```ts
+{
+    "type": "create",
+    "target": string,
+    "parent": string | null,
+    "fractional_index": UInt8Array
+}
+```
+
+- `type`: `create`, `move` or `delete`.
+- `target`: the string format of target `TreeID` moved.
+- `parent`: the string format of `TreeID` or `null`. If it is `null`, the target node will be a root node.
+- `fractional_index`: the fractional index of the target node.
+
 #### Move
 
 ```ts
@@ -270,7 +286,7 @@ The following is the **content** of each container。
 }
 ```
 
-- `type`: `move` or `delete`.
+- `type`: `create`, `move` or `delete`.
 - `target`: the string format of target `TreeID` moved.
 - `parent`: the string format of `TreeID` or `null`. If it is `null`, the target node will be a root node.
 - `fractional_index`: the fractional index of the target node.
@@ -284,7 +300,7 @@ The following is the **content** of each container。
 }
 ```
 
-- `type`: `move` or `delete`.
+- `type`: `create`, `move` or `delete`.
 - `target`: the string format of target `TreeID` deleted.
 
 ### Unknown

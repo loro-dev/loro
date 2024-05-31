@@ -4137,6 +4137,11 @@ export type MapOp = {
 };
 
 export type TreeOp = {
+  type: "create",
+  target: TreeID,
+  parent: TreeID | undefined,
+  fractional_index: Uint8Array
+}|{
   type: "move",
   target: TreeID,
   parent: TreeID | undefined,

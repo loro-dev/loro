@@ -300,11 +300,7 @@ impl TreeHandler {
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
             inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp {
-                target,
-                parent: Some(TreeID::delete_root()),
-                position: None,
-            }),
+            crate::op::RawOpContent::Tree(TreeOp::Delete { target }),
             EventHint::Tree(TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Delete {
@@ -528,10 +524,10 @@ impl TreeHandler {
     ) -> LoroResult<TreeID> {
         txn.apply_local_op(
             inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp {
+            crate::op::RawOpContent::Tree(TreeOp::Create {
                 target: tree_id,
                 parent,
-                position: Some(position.clone()),
+                position: position.clone(),
             }),
             EventHint::Tree(TreeDiffItem {
                 target: tree_id,
@@ -557,10 +553,10 @@ impl TreeHandler {
     ) -> LoroResult<()> {
         txn.apply_local_op(
             inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp {
+            crate::op::RawOpContent::Tree(TreeOp::Move {
                 target,
                 parent,
-                position: Some(position.clone()),
+                position: position.clone(),
             }),
             EventHint::Tree(TreeDiffItem {
                 target,
