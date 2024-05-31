@@ -4038,3 +4038,123 @@ interface LoroMovableList {
 
 export type Side = -1 | 0 | 1;
 "#;
+
+#[wasm_bindgen(typescript_custom_section)]
+const JSON_SCHEMA_TYPES: &'static str = r#"
+export type JsonOpID = `${number}@${PeerID}`;
+export type JsonContainerID =  `🦜:${ContainerID}` ;
+export type JsonValue  =
+  | JsonContainerID
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: JsonValue }
+  | Uint8Array
+  | JsonValue[];
+
+export type JsonSchema = {
+  schema_version: number;
+  start_version: Record<string, number>,
+  end_version: Record<string, number>,
+  peers: PeerID[],
+  changes: JsonChange[]
+};
+
+export type JsonChange = {
+  id: JsonOpID
+  timestamp: number,
+  deps: JsonOpID[],
+  lamport: number,
+  msg: string | null,
+  ops: JsonOp[]
+}
+
+export type JsonOp = {
+  container: ContainerID,
+  counter: number,
+  content: ListOp | TextOp | MapOp | TreeOp | MovableListOp | UnknownOp
+}
+
+export type ListOp = {
+  type: "insert",
+  pos: number,
+  value: JsonValue
+} | {
+  type: "delete",
+  pos: number,
+  len: number,
+  start_id: JsonOpID,
+};
+
+export type MovableListOp = {
+  type: "insert",
+  pos: number,
+  value: JsonValue
+} | {
+  type: "delete",
+  pos: number,
+  len: number,
+  start_id: JsonOpID,
+}| {
+  type: "move",
+  from: number,
+  to: number,
+  from_id: JsonOpID,
+}|{
+  type: "set",
+  elem_id: JsonOpID,
+  value: JsonValue
+}
+
+export type TextOp = {
+  type: "insert",
+  pos: number,
+  text: string
+} | {
+  type: "delete",
+  pos: number,
+  len: number,
+  start_id: JsonOpID,
+} | {
+  type: "mark",
+  start: number,
+  end: number,
+  style_key: string,
+  style_value: JsonValue,
+  info: number
+}|{
+  type: "mark_end"
+};
+
+export type MapOp = {
+  type: "insert",
+  key: string,
+  value: JsonValue
+} | {
+  type: "delete",
+  key: string,
+};
+
+export type TreeOp = {
+  type: "move",
+  target: TreeID,
+  parent: TreeID | undefined,
+  fractional_index: Uint8Array
+}|{
+  type: "delete",
+  target: TreeID
+};
+
+export type UnknownOp = {
+  type: "unknown"
+  prop: number,
+  value_type: "unknown",
+  value: unknown
+} | {
+  type: "unknown"
+  prop: number,
+  value_type: "json_unknown",
+  value: string
+};
+"#;

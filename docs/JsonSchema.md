@@ -1,8 +1,8 @@
-# Json Representation of Loro
+# JSON Representation of Loro's OpLog
 
 ## Motivation
 
-Loro is diligently going towards the v1.0 stable version, during which the encoding format of Loro will inevitably bring some changes. In order to allow early trial users to smoothly migrate their historical data, Loro needs to add a more universal, and even human-readable, self-describing encoding format. This can also serve as the data source for future Loro dev-tools for visualization.
+Loro supports many data structure semantics and abstracts some concepts such as [OpLog](https://www.loro.dev/docs/advanced/doc_state_and_oplog), [`Change`, `Operation`](https://www.loro.dev/docs/advanced/op_and_change) or [`REG`](https://www.loro.dev/docs/advanced/replayable_event_graph), etc. We hope to provide a more universal, human-readable and self-describing encoding format than the binary encoding format to better help users understand, lookup and modify Loro documents. This can also serve as the data source for future Loro dev-tools for visualization.
 
 
 ## Document
@@ -36,7 +36,7 @@ You can also attach a commit message to a `Change` like you usually do with Git'
 {
     "id": string,
     "timestamp": number,
-    "deps": string[],
+    "deps": OpID[],
     "lamport": number,
     "msg": string,
     "ops": Op[]
@@ -44,7 +44,7 @@ You can also attach a commit message to a `Change` like you usually do with Git'
 ```
 
 - `id`: the string representation of the unique `ID` of each `Change`, in the form of `{Counter}@{PeerID}` which is the `@` character connecting `Counter` and `PeerID`. Of course, This `PeerID` is the index of peers in the global context.
-- `timestamp`: the number of Unix timestamp when the change is committed.
+- `timestamp`: the number of Unix timestamp when the change is committed. [Timestamp is not recorded by default](https://loro.dev/docs/advanced/timestamp)
 - `deps`: a list of causal dependency of this `Change`, each item is the `ID` represented by a string.
 - `lamport`: the lamport timestamp of the `Change`.
 - `msg`: the commit message.
@@ -93,14 +93,14 @@ The following is the **content** of each container。
     "type": "delete",
     "pos": number,
     "len": number,
-    "delete_start_id": string
+    "start_id": OpID
 }
 ```
 
 - `type`: `insert` or `delete`.
 - `pos`: the start index of the deletion.
 - `len`: the length of deleted content.
-- `delete_start_id`: the string id of start element.
+- `start_id`: the string id of start element deleted.
 
 ### MovableList
 
@@ -125,14 +125,14 @@ The following is the **content** of each container。
     "type": "delete",
     "pos": number,
     "len": number,
-    "delete_start_id": string
+    "start_id": OpID
 }
 ```
 
 - `type`:`insert`, `delete`, `move` or `set`.
 - `pos`: the start index of the deletion.
 - `len`: the length of deleted content.
-- `delete_start_id`: the string id of start element.
+- `start_id`: the string id of start element deleted.
 
 #### Move
 
@@ -141,7 +141,7 @@ The following is the **content** of each container。
     "type": "move",
     "from": number,
     "to": number,
-    "from_id": string
+    "from_id": OpID
 }
 ```
 
@@ -155,7 +155,7 @@ The following is the **content** of each container。
 ```ts
 {
     "type": "set",
-    "elem_id": string,
+    "elem_id": OpID,
     "value": LoroValue
 }
 ```
@@ -204,6 +204,10 @@ The following is the **content** of each container。
 }
 ```
 
+`type`: `insert`, `delete`, `mark` or `mark_end`.
+`pos`: the index of the insert operation. The position is based on the Unicode code point length.
+`text`: the string of the insertion.
+
 #### Delete
 
 ```ts
@@ -211,9 +215,15 @@ The following is the **content** of each container。
     "type": "delete",
     "pos": number,
     "len": number,
-    "id_start": string
+    "id_start": OpID
 }
 ```
+
+`type`: `insert`, `delete`, `mark` or `mark_end`.
+`pos`: the index of the deletion. The position is based on the Unicode code point length.
+`len`: the length of the text deleted.
+`id_start`: the string id of the beginning element deleted.
+
 
 #### Mark
 
@@ -228,6 +238,13 @@ The following is the **content** of each container。
 }
 ```
 
+`type`: `insert`, `delete`, `mark` or `mark_end`.
+`start`: the start index of text need to mark. The position is based on the Unicode code point length.
+`end`: the end index of text need to mark. The position is based on the Unicode code point length.
+`style_key`: the key of style, it is customizable.
+`style_value`: the value of style, it is customizable.
+`info`: the config of the style, whether to expand the style when inserting new text around it.
+
 #### MarkEnd
 
 ```ts
@@ -235,6 +252,8 @@ The following is the **content** of each container。
     "type": "mark_end"
 }
 ```
+
+`type`: `insert`, `delete`, `mark` or `mark_end`.
 
 ### Tree
 
@@ -279,7 +298,7 @@ So there are two kind of unknown format, binary format and json-string format.
     "type": "unknown",
     "prop": number,
     "value_type:": "unknown",
-    "value": OwnedEncodeValue
+    "value": EncodeValue
 }
 ```
 
@@ -302,14 +321,13 @@ So there are two kind of unknown format, binary format and json-string format.
 - `type`: just an unknown type.
 - `prop`: a property of the encoded op, it's a number.
 - `value_type`: json_unknown.
-- `value`: a string json format of `OwnedEncodeValue`
+- `value`: a string json format of `EncodeValue`
 
 ## Value
 
 In this section, we will introduction two *Value* in Loro. One is `LoroValue`, it's an enum of data types supported by Loro, such as the value inserted by `List` or `Map`.
 
-The another is `OwnedEnodeValue`, it's just used in encoding module for unknown type.
-
+The another is `EncodeValue`, it's just used in encoding module for unknown type.
 
 ### LoroValue
 
@@ -327,6 +345,6 @@ These are data types supported by Loro and its json format:
 
 Note: Compared with the string format, we add a prefix `🦜:` when encoding the json format of `ContainerID` to prevent users from saving the string format of `ContainerID` and misinterpreting it as `ContainerID` when decoding.
 
-### OwnedEncodeValue
+### EncodeValue
 
-The `OwnedEncodeValue` is the specific type used by Loro when encoding, it's an internal value, users do not need to get it clear. It is specially designed to handle the schema mismatch due to forward and backward compatibility. In json encoding format, the `OwnedEncodeValue` will be encoded as an object.
+The `EncodeValue` is the specific type used by Loro when encoding, it's an internal value, users do not need to get it clear. It is specially designed to handle the schema mismatch due to forward and backward compatibility. In json encoding format, the `EncodeValue` will be encoded as an object.
