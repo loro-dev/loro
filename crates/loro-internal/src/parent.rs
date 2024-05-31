@@ -8,7 +8,10 @@ use loro_common::LoroValue;
 
 use crate::{
     change::Change,
-    container::{list::list_op::ListOp, map::MapSet},
+    container::{
+        list::list_op::{self, ListOp},
+        map::MapSet,
+    },
     op::{ListSlice, RawOp, RawOpContent},
     DocState, OpLog,
 };
@@ -51,7 +54,7 @@ impl OpLog {
                     }
                 }
                 crate::op::InnerContent::Tree(t) => {
-                    let id = t.target.associated_meta_container();
+                    let id = t.target().associated_meta_container();
                     let idx = arena.register_container(&id);
                     arena.set_parent(idx, Some(op.container));
                 }

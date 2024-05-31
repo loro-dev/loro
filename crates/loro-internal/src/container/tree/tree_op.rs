@@ -12,7 +12,7 @@ use crate::state::TreeParentId;
 /// - **Delete**: move target tree node to [`loro_common::DELETED_TREE_ROOT`].
 ///
 ///
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum TreeOp {
     Create {
         target: TreeID,

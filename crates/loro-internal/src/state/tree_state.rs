@@ -1,9 +1,7 @@
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{
-    ContainerID, IdFull, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID, ID,
-};
+use loro_common::{ContainerID, IdFull, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID};
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -32,6 +30,21 @@ pub enum TreeParentId {
     Deleted,
     /// parent is root
     None,
+}
+
+impl From<Option<TreeID>> for TreeParentId {
+    fn from(id: Option<TreeID>) -> Self {
+        match id {
+            Some(id) => {
+                if TreeID::is_deleted_root(&id) {
+                    TreeParentId::Deleted
+                } else {
+                    TreeParentId::Node(id)
+                }
+            }
+            None => TreeParentId::None,
+        }
+    }
 }
 
 /// The state of movable tree.
@@ -237,29 +250,18 @@ impl ContainerState for TreeState {
         let _ = self.apply_diff_and_convert(diff, arena, txn, state);
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
-        match &raw_op.content {
-            crate::op::RawOpContent::Tree(tree) => match tree {
-                TreeOp::Create {
-                    target,
-                    parent,
-                }
-                | TreeOp::Move {
-                    target,
-                    parent,
-                } => {
-                    let parent = TreeParentId::from(*parent);
-                    self.mov(
-                        *target,
-                        parent,
-                        raw_op.id_full(),
-                    )
-                }
-                TreeOp::Delete { target } => {
-                    let parent = TreeParentId::Deleted;
-                    self.mov(*target, parent, raw_op.id_full())
-                }
-            },
+    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &crate::op::Op) -> LoroResult<()> {
+        match raw_op.content {
+            crate::op::RawOpContent::Tree(ref tree) => {
+                let target = tree.target();
+                let parent = match tree {
+                    TreeOp::Create { parent, .. } | TreeOp::Move { parent, .. } => {
+                        TreeParentId::from(*parent)
+                    }
+                    TreeOp::Delete { .. } => TreeParentId::Deleted,
+                };
+                self.mov(target, parent, raw_op.id_full())
+            }
             _ => unreachable!(),
         }
     }
@@ -316,19 +318,6 @@ impl ContainerState for TreeState {
                 ans.push(t.into());
             }
         }
-        ans.sort_by_key(|x| {
-            let id: ID = x
-                .as_map()
-                .unwrap()
-                .get("id")
-                .unwrap()
-                .as_string()
-                .unwrap()
-                .as_str()
-                .try_into()
-                .unwrap();
-            id
-        });
         ans.into()
     }
 
@@ -371,26 +360,107 @@ impl ContainerState for TreeState {
         for op in ctx.ops {
             assert_eq!(op.op.atom_len(), 1);
             let content = op.op.content.as_tree().unwrap();
-            match content {
-                TreeOp::Create {
-                    target,
-                    parent,
+            let target = content.target();
+            let parent = match content {
+                TreeOp::Create { parent, .. } | TreeOp::Move { parent, .. } => {
+                    TreeParentId::from(*parent)
                 }
-                | TreeOp::Move {
-                    target,
-                    parent,
-                } => {
-                    let parent = TreeParentId::from(*parent);
-                    self.mov(*target, parent, op.id_full())
-                        .unwrap()
-                }
-                TreeOp::Delete { target } => {
-                    let parent = TreeParentId::Deleted;
-                    self.mov(*target, parent, op.id_full())
-                        .unwrap()
-                }
+                TreeOp::Delete { .. } => TreeParentId::Deleted,
             };
+            self.trees.insert(
+                target,
+                TreeStateNode {
+                    parent,
+                    last_move_op: op.id_full(),
+                },
+            );
         }
+    }
+}
+
+/// Convert flatten tree structure to hierarchy for user interface.
+///
+/// ```json
+/// {
+///     "roots": [......],
+///     // "deleted": [......]
+/// }
+/// ```
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Forest {
+    pub roots: Vec<TreeNode>,
+    // deleted: Vec<TreeNode>,
+}
+
+/// The node with metadata in hierarchy tree structure.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TreeNode {
+    id: TreeID,
+    meta: LoroValue,
+    parent: Option<TreeID>,
+    children: Vec<TreeNode>,
+}
+
+impl Forest {
+    pub(crate) fn from_tree_state(state: &FxHashMap<TreeID, TreeStateNode>) -> Self {
+        let mut forest = Self::default();
+        let mut parent_id_to_children = FxHashMap::default();
+
+        for id in state.keys().sorted() {
+            let parent = state.get(id).unwrap();
+            parent_id_to_children
+                .entry(parent.parent)
+                .or_insert_with(Vec::new)
+                .push(*id)
+        }
+
+        if let Some(roots) = parent_id_to_children.get(&TreeParentId::None) {
+            for root in roots.iter().copied() {
+                let mut stack = vec![(
+                    root,
+                    TreeNode {
+                        id: root,
+                        parent: None,
+                        meta: LoroValue::Container(root.associated_meta_container()),
+                        children: vec![],
+                    },
+                )];
+                let mut id_to_node = FxHashMap::default();
+                while let Some((id, mut node)) = stack.pop() {
+                    if let Some(children) = parent_id_to_children.get(&TreeParentId::Node(id)) {
+                        let mut children_to_stack = Vec::new();
+                        for child in children {
+                            if let Some(child_node) = id_to_node.remove(child) {
+                                node.children.push(child_node);
+                            } else {
+                                children_to_stack.push((
+                                    *child,
+                                    TreeNode {
+                                        id: *child,
+                                        parent: Some(id),
+                                        meta: LoroValue::Container(
+                                            child.associated_meta_container(),
+                                        ),
+                                        children: vec![],
+                                    },
+                                ));
+                            }
+                        }
+                        if !children_to_stack.is_empty() {
+                            stack.push((id, node));
+                            stack.extend(children_to_stack);
+                        } else {
+                            id_to_node.insert(id, node);
+                        }
+                    } else {
+                        id_to_node.insert(id, node);
+                    }
+                }
+                let root_node = id_to_node.remove(&root).unwrap();
+                forest.roots.push(root_node);
+            }
+        }
+        forest
     }
 }
 

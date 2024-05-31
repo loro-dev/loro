@@ -319,23 +319,15 @@ fn encode_changes(
 
                 ContainerType::Tree => match content {
                     InnerContent::Tree(op) => JsonOpContent::Tree(match op {
-                        TreeOp::Create {
-                            target,
-                            parent,
-                            position,
-                        } => op::TreeOp::Create {
+                        TreeOp::Create { target, parent } => op::TreeOp::Create {
                             target: register_tree_id(target, peer_register),
                             parent: parent.map(|p| register_tree_id(&p, peer_register)),
-                            fractional_index: position.clone(),
+                            fractional_index: Some(vec![128]),
                         },
-                        TreeOp::Move {
-                            target,
-                            parent,
-                            position,
-                        } => op::TreeOp::Move {
+                        TreeOp::Move { target, parent } => op::TreeOp::Move {
                             target: register_tree_id(target, peer_register),
                             parent: parent.map(|p| register_tree_id(&p, peer_register)),
-                            fractional_index: position.clone(),
+                            fractional_index: Some(vec![128]),
                         },
                         TreeOp::Delete { target } => op::TreeOp::Delete {
                             target: register_tree_id(target, peer_register),
@@ -546,9 +538,10 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                         return Err(LoroError::DecodeError("To maintain data accuracy, Tree Op from v0.16 and later do not support downgrading back to v0.15".into()));
                     }
                     InnerContent::Tree(TreeOp::Create {
-                    target: convert_tree_id(&target, peers),
-                    parent: parent.map(|p| convert_tree_id(&p, peers)),
-                })},
+                        target: convert_tree_id(&target, peers),
+                        parent: parent.map(|p| convert_tree_id(&p, peers)),
+                    })
+                }
                 op::TreeOp::Move {
                     target,
                     parent,
@@ -558,13 +551,12 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                         return Err(LoroError::DecodeError("To maintain data accuracy, Tree Op from v0.16 and later do not support downgrading back to v0.15".into()));
                     }
                     InnerContent::Tree(TreeOp::Move {
-                    target: convert_tree_id(&target, peers),
-                    parent: parent.map(|p| convert_tree_id(&p, peers)),
-                    position: fractional_index,
-                })},
+                        target: convert_tree_id(&target, peers),
+                        parent: parent.map(|p| convert_tree_id(&p, peers)),
+                    })
+                }
                 op::TreeOp::Delete { target } => InnerContent::Tree(TreeOp::Delete {
                     target: convert_tree_id(&target, peers),
-                    parent: Some(TreeID::delete_root()),
                 }),
             },
             _ => unreachable!(),
@@ -728,8 +720,9 @@ pub mod op {
             target: TreeID,
             #[serde(with = "self::serde_impl::option_tree_id")]
             parent: Option<TreeID>,
+            // PATCH: A temporary solution to deal with FI for v0.15.x
             #[serde(default)]
-            fractional_index: FractionalIndex,
+            fractional_index: Option<Vec<u8>>,
         },
         Move {
             #[serde(with = "self::serde_impl::tree_id")]
