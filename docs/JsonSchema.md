@@ -163,7 +163,7 @@ type MovableListMoveOp = {
     "type": "move",
     "from": number,
     "to": number,
-    "from_id": ElemID
+    "elem_id": ElemID
 }
 
 type ElemID = `L${number}@${PeerID}`
@@ -172,7 +172,7 @@ type ElemID = `L${number}@${PeerID}`
 - `type`:`insert`, `delete`, `move` or `set`.
 - `from`: the index of the element before is moved.
 - `to`: the index of the index moved to after moving out the element
-- `from_id`: the ID (described by lamport@peer) of the element moved.
+- `elem_id`: the ID (described by lamport@peer) of the element moved.
 
 #### Set
 
@@ -387,10 +387,10 @@ The another is `EncodedValue`, it's just used in encoding module for unknown typ
 
 These are data types supported by Loro and its json format:
 
-- `null`: `null` or `undefined`
+- `null`: `null`
 - `Bool`: `true` or `false`
 - `F64`: `number`(float)
-- `I64`: `number`(signed)
+- `I64`: `number` or `bigint` (signed)
 - `Binary`: `UInt8Array`
 - `String`: `string`
 - `List`: `Array<LoroValue>`
