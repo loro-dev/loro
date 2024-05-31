@@ -41,6 +41,8 @@ You can also attach a commit message to a `Change` like you usually do with Git'
     "msg": string,
     "ops": Op[]
 }
+
+type OpID = `${number}@${PeerID}`;
 ```
 
 - `id`: the string representation of the unique `ID` of each `Change`, in the form of `{Counter}@{PeerID}` which is the `@` character connecting `Counter` and `PeerID`. Of course, This `PeerID` is the index of peers in the global context.
