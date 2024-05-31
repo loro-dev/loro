@@ -266,7 +266,7 @@ fn encode_changes(
                         }) => op::TextOp::Delete {
                             pos: *pos,
                             len: *signed_len,
-                            id_start: register_id(id_start, peer_register),
+                            start_id: register_id(id_start, peer_register),
                         },
                         InnerListOp::StyleStart {
                             start,
@@ -442,7 +442,11 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> Op {
                         pos,
                     })
                 }
-                op::TextOp::Delete { pos, len, id_start } => {
+                op::TextOp::Delete {
+                    pos,
+                    len,
+                    start_id: id_start,
+                } => {
                     let id_start = convert_id(&id_start, peers);
                     InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
                         id_start,
@@ -524,8 +528,12 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> Op {
                         },
                     }))
                 }
-                op::MovableListOp::Move { from, elem_id, to } => {
-                    let from_id = convert_idlp(&elem_id, peers);
+                op::MovableListOp::Move {
+                    from,
+                    elem_id: from_id,
+                    to,
+                } => {
+                    let from_id = convert_idlp(&from_id, peers);
                     InnerContent::List(InnerListOp::Move { from, from_id, to })
                 }
                 op::MovableListOp::Set { elem_id, mut value } => {
@@ -752,7 +760,7 @@ pub mod op {
             pos: isize,
             len: isize,
             #[serde(with = "self::serde_impl::id")]
-            id_start: ID,
+            start_id: ID,
         },
         Mark {
             start: u32,

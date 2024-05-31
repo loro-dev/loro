@@ -159,8 +159,9 @@ extern "C" {
     pub type JsCursorQueryAns;
     #[wasm_bindgen(typescript_type = "UndoConfig")]
     pub type JsUndoConfig;
+    #[wasm_bindgen(typescript_type = "JsonSchema")]
     pub type JsJsonSchema;
-    #[wasm_bindgen(typescript_type = "string | JsJsonSchema")]
+    #[wasm_bindgen(typescript_type = "string | JsonSchema")]
     pub type JsJsonSchemaOrString;
 }
 
@@ -876,16 +877,17 @@ impl Loro {
 
     /// Export updates from the specific version to the current version with JSON format.
     #[wasm_bindgen(js_name = "exportJsonUpdates")]
-    pub fn export_json_updates(&self, vv: Option<VersionVector>) -> JsResult<JsValue> {
+    pub fn export_json_updates(&self, vv: Option<VersionVector>) -> JsResult<JsJsonSchema> {
         let mut json_vv = Default::default();
         if let Some(vv) = vv {
             json_vv = vv.0;
         }
         let json_schema = self.0.export_json_updates(&json_vv);
-        let s = serde_wasm_bindgen::Serializer::new()
-            .serialize_large_number_types_as_bigints(true)
-            .serialize_missing_as_null(true);
-        json_schema.serialize(&s).map_err(|e| e.into())
+        let s = serde_wasm_bindgen::Serializer::new();
+        let v = json_schema
+            .serialize(&s)
+            .map_err(std::convert::Into::<JsValue>::into)?;
+        Ok(v.into())
     }
 
     /// Import updates from the JSON format.
@@ -4102,7 +4104,7 @@ export type MovableListOp = {
   type: "move",
   from: number,
   to: number,
-  from_id: JsonOpID,
+  elem_id: JsonOpID,
 }|{
   type: "set",
   elem_id: JsonOpID,
