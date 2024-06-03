@@ -325,12 +325,12 @@ fn encode_changes(
                         TreeOp::Create { target, parent } => op::TreeOp::Create {
                             target: register_tree_id(target, peer_register),
                             parent: parent.map(|p| register_tree_id(&p, peer_register)),
-                            fractional_index: Some(vec![128]),
+                            fractional_index: "80".to_string(),
                         },
                         TreeOp::Move { target, parent } => op::TreeOp::Move {
                             target: register_tree_id(target, peer_register),
                             parent: parent.map(|p| register_tree_id(&p, peer_register)),
-                            fractional_index: Some(vec![128]),
+                            fractional_index: "80".to_string(),
                         },
                         TreeOp::Delete { target } => op::TreeOp::Delete {
                             target: register_tree_id(target, peer_register),
@@ -541,7 +541,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                     parent,
                     fractional_index,
                 } => {
-                    if fractional_index.is_some() && fractional_index.as_ref().unwrap() != &[128] {
+                    if !fractional_index.is_empty() || !fractional_index.starts_with("80") {
                         return Err(LoroError::DecodeError("To maintain data accuracy, Tree Op from v0.16 and later do not support downgrading back to v0.15".into()));
                     }
                     InnerContent::Tree(TreeOp::Create {
@@ -554,7 +554,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                     parent,
                     fractional_index,
                 } => {
-                    if fractional_index.is_some() && fractional_index.as_ref().unwrap() != &[128] {
+                    if !fractional_index.is_empty() || !fractional_index.starts_with("80") {
                         return Err(LoroError::DecodeError("To maintain data accuracy, Tree Op from v0.16 and later do not support downgrading back to v0.15".into()));
                     }
                     InnerContent::Tree(TreeOp::Move {
@@ -606,7 +606,7 @@ pub mod op {
     use serde::{Deserialize, Serialize};
     use smallvec::SmallVec;
 
-    use crate:: version::Frontiers;
+    use crate::version::Frontiers;
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct JsonSchema {
@@ -727,7 +727,7 @@ pub mod op {
             parent: Option<TreeID>,
             // PATCH: A temporary solution to deal with FI for v0.15.x
             #[serde(default)]
-            fractional_index: Option<String>,
+            fractional_index: String,
         },
         Move {
             #[serde(with = "self::serde_impl::tree_id")]
@@ -736,7 +736,7 @@ pub mod op {
             parent: Option<TreeID>,
             // PATCH: A temporary solution to deal with FI for v0.15.x
             #[serde(default)]
-            fractional_index: Option<String>,
+            fractional_index: String,
         },
         Delete {
             #[serde(with = "self::serde_impl::tree_id")]

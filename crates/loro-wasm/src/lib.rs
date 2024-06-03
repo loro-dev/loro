@@ -3689,7 +3689,7 @@ export type MapOp = {
 export type TreeOp = {
   type: "create",
   target: TreeID,
-  parent: TreeID | undefined
+  parent: TreeID | undefined,
 }|{
   type: "move",
   target: TreeID,
