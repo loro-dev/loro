@@ -1,34 +1,40 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { Container, Loro, LoroMap, LoroTree, LoroTreeNode } from "../src";
+import {
+  Container,
+  Loro,
+  LoroMap,
+  LoroTree,
+  LoroTreeNode,
+  TextOp,
+} from "../src";
 
 it("json encoding", () => {
-    const doc = new Loro();
-    const text = doc.getText("text");
-    text.insert(0, "123")
-    const map = doc.getMap("map");
-    const list = doc.getList("list");
-    const movableList = doc.getMovableList("movableList");
-    const tree = doc.getTree("tree");
-    const subMap = map.setContainer("subMap", new LoroMap());
-    subMap.set("foo", "bar");
-    list.push("foo");
-    list.push("🦜");
-    movableList.push("move list");
-    movableList.push("🦜");
-    movableList.move(1, 0);
-    const root = tree.createNode(undefined);
-    const child = tree.createNode(root.id);
-    child.data.set("tree", "abc");
-    text.mark({start:0, end:3}, "bold", true);
-    const json = doc.exportJsonUpdates();
-    // console.log(json.changes[0].ops);
-    const doc2 = new Loro();
-    doc2.importJsonUpdates(json);
-    
-})
+  const doc = new Loro();
+  const text = doc.getText("text");
+  text.insert(0, "123");
+  const map = doc.getMap("map");
+  const list = doc.getList("list");
+  const movableList = doc.getMovableList("movableList");
+  const tree = doc.getTree("tree");
+  const subMap = map.setContainer("subMap", new LoroMap());
+  subMap.set("foo", "bar");
+  list.push("foo");
+  list.push("🦜");
+  movableList.push("move list");
+  movableList.push("🦜");
+  movableList.move(1, 0);
+  const root = tree.createNode(undefined);
+  const child = tree.createNode(root.id);
+  child.data.set("tree", "abc");
+  text.mark({ start: 0, end: 3 }, "bold", true);
+  const json = doc.exportJsonUpdates();
+  // console.log(json.changes[0].ops);
+  const doc2 = new Loro();
+  doc2.importJsonUpdates(json);
+});
 
 it("json decoding", () => {
-    const v15Json = `{
+  const v15Json = `{
     "schema_version": 1,
     "start_version": {},
     "peers": [
@@ -133,5 +139,30 @@ it("json decoding", () => {
   }`;
   const doc = new Loro();
   doc.importJsonUpdates(v15Json);
-// console.log(doc.exportJsonUpdates());
-})
+  // console.log(doc.exportJsonUpdates());
+});
+
+it("test some type correctness", () => {
+  const doc = new Loro();
+  doc.setPeerId(0);
+  doc.getText("text").insert(0, "123");
+  doc.commit();
+  doc.getText("text").delete(2, 1);
+  doc.getText("text").delete(1, 1);
+  doc.getText("text").delete(0, 1);
+  doc.commit();
+  const updates = doc.exportJsonUpdates();
+  expect(updates.start_version).toBeDefined();
+  expect(updates.changes.length).toBe(1);
+  expect(updates.changes[0].ops[0].content).toStrictEqual({
+    type: "insert",
+    pos: 0,
+    text: "123",
+  } as TextOp);
+  expect(updates.changes[0].ops[1].content).toStrictEqual({
+    type: "delete",
+    pos: 2,
+    len: -3,
+    start_id: "0@0",
+  } as TextOp);
+});
