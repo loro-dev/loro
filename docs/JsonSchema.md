@@ -248,14 +248,14 @@ type TextDeleteOp = {
     "type": "delete",
     "pos": number,
     "len": number,
-    "id_start": OpID
+    "start_id": OpID
 }
 ```
 
 `type`: `delete`.
 `pos`: the index of the deletion. The position is based on the Unicode code point length.
 `len`: the length of the text deleted.
-`id_start`: the string id of the beginning element deleted.
+`start_id`: the string id of the beginning element deleted.
 
 
 #### Mark
