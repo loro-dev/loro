@@ -781,7 +781,7 @@ pub mod op {
             target: TreeID,
             #[serde(with = "self::serde_impl::option_tree_id")]
             parent: Option<TreeID>,
-            #[serde(default)]
+            #[serde(default, with = "self::serde_impl::fractional_index")]
             fractional_index: FractionalIndex,
         },
         Move {
