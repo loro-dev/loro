@@ -22,6 +22,8 @@ use crate::{
 use super::encode_reordered::{import_changes_to_oplog, ValueRegister};
 use op::{JsonOpContent, JsonSchema};
 
+const SCHEMA_VERSION: u8 = 1;
+
 pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> JsonSchema {
     let actual_start_vv: VersionVector = vv
         .iter()
@@ -39,15 +41,16 @@ pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> J
         })
         .collect();
 
+    let frontiers = oplog.dag.vv_to_frontiers(&actual_start_vv);
+
     let mut peer_register = ValueRegister::<PeerID>::new();
     let diff_changes = init_encode(oplog, &actual_start_vv);
     let changes = encode_changes(&diff_changes, &oplog.arena, &mut peer_register);
     JsonSchema {
         changes,
-        schema_version: 1,
+        schema_version: SCHEMA_VERSION,
         peers: peer_register.unwrap_vec(),
-        start_vv: actual_start_vv,
-        end_vv: oplog.vv().clone(),
+        start_version: frontiers,
     }
 }
 
@@ -603,15 +606,13 @@ pub mod op {
     use serde::{Deserialize, Serialize};
     use smallvec::SmallVec;
 
-    use crate::VersionVector;
+    use crate:: version::Frontiers;
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct JsonSchema {
         pub schema_version: u8,
-        #[serde(with = "self::serde_impl::vv")]
-        pub start_vv: VersionVector,
-        #[serde(with = "self::serde_impl::vv")]
-        pub end_vv: VersionVector,
+        #[serde(with = "self::serde_impl::frontiers")]
+        pub start_version: Frontiers,
         #[serde(with = "self::serde_impl::peer_id")]
         pub peers: Vec<PeerID>,
         pub changes: Vec<Change>,
@@ -726,7 +727,7 @@ pub mod op {
             parent: Option<TreeID>,
             // PATCH: A temporary solution to deal with FI for v0.15.x
             #[serde(default)]
-            fractional_index: Option<Vec<u8>>,
+            fractional_index: Option<String>,
         },
         Move {
             #[serde(with = "self::serde_impl::tree_id")]
@@ -735,7 +736,7 @@ pub mod op {
             parent: Option<TreeID>,
             // PATCH: A temporary solution to deal with FI for v0.15.x
             #[serde(default)]
-            fractional_index: Option<Vec<u8>>,
+            fractional_index: Option<String>,
         },
         Delete {
             #[serde(with = "self::serde_impl::tree_id")]
@@ -846,42 +847,43 @@ pub mod op {
             }
         }
 
-        pub mod vv {
+        pub mod frontiers {
+            use loro_common::ID;
             use serde::{ser::SerializeMap, Deserializer, Serializer};
 
-            use crate::VersionVector;
+            use crate::version::Frontiers;
 
-            pub fn serialize<S>(vv: &VersionVector, s: S) -> Result<S::Ok, S::Error>
+            pub fn serialize<S>(f: &Frontiers, s: S) -> Result<S::Ok, S::Error>
             where
                 S: Serializer,
             {
-                let mut map = s.serialize_map(Some(vv.len()))?;
-                for (k, v) in vv.iter() {
-                    map.serialize_entry(&k.to_string(), v)?;
+                let mut map = s.serialize_map(Some(f.len()))?;
+                for id in f.iter() {
+                    map.serialize_entry(&id.peer.to_string(), &id.counter)?;
                 }
                 map.end()
             }
 
-            pub fn deserialize<'de, 'a, D>(d: D) -> Result<VersionVector, D::Error>
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<Frontiers, D::Error>
             where
                 D: Deserializer<'de>,
             {
                 struct __Visitor;
                 impl<'de> serde::de::Visitor<'de> for __Visitor {
-                    type Value = VersionVector;
+                    type Value = Frontiers;
                     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                        formatter.write_str("a vv")
+                        formatter.write_str("a Frontiers")
                     }
 
                     fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
                     where
                         A: serde::de::MapAccess<'de>,
                     {
-                        let mut vv = VersionVector::new();
+                        let mut f = Frontiers::default();
                         while let Some((k, v)) = map.next_entry::<String, i32>()? {
-                            vv.insert(k.parse().unwrap(), v);
+                            f.push(ID::new(k.parse().unwrap(), v))
                         }
-                        Ok(vv)
+                        Ok(f)
                     }
                 }
                 d.deserialize_map(__Visitor)

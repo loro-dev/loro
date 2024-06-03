@@ -3606,8 +3606,7 @@ export type JsonValue  =
 
 export type JsonSchema = {
   schema_version: number;
-  start_version: Record<string, number>,
-  end_version: Record<string, number>,
+  start_version: Map<string, number>,
   peers: PeerID[],
   changes: JsonChange[]
 };

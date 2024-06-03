@@ -30,10 +30,7 @@ it("json encoding", () => {
 it("json decoding", () => {
     const v16Json = `{
     "schema_version": 1,
-    "start_vv": {},
-    "end_vv": {
-      "14944917281143706156": 12
-    },
+    "start_version": {},
     "peers": [
       "14944917281143706156"
     ],
