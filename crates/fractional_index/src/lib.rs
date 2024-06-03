@@ -74,10 +74,7 @@ pub(crate) fn new_after(bytes: &[u8]) -> Vec<u8> {
 }
 
 pub(crate) fn new_between(left: &[u8], right: &[u8], extra_capacity: usize) -> Option<Vec<u8>> {
-    let mut shorter_len = left.len().min(right.len()) - 1;
-    if extra_capacity > 1 {
-        shorter_len += 1;
-    }
+    let shorter_len = left.len().min(right.len());
     for i in 0..shorter_len {
         if left[i] < right[i] - 1 {
             let mut ans: Vec<u8> = left[0..=i].into();
