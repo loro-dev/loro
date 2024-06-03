@@ -21,15 +21,14 @@ We will also extract the 64-bit integer PeerID to the beginning of the document 
 ```ts
 {
     "schema_version": number,
-    "start_version": Record<string, number>,
-    "end_version": Record<string, number>,
+    "start_version": Map<string, number>,
     "peers": string[],
     "changes": Change[],
 }
 ```
 
 - `schema_version`: the version of the schema that the document is encoded with. It's 1 for the current specification.
-- `start_version` and `end_version`: the start and end version of the document. They are represented as a map from the decimal string representation of `PeerID` to `Counter`.
+- `start_version`: the start `Frontiers` version of the document. They are represented as a map from the decimal string representation of `PeerID` to `Counter`.
 - `peers`: the list of peers in the document. We represent all PeerIDs as decimal strings to avoid exceeding JavaScript's number limit.
 - `changes`: the list of changes in the document.
 
@@ -300,40 +299,46 @@ type TreeOp = TreeCreateOp | TreeMoveOp | TreeDeleteOp;
 ```ts
 type TreeCreateOp = {
     "type": "create",
-    "target": string,
-    "parent": string | null,
-    "fractional_index": UInt8Array
+    "target": TreeID,
+    "parent": TreeID | null,
+    "fractional_index": string
 }
+
+type TreeID = `${number}@${PeerID}`
 ```
 
 - `type`: `create`.
 - `target`: the string format of target `TreeID` moved.
 - `parent`: the string format of `TreeID` or `null`. If it is `null`, the target node will be a root node.
-- `fractional_index`: the fractional index of the target node.
+- `fractional_index`: the fractional index with hex string format of the target node.
 
 #### Move
 
 ```ts
 type TreeMoveOp = {
     "type": "move",
-    "target": string,
-    "parent": string | null,
-    "fractional_index": UInt8Array
+    "target": TreeID,
+    "parent": TreeID | null,
+    "fractional_index": string
 }
+
+type TreeID = `${number}@${PeerID}`
 ```
 
 - `type`: `move`.
 - `target`: the string format of target `TreeID` moved.
 - `parent`: the string format of `TreeID` or `null`. If it is `null`, the target node will be a root node.
-- `fractional_index`: the fractional index of the target node.
+- `fractional_index`: the fractional index with hex string format of the target node.
 
 #### Delete
 
 ```ts
 type TreeDeleteOp = {
     "type": "delete",
-    "target": string
+    "target": TreeID
 }
+
+type TreeID = `${number}@${PeerID}`
 ```
 
 - `type`: `delete`.

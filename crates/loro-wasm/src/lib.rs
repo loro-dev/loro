@@ -4059,8 +4059,7 @@ export type JsonValue  =
 
 export type JsonSchema = {
   schema_version: number;
-  start_version: Record<string, number>,
-  end_version: Record<string, number>,
+  start_version: Map<string, number>,
   peers: PeerID[],
   changes: JsonChange[]
 };
@@ -4144,12 +4143,12 @@ export type TreeOp = {
   type: "create",
   target: TreeID,
   parent: TreeID | undefined,
-  fractional_index: Uint8Array
+  fractional_index: string
 }|{
   type: "move",
   target: TreeID,
   parent: TreeID | undefined,
-  fractional_index: Uint8Array
+  fractional_index: string
 }|{
   type: "delete",
   target: TreeID
