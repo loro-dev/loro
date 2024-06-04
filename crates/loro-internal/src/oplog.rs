@@ -21,11 +21,13 @@ use crate::op::{FutureInnerContent, ListSlice, Op, RawOpContent, RemoteOp, RichO
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
-use change_store::ChangeStore;
+pub(crate) use change_store::{BlockChangeRef, ChangeStore};
 use fxhash::FxHashMap;
+use itertools::Itertools;
 use loro_common::{HasCounter, HasId, IdLp, IdSpan};
 use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
+use tracing::debug;
 
 type ClientChanges = FxHashMap<PeerID, Vec<Change>>;
 pub use self::dag::FrontiersNotIncluded;
@@ -203,25 +205,13 @@ impl OpLog {
     /// Get the change with the given peer and lamport.
     ///
     /// If not found, return the change with the greatest lamport that is smaller than the given lamport.
-    pub fn get_change_with_lamport(&self, peer: PeerID, lamport: Lamport) -> Option<&Change> {
-        let changes = self.changes.get(&peer)?;
-        let index = changes.binary_search_by(|c| match c.lamport.cmp(&lamport) {
-            Ordering::Greater => Ordering::Greater,
-            Ordering::Equal => Ordering::Equal,
-            Ordering::Less => {
-                if c.lamport_end() > lamport {
-                    Ordering::Equal
-                } else {
-                    Ordering::Less
-                }
-            }
-        });
-
-        match index {
-            Err(0) => None,
-            Err(i) => changes.get(i - 1),
-            Ok(i) => changes.get(i),
-        }
+    pub fn get_change_with_lamport(
+        &self,
+        peer: PeerID,
+        lamport: Lamport,
+    ) -> Option<BlockChangeRef> {
+        self.change_store
+            .get_change_by_idlp(IdLp::new(peer, lamport))
     }
 
     pub fn get_timestamp_of_version(&self, f: &Frontiers) -> Timestamp {
@@ -362,7 +352,6 @@ impl OpLog {
             });
 
             for dep in change.deps.iter() {
-                self.ensure_dep_on_change_end(change.id.peer, *dep);
                 let target = self.dag.get_mut(*dep).unwrap();
                 if target.ctr_last() == dep.counter {
                     target.has_succ = true;
@@ -373,39 +362,12 @@ impl OpLog {
         EnsureChangeDepsAreAtTheEnd
     }
 
-    fn ensure_dep_on_change_end(&mut self, src: PeerID, dep: ID) {
-        let changes = self.changes.get_mut(&dep.peer).unwrap();
-        match changes.binary_search_by(|c| c.ctr_last().cmp(&dep.counter)) {
-            Ok(_) => {}
-            Err(index) => {
-                // This operation is slow in some rare cases, but I guess it's fine for now.
-                //
-                // It's only slow when you import an old concurrent change.
-                // And once it's imported, because it's old, it has small lamport timestamp, so it
-                // won't be slow again in the future imports.
-                let change = &mut changes[index];
-                let offset = (dep.counter - change.id.counter + 1) as usize;
-                let left = change.slice(0, offset);
-                let right = change.slice(offset, change.atom_len());
-                assert_ne!(left.atom_len(), 0);
-                assert_ne!(right.atom_len(), 0);
-                *change = left;
-                changes.insert(index + 1, right);
-            }
-        }
-    }
-
     /// Trim the known part of change
     pub(crate) fn trim_the_known_part_of_change(&self, change: Change) -> Option<Change> {
-        let Some(changes) = self.changes.get(&change.id.peer) else {
+        let Some(&end) = self.dag.vv.get(&change.id.peer) else {
             return Some(change);
         };
 
-        if changes.is_empty() {
-            return Some(change);
-        }
-
-        let end = changes.last().unwrap().ctr_end();
         if change.id.counter >= end {
             return Some(change);
         }
@@ -482,32 +444,9 @@ impl OpLog {
             .map(|c| c.lamport + (id.counter - c.id.counter) as Lamport)
     }
 
-    pub(crate) fn iter_ops(&self, id_span: IdSpan) -> impl Iterator<Item = RichOp> + '_ {
-        self.changes
-            .get(&id_span.peer)
-            .map(move |changes| {
-                let len = changes.len();
-                let start = changes
-                    .get_by_atom_index(id_span.counter.start)
-                    .map(|x| x.merged_index)
-                    .unwrap_or(len);
-                let mut end = changes
-                    .get_by_atom_index(id_span.counter.end)
-                    .map(|x| x.merged_index)
-                    .unwrap_or(len);
-                if end < changes.len() {
-                    end += 1;
-                }
-
-                changes[start..end].iter().flat_map(move |c| {
-                    // TODO: PERF can be optimized
-                    c.ops()
-                        .iter()
-                        .filter_map(move |op| RichOp::new_by_cnt_range(c, id_span.counter, op))
-                })
-            })
-            .into_iter()
-            .flatten()
+    pub(crate) fn iter_ops(&self, id_span: IdSpan) -> impl Iterator<Item = RichOp<'static>> + '_ {
+        let change_iter = self.change_store.iter_changes(id_span);
+        change_iter.flat_map(move |c| RichOp::new_iter_by_cnt_range(c, id_span.counter))
     }
 
     pub(crate) fn get_max_lamport_at(&self, id: ID) -> Lamport {

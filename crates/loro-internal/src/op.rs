@@ -3,6 +3,7 @@ use crate::{
     container::{idx::ContainerIdx, ContainerID},
     estimated_size::EstimatedSize,
     id::{Counter, PeerID, ID},
+    oplog::BlockChangeRef,
     span::{HasCounter, HasId, HasLamport},
 };
 use crate::{delta::DeltaValue, LoroValue};
@@ -101,7 +102,7 @@ impl RawOp<'_> {
 /// RichOp includes lamport and timestamp info, which is used for conflict resolution.
 #[derive(Debug, Clone)]
 pub struct RichOp<'a> {
-    op: &'a Op,
+    op: Cow<'a, Op>,
     pub peer: PeerID,
     lamport: Lamport,
     pub timestamp: Timestamp,
@@ -232,7 +233,7 @@ impl<'a> RichOp<'a> {
     pub fn new_by_change(change: &Change<Op>, op: &'a Op) -> Self {
         let diff = op.counter - change.id.counter;
         RichOp {
-            op,
+            op: Cow::Borrowed(op),
             peer: change.id.peer,
             lamport: change.lamport + diff as Lamport,
             timestamp: change.timestamp,
@@ -250,7 +251,7 @@ impl<'a> RichOp<'a> {
         let op_slice_start = (start - op_index_in_change).clamp(0, op.atom_len() as i32);
         let op_slice_end = (end - op_index_in_change).clamp(0, op.atom_len() as i32);
         RichOp {
-            op,
+            op: Cow::Borrowed(op),
             peer: change.id.peer,
             lamport: change.lamport + op_index_in_change as Lamport,
             timestamp: change.timestamp,
@@ -267,7 +268,7 @@ impl<'a> RichOp<'a> {
             return None;
         }
         Some(RichOp {
-            op,
+            op: Cow::Borrowed(op),
             peer: change.id.peer,
             lamport: change.lamport + op_index_in_change as Lamport,
             timestamp: change.timestamp,
@@ -276,16 +277,24 @@ impl<'a> RichOp<'a> {
         })
     }
 
+    pub fn new_iter_by_cnt_range(change: BlockChangeRef, span: CounterSpan) -> RichOpBlockIter {
+        return RichOpBlockIter {
+            change,
+            span,
+            op_index: 0,
+        };
+    }
+
     pub fn op(&self) -> Cow<'_, Op> {
         if self.start == 0 && self.end == self.op.content_len() {
-            Cow::Borrowed(self.op)
+            self.op.clone()
         } else {
             Cow::Owned(self.op.slice(self.start, self.end))
         }
     }
 
     pub fn raw_op(&self) -> &Op {
-        self.op
+        &self.op
     }
 
     pub fn client_id(&self) -> u64 {
@@ -314,6 +323,36 @@ impl<'a> RichOp<'a> {
 
     pub(crate) fn id_full(&self) -> IdFull {
         IdFull::new(self.peer, self.op.counter, self.lamport)
+    }
+}
+
+pub(crate) struct RichOpBlockIter {
+    change: BlockChangeRef,
+    span: CounterSpan,
+    op_index: usize,
+}
+
+impl Iterator for RichOpBlockIter {
+    type Item = RichOp<'static>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let op = self.change.ops.get(self.op_index)?.clone();
+        let op_offset_in_change = op.counter - self.change.id.counter;
+        let op_slice_start = (self.span.start - op.counter).clamp(0, op.atom_len() as i32);
+        let op_slice_end = (self.span.end - op.counter).clamp(0, op.atom_len() as i32);
+        self.op_index += 1;
+        if op_slice_start == op_slice_end {
+            return self.next();
+        }
+
+        Some(RichOp {
+            op: Cow::Owned(op),
+            peer: self.change.id.peer,
+            lamport: self.change.lamport + op_offset_in_change as Lamport,
+            timestamp: self.change.timestamp,
+            start: op_slice_start as usize,
+            end: op_slice_end as usize,
+        })
     }
 }
 

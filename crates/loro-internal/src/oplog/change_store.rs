@@ -1,11 +1,19 @@
 use bytes::Bytes;
+use itertools::Itertools;
 use loro_common::{
     Counter, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport, LoroError, LoroResult,
     PeerID, ID,
 };
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RleCollection, RlePush};
-use std::{cmp::Ordering, collections::BTreeMap, io::Read, ops::Deref, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::BTreeMap,
+    io::Read,
+    ops::Deref,
+    sync::{Arc, Mutex},
+};
+use tracing::trace;
 mod block_encode;
 mod delta_rle_encode;
 use crate::{
@@ -19,20 +27,21 @@ const MAX_BLOCK_SIZE: usize = 1024 * 4;
 #[derive(Debug, Clone)]
 pub struct ChangeStore {
     arena: SharedArena,
-    kv: BTreeMap<ID, Arc<ChangesBlock>>,
+    kv: Arc<Mutex<BTreeMap<ID, Arc<ChangesBlock>>>>,
 }
 
 impl ChangeStore {
     pub fn new(a: &SharedArena) -> Self {
         Self {
             arena: a.clone(),
-            kv: BTreeMap::new(),
+            kv: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
-    pub fn insert_change(&mut self, mut change: Change) {
+    pub fn insert_change(&self, mut change: Change) {
         let id = change.id;
-        if let Some((_id, block)) = self.kv.range_mut(..id).next_back() {
+        let mut kv = self.kv.lock().unwrap();
+        if let Some((_id, block)) = kv.range_mut(..id).next_back() {
             match block.push_change(change) {
                 Ok(_) => {
                     return;
@@ -41,8 +50,7 @@ impl ChangeStore {
             }
         }
 
-        self.kv
-            .insert(id, Arc::new(ChangesBlock::new(change, &self.arena)));
+        kv.insert(id, Arc::new(ChangesBlock::new(change, &self.arena)));
     }
 
     pub fn insert_block(&mut self, block: ChangesBlock) {
@@ -50,19 +58,18 @@ impl ChangeStore {
     }
 
     pub fn block_num(&self) -> usize {
-        self.kv.len()
+        let mut kv = self.kv.lock().unwrap();
+        kv.len()
     }
 
-    pub(crate) fn iter_bytes(&mut self) -> impl Iterator<Item = (ID, ChangesBlockBytes)> + '_ {
-        self.kv
-            .iter_mut()
-            .map(|(id, block)| (*id, block.bytes(&self.arena)))
-    }
-
-    pub(crate) fn encode_all(&mut self) -> Vec<u8> {
-        println!("block num {}", self.kv.len());
+    pub(crate) fn encode_all(&self) -> Vec<u8> {
+        let mut kv = self.kv.lock().unwrap();
+        println!("block num {}", kv.len());
         let mut bytes = Vec::new();
-        for (_, block) in self.iter_bytes() {
+        let iter = kv
+            .iter_mut()
+            .map(|(id, block)| (*id, block.bytes(&self.arena)));
+        for (_, block) in iter {
             println!("block size {}", block.bytes.len());
             leb128::write::unsigned(&mut bytes, block.bytes.len() as u64).unwrap();
             bytes.extend(&block.bytes);
@@ -71,22 +78,24 @@ impl ChangeStore {
         bytes
     }
 
-    pub(crate) fn decode_all(&mut self, blocks: &[u8]) -> Result<(), LoroError> {
-        assert!(self.kv.is_empty());
+    pub(crate) fn decode_all(&self, blocks: &[u8]) -> Result<(), LoroError> {
+        let mut kv = self.kv.lock().unwrap();
+        assert!(kv.is_empty());
         let mut reader = blocks;
         while !reader.is_empty() {
             let size = leb128::read::unsigned(&mut reader).unwrap();
             let block_bytes = &reader[0..size as usize];
             let block = ChangesBlock::from_bytes(Bytes::copy_from_slice(block_bytes), &self.arena)?;
-            self.kv.insert(block.id(), Arc::new(block));
+            kv.insert(block.id(), Arc::new(block));
             reader = &reader[size as usize..];
         }
 
         Ok(())
     }
 
-    pub fn get_change(&mut self, id: ID) -> Option<BlockChangeRef> {
-        let (_id, block) = self.kv.range_mut(..=id).next_back()?;
+    pub fn get_change(&self, id: ID) -> Option<BlockChangeRef> {
+        let mut kv = self.kv.lock().unwrap();
+        let (_id, block) = kv.range_mut(..=id).next_back()?;
         if block.peer == id.peer && block.counter_range.1 > id.counter {
             block.ensure_changes().unwrap();
             Some(BlockChangeRef {
@@ -98,19 +107,17 @@ impl ChangeStore {
         }
     }
 
-    pub fn get_change_by_idlp(&mut self, idlp: IdLp) -> Option<BlockChangeRef> {
+    /// Get the change with the given peer and lamport.
+    ///
+    /// If not found, return the change with the greatest lamport that is smaller than the given lamport.
+    pub fn get_change_by_idlp(&self, idlp: IdLp) -> Option<BlockChangeRef> {
         // TODO: this can be optimized if we use a more customized tree structure
-        let mut iter = self
-            .kv
-            .range_mut(ID::new(idlp.peer, 0)..ID::new(idlp.peer, i32::MAX));
+        let mut kv = self.kv.lock().unwrap();
+        let mut iter = kv.range_mut(ID::new(idlp.peer, 0)..ID::new(idlp.peer, i32::MAX));
         while let Some((_id, block)) = iter.next_back() {
-            if block.lamport_range.1 <= idlp.lamport {
-                return None;
-            }
-
             if block.lamport_range.0 <= idlp.lamport {
                 block.ensure_changes().unwrap();
-                let index = block.get_change_index_by_lamport(idlp.lamport).unwrap();
+                let index = block.get_change_index_by_lamport(idlp.lamport)?;
                 return Some(BlockChangeRef {
                     change_index: index,
                     block: block.clone(),
@@ -121,43 +128,54 @@ impl ChangeStore {
         None
     }
 
-    pub fn iter_changes(&mut self, id_span: IdSpan) -> impl Iterator<Item = BlockChangeRef> + '_ {
-        self.kv
-            .range_mut(id_span.id_start()..=id_span.id_end())
-            .flat_map(move |(_id, block)| {
-                block.ensure_changes().unwrap();
-                let changes = block.content.try_changes().unwrap();
-                let start;
-                let end;
-                if id_span.counter.start <= block.counter_range.0
-                    && id_span.counter.end >= block.counter_range.1
-                {
-                    start = 0;
-                    end = changes.len();
-                } else {
-                    start = block
-                        .get_change_index_by_counter(id_span.counter.start)
-                        .unwrap_or(0);
-                    end = block
-                        .get_change_index_by_counter(id_span.counter.end)
-                        .unwrap_or(changes.len());
+    pub fn iter_changes(&self, id_span: IdSpan) -> impl Iterator<Item = BlockChangeRef> + '_ {
+        let mut kv = self.kv.lock().unwrap();
+        let iter = kv
+            // TODO: PERF This can be optimized by using a more customized tree structure
+            .range_mut(ID::new(id_span.peer, 0)..ID::new(id_span.peer, id_span.counter.end))
+            .filter_map(|(_id, block)| {
+                if block.counter_range.1 < id_span.counter.start {
+                    return None;
                 }
 
-                (start..end).map(|i| BlockChangeRef {
-                    change_index: i,
-                    block: block.clone(),
-                })
+                block.ensure_changes().unwrap();
+                Some(block.clone())
             })
+            .collect_vec();
+        dbg!(&kv);
+        trace!("iter_changes {:?}", iter);
+        iter.into_iter().flat_map(move |block| {
+            let changes = block.content.try_changes().unwrap();
+            let start;
+            let end;
+            if id_span.counter.start <= block.counter_range.0
+                && id_span.counter.end >= block.counter_range.1
+            {
+                start = 0;
+                end = changes.len().saturating_sub(1);
+            } else {
+                start = block
+                    .get_change_index_by_counter(id_span.counter.start)
+                    .unwrap_or(0);
+                end = block
+                    .get_change_index_by_counter(id_span.counter.end)
+                    .unwrap_or(changes.len().saturating_sub(1));
+            }
+
+            (start..=end).map(move |i| BlockChangeRef {
+                change_index: i,
+                block: block.clone(),
+            })
+        })
     }
 
-    pub fn change_num(&mut self) -> usize {
-        self.kv
-            .iter_mut()
-            .map(|(_, block)| block.change_num())
-            .sum()
+    pub fn change_num(&self) -> usize {
+        let mut kv = self.kv.lock().unwrap();
+        kv.iter_mut().map(|(_, block)| block.change_num()).sum()
     }
 }
 
+#[derive(Clone)]
 pub struct BlockChangeRef {
     block: Arc<ChangesBlock>,
     change_index: usize,
@@ -336,6 +354,7 @@ impl ChangesBlock {
 
     fn get_change_index_by_lamport(&self, lamport: Lamport) -> Option<usize> {
         let changes = self.content.try_changes().unwrap();
+        dbg!(&changes, lamport);
         let r = changes.binary_search_by(|c| {
             if c.lamport > lamport {
                 Ordering::Greater
@@ -348,7 +367,13 @@ impl ChangesBlock {
 
         match r {
             Ok(found) => Some(found),
-            Err(_) => None,
+            Err(not_found) => {
+                if not_found == 0 {
+                    None
+                } else {
+                    Some(not_found - 1)
+                }
+            }
         }
     }
 

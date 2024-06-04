@@ -1,5 +1,6 @@
 //! # Encode
 //!
+//! ```log
 //!
 //!    ≈4KB after compression
 //!
@@ -56,6 +57,9 @@
 //!    │                       Delete Start IDs                       │
 //!    │                                                              │
 //!    └──────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//!
 
 use std::borrow::Cow;
 use std::io::Write;
