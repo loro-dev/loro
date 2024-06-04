@@ -348,39 +348,19 @@ type TreeID = `${number}@${PeerID}`
 
 To support forward compatibility, we have an unknown type. When an `Op` with a newly supported Container from a newer version is decoded into the older version, it will be treated as an unknown type in a more general form, such as binary and string. When the new version decodes an unknown `Op`, the newer version of Loro will know its true type and decode correctly.
 
-So there are two kind of unknown format, binary format and json-string format.
-
-#### Binary Unknown
-
 ```ts
-{
+type UnknownOp = {
     "type": "unknown",
     "prop": number,
-    "value_type": "unknown",
-    "value": EncodedValue
+    "value_type": string,
+    "value": `${EncodeValue}`
 }
 ```
 
 - `type`: just an unknown type.
 - `prop`: a property of the encoded op, it's a number.
-- `value_type`: unknown.
-- `value`: common data types used in encoding.
-
-#### Json Unknown
-
-```ts
-{
-    "type": "unknown",
-    "prop": number,
-    "value_type": "json_unknown",
-    "value": string
-}
-```
-
-- `type`: just an unknown type.
-- `prop`: a property of the encoded op, it's a number.
-- `value_type`: json_unknown.
-- `value`: a string json format of `EncodedValue`
+- `value_type`: the type of `EncodeValue`.
+- `value`: common data types used in encoding with json string format.
 
 ## Value
 
