@@ -35,8 +35,6 @@ pub struct Change<O = Op> {
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
     /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub(crate) timestamp: Timestamp,
-    /// if it has dependents, it cannot merge with new changes
-    pub(crate) has_dependents: bool,
 }
 
 impl<O> Change<O> {
@@ -53,7 +51,6 @@ impl<O> Change<O> {
             id,
             lamport,
             timestamp,
-            has_dependents: false,
         }
     }
 
@@ -208,7 +205,6 @@ impl<O: Mergable + HasLength + HasIndex + Sliceable + HasCounter + Debug> Slicea
             id: self.id.inc(from as Counter),
             lamport: self.lamport + from as Lamport,
             timestamp: self.timestamp,
-            has_dependents: self.has_dependents,
         }
     }
 }

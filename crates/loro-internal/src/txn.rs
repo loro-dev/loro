@@ -315,7 +315,6 @@ impl Transaction {
                 self.timestamp
                     .unwrap_or_else(|| oplog.get_timestamp_for_next_txn()),
             ),
-            has_dependents: false,
         };
 
         let diff = if state.is_recording() {

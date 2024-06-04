@@ -262,10 +262,7 @@ impl OpLog {
 
                 let timestamp_change = change.timestamp - last.timestamp;
                 // TODO: make this a config
-                if !last.has_dependents
-                    && change.deps_on_self()
-                    && timestamp_change < merge_interval
-                {
+                if change.deps_on_self() && timestamp_change < merge_interval {
                     for op in take(change.ops.vec_mut()) {
                         last.ops.push(op);
                     }
@@ -379,11 +376,7 @@ impl OpLog {
     fn ensure_dep_on_change_end(&mut self, src: PeerID, dep: ID) {
         let changes = self.changes.get_mut(&dep.peer).unwrap();
         match changes.binary_search_by(|c| c.ctr_last().cmp(&dep.counter)) {
-            Ok(index) => {
-                if src != dep.peer {
-                    changes[index].has_dependents = true;
-                }
-            }
+            Ok(_) => {}
             Err(index) => {
                 // This operation is slow in some rare cases, but I guess it's fine for now.
                 //
@@ -565,7 +558,6 @@ impl OpLog {
             deps: change.deps.clone(),
             lamport: change.lamport,
             timestamp: change.timestamp,
-            has_dependents: false,
         }
     }
 

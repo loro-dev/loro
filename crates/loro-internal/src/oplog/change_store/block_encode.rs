@@ -542,7 +542,6 @@ pub fn decode_block(
             id: ID::new(header.peer, header.counters[i]),
             lamport: header.lamports[i],
             timestamp: timestamp_decoder.next().unwrap().unwrap() as Timestamp,
-            has_dependents: true, // FIXME: this field
         })
     }
 

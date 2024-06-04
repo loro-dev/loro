@@ -283,7 +283,6 @@ fn decode_changes<'a>(
             deps: Frontiers::with_capacity((deps_len + if dep_on_self { 1 } else { 0 }) as usize),
             lamport: 0,
             timestamp,
-            has_dependents: false,
         };
 
         if dep_on_self {
