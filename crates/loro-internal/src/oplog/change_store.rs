@@ -11,7 +11,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     io::Read,
     ops::Deref,
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicI64, Arc, Mutex},
 };
 use tracing::trace;
 mod block_encode;
@@ -28,11 +28,13 @@ const MAX_BLOCK_SIZE: usize = 1024 * 4;
 pub struct ChangeStore {
     arena: SharedArena,
     kv: Arc<Mutex<BTreeMap<ID, Arc<ChangesBlock>>>>,
+    merge_interval: Arc<AtomicI64>,
 }
 
 impl ChangeStore {
-    pub fn new(a: &SharedArena) -> Self {
+    pub fn new(a: &SharedArena, merge_interval: Arc<AtomicI64>) -> Self {
         Self {
+            merge_interval,
             arena: a.clone(),
             kv: Arc::new(Mutex::new(BTreeMap::new())),
         }
@@ -42,7 +44,11 @@ impl ChangeStore {
         let id = change.id;
         let mut kv = self.kv.lock().unwrap();
         if let Some((_id, block)) = kv.range_mut(..id).next_back() {
-            match block.push_change(change) {
+            match block.push_change(
+                change,
+                self.merge_interval
+                    .load(std::sync::atomic::Ordering::Acquire) as i64,
+            ) {
                 Ok(_) => {
                     return;
                 }
@@ -335,7 +341,11 @@ impl ChangesBlock {
         self.estimated_size > MAX_BLOCK_SIZE
     }
 
-    pub fn push_change(self: &mut Arc<Self>, change: Change) -> Result<(), Change> {
+    pub fn push_change(
+        self: &mut Arc<Self>,
+        change: Change,
+        merge_interval: i64,
+    ) -> Result<(), Change> {
         if self.counter_range.1 != change.id.counter {
             return Err(change);
         }
@@ -347,7 +357,6 @@ impl ChangesBlock {
         let is_full = self.is_full();
         let this = Arc::make_mut(self);
         let changes = this.content.changes_mut().unwrap();
-        let merge_interval = 10000; // TODO: FIXME: Use configure
         let changes = Arc::make_mut(changes);
         match changes.last_mut() {
             Some(last)

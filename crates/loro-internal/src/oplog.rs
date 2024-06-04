@@ -22,7 +22,7 @@ use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::BlockOpRef;
-pub(crate) use change_store::{BlockChangeRef, ChangeStore};
+pub use change_store::{BlockChangeRef, ChangeStore};
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{HasCounter, HasId, IdLp, IdSpan};
@@ -47,7 +47,6 @@ use super::arena::SharedArena;
 pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
-    changes: ClientChanges,
     change_store: ChangeStore,
     pub(crate) op_groups: OpGroups,
     /// **lamport starts from 0**
@@ -90,7 +89,6 @@ impl Clone for OpLog {
         Self {
             dag: self.dag.clone(),
             arena: self.arena.clone(),
-            changes: self.changes.clone(),
             op_groups: self.op_groups.clone(),
             change_store: self.change_store.clone(),
             next_lamport: self.next_lamport,
@@ -165,7 +163,6 @@ impl std::fmt::Debug for OpLog {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpLog")
             .field("dag", &self.dag)
-            .field("changes", &self.changes)
             .field("pending_changes", &self.pending_changes)
             .field("next_lamport", &self.next_lamport)
             .field("latest_timestamp", &self.latest_timestamp)
@@ -179,17 +176,17 @@ impl OpLog {
     #[inline]
     pub(crate) fn new() -> Self {
         let arena = SharedArena::new();
+        let cfg = Configure::default();
         Self {
-            change_store: ChangeStore::new(&arena),
+            change_store: ChangeStore::new(&arena, cfg.merge_interval.clone()),
             dag: AppDag::default(),
             op_groups: OpGroups::new(arena.clone()),
-            changes: ClientChanges::default(),
             arena,
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
             batch_importing: false,
-            configure: Configure::default(),
+            configure: cfg,
         }
     }
 
@@ -201,6 +198,10 @@ impl OpLog {
     #[inline]
     pub fn dag(&self) -> &AppDag {
         &self.dag
+    }
+
+    pub fn change_store(&self) -> &ChangeStore {
+        &self.change_store
     }
 
     /// Get the change with the given peer and lamport.
@@ -231,41 +232,11 @@ impl OpLog {
         self.dag.map.is_empty() && self.arena.can_import_snapshot()
     }
 
-    #[inline]
-    pub fn changes(&self) -> &ClientChanges {
-        &self.changes
-    }
-
     /// This is the **only** place to update the `OpLog.changes`
     pub(crate) fn insert_new_change(&mut self, mut change: Change, _: EnsureChangeDepsAreAtTheEnd) {
         self.op_groups.insert_by_change(&change);
         self.change_store.insert_change(change.clone());
         self.register_container_and_parent_link(&change);
-        let entry = self.changes.entry(change.id.peer).or_default();
-        match entry.last_mut() {
-            Some(last) => {
-                assert_eq!(
-                    change.id.counter,
-                    last.ctr_end(),
-                    "change id is not continuous"
-                );
-                let merge_interval = self.configure.merge_interval();
-
-                let timestamp_change = change.timestamp - last.timestamp;
-                // TODO: make this a config
-                if change.deps_on_self() && timestamp_change < merge_interval {
-                    for op in take(change.ops.vec_mut()) {
-                        last.ops.push(op);
-                    }
-                } else {
-                    entry.push(change);
-                }
-            }
-            None => {
-                assert!(change.id.counter == 0, "change id is not continuous");
-                entry.push(change);
-            }
-        }
     }
 
     /// Import a change.
@@ -751,15 +722,6 @@ impl OpLog {
             total_ops,
             total_atom_ops,
             total_dag_node,
-        }
-    }
-
-    #[allow(unused)]
-    pub(crate) fn debug_check(&self) {
-        for (_, changes) in self.changes().iter() {
-            let c = changes.last().unwrap();
-            let node = self.dag.get(c.id_start()).unwrap();
-            assert_eq!(c.id_end(), node.id_end());
         }
     }
 
