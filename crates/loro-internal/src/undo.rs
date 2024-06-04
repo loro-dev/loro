@@ -407,8 +407,9 @@ fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
     doc.oplog()
         .lock()
         .unwrap()
-        .get_peer_changes(peer)
-        .and_then(|x| x.last().map(|x| x.ctr_end()))
+        .vv()
+        .get(&peer)
+        .cloned()
         .unwrap_or(0)
 }
 

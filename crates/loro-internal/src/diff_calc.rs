@@ -174,9 +174,13 @@ impl DiffCalculator {
 
                     if visited.contains(&op.container) {
                         // don't checkout if we have already checked out this container in this round
-                        calculator.apply_change(oplog, RichOp::new_by_change(change, op), None);
+                        calculator.apply_change(oplog, RichOp::new_by_change(&change, op), None);
                     } else {
-                        calculator.apply_change(oplog, RichOp::new_by_change(change, op), Some(vv));
+                        calculator.apply_change(
+                            oplog,
+                            RichOp::new_by_change(&change, op),
+                            Some(vv),
+                        );
                         visited.insert(container);
                     }
                 }
@@ -726,14 +730,14 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 crate::container::list::list_op::InnerListOp::StyleEnd => {
                     let id = op.id();
                     // PERF: this can be sped up by caching the last style op
-                    let start_op = oplog.get_op(op.id().inc(-1));
+                    let start_op = oplog.get_op(op.id().inc(-1)).unwrap();
                     let InnerListOp::StyleStart {
                         start: _,
                         end,
                         key,
                         value,
                         info,
-                    } = start_op.unwrap().content.as_list().unwrap()
+                    } = start_op.content.as_list().unwrap()
                     else {
                         unreachable!()
                     };

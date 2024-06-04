@@ -21,6 +21,7 @@ use crate::op::{FutureInnerContent, ListSlice, Op, RawOpContent, RemoteOp, RichO
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
+use change_store::BlockOpRef;
 pub(crate) use change_store::{BlockChangeRef, ChangeStore};
 use fxhash::FxHashMap;
 use itertools::Itertools;
@@ -404,10 +405,6 @@ impl OpLog {
         ID::new(peer, cnt)
     }
 
-    pub fn get_peer_changes(&self, peer: PeerID) -> Option<&Vec<Change>> {
-        self.changes.get(&peer)
-    }
-
     pub(crate) fn vv(&self) -> &VersionVector {
         &self.dag.vv
     }
@@ -458,14 +455,8 @@ impl OpLog {
             .unwrap_or(Lamport::MAX)
     }
 
-    pub fn get_change_at(&self, id: ID) -> Option<&Change> {
-        if let Some(peer_changes) = self.changes.get(&id.peer) {
-            if let Some(result) = peer_changes.get_by_atom_index(id.counter) {
-                return Some(&peer_changes[result.merged_index]);
-            }
-        }
-
-        None
+    pub fn get_change_at(&self, id: ID) -> Option<BlockChangeRef> {
+        self.change_store.get_change(id)
     }
 
     pub fn get_deps_of(&self, id: ID) -> Option<Frontiers> {
@@ -480,7 +471,7 @@ impl OpLog {
 
     pub fn get_remote_change_at(&self, id: ID) -> Option<Change<RemoteOp>> {
         let change = self.get_change_at(id)?;
-        Some(self.convert_change_to_remote(change))
+        Some(self.convert_change_to_remote(&change))
     }
 
     fn convert_change_to_remote(&self, change: &Change) -> Change<RemoteOp> {
@@ -624,23 +615,8 @@ impl OpLog {
     /// lookup change by id.
     ///
     /// if id does not included in this oplog, return None
-    pub(crate) fn lookup_change(&self, id: ID) -> Option<&Change> {
-        self.changes.get(&id.peer).and_then(|changes| {
-            // Because get_by_atom_index would return Some if counter is at the end,
-            // we cannot use it directly.
-            // TODO: maybe we should refactor this
-            if id.counter <= changes.last().unwrap().id_last().counter {
-                Some(changes.get_by_atom_index(id.counter).unwrap().element)
-            } else {
-                None
-            }
-        })
-    }
-
-    #[allow(unused)]
-    pub(crate) fn lookup_op(&self, id: ID) -> Option<&crate::op::Op> {
-        self.lookup_change(id)
-            .and_then(|change| change.ops.get_by_atom_index(id.counter).map(|x| x.element))
+    pub(crate) fn lookup_change(&self, id: ID) -> Option<BlockChangeRef> {
+        self.change_store.get_change(id)
     }
 
     #[inline(always)]
@@ -660,27 +636,10 @@ impl OpLog {
         b: &VersionVector,
         mut f: impl FnMut(&Change),
     ) {
-        for (peer, changes) in self.changes.iter() {
-            let mut from_cnt = a.get(peer).copied().unwrap_or(0);
-            let mut to_cnt = b.get(peer).copied().unwrap_or(0);
-            if from_cnt == to_cnt {
-                continue;
-            }
-
-            if to_cnt < from_cnt {
-                std::mem::swap(&mut from_cnt, &mut to_cnt);
-            }
-
-            let Some(result) = changes.get_by_atom_index(from_cnt) else {
-                continue;
-            };
-
-            for change in &changes[result.merged_index..changes.len()] {
-                if change.id.counter >= to_cnt {
-                    break;
-                }
-
-                f(change)
+        let spans = b.sub_iter(a);
+        for span in spans {
+            for c in self.change_store.iter_changes(span) {
+                f(&c);
             }
         }
     }
@@ -703,7 +662,7 @@ impl OpLog {
         to_frontiers: Option<&Frontiers>,
     ) -> (
         VersionVector,
-        impl Iterator<Item = (&Change, Counter, Rc<RefCell<VersionVector>>)>,
+        impl Iterator<Item = (BlockChangeRef, Counter, Rc<RefCell<VersionVector>>)> + '_,
     ) {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
@@ -749,11 +708,7 @@ impl OpLog {
                         .max(common_ancestors_vv.get(&peer).copied().unwrap_or(0));
                     let end = (inner.data.cnt + inner.data.len as Counter)
                         .min(merged_vv.get(&peer).copied().unwrap_or(0));
-                    let change = self
-                        .changes
-                        .get(&peer)
-                        .and_then(|x| x.get_by_atom_index(cnt).map(|x| x.element))
-                        .unwrap();
+                    let change = self.change_store.get_change(ID::new(peer, cnt)).unwrap();
 
                     if change.ctr_end() < end {
                         cur_cnt = change.ctr_end();
@@ -773,7 +728,7 @@ impl OpLog {
     }
 
     pub fn len_changes(&self) -> usize {
-        self.changes.values().map(|x| x.len()).sum()
+        self.change_store.change_num()
     }
 
     pub fn diagnose_size(&self) -> SizeInfo {
@@ -781,13 +736,11 @@ impl OpLog {
         let mut total_ops = 0;
         let mut total_atom_ops = 0;
         let total_dag_node = self.dag.map.len();
-        for changes in self.changes.values() {
-            total_changes += changes.len();
-            for change in changes.iter() {
-                total_ops += change.ops.len();
-                total_atom_ops += change.atom_len();
-            }
-        }
+        self.change_store.visit_all_changes(&mut |change| {
+            total_changes += 1;
+            total_ops += change.ops.len();
+            total_atom_ops += change.atom_len();
+        });
 
         println!("total changes: {}", total_changes);
         println!("total ops: {}", total_ops);
@@ -814,18 +767,11 @@ impl OpLog {
         &'a self,
         from: &VersionVector,
         to: &VersionVector,
-    ) -> impl Iterator<Item = &'a Change> + 'a {
+    ) -> impl Iterator<Item = BlockChangeRef> + 'a {
         let spans: Vec<_> = from.diff_iter(to).1.collect();
-        spans.into_iter().flat_map(move |span| {
-            let peer = span.peer;
-            let cnt = span.counter.start;
-            let end_cnt = span.counter.end;
-            let peer_changes = self.changes.get(&peer).unwrap();
-            let index = peer_changes.search_atom_index(cnt);
-            peer_changes[index..]
-                .iter()
-                .take_while(move |x| x.ctr_start() < end_cnt)
-        })
+        spans
+            .into_iter()
+            .flat_map(move |span| self.change_store.iter_changes(span))
     }
 
     pub(crate) fn iter_changes_causally_rev<'a>(
@@ -845,28 +791,15 @@ impl OpLog {
     }
 
     pub(crate) fn idlp_to_id(&self, id: loro_common::IdLp) -> Option<ID> {
-        if let Some(peer_changes) = self.changes.get(&id.peer) {
-            let ans = peer_changes.binary_search_by(|c| {
-                if c.lamport > id.lamport {
-                    Ordering::Greater
-                } else if (c.lamport + c.atom_len() as Lamport) <= id.lamport {
-                    Ordering::Less
-                } else {
-                    Ordering::Equal
-                }
-            });
-
-            match ans {
-                Ok(index) => {
-                    let change = &peer_changes[index];
-                    let counter = (id.lamport - change.lamport) as Counter + change.id.counter;
-                    Some(ID::new(id.peer, counter))
-                }
-                Err(_) => None,
-            }
-        } else {
-            None
+        let change = self.change_store.get_change_by_idlp(id)?;
+        if change.lamport > id.lamport || change.lamport_end() <= id.lamport {
+            return None;
         }
+
+        Some(ID::new(
+            change.id.peer,
+            (id.lamport - change.lamport) as Counter + change.id.counter,
+        ))
     }
 
     #[allow(unused)]
@@ -877,9 +810,9 @@ impl OpLog {
         loro_common::IdLp { peer, lamport }
     }
 
-    pub(crate) fn get_op(&self, id: ID) -> Option<&Op> {
+    pub(crate) fn get_op(&self, id: ID) -> Option<BlockOpRef> {
         let change = self.get_change_at(id)?;
-        change.ops.get_by_atom_index(id.counter).map(|x| x.element)
+        change.get_op_with_counter(id.counter)
     }
 
     pub(crate) fn split_span_based_on_deps(&self, id_span: IdSpan) -> Vec<(IdSpan, Frontiers)> {

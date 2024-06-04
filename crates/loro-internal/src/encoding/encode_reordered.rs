@@ -1,5 +1,6 @@
 use std::{borrow::Cow, cell::RefCell, cmp::Ordering, mem::take, rc::Rc};
 
+use either::Either;
 pub(crate) use encode::{encode_op, get_op_prop};
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
@@ -67,7 +68,10 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     } = extract_containers_in_order(
         &mut diff_changes
             .iter()
-            .flat_map(|x| x.ops.iter())
+            .flat_map(|x| match x {
+                Either::Left(c) => c.ops.iter(),
+                Either::Right(c) => c.ops.iter(),
+            })
             .map(|x| x.container),
         &oplog.arena,
     );
@@ -418,7 +422,13 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         &mut state.iter().map(|x| x.container_idx()).chain(
             diff_changes
                 .iter()
-                .flat_map(|x| x.ops.iter())
+                .flat_map(|x| {
+                    let c = match x {
+                        Either::Left(c) => c,
+                        Either::Right(c) => c,
+                    };
+                    c.ops.iter()
+                })
                 .map(|x| x.container),
         ),
         &oplog.arena,
@@ -877,6 +887,7 @@ fn decode_snapshot_states(
 mod encode {
     #[allow(unused_imports)]
     use crate::encoding::value::FutureValue;
+    use either::Either;
     use fxhash::FxHashMap;
     use loro_common::{ContainerType, HasId, PeerID, ID};
     use rle::{HasLength, Sliceable};
@@ -893,6 +904,7 @@ mod encode {
             value_register::ValueRegister,
         },
         op::{FutureInnerContent, Op},
+        oplog::BlockChangeRef,
     };
 
     #[derive(Debug, Clone)]
@@ -1006,7 +1018,7 @@ mod encode {
     }
 
     pub(super) fn encode_changes<'p, 'a: 'p>(
-        diff_changes: &'a [Cow<'a, Change>],
+        diff_changes: &'a [Either<Change, BlockChangeRef>],
         dep_arena: &mut super::DepsArena,
         push_op: &mut impl FnMut(TempOp<'a>),
         container_idx2index: &FxHashMap<ContainerIdx, usize>,
@@ -1016,6 +1028,10 @@ mod encode {
         for change in diff_changes.iter() {
             let mut dep_on_self = false;
             let mut deps_len = 0;
+            let change = match change {
+                Either::Left(c) => c,
+                Either::Right(c) => c,
+            };
             for dep in change.deps.iter() {
                 if dep.peer == change.id.peer {
                     dep_on_self = true;
@@ -1058,12 +1074,12 @@ mod encode {
         oplog: &'a OpLog,
         vv: &'_ VersionVector,
         peer_register: &mut ValueRegister<PeerID>,
-    ) -> (Vec<i32>, Vec<Cow<'a, Change>>) {
+    ) -> (Vec<i32>, Vec<Either<Change, BlockChangeRef>>) {
         let self_vv = oplog.vv();
         let start_vv = vv.trim(oplog.vv());
         let mut start_counters = Vec::new();
 
-        let mut diff_changes: Vec<Cow<'a, Change>> = Vec::new();
+        let mut diff_changes: Vec<Either<Change, BlockChangeRef>> = Vec::new();
         for change in oplog.iter_changes_peer_by_peer(&start_vv, self_vv) {
             let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
             if !peer_register.contains(&change.id.peer) {
@@ -1072,13 +1088,18 @@ mod encode {
             }
             if change.id.counter < start_cnt {
                 let offset = start_cnt - change.id.counter;
-                diff_changes.push(Cow::Owned(change.slice(offset as usize, change.atom_len())));
+                diff_changes.push(Either::Left(
+                    change.slice(offset as usize, change.atom_len()),
+                ));
             } else {
-                diff_changes.push(Cow::Borrowed(change));
+                diff_changes.push(Either::Right(change));
             }
         }
 
-        diff_changes.sort_by_key(|x| x.lamport);
+        diff_changes.sort_by_key(|x| match x {
+            Either::Left(c) => c.lamport,
+            Either::Right(c) => c.lamport,
+        });
         (start_counters, diff_changes)
     }
 

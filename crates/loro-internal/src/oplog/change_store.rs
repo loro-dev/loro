@@ -17,7 +17,7 @@ use tracing::trace;
 mod block_encode;
 mod delta_rle_encode;
 use crate::{
-    arena::SharedArena, change::Change, estimated_size::EstimatedSize, version::Frontiers,
+    arena::SharedArena, change::Change, estimated_size::EstimatedSize, op::Op, version::Frontiers,
 };
 
 use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
@@ -64,7 +64,6 @@ impl ChangeStore {
 
     pub(crate) fn encode_all(&self) -> Vec<u8> {
         let mut kv = self.kv.lock().unwrap();
-        println!("block num {}", kv.len());
         let mut bytes = Vec::new();
         let iter = kv
             .iter_mut()
@@ -126,6 +125,16 @@ impl ChangeStore {
         }
 
         None
+    }
+
+    pub fn visit_all_changes(&self, f: &mut dyn FnMut(&Change)) {
+        let mut kv = self.kv.lock().unwrap();
+        for (_, block) in kv.iter_mut() {
+            block.ensure_changes().unwrap();
+            for c in block.content.try_changes().unwrap() {
+                f(c);
+            }
+        }
     }
 
     pub fn iter_changes(&self, id_span: IdSpan) -> impl Iterator<Item = BlockChangeRef> + '_ {
@@ -215,6 +224,36 @@ impl Deref for BlockChangeRef {
     type Target = Change;
     fn deref(&self) -> &Change {
         &self.block.content.try_changes().unwrap()[self.change_index]
+    }
+}
+
+impl BlockChangeRef {
+    pub fn get_op_with_counter(&self, counter: Counter) -> Option<BlockOpRef> {
+        if counter >= self.id_end().counter {
+            return None;
+        }
+
+        let index = self.ops.search_atom_index(counter);
+        Some(BlockOpRef {
+            block: self.block.clone(),
+            change_index: self.change_index,
+            op_index: index,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct BlockOpRef {
+    pub block: Arc<ChangesBlock>,
+    pub change_index: usize,
+    pub op_index: usize,
+}
+
+impl Deref for BlockOpRef {
+    type Target = Op;
+
+    fn deref(&self) -> &Op {
+        &self.block.content.try_changes().unwrap()[self.change_index].ops[self.op_index]
     }
 }
 
