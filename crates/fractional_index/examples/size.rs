@@ -1,4 +1,4 @@
-use fractional_index::FractionalIndex;
+use loro_fractional_index::FractionalIndex;
 
 fn find_common_prefix(a: &[u8], b: &[u8]) -> usize {
     a.iter().zip(b.iter()).take_while(|(a, b)| a == b).count()

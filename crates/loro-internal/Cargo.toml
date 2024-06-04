@@ -1,6 +1,6 @@
 [package]
 name = "loro-internal"
-version = "0.5.1"
+version = "0.16.2"
 edition = "2021"
 license = "MIT"
 description = "Loro internal library. Do not use it directly as it's not stable."
@@ -14,10 +14,12 @@ keywords = ["crdt", "local-first"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-loro-delta = { path = "../delta", version = "0.5.1", package = "loro-delta" }
-rle = { path = "../rle", version = "0.5.1", package = "loro-rle" }
-loro-common = { path = "../loro-common", version = "0.5.1" }
-fractional_index = { path = "../fractional_index", features = ["serde"] }
+loro-delta = { path = "../delta", version = "0.16.2", package = "loro-delta" }
+rle = { path = "../rle", version = "0.16.2", package = "loro-rle" }
+loro-common = { path = "../loro-common", version = "0.16.2" }
+fractional_index = { path = "../fractional_index", features = [
+  "serde",
+], version = "0.16.2", package = "loro_fractional_index" }
 smallvec = { version = "1.8.0", features = ["serde"] }
 postcard = "1"
 fxhash = { workspace = true }

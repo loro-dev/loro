@@ -115,4 +115,9 @@ impl ContainerState for CounterState {
         let mut reader = ctx.blob;
         self.value = leb128::read::signed(&mut reader).unwrap();
     }
+
+    #[allow(unused)]
+    fn contains_child(&self, id: &ContainerID) -> bool {
+        false
+    }
 }
