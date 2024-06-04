@@ -333,17 +333,15 @@ impl<'a> Value<'a> {
         future_kind: FutureValueKind,
         value_reader: &'r mut ValueReader,
     ) -> LoroResult<Self> {
-        let bytes_length = value_reader.read_usize()?;
+        let bytes = value_reader.read_binary()?;
         let value = match future_kind {
             #[cfg(feature = "counter")]
             FutureValueKind::Counter => FutureValue::Counter,
-            FutureValueKind::Unknown(kind) => FutureValue::Unknown {
-                kind,
-                data: value_reader.take_bytes(bytes_length),
-            },
+            FutureValueKind::Unknown(kind) => FutureValue::Unknown { kind, data: bytes },
             FutureValueKind::JsonUnknown => {
-                let value_type = value_reader.read_str()?;
-                let value = value_reader.read_str()?;
+                let mut reader = ValueReader::new(bytes);
+                let value_type = reader.read_str()?;
+                let value = reader.read_str()?;
                 FutureValue::JsonUnknown { value_type, value }
             }
         };
@@ -405,20 +403,27 @@ impl<'a> Value<'a> {
         value: FutureValue,
         value_writer: &mut ValueWriter,
     ) -> (FutureValueKind, usize) {
+        // Note: we should encode FutureValue as binary data.
+        // [binary data length, binary data]
+        // when decoding, we will use reader.read_binary() to read the binary data.
+        // So such as FutureValue::Counter, we should write 0 as the length of binary data first.
         match value {
             #[cfg(feature = "counter")]
             FutureValue::Counter => {
                 // write bytes length
                 value_writer.write_u8(0);
-                (FutureValueKind::Counter, 0)
+                (FutureValueKind::Counter, 1)
             }
             FutureValue::Unknown { kind, data } => (
                 FutureValueKind::Unknown(kind),
                 value_writer.write_binary(data),
             ),
             FutureValue::JsonUnknown { value_type, value } => {
-                let mut len = value_writer.write_str(value_type);
-                len += value_writer.write_str(value);
+                let mut writer = ValueWriter::new();
+                writer.write_str(value_type);
+                writer.write_str(value);
+                let bytes = std::mem::take(&mut writer.buffer);
+                let len = value_writer.write_binary(&bytes);
                 (FutureValueKind::JsonUnknown, len)
             }
         }
