@@ -8,7 +8,7 @@ use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RleCollection, RlePush};
 use std::{
     cmp::Ordering,
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     io::Read,
     ops::Deref,
     sync::{Arc, Mutex},
@@ -130,9 +130,15 @@ impl ChangeStore {
 
     pub fn iter_changes(&self, id_span: IdSpan) -> impl Iterator<Item = BlockChangeRef> + '_ {
         let mut kv = self.kv.lock().unwrap();
+        let start_counter = kv
+            .range(..=id_span.id_start())
+            .next_back()
+            .map(|(id, _)| id.counter)
+            .unwrap_or(0);
         let iter = kv
-            // TODO: PERF This can be optimized by using a more customized tree structure
-            .range_mut(ID::new(id_span.peer, 0)..ID::new(id_span.peer, id_span.counter.end))
+            .range_mut(
+                ID::new(id_span.peer, start_counter)..ID::new(id_span.peer, id_span.counter.end),
+            )
             .filter_map(|(_id, block)| {
                 if block.counter_range.1 < id_span.counter.start {
                     return None;
@@ -141,9 +147,9 @@ impl ChangeStore {
                 block.ensure_changes().unwrap();
                 Some(block.clone())
             })
+            // TODO: PERF avoid alloc
             .collect_vec();
-        dbg!(&kv);
-        trace!("iter_changes {:?}", iter);
+
         iter.into_iter().flat_map(move |block| {
             let changes = block.content.try_changes().unwrap();
             let start;
@@ -169,6 +175,30 @@ impl ChangeStore {
         })
     }
 
+    pub(crate) fn get_blocks_in_range(&self, id_span: IdSpan) -> VecDeque<Arc<ChangesBlock>> {
+        let mut kv = self.kv.lock().unwrap();
+        let start_counter = kv
+            .range(..=id_span.id_start())
+            .next_back()
+            .map(|(id, _)| id.counter)
+            .unwrap_or(0);
+        let vec = kv
+            .range_mut(
+                ID::new(id_span.peer, start_counter)..ID::new(id_span.peer, id_span.counter.end),
+            )
+            .filter_map(|(_id, block)| {
+                if block.counter_range.1 < id_span.counter.start {
+                    return None;
+                }
+
+                block.ensure_changes().unwrap();
+                Some(block.clone())
+            })
+            // TODO: PERF avoid alloc
+            .collect();
+        vec
+    }
+
     pub fn change_num(&self) -> usize {
         let mut kv = self.kv.lock().unwrap();
         kv.iter_mut().map(|(_, block)| block.change_num()).sum()
@@ -177,8 +207,8 @@ impl ChangeStore {
 
 #[derive(Clone)]
 pub struct BlockChangeRef {
-    block: Arc<ChangesBlock>,
-    change_index: usize,
+    pub block: Arc<ChangesBlock>,
+    pub change_index: usize,
 }
 
 impl Deref for BlockChangeRef {
@@ -215,6 +245,10 @@ impl ChangesBlock {
             lamport_range,
             content,
         })
+    }
+
+    pub fn content(&self) -> &ChangesBlockContent {
+        &self.content
     }
 
     pub fn new(change: Change, a: &SharedArena) -> Self {
@@ -395,7 +429,7 @@ impl ChangesBlock {
 }
 
 #[derive(Clone)]
-enum ChangesBlockContent {
+pub(crate) enum ChangesBlockContent {
     Changes(Arc<Vec<Change>>),
     Bytes(ChangesBlockBytes),
     Both(Arc<Vec<Change>>, ChangesBlockBytes),
@@ -430,11 +464,19 @@ impl ChangesBlockContent {
         }
     }
 
-    fn try_changes(&self) -> Option<&Vec<Change>> {
+    pub(crate) fn try_changes(&self) -> Option<&Vec<Change>> {
         match self {
             ChangesBlockContent::Changes(changes) => Some(changes),
             ChangesBlockContent::Both(changes, _) => Some(changes),
             ChangesBlockContent::Bytes(_) => None,
+        }
+    }
+
+    pub(crate) fn len_changes(&self) -> usize {
+        match self {
+            ChangesBlockContent::Changes(changes) => changes.len(),
+            ChangesBlockContent::Both(changes, _) => changes.len(),
+            ChangesBlockContent::Bytes(bytes) => bytes.len_changes(),
         }
     }
 }

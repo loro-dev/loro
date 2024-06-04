@@ -832,8 +832,8 @@ impl OpLog {
         &'a self,
         from: &VersionVector,
         to: &VersionVector,
-    ) -> impl Iterator<Item = &'a Change> + 'a {
-        MergedChangeIter::new_change_iter(self, from, to, false)
+    ) -> impl Iterator<Item = BlockChangeRef> + 'a {
+        MergedChangeIter::new_change_iter_rev(self, from, to)
     }
 
     pub fn get_timestamp_for_next_txn(&self) -> Timestamp {

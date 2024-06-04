@@ -1,79 +1,120 @@
-use std::collections::BinaryHeap;
+use std::{
+    collections::{BinaryHeap, VecDeque},
+    sync::Arc,
+};
 
-use loro_common::{CounterSpan, HasLamport};
+use loro_common::{CounterSpan, HasIdSpan, HasLamport};
 use rle::RleCollection;
 
 use crate::{change::Change, OpLog, VersionVector};
 
-use super::{AppDag, AppDagNode};
+use super::{change_store::ChangesBlock, AppDag, AppDagNode, BlockChangeRef};
 
-pub(crate) struct PeerChangesIter<'a, T> {
-    changes: &'a [T],
-    is_forward: bool,
+pub(crate) struct PeerChangesIter {
+    blocks: VecDeque<Arc<ChangesBlock>>,
+    change_index: usize,
+    counter_range: CounterSpan,
 }
 
-impl<T: HasLamport> PeerChangesIter<'_, T> {
+impl PeerChangesIter {
+    fn new_change_iter_rev(mut changes: VecDeque<Arc<ChangesBlock>>, counter: CounterSpan) -> Self {
+        let mut index = changes
+            .back()
+            .map(|x| x.content().len_changes().saturating_sub(1))
+            .unwrap_or(0);
+
+        while let Some(block) = changes.back() {
+            if let Some(change) = block.content().try_changes().unwrap().get(index) {
+                if change.id.counter < counter.end {
+                    break;
+                }
+            } else if index == 0 {
+                changes.pop_back();
+            } else {
+                index -= 1;
+            }
+        }
+
+        PeerChangesIter {
+            blocks: changes,
+            change_index: index,
+            counter_range: counter,
+        }
+    }
+
     fn current_weight(&self) -> i32 {
-        if self.changes.is_empty() {
+        if self.blocks.is_empty() {
             return 0;
         }
 
-        if self.is_forward {
-            // Need to be reversed so that the top element in the max heap
-            // has the smallest lamport
-            -(self.changes.first().unwrap().lamport() as i32)
-        } else {
-            self.changes.last().unwrap().lamport() as i32
-        }
+        self.blocks
+            .back()
+            .map(|x| {
+                x.content()
+                    .try_changes()
+                    .unwrap()
+                    .get(self.change_index)
+                    .unwrap()
+                    .lamport as i32
+            })
+            .unwrap_or(0)
     }
 }
 
-impl<T: HasLamport> Ord for PeerChangesIter<'_, T> {
+impl Ord for PeerChangesIter {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.current_weight().cmp(&other.current_weight())
     }
 }
 
-impl<T: HasLamport> PartialOrd for PeerChangesIter<'_, T> {
+impl PartialOrd for PeerChangesIter {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<T: HasLamport> PartialEq for PeerChangesIter<'_, T> {
+impl PartialEq for PeerChangesIter {
     fn eq(&self, other: &Self) -> bool {
         self.current_weight() == other.current_weight()
     }
 }
 
-impl<T: HasLamport> Eq for PeerChangesIter<'_, T> {}
+impl Eq for PeerChangesIter {}
 
-impl<'a, T: HasLamport> Iterator for PeerChangesIter<'a, T> {
-    type Item = &'a T;
+impl Iterator for PeerChangesIter {
+    type Item = BlockChangeRef;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.changes.is_empty() {
+        if self.blocks.is_empty() {
             return None;
         }
 
-        if self.is_forward {
-            let (next, rest) = self.changes.split_first().unwrap();
-            self.changes = rest;
-            Some(next)
-        } else {
-            let (next, rest) = self.changes.split_last().unwrap();
-            self.changes = rest;
-            Some(next)
+        let c = BlockChangeRef {
+            block: self.blocks.back().unwrap().clone(),
+            change_index: self.change_index,
+        };
+
+        if c.id_last().counter < self.counter_range.start {
+            return None;
         }
+
+        let ans = Some(c);
+        if self.change_index == 0 {
+            self.blocks.pop_back();
+        } else {
+            self.change_index -= 1;
+        }
+
+        ans
     }
 }
 
-pub(crate) struct MergedChangeIter<'a, T> {
-    heap: BinaryHeap<PeerChangesIter<'a, T>>,
+pub(crate) struct MergedChangeIter {
+    heap: BinaryHeap<PeerChangesIter>,
 }
 
-impl<'a, T: HasLamport> Iterator for MergedChangeIter<'a, T> {
-    type Item = &'a T;
+impl Iterator for MergedChangeIter {
+    type Item = BlockChangeRef;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut iter = self.heap.pop()?;
@@ -83,83 +124,12 @@ impl<'a, T: HasLamport> Iterator for MergedChangeIter<'a, T> {
     }
 }
 
-#[allow(unused)]
-impl PeerChangesIter<'_, AppDagNode> {
-    pub(crate) fn new_dag_iter(
-        changes: &Vec<AppDagNode>,
-        counter: CounterSpan,
-        is_forward: bool,
-    ) -> PeerChangesIter<'_, AppDagNode> {
-        assert!(counter.start < counter.end);
-        let start = changes
-            .get_by_atom_index(counter.start)
-            .unwrap()
-            .merged_index;
-        let end = changes
-            .get_by_atom_index(counter.end - 1)
-            .unwrap()
-            .merged_index;
-        let changes = &changes[start..=end];
-        PeerChangesIter {
-            changes,
-            is_forward,
-        }
-    }
-}
-
-#[allow(unused)]
-impl<'a> MergedChangeIter<'a, AppDagNode> {
-    pub fn new_dag_iter(
-        dag: &'a AppDag,
-        from: &VersionVector,
-        to: &VersionVector,
-        is_forward: bool,
-    ) -> Self {
+impl MergedChangeIter {
+    pub fn new_change_iter_rev(oplog: &OpLog, from: &VersionVector, to: &VersionVector) -> Self {
         let mut heap = BinaryHeap::new();
         for span in to.sub_iter(from) {
-            let nodes = dag.map.get(&span.peer).unwrap();
-            let iter = PeerChangesIter::new_dag_iter(nodes, span.counter, is_forward);
-            heap.push(iter);
-        }
-
-        Self { heap }
-    }
-}
-
-impl PeerChangesIter<'_, Change> {
-    pub(crate) fn new_change_iter(
-        changes: &Vec<Change>,
-        counter: CounterSpan,
-        is_forward: bool,
-    ) -> PeerChangesIter<'_, Change> {
-        assert!(counter.start < counter.end);
-        let start = changes
-            .get_by_atom_index(counter.start)
-            .unwrap()
-            .merged_index;
-        let end = changes
-            .get_by_atom_index(counter.end - 1)
-            .unwrap()
-            .merged_index;
-        let changes = &changes[start..=end];
-        PeerChangesIter {
-            changes,
-            is_forward,
-        }
-    }
-}
-
-impl<'a> MergedChangeIter<'a, Change> {
-    pub fn new_change_iter(
-        oplog: &'a OpLog,
-        from: &VersionVector,
-        to: &VersionVector,
-        is_forward: bool,
-    ) -> Self {
-        let mut heap = BinaryHeap::new();
-        for span in to.sub_iter(from) {
-            let nodes = oplog.changes.get(&span.peer).unwrap();
-            let iter = PeerChangesIter::new_change_iter(nodes, span.counter, is_forward);
+            let blocks = oplog.change_store.get_blocks_in_range(span);
+            let iter = PeerChangesIter::new_change_iter_rev(blocks, span.counter);
             heap.push(iter);
         }
 
