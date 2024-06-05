@@ -9,7 +9,7 @@ use loro_common::{
     ContainerID, Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult,
     LoroValue, PeerID,
 };
-use tracing::{debug_span, info_span, instrument};
+use tracing::{debug_span, info_span, instrument, trace};
 
 use crate::{
     change::get_sys_timestamp,
@@ -144,7 +144,7 @@ pub type OnPush = Box<dyn Fn(UndoOrRedo, CounterSpan) -> UndoItemMeta + Send + S
 pub type OnPop = Box<dyn Fn(UndoOrRedo, CounterSpan, UndoItemMeta) + Send + Sync>;
 
 struct UndoManagerInner {
-    latest_counter: Counter,
+    latest_counter: Option<Counter>,
     undo_stack: Stack,
     redo_stack: Stack,
     processing_undo: bool,
@@ -207,7 +207,7 @@ impl UndoItemMeta {
         }
     }
 
-    /// It's assumed that the cursor is just acqured before the ops that
+    /// It's assumed that the cursor is just acquired before the ops that
     /// need to be undo/redo.
     ///
     /// We need to rely on the validity of the original pos value
@@ -362,7 +362,7 @@ impl Default for Stack {
 impl UndoManagerInner {
     fn new(last_counter: Counter) -> Self {
         UndoManagerInner {
-            latest_counter: last_counter,
+            latest_counter: Some(last_counter),
             undo_stack: Default::default(),
             redo_stack: Default::default(),
             processing_undo: false,
@@ -376,13 +376,18 @@ impl UndoManagerInner {
     }
 
     fn record_checkpoint(&mut self, latest_counter: Counter) {
-        if latest_counter == self.latest_counter {
+        if Some(latest_counter) == self.latest_counter {
             return;
         }
 
-        assert!(self.latest_counter < latest_counter);
+        if self.latest_counter.is_none() {
+            self.latest_counter = Some(latest_counter);
+            return;
+        }
+
+        assert!(self.latest_counter.unwrap() < latest_counter);
         let now = get_sys_timestamp();
-        let span = CounterSpan::new(self.latest_counter, latest_counter);
+        let span = CounterSpan::new(self.latest_counter.unwrap(), latest_counter);
         let meta = self
             .on_push
             .as_ref()
@@ -395,7 +400,7 @@ impl UndoManagerInner {
             self.undo_stack.push(span, meta);
         }
 
-        self.latest_counter = latest_counter;
+        self.latest_counter = Some(latest_counter);
         self.redo_stack.clear();
         while self.undo_stack.len() > self.max_stack_size {
             self.undo_stack.pop_front();
@@ -440,7 +445,7 @@ impl UndoManager {
                         // a remote event.
                         inner.undo_stack.compose_remote_event(event.events);
                         inner.redo_stack.compose_remote_event(event.events);
-                        inner.latest_counter = id.counter + 1;
+                        inner.latest_counter = Some(id.counter + 1);
                     } else {
                         inner.record_checkpoint(id.counter + 1);
                     }
@@ -455,6 +460,7 @@ impl UndoManager {
                 let mut inner = inner_clone.try_lock().unwrap();
                 inner.undo_stack.clear();
                 inner.redo_stack.clear();
+                inner.latest_counter = None;
             }
         }));
 
@@ -540,6 +546,7 @@ impl UndoManager {
                 let inner = self.inner.clone();
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
                 let remote_change_clone = remote_diff.try_lock().unwrap().clone();
+                trace!("NEW Remote change {:?}", &remote_change_clone);
                 let commit = doc.undo_internal(
                     IdSpan {
                         peer: self.peer,
@@ -580,7 +587,7 @@ impl UndoManager {
                     .map(|x| x(kind.opposite(), CounterSpan::new(end_counter, new_counter)))
                     .unwrap_or_default();
                 get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter), meta);
-                inner.latest_counter = new_counter;
+                inner.latest_counter = Some(new_counter);
                 executed = true;
                 break;
             } else {
