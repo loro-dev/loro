@@ -6404,7 +6404,7 @@ fn unknown_test_3() {
         vec![FuzzTarget::All],
         &mut [
             Handle {
-                site: 48,
+                site: 0,
                 target: 255,
                 container: 203,
                 action: Generic(GenericAction {
@@ -6431,7 +6431,7 @@ fn unknown_test_3() {
             },
             SyncAll,
             Handle {
-                site: 0,
+                site: 3,
                 target: 0,
                 container: 0,
                 action: Generic(GenericAction {
@@ -6457,7 +6457,7 @@ fn unknown_test_3() {
                 }),
             },
             Handle {
-                site: 48,
+                site: 0,
                 target: 49,
                 container: 54,
                 action: Generic(GenericAction {
@@ -6537,7 +6537,7 @@ fn unknown_test_3() {
                 }),
             },
             Undo {
-                site: 123,
+                site: 0,
                 op_len: 125533051,
             },
         ],

@@ -40,9 +40,11 @@ impl DiffBatch {
             return;
         }
 
-        for (idx, diff) in self.0.iter_mut() {
-            if let Some(b_diff) = other.0.get(idx) {
-                diff.compose_ref(b_diff);
+        for (idx, diff) in other.0.iter() {
+            if let Some(this_diff) = self.0.get_mut(idx) {
+                this_diff.compose_ref(diff);
+            } else {
+                self.0.insert(idx.clone(), diff.clone());
             }
         }
     }
