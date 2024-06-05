@@ -9,7 +9,7 @@ use loro_common::{
     ContainerID, Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult,
     LoroValue, PeerID,
 };
-use tracing::{debug_span, info_span, instrument, trace};
+use tracing::{debug_span, info_span, instrument, trace, trace_span};
 
 use crate::{
     change::get_sys_timestamp,
@@ -546,23 +546,26 @@ impl UndoManager {
                 let inner = self.inner.clone();
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
                 let remote_change_clone = remote_diff.try_lock().unwrap().clone();
-                trace!("NEW Remote change {:?}", &remote_change_clone);
-                let commit = doc.undo_internal(
-                    IdSpan {
-                        peer: self.peer,
-                        counter: span.span,
-                    },
-                    &mut self.container_remap,
-                    Some(&remote_change_clone),
-                    &mut |diff| {
-                        info_span!("transform remote diff").in_scope(|| {
-                            let mut inner = inner.try_lock().unwrap();
-                            // <transform_delta>
-                            get_stack(&mut inner).transform_based_on_this_delta(diff);
-                        });
-                    },
-                )?;
-                drop(commit);
+                trace_span!("Perform Undo/Redo").in_scope(|| {
+                    trace!("NEW Remote change {:?}", &remote_change_clone);
+                    let commit = doc.undo_internal(
+                        IdSpan {
+                            peer: self.peer,
+                            counter: span.span,
+                        },
+                        &mut self.container_remap,
+                        Some(&remote_change_clone),
+                        &mut |diff| {
+                            info_span!("transform remote diff").in_scope(|| {
+                                let mut inner = inner.try_lock().unwrap();
+                                // <transform_delta>
+                                get_stack(&mut inner).transform_based_on_this_delta(diff);
+                            });
+                        },
+                    )?;
+                    drop(commit);
+                    Ok::<(), loro_common::LoroError>(())
+                })?;
                 if let Some(x) = self.inner.try_lock().unwrap().on_pop.as_ref() {
                     for cursor in span.meta.cursors.iter_mut() {
                         // <cursor_transform> We need to transform cursor here.
