@@ -446,12 +446,11 @@ impl UndoManager {
                     }
                 }
             }
-            EventTriggerKind::Import => {
+            EventTriggerKind::Import | EventTriggerKind::Checkout => {
                 let mut inner = inner_clone.try_lock().unwrap();
                 inner.undo_stack.compose_remote_event(event.events);
                 inner.redo_stack.compose_remote_event(event.events);
             }
-            EventTriggerKind::Checkout => {}
         }));
 
         UndoManager {
