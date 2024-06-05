@@ -9,7 +9,7 @@ use loro_common::{
     ContainerID, Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult,
     LoroValue, PeerID,
 };
-use tracing::{debug_span, info_span, instrument, trace};
+use tracing::{debug_span, info_span, instrument};
 
 use crate::{
     change::get_sys_timestamp,
@@ -446,10 +446,15 @@ impl UndoManager {
                     }
                 }
             }
-            EventTriggerKind::Import | EventTriggerKind::Checkout => {
+            EventTriggerKind::Import => {
                 let mut inner = inner_clone.try_lock().unwrap();
                 inner.undo_stack.compose_remote_event(event.events);
                 inner.redo_stack.compose_remote_event(event.events);
+            }
+            EventTriggerKind::Checkout => {
+                let mut inner = inner_clone.try_lock().unwrap();
+                inner.undo_stack.clear();
+                inner.redo_stack.clear();
             }
         }));
 
