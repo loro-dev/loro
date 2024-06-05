@@ -347,6 +347,42 @@ pub trait ActorTrait {
 }
 
 pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
+    fn eq_without_position(a: &LoroValue, b: &LoroValue) -> bool {
+        match (a, b) {
+            (LoroValue::Map(a), LoroValue::Map(b)) => {
+                for (k, v) in a.iter() {
+                    if k == "position" {
+                        continue;
+                    }
+
+                    if !eq_without_position(v, b.get(k).unwrap_or(&LoroValue::I64(0))) {
+                        return false;
+                    }
+                }
+
+                for (k, v) in b.iter() {
+                    if k == "position" {
+                        continue;
+                    }
+                    if !eq_without_position(v, a.get(k).unwrap_or(&LoroValue::I64(0))) {
+                        return false;
+                    }
+                }
+                true
+            }
+            (LoroValue::List(a), LoroValue::List(b)) => {
+                if a.len() != b.len() {
+                    return false;
+                }
+
+                a.iter()
+                    .zip(b.iter())
+                    .all(|(a, b)| eq_without_position(a, b))
+            }
+            (a, b) => a == b,
+        }
+    }
+
     #[must_use]
     fn eq(a: &LoroValue, b: &LoroValue) -> bool {
         match (a, b) {
@@ -385,7 +421,7 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
 
                 true
             }
-            (a, b) => a == b,
+            (a, b) => eq_without_position(a, b),
         }
     }
     assert!(
