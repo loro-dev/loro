@@ -10,6 +10,8 @@ To better understand this document, you may first need to understand how Loro st
 - [`Change`, `Operation`](https://www.loro.dev/docs/advanced/op_and_change)
 - [`Replayable Event Graph (REG)`](https://www.loro.dev/docs/advanced/replayable_event_graph)
 
+It should be noted that considering the usage scenario, JSON Schema only supports backward compatibility but not forward compatibility.
+
 # Specification
 
 ## Root object

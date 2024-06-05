@@ -268,10 +268,8 @@ mod container {
                 ContainerType::MovableList => "MovableList",
                 ContainerType::Text => "Text",
                 ContainerType::Tree => "Tree",
-                // The Future container type must be encoded as "TypeName(u8)".
-                // As we encode it to string when `json-format` is used.
                 #[cfg(feature = "counter")]
-                ContainerType::Counter => "Counter(5)",
+                ContainerType::Counter => "Counter",
                 ContainerType::Unknown(k) => return f.write_fmt(format_args!("Unknown({})", k)),
             })
         }
@@ -549,7 +547,5 @@ mod test {
         assert!(ContainerID::try_from("cid:x@0:Map").is_err());
         assert!(ContainerID::try_from("id:0@0:Map").is_err());
         assert!(ContainerID::try_from("cid:0@0:Unknown(6)").is_ok());
-        assert!(ContainerID::try_from("cid:0@0:Counter(5)").is_ok());
-        assert!(ContainerID::try_from("cid:0@0:MultiRegister(8)").is_ok());
     }
 }

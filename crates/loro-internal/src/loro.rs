@@ -571,6 +571,9 @@ impl LoroDoc {
         ans
     }
 
+    /// Import the json schema updates.
+    ///
+    /// only supports backward compatibility but not forward compatibility.
     pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> LoroResult<()> {
         let json = json.try_into().map_err(|_| LoroError::InvalidJsonSchema)?;
         self.commit_then_stop();

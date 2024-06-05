@@ -14,10 +14,7 @@ use crate::{
     encoding::encode_reordered::MAX_COLLECTION_SIZE,
 };
 
-use super::{
-    arena::{DecodedArenas, EncodedRegisters, EncodedTreeID},
-    future_value::OwnedFutureValue,
-};
+use super::arena::{DecodedArenas, EncodedRegisters, EncodedTreeID};
 
 #[derive(Debug)]
 pub enum ValueKind {
@@ -91,7 +88,6 @@ pub enum FutureValueKind {
     #[cfg(feature = "counter")]
     Counter, // 16
     Unknown(u8),
-    JsonUnknown,
 }
 
 impl ValueKind {
@@ -117,7 +113,6 @@ impl ValueKind {
                 #[cfg(feature = "counter")]
                 FutureValueKind::Counter => 16,
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
-                FutureValueKind::JsonUnknown => 127,
             },
         }
     }
@@ -187,10 +182,6 @@ pub enum FutureValue<'a> {
         kind: u8,
         data: &'a [u8],
     },
-    JsonUnknown {
-        value_type: &'a str,
-        value: &'a str,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -222,6 +213,18 @@ pub enum OwnedValue {
     },
     #[serde(untagged)]
     Future(OwnedFutureValue),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "value_type", content = "value")]
+pub enum OwnedFutureValue {
+    #[cfg(feature = "counter")]
+    Counter,
+    // The future value cannot depend on the arena for encoding.
+    Unknown {
+        kind: u8,
+        data: Arc<Vec<u8>>,
+    },
 }
 
 impl<'a> Value<'a> {
@@ -262,16 +265,10 @@ impl<'a> Value<'a> {
             OwnedValue::Future(value) => match value {
                 #[cfg(feature = "counter")]
                 OwnedFutureValue::Counter => Value::Future(FutureValue::Counter),
-                OwnedFutureValue::Unknown(super::future_value::Unknown { kind, data }) => {
-                    Value::Future(FutureValue::Unknown {
-                        kind: *kind,
-                        data: data.as_slice(),
-                    })
-                }
-                OwnedFutureValue::JsonUnknown(super::future_value::JsonUnknown {
-                    value_type,
-                    value,
-                }) => Value::Future(FutureValue::JsonUnknown { value_type, value }),
+                OwnedFutureValue::Unknown { kind, data } => Value::Future(FutureValue::Unknown {
+                    kind: *kind,
+                    data: data.as_slice(),
+                }),
             },
         }
     }
@@ -314,17 +311,11 @@ impl<'a> Value<'a> {
                 #[cfg(feature = "counter")]
                 FutureValue::Counter => OwnedValue::Future(OwnedFutureValue::Counter),
                 FutureValue::Unknown { kind, data } => {
-                    OwnedValue::Future(OwnedFutureValue::Unknown(super::future_value::Unknown {
+                    OwnedValue::Future(OwnedFutureValue::Unknown {
                         kind,
                         data: Arc::new(data.to_owned()),
-                    }))
+                    })
                 }
-                FutureValue::JsonUnknown { value_type, value } => OwnedValue::Future(
-                    OwnedFutureValue::JsonUnknown(super::future_value::JsonUnknown {
-                        value_type: Arc::new(value_type.to_owned()),
-                        value: Arc::new(value.to_owned()),
-                    }),
-                ),
             },
         }
     }
@@ -338,12 +329,6 @@ impl<'a> Value<'a> {
             #[cfg(feature = "counter")]
             FutureValueKind::Counter => FutureValue::Counter,
             FutureValueKind::Unknown(kind) => FutureValue::Unknown { kind, data: bytes },
-            FutureValueKind::JsonUnknown => {
-                let mut reader = ValueReader::new(bytes);
-                let value_type = reader.read_str()?;
-                let value = reader.read_str()?;
-                FutureValue::JsonUnknown { value_type, value }
-            }
         };
         Ok(Value::Future(value))
     }
@@ -418,14 +403,6 @@ impl<'a> Value<'a> {
                 FutureValueKind::Unknown(kind),
                 value_writer.write_binary(data),
             ),
-            FutureValue::JsonUnknown { value_type, value } => {
-                let mut writer = ValueWriter::new();
-                writer.write_str(value_type);
-                writer.write_str(value);
-                let bytes = std::mem::take(&mut writer.buffer);
-                let len = value_writer.write_binary(&bytes);
-                (FutureValueKind::JsonUnknown, len)
-            }
         }
     }
 
@@ -949,12 +926,6 @@ impl<'a> ValueReader<'a> {
             value,
             info,
         })
-    }
-
-    pub fn take_bytes(&mut self, len: usize) -> &'a [u8] {
-        let ans = &self.raw[..len];
-        self.raw = &self.raw[len..];
-        ans
     }
 
     pub fn read_tree_move(&mut self) -> LoroResult<EncodedTreeMove> {

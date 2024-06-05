@@ -1,10 +1,7 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { expect, it } from "vitest";
 import {
-  Container,
   Loro,
   LoroMap,
-  LoroTree,
-  LoroTreeNode,
   TextOp,
 } from "../src";
 

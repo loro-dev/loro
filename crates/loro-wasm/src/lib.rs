@@ -891,6 +891,8 @@ impl Loro {
     }
 
     /// Import updates from the JSON format.
+    ///
+    /// only supports backward compatibility but not forward compatibility.
     #[wasm_bindgen(js_name = "importJsonUpdates")]
     pub fn import_json_updates(&self, json: JsJsonSchemaOrString) -> JsResult<()> {
         let json: JsValue = json.into();
@@ -4158,11 +4160,9 @@ export type UnknownOp = {
   type: "unknown"
   prop: number,
   value_type: "unknown",
-  value: unknown
-} | {
-  type: "unknown"
-  prop: number,
-  value_type: "json_unknown",
-  value: string
+  value: {
+    kind: number,
+    data: Uint8Array
+  }
 };
 "#;

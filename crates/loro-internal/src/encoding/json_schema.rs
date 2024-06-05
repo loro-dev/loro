@@ -364,7 +364,7 @@ fn encode_changes(
                             JsonOpContent::Future(op::FutureOpWrapper {
                                 prop: *x as i32,
                                 value: op::FutureOp::Counter(super::value::OwnedValue::Future(
-                                    super::future_value::OwnedFutureValue::Counter,
+                                    super::value::OwnedFutureValue::Counter,
                                 )),
                             })
                         }
@@ -798,7 +798,7 @@ pub mod op {
         },
     }
 
-    #[derive(Debug, Clone, Serialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum FutureOp {
         #[cfg(feature = "counter")]
@@ -884,13 +884,13 @@ pub mod op {
                                 ContainerType::Counter => {
                                     let (_key, v) = map.next_entry::<String, i64>()?.unwrap();
                                     super::JsonOpContent::Future(super::FutureOpWrapper {
-                                    prop: v as i32,
-                                    value: super::FutureOp::Counter(
-                                        crate::encoding::value::OwnedValue::Future(
-                                            crate::encoding::future_value::OwnedFutureValue::Counter,
-                                        )
-                                    )
-                                })
+                                        prop: v as i32,
+                                        value: super::FutureOp::Counter(
+                                            crate::encoding::value::OwnedValue::Future(
+                                                crate::encoding::value::OwnedFutureValue::Counter,
+                                            ),
+                                        ),
+                                    })
                                 }
                                 _ => unreachable!(),
                             }
@@ -908,69 +908,69 @@ pub mod op {
             }
         }
 
-        pub mod future_op {
+        // pub mod future_op {
 
-            use serde::{Deserialize, Deserializer};
+        //     use serde::{Deserialize, Deserializer};
 
-            use crate::encoding::json_schema::op::FutureOp;
+        //     use crate::encoding::json_schema::op::FutureOp;
 
-            impl<'de> Deserialize<'de> for FutureOp {
-                fn deserialize<D>(d: D) -> Result<FutureOp, D::Error>
-                where
-                    D: Deserializer<'de>,
-                {
-                    enum Field {
-                        #[cfg(feature = "counter")]
-                        Counter,
-                        Unknown,
-                    }
-                    struct FieldVisitor;
-                    impl<'de> serde::de::Visitor<'de> for FieldVisitor {
-                        type Value = Field;
-                        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                            f.write_str("field identifier")
-                        }
-                        fn visit_str<E>(self, value: &str) -> Result<Field, E>
-                        where
-                            E: serde::de::Error,
-                        {
-                            match value {
-                                #[cfg(feature = "counter")]
-                                "counter" => Ok(Field::Counter),
-                                _ => Ok(Field::Unknown),
-                            }
-                        }
-                    }
-                    impl<'de> Deserialize<'de> for Field {
-                        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-                        where
-                            D: Deserializer<'de>,
-                        {
-                            deserializer.deserialize_identifier(FieldVisitor)
-                        }
-                    }
-                    let (tag, content) = d.deserialize_any(
-                        serde::__private::de::TaggedContentVisitor::<Field>::new(
-                            "type",
-                            "internally tagged enum FutureOp",
-                        ),
-                    )?;
-                    let __deserializer =
-                        serde::__private::de::ContentDeserializer::<D::Error>::new(content);
-                    match tag {
-                        #[cfg(feature = "counter")]
-                        Field::Counter => {
-                            let v = serde::Deserialize::deserialize(__deserializer)?;
-                            Ok(FutureOp::Counter(v))
-                        }
-                        _ => {
-                            let v = serde::Deserialize::deserialize(__deserializer)?;
-                            Ok(FutureOp::Unknown(v))
-                        }
-                    }
-                }
-            }
-        }
+        //     impl<'de> Deserialize<'de> for FutureOp {
+        //         fn deserialize<D>(d: D) -> Result<FutureOp, D::Error>
+        //         where
+        //             D: Deserializer<'de>,
+        //         {
+        //             enum Field {
+        //                 #[cfg(feature = "counter")]
+        //                 Counter,
+        //                 Unknown,
+        //             }
+        //             struct FieldVisitor;
+        //             impl<'de> serde::de::Visitor<'de> for FieldVisitor {
+        //                 type Value = Field;
+        //                 fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        //                     f.write_str("field identifier")
+        //                 }
+        //                 fn visit_str<E>(self, value: &str) -> Result<Field, E>
+        //                 where
+        //                     E: serde::de::Error,
+        //                 {
+        //                     match value {
+        //                         #[cfg(feature = "counter")]
+        //                         "counter" => Ok(Field::Counter),
+        //                         _ => Ok(Field::Unknown),
+        //                     }
+        //                 }
+        //             }
+        //             impl<'de> Deserialize<'de> for Field {
+        //                 fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        //                 where
+        //                     D: Deserializer<'de>,
+        //                 {
+        //                     deserializer.deserialize_identifier(FieldVisitor)
+        //                 }
+        //             }
+        //             let (tag, content) = d.deserialize_any(
+        //                 serde::__private::de::TaggedContentVisitor::<Field>::new(
+        //                     "type",
+        //                     "internally tagged enum FutureOp",
+        //                 ),
+        //             )?;
+        //             let __deserializer =
+        //                 serde::__private::de::ContentDeserializer::<D::Error>::new(content);
+        //             match tag {
+        //                 #[cfg(feature = "counter")]
+        //                 Field::Counter => {
+        //                     let v = serde::Deserialize::deserialize(__deserializer)?;
+        //                     Ok(FutureOp::Counter(v))
+        //                 }
+        //                 _ => {
+        //                     let v = serde::Deserialize::deserialize(__deserializer)?;
+        //                     Ok(FutureOp::Unknown(v))
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
         pub mod id {
             use loro_common::ID;

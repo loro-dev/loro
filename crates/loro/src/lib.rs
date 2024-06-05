@@ -290,7 +290,9 @@ impl LoroDoc {
         self.doc.import_with(bytes, origin.into())
     }
 
-    /// Import json-string.
+    /// Import the json schema updates.
+    ///
+    /// only supports backward compatibility but not forward compatibility.
     pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> Result<(), LoroError> {
         self.doc.import_json_updates(json)
     }
