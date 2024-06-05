@@ -16,7 +16,7 @@ loro-common = { git = "https://github.com/loro-dev/loro.git", features = [
 ], rev = "ec73f37d9487a0c83f88f33ed1ccc3b8a5347d28" }
 # loro = { path = "../loro", package = "loro", features = ["counter"] }
 # loro-common = { path = "../loro-common", features = ["counter"] }
-# loro-without-counter = { git = "https://github.com/loro-dev/loro.git", branch = "zxch3n/loro-560-undoredo", package = "loro" }
+# loro-without-counter = { git = "https://github.com/loro-dev/loro.git", branch = "fix-undo-with-checkout", package = "loro" }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
 enum-as-inner = { workspace = true }

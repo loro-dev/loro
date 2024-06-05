@@ -164,3 +164,109 @@ fn tree_delete() {
         ],
     )
 }
+
+#[test]
+fn tree_undo_delete_with_diff_old_index() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(454761243),
+                    bool: true,
+                    key: 4280621851,
+                    pos: 1953184669377757183,
+                    length: 1953184666628070171,
+                    prop: 71829045943205915,
+                }),
+            },
+            Handle {
+                site: 251,
+                target: 197,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: I32(454761243),
+                    bool: true,
+                    key: 454761243,
+                    pos: 1953184666628070171,
+                    length: 16710579922159737627,
+                    prop: 288230380914862055,
+                }),
+            },
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(387661595),
+                    bool: false,
+                    key: 454761243,
+                    pos: 1953184666628070171,
+                    length: 71829045943205915,
+                    prop: 18430413027502194837,
+                }),
+            },
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(454761243),
+                    bool: true,
+                    key: 454761243,
+                    pos: 16710579922159737627,
+                    length: 288230380914862055,
+                    prop: 1953184666628070171,
+                }),
+            },
+            Handle {
+                site: 63,
+                target: 27,
+                container: 23,
+                action: Generic(GenericAction {
+                    value: I32(454761243),
+                    bool: true,
+                    key: 454761243,
+                    pos: 1953184666628070171,
+                    length: 1953184666628070171,
+                    prop: 1953184666627808027,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(454761243),
+                    bool: false,
+                    key: 807600128,
+                    pos: 29802787832063,
+                    length: 163831513883392,
+                    prop: 2527082340907941888,
+                }),
+            },
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(-1920103141),
+                    bool: true,
+                    key: 2374864269,
+                    pos: 10199964370168810893,
+                    length: 10199964370168810893,
+                    prop: 10199964370168810893,
+                }),
+            },
+            SyncAllUndo {
+                site: 141,
+                op_len: 2374864269,
+            },
+        ],
+    )
+}

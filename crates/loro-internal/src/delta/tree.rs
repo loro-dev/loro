@@ -38,6 +38,41 @@ pub enum TreeExternalDiff {
     },
 }
 
+impl TreeExternalDiff {
+    fn same_effect(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                TreeExternalDiff::Create {
+                    parent: p1,
+                    index: i1,
+                    position: pos1,
+                },
+                TreeExternalDiff::Create {
+                    parent: p2,
+                    index: i2,
+                    position: pos2,
+                },
+            ) => p1 == p2 && i1 == i2 && pos1 == pos2,
+            (
+                TreeExternalDiff::Move {
+                    parent: p1,
+                    index: i1,
+                    position: pos1,
+                    ..
+                },
+                TreeExternalDiff::Move {
+                    parent: p2,
+                    index: i2,
+                    position: pos2,
+                    ..
+                },
+            ) => p1 == p2 && i1 == i2 && pos1 == pos2,
+            (TreeExternalDiff::Delete { .. }, TreeExternalDiff::Delete { .. }) => true,
+            _ => false,
+        }
+    }
+}
+
 impl TreeDiff {
     pub(crate) fn compose(mut self, other: Self) -> Self {
         // TODO: better compose
@@ -65,10 +100,13 @@ impl TreeDiff {
 
         let mut removes = Vec::new();
         for (target, diff) in b_update {
-            if self_update.contains_key(&target) && diff == self_update.get(&target).unwrap().0 {
-                let (_, i) = self_update.remove(&target).unwrap();
-                removes.push(i);
-                continue;
+            if let Some(self_diff) = self_update.get(&target).map(|x| x.0) {
+                // if the diff is the same, remove it,
+                if self_diff.same_effect(diff) {
+                    let (_, i) = self_update.remove(&target).unwrap();
+                    removes.push(i);
+                    continue;
+                }
             }
             if !left_prior {
                 if let Some((_, i)) = self_update.remove(&target) {
