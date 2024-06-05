@@ -1106,12 +1106,19 @@ impl Handler {
                             index,
                             position: _,
                         } => {
-                            x.create_at_with_target(parent, index, target)?;
-                            // create map event
+                            // For undo, maybe the parent has been deleted, we should apply the diff but not emit the event
+                            let without_event = parent.is_some_and(|p| !x.contains(p));
+                            x.create_at_with_target(parent, index, target, !without_event)?;
                         }
                         TreeExternalDiff::Delete { .. } => x.delete(target)?,
                         TreeExternalDiff::Move { parent, index, .. } => {
-                            x.move_to(target, parent, index)?
+                            // For undo, maybe the parent has been deleted, we should apply the diff but not emit the event
+                            let without_event = parent.is_some_and(|p| !x.contains(p));
+                            if !x.contains(target) {
+                                x.create_at_with_target(parent, index, target, !without_event)?;
+                            } else {
+                                x.move_to_inner(target, parent, index, !without_event)?
+                            }
                         }
                     }
                 }

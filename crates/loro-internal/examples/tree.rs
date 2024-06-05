@@ -10,15 +10,11 @@ fn checkout() {
     let tree = loro.get_tree("tree");
     let mut ids = vec![];
     let mut versions = vec![];
-    let id1 = loro
-        .with_txn(|txn| tree.create_with_txn(txn, None, 0))
-        .unwrap();
+    let id1 = tree.create_at(None, 0).unwrap();
     ids.push(id1);
     versions.push(loro.oplog_frontiers());
     for _ in 1..depth {
-        let id = loro
-            .with_txn(|txn| tree.create_with_txn(txn, *ids.last().unwrap(), 0))
-            .unwrap();
+        let id = tree.create_at(*ids.last().unwrap(), 0).unwrap();
         ids.push(id);
         versions.push(loro.oplog_frontiers());
     }
@@ -63,8 +59,7 @@ fn create() {
     let loro = LoroDoc::default();
     let tree = loro.get_tree("tree");
     for _ in 0..size {
-        loro.with_txn(|txn| tree.create_with_txn(txn, None, 0))
-            .unwrap();
+        tree.create_at(None, 0).unwrap();
     }
     println!("encode snapshot size {:?}\n", loro.export_snapshot().len());
     println!(
