@@ -90,7 +90,9 @@ impl TreeDiff {
         if b.is_empty() || self.is_empty() {
             return;
         }
-
+        // the diff maybe create node1 + create node2 as child of node1 + delete node1
+        // after matching target, the creating node2 is left. but the fact is that node2 is deleted
+        // so we need compose the diff first
         let _ = std::mem::replace(self, compose_tree_diff(self));
         let b = compose_tree_diff(b);
 

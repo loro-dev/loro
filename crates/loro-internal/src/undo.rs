@@ -704,14 +704,11 @@ pub(crate) fn undo(
             if i == spans.len() - 1 {
                 on_last_event_a(&event_a_prime);
             }
-            println!("\na {:?}", event_a_prime);
-            println!("\nb {:?}", event_b_i);
             // --------------------------------------------------
             // 3. Transform event A'_i based on B_i, call it C_i
             // --------------------------------------------------
             event_a_prime.transform(event_b_i, true);
             let c_i = event_a_prime;
-            println!("\n transform {:?}", c_i);
             last_ci = Some(c_i);
         });
     }
