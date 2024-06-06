@@ -588,6 +588,7 @@ impl Loro {
         Ok(LoroText {
             handler: text,
             doc: Some(self.0.clone()),
+            delta_cache: None,
         })
     }
 
@@ -721,6 +722,7 @@ impl Loro {
                 LoroText {
                     handler: richtext,
                     doc: Some(self.0.clone()),
+                    delta_cache: None,
                 }
                 .into()
             }
@@ -1348,6 +1350,7 @@ fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsValue 
 pub struct LoroText {
     handler: TextHandler,
     doc: Option<Arc<LoroDoc>>,
+    delta_cache: Option<(usize, JsValue)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1367,6 +1370,7 @@ impl LoroText {
         Self {
             handler: TextHandler::new_detached(),
             doc: None,
+            delta_cache: None,
         }
     }
 
@@ -1480,10 +1484,19 @@ impl LoroText {
     /// console.log(text.toDelta());  // [ { insert: 'Hello', attributes: { bold: true } } ]
     /// ```
     #[wasm_bindgen(js_name = "toDelta")]
-    pub fn to_delta(&self) -> JsStringDelta {
+    pub fn to_delta(&mut self) -> JsStringDelta {
+        let version = self.handler.version_id();
+        if let Some((v, delta)) = self.delta_cache.as_ref() {
+            if *v == version {
+                return delta.clone().into();
+            }
+        }
+
         let delta = self.handler.get_richtext_value();
         let value: JsValue = delta.into();
-        value.into()
+        let ans: JsStringDelta = value.clone().into();
+        self.delta_cache = Some((version, value));
+        ans
     }
 
     /// Get the container id of the text.
