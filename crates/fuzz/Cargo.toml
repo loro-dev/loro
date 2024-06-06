@@ -8,10 +8,10 @@ publish = false
 
 [dependencies]
 loro-without-counter = { path = "../loro", features = [], package = "loro" }
-loro = { git = "https://github.com/loro-dev/loro.git", rev = "260c05d4b23567e4aaef7d731ccac3c3ce24706f", features = [
+loro = { git = "https://github.com/loro-dev/loro.git", rev = "583a62db1795a84e7fb868ad6aeba03ea55240b9", features = [
     "counter",
 ] }
-loro-common = { git = "https://github.com/loro-dev/loro.git", rev = "260c05d4b23567e4aaef7d731ccac3c3ce24706f", features = [
+loro-common = { git = "https://github.com/loro-dev/loro.git", rev = "583a62db1795a84e7fb868ad6aeba03ea55240b9", features = [
     "counter",
 ] }
 # loro = { path = "../loro", package = "loro", features = ["counter"] }
