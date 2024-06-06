@@ -1734,6 +1734,8 @@ fn tree_diff_position() {
 
 #[test]
 fn tree_undo_unknown() {
+    // 0: create 13@0 create 0@0 -> 13@0
+    // 1: meta 0@0  delete 13@0
     test_multi_sites(
         5,
         vec![FuzzTarget::Tree],
@@ -2348,6 +2350,87 @@ fn tree_undo_unknown() {
             Undo {
                 site: 31,
                 op_len: 2,
+            },
+        ],
+    )
+}
+
+#[test]
+fn undo_tree_index() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Tree],
+        &mut [
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(188430649),
+                    bool: true,
+                    key: 185273099,
+                    pos: 18446744070374634251,
+                    length: 795741901218843451,
+                    prop: 795741901218843403,
+                }),
+            },
+            Handle {
+                site: 1,
+                target: 0,
+                container: 11,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 3654932953,
+                    pos: 15697817505862638041,
+                    length: 4035108562632563161,
+                    prop: 3399988123389603733,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 41,
+                target: 41,
+                container: 41,
+                action: Generic(GenericAction {
+                    value: I32(690563369),
+                    bool: true,
+                    key: 188430649,
+                    pos: 795741901218843403,
+                    length: 795741901218843403,
+                    prop: 2970615681721645323,
+                }),
+            },
+            Handle {
+                site: 128,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(185280777),
+                    bool: true,
+                    key: 185273099,
+                    pos: 795741901218843403,
+                    length: 15697590118234390529,
+                    prop: 15697817505862638041,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(690563369),
+                    bool: true,
+                    key: 690563369,
+                    pos: 2965947086361143593,
+                    length: 2965947086361143593,
+                    prop: 2965947086361143593,
+                }),
+            },
+            SyncAllUndo {
+                site: 43,
+                op_len: 2214581759,
             },
         ],
     )
