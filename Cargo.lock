@@ -661,8 +661,8 @@ dependencies = [
  "fxhash",
  "itertools 0.12.1",
  "loro 0.16.2",
- "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9)",
- "loro-common 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9)",
+ "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout)",
+ "loro-common 0.16.2",
  "rand",
  "tabled 0.10.0",
  "tracing",
@@ -998,13 +998,13 @@ dependencies = [
 [[package]]
 name = "loro"
 version = "0.16.2"
-source = "git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9#583a62db1795a84e7fb868ad6aeba03ea55240b9"
+source = "git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout#903914c43db050288b04211139ba743e69750804"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
  "generic-btree",
- "loro-delta 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9)",
- "loro-internal 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9)",
+ "loro-delta 0.16.2 (git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout)",
+ "loro-internal 0.16.2 (git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout)",
  "tracing",
 ]
 
@@ -1028,12 +1028,12 @@ dependencies = [
 [[package]]
 name = "loro-common"
 version = "0.16.2"
-source = "git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9#583a62db1795a84e7fb868ad6aeba03ea55240b9"
+source = "git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout#903914c43db050288b04211139ba743e69750804"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
  "fxhash",
- "loro-rle 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9)",
+ "loro-rle 0.16.2 (git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout)",
  "nonmax",
  "serde",
  "serde_columnar",
@@ -1060,7 +1060,7 @@ dependencies = [
 [[package]]
 name = "loro-delta"
 version = "0.16.2"
-source = "git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9#583a62db1795a84e7fb868ad6aeba03ea55240b9"
+source = "git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout#903914c43db050288b04211139ba743e69750804"
 dependencies = [
  "arrayvec",
  "enum-as-inner 0.5.1",
@@ -1123,7 +1123,7 @@ dependencies = [
 [[package]]
 name = "loro-internal"
 version = "0.16.2"
-source = "git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9#583a62db1795a84e7fb868ad6aeba03ea55240b9"
+source = "git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout#903914c43db050288b04211139ba743e69750804"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -1136,10 +1136,10 @@ dependencies = [
  "im",
  "itertools 0.12.1",
  "leb128",
- "loro-common 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9)",
- "loro-delta 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9)",
- "loro-rle 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9)",
- "loro_fractional_index 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9)",
+ "loro-common 0.16.2 (git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout)",
+ "loro-delta 0.16.2 (git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout)",
+ "loro-rle 0.16.2 (git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout)",
+ "loro_fractional_index 0.16.2 (git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout)",
  "md5",
  "num",
  "num-derive",
@@ -1175,7 +1175,7 @@ dependencies = [
 [[package]]
 name = "loro-rle"
 version = "0.16.2"
-source = "git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9#583a62db1795a84e7fb868ad6aeba03ea55240b9"
+source = "git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout#903914c43db050288b04211139ba743e69750804"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -1223,7 +1223,7 @@ dependencies = [
 [[package]]
 name = "loro_fractional_index"
 version = "0.16.2"
-source = "git+https://github.com/loro-dev/loro.git?rev=583a62db1795a84e7fb868ad6aeba03ea55240b9#583a62db1795a84e7fb868ad6aeba03ea55240b9"
+source = "git+https://github.com/loro-dev/loro.git?branch=fix-undo-with-checkout#903914c43db050288b04211139ba743e69750804"
 dependencies = [
  "imbl",
  "rand",
