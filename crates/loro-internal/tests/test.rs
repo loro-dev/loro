@@ -720,7 +720,7 @@ fn map_concurrent_checkout() {
 
 #[test]
 fn tree_checkout() {
-    let doc_a = LoroDoc::new();
+    let doc_a = LoroDoc::new_auto_commit();
     doc_a.subscribe_root(Arc::new(|_e| {}));
     doc_a.set_peer_id(1).unwrap();
     let tree = doc_a.get_tree("root");
