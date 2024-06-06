@@ -1,7 +1,8 @@
 use fractional_index::FractionalIndex;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{IdFull, TreeID};
+use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 
@@ -75,8 +76,8 @@ impl TreeExternalDiff {
 
 impl TreeDiff {
     pub(crate) fn compose(mut self, other: Self) -> Self {
-        // TODO: better compose
         self.diff.extend(other.diff);
+        self = compose_tree_diff(&self);
         self
     }
 
@@ -89,6 +90,9 @@ impl TreeDiff {
         if b.is_empty() || self.is_empty() {
             return;
         }
+
+        let _ = std::mem::replace(self, compose_tree_diff(self));
+        let b = compose_tree_diff(b);
 
         let b_update: FxHashMap<_, _> = b.diff.iter().map(|d| (d.target, &d.action)).collect();
         let mut self_update: FxHashMap<_, _> = self
@@ -331,5 +335,181 @@ impl Deref for TreeDiff {
 impl DerefMut for TreeDiff {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.diff
+    }
+}
+
+pub(crate) fn compose_tree_diff(diff: &TreeDiff) -> TreeDiff {
+    let mut f = Forest::default();
+    f.compose_diff(diff)
+}
+
+#[derive(Debug, Default)]
+struct Forest {
+    parent: FxHashMap<TreeID, TreeParentId>,
+    children: FxHashMap<TreeParentId, Vec<TreeID>>,
+    delete_others: FxHashSet<TreeID>,
+}
+
+impl Forest {
+    fn compose_diff(&mut self, diff: &TreeDiff) -> TreeDiff {
+        for TreeDiffItem { target, action } in diff.diff.iter().cloned() {
+            match action {
+                TreeExternalDiff::Create { parent, .. } => {
+                    let parent = TreeParentId::from(parent);
+                    self.parent.insert(target, parent);
+                    // we need not to modify the index of node
+                    self.children.entry(parent).or_default().push(target);
+                }
+                TreeExternalDiff::Move { parent, .. } => {
+                    let parent = TreeParentId::from(parent);
+                    self.children.entry(parent).or_default().push(target);
+                    let old_parent = self.parent.insert(target, parent);
+                    if let Some(parent) = old_parent {
+                        if let Some(v) = self.children.get_mut(&parent) {
+                            v.retain(|n| n != &target)
+                        }
+                    }
+                }
+                TreeExternalDiff::Delete { .. } => {
+                    let mut q = VecDeque::from_iter([target]);
+                    while let Some(node) = q.pop_front() {
+                        if let Some(children) = self.children.get(&TreeParentId::Node(node)) {
+                            for child in children.iter() {
+                                q.push_back(*child);
+                            }
+                        }
+                        let parent = self.parent.remove(&node);
+                        if let Some(parent) = parent {
+                            if let Some(v) = self.children.get_mut(&parent) {
+                                v.retain(|n| n != &node)
+                            }
+                        } else {
+                            self.delete_others.insert(target);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut ans = TreeDiff::default();
+        for diff in diff.diff.iter() {
+            let target = diff.target;
+            if matches!(diff.action, TreeExternalDiff::Delete { .. }) {
+                if self.delete_others.contains(&target) {
+                    ans.push(diff.clone());
+                }
+            } else {
+                let parent = match diff.action {
+                    TreeExternalDiff::Create { parent, .. } => parent,
+                    TreeExternalDiff::Move { parent, .. } => parent,
+                    _ => unreachable!(),
+                };
+                let parent = TreeParentId::from(parent);
+                if self.parent.get(&target) == Some(&parent) {
+                    ans.push(diff.clone());
+                }
+            }
+        }
+        ans
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use fractional_index::FractionalIndex;
+    use loro_common::TreeID;
+
+    use crate::state::TreeParentId;
+
+    use super::{compose_tree_diff, TreeDiff, TreeDiffItem};
+
+    #[test]
+    fn create_delete() {
+        let diff = TreeDiff {
+            diff: vec![
+                TreeDiffItem {
+                    target: TreeID {
+                        peer: 0,
+                        counter: 0,
+                    },
+                    action: super::TreeExternalDiff::Create {
+                        parent: None,
+                        index: 0,
+                        position: FractionalIndex::default(),
+                    },
+                },
+                TreeDiffItem {
+                    target: TreeID {
+                        peer: 0,
+                        counter: 0,
+                    },
+                    action: super::TreeExternalDiff::Delete {
+                        old_parent: TreeParentId::Root,
+                        old_index: 0,
+                    },
+                },
+            ],
+        };
+        let ans = compose_tree_diff(&diff);
+        assert!(ans.is_empty());
+    }
+
+    #[test]
+    fn delete_other() {
+        let diff = TreeDiff {
+            diff: vec![TreeDiffItem {
+                target: TreeID {
+                    peer: 0,
+                    counter: 2,
+                },
+                action: super::TreeExternalDiff::Delete {
+                    old_parent: TreeParentId::Root,
+                    old_index: 0,
+                },
+            }],
+        };
+        let ans = compose_tree_diff(&diff);
+        assert_eq!(ans.len(), 1);
+    }
+
+    #[test]
+    fn delete_parent() {
+        let target = TreeID {
+            peer: 0,
+            counter: 0,
+        };
+        let child = TreeID {
+            peer: 0,
+            counter: 1,
+        };
+        let diff = TreeDiff {
+            diff: vec![
+                TreeDiffItem {
+                    target,
+                    action: super::TreeExternalDiff::Create {
+                        parent: None,
+                        index: 0,
+                        position: FractionalIndex::default(),
+                    },
+                },
+                TreeDiffItem {
+                    target: child,
+                    action: super::TreeExternalDiff::Create {
+                        parent: Some(target),
+                        index: 0,
+                        position: FractionalIndex::default(),
+                    },
+                },
+                TreeDiffItem {
+                    target,
+                    action: super::TreeExternalDiff::Delete {
+                        old_parent: TreeParentId::Root,
+                        old_index: 0,
+                    },
+                },
+            ],
+        };
+        let ans = compose_tree_diff(&diff);
+        assert!(ans.is_empty());
     }
 }
