@@ -1186,6 +1186,20 @@ impl TextHandler {
         }
     }
 
+    /// Get the version id of the richtext
+    ///
+    /// This can be used to detect whether the richtext is changed
+    pub fn version_id(&self) -> usize {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unimplemented!("Detached text container does not have version id")
+            }
+            MaybeDetached::Attached(a) => {
+                a.with_state(|state| state.as_richtext_state_mut().unwrap().get_version_id())
+            }
+        }
+    }
+
     pub fn get_richtext_value(&self) -> LoroValue {
         match &self.inner {
             MaybeDetached::Detached(t) => {

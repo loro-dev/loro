@@ -735,7 +735,7 @@ pub(crate) fn undo(
                 let next = if i + 1 < spans.len() {
                     spans[i + 1].0.id_last().into()
                 } else {
-                    match last_frontiers_or_last_bi.clone() {
+                    match last_frontiers_or_last_bi {
                         Either::Left(last_frontiers) => last_frontiers.clone(),
                         Either::Right(right) => break 'block right,
                     }
