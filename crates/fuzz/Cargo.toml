@@ -18,7 +18,7 @@ loro-common = { git = "https://github.com/loro-dev/loro.git", features = [
 # loro-common = { path = "../loro-common", package = "loro-common", features = [
 #     "counter",
 # ] }
-# loro-without-counter = { git = "https://github.com/loro-dev/loro.git", rev = "eb6daf4f064238cbc5c3d357615f5ed73767e98c", package = "loro" }
+# loro-without-counter = { git = "https://github.com/loro-dev/loro.git", branch = "main", package = "loro" }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
 enum-as-inner = { workspace = true }

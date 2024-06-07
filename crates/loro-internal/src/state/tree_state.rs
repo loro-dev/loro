@@ -1126,7 +1126,10 @@ impl TreeNode {
             self.id.associated_meta_container().into(),
         );
         t.insert("index".to_string(), (self.index as i64).into());
-        t.insert("position".to_string(), self.position.to_string().into());
+        t.insert(
+            "fractional_index".to_string(),
+            self.position.to_string().into(),
+        );
         t.into()
     }
 }

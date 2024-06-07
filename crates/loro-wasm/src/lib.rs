@@ -3075,13 +3075,17 @@ impl LoroTree {
                 .unwrap_or(JsValue::undefined())
                 .into();
             let index = *v["index"].as_i64().unwrap() as u32;
-            let position = v["position"].as_string().unwrap();
+            let position = v["fractional_index"].as_string().unwrap();
             let map: LoroMap = self.get_node_by_id(&id).unwrap().data()?;
             let obj = Object::new();
             js_sys::Reflect::set(&obj, &"id".into(), &id)?;
             js_sys::Reflect::set(&obj, &"parent".into(), &parent)?;
             js_sys::Reflect::set(&obj, &"index".into(), &JsValue::from(index))?;
-            js_sys::Reflect::set(&obj, &"position".into(), &JsValue::from_str(position))?;
+            js_sys::Reflect::set(
+                &obj,
+                &"fractional_index".into(),
+                &JsValue::from_str(position),
+            )?;
             js_sys::Reflect::set(&obj, &"meta".into(), &map.into())?;
             ans.push(&obj);
         }
