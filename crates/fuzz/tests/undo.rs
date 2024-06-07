@@ -2,7 +2,7 @@ use fuzz::{
     actions::{ActionWrapper::*, GenericAction},
     crdt_fuzzer::{test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
 };
-use loro_common::ContainerType::*;
+use loro::ContainerType::*;
 
 #[ctor::ctor]
 fn init() {

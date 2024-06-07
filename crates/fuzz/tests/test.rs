@@ -6,7 +6,7 @@ use fuzz::{
         GenericAction,
     },
     container::{TreeAction, TreeActionInner},
-    crdt_fuzzer::{test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
+    crdt_fuzzer::{minify_error, test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
 };
 use loro::{ContainerType::*, LoroCounter, LoroDoc};
 
@@ -6675,5 +6675,155 @@ fn b_delete_parent_tree_undo() {
                 op_len: 291557249,
             },
         ],
+    )
+}
+
+#[test]
+fn unknown_undo_err() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 48,
+                target: 255,
+                container: 203,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 18446744073709551615,
+                    length: 1,
+                    prop: 506381209866536711,
+                }),
+            },
+            Handle {
+                site: 7,
+                target: 7,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: I32(117901063),
+                    bool: true,
+                    key: 2332033031,
+                    pos: 506381364485359499,
+                    length: 17268955636171736839,
+                    prop: 506381949047603367,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(117901063),
+                    bool: true,
+                    key: 4219143943,
+                    pos: 539160350683790203,
+                    length: 18446744073693102591,
+                    prop: 506381188273799167,
+                }),
+            },
+            Handle {
+                site: 39,
+                target: 39,
+                container: 39,
+                action: Generic(GenericAction {
+                    value: I32(656877351),
+                    bool: true,
+                    key: 79017397,
+                    pos: 18446744073558687743,
+                    length: 18446471394817474559,
+                    prop: 2821266740699193087,
+                }),
+            },
+            Handle {
+                site: 48,
+                target: 49,
+                container: 54,
+                action: Generic(GenericAction {
+                    value: I32(939524701),
+                    bool: false,
+                    key: 3419143984,
+                    pos: 18388267869089287115,
+                    length: 16492674416639,
+                    prop: 18446744073709551360,
+                }),
+            },
+            Handle {
+                site: 39,
+                target: 39,
+                container: 39,
+                action: Generic(GenericAction {
+                    value: I32(656877351),
+                    bool: true,
+                    key: 656877351,
+                    pos: 13053445094070757159,
+                    length: 2199017665973,
+                    prop: 576459871835127808,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 39,
+                target: 39,
+                container: 39,
+                action: Generic(GenericAction {
+                    value: I32(656877351),
+                    bool: true,
+                    key: 656877351,
+                    pos: 18385905728160868135,
+                    length: 9826112617566373121,
+                    prop: 506381211308916736,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 139,
+                container: 139,
+                action: Generic(GenericAction {
+                    value: I32(-1),
+                    bool: true,
+                    key: 2071690107,
+                    pos: 506378989234256763,
+                    length: 1978051601041159,
+                    prop: 18386797630442932992,
+                }),
+            },
+            SyncAll,
+            Undo {
+                site: 123,
+                op_len: 4278680443,
+            },
+            SyncAll,
+            Handle {
+                site: 39,
+                target: 39,
+                container: 39,
+                action: Generic(GenericAction {
+                    value: I32(35733558),
+                    bool: false,
+                    key: 939524701,
+                    pos: 14685055086132932610,
+                    length: 18446744070224098211,
+                    prop: 18446462598733823999,
+                }),
+            },
+            SyncAll,
+            Undo {
+                site: 123,
+                op_len: 4278680443,
+            },
+        ],
+    )
+}
+
+#[test]
+fn minify() {
+    minify_error(
+        5,
+        |n, actions| test_multi_sites(n, vec![FuzzTarget::All], actions),
+        |n, actions| actions.to_vec(),
+        vec![],
     )
 }

@@ -306,7 +306,7 @@ impl Loro {
     /// If enabled, the Unix timestamp will be recorded for each change automatically.
     ///
     /// You can also set each timestamp manually when you commit a change.
-    /// The timstamp manually set will override the automatic one.
+    /// The timestamp manually set will override the automatic one.
     ///
     /// NOTE: Timestamps are forced to be in ascending order.
     /// If you commit a new change with a timestamp that is less than the existing one,
@@ -739,6 +739,9 @@ impl Loro {
                     doc: Some(self.0.clone()),
                 }
                 .into()
+            }
+            ContainerType::Counter => {
+                unimplemented!()
             }
             ContainerType::Unknown(_) => {
                 return Err(JsValue::from_str(
@@ -1574,7 +1577,7 @@ impl LoroText {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -1929,7 +1932,7 @@ impl LoroMap {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -2215,7 +2218,7 @@ impl LoroList {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -2540,7 +2543,7 @@ impl LoroMovableList {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -3171,7 +3174,7 @@ impl LoroTree {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -3250,7 +3253,7 @@ impl Cursor {
 
     /// Get the ID that represents the position.
     ///
-    /// It can be undefined if it's not binded into a specific ID.
+    /// It can be undefined if it's not bind into a specific ID.
     pub fn pos(&self) -> Option<JsID> {
         match self.pos.id {
             Some(id) => {

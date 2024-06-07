@@ -270,19 +270,14 @@ impl Stack {
 
     pub fn push_with_merge(&mut self, span: CounterSpan, meta: UndoItemMeta, can_merge: bool) {
         let last = self.stack.back_mut().unwrap();
-        let mut last_remote_diff = last.1.try_lock().unwrap();
+        let last_remote_diff = last.1.try_lock().unwrap();
         if !last_remote_diff.0.is_empty() {
             // If the remote diff is not empty, we cannot merge
-            if last.0.is_empty() {
-                last.0.push_back(StackItem { span, meta });
-                last_remote_diff.clear();
-            } else {
-                drop(last_remote_diff);
-                let mut v = VecDeque::new();
-                v.push_back(StackItem { span, meta });
-                self.stack
-                    .push_back((v, Arc::new(Mutex::new(DiffBatch::default()))));
-            }
+            drop(last_remote_diff);
+            let mut v = VecDeque::new();
+            v.push_back(StackItem { span, meta });
+            self.stack
+                .push_back((v, Arc::new(Mutex::new(DiffBatch::default()))));
 
             self.size += 1;
         } else {
@@ -549,7 +544,7 @@ impl UndoManager {
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
                 let remote_change_clone = remote_diff.try_lock().unwrap().clone();
                 trace_span!("Perform Undo/Redo").in_scope(|| {
-                    trace!("NEW Remote change {:?}", &remote_change_clone);
+                    trace!("Transform based remote change {:?}", &remote_change_clone);
                     let commit = doc.undo_internal(
                         IdSpan {
                             peer: self.peer,

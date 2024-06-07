@@ -321,7 +321,6 @@ pub(crate) fn handler_to_js_value(handler: Handler, doc: Option<Arc<LoroDoc>>) -
         Handler::List(l) => LoroList { handler: l, doc }.into(),
         Handler::Tree(t) => LoroTree { handler: t, doc }.into(),
         Handler::MovableList(m) => LoroMovableList { handler: m, doc }.into(),
-        #[cfg(feature = "counter")]
         Handler::Counter(c) => unimplemented!(),
         Handler::Unknown(_) => unreachable!(),
     }
