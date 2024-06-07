@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.4-alpha.0
+
+### Patch Changes
+
+- Export/import JSON schema
+- Updated dependencies
+  - loro-wasm@0.16.4
+
 ## 0.16.3
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.4-alpha.0
+
+### Patch Changes
+
+- Export/import JSON schema
+
 ## 0.16.3
 
 ### Patch Changes
