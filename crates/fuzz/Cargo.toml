@@ -10,13 +10,15 @@ publish = false
 loro-without-counter = { path = "../loro", package = "loro" }
 loro = { git = "https://github.com/loro-dev/loro.git", features = [
     "counter",
-], rev = "cd04b27d65128420f6daaf792be9ef511483de99" }
+], rev = "83938290ab2666d85c0c72169127611585a05cf9" }
 loro-common = { git = "https://github.com/loro-dev/loro.git", features = [
     "counter",
-], rev = "cd04b27d65128420f6daaf792be9ef511483de99" }
+], rev = "83938290ab2666d85c0c72169127611585a05cf9" }
 # loro = { path = "../loro", package = "loro", features = ["counter"] }
-# loro-common = { path = "../loro-common", features = ["counter"] }
-# loro-without-counter = { git = "https://github.com/loro-dev/loro.git", branch = "zxch3n/loro-560-undoredo", package = "loro" }
+# loro-common = { path = "../loro-common", package = "loro-common", features = [
+#     "counter",
+# ] }
+# loro-without-counter = { git = "https://github.com/loro-dev/loro.git", rev = "eb6daf4f064238cbc5c3d357615f5ed73767e98c", package = "loro" }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
 enum-as-inner = { workspace = true }
@@ -33,3 +35,4 @@ dev-utils = { path = "../dev-utils" }
 tracing-subscriber = "0.3.18"
 tracing-chrome = "0.7.1"
 color-backtrace = "0.6.1"
+serde_json = "1"

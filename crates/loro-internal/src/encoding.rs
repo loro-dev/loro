@@ -1,5 +1,6 @@
 mod arena;
 mod encode_reordered;
+pub(crate) mod json_schema;
 mod value;
 pub(crate) use value::OwnedValue;
 

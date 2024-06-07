@@ -126,9 +126,9 @@ impl TreeDiffCalculator {
         tracing::info!("forward ops {:?}", forward_ops);
         for (lamport, op) in forward_ops {
             let op = MoveLamportAndID {
-                target: op.value.target,
+                target: op.value.target(),
                 parent: op.value.parent_id(),
-                position: op.value.position.clone(),
+                position: op.value.fractional_index(),
                 id: op.id_start(),
                 lamport,
                 effected: false,
@@ -239,9 +239,9 @@ impl TreeDiffCalculator {
                     && to.includes_id(op.id_start())
                 {
                     let op = MoveLamportAndID {
-                        target: op.value.target,
+                        target: op.value.target(),
                         parent: op.value.parent_id(),
-                        position: op.value.position.clone(),
+                        position: op.value.fractional_index(),
                         id: op.id_start(),
                         lamport: *lamport,
                         effected: false,

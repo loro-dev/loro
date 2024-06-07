@@ -180,32 +180,20 @@ pub enum FutureValue<'a> {
     // The future value cannot depend on the arena for encoding.
     Unknown {
         kind: u8,
-        prop: i32,
         data: &'a [u8],
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum OwnedFutureValue {
-    #[cfg(feature = "counter")]
-    Counter,
-    // The future value cannot depend on the arena for encoding.
-    Unknown {
-        kind: u8,
-        prop: i32,
-        data: Vec<u8>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "value_type", content = "value", rename_all = "snake_case")]
 pub enum OwnedValue {
     Null,
     True,
     False,
     I64(i64),
     F64(f64),
-    Str(String),
-    Binary(Vec<u8>),
+    Str(Arc<String>),
+    Binary(Arc<Vec<u8>>),
     ContainerIdx(usize),
     DeleteOnce,
     DeleteSeq,
@@ -223,7 +211,20 @@ pub enum OwnedValue {
         lamport: Lamport,
         value: LoroValue,
     },
+    #[serde(untagged)]
     Future(OwnedFutureValue),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "value_type", content = "value")]
+pub enum OwnedFutureValue {
+    #[cfg(feature = "counter")]
+    Counter,
+    // The future value cannot depend on the arena for encoding.
+    Unknown {
+        kind: u8,
+        data: Arc<Vec<u8>>,
+    },
 }
 
 impl<'a> Value<'a> {
@@ -264,13 +265,10 @@ impl<'a> Value<'a> {
             OwnedValue::Future(value) => match value {
                 #[cfg(feature = "counter")]
                 OwnedFutureValue::Counter => Value::Future(FutureValue::Counter),
-                OwnedFutureValue::Unknown { kind, prop, data } => {
-                    Value::Future(FutureValue::Unknown {
-                        kind: *kind,
-                        prop: *prop,
-                        data: data.as_slice(),
-                    })
-                }
+                OwnedFutureValue::Unknown { kind, data } => Value::Future(FutureValue::Unknown {
+                    kind: *kind,
+                    data: data.as_slice(),
+                }),
             },
         }
     }
@@ -284,12 +282,12 @@ impl<'a> Value<'a> {
             Value::I64(x) => OwnedValue::I64(x),
             Value::ContainerIdx(x) => OwnedValue::ContainerIdx(x),
             Value::F64(x) => OwnedValue::F64(x),
-            Value::Str(x) => OwnedValue::Str(x.to_owned()),
+            Value::Str(x) => OwnedValue::Str(Arc::new(x.to_owned())),
             Value::DeleteSeq => OwnedValue::DeleteSeq,
             Value::DeltaInt(x) => OwnedValue::DeltaInt(x),
             Value::LoroValue(x) => OwnedValue::LoroValue(x),
             Value::MarkStart(x) => OwnedValue::MarkStart(x),
-            Value::Binary(x) => OwnedValue::Binary(x.to_owned()),
+            Value::Binary(x) => OwnedValue::Binary(Arc::new(x.to_owned())),
             Value::TreeMove(x) => OwnedValue::TreeMove(x),
             Value::ListMove {
                 from,
@@ -312,11 +310,10 @@ impl<'a> Value<'a> {
             Value::Future(value) => match value {
                 #[cfg(feature = "counter")]
                 FutureValue::Counter => OwnedValue::Future(OwnedFutureValue::Counter),
-                FutureValue::Unknown { kind, prop, data } => {
+                FutureValue::Unknown { kind, data } => {
                     OwnedValue::Future(OwnedFutureValue::Unknown {
                         kind,
-                        prop,
-                        data: data.to_owned(),
+                        data: Arc::new(data.to_owned()),
                     })
                 }
             },
@@ -326,17 +323,12 @@ impl<'a> Value<'a> {
     fn decode_without_arena<'r: 'a>(
         future_kind: FutureValueKind,
         value_reader: &'r mut ValueReader,
-        prop: i32,
     ) -> LoroResult<Self> {
-        let bytes_length = value_reader.read_usize()?;
+        let bytes = value_reader.read_binary()?;
         let value = match future_kind {
             #[cfg(feature = "counter")]
             FutureValueKind::Counter => FutureValue::Counter,
-            FutureValueKind::Unknown(kind) => FutureValue::Unknown {
-                kind,
-                prop,
-                data: value_reader.take_bytes(bytes_length),
-            },
+            FutureValueKind::Unknown(kind) => FutureValue::Unknown { kind, data: bytes },
         };
         Ok(Value::Future(value))
     }
@@ -346,7 +338,6 @@ impl<'a> Value<'a> {
         value_reader: &'r mut ValueReader,
         arenas: &'a DecodedArenas<'a>,
         id: ID,
-        prop: i32,
     ) -> LoroResult<Self> {
         Ok(match kind {
             ValueKind::Null => Value::Null,
@@ -388,7 +379,7 @@ impl<'a> Value<'a> {
                 }
             }
             ValueKind::Future(future_kind) => {
-                Self::decode_without_arena(future_kind, value_reader, prop)?
+                Self::decode_without_arena(future_kind, value_reader)?
             }
         })
     }
@@ -397,18 +388,18 @@ impl<'a> Value<'a> {
         value: FutureValue,
         value_writer: &mut ValueWriter,
     ) -> (FutureValueKind, usize) {
+        // Note: we should encode FutureValue as binary data.
+        // [binary data length, binary data]
+        // when decoding, we will use reader.read_binary() to read the binary data.
+        // So such as FutureValue::Counter, we should write 0 as the length of binary data first.
         match value {
             #[cfg(feature = "counter")]
             FutureValue::Counter => {
                 // write bytes length
                 value_writer.write_u8(0);
-                (FutureValueKind::Counter, 0)
+                (FutureValueKind::Counter, 1)
             }
-            FutureValue::Unknown {
-                kind,
-                prop: _,
-                data,
-            } => (
+            FutureValue::Unknown { kind, data } => (
                 FutureValueKind::Unknown(kind),
                 value_writer.write_binary(data),
             ),
@@ -476,7 +467,7 @@ pub struct MarkStart {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EncodedTreeMove {
-    pub subject_idx: usize,
+    pub target_idx: usize,
     pub is_parent_null: bool,
     pub parent_idx: usize,
     pub position: usize,
@@ -488,6 +479,7 @@ impl EncodedTreeMove {
         peer_ids: &[u64],
         positions: &[Vec<u8>],
         tree_ids: &[EncodedTreeID],
+        op_id: ID,
     ) -> LoroResult<TreeOp> {
         let parent = if self.is_parent_null {
             None
@@ -500,55 +492,91 @@ impl EncodedTreeMove {
                 counter as Counter,
             ))
         };
-        let position = if parent.is_some_and(|x| TreeID::is_deleted_root(&x)) {
+        let is_delete = parent.is_some_and(|p| TreeID::is_deleted_root(&p));
+        let position = if is_delete {
             None
         } else {
             let bytes = &positions[self.position];
             Some(FractionalIndex::from_bytes(bytes.clone()))
         };
-        let EncodedTreeID { peer_idx, counter } = tree_ids[self.subject_idx];
-        Ok(TreeOp {
-            target: TreeID::new(
-                *(peer_ids
-                    .get(peer_idx)
-                    .ok_or(LoroError::DecodeDataCorruptionError)?),
-                counter as Counter,
-            ),
-            parent,
-            position,
-        })
+        let EncodedTreeID { peer_idx, counter } = tree_ids[self.target_idx];
+        let target = TreeID::new(
+            *(peer_ids
+                .get(peer_idx)
+                .ok_or(LoroError::DecodeDataCorruptionError)?),
+            counter as Counter,
+        );
+
+        let is_create = target.id() == op_id;
+        let op = if is_delete {
+            TreeOp::Delete { target }
+        } else if is_create {
+            TreeOp::Create {
+                target,
+                parent,
+                position: position.unwrap(),
+            }
+        } else {
+            TreeOp::Move {
+                target,
+                parent,
+                position: position.unwrap(),
+            }
+        };
+        Ok(op)
     }
 
     pub fn from_tree_op<'p, 'a: 'p>(op: &'a TreeOp, registers: &mut EncodedRegisters) -> Self {
-        let position = if let Some(position) = &op.position {
-            let bytes = position.as_bytes();
-            let either::Right(position_register) = &mut registers.position else {
-                unreachable!()
-            };
-            position_register.get(&bytes).unwrap()
-        } else {
-            debug_assert!(op.parent.is_some_and(|x| TreeID::is_deleted_root(&x)));
-            // placeholder
-            0
-        };
+        match op {
+            TreeOp::Create {
+                target,
+                parent,
+                position,
+            }
+            | TreeOp::Move {
+                target,
+                parent,
+                position,
+            } => {
+                let bytes = position.as_bytes();
+                let either::Right(position_register) = &mut registers.position else {
+                    unreachable!()
+                };
+                let position = position_register.get(&bytes).unwrap();
+                let target_idx = registers.tree_id.register(&EncodedTreeID {
+                    peer_idx: registers.peer.register(&target.peer),
+                    counter: target.counter,
+                });
 
-        let target_idx = registers.tree_id.register(&EncodedTreeID {
-            peer_idx: registers.peer.register(&op.target.peer),
-            counter: op.target.counter,
-        });
-
-        let parent_idx = op.parent.map(|x| {
-            registers.tree_id.register(&EncodedTreeID {
-                peer_idx: registers.peer.register(&x.peer),
-                counter: x.counter,
-            })
-        });
-
-        EncodedTreeMove {
-            subject_idx: target_idx,
-            is_parent_null: op.parent.is_none(),
-            parent_idx: parent_idx.unwrap_or(0),
-            position,
+                let parent_idx = parent.map(|x| {
+                    registers.tree_id.register(&EncodedTreeID {
+                        peer_idx: registers.peer.register(&x.peer),
+                        counter: x.counter,
+                    })
+                });
+                EncodedTreeMove {
+                    target_idx,
+                    is_parent_null: parent.is_none(),
+                    parent_idx: parent_idx.unwrap_or(0),
+                    position,
+                }
+            }
+            TreeOp::Delete { target } => {
+                let target_idx = registers.tree_id.register(&EncodedTreeID {
+                    peer_idx: registers.peer.register(&target.peer),
+                    counter: target.counter,
+                });
+                let parent_idx = registers.tree_id.register(&EncodedTreeID {
+                    peer_idx: registers.peer.register(&TreeID::delete_root().peer),
+                    counter: TreeID::delete_root().counter,
+                });
+                EncodedTreeMove {
+                    target_idx,
+                    is_parent_null: false,
+                    parent_idx,
+                    position: 0,
+                }
+            }
         }
     }
 }
@@ -900,12 +928,6 @@ impl<'a> ValueReader<'a> {
         })
     }
 
-    pub fn take_bytes(&mut self, len: usize) -> &'a [u8] {
-        let ans = &self.raw[..len];
-        self.raw = &self.raw[len..];
-        ans
-    }
-
     pub fn read_tree_move(&mut self) -> LoroResult<EncodedTreeMove> {
         let subject_idx = self.read_usize()?;
         let is_parent_null = self.read_u8()? != 0;
@@ -915,7 +937,7 @@ impl<'a> ValueReader<'a> {
             parent_idx = self.read_usize()?;
         }
         Ok(EncodedTreeMove {
-            subject_idx,
+            target_idx: subject_idx,
             is_parent_null,
             parent_idx,
             position,
@@ -1039,7 +1061,7 @@ impl ValueWriter {
 
     fn write_tree_move(&mut self, op: &EncodedTreeMove) -> usize {
         let len = self.buffer.len();
-        self.write_usize(op.subject_idx);
+        self.write_usize(op.target_idx);
         self.write_u8(op.is_parent_null as u8);
         self.write_usize(op.position);
         if op.is_parent_null {

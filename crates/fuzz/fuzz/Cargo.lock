@@ -207,27 +207,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
-name = "fractional_index"
-version = "0.1.0"
-dependencies = [
- "imbl",
- "rand",
- "serde",
- "smallvec",
-]
-
-[[package]]
-name = "fractional_index"
-version = "0.1.0"
-source = "git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125#0dade6bc0fb574a8190db2aa80c83a479f62e125"
-dependencies = [
- "imbl",
- "rand",
- "serde",
- "smallvec",
-]
-
-[[package]]
 name = "fuzz"
 version = "0.1.0"
 dependencies = [
@@ -236,9 +215,9 @@ dependencies = [
  "enum_dispatch",
  "fxhash",
  "itertools 0.12.1",
- "loro 0.5.1",
- "loro 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125)",
- "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125)",
+ "loro 0.16.2",
+ "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9)",
+ "loro-common 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9)",
  "rand",
  "tabled",
  "tracing",
@@ -444,37 +423,37 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "0.5.1"
+version = "0.16.2"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
  "generic-btree",
- "loro-delta 0.5.1",
- "loro-internal 0.5.1",
+ "loro-delta 0.16.2",
+ "loro-internal 0.16.2",
  "tracing",
 ]
 
 [[package]]
 name = "loro"
-version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125#0dade6bc0fb574a8190db2aa80c83a479f62e125"
+version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9#83938290ab2666d85c0c72169127611585a05cf9"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
  "generic-btree",
- "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125)",
- "loro-internal 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125)",
+ "loro-delta 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9)",
+ "loro-internal 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9)",
  "tracing",
 ]
 
 [[package]]
 name = "loro-common"
-version = "0.5.1"
+version = "0.16.2"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
  "fxhash",
- "loro-rle 0.5.1",
+ "loro-rle 0.16.2",
  "nonmax",
  "serde",
  "serde_columnar",
@@ -484,13 +463,13 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125#0dade6bc0fb574a8190db2aa80c83a479f62e125"
+version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9#83938290ab2666d85c0c72169127611585a05cf9"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
  "fxhash",
- "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125)",
+ "loro-rle 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9)",
  "nonmax",
  "serde",
  "serde_columnar",
@@ -500,7 +479,7 @@ dependencies = [
 
 [[package]]
 name = "loro-delta"
-version = "0.5.1"
+version = "0.16.2"
 dependencies = [
  "arrayvec",
  "enum-as-inner 0.5.1",
@@ -511,8 +490,8 @@ dependencies = [
 
 [[package]]
 name = "loro-delta"
-version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125#0dade6bc0fb574a8190db2aa80c83a479f62e125"
+version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9#83938290ab2666d85c0c72169127611585a05cf9"
 dependencies = [
  "arrayvec",
  "enum-as-inner 0.5.1",
@@ -523,23 +502,23 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "0.5.1"
+version = "0.16.2"
 dependencies = [
  "append-only-bytes",
  "arref",
  "either",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
- "fractional_index 0.1.0",
  "fxhash",
  "generic-btree",
  "getrandom",
  "im",
  "itertools 0.12.1",
  "leb128",
- "loro-common 0.5.1",
- "loro-delta 0.5.1",
- "loro-rle 0.5.1",
+ "loro-common 0.16.2",
+ "loro-delta 0.16.2",
+ "loro-rle 0.16.2",
+ "loro_fractional_index 0.16.2",
  "md5",
  "num",
  "num-derive",
@@ -557,24 +536,24 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125#0dade6bc0fb574a8190db2aa80c83a479f62e125"
+version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9#83938290ab2666d85c0c72169127611585a05cf9"
 dependencies = [
  "append-only-bytes",
  "arref",
  "either",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
- "fractional_index 0.1.0 (git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125)",
  "fxhash",
  "generic-btree",
  "getrandom",
  "im",
  "itertools 0.12.1",
  "leb128",
- "loro-common 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125)",
- "loro-delta 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125)",
- "loro-rle 0.5.1 (git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125)",
+ "loro-common 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9)",
+ "loro-delta 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9)",
+ "loro-rle 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9)",
+ "loro_fractional_index 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9)",
  "md5",
  "num",
  "num-derive",
@@ -592,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "loro-rle"
-version = "0.5.1"
+version = "0.16.2"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -604,8 +583,8 @@ dependencies = [
 
 [[package]]
 name = "loro-rle"
-version = "0.5.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=0dade6bc0fb574a8190db2aa80c83a479f62e125#0dade6bc0fb574a8190db2aa80c83a479f62e125"
+version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9#83938290ab2666d85c0c72169127611585a05cf9"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -620,6 +599,27 @@ name = "loro-thunderdome"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
+
+[[package]]
+name = "loro_fractional_index"
+version = "0.16.2"
+dependencies = [
+ "imbl",
+ "rand",
+ "serde",
+ "smallvec",
+]
+
+[[package]]
+name = "loro_fractional_index"
+version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?rev=83938290ab2666d85c0c72169127611585a05cf9#83938290ab2666d85c0c72169127611585a05cf9"
+dependencies = [
+ "imbl",
+ "rand",
+ "serde",
+ "smallvec",
+]
 
 [[package]]
 name = "md5"

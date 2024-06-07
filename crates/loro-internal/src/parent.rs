@@ -8,11 +8,7 @@ use loro_common::LoroValue;
 
 use crate::{
     change::Change,
-    container::{
-        list::list_op::{ListOp},
-        map::MapSet,
-        tree::tree_op::TreeOp,
-    },
+    container::{list::list_op::ListOp, map::MapSet},
     op::{ListSlice, RawOp, RawOpContent},
     DocState, OpLog,
 };
@@ -71,7 +67,8 @@ impl DocState {
                     self.arena.set_parent(idx, Some(container));
                 }
             }
-            RawOpContent::Tree(TreeOp { target, .. }) => {
+            RawOpContent::Tree(tree) => {
+                let target = tree.target();
                 // create associated metadata container
                 // TODO: maybe we could create map container only when setting metadata
                 let container_id = target.associated_meta_container();
