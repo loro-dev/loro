@@ -1108,16 +1108,16 @@ impl Handler {
                         } => {
                             // For undo, maybe the parent has been deleted, we should apply the diff but not emit the event
                             let without_event = parent.is_some_and(|p| !x.contains(p));
-                            x.create_at_with_target(parent, index, target, !without_event)?;
+                            x.create_at_with_target(parent, index, target, true)?;
                         }
                         TreeExternalDiff::Delete { .. } => x.delete(target)?,
                         TreeExternalDiff::Move { parent, index, .. } => {
                             // For undo, maybe the parent has been deleted, we should apply the diff but not emit the event
                             let without_event = parent.is_some_and(|p| !x.contains(p));
                             if !x.contains(target) {
-                                x.create_at_with_target(parent, index, target, !without_event)?;
+                                x.create_at_with_target(parent, index, target, true)?;
                             } else {
-                                x.move_to_inner(target, parent, index, !without_event)?
+                                x.move_to_inner(target, parent, index, true)?
                             }
                         }
                     }

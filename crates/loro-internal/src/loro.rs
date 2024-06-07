@@ -767,6 +767,8 @@ impl LoroDoc {
             before_diff,
         );
 
+        println!("\nundo diff {:?}", diff);
+
         self.checkout_without_emitting(&latest_frontiers)?;
         self.detached.store(false, Release);
         if was_recording {

@@ -200,6 +200,7 @@ struct Forest {
 
 impl Forest {
     fn transform_diff(&mut self, left: TreeDiff, right: TreeDiff) -> TreeDiff {
+        println!("\n\n####left {:?}\nright {:?}", left, right);
         // apply right first
         self.apply_diff(right);
 
@@ -409,4 +410,10 @@ impl Forest {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_diff_index_tree_undo() {}
 }
