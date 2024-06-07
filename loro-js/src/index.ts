@@ -531,11 +531,30 @@ declare module "loro-wasm" {
     T extends Record<string, unknown> = Record<string, unknown>,
   > {
     new (): LoroTree<T>;
-    createNode(parent: TreeID | undefined): LoroTreeNode<T>;
-    move(target: TreeID, parent: TreeID | undefined): void;
+    /**
+     * Create a new tree node as the child of parent and return a `LoroTreeNode` instance.
+     * If the parent is undefined, the tree node will be a root node.
+     *
+     * If the index is not provided, the new node will be appended to the end.
+     *
+     * @example
+     * ```ts
+     * import { Loro } from "loro-crdt";
+     *
+     * const doc = new Loro();
+     * const tree = doc.getTree("tree");
+     * const root = tree.createNode();
+
+     * ```
+     */
+    createNode(parent?: TreeID): LoroTreeNode<T>;
+    move(target: TreeID, parent?: TreeID): void;
     delete(target: TreeID): void;
     has(target: TreeID): boolean;
-    getNodeByID(target: TreeID): LoroTreeNode;
+    /**
+     * Get LoroTreeNode by the TreeID.
+     */
+    getNodeByID(target: TreeID): LoroTreeNode<T>;
     subscribe(listener: Listener): number;
   }
 
@@ -546,10 +565,31 @@ declare module "loro-wasm" {
      * Get the associated metadata map container of a tree node.
      */
     readonly data: LoroMap<T>;
+    /** 
+     * Create a new node as the child of the current node and
+     * return an instance of `LoroTreeNode`.
+     *
+     * If the index is not provided, the new node will be appended to the end.
+     *
+     * @example
+     * ```typescript
+     * import { Loro } from "loro-crdt";
+     *
+     * let doc = new Loro();
+     * let tree = doc.getTree("tree");
+     * let root = tree.createNode();
+     * ```
+     */ 
     createNode(): LoroTreeNode<T>;
     setAsRoot(): void;
     moveTo(parent: LoroTreeNode<T>): void;
     parent(): LoroTreeNode<T> | undefined;
+    /**
+     * Get the children of this node.
+     *
+     * The objects returned are new js objects each time because they need to cross
+     * the WASM boundary.
+     */
     children(): Array<LoroTreeNode<T>>;
   }
 

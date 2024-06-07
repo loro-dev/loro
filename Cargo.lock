@@ -581,9 +581,10 @@ dependencies = [
  "enum-as-inner 0.5.1",
  "enum_dispatch",
  "fxhash",
+ "itertools 0.12.1",
  "loro",
- "loro-internal",
  "rand",
+ "serde_json",
  "tabled 0.10.0",
  "tracing",
  "tracing-subscriber",
@@ -790,6 +791,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -935,7 +945,7 @@ dependencies = [
  "proptest-derive",
  "rand",
  "serde",
- "serde-wasm-bindgen",
+ "serde-wasm-bindgen 0.5.0",
  "serde_columnar",
  "serde_json",
  "smallvec",
@@ -980,10 +990,11 @@ dependencies = [
  "loro-internal",
  "loro-rle",
  "serde",
- "serde-wasm-bindgen",
+ "serde-wasm-bindgen 0.6.5",
  "tracing",
  "tracing-wasm",
  "wasm-bindgen",
+ "wasm-bindgen-derive",
 ]
 
 [[package]]
@@ -1600,6 +1611,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "serde_columnar"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2074,6 +2096,28 @@ dependencies = [
  "quote 1.0.35",
  "syn 2.0.48",
  "wasm-bindgen-shared",
+]
+
+[[package]]
+name = "wasm-bindgen-derive"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1ab6c8bffb3f89584781211283fb57337d6902faab6eaee38f336977bdf177d"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-derive-macro",
+]
+
+[[package]]
+name = "wasm-bindgen-derive-macro"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b87c28b31d27616bc69a891700ef0445d2cbaa0340fdacb145145256d5f5fcbb"
+dependencies = [
+ "proc-macro2 1.0.75",
+ "quote 1.0.35",
+ "syn 1.0.107",
 ]
 
 [[package]]

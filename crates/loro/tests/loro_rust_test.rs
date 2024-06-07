@@ -356,7 +356,6 @@ fn map() -> LoroResult<()> {
 }
 
 #[test]
-#[cfg(feature = "test_utils")]
 fn tree() {
     use loro::{LoroDoc, ToJson};
 

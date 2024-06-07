@@ -66,9 +66,10 @@ impl<'a> RawOpContent<'a> {
                     to: *to,
                     elem_id: *from_id,
                 }),
-                ListOp::Set { elem_id, value } => {
-                    RawOpContent::List(ListOp::Set { elem_id: *elem_id, value: value.clone() })
-                }
+                ListOp::Set { elem_id, value } => RawOpContent::List(ListOp::Set {
+                    elem_id: *elem_id,
+                    value: value.clone(),
+                }),
             },
             Self::Tree(arg0) => RawOpContent::Tree(*arg0),
         }
@@ -81,16 +82,6 @@ impl<'a> HasLength for RawOpContent<'a> {
             RawOpContent::Map(x) => x.content_len(),
             RawOpContent::List(x) => x.content_len(),
             RawOpContent::Tree(x) => x.content_len(),
-        }
-    }
-}
-
-impl<'a> Sliceable for RawOpContent<'a> {
-    fn slice(&self, from: usize, to: usize) -> Self {
-        match self {
-            RawOpContent::Map(x) => RawOpContent::Map(x.slice(from, to)),
-            RawOpContent::List(x) => RawOpContent::List(x.slice(from, to)),
-            RawOpContent::Tree(x) => RawOpContent::Tree(x.slice(from, to)),
         }
     }
 }

@@ -3037,10 +3037,7 @@ impl TreeHandler {
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
             inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp {
-                target,
-                parent: Some(TreeID::delete_root()),
-            }),
+            crate::op::RawOpContent::Tree(TreeOp::Delete { target }),
             EventHint::Tree(TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Delete,
@@ -3073,7 +3070,7 @@ impl TreeHandler {
         };
         txn.apply_local_op(
             inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp {
+            crate::op::RawOpContent::Tree(TreeOp::Create {
                 target: tree_id,
                 parent,
             }),
@@ -3104,7 +3101,7 @@ impl TreeHandler {
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
             inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp { target, parent }),
+            crate::op::RawOpContent::Tree(TreeOp::Move { target, parent }),
             EventHint::Tree(TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Move(parent),

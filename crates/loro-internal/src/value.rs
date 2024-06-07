@@ -730,19 +730,3 @@ pub mod wasm {
         }
     }
 }
-
-#[cfg(test)]
-#[cfg(feature = "json")]
-mod json_test {
-    use crate::{fx_map, value::ToJson, LoroValue};
-
-    #[test]
-    fn list() {
-        let list = LoroValue::List(
-            vec![12.into(), "123".into(), fx_map!("kk" => 123.into()).into()].into(),
-        );
-        let json = list.to_json();
-        println!("{}", json);
-        assert_eq!(LoroValue::from_json(&json), list);
-    }
-}

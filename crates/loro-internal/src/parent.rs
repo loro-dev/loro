@@ -11,7 +11,6 @@ use crate::{
     container::{
         list::list_op::{self, ListOp},
         map::MapSet,
-        tree::tree_op::TreeOp,
     },
     op::{ListSlice, RawOp, RawOpContent},
     DocState, OpLog,
@@ -55,7 +54,7 @@ impl OpLog {
                     }
                 }
                 crate::op::InnerContent::Tree(t) => {
-                    let id = t.target.associated_meta_container();
+                    let id = t.target().associated_meta_container();
                     let idx = arena.register_container(&id);
                     arena.set_parent(idx, Some(op.container));
                 }
@@ -102,7 +101,8 @@ impl DocState {
                     self.arena.set_parent(idx, Some(container));
                 }
             }
-            RawOpContent::Tree(TreeOp { target, .. }) => {
+            RawOpContent::Tree(tree) => {
+                let target = tree.target();
                 // create associated metadata container
                 // TODO: maybe we could create map container only when setting metadata
                 let container_id = target.associated_meta_container();

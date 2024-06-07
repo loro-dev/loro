@@ -28,9 +28,11 @@ use crate::{
 
 use self::{
     arena::{decode_arena, encode_arena, ContainerArena, DecodedArenas, PeerIdArena},
-    encode::{encode_changes, encode_ops, init_encode, TempOp, ValueRegister},
+    encode::{encode_changes, encode_ops, init_encode, TempOp},
     value::ValueReader,
 };
+
+pub(super) use self::encode::ValueRegister;
 
 use super::{parse_header_and_body, ImportBlobMetadata};
 
@@ -226,7 +228,7 @@ pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
     })
 }
 
-fn import_changes_to_oplog(
+pub(super) fn import_changes_to_oplog(
     changes: Vec<Change>,
     oplog: &mut OpLog,
 ) -> Result<(Vec<ID>, Vec<Change>), LoroError> {
@@ -567,12 +569,6 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
     serde_columnar::to_vec(&doc).unwrap()
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Eq, PartialOrd, Ord)]
-struct IdWithLamport {
-    peer: PeerID,
-    lamport: Lamport,
-}
-
 #[derive(Clone, Copy, PartialEq, Debug, Eq)]
 struct PosMappingItem {
     start_id: ID,
@@ -852,7 +848,7 @@ fn decode_snapshot_states(
     Ok(())
 }
 
-mod encode {
+pub(super) mod encode {
     use fxhash::FxHashMap;
     use loro_common::{ContainerID, ContainerType, HasId, PeerID, ID};
     use num_traits::ToPrimitive;
@@ -1035,13 +1031,13 @@ mod encode {
     }
 
     use crate::{OpLog, VersionVector};
-    pub(super) use value_register::ValueRegister;
+    pub(crate) use value_register::ValueRegister;
 
     use super::{
         value::{MarkStart, Value, ValueKind},
         EncodedChange, EncodedDeleteStartId, EncodedOp,
     };
-    mod value_register {
+    pub(super) mod value_register {
         use fxhash::FxHashMap;
 
         pub struct ValueRegister<T> {
@@ -1383,7 +1379,7 @@ fn decode_op(
         ContainerType::Tree => match kind {
             ValueKind::TreeMove => {
                 let op = value_reader.read_tree_move()?;
-                crate::op::InnerContent::Tree(op.as_tree_op(peers)?)
+                crate::op::InnerContent::Tree(op.as_tree_op(peers, id)?)
             }
             _ => unreachable!(),
         },
@@ -1669,34 +1665,53 @@ mod value {
     }
 
     impl EncodedTreeMove {
-        pub fn as_tree_op(&self, peer_ids: &[u64]) -> LoroResult<TreeOp> {
-            Ok(TreeOp {
-                target: TreeID::new(
+        pub fn as_tree_op(&self, peer_ids: &[u64], op_id: ID) -> LoroResult<TreeOp> {
+            let parent = if self.is_parent_null {
+                None
+            } else {
+                Some(TreeID::new(
                     *(peer_ids
-                        .get(self.subject_peer_idx)
+                        .get(self.parent_peer_idx)
                         .ok_or(LoroError::DecodeDataCorruptionError)?),
-                    self.subject_cnt as Counter,
-                ),
-                parent: if self.is_parent_null {
-                    None
-                } else {
-                    Some(TreeID::new(
-                        *(peer_ids
-                            .get(self.parent_peer_idx)
-                            .ok_or(LoroError::DecodeDataCorruptionError)?),
-                        self.parent_cnt as Counter,
-                    ))
-                },
-            })
+                    self.parent_cnt as Counter,
+                ))
+            };
+            let is_delete = parent.is_some_and(|p| TreeID::is_deleted_root(&p));
+            let target = TreeID::new(
+                *(peer_ids
+                    .get(self.subject_peer_idx)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?),
+                self.subject_cnt as Counter,
+            );
+            let is_create = target.id() == op_id;
+            let op = if is_delete {
+                TreeOp::Delete { target }
+            } else if is_create {
+                TreeOp::Create { target, parent }
+            } else {
+                TreeOp::Move { target, parent }
+            };
+            Ok(op)
         }
 
         pub fn from_tree_op(op: &TreeOp, register_peer_id: &mut ValueRegister<PeerID>) -> Self {
-            EncodedTreeMove {
-                subject_peer_idx: register_peer_id.register(&op.target.peer),
-                subject_cnt: op.target.counter as usize,
-                is_parent_null: op.parent.is_none(),
-                parent_peer_idx: op.parent.map_or(0, |x| register_peer_id.register(&x.peer)),
-                parent_cnt: op.parent.map_or(0, |x| x.counter as usize),
+            match op {
+                TreeOp::Create { target, parent } | TreeOp::Move { target, parent } => {
+                    EncodedTreeMove {
+                        subject_peer_idx: register_peer_id.register(&target.peer),
+                        subject_cnt: target.counter as usize,
+                        is_parent_null: parent.is_none(),
+                        parent_peer_idx: parent.map_or(0, |x| register_peer_id.register(&x.peer)),
+                        parent_cnt: parent.map_or(0, |x| x.counter as usize),
+                    }
+                }
+                TreeOp::Delete { target } => EncodedTreeMove {
+                    subject_peer_idx: register_peer_id.register(&target.peer),
+                    subject_cnt: target.counter as usize,
+                    is_parent_null: false,
+                    parent_peer_idx: register_peer_id.register(&TreeID::delete_root().peer),
+                    parent_cnt: TreeID::delete_root().counter as usize,
+                },
             }
         }
     }

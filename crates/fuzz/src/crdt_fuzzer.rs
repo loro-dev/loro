@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
@@ -17,11 +17,11 @@ pub enum FuzzValue {
     Container(ContainerType),
 }
 
-impl ToString for FuzzValue {
-    fn to_string(&self) -> String {
+impl Display for FuzzValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FuzzValue::I32(i) => i.to_string(),
-            FuzzValue::Container(c) => c.to_string(),
+            FuzzValue::I32(i) => write!(f, "{}", i),
+            FuzzValue::Container(c) => write!(f, "{:?}", c),
         }
     }
 }
@@ -155,20 +155,33 @@ impl CRDTFuzzer {
                 info_span!("Attach", peer = j).in_scope(|| {
                     b_doc.attach();
                 });
-                if (i + j) % 2 == 0 {
-                    info_span!("Updates", from = j, to = i).in_scope(|| {
-                        a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
-                    });
-                    info_span!("Updates", from = i, to = j).in_scope(|| {
-                        b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
-                    });
-                } else {
-                    info_span!("Snapshot", from = i, to = j).in_scope(|| {
-                        b_doc.import(&a_doc.export_snapshot()).unwrap();
-                    });
-                    info_span!("Snapshot", from = j, to = i).in_scope(|| {
-                        a_doc.import(&b_doc.export_snapshot()).unwrap();
-                    });
+                match (i + j) % 3 {
+                    0 => {
+                        info_span!("Updates", from = j, to = i).in_scope(|| {
+                            a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
+                        });
+                        info_span!("Updates", from = i, to = j).in_scope(|| {
+                            b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
+                        });
+                    }
+                    1 => {
+                        info_span!("Snapshot", from = i, to = j).in_scope(|| {
+                            b_doc.import(&a_doc.export_snapshot()).unwrap();
+                        });
+                        info_span!("Snapshot", from = j, to = i).in_scope(|| {
+                            a_doc.import(&b_doc.export_snapshot()).unwrap();
+                        });
+                    }
+                    _ => {
+                        info_span!("JsonFormat", from = i, to = j).in_scope(|| {
+                            let a_json = a_doc.export_json_updates(&b_doc.oplog_vv());
+                            b_doc.import_json_updates(a_json).unwrap();
+                        });
+                        info_span!("JsonFormat", from = j, to = i).in_scope(|| {
+                            let b_json = b_doc.export_json_updates(&a_doc.oplog_vv());
+                            a_doc.import_json_updates(b_json).unwrap();
+                        });
+                    }
                 }
                 a.check_eq(b);
                 a.record_history();

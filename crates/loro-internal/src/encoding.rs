@@ -1,4 +1,5 @@
 mod encode_reordered;
+pub(crate) mod json_schema;
 
 use crate::op::OpWithId;
 use crate::version::Frontiers;

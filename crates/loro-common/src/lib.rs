@@ -368,9 +368,13 @@ mod container {
                 "Text" | "text" => Ok(ContainerType::Text),
                 "Tree" | "tree" => Ok(ContainerType::Tree),
                 "MovableList" | "movableList" => Ok(ContainerType::MovableList),
-                _ => Err(LoroError::DecodeError(
+                _ => {
+                    
+                        Err(LoroError::DecodeError(
                     format!("Unknown container type \"{}\". The valid options are Map|List|Text|Tree|MovableList.", value).into(),
-                )),
+                ))
+                    }
+                
             }
         }
     }

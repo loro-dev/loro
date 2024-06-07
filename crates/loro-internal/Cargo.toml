@@ -14,13 +14,13 @@ keywords = ["crdt", "local-first"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-loro-delta = { path = "../delta", version = "0.15.4", package = "loro-delta" }
-rle = { path = "../rle", version = "0.15.4", package = "loro-rle" }
-loro-common = { path = "../loro-common", version = "0.15.4" }
-smallvec = { version = "1.8.0", features = ["serde"] }
+loro-delta = { path = "../delta", package = "loro-delta" }
+rle = { path = "../rle", package = "loro-rle" }
+loro-common = { path = "../loro-common" }
+smallvec = { workspace = true }
 postcard = "1"
 fxhash = { workspace = true }
-serde = { version = "1", features = ["derive"] }
+serde = { workspace = true }
 thiserror = "1"
 enum-as-inner = { workspace = true }
 num = "0.4.0"
@@ -30,7 +30,7 @@ tabled = { version = "0.10.0", optional = true }
 wasm-bindgen = { version = "=0.2.92", optional = true }
 serde-wasm-bindgen = { version = "0.5.0", optional = true }
 js-sys = { version = "0.3.60", optional = true }
-serde_json = { version = "1" }
+serde_json = { workspace = true }
 arref = "0.1.0"
 serde_columnar = { workspace = true }
 append-only-bytes = { version = "0.1.12", features = ["u32_range"] }

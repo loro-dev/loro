@@ -16,7 +16,7 @@ use loro_internal::{
     id::{Counter, TreeID, ID},
     obs::SubID,
     version::Frontiers,
-    ContainerType, DiffEvent, HandlerTrait, LoroDoc, LoroValue, MovableListHandler,
+    ContainerType, DiffEvent, HandlerTrait, JsonSchema, LoroDoc, LoroValue, MovableListHandler,
     VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
@@ -146,6 +146,10 @@ extern "C" {
     pub type JsSide;
     #[wasm_bindgen(typescript_type = "{ update?: Cursor, offset: number, side: Side }")]
     pub type JsCursorQueryAns;
+    #[wasm_bindgen(typescript_type = "JsonSchema")]
+    pub type JsJsonSchema;
+    #[wasm_bindgen(typescript_type = "string | JsonSchema")]
+    pub type JsJsonSchemaOrString;
 }
 
 mod observer {
@@ -818,6 +822,37 @@ impl Loro {
         } else {
             Ok(self.0.export_from(&Default::default()))
         }
+    }
+
+    /// Export updates from the specific version to the current version with JSON format.
+    #[wasm_bindgen(js_name = "exportJsonUpdates")]
+    pub fn export_json_updates(&self, vv: Option<VersionVector>) -> JsResult<JsJsonSchema> {
+        let mut json_vv = Default::default();
+        if let Some(vv) = vv {
+            json_vv = vv.0;
+        }
+        let json_schema = self.0.export_json_updates(&json_vv);
+        let s = serde_wasm_bindgen::Serializer::new();
+        let v = json_schema
+            .serialize(&s)
+            .map_err(std::convert::Into::<JsValue>::into)?;
+        Ok(v.into())
+    }
+
+    /// Import updates from the JSON format.
+    #[wasm_bindgen(js_name = "importJsonUpdates")]
+    pub fn import_json_updates(&self, json: JsJsonSchemaOrString) -> JsResult<()> {
+        let json: JsValue = json.into();
+        if JsValue::is_string(&json) {
+            let json_str = json.as_string().unwrap();
+            return self
+                .0
+                .import_json_updates(json_str.as_str())
+                .map_err(|e| e.into());
+        }
+        let json_schema: JsonSchema = serde_wasm_bindgen::from_value(json)?;
+        self.0.import_json_updates(json_schema)?;
+        Ok(())
     }
 
     /// Import a snapshot or a update to current doc.
@@ -2622,7 +2657,7 @@ impl LoroTreeNode {
     /// const root = tree.createNode();
     /// const node = root.createNode();
     /// ```
-    #[wasm_bindgen(js_name = "createNode")]
+    #[wasm_bindgen(js_name = "createNode", skip_typescript)]
     pub fn create_node(&self) -> JsResult<LoroTreeNode> {
         let id = self.tree.create(Some(self.id))?;
         let node = LoroTreeNode::from_tree(id, self.tree.clone(), self.doc.clone());
@@ -2672,6 +2707,7 @@ impl LoroTreeNode {
     /// - The parent container of the root tree is `undefined`.
     /// - The object returned is a new js object each time because it need to cross
     ///   the WASM boundary.
+    #[wasm_bindgen(skip_typescript)]
     pub fn parent(&self) -> Option<LoroTreeNode> {
         let parent = self.tree.get_node_parent(self.id).flatten();
         parent.map(|p| LoroTreeNode::from_tree(p, self.tree.clone(), self.doc.clone()))
@@ -2681,6 +2717,7 @@ impl LoroTreeNode {
     ///
     /// The objects returned are new js objects each time because they need to cross
     /// the WASM boundary.
+    #[wasm_bindgen(skip_typescript)]
     pub fn children(&self) -> Array {
         let children = self.tree.children(self.id);
         let children = children.into_iter().map(|c| {
@@ -2737,7 +2774,7 @@ impl LoroTree {
     /// ]
     ///  *\/
     /// ```
-    #[wasm_bindgen(js_name = "createNode")]
+    #[wasm_bindgen(js_name = "createNode", skip_typescript)]
     pub fn create_node(&mut self, parent: Option<JsTreeID>) -> JsResult<LoroTreeNode> {
         let id = if let Some(p) = parent {
             let p: JsValue = p.into();
@@ -2804,6 +2841,7 @@ impl LoroTree {
     /// ]
     ///  *\/
     /// ```
+    #[wasm_bindgen]
     pub fn delete(&mut self, target: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
         self.handler.delete(target.try_into().unwrap())?;
@@ -2811,7 +2849,7 @@ impl LoroTree {
     }
 
     /// Get LoroTreeNode by the TreeID.
-    #[wasm_bindgen(js_name = "getNodeByID")]
+    #[wasm_bindgen(js_name = "getNodeByID", skip_typescript)]
     pub fn get_node_by_id(&self, target: JsTreeID) -> Option<LoroTreeNode> {
         let target: JsValue = target.into();
         let target = TreeID::try_from(target).ok()?;
@@ -2969,6 +3007,7 @@ impl LoroTree {
     /// - The parent container of the root tree is `undefined`.
     /// - The object returned is a new js object each time because it need to cross
     ///   the WASM boundary.
+    #[wasm_bindgen]
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = HandlerTrait::parent(&self.handler) {
             handler_to_js_value(p, self.doc.clone()).into()
@@ -3549,4 +3588,114 @@ interface LoroMovableList {
 }
 
 export type Side = -1 | 0 | 1;
+"#;
+
+#[wasm_bindgen(typescript_custom_section)]
+const JSON_SCHEMA_TYPES: &'static str = r#"
+export type JsonOpID = `${number}@${PeerID}`;
+export type JsonContainerID =  `🦜:${ContainerID}` ;
+export type JsonValue  =
+  | JsonContainerID
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: JsonValue }
+  | Uint8Array
+  | JsonValue[];
+
+export type JsonSchema = {
+  schema_version: number;
+  start_version: Map<string, number>,
+  peers: PeerID[],
+  changes: JsonChange[]
+};
+
+export type JsonChange = {
+  id: JsonOpID
+  timestamp: number,
+  deps: JsonOpID[],
+  lamport: number,
+  msg: string | null,
+  ops: JsonOp[]
+}
+
+export type JsonOp = {
+  container: ContainerID,
+  counter: number,
+  content: ListOp | TextOp | MapOp | TreeOp | MovableListOp
+}
+
+export type ListOp = {
+  type: "insert",
+  pos: number,
+  value: JsonValue
+} | {
+  type: "delete",
+  pos: number,
+  len: number,
+  start_id: JsonOpID,
+};
+
+export type MovableListOp = {
+  type: "insert",
+  pos: number,
+  value: JsonValue
+} | {
+  type: "delete",
+  pos: number,
+  len: number,
+  start_id: JsonOpID,
+}| {
+  type: "move",
+  from: number,
+  to: number,
+  elem_id: JsonOpID,
+}|{
+  type: "set",
+  elem_id: JsonOpID,
+  value: JsonValue
+}
+
+export type TextOp = {
+  type: "insert",
+  pos: number,
+  text: string
+} | {
+  type: "delete",
+  pos: number,
+  len: number,
+  start_id: JsonOpID,
+} | {
+  type: "mark",
+  start: number,
+  end: number,
+  style_key: string,
+  style_value: JsonValue,
+  info: number
+}|{
+  type: "mark_end"
+};
+
+export type MapOp = {
+  type: "insert",
+  key: string,
+  value: JsonValue
+} | {
+  type: "delete",
+  key: string,
+};
+
+export type TreeOp = {
+  type: "create",
+  target: TreeID,
+  parent: TreeID | undefined,
+}|{
+  type: "move",
+  target: TreeID,
+  parent: TreeID | undefined
+}|{
+  type: "delete",
+  target: TreeID
+};
 "#;

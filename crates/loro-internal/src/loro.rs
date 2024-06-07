@@ -25,7 +25,8 @@ use crate::{
     cursor::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
     dag::DagUtils,
     encoding::{
-        decode_snapshot, export_snapshot, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
+        decode_snapshot, export_snapshot, json_schema::op::JsonSchema, parse_header_and_body,
+        EncodeMode, ParsedHeaderAndBody,
     },
     event::{str_to_path, EventTriggerKind, Index},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
@@ -559,6 +560,27 @@ impl LoroDoc {
         let ans = export_snapshot(self);
         self.renew_txn_if_auto_commit();
         ans
+    }
+
+    pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> LoroResult<()> {
+        let json = json.try_into().map_err(|_| LoroError::InvalidJsonSchema)?;
+        self.commit_then_stop();
+        self.update_oplog_and_apply_delta_to_state_if_needed(
+            |oplog| crate::encoding::json_schema::import_json(oplog, json),
+            Default::default(),
+        )?;
+        self.emit_events();
+        self.renew_txn_if_auto_commit();
+        Ok(())
+    }
+
+    pub fn export_json_updates(&self, vv: &VersionVector) -> JsonSchema {
+        self.commit_then_stop();
+        let oplog = self.oplog.lock().unwrap();
+        let json = crate::encoding::json_schema::export_json(&oplog, vv);
+        drop(oplog);
+        self.renew_txn_if_auto_commit();
+        json
     }
 
     /// Get the version vector of the current OpLog

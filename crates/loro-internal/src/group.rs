@@ -225,11 +225,9 @@ pub(crate) struct TreeOpGroup {
 impl OpGroupTrait for TreeOpGroup {
     fn insert(&mut self, op: &RichOp) {
         let tree_op = op.raw_op().content.as_tree().unwrap();
-        let target = tree_op.target;
-        let parent = tree_op.parent;
         let entry = self.ops.entry(op.lamport()).or_default();
         entry.insert(GroupedTreeOpInfo {
-            value: TreeOp { target, parent },
+            value: *tree_op,
             counter: op.raw_op().counter,
             peer: op.peer,
         });

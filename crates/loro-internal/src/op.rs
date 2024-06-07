@@ -166,17 +166,6 @@ impl<'a> HasLength for RemoteOp<'a> {
     }
 }
 
-impl<'a> Sliceable for RemoteOp<'a> {
-    fn slice(&self, from: usize, to: usize) -> Self {
-        assert!(to > from);
-        RemoteOp {
-            counter: (self.counter + from as Counter),
-            content: self.content.slice(from, to),
-            container: self.container.clone(),
-        }
-    }
-}
-
 impl HasIndex for Op {
     type Int = Counter;
 

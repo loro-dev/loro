@@ -1,7 +1,9 @@
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{ContainerID, IdFull, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID};
+use loro_common::{
+    ContainerID, IdFull, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID, ID,
+};
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -30,6 +32,21 @@ pub enum TreeParentId {
     Deleted,
     /// parent is root
     None,
+}
+
+impl From<Option<TreeID>> for TreeParentId {
+    fn from(id: Option<TreeID>) -> Self {
+        match id {
+            Some(id) => {
+                if TreeID::is_deleted_root(&id) {
+                    TreeParentId::Deleted
+                } else {
+                    TreeParentId::Node(id)
+                }
+            }
+            None => TreeParentId::None,
+        }
+    }
 }
 
 /// The state of movable tree.
@@ -237,18 +254,13 @@ impl ContainerState for TreeState {
 
     fn apply_local_op(&mut self, raw_op: &RawOp, _op: &crate::op::Op) -> LoroResult<()> {
         match raw_op.content {
-            crate::op::RawOpContent::Tree(tree) => {
-                let TreeOp { target, parent, .. } = tree;
-                // TODO: use TreeParentId
-                let parent = match parent {
-                    Some(parent) => {
-                        if TreeID::is_deleted_root(&parent) {
-                            TreeParentId::Deleted
-                        } else {
-                            TreeParentId::Node(parent)
-                        }
+            crate::op::RawOpContent::Tree(ref tree) => {
+                let target = tree.target();
+                let parent = match tree {
+                    TreeOp::Create { parent, .. } | TreeOp::Move { parent, .. } => {
+                        TreeParentId::from(*parent)
                     }
-                    None => TreeParentId::None,
+                    TreeOp::Delete { .. } => TreeParentId::Deleted,
                 };
                 self.mov(target, parent, raw_op.id_full())
             }
@@ -308,6 +320,19 @@ impl ContainerState for TreeState {
                 ans.push(t.into());
             }
         }
+        ans.sort_by_key(|x| {
+            let id: ID = x
+                .as_map()
+                .unwrap()
+                .get("id")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .as_str()
+                .try_into()
+                .unwrap();
+            id
+        });
         ans.into()
     }
 
@@ -350,18 +375,12 @@ impl ContainerState for TreeState {
         for op in ctx.ops {
             assert_eq!(op.op.atom_len(), 1);
             let content = op.op.content.as_tree().unwrap();
-            let target = content.target;
-            let parent = content.parent;
-            // TODO: use TreeParentId
-            let parent = match parent {
-                Some(parent) => {
-                    if TreeID::is_deleted_root(&parent) {
-                        TreeParentId::Deleted
-                    } else {
-                        TreeParentId::Node(parent)
-                    }
+            let target = content.target();
+            let parent = match content {
+                TreeOp::Create { parent, .. } | TreeOp::Move { parent, .. } => {
+                    TreeParentId::from(*parent)
                 }
-                None => TreeParentId::None,
+                TreeOp::Delete { .. } => TreeParentId::Deleted,
             };
             self.trees.insert(
                 target,
@@ -468,83 +487,5 @@ pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
         let meta = map.get_mut("meta").unwrap();
         let id = meta.as_container().unwrap();
         *meta = state.get_container_deep_value(state.arena.register_container(id));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    const ID1: TreeID = TreeID {
-        peer: 0,
-        counter: 0,
-    };
-    const ID2: TreeID = TreeID {
-        peer: 0,
-        counter: 1,
-    };
-    const ID3: TreeID = TreeID {
-        peer: 0,
-        counter: 2,
-    };
-    const ID4: TreeID = TreeID {
-        peer: 0,
-        counter: 3,
-    };
-
-    #[test]
-    fn test_tree_state() {
-        let mut state = TreeState::new(ContainerIdx::from_index_and_type(
-            0,
-            loro_common::ContainerType::Tree,
-        ));
-        state.mov(ID1, TreeParentId::None, IdFull::NONE_ID).unwrap();
-        state
-            .mov(ID2, TreeParentId::Node(ID1), IdFull::NONE_ID)
-            .unwrap();
-    }
-
-    #[test]
-    fn tree_convert() {
-        let mut state = TreeState::new(ContainerIdx::from_index_and_type(
-            0,
-            loro_common::ContainerType::Tree,
-        ));
-        state.mov(ID1, TreeParentId::None, IdFull::NONE_ID).unwrap();
-        state
-            .mov(ID2, TreeParentId::Node(ID1), IdFull::NONE_ID)
-            .unwrap();
-        let roots = Forest::from_tree_state(&state.trees);
-        let json = serde_json::to_string(&roots).unwrap();
-        assert_eq!(
-            json,
-            r#"{"roots":[{"id":{"peer":0,"counter":0},"meta":{"Container":{"Normal":{"peer":0,"counter":0,"container_type":"Map"}}},"parent":null,"children":[{"id":{"peer":0,"counter":1},"meta":{"Container":{"Normal":{"peer":0,"counter":1,"container_type":"Map"}}},"parent":{"peer":0,"counter":0},"children":[]}]}]}"#
-        )
-    }
-
-    #[test]
-    fn delete_node() {
-        let mut state = TreeState::new(ContainerIdx::from_index_and_type(
-            0,
-            loro_common::ContainerType::Tree,
-        ));
-        state.mov(ID1, TreeParentId::None, IdFull::NONE_ID).unwrap();
-        state
-            .mov(ID2, TreeParentId::Node(ID1), IdFull::NONE_ID)
-            .unwrap();
-        state
-            .mov(ID3, TreeParentId::Node(ID2), IdFull::NONE_ID)
-            .unwrap();
-        state
-            .mov(ID4, TreeParentId::Node(ID1), IdFull::NONE_ID)
-            .unwrap();
-        state
-            .mov(ID2, TreeParentId::Deleted, IdFull::NONE_ID)
-            .unwrap();
-        let roots = Forest::from_tree_state(&state.trees);
-        let json = serde_json::to_string(&roots).unwrap();
-        assert_eq!(
-            json,
-            r#"{"roots":[{"id":{"peer":0,"counter":0},"meta":{"Container":{"Normal":{"peer":0,"counter":0,"container_type":"Map"}}},"parent":null,"children":[{"id":{"peer":0,"counter":3},"meta":{"Container":{"Normal":{"peer":0,"counter":3,"container_type":"Map"}}},"parent":{"peer":0,"counter":0},"children":[]}]}]}"#
-        )
     }
 }

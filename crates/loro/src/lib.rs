@@ -12,6 +12,7 @@ use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
+use loro_internal::JsonSchema;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 
@@ -262,6 +263,16 @@ impl LoroDoc {
     /// in the generated events.
     pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<(), LoroError> {
         self.doc.import_with(bytes, origin.into())
+    }
+
+    /// Import json-string.
+    pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> Result<(), LoroError> {
+        self.doc.import_json_updates(json)
+    }
+
+    /// Export the current state with json-string format of the document.
+    pub fn export_json_updates(&self, vv: &VersionVector) -> JsonSchema {
+        self.doc.export_json_updates(vv)
     }
 
     /// Export all the ops not included in the given `VersionVector`

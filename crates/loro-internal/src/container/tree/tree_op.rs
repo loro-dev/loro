@@ -1,5 +1,5 @@
 use loro_common::TreeID;
-use rle::{HasLength, Mergable, Sliceable};
+use rle::{HasLength, Mergable};
 use serde::{Deserialize, Serialize};
 
 use crate::state::TreeParentId;
@@ -11,24 +11,35 @@ use crate::state::TreeParentId;
 /// - **Move**: move target tree node a child node of the specified parent node.
 /// - **Delete**: move target tree node to [`loro_common::DELETED_TREE_ROOT`].
 ///
+///
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub struct TreeOp {
-    pub(crate) target: TreeID,
-    pub(crate) parent: Option<TreeID>,
+pub enum TreeOp {
+    Create {
+        target: TreeID,
+        parent: Option<TreeID>,
+    },
+    Move {
+        target: TreeID,
+        parent: Option<TreeID>,
+    },
+    Delete {
+        target: TreeID,
+    },
 }
 
 impl TreeOp {
-    // TODO: use `TreeParentId` instead of `Option<TreeID>`
+    pub(crate) fn target(&self) -> TreeID {
+        match self {
+            TreeOp::Create { target, .. } => *target,
+            TreeOp::Move { target, .. } => *target,
+            TreeOp::Delete { target, .. } => *target,
+        }
+    }
     pub(crate) fn parent_id(&self) -> TreeParentId {
-        match self.parent {
-            Some(parent) => {
-                if TreeID::is_deleted_root(&parent) {
-                    TreeParentId::Deleted
-                } else {
-                    TreeParentId::Node(parent)
-                }
-            }
-            None => TreeParentId::None,
+        match self {
+            TreeOp::Create { parent, .. } => TreeParentId::from(*parent),
+            TreeOp::Move { parent, .. } => TreeParentId::from(*parent),
+            TreeOp::Delete { .. } => TreeParentId::Deleted,
         }
     }
 }
@@ -36,13 +47,6 @@ impl TreeOp {
 impl HasLength for TreeOp {
     fn content_len(&self) -> usize {
         1
-    }
-}
-
-impl Sliceable for TreeOp {
-    fn slice(&self, from: usize, to: usize) -> Self {
-        assert!(from == 0 && to == 1);
-        *self
     }
 }
 
