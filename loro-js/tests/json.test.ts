@@ -87,7 +87,7 @@ it("json decoding", () => {
               "type": "move",
               "target": "7@0",
               "parent": null,
-              "fractional_index": [128]
+              "fractional_index": "8081"
             },
             "counter": 7
           },
@@ -97,7 +97,7 @@ it("json decoding", () => {
               "type": "move",
               "target": "8@0",
               "parent": "7@0",
-              "fractional_index": [128, 129]
+              "fractional_index": "80"
             },
             "counter": 8
           },

@@ -541,7 +541,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                     parent,
                     fractional_index,
                 } => {
-                    if !fractional_index.is_empty() || !fractional_index.starts_with("80") {
+                    if !fractional_index.eq("80") {
                         return Err(LoroError::DecodeError("To maintain data accuracy, Tree Op from v0.16 and later do not support downgrading back to v0.15".into()));
                     }
                     InnerContent::Tree(TreeOp::Create {
@@ -554,7 +554,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                     parent,
                     fractional_index,
                 } => {
-                    if !fractional_index.is_empty() || !fractional_index.starts_with("80") {
+                    if !fractional_index.eq("80") {
                         return Err(LoroError::DecodeError("To maintain data accuracy, Tree Op from v0.16 and later do not support downgrading back to v0.15".into()));
                     }
                     InnerContent::Tree(TreeOp::Move {
