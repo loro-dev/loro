@@ -10,10 +10,10 @@ publish = false
 loro-without-counter = { path = "../loro", package = "loro" }
 loro = { git = "https://github.com/loro-dev/loro.git", features = [
     "counter",
-], rev = "83938290ab2666d85c0c72169127611585a05cf9" }
+], rev = "43b4f37f51121d2c52019f09499e5b48e8ff9d7c" }
 loro-common = { git = "https://github.com/loro-dev/loro.git", features = [
     "counter",
-], rev = "83938290ab2666d85c0c72169127611585a05cf9" }
+], rev = "43b4f37f51121d2c52019f09499e5b48e8ff9d7c" }
 # loro = { path = "../loro", package = "loro", features = ["counter"] }
 # loro-common = { path = "../loro-common", package = "loro-common", features = [
 #     "counter",
