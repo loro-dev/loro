@@ -1103,23 +1103,66 @@ impl Handler {
                     match diff.action {
                         TreeExternalDiff::Create {
                             parent,
-                            index,
-                            position: _,
+                            index: _,
+                            position,
                         } => {
+                            // TODO: position
+                            let index = match x.get_index_by_fractional_index(parent, &position) {
+                                Some(Ok(i)) => i + 1,
+                                Some(Err(i)) => i,
+                                None => {
+                                    // parent has deleted
+                                    // TODO: ?
+                                    0
+                                }
+                            };
                             // For undo, maybe the parent has been deleted, we should apply the diff but not emit the event
-                            let without_event = parent.is_some_and(|p| !x.contains(p));
-                            x.create_at_with_target(parent, index, target, true)?;
-                        }
-                        TreeExternalDiff::Delete { .. } => x.delete(target)?,
-                        TreeExternalDiff::Move { parent, index, .. } => {
-                            // For undo, maybe the parent has been deleted, we should apply the diff but not emit the event
-                            let without_event = parent.is_some_and(|p| !x.contains(p));
-                            if !x.contains(target) {
-                                x.create_at_with_target(parent, index, target, true)?;
-                            } else {
-                                x.move_to_inner(target, parent, index, true)?
+                            let with_event = !parent.is_some_and(|p| !x.contains(p));
+                            x.create_at_with_target_for_apply_diff(
+                                parent, position, index, target, with_event,
+                            )?;
+                            if !with_event {
+                                if let Some(children) = x.children(Some(target)) {
+                                    for (i, child) in children.into_iter().enumerate() {
+                                        // TODO: just emit event
+                                        x.create_at_with_target_for_apply_diff(
+                                            Some(target),
+                                            x.get_position_by_tree_id(&child).unwrap(),
+                                            i,
+                                            child,
+                                            with_event,
+                                        )?;
+                                    }
+                                }
                             }
                         }
+                        TreeExternalDiff::Move {
+                            parent,
+                            index: _,
+                            position,
+                        } => {
+                            let index = match x.get_index_by_fractional_index(parent, &position) {
+                                Some(Ok(i)) => i + 1,
+                                Some(Err(i)) => i,
+                                None => {
+                                    // parent has deleted
+                                    // TODO: ?
+                                    0
+                                }
+                            };
+                            // For undo, maybe the parent has been deleted, we should apply the diff but not emit the event
+                            let with_event = !parent.is_some_and(|p| !x.contains(p));
+                            if !x.contains(target) {
+                                x.create_at_with_target_for_apply_diff(
+                                    parent, position, index, target, with_event,
+                                )?;
+                            } else {
+                                x.move_at_with_target_for_apply_diff(
+                                    parent, position, index, target, with_event,
+                                )?;
+                            }
+                        }
+                        TreeExternalDiff::Delete => x.delete(target)?,
                     }
                 }
             }

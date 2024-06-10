@@ -141,9 +141,19 @@ impl Actor {
         let root = Arc::make_mut(a.as_map_mut().unwrap());
         let tree = root.get_mut("tree").unwrap();
         let nodes = Arc::make_mut(tree.as_list_mut().unwrap());
+        nodes.sort_by_key(|x| {
+            x.as_map()
+                .unwrap()
+                .get("id")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_string()
+        });
         for node in nodes.iter_mut() {
             let node = Arc::make_mut(node.as_map_mut().unwrap());
             node.remove("position");
+            node.remove("index");
         }
     }
 

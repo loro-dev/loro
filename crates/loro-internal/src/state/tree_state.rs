@@ -9,6 +9,7 @@ use loro_common::{
 use rand::SeedableRng;
 use rle::HasLength;
 use serde::Serialize;
+use std::cmp::Reverse;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
@@ -74,6 +75,13 @@ impl NodeChildren {
         match self {
             NodeChildren::Vec(v) => v.iter().position(|(_, id)| id == target),
             NodeChildren::BTree(btree) => btree.id_to_index(target),
+        }
+    }
+
+    fn get_index_by_position(&self, fractional_index: &FractionalIndex) -> Result<usize, usize> {
+        match self {
+            NodeChildren::Vec(v) => v.binary_search_by_key(&fractional_index, |n| &n.0.position),
+            NodeChildren::BTree(btree) => btree.get_index_by_fractional_index(fractional_index),
         }
     }
 
@@ -230,6 +238,7 @@ struct TreeChildrenCache(FxHashMap<TreeParentId, NodeChildren>);
 mod btree {
     use std::{cmp::Ordering, ops::Range, sync::Arc};
 
+    use fractional_index::FractionalIndex;
     use fxhash::FxHashMap;
     use generic_btree::{
         rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
@@ -317,6 +326,33 @@ mod btree {
             );
 
             Some(ans)
+        }
+
+        pub(super) fn get_index_by_fractional_index(
+            &self,
+            fractional_index: &FractionalIndex,
+        ) -> Result<usize, usize> {
+            let Some(res) = self.tree.query::<FracIndexQuery>(fractional_index) else {
+                return Ok(0);
+            };
+            let mut ans = 0;
+            self.tree
+                .visit_previous_caches(res.cursor, |prev| match prev {
+                    generic_btree::PreviousCache::NodeCache(c) => {
+                        ans += c.len;
+                    }
+                    generic_btree::PreviousCache::PrevSiblingElem(_) => {
+                        ans += 1;
+                    }
+                    generic_btree::PreviousCache::ThisElemAndOffset { elem: _, offset } => {
+                        ans += offset;
+                    }
+                });
+            if res.found {
+                Ok(ans)
+            } else {
+                Err(ans)
+            }
         }
     }
 
@@ -474,6 +510,52 @@ mod btree {
         }
     }
 
+    struct FracIndexQuery;
+    impl Query<ChildTreeTrait> for FracIndexQuery {
+        type QueryArg = FractionalIndex;
+
+        fn init(_: &Self::QueryArg) -> Self {
+            FracIndexQuery
+        }
+
+        fn find_node(
+            &mut self,
+            target: &Self::QueryArg,
+            caches: &[generic_btree::Child<ChildTreeTrait>],
+        ) -> FindResult {
+            let result = caches.binary_search_by(|x| {
+                let range = x.cache.range.as_ref().unwrap();
+                if target < &range.start.position {
+                    core::cmp::Ordering::Greater
+                } else if target > &range.end.position {
+                    core::cmp::Ordering::Less
+                } else {
+                    core::cmp::Ordering::Equal
+                }
+            });
+
+            match result {
+                Ok(i) => FindResult::new_found(i, 0),
+                Err(i) => FindResult::new_missing(
+                    i.min(caches.len() - 1),
+                    if i == caches.len() { 1 } else { 0 },
+                ),
+            }
+        }
+
+        fn confirm_elem(
+            &mut self,
+            q: &Self::QueryArg,
+            elem: &<ChildTreeTrait as BTreeTrait>::Elem,
+        ) -> (usize, bool) {
+            match q.cmp(&elem.pos.position) {
+                Ordering::Less => (0, false),
+                Ordering::Equal => (0, true),
+                Ordering::Greater => (1, false),
+            }
+        }
+    }
+
     impl UseLengthFinder<ChildTreeTrait> for ChildTreeTrait {
         fn get_len(cache: &<ChildTreeTrait as BTreeTrait>::Cache) -> usize {
             cache.len
@@ -521,13 +603,27 @@ pub struct TreeState {
     jitter: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct NodePosition {
     position: FractionalIndex,
     // different nodes created by a peer may have the same position
     // when we merge updates that cause cycles.
     // for example [::fuzz::test::test_tree::same_peer_have_same_position()]
     idlp: IdLp,
+}
+
+impl PartialOrd for NodePosition {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for NodePosition {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.position
+            .cmp(&other.position)
+            .then(Reverse(self.idlp).cmp(&Reverse(other.idlp)))
+    }
 }
 
 impl NodePosition {
@@ -778,6 +874,16 @@ impl TreeState {
             .flatten()
     }
 
+    pub(crate) fn get_index_by_position(
+        &self,
+        parent: &TreeParentId,
+        fractional_index: &FractionalIndex,
+    ) -> Option<Result<usize, usize>> {
+        self.children
+            .get(parent)
+            .map(|c| c.get_index_by_position(fractional_index))
+    }
+
     pub(crate) fn get_id_by_index(&self, parent: &TreeParentId, index: usize) -> Option<TreeID> {
         (!parent.is_deleted())
             .then(|| self.children.get(parent).and_then(|x| x.get_id_at(index)))
@@ -834,8 +940,6 @@ impl ContainerState for TreeState {
                         });
                     }
                     TreeInternalDiff::Move { parent, position } => {
-                        let old_parent = self.trees.get(&target).unwrap().parent;
-                        let old_index = self.get_index_by_tree_id(&target).unwrap();
                         self.mov(target, *parent, last_move_op, Some(position.clone()), false)
                             .unwrap();
                         let index = self.get_index_by_tree_id(&target).unwrap();
@@ -845,22 +949,15 @@ impl ContainerState for TreeState {
                                 parent: parent.into_node().ok(),
                                 index,
                                 position: position.clone(),
-                                old_parent,
-                                old_index,
                             },
                         });
                     }
                     TreeInternalDiff::Delete { parent, position } => {
-                        let old_parent = self.trees.get(&target).unwrap().parent;
-                        let old_index = self.get_index_by_tree_id(&target).unwrap();
                         self.mov(target, *parent, last_move_op, position.clone(), false)
                             .unwrap();
                         ans.push(TreeDiffItem {
                             target,
-                            action: TreeExternalDiff::Delete {
-                                old_parent,
-                                old_index,
-                            },
+                            action: TreeExternalDiff::Delete,
                         });
                     }
                     TreeInternalDiff::MoveInDelete { parent, position } => {
@@ -868,14 +965,9 @@ impl ContainerState for TreeState {
                             .unwrap();
                     }
                     TreeInternalDiff::UnCreate => {
-                        let old_parent = self.trees.get(&target).unwrap().parent;
-                        let old_index = self.get_index_by_tree_id(&target).unwrap();
                         ans.push(TreeDiffItem {
                             target,
-                            action: TreeExternalDiff::Delete {
-                                old_parent,
-                                old_index,
-                            },
+                            action: TreeExternalDiff::Delete,
                         });
                         // delete it from state
                         let parent = self.trees.remove(&target);
@@ -1175,5 +1267,55 @@ mod jitter {
                     .collect(),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use fractional_index::FractionalIndex;
+    use loro_common::{IdLp, TreeID};
+
+    use super::{btree::ChildTree, NodeChildren, NodePosition};
+
+    #[test]
+    fn get_index_by_fractional_index() {
+        let mut node = NodeChildren::BTree(ChildTree::new());
+        let fi = FractionalIndex::default();
+        let fi_after = FractionalIndex::new_after(&fi);
+        let fi_before = FractionalIndex::new_before(&fi);
+
+        node.insert_child(
+            NodePosition::new(fi.clone(), IdLp::new(0, 0)),
+            TreeID::new(0, 0),
+        );
+
+        let index = node.get_index_by_position(&fi_before);
+        assert_eq!(index, Err(0));
+        let index = node.get_index_by_position(&fi);
+        assert_eq!(index, Ok(0));
+        let index = node.get_index_by_position(&fi_after);
+        assert_eq!(index, Err(1));
+
+        node.insert_child(
+            NodePosition::new(fi_before.clone(), IdLp::new(0, 1)),
+            TreeID::new(0, 1),
+        );
+        node.insert_child(
+            NodePosition::new(fi_after.clone(), IdLp::new(0, 2)),
+            TreeID::new(0, 2),
+        );
+
+        let index = node.get_index_by_position(&fi_before);
+        assert_eq!(index, Ok(0));
+        let index = node.get_index_by_position(&fi);
+        assert_eq!(index, Ok(1));
+        let index = node.get_index_by_position(&fi_after);
+        assert_eq!(index, Ok(2));
+        let index =
+            node.get_index_by_position(&FractionalIndex::new_between(&fi_before, &fi).unwrap());
+        assert_eq!(index, Err(1));
+        let index =
+            node.get_index_by_position(&FractionalIndex::new_between(&fi, &fi_after).unwrap());
+        assert_eq!(index, Err(2));
     }
 }

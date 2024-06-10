@@ -1351,7 +1351,7 @@ impl LoroTree {
     }
 
     /// Return all children of the target node.
-    pub fn children(&self, parent: Option<TreeID>) -> Vec<TreeID> {
+    pub fn children(&self, parent: Option<TreeID>) -> Option<Vec<TreeID>> {
         self.handler.children(parent)
     }
 
