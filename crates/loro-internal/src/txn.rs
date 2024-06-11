@@ -123,7 +123,8 @@ pub(super) enum EventHint {
         key: InternalString,
         value: Option<LoroValue>,
     },
-    Tree(TreeDiffItem),
+    // use vec because we could bring back some node that has children
+    Tree(SmallVec<[TreeDiffItem; 1]>),
     MarkEnd,
     #[cfg(feature = "counter")]
     Counter(i64),
@@ -419,6 +420,19 @@ impl Transaction {
         Ok(())
     }
 
+    pub(super) fn add_event_to_emit(&mut self, event: EventHint) {
+        if !event.is_none() {
+            match self.event_hints.last_mut() {
+                Some(last) if last.can_merge(&event) => {
+                    last.merge_right(&event);
+                }
+                _ => {
+                    self.event_hints.push(event);
+                }
+            }
+        }
+    }
+
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
@@ -492,6 +506,13 @@ impl Transaction {
         ID {
             peer: self.peer,
             counter: self.next_counter,
+        }
+    }
+
+    pub fn next_idlp(&self) -> IdLp {
+        IdLp {
+            peer: self.peer,
+            lamport: self.next_lamport,
         }
     }
 
@@ -663,7 +684,7 @@ fn change_to_diff(
             }),
             EventHint::Tree(tree_diff) => {
                 let mut diff = TreeDiff::default();
-                diff.push(tree_diff);
+                diff.diff.extend(tree_diff.into_iter());
                 ans.push(TxnContainerDiff {
                     idx: op.container,
                     diff: Diff::Tree(diff),
@@ -723,6 +744,5 @@ fn change_to_diff(
             .map(|x| x.content_len() as Lamport)
             .sum::<Lamport>();
     }
-
     ans
 }

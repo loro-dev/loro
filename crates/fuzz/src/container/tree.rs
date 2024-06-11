@@ -393,7 +393,6 @@ impl ApplyDiff for TreeTracker {
 
     fn apply_diff(&mut self, diff: Diff) {
         let diff = diff.as_tree().unwrap();
-        println!("\n diff {:?}", diff);
         for diff in &diff.diff {
             let target = diff.target;
             match &diff.action {

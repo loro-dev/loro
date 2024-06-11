@@ -582,7 +582,7 @@ declare module "loro-wasm" {
     createNode(index?: number): LoroTreeNode<T>;
     move(parent?: LoroTreeNode<T>, index?: number): void;
     parent(): LoroTreeNode<T> | undefined;
-    children(): Array<LoroTreeNode<T>>;
+    children(): Array<LoroTreeNode<T>> | undefined;
   }
 
   interface AwarenessWasm<T extends Value = Value> {

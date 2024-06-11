@@ -39,7 +39,9 @@ pub(crate) use self::movable_list_state::{IndexType, MovableListState};
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
-pub(crate) use tree_state::{get_meta_value, FractionalIndexGenResult, TreeParentId, TreeState};
+pub(crate) use tree_state::{
+    get_meta_value, FractionalIndexGenResult, NodePosition, TreeParentId, TreeState,
+};
 
 use self::unknown_state::UnknownState;
 

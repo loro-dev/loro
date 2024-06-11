@@ -6412,20 +6412,6 @@ fn b_delete_parent_tree_undo() {
                     prop: 16710579925595711463,
                 }),
             },
-            SyncAll,
-            Handle {
-                site: 27,
-                target: 27,
-                container: 27,
-                action: Generic(GenericAction {
-                    value: I32(741088027),
-                    bool: false,
-                    key: 454765612,
-                    pos: 41940867554155291,
-                    length: 1953184666628063232,
-                    prop: 1953184666628070171,
-                }),
-            },
             Handle {
                 site: 27,
                 target: 27,
@@ -6440,19 +6426,6 @@ fn b_delete_parent_tree_undo() {
                 }),
             },
             SyncAll,
-            Handle {
-                site: 17,
-                target: 17,
-                container: 17,
-                action: Generic(GenericAction {
-                    value: I32(319885585),
-                    bool: true,
-                    key: 286331153,
-                    pos: 1229782938247303441,
-                    length: 18446744073709551377,
-                    prop: 1229782938262962175,
-                }),
-            },
             Handle {
                 site: 17,
                 target: 17,
@@ -6478,19 +6451,6 @@ fn b_delete_parent_tree_undo() {
                     pos: 18446744073709551615,
                     length: 1227230898458525695,
                     prop: 1229787336293814545,
-                }),
-            },
-            Handle {
-                site: 0,
-                target: 17,
-                container: 17,
-                action: Generic(GenericAction {
-                    value: I32(-62959),
-                    bool: true,
-                    key: 2165440511,
-                    pos: 18438844157302636817,
-                    length: 18158509282264031743,
-                    prop: 18157383382357244411,
                 }),
             },
             SyncAllUndo {

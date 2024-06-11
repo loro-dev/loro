@@ -451,7 +451,7 @@ impl TreeCacheForDiff {
                 ans.push((*tree_id, op.position.clone(), op.id_full()));
             }
         }
-
+        ans.sort_by(|a, b| a.1.cmp(&b.1));
         ans
     }
 }

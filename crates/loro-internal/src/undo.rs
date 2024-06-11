@@ -316,7 +316,6 @@ impl Stack {
         if self.is_empty() {
             return;
         }
-
         let remote_diff = &mut self.stack.back_mut().unwrap().1;
         remote_diff.try_lock().unwrap().transform(diff, false);
     }
@@ -688,7 +687,6 @@ pub(crate) fn undo(
                 // ------------------------------------------------------------------------------
                 // 1.b Transform and apply Ci-1 based on Ai, call it A'i
                 // ------------------------------------------------------------------------------
-
                 last_ci.transform(&event_a_i, true);
 
                 event_a_i.compose(&last_ci);

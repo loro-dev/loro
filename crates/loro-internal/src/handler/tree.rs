@@ -3,13 +3,14 @@ use std::collections::VecDeque;
 use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, ContainerType, Counter, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
+    ContainerID, ContainerType, Counter, IdLp, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
 };
+use smallvec::smallvec;
 
 use crate::{
     container::tree::tree_op::TreeOp,
     delta::{TreeDiffItem, TreeExternalDiff},
-    state::{FractionalIndexGenResult, TreeParentId},
+    state::{FractionalIndexGenResult, NodePosition, TreeParentId},
     txn::{EventHint, Transaction},
     BasicHandler, HandlerTrait, MapHandler,
 };
@@ -292,11 +293,27 @@ impl TreeHandler {
                 t.value.delete(target)?;
                 Ok(())
             }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, target)),
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, target, true)),
         }
     }
 
-    pub(crate) fn delete_with_txn(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
+    pub(crate) fn delete_inner(&self, target: TreeID, with_event: bool) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unreachable!()
+            }
+            MaybeDetached::Attached(a) => {
+                a.with_txn(|txn| self.delete_with_txn(txn, target, with_event))
+            }
+        }
+    }
+
+    pub(crate) fn delete_with_txn(
+        &self,
+        txn: &mut Transaction,
+        target: TreeID,
+        with_event: bool,
+    ) -> LoroResult<()> {
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
             inner.container_idx,
@@ -305,10 +322,14 @@ impl TreeHandler {
                 parent: Some(TreeID::delete_root()),
                 position: None,
             }),
-            EventHint::Tree(TreeDiffItem {
-                target,
-                action: TreeExternalDiff::Delete,
-            }),
+            if with_event {
+                EventHint::Tree(smallvec![TreeDiffItem {
+                    target,
+                    action: TreeExternalDiff::Delete,
+                }])
+            } else {
+                EventHint::None
+            },
             &inner.state,
         )
     }
@@ -340,21 +361,70 @@ impl TreeHandler {
         &self,
         parent: Option<TreeID>,
         position: FractionalIndex,
-        index: usize,
         target: TreeID,
-        with_event: bool,
     ) -> LoroResult<()> {
-        match &self.inner {
-            MaybeDetached::Detached(_) => {
-                unreachable!();
-            }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| {
-                let inner = self.inner.try_attached_state()?;
+        let MaybeDetached::Attached(a) = &self.inner else {
+            unreachable!();
+        };
 
-                self.create_with_position(inner, txn, target, parent, index, position, with_event)?;
-                Ok(())
-            }),
+        if self.contains(target) && self.is_parent(target, parent) {
+            return Ok(());
         }
+
+        // TODO: maybe just emit event
+        let index = self
+            .get_index_by_fractional_index(
+                parent,
+                &NodePosition {
+                    position: position.clone(),
+                    idlp: self.next_idlp(),
+                },
+            )
+            // TODO: parent has deleted？
+            .unwrap_or(0);
+        let with_event = !parent.is_some_and(|p| !self.contains(p));
+        let event_hint = if with_event {
+            let mut hint = smallvec![TreeDiffItem {
+                target,
+                action: TreeExternalDiff::Create {
+                    parent,
+                    index,
+                    position: position.clone(),
+                },
+            }];
+
+            if let Some(children) = self.children(Some(target)) {
+                for (index, child) in children.into_iter().enumerate() {
+                    hint.push(TreeDiffItem {
+                        target: child,
+                        action: TreeExternalDiff::Create {
+                            parent: Some(target),
+                            index,
+                            position: self.get_position_by_tree_id(&child).unwrap(),
+                        },
+                    });
+                }
+            }
+
+            EventHint::Tree(hint)
+        } else {
+            EventHint::None
+        };
+
+        a.with_txn(|txn| {
+            let inner = self.inner.try_attached_state()?;
+            txn.apply_local_op(
+                inner.container_idx,
+                crate::op::RawOpContent::Tree(TreeOp {
+                    target,
+                    parent,
+                    position: Some(position.clone()),
+                }),
+                event_hint,
+                &inner.state,
+            )?;
+            Ok(())
+        })
     }
 
     /// For undo/redo, Specify the TreeID of the created node
@@ -362,20 +432,58 @@ impl TreeHandler {
         &self,
         parent: Option<TreeID>,
         position: FractionalIndex,
-        index: usize,
         target: TreeID,
-        with_event: bool,
     ) -> LoroResult<()> {
-        match &self.inner {
-            MaybeDetached::Detached(_) => {
-                unreachable!();
-            }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| {
-                let inner = self.inner.try_attached_state()?;
-                self.mov_with_position(inner, txn, target, parent, index, position, with_event)?;
-                Ok(())
-            }),
+        let MaybeDetached::Attached(a) = &self.inner else {
+            unreachable!();
+        };
+        if self.contains(target) && self.is_parent(target, parent) {
+            return Ok(());
         }
+        // TODO: maybe just event
+
+        // the move node does not exist, create it
+        if !self.contains(target) {
+            return self.create_at_with_target_for_apply_diff(parent, position, target);
+        }
+
+        let index = self
+            .get_index_by_fractional_index(
+                parent,
+                &NodePosition {
+                    position: position.clone(),
+                    idlp: self.next_idlp(),
+                },
+            )
+            .unwrap_or(0);
+        let with_event = !parent.is_some_and(|p| !self.contains(p));
+
+        let event_hint = if with_event {
+            EventHint::Tree(smallvec![TreeDiffItem {
+                target,
+                action: TreeExternalDiff::Move {
+                    parent,
+                    index,
+                    position: position.clone(),
+                },
+            }])
+        } else {
+            EventHint::None
+        };
+
+        a.with_txn(|txn| {
+            let inner = self.inner.try_attached_state()?;
+            txn.apply_local_op(
+                inner.container_idx,
+                crate::op::RawOpContent::Tree(TreeOp {
+                    target,
+                    parent,
+                    position: Some(position.clone()),
+                }),
+                event_hint,
+                &inner.state,
+            )
+        })
     }
 
     pub(crate) fn create_with_txn<T: Into<Option<TreeID>>>(
@@ -390,15 +498,15 @@ impl TreeHandler {
 
         match self.generate_position_at(&target, parent, index) {
             FractionalIndexGenResult::Ok(position) => {
-                self.create_with_position(inner, txn, target, parent, index, position, true)
+                self.create_with_position(inner, txn, target, parent, index, position)
             }
             FractionalIndexGenResult::Rearrange(ids) => {
                 for (i, (id, position)) in ids.into_iter().enumerate() {
                     if i == 0 {
-                        self.create_with_position(inner, txn, id, parent, index, position, true)?;
+                        self.create_with_position(inner, txn, id, parent, index, position)?;
                         continue;
                     }
-                    self.mov_with_position(inner, txn, id, parent, index + i, position, true)?;
+                    self.mov_with_position(inner, txn, id, parent, index + i, position)?;
                 }
                 Ok(target)
             }
@@ -420,7 +528,7 @@ impl TreeHandler {
                 if self.is_parent(target, parent) {
                     index -= 1;
                 }
-                a.with_txn(|txn| self.mov_with_txn(txn, target, parent, index, true))
+                a.with_txn(|txn| self.mov_with_txn(txn, target, parent, index))
             }
         }
     }
@@ -462,7 +570,7 @@ impl TreeHandler {
                 t.value.mov(target, parent.into(), index)
             }
             MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| self.mov_with_txn(txn, target, parent, index, true))
+                a.with_txn(|txn| self.mov_with_txn(txn, target, parent, index))
             }
         }
     }
@@ -473,7 +581,6 @@ impl TreeHandler {
         target: TreeID,
         parent: T,
         index: usize,
-        with_event: bool,
     ) -> LoroResult<()> {
         let parent = parent.into();
         let inner = self.inner.try_attached_state()?;
@@ -505,19 +612,11 @@ impl TreeHandler {
 
         match self.generate_position_at(&target, parent, index) {
             FractionalIndexGenResult::Ok(position) => {
-                self.mov_with_position(inner, txn, target, parent, index, position, with_event)
+                self.mov_with_position(inner, txn, target, parent, index, position)
             }
             FractionalIndexGenResult::Rearrange(ids) => {
                 for (i, (id, position)) in ids.into_iter().enumerate() {
-                    self.mov_with_position(
-                        inner,
-                        txn,
-                        id,
-                        parent,
-                        index + i,
-                        position,
-                        with_event,
-                    )?;
+                    self.mov_with_position(inner, txn, id, parent, index + i, position)?;
                 }
                 Ok(())
             }
@@ -533,7 +632,6 @@ impl TreeHandler {
         parent: Option<TreeID>,
         index: usize,
         position: FractionalIndex,
-        with_event: bool,
     ) -> LoroResult<TreeID> {
         txn.apply_local_op(
             inner.container_idx,
@@ -542,18 +640,14 @@ impl TreeHandler {
                 parent,
                 position: Some(position.clone()),
             }),
-            if with_event {
-                EventHint::Tree(TreeDiffItem {
-                    target: tree_id,
-                    action: TreeExternalDiff::Create {
-                        parent,
-                        index,
-                        position,
-                    },
-                })
-            } else {
-                EventHint::None
-            },
+            EventHint::Tree(smallvec![TreeDiffItem {
+                target: tree_id,
+                action: TreeExternalDiff::Create {
+                    parent,
+                    index,
+                    position,
+                },
+            }]),
             &inner.state,
         )?;
         Ok(tree_id)
@@ -568,7 +662,6 @@ impl TreeHandler {
         parent: Option<TreeID>,
         index: usize,
         position: FractionalIndex,
-        with_event: bool,
     ) -> LoroResult<()> {
         txn.apply_local_op(
             inner.container_idx,
@@ -577,18 +670,14 @@ impl TreeHandler {
                 parent,
                 position: Some(position.clone()),
             }),
-            if with_event {
-                EventHint::Tree(TreeDiffItem {
-                    target,
-                    action: TreeExternalDiff::Move {
-                        parent,
-                        index,
-                        position,
-                    },
-                })
-            } else {
-                EventHint::None
-            },
+            EventHint::Tree(smallvec![TreeDiffItem {
+                target,
+                action: TreeExternalDiff::Move {
+                    parent,
+                    index,
+                    position,
+                },
+            }]),
             &inner.state,
         )
     }
@@ -641,8 +730,7 @@ impl TreeHandler {
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
-                a.get_children(&TreeParentId::from(parent))
-                    .map(|x| x.collect())
+                a.children(&TreeParentId::from(parent))
             }),
         }
     }
@@ -784,16 +872,37 @@ impl TreeHandler {
     pub(crate) fn get_index_by_fractional_index(
         &self,
         parent: Option<TreeID>,
-        fractional_index: &FractionalIndex,
-    ) -> Option<Result<usize, usize>> {
+        node_position: &NodePosition,
+    ) -> Option<usize> {
         match &self.inner {
             MaybeDetached::Detached(_) => {
                 unreachable!();
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
-                a.get_index_by_position(&TreeParentId::from(parent), fractional_index)
+                a.get_index_by_position(&TreeParentId::from(parent), node_position)
             }),
+        }
+    }
+
+    pub(crate) fn only_add_event(&self, event: EventHint) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unreachable!();
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| {
+                txn.add_event_to_emit(event);
+                Ok(())
+            }),
+        }
+    }
+
+    pub(crate) fn next_idlp(&self) -> IdLp {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unreachable!()
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| Ok(txn.next_idlp())).unwrap(),
         }
     }
 }
