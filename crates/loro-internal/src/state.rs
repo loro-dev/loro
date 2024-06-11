@@ -425,7 +425,6 @@ impl DocState {
 
         // We need to ensure diff is processed in order
         diffs.sort_by_cached_key(|diff| self.arena.get_depth(diff.idx).unwrap());
-
         let mut to_revive_in_next_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
         let mut to_revive_in_this_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
         let mut last_depth = 0;

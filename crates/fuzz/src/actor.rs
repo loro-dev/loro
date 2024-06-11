@@ -124,9 +124,12 @@ impl Actor {
     pub fn undo(&mut self, undo_length: u32) {
         self.loro.attach();
         let mut before_undo = self.loro.get_deep_value();
+        println!("\n\n\n undo");
         for _ in 0..undo_length {
             self.undo_manager.undo.undo(&self.loro).unwrap();
         }
+
+        println!("\n\n\n redo");
 
         for _ in 0..undo_length {
             self.undo_manager.undo.redo(&self.loro).unwrap();
