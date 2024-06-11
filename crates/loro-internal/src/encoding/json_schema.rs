@@ -22,27 +22,34 @@ use op::{JsonOpContent, JsonSchema};
 
 const SCHEMA_VERSION: u8 = 1;
 
-pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> JsonSchema {
-    let actual_start_vv: VersionVector = vv
-        .iter()
-        .filter_map(|(&peer, &end_counter)| {
-            if end_counter == 0 {
-                return None;
-            }
+fn refine_vv(vv: &VersionVector, oplog: &OpLog) -> VersionVector {
+    let mut refined = VersionVector::new();
+    for (peer, counter) in vv.iter() {
+        if counter == &0 {
+            continue;
+        }
+        let end = oplog.vv().get(peer).copied().unwrap_or(0);
+        if end <= *counter {
+            refined.insert(*peer, end);
+        } else {
+            refined.insert(*peer, *counter);
+        }
+    }
+    refined
+}
 
-            let this_end = oplog.vv().get(&peer).cloned().unwrap_or(0);
-            if this_end <= end_counter {
-                return Some((peer, this_end));
-            }
-
-            Some((peer, end_counter))
-        })
-        .collect();
+pub(crate) fn export_json<'a, 'c: 'a>(
+    oplog: &'c OpLog,
+    start_vv: &VersionVector,
+    end_vv: &VersionVector,
+) -> JsonSchema {
+    let actual_start_vv = refine_vv(start_vv, oplog);
+    let actual_end_vv = refine_vv(end_vv, oplog);
 
     let frontiers = oplog.dag.vv_to_frontiers(&actual_start_vv);
 
     let mut peer_register = ValueRegister::<PeerID>::new();
-    let diff_changes = init_encode(oplog, &actual_start_vv);
+    let diff_changes = init_encode(oplog, &actual_start_vv, &actual_end_vv);
     let changes = encode_changes(&diff_changes, &oplog.arena, &mut peer_register);
     JsonSchema {
         changes,
@@ -62,15 +69,24 @@ pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<()>
     Ok(())
 }
 
-fn init_encode<'s, 'a: 's>(oplog: &'a OpLog, vv: &'_ VersionVector) -> Vec<Cow<'s, Change>> {
-    let self_vv = oplog.vv();
-    let start_vv = vv.trim(oplog.vv());
+fn init_encode<'s, 'a: 's>(
+    oplog: &'a OpLog,
+    start_vv: &VersionVector,
+    end_vv: &VersionVector,
+) -> Vec<Cow<'s, Change>> {
     let mut diff_changes: Vec<Cow<'a, Change>> = Vec::new();
-    for change in oplog.iter_changes_peer_by_peer(&start_vv, self_vv) {
+    for change in oplog.iter_changes_peer_by_peer(start_vv, end_vv) {
         let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
+        let end_cnt = end_vv.get(&change.id.peer).copied().unwrap_or(0);
         if change.id.counter < start_cnt {
             let offset = start_cnt - change.id.counter;
-            diff_changes.push(Cow::Owned(change.slice(offset as usize, change.atom_len())));
+            let to = change
+                .atom_len()
+                .min((end_cnt - change.id.counter) as usize);
+            diff_changes.push(Cow::Owned(change.slice(offset as usize, to)));
+        } else if change.id.counter + change.atom_len() as i32 > end_cnt {
+            let len = end_cnt - change.id.counter;
+            diff_changes.push(Cow::Owned(change.slice(0, len as usize)));
         } else {
             diff_changes.push(Cow::Borrowed(change));
         }
@@ -1171,5 +1187,30 @@ pub mod op {
                 Ok(fi)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{LoroDoc, VersionVector};
+
+    #[test]
+    fn json_range_version() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(0).unwrap();
+        let list = doc.get_list("list");
+        list.insert(0, "a").unwrap();
+        list.insert(0, "b").unwrap();
+        list.insert(0, "c").unwrap();
+        let json = doc.export_json_updates(
+            &VersionVector::from_iter(vec![(0, 1)]),
+            &VersionVector::from_iter(vec![(0, 2)]),
+        );
+        assert_eq!(json.changes[0].ops.len(), 1);
+        let json = doc.export_json_updates(
+            &VersionVector::from_iter(vec![(0, 0)]),
+            &VersionVector::from_iter(vec![(0, 2)]),
+        );
+        assert_eq!(json.changes[0].ops.len(), 2);
     }
 }
