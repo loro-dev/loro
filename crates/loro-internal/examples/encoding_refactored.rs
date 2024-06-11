@@ -24,7 +24,8 @@ fn log_size() {
         let snapshot = loro.export_snapshot();
         let updates = loro.export_from(&Default::default());
         let json_updates =
-            serde_json::to_string(&loro.export_json_updates(&Default::default())).unwrap();
+            serde_json::to_string(&loro.export_json_updates(&Default::default(), &loro.oplog_vv()))
+                .unwrap();
         println!("\n");
         println!("Snapshot size={}", snapshot.len());
         println!("Updates size={}", updates.len());

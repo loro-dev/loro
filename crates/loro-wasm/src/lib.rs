@@ -879,12 +879,20 @@ impl Loro {
 
     /// Export updates from the specific version to the current version with JSON format.
     #[wasm_bindgen(js_name = "exportJsonUpdates")]
-    pub fn export_json_updates(&self, vv: Option<VersionVector>) -> JsResult<JsJsonSchema> {
-        let mut json_vv = Default::default();
-        if let Some(vv) = vv {
-            json_vv = vv.0;
+    pub fn export_json_updates(
+        &self,
+        start_vv: Option<VersionVector>,
+        end_vv: Option<VersionVector>,
+    ) -> JsResult<JsJsonSchema> {
+        let mut json_start_vv = Default::default();
+        if let Some(vv) = start_vv {
+            json_start_vv = vv.0;
         }
-        let json_schema = self.0.export_json_updates(&json_vv);
+        let mut json_end_vv = self.oplog_version().0;
+        if let Some(vv) = end_vv {
+            json_end_vv = vv.0;
+        }
+        let json_schema = self.0.export_json_updates(&json_start_vv, &json_end_vv);
         let s = serde_wasm_bindgen::Serializer::new();
         let v = json_schema
             .serialize(&s)

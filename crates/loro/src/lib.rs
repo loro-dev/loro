@@ -298,8 +298,12 @@ impl LoroDoc {
     }
 
     /// Export the current state with json-string format of the document.
-    pub fn export_json_updates(&self, vv: &VersionVector) -> JsonSchema {
-        self.doc.export_json_updates(vv)
+    pub fn export_json_updates(
+        &self,
+        start_vv: &VersionVector,
+        end_vv: &VersionVector,
+    ) -> JsonSchema {
+        self.doc.export_json_updates(start_vv, end_vv)
     }
 
     /// Export all the ops not included in the given `VersionVector`
