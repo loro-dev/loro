@@ -77,10 +77,10 @@ impl NodeChildren {
         }
     }
 
-    fn get_node_position_at(&self, pos: usize) -> &NodePosition {
+    fn get_node_position_at(&self, pos: usize) -> Option<&NodePosition> {
         match self {
-            NodeChildren::Vec(v) => &v[pos].0,
-            NodeChildren::BTree(btree) => &btree.get_elem_at(pos).unwrap().pos,
+            NodeChildren::Vec(v) => v.get(pos).map(|x| &x.0),
+            NodeChildren::BTree(btree) => btree.get_elem_at(pos).map(|x| x.pos.as_ref()),
         }
     }
 
@@ -98,9 +98,12 @@ impl NodeChildren {
         {
             let mut right = None;
             let children_num = self.len();
+            if children_num == 0 {
+                return FractionalIndexGenResult::Ok(FractionalIndex::default());
+            }
 
             if pos > 0 {
-                left = Some(self.get_node_position_at(pos - 1));
+                left = self.get_node_position_at(pos - 1);
             }
             if pos < children_num {
                 right = self.get_elem_at(pos);
@@ -114,7 +117,8 @@ impl NodeChildren {
                     // TODO: the min length between left and right
                     reset_ids.push(*right.unwrap().1);
                     for i in (pos + 1)..children_num {
-                        let this_position = &self.get_node_position_at(i).position;
+                        let this_position =
+                            self.get_node_position_at(i).map(|x| &x.position).unwrap();
                         if this_position == left_fi {
                             reset_ids.push(*self.get_elem_at(i).unwrap().1);
                         } else {
@@ -1151,9 +1155,14 @@ mod jitter {
             {
                 let mut right = None;
                 let children_num = self.len();
+                if children_num == 0 {
+                    return FractionalIndexGenResult::Ok(FractionalIndex::jitter_default(
+                        rng, jitter,
+                    ));
+                }
 
                 if pos > 0 {
-                    left = Some(self.get_node_position_at(pos - 1));
+                    left = self.get_node_position_at(pos - 1);
                 }
                 if pos < children_num {
                     right = self.get_elem_at(pos);
@@ -1167,7 +1176,7 @@ mod jitter {
                         // TODO: the min length between left and right
                         reset_ids.push(*right.unwrap().1);
                         for i in (pos + 1)..children_num {
-                            let this_position = &self.get_node_position_at(i).position;
+                            let this_position = &self.get_node_position_at(i).unwrap().position;
                             if this_position == left_fi {
                                 reset_ids.push(*self.get_elem_at(i).unwrap().1);
                             } else {
