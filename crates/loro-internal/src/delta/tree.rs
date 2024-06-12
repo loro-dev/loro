@@ -63,7 +63,7 @@ impl TreeDiff {
     }
 
     pub(crate) fn transform(&mut self, b: &TreeDiff, left_prior: bool) {
-        // println!("\ntransform {:?} \nb {:?}\n", self, b);
+        // println!("\ntransform prior {:?} {:?} \nb {:?}", left_prior, self, b);
         if b.is_empty() || self.is_empty() {
             return;
         }

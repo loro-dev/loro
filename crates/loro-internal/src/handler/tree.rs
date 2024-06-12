@@ -355,8 +355,12 @@ impl TreeHandler {
             unreachable!();
         };
 
-        if self.contains(target) && self.is_parent(target, parent) {
-            return Ok(());
+        if self.contains(target) {
+            if self.is_parent(target, parent) {
+                return Ok(());
+            } else {
+                return self.move_at_with_target_for_apply_diff(parent, position, target);
+            }
         }
 
         let index = self

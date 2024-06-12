@@ -2937,3 +2937,140 @@ fn tree_undo_nested_map_tree_tree_meta() {
         ],
     )
 }
+
+#[test]
+fn tree_undo_delete_and_create_exist_node() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Tree],
+        &mut [
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(67108864),
+                    bool: false,
+                    key: 5120,
+                    pos: 18374967954648273920,
+                    length: 2244797026329624582,
+                    prop: 18434758041542467359,
+                }),
+            },
+            Handle {
+                site: 4,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 18446521976655708160,
+                }),
+            },
+            Handle {
+                site: 126,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 3520188881,
+                    pos: 6872316421537386961,
+                    length: 6872316419617283935,
+                    prop: 6872316419617283935,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(262144),
+                    bool: false,
+                    key: 20,
+                    pos: 504122782800412436,
+                    length: 2242554153559866112,
+                    prop: 9511555592568334879,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(47),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 4107282860161892352,
+                    prop: 18390450177879048246,
+                }),
+            },
+            Handle {
+                site: 48,
+                target: 0,
+                container: 31,
+                action: Generic(GenericAction {
+                    value: I32(520093696),
+                    bool: false,
+                    key: 0,
+                    pos: 72349003438748113,
+                    length: 72340172853149953,
+                    prop: 6872316418034041089,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(47),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 4107282860161892352,
+                    prop: 18390450177879048246,
+                }),
+            },
+            Handle {
+                site: 48,
+                target: 0,
+                container: 31,
+                action: Generic(GenericAction {
+                    value: I32(-256),
+                    bool: true,
+                    key: 335544319,
+                    pos: 2115960832,
+                    length: 72349003438748113,
+                    prop: 72340172853149953,
+                }),
+            },
+            Undo {
+                site: 95,
+                op_len: 1600085855,
+            },
+            SyncAllUndo {
+                site: 128,
+                op_len: 4294967249,
+            },
+            Handle {
+                site: 131,
+                target: 31,
+                container: 39,
+                action: Generic(GenericAction {
+                    value: I32(-714423189),
+                    bool: true,
+                    key: 1364283729,
+                    pos: 18446744073709551441,
+                    length: 14430449448537641246,
+                    prop: 15132094744467078979,
+                }),
+            },
+        ],
+    )
+}
