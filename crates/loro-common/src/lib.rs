@@ -221,7 +221,7 @@ impl ContainerType {
             ContainerType::Tree => LoroValue::List(Arc::new(Default::default())),
             ContainerType::MovableList => LoroValue::List(Arc::new(Default::default())),
             #[cfg(feature = "counter")]
-            ContainerType::Counter => LoroValue::I64(0),
+            ContainerType::Counter => LoroValue::Double(0.),
             ContainerType::Unknown(_) => unreachable!(),
         }
     }

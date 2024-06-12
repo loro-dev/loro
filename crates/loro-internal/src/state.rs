@@ -8,6 +8,7 @@ use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
+use num::complex::ComplexFloat;
 use tracing::{info, instrument};
 
 use crate::{
@@ -591,10 +592,10 @@ impl DocState {
         &mut self,
         cid: ContainerID,
         decode_ctx: StateSnapshotDecodeContext,
-    ) {
+    ) -> LoroResult<()> {
         let idx = self.arena.register_container(&cid);
         let state = get_or_create!(self, idx);
-        state.import_from_snapshot_ops(decode_ctx);
+        state.import_from_snapshot_ops(decode_ctx)
     }
 
     pub(crate) fn init_unknown_container(&mut self, cid: ContainerID) {
@@ -1089,8 +1090,8 @@ impl DocState {
             }
             #[cfg(feature = "counter")]
             if id.container_type() == ContainerType::Counter {
-                if let LoroValue::I64(c) = value {
-                    if c == 0 {
+                if let LoroValue::Double(c) = value {
+                    if c.abs() < f64::EPSILON {
                         return None;
                     }
                 }

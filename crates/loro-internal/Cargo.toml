@@ -72,7 +72,6 @@ doctest = false
 bench = false
 
 [features]
-default = ["counter"]
 # "wasm" will use utf-16 index by default when using text related stuff; But it'll use utf-8 encoding internally.
 wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen", "loro-common/wasm"]
 # whether to use list slice instead of raw str in text container

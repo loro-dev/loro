@@ -862,7 +862,7 @@ fn decode_snapshot_states(
                 mode: crate::encoding::EncodeMode::Snapshot,
                 peers: &peers.peer_ids,
             },
-        );
+        )?;
     }
 
     let s = take(&mut state.states);
