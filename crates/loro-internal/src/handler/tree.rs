@@ -787,7 +787,7 @@ impl TreeHandler {
     }
 
     pub fn roots(&self) -> Vec<TreeID> {
-        self.children(None).unwrap()
+        self.children(None).unwrap_or_default()
     }
 
     #[allow(non_snake_case)]
