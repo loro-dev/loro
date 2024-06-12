@@ -14,8 +14,8 @@ fn unknown_json() {
     let doc = loro::LoroDoc::new();
     let doc_with_unknown = loro_without_counter::LoroDoc::new();
     let counter = doc.get_counter("counter");
-    counter.increment(5).unwrap();
-    counter.increment(1).unwrap();
+    counter.increment(5.).unwrap();
+    counter.increment(1.).unwrap();
     // json format with counter
     let json = doc.export_json_updates(&Default::default());
     // Test1: old version import newer version json
