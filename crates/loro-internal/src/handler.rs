@@ -3239,17 +3239,17 @@ pub mod counter {
 
     #[derive(Clone)]
     pub struct CounterHandler {
-        pub(super) inner: MaybeDetached<i64>,
+        pub(super) inner: MaybeDetached<f64>,
     }
 
     impl CounterHandler {
         pub fn new_detached() -> Self {
             Self {
-                inner: MaybeDetached::new_detached(0),
+                inner: MaybeDetached::new_detached(0.),
             }
         }
 
-        pub fn increment(&self, n: i64) -> LoroResult<()> {
+        pub fn increment(&self, n: f64) -> LoroResult<()> {
             match &self.inner {
                 MaybeDetached::Detached(d) => {
                     let d = &mut d.try_lock().unwrap().value;
@@ -3260,7 +3260,18 @@ pub mod counter {
             }
         }
 
-        fn increment_with_txn(&self, txn: &mut Transaction, n: i64) -> LoroResult<()> {
+        pub fn decrement(&self, n: f64) -> LoroResult<()> {
+            match &self.inner {
+                MaybeDetached::Detached(d) => {
+                    let d = &mut d.try_lock().unwrap().value;
+                    *d -= n;
+                    Ok(())
+                }
+                MaybeDetached::Attached(a) => a.with_txn(|txn| self.increment_with_txn(txn, -n)),
+            }
+        }
+
+        fn increment_with_txn(&self, txn: &mut Transaction, n: f64) -> LoroResult<()> {
             let inner = self.inner.try_attached_state()?;
             txn.apply_local_op(
                 inner.container_idx,
@@ -3340,7 +3351,7 @@ pub mod counter {
                 MaybeDetached::Attached(a) => {
                     let new_inner = create_handler(a, self_id);
                     let ans = new_inner.into_counter().unwrap();
-                    let delta = *self.get_value().as_i64().unwrap();
+                    let delta = *self.get_value().as_double().unwrap();
                     ans.increment_with_txn(txn, delta)?;
                     Ok(ans)
                 }

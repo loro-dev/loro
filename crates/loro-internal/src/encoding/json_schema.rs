@@ -1,7 +1,9 @@
 use std::{borrow::Cow, sync::Arc};
 
-use loro_common::{ContainerID, ContainerType, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID};
-use rle::{HasLength, Sliceable};
+use loro_common::{
+    ContainerID, ContainerType, IdLp, LoroError, LoroResult, LoroValue, PeerID, TreeID, ID,
+};
+use rle::{HasLength, RleVec, Sliceable};
 
 use crate::{
     arena::SharedArena,
@@ -17,7 +19,11 @@ use crate::{
     OpLog, VersionVector,
 };
 
-use super::encode_reordered::{import_changes_to_oplog, ValueRegister};
+use super::{
+    encode_reordered::{import_changes_to_oplog, ValueRegister},
+    value::{FutureValueKind, OwnedFutureValue, ValueKind, ValueReader},
+    OwnedValue,
+};
 use op::{JsonOpContent, JsonSchema};
 
 const SCHEMA_VERSION: u8 = 1;
@@ -60,7 +66,7 @@ pub(crate) fn export_json<'a, 'c: 'a>(
 }
 
 pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<()> {
-    let changes = decode_changes(json, &oplog.arena);
+    let changes = decode_changes(json, &oplog.arena)?;
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
@@ -378,10 +384,8 @@ fn encode_changes(
                     match f {
                         FutureInnerContent::Counter(x) => {
                             JsonOpContent::Future(op::FutureOpWrapper {
-                                prop: *x as i32,
-                                value: op::FutureOp::Counter(super::value::OwnedValue::Future(
-                                    super::value::OwnedFutureValue::Counter,
-                                )),
+                                prop: 0,
+                                value: op::FutureOp::Counter(super::OwnedValue::F64(*x)),
                             })
                         }
                         _ => unreachable!(),
@@ -411,7 +415,7 @@ fn encode_changes(
     changes
 }
 
-fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
+fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Change>> {
     let JsonSchema { peers, changes, .. } = json;
     let mut ans = Vec::with_capacity(changes.len());
     for op::Change {
@@ -420,14 +424,15 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
         deps,
         lamport,
         msg: _,
-        ops,
+        ops: json_ops,
     } in changes
     {
         let id = convert_id(&id, &peers);
-        let ops = ops
-            .into_iter()
-            .map(|op| decode_op(op, arena, &peers))
-            .collect();
+        let mut ops: RleVec<[Op; 1]> = RleVec::new();
+        for op in json_ops {
+            ops.push(decode_op(op, arena, &peers)?);
+        }
+
         let change = Change {
             id,
             timestamp,
@@ -438,10 +443,10 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
         };
         ans.push(change);
     }
-    ans
+    Ok(ans)
 }
 
-fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> Op {
+fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op> {
     let op::JsonOp {
         counter,
         container,
@@ -618,24 +623,34 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> Op {
         },
         #[cfg(feature = "counter")]
         ContainerType::Counter => {
-            let JsonOpContent::Future(op::FutureOpWrapper { prop, value }) = content else {
+            let JsonOpContent::Future(op::FutureOpWrapper { prop: _, value }) = content else {
                 unreachable!()
             };
             match value {
-                op::FutureOp::Counter(_) => {
-                    InnerContent::Future(FutureInnerContent::Counter(prop as i64))
+                op::FutureOp::Counter(OwnedValue::F64(c)) => {
+                    InnerContent::Future(FutureInnerContent::Counter(c))
                 }
-                op::FutureOp::Unknown(_) => {
-                    InnerContent::Future(FutureInnerContent::Counter(prop as i64))
+                op::FutureOp::Unknown(OwnedValue::Future(OwnedFutureValue::Unknown {
+                    kind,
+                    data,
+                })) => {
+                    if kind == ValueKind::Future(FutureValueKind::Counter).to_u8() {
+                        let mut reader = ValueReader::new(data.as_ref());
+                        let c = reader.read_f64()?;
+                        crate::op::InnerContent::Future(FutureInnerContent::Counter(c))
+                    } else {
+                        return Err(LoroError::DecodeDataCorruptionError);
+                    }
                 }
+                _ => unreachable!(),
             }
         } // Note: The Future Type need try to parse Op from the unknown content
     };
-    Op {
+    Ok(Op {
         counter,
         container: idx,
         content,
-    }
+    })
 }
 
 impl TryFrom<&str> for JsonSchema {
@@ -898,13 +913,11 @@ pub mod op {
                                 }
                                 #[cfg(feature = "counter")]
                                 ContainerType::Counter => {
-                                    let (_key, v) = map.next_entry::<String, i64>()?.unwrap();
+                                    let (_key, v) = map.next_entry::<String, f64>()?.unwrap();
                                     super::JsonOpContent::Future(super::FutureOpWrapper {
-                                        prop: v as i32,
+                                        prop: 0,
                                         value: super::FutureOp::Counter(
-                                            crate::encoding::value::OwnedValue::Future(
-                                                crate::encoding::value::OwnedFutureValue::Counter,
-                                            ),
+                                            crate::encoding::value::OwnedValue::F64(v),
                                         ),
                                     })
                                 }

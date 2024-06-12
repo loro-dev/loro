@@ -136,7 +136,7 @@ pub(crate) trait ContainerState: Clone {
     fn encode_snapshot(&self, encoder: StateSnapshotEncoder) -> Vec<u8>;
 
     /// Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext);
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()>;
 }
 
 impl<T: ContainerState> ContainerState for Box<T> {
@@ -216,7 +216,7 @@ impl<T: ContainerState> ContainerState for Box<T> {
     }
 
     #[doc = r" Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
         self.as_mut().import_from_snapshot_ops(ctx)
     }
 }

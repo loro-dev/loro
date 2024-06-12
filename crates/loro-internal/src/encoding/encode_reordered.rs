@@ -15,7 +15,7 @@ use crate::{
     arena::SharedArena,
     change::{Change, Lamport, Timestamp},
     container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
-    encoding::StateSnapshotDecodeContext,
+    encoding::{value::FutureValueKind, StateSnapshotDecodeContext},
     op::{FutureInnerContent, Op, OpWithId, SliceRange},
     state::ContainerState,
     version::Frontiers,
@@ -28,7 +28,7 @@ use self::encode::{encode_changes, encode_ops, init_encode, TempOp};
 use super::{
     arena::*,
     parse_header_and_body,
-    value::{Value, ValueKind, ValueReader, ValueWriter},
+    value::{FutureValue, Value, ValueKind, ValueReader, ValueWriter},
     ImportBlobMetadata,
 };
 
@@ -1138,7 +1138,7 @@ mod encode {
     fn get_future_op_prop(op: &FutureInnerContent) -> i32 {
         match &op {
             #[cfg(feature = "counter")]
-            FutureInnerContent::Counter(c) => *c as i32,
+            FutureInnerContent::Counter(_) => 0,
             FutureInnerContent::Unknown { prop, .. } => *prop,
         }
     }
@@ -1269,7 +1269,7 @@ mod encode {
             }
             crate::op::InnerContent::Future(f) => match f {
                 #[cfg(feature = "counter")]
-                FutureInnerContent::Counter(_) => Value::Future(FutureValue::Counter),
+                FutureInnerContent::Counter(c) => Value::F64(*c),
                 FutureInnerContent::Unknown { prop: _, value } => Value::from_owned(value),
             },
         };
@@ -1443,9 +1443,19 @@ fn decode_op(
             }
         }
         #[cfg(feature = "counter")]
-        ContainerType::Counter => {
-            crate::op::InnerContent::Future(FutureInnerContent::Counter(prop as i64))
-        }
+        ContainerType::Counter => match value {
+            Value::F64(c) => crate::op::InnerContent::Future(FutureInnerContent::Counter(c)),
+            Value::Future(FutureValue::Unknown { kind, data }) => {
+                if kind == ValueKind::Future(FutureValueKind::Counter).to_u8() {
+                    let mut reader = ValueReader::new(data);
+                    let c = reader.read_f64()?;
+                    crate::op::InnerContent::Future(FutureInnerContent::Counter(c))
+                } else {
+                    return Err(LoroError::DecodeDataCorruptionError);
+                }
+            }
+            _ => unreachable!(),
+        },
         // NOTE: The future container type need also try to parse the unknown type
         ContainerType::Unknown(_) => crate::op::InnerContent::Future(FutureInnerContent::Unknown {
             prop,

@@ -1,0 +1,38 @@
+import { describe, expect, it } from "vitest";
+import { CounterDiff, Loro } from "../src";
+
+function oneMs(): Promise<void> {
+  return new Promise((r) => setTimeout(r));
+}
+
+describe("counter", () => {
+  it("increment", () => {
+    const doc = new Loro();
+    const counter = doc.getCounter("counter");
+    counter.increment(1);
+    counter.increment(2);
+    counter.decrement(1);
+    expect(counter.value).toBe(2);
+  });
+});
+
+describe("counter event", () => {
+  it("event", async () => {
+    const doc = new Loro();
+    let triggered = false;
+    doc.subscribe((e) => {
+      triggered = true;
+      const diff = e.events[0].diff as CounterDiff;
+      expect(diff.type).toBe("counter");
+      expect(diff.increment).toStrictEqual(-1);
+    });
+    const counter = doc.getCounter("counter");
+
+    counter.increment(1);
+    counter.increment(2);
+    counter.decrement(4);
+    doc.commit();
+    await oneMs();
+    expect(triggered).toBe(true);
+  });
+});

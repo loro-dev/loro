@@ -655,7 +655,7 @@ impl ContainerState for RichtextState {
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
         self.update_version();
         assert_eq!(ctx.mode, EncodeMode::Snapshot);
         let mut loader = RichtextStateLoader::default();
@@ -692,6 +692,7 @@ impl ContainerState for RichtextState {
 
         self.state = LazyLoad::Src(loader);
         // self.check_consistency_between_content_and_style_ranges();
+        Ok(())
     }
 }
 
