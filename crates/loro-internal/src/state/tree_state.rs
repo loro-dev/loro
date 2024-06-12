@@ -83,7 +83,7 @@ impl NodeChildren {
     ) -> Result<usize, usize> {
         match self {
             NodeChildren::Vec(v) => v.binary_search_by_key(&node_position, |x| &x.0),
-            NodeChildren::BTree(btree) => btree.get_index_by_fractional_index(node_position),
+            NodeChildren::BTree(btree) => btree.get_index_by_node_position(node_position),
         }
     }
 
@@ -333,7 +333,7 @@ mod btree {
             Some(ans)
         }
 
-        pub(super) fn get_index_by_fractional_index(
+        pub(super) fn get_index_by_node_position(
             &self,
             node_position: &NodePosition,
         ) -> Result<usize, usize> {
@@ -621,22 +621,10 @@ impl TreeState {
             self.delete_position(&old_parent, target);
         }
 
-        // if !parent.is_deleted() {
         let entry = self.children.entry(parent).or_default();
         let node_position = NodePosition::new(position.clone().unwrap_or_default(), id.idlp());
         debug_assert!(!entry.has_child(&node_position));
         entry.insert_child(node_position, target);
-        // } else {
-        // clean the cache recursively, otherwise the index of event will be calculated incorrectly
-        // let mut q = vec![target];
-        // while let Some(id) = q.pop() {
-        //     let parent = TreeParentId::from(Some(id));
-        //     if let Some(children) = self.children.get(&parent) {
-        //         q.extend(children.iter().map(|x| x.1));
-        //     }
-        //     self.children.remove(&parent);
-        // }
-        // }
 
         self.trees.insert(
             target,

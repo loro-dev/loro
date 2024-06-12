@@ -540,7 +540,6 @@ fn change_to_diff(
     let mut op_iter = change.ops.iter();
     while let Some(op) = op_iter.next() {
         let Some(hint) = o_hint.as_mut() else {
-            // tree undo may not emit event
             continue;
         };
 
