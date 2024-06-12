@@ -355,10 +355,11 @@ impl TreeHandler {
             unreachable!();
         };
 
-        if self.contains(target) {
-            if self.is_parent(target, parent) {
+        if let Some(p) = self.get_node_parent(&target) {
+            if p == parent {
                 return Ok(());
-            } else {
+                // If parent is deleted, we need to create the node, so this op from move_apply_diff
+            } else if !p.is_some_and(|p| !self.contains(p)) {
                 return self.move_at_with_target_for_apply_diff(parent, position, target);
             }
         }
@@ -428,13 +429,16 @@ impl TreeHandler {
         let MaybeDetached::Attached(a) = &self.inner else {
             unreachable!();
         };
-        if self.contains(target) && self.is_parent(target, parent) {
-            return Ok(());
-        }
 
         // the move node does not exist, create it
         if !self.contains(target) {
             return self.create_at_with_target_for_apply_diff(parent, position, target);
+        }
+
+        if let Some(p) = self.get_node_parent(&target) {
+            if p == parent {
+                return Ok(());
+            }
         }
 
         let index = self
