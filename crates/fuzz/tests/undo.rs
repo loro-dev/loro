@@ -2635,7 +2635,7 @@ fn undo_tree_delete_delete() {
 }
 
 #[test]
-fn tree_undo_metadata() {
+fn tree_undo_nested_map_tree_tree_meta() {
     test_multi_sites(
         5,
         vec![FuzzTarget::Tree],

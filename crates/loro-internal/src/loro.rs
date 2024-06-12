@@ -1019,7 +1019,6 @@ impl LoroDoc {
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
             ));
         };
-
         let diff = calc.calc_diff_internal(
             &oplog,
             before,

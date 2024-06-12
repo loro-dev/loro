@@ -14,6 +14,7 @@ use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
     cursor::Cursor,
+    delta::{TreeDiffItem, TreeExternalDiff},
     diff_calc::DiffCalculator,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
@@ -450,9 +451,13 @@ impl DocState {
 
                     let external_diff =
                         state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
-                    trigger_on_new_container(&external_diff, |cid| {
-                        to_revive_in_this_layer.insert(cid);
-                    });
+                    trigger_on_new_container(
+                        &external_diff,
+                        |cid| {
+                            to_revive_in_this_layer.insert(cid);
+                        },
+                        &self.arena,
+                    );
 
                     diffs.push(InternalContainerDiff {
                         idx: new,
@@ -473,9 +478,13 @@ impl DocState {
                         let state = get_or_create!(self, diff.idx);
                         let extern_diff =
                             state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
-                        trigger_on_new_container(&extern_diff, |cid| {
-                            to_revive_in_next_layer.insert(cid);
-                        });
+                        trigger_on_new_container(
+                            &extern_diff,
+                            |cid| {
+                                to_revive_in_next_layer.insert(cid);
+                            },
+                            &self.arena,
+                        );
                         diff.diff = extern_diff.into();
                     }
                 }
@@ -503,9 +512,13 @@ impl DocState {
                                     &self.weak_state,
                                 )
                             };
-                        trigger_on_new_container(&external_diff, |cid| {
-                            to_revive_in_next_layer.insert(cid);
-                        });
+                        trigger_on_new_container(
+                            &external_diff,
+                            |cid| {
+                                to_revive_in_next_layer.insert(cid);
+                            },
+                            &self.arena,
+                        );
                         diff.diff = external_diff.into();
                     } else {
                         state.apply_diff(
@@ -539,9 +552,13 @@ impl DocState {
                 }
 
                 let external_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
-                trigger_on_new_container(&external_diff, |cid| {
-                    to_revive_in_next_layer.insert(cid);
-                });
+                trigger_on_new_container(
+                    &external_diff,
+                    |cid| {
+                        to_revive_in_next_layer.insert(cid);
+                    },
+                    &self.arena,
+                );
 
                 diffs.push(InternalContainerDiff {
                     idx: new,
@@ -1289,7 +1306,11 @@ impl DocState {
     }
 }
 
-fn trigger_on_new_container(state_diff: &Diff, mut listener: impl FnMut(ContainerIdx)) {
+fn trigger_on_new_container(
+    state_diff: &Diff,
+    mut listener: impl FnMut(ContainerIdx),
+    arena: &SharedArena,
+) {
     match state_diff {
         Diff::List(list) => {
             for delta in list.iter() {
@@ -1317,6 +1338,14 @@ fn trigger_on_new_container(state_diff: &Diff, mut listener: impl FnMut(Containe
                 if let Some(ValueOrHandler::Handler(h)) = &v.value {
                     let idx = h.container_idx();
                     listener(idx);
+                }
+            }
+        }
+        Diff::Tree(tree) => {
+            for item in tree.iter() {
+                if matches!(item.action, TreeExternalDiff::Create { .. }) {
+                    let id = item.target.associated_meta_container();
+                    listener(arena.id_to_idx(&id).unwrap());
                 }
             }
         }
