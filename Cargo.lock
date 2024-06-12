@@ -1049,6 +1049,7 @@ dependencies = [
  "enum-as-inner 0.6.0",
  "fxhash",
  "js-sys",
+ "leb128",
  "loro-rle 0.16.2",
  "nonmax",
  "serde",

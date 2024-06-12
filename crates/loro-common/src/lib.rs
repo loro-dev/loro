@@ -1,4 +1,4 @@
-use std::{fmt::Display, sync::Arc};
+use std::{fmt::Display, io::Write, sync::Arc};
 
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
@@ -156,6 +156,87 @@ pub enum ContainerID {
         counter: Counter,
         container_type: ContainerType,
     },
+}
+
+/// Root is less than Normal.
+/// The same ContainerType should be grouped together.
+impl Ord for ContainerID {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (
+                Self::Root {
+                    name,
+                    container_type,
+                },
+                Self::Root {
+                    name: name2,
+                    container_type: container_type2,
+                },
+            ) => {
+                if container_type == container_type2 {
+                    name.cmp(name2)
+                } else {
+                    container_type.cmp(container_type2)
+                }
+            }
+            (
+                Self::Normal {
+                    peer,
+                    counter,
+                    container_type,
+                },
+                Self::Normal {
+                    peer: peer2,
+                    counter: counter2,
+                    container_type: container_type2,
+                },
+            ) => {
+                if container_type == container_type2 {
+                    if peer == peer2 {
+                        counter.cmp(counter2)
+                    } else {
+                        peer.cmp(peer2)
+                    }
+                } else {
+                    container_type.cmp(container_type2)
+                }
+            }
+            (Self::Root { .. }, Self::Normal { .. }) => std::cmp::Ordering::Less,
+            (Self::Normal { .. }, Self::Root { .. }) => std::cmp::Ordering::Greater,
+        }
+    }
+}
+
+impl PartialOrd for ContainerID {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl ContainerID {
+    pub fn encode<W: Write>(&self, writer: &mut W) -> Result<(), std::io::Error> {
+        match self {
+            Self::Root {
+                name,
+                container_type,
+            } => {
+                writer.write_all(&[0, container_type.to_u8()])?;
+                leb128::write::unsigned(writer, name.len() as u64)?;
+                writer.write_all(name.as_bytes())?;
+            }
+            Self::Normal {
+                peer,
+                counter,
+                container_type,
+            } => {
+                writer.write_all(&[1, container_type.to_u8()])?;
+                writer.write_all(&peer.to_le_bytes())?;
+                leb128::write::unsigned(writer, *counter as u64)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for ContainerID {

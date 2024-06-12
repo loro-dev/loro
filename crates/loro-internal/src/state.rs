@@ -26,6 +26,7 @@ use crate::{
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue, OpLog,
 };
 
+mod container_store;
 #[cfg(feature = "counter")]
 mod counter_state;
 mod list_state;

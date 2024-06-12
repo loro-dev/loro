@@ -1,19 +1,16 @@
 use bytes::Bytes;
 use itertools::Itertools;
 use loro_common::{
-    Counter, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport, LoroError, LoroResult,
-    PeerID, ID,
+    Counter, HasId, HasIdSpan, IdLp, IdSpan, Lamport, LoroError, LoroResult, PeerID, ID,
 };
 use once_cell::sync::OnceCell;
-use rle::{HasLength, Mergable, RleCollection, RlePush};
+use rle::{HasLength, Mergable};
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, VecDeque},
-    io::Read,
     ops::Deref,
     sync::{atomic::AtomicI64, Arc, Mutex},
 };
-use tracing::trace;
 mod block_encode;
 mod delta_rle_encode;
 use crate::{
@@ -47,7 +44,7 @@ impl ChangeStore {
             match block.push_change(
                 change,
                 self.merge_interval
-                    .load(std::sync::atomic::Ordering::Acquire) as i64,
+                    .load(std::sync::atomic::Ordering::Acquire),
             ) {
                 Ok(_) => {
                     return;
@@ -64,7 +61,7 @@ impl ChangeStore {
     }
 
     pub fn block_num(&self) -> usize {
-        let mut kv = self.kv.lock().unwrap();
+        let kv = self.kv.lock().unwrap();
         kv.len()
     }
 
@@ -75,7 +72,6 @@ impl ChangeStore {
             .iter_mut()
             .map(|(id, block)| (*id, block.bytes(&self.arena)));
         for (_, block) in iter {
-            println!("block size {}", block.bytes.len());
             leb128::write::unsigned(&mut bytes, block.bytes.len() as u64).unwrap();
             bytes.extend(&block.bytes);
         }

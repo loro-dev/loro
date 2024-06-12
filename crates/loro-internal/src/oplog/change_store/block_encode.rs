@@ -87,7 +87,7 @@ use serde_columnar::{
 };
 
 #[derive(Serialize, Deserialize)]
-struct EncodedDoc<'a> {
+struct EncodedBlock<'a> {
     version: u16,
     n_changes: u32,
     first_counter: u32,
@@ -248,7 +248,7 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     //      └────────────────┴─────────────────────────────────────────────┘
 
     let value_bytes = value_writer.finish();
-    let out = EncodedDoc {
+    let out = EncodedBlock {
         version: VERSION,
         n_changes: block.len() as u32,
         first_counter: block[0].id.counter as u32,
@@ -343,8 +343,8 @@ pub fn decode_header(m_bytes: &[u8]) -> LoroResult<ChangesBlockHeader> {
     decode_header_from_doc(&doc)
 }
 
-fn decode_header_from_doc(doc: &EncodedDoc) -> Result<ChangesBlockHeader, LoroError> {
-    let EncodedDoc {
+fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, LoroError> {
+    let EncodedBlock {
         n_changes,
         first_counter,
         peers: peers_bytes,
@@ -499,7 +499,7 @@ pub fn decode_block(
         header_on_stack = Some(decode_header_from_doc(&doc).unwrap());
         &header_on_stack.as_ref().unwrap()
     });
-    let EncodedDoc {
+    let EncodedBlock {
         version,
         n_changes,
         first_counter,
