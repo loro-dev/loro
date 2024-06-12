@@ -626,7 +626,8 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                 | op::FutureOp::Unknown(OwnedValue::F64(c)) => {
                     InnerContent::Future(FutureInnerContent::Counter(c))
                 }
-                op::FutureOp::Counter(OwnedValue::I64(c)) => {
+                op::FutureOp::Counter(OwnedValue::I64(c))
+                | op::FutureOp::Unknown(OwnedValue::I64(c)) => {
                     InnerContent::Future(FutureInnerContent::Counter(c as f64))
                 }
                 _ => unreachable!(),

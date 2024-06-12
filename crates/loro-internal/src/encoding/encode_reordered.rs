@@ -1456,17 +1456,6 @@ fn decode_op(
         ContainerType::Counter => match value {
             Value::F64(c) => crate::op::InnerContent::Future(FutureInnerContent::Counter(c)),
             Value::I64(c) => crate::op::InnerContent::Future(FutureInnerContent::Counter(c as f64)),
-            Value::Future(FutureValue::Unknown { kind, data }) => {
-                let mut reader = ValueReader::new(data);
-                let c = if kind == ValueKind::F64.to_u8() {
-                    reader.read_f64()?
-                } else if kind == ValueKind::I64.to_u8() {
-                    reader.read_i64()? as f64
-                } else {
-                    return Err(LoroError::DecodeDataCorruptionError);
-                };
-                crate::op::InnerContent::Future(FutureInnerContent::Counter(c))
-            }
             _ => unreachable!(),
         },
         // NOTE: The future container type need also try to parse the unknown type
