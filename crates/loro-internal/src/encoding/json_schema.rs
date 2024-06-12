@@ -626,6 +626,9 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                 | op::FutureOp::Unknown(OwnedValue::F64(c)) => {
                     InnerContent::Future(FutureInnerContent::Counter(c))
                 }
+                op::FutureOp::Counter(OwnedValue::I64(c)) => {
+                    InnerContent::Future(FutureInnerContent::Counter(c as f64))
+                }
                 _ => unreachable!(),
             }
         } // Note: The Future Type need try to parse Op from the unknown content
@@ -830,6 +833,9 @@ pub mod op {
             Deserialize, Deserializer, Serialize, Serializer,
         };
 
+        #[allow(unused_imports)]
+        use crate::encoding::OwnedValue;
+
         impl Serialize for super::JsonOp {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
@@ -897,12 +903,11 @@ pub mod op {
                                 }
                                 #[cfg(feature = "counter")]
                                 ContainerType::Counter => {
-                                    let (_key, v) = map.next_entry::<String, f64>()?.unwrap();
+                                    let (_key, v) =
+                                        map.next_entry::<String, OwnedValue>()?.unwrap();
                                     super::JsonOpContent::Future(super::FutureOpWrapper {
                                         prop: 0,
-                                        value: super::FutureOp::Counter(
-                                            crate::encoding::value::OwnedValue::F64(v),
-                                        ),
+                                        value: super::FutureOp::Counter(v),
                                     })
                                 }
                                 _ => unreachable!(),
@@ -920,70 +925,6 @@ pub mod op {
                 deserializer.deserialize_struct("JsonOp", FIELDS, __Visitor)
             }
         }
-
-        // pub mod future_op {
-
-        //     use serde::{Deserialize, Deserializer};
-
-        //     use crate::encoding::json_schema::op::FutureOp;
-
-        //     impl<'de> Deserialize<'de> for FutureOp {
-        //         fn deserialize<D>(d: D) -> Result<FutureOp, D::Error>
-        //         where
-        //             D: Deserializer<'de>,
-        //         {
-        //             enum Field {
-        //                 #[cfg(feature = "counter")]
-        //                 Counter,
-        //                 Unknown,
-        //             }
-        //             struct FieldVisitor;
-        //             impl<'de> serde::de::Visitor<'de> for FieldVisitor {
-        //                 type Value = Field;
-        //                 fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        //                     f.write_str("field identifier")
-        //                 }
-        //                 fn visit_str<E>(self, value: &str) -> Result<Field, E>
-        //                 where
-        //                     E: serde::de::Error,
-        //                 {
-        //                     match value {
-        //                         #[cfg(feature = "counter")]
-        //                         "counter" => Ok(Field::Counter),
-        //                         _ => Ok(Field::Unknown),
-        //                     }
-        //                 }
-        //             }
-        //             impl<'de> Deserialize<'de> for Field {
-        //                 fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        //                 where
-        //                     D: Deserializer<'de>,
-        //                 {
-        //                     deserializer.deserialize_identifier(FieldVisitor)
-        //                 }
-        //             }
-        //             let (tag, content) = d.deserialize_any(
-        //                 serde::__private::de::TaggedContentVisitor::<Field>::new(
-        //                     "type",
-        //                     "internally tagged enum FutureOp",
-        //                 ),
-        //             )?;
-        //             let __deserializer =
-        //                 serde::__private::de::ContentDeserializer::<D::Error>::new(content);
-        //             match tag {
-        //                 #[cfg(feature = "counter")]
-        //                 Field::Counter => {
-        //                     let v = serde::Deserialize::deserialize(__deserializer)?;
-        //                     Ok(FutureOp::Counter(v))
-        //                 }
-        //                 _ => {
-        //                     let v = serde::Deserialize::deserialize(__deserializer)?;
-        //                     Ok(FutureOp::Unknown(v))
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
 
         pub mod id {
             use loro_common::ID;

@@ -386,6 +386,8 @@ mod container {
                 "Text" | "text" => Ok(ContainerType::Text),
                 "Tree" | "tree" => Ok(ContainerType::Tree),
                 "MovableList" | "movableList" => Ok(ContainerType::MovableList),
+                #[cfg(feature = "counter")]
+                "Counter" | "counter" => Ok(ContainerType::Counter),
                 a => {
                     if a.ends_with(')') {
                         let start = a.find('(').ok_or_else(|| {

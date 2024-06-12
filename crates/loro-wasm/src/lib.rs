@@ -921,7 +921,7 @@ impl Loro {
             json_end_vv = vv.0;
         }
         let json_schema = self.0.export_json_updates(&json_start_vv, &json_end_vv);
-        let s = serde_wasm_bindgen::Serializer::new();
+        let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
         let v = json_schema
             .serialize(&s)
             .map_err(std::convert::Into::<JsValue>::into)?;

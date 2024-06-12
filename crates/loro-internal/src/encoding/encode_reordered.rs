@@ -28,9 +28,12 @@ use self::encode::{encode_changes, encode_ops, init_encode, TempOp};
 use super::{
     arena::*,
     parse_header_and_body,
-    value::{FutureValue, Value, ValueKind, ValueReader, ValueWriter},
+    value::{Value, ValueKind, ValueReader, ValueWriter},
     ImportBlobMetadata,
 };
+
+#[allow(unused_imports)]
+use super::value::FutureValue;
 
 /// If any section of the document is longer than this, we will not decode it.
 /// It will return an data corruption error instead.

@@ -14,6 +14,27 @@ describe("counter", () => {
     counter.decrement(1);
     expect(counter.value).toBe(2);
   });
+
+   it("encode", async () => {
+    const doc = new Loro();
+    const counter = doc.getCounter("counter");
+    counter.increment(1);
+    counter.increment(2);
+    counter.decrement(4);
+    
+    const updates = doc.exportFrom();
+    const snapshot = doc.exportSnapshot();
+    const json = doc.exportJsonUpdates();
+    const doc2 = new Loro();
+    doc2.import(updates);
+    expect(doc2.toJSON()).toStrictEqual(doc.toJSON());
+    const doc3 = new Loro();
+    doc3.import(snapshot);
+    expect(doc3.toJSON()).toStrictEqual(doc.toJSON());
+    const doc4 = new Loro();
+    doc4.importJsonUpdates(json);
+    expect(doc4.toJSON()).toStrictEqual(doc.toJSON());
+  });
 });
 
 describe("counter event", () => {
@@ -36,3 +57,4 @@ describe("counter event", () => {
     expect(triggered).toBe(true);
   });
 });
+
