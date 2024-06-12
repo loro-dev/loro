@@ -15,7 +15,7 @@ use crate::{
     arena::SharedArena,
     change::{Change, Lamport, Timestamp},
     container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
-    encoding::{value::FutureValueKind, StateSnapshotDecodeContext},
+    encoding::StateSnapshotDecodeContext,
     op::{FutureInnerContent, Op, OpWithId, SliceRange},
     state::ContainerState,
     version::Frontiers,
@@ -1269,7 +1269,14 @@ mod encode {
             }
             crate::op::InnerContent::Future(f) => match f {
                 #[cfg(feature = "counter")]
-                FutureInnerContent::Counter(c) => Value::F64(*c),
+                FutureInnerContent::Counter(c) => {
+                    let c_abs = c.abs();
+                    if c_abs.fract() < std::f64::EPSILON && (c_abs as i64) < (2 << 26) {
+                        Value::I64(*c as i64)
+                    } else {
+                        Value::F64(*c)
+                    }
+                }
                 FutureInnerContent::Unknown { prop: _, value } => Value::from_owned(value),
             },
         };
@@ -1445,14 +1452,17 @@ fn decode_op(
         #[cfg(feature = "counter")]
         ContainerType::Counter => match value {
             Value::F64(c) => crate::op::InnerContent::Future(FutureInnerContent::Counter(c)),
+            Value::I64(c) => crate::op::InnerContent::Future(FutureInnerContent::Counter(c as f64)),
             Value::Future(FutureValue::Unknown { kind, data }) => {
-                if kind == ValueKind::Future(FutureValueKind::Counter).to_u8() {
-                    let mut reader = ValueReader::new(data);
-                    let c = reader.read_f64()?;
-                    crate::op::InnerContent::Future(FutureInnerContent::Counter(c))
+                let mut reader = ValueReader::new(data);
+                let c = if kind == ValueKind::F64.to_u8() {
+                    reader.read_f64()?
+                } else if kind == ValueKind::I64.to_u8() {
+                    reader.read_i64()? as f64
                 } else {
                     return Err(LoroError::DecodeDataCorruptionError);
-                }
+                };
+                crate::op::InnerContent::Future(FutureInnerContent::Counter(c))
             }
             _ => unreachable!(),
         },

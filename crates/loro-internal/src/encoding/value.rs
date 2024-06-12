@@ -85,8 +85,6 @@ impl LoroValueKind {
 
 #[derive(Debug)]
 pub enum FutureValueKind {
-    #[cfg(feature = "counter")]
-    Counter, // 16
     Unknown(u8),
 }
 
@@ -110,8 +108,6 @@ impl ValueKind {
             ValueKind::ListMove => 14,
             ValueKind::ListSet => 15,
             ValueKind::Future(future_value_kind) => match future_value_kind {
-                #[cfg(feature = "counter")]
-                FutureValueKind::Counter => 16,
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
             },
         }
@@ -136,8 +132,6 @@ impl ValueKind {
             13 => ValueKind::TreeMove,
             14 => ValueKind::ListMove,
             15 => ValueKind::ListSet,
-            #[cfg(feature = "counter")]
-            16 => ValueKind::Future(FutureValueKind::Counter),
             _ => ValueKind::Future(FutureValueKind::Unknown(kind)),
         }
     }
@@ -312,11 +306,6 @@ impl<'a> Value<'a> {
     ) -> LoroResult<Self> {
         let bytes = value_reader.read_binary()?;
         let value = match future_kind {
-            #[cfg(feature = "counter")]
-            FutureValueKind::Counter => {
-                let mut reader = ValueReader::new(bytes);
-                Value::F64(reader.read_f64()?)
-            }
             FutureValueKind::Unknown(kind) => {
                 Value::Future(FutureValue::Unknown { kind, data: bytes })
             }
