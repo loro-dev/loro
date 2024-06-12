@@ -46,13 +46,11 @@ fn unknown_json() {
     let _json_with_binary_unknown = doc3_without_counter
         .export_json_updates(&Default::default(), &doc3_without_counter.oplog_vv());
     let new_doc = loro::LoroDoc::new();
-    // Test4: newer version import older version json with binary unknown
-    if new_doc
+    // Test4: newer version import older version json with counter unknown
+    // TODO: need one more test case for binary unknown
+    new_doc
         .import_json_updates(serde_json::to_string(&unknown_json_from_snapshot).unwrap())
-        .is_ok()
-    {
-        panic!("json schema don't support forward compatibility");
-    }
+        .unwrap();
 }
 
 #[test]

@@ -59,7 +59,7 @@ async function build() {
 
 async function cargoBuild() {
   const cmd =
-    `cargo build --target wasm32-unknown-unknown --profile ${profile}`;
+    `cargo build --features counter --target wasm32-unknown-unknown --profile ${profile}`;
   console.log(cmd);
   const status = await Deno.run({
     cmd: cmd.split(" "),

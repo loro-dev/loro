@@ -1,8 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
-use loro_common::{
-    ContainerID, ContainerType, IdLp, LoroError, LoroResult, LoroValue, PeerID, TreeID, ID,
-};
+use loro_common::{ContainerID, ContainerType, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID};
 use rle::{HasLength, RleVec, Sliceable};
 
 use crate::{
@@ -19,11 +17,7 @@ use crate::{
     OpLog, VersionVector,
 };
 
-use super::{
-    encode_reordered::{import_changes_to_oplog, ValueRegister},
-    value::{FutureValueKind, OwnedFutureValue, ValueKind, ValueReader},
-    OwnedValue,
-};
+use super::encode_reordered::{import_changes_to_oplog, ValueRegister};
 use op::{JsonOpContent, JsonSchema};
 
 const SCHEMA_VERSION: u8 = 1;
@@ -626,21 +620,11 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
             let JsonOpContent::Future(op::FutureOpWrapper { prop: _, value }) = content else {
                 unreachable!()
             };
+            use crate::encoding::OwnedValue;
             match value {
-                op::FutureOp::Counter(OwnedValue::F64(c)) => {
+                op::FutureOp::Counter(OwnedValue::F64(c))
+                | op::FutureOp::Unknown(OwnedValue::F64(c)) => {
                     InnerContent::Future(FutureInnerContent::Counter(c))
-                }
-                op::FutureOp::Unknown(OwnedValue::Future(OwnedFutureValue::Unknown {
-                    kind,
-                    data,
-                })) => {
-                    if kind == ValueKind::Future(FutureValueKind::Counter).to_u8() {
-                        let mut reader = ValueReader::new(data.as_ref());
-                        let c = reader.read_f64()?;
-                        crate::op::InnerContent::Future(FutureInnerContent::Counter(c))
-                    } else {
-                        return Err(LoroError::DecodeDataCorruptionError);
-                    }
                 }
                 _ => unreachable!(),
             }

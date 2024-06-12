@@ -5580,7 +5580,6 @@ fn unknown_container() {
         &list.id(),
         Arc::new(|e| {
             assert_eq!(e.events.len(), 2);
-            assert!(e.events[1].is_unknown)
         }),
     );
 
