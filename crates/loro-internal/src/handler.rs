@@ -7,10 +7,10 @@ use crate::{
         richtext::{richtext_state::PosType, RichtextState, StyleOp, TextStyleInfoFlag},
     },
     cursor::{Cursor, Side},
-    delta::{DeltaItem, StyleMeta, TreeDiffItem, TreeExternalDiff},
+    delta::{DeltaItem, StyleMeta, TreeExternalDiff},
     event::{Diff, TextDiffItem},
     op::ListSlice,
-    state::{ContainerState, IndexType, NodePosition, State},
+    state::{ContainerState, IndexType, State},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
 };
@@ -19,8 +19,7 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
 use loro_common::{
-    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, TreeID,
-    ID,
+    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, ID,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -1101,60 +1100,18 @@ impl Handler {
             Self::Tree(x) => {
                 for diff in diff.into_tree().unwrap().diff {
                     let target = diff.target;
-                    // TODO: why cannot get index of child
                     match diff.action {
                         TreeExternalDiff::Create {
                             parent,
                             index: _,
                             position,
-                        } => {
-                            // if x.get_node_parent(&target).is_some_and(|n| n == parent) {
-                            //     x.only_add_event(EventHint::Tree(TreeDiffItem {
-                            //         target,
-                            //         action: TreeExternalDiff::Move {
-                            //             parent,
-                            //             index: x.get_index_by_tree_id(&target).unwrap(),
-                            //             position,
-                            //         },
-                            //     }))?;
-                            //     return Ok(());
-                            // }
-                            // TODO: position
-
-                            // For undo, maybe the parent has been deleted, we should apply the diff but not emit the event
-                            x.create_at_with_target_for_apply_diff(parent, position, target)?;
-                        }
+                        } => x.create_at_with_target_for_apply_diff(parent, position, target)?,
                         TreeExternalDiff::Move {
                             parent,
                             index: _,
                             position,
-                        } => {
-                            // if x.get_node_parent(&target).is_some_and(|n| n == parent) {
-                            //     x.only_add_event(EventHint::Tree(TreeDiffItem {
-                            //         target,
-                            //         action: TreeExternalDiff::Move {
-                            //             parent,
-                            //             index: x.get_index_by_tree_id(&target).unwrap(),
-                            //             position,
-                            //         },
-                            //     }))?;
-                            //     return Ok(());
-                            // }
-
-                            // For undo, maybe the parent has been deleted, we should apply the diff but not emit the event
-                            // let with_event = !parent.is_some_and(|p| !x.contains(p));
-                            // if !x.contains(target) {
-                            //     x.create_at_with_target_for_apply_diff(
-                            //         parent, position, index, target, with_event,
-                            //     )?;
-                            // } else {
-                            x.move_at_with_target_for_apply_diff(parent, position, target)?
-                            // }
-                        }
-                        TreeExternalDiff::Delete => {
-                            let with_event = x.contains(target);
-                            x.delete_inner(target, with_event)?
-                        }
+                        } => x.move_at_with_target_for_apply_diff(parent, position, target)?,
+                        TreeExternalDiff::Delete => x.delete_inner(target)?,
                     }
                 }
             }

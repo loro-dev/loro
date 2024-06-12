@@ -14,7 +14,7 @@ use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
     cursor::Cursor,
-    delta::{TreeDiffItem, TreeExternalDiff},
+    delta::TreeExternalDiff,
     diff_calc::DiffCalculator,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},

@@ -1221,23 +1221,3 @@ mod jitter {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::vec;
-
-    use fractional_index::FractionalIndex;
-    use loro_common::{IdLp, TreeID};
-
-    use super::{btree::ChildTree, NodeChildren, NodePosition};
-
-    #[test]
-    fn node_position_sort() {
-        let node1 = NodePosition::new(FractionalIndex::default(), IdLp::new(0, 0));
-        let node2 = NodePosition::new(FractionalIndex::default(), IdLp::new(0, 1));
-        let node3 = NodePosition::new(FractionalIndex::default(), IdLp::new(1, 1));
-        let mut array = vec![node1, node2, node3];
-        array.sort();
-        println!("{:?}", array);
-    }
-}

@@ -420,19 +420,6 @@ impl Transaction {
         Ok(())
     }
 
-    pub(super) fn add_event_to_emit(&mut self, event: EventHint) {
-        if !event.is_none() {
-            match self.event_hints.last_mut() {
-                Some(last) if last.can_merge(&event) => {
-                    last.merge_right(&event);
-                }
-                _ => {
-                    self.event_hints.push(event);
-                }
-            }
-        }
-    }
-
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {

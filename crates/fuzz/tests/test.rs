@@ -6606,7 +6606,7 @@ fn minify() {
     minify_error(
         5,
         |n, actions| test_multi_sites(n, vec![FuzzTarget::All], actions),
-        |n, actions| actions.to_vec(),
+        |_, actions| actions.to_vec(),
         vec![],
     )
 }

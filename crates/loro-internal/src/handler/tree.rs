@@ -50,19 +50,6 @@ impl TreeInner {
         id
     }
 
-    fn create_with_target(
-        &mut self,
-        parent: Option<TreeID>,
-        index: usize,
-        target: TreeID,
-    ) -> TreeID {
-        self.map.insert(target, MapHandler::new_detached());
-        self.parent_links.insert(target, parent);
-        let children = self.children_links.entry(parent).or_default();
-        children.insert(index, target);
-        target
-    }
-
     fn mov(&mut self, target: TreeID, new_parent: Option<TreeID>, index: usize) -> LoroResult<()> {
         let old_parent = self
             .parent_links
@@ -297,14 +284,15 @@ impl TreeHandler {
         }
     }
 
-    pub(crate) fn delete_inner(&self, target: TreeID, with_event: bool) -> LoroResult<()> {
+    pub(crate) fn delete_inner(&self, target: TreeID) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(_) => {
                 unreachable!()
             }
-            MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| self.delete_with_txn(txn, target, with_event))
-            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| {
+                let with_event = self.contains(target);
+                self.delete_with_txn(txn, target, with_event)
+            }),
         }
     }
 
@@ -371,7 +359,6 @@ impl TreeHandler {
             return Ok(());
         }
 
-        // TODO: maybe just emit event
         let index = self
             .get_index_by_fractional_index(
                 parent,
@@ -440,7 +427,6 @@ impl TreeHandler {
         if self.contains(target) && self.is_parent(target, parent) {
             return Ok(());
         }
-        // TODO: maybe just event
 
         // the move node does not exist, create it
         if !self.contains(target) {
@@ -881,18 +867,6 @@ impl TreeHandler {
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
                 a.get_index_by_position(&TreeParentId::from(parent), node_position)
-            }),
-        }
-    }
-
-    pub(crate) fn only_add_event(&self, event: EventHint) -> LoroResult<()> {
-        match &self.inner {
-            MaybeDetached::Detached(_) => {
-                unreachable!();
-            }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| {
-                txn.add_event_to_emit(event);
-                Ok(())
             }),
         }
     }

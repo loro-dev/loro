@@ -203,10 +203,3 @@ impl DerefMut for TreeDiff {
         &mut self.diff
     }
 }
-
-#[derive(Debug, Clone, PartialEq)]
-struct Node {
-    target: TreeID,
-    index: Option<usize>,
-    position: Option<FractionalIndex>,
-}
