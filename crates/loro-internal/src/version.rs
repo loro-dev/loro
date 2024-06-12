@@ -3,7 +3,6 @@ use smallvec::smallvec;
 use std::{
     cmp::Ordering,
     ops::{Deref, DerefMut},
-    sync::Arc,
 };
 
 use fxhash::{FxHashMap, FxHashSet};

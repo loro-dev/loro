@@ -563,7 +563,7 @@ pub mod wasm {
                         js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
                         js_sys::Reflect::set(
                             &obj,
-                            &"position".into(),
+                            &"fractional_index".into(),
                             &position.to_string().into(),
                         )
                         .unwrap();
@@ -583,7 +583,7 @@ pub mod wasm {
                         js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
                         js_sys::Reflect::set(
                             &obj,
-                            &"position".into(),
+                            &"fractional_index".into(),
                             &position.to_string().into(),
                         )
                         .unwrap();

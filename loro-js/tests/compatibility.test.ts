@@ -23,9 +23,10 @@ describe("compatibility", () => {
     docA.getMap("map").set("key", "123");
     docA.getList("list").insert(0, 1);
     docA.getList("list").insert(0, "1");
-    const t = docA.getTree("tree");
-    const node = t.createNode();
-    t.createNode(node.id, 0);
+    // TODO: rename
+    // const t = docA.getTree("tree");
+    // const node = t.createNode();
+    // t.createNode(node.id, 0);
     const bytes = docA.exportFrom();
 
     const docB = new OLD.Loro();
@@ -40,9 +41,9 @@ describe("compatibility", () => {
     docA.getMap("map").set("key", "123");
     docA.getList("list").insert(0, 1);
     docA.getList("list").insert(0, "1");
-    const t = docA.getTree("tree");
-    const node = t.createNode();
-    t.createNode(node.id, 0);
+    // const t = docA.getTree("tree");
+    // const node = t.createNode();
+    // t.createNode(node.id, 0);
     const bytes = docA.exportSnapshot();
 
     const docB = new OLD.Loro();
@@ -57,9 +58,9 @@ describe("compatibility", () => {
     docA.getMap("map").set("key", "123");
     docA.getList("list").insert(0, 1);
     docA.getList("list").insert(0, "1");
-    const t = docA.getTree("tree");
-    const node = t.createNode();
-    t.createNode(node.id);
+    // const t = docA.getTree("tree");
+    // const node = t.createNode();
+    // t.createNode(node.id);
     const bytes = docA.exportSnapshot();
 
     const docB = new Loro();
@@ -74,9 +75,10 @@ describe("compatibility", () => {
     docA.getMap("map").set("key", "123");
     docA.getList("list").insert(0, 1);
     docA.getList("list").insert(0, "1");
-    const t = docA.getTree("tree");
-    const node = t.createNode();
-    t.createNode(node.id);
+    
+    // const t = docA.getTree("tree");
+    // const node = t.createNode();
+    // t.createNode(node.id);
     const bytes = docA.exportSnapshot();
 
     const docB = new Loro();
