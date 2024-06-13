@@ -215,10 +215,7 @@ impl MapState {
         self.map.len()
     }
 
-    fn to_map(
-        &self,
-    ) -> std::collections::HashMap<String, LoroValue, std::hash::BuildHasherDefault<fxhash::FxHasher>>
-    {
+    fn to_map(&self) -> FxHashMap<String, LoroValue> {
         let mut ans = FxHashMap::with_capacity_and_hasher(self.len(), Default::default());
         for (key, value) in self.map.iter() {
             if value.value.is_none() {
@@ -237,6 +234,156 @@ impl MapState {
                 None => None,
             },
             None => None,
+        }
+    }
+}
+
+mod snapshot {
+    use loro_common::InternalString;
+    use serde_columnar::Itertools;
+
+    use crate::{
+        delta::MapValue,
+        state::{ContainerState, FastStateSnashot},
+    };
+
+    use super::MapState;
+
+    impl FastStateSnashot for MapState {
+        fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
+            let value = self.get_value();
+            postcard::to_io(&value, &mut w).unwrap();
+
+            let keys_with_none_value = self
+                .map
+                .iter()
+                .filter_map(|(k, v)| if v.value.is_some() { None } else { Some(k) })
+                .collect_vec();
+            postcard::to_io(&keys_with_none_value, &mut w).unwrap();
+            let mut keys: Vec<&InternalString> = self.map.keys().collect();
+            keys.sort_unstable();
+            for key in keys.into_iter() {
+                let value = self.map.get(key).unwrap();
+                w.write_all(&value.peer.to_le_bytes()).unwrap();
+                leb128::write::unsigned(&mut w, value.lamp as u64).unwrap();
+            }
+        }
+
+        fn decode_value(bytes: &[u8]) -> loro_common::LoroResult<(loro_common::LoroValue, &[u8])> {
+            postcard::take_from_bytes(bytes).map_err(|_| {
+                loro_common::LoroError::DecodeError(
+                    "Decode map value failed".to_string().into_boxed_str(),
+                )
+            })
+        }
+
+        fn decode_snapshot_fast(
+            idx: crate::container::idx::ContainerIdx,
+            (value, bytes): (loro_common::LoroValue, &[u8]),
+        ) -> loro_common::LoroResult<Self>
+        where
+            Self: Sized,
+        {
+            let value = value.into_map().unwrap();
+            // keys_with_none_value
+            let (mut keys, mut bytes) = postcard::take_from_bytes::<Vec<InternalString>>(bytes)
+                .map_err(|_| {
+                    loro_common::LoroError::DecodeError(
+                        "Decode map keys_with_none_value failed"
+                            .to_string()
+                            .into_boxed_str(),
+                    )
+                })?;
+            keys.extend(value.keys().map(|x| x.as_str().into()));
+            keys.sort_unstable();
+            let mut key_iter = keys.into_iter();
+            let mut ans = MapState::new(idx);
+            while !bytes.is_empty() {
+                let peer = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+                bytes = &bytes[8..];
+                let lamp = leb128::read::unsigned(&mut bytes).unwrap() as u32;
+                let key = key_iter.next().unwrap();
+                let value = value.get(&*key).cloned();
+                ans.insert(key.as_str().into(), MapValue { value, lamp, peer });
+            }
+
+            Ok(ans)
+        }
+    }
+
+    #[cfg(test)]
+    mod map_snapshot_test {
+        use loro_common::LoroValue;
+
+        use crate::container::idx::ContainerIdx;
+
+        use super::*;
+
+        #[test]
+        fn map_fast_snapshot() {
+            let mut map = MapState::new(ContainerIdx::from_index_and_type(
+                0,
+                loro_common::ContainerType::Map,
+            ));
+            map.insert(
+                "1".into(),
+                MapValue {
+                    value: None,
+                    lamp: 1,
+                    peer: 1,
+                },
+            );
+            map.insert(
+                "2".into(),
+                MapValue {
+                    value: Some(LoroValue::I64(0)),
+                    lamp: 2,
+                    peer: 2,
+                },
+            );
+            map.insert(
+                "3".into(),
+                MapValue {
+                    value: Some(LoroValue::Double(1.0)),
+                    lamp: 3,
+                    peer: 3,
+                },
+            );
+
+            let mut bytes = Vec::new();
+            map.encode_snapshot_fast(&mut bytes);
+
+            let (value, bytes) = MapState::decode_value(&bytes).unwrap();
+            {
+                let m = value.clone().into_map().unwrap();
+                assert_eq!(m.len(), 2);
+                assert_eq!(m.get("2").unwrap(), &LoroValue::I64(0));
+                assert_eq!(m.get("3").unwrap(), &LoroValue::Double(1.0));
+            }
+
+            let new_map = MapState::decode_snapshot_fast(
+                ContainerIdx::from_index_and_type(0, loro_common::ContainerType::Map),
+                (value, bytes),
+            )
+            .unwrap();
+            let v = new_map.map.get(&"2".into()).unwrap();
+            assert_eq!(
+                v,
+                &MapValue {
+                    value: Some(LoroValue::I64(0)),
+                    lamp: 2,
+                    peer: 2,
+                }
+            );
+            let v = new_map.map.get(&"1".into()).unwrap();
+            assert_eq!(
+                v,
+                &MapValue {
+                    value: None,
+                    lamp: 1,
+                    peer: 1,
+                }
+            );
         }
     }
 }
