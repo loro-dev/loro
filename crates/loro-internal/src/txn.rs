@@ -129,7 +129,7 @@ pub(super) enum EventHint {
     #[cfg(feature = "counter")]
     Counter(i64),
     /// Do not emit any event
-    None,
+    None(usize),
 }
 
 impl generic_btree::rle::HasLength for EventHint {
@@ -149,7 +149,7 @@ impl generic_btree::rle::HasLength for EventHint {
             EventHint::SetList { .. } => 1,
             #[cfg(feature = "counter")]
             EventHint::Counter(_) => 1,
-            EventHint::None => 0,
+            EventHint::None(l) => *l,
         }
     }
 }
@@ -397,21 +397,21 @@ impl Transaction {
         let op = self.arena.convert_raw_op(&raw_op);
         state.apply_local_op(&raw_op, &op)?;
         drop(state);
-        if !event.is_none() {
-            debug_assert_eq!(
-                event.rle_len(),
-                op.atom_len(),
-                "event:{:#?} \nop:{:#?}",
-                &event,
-                &op
-            );
-            match self.event_hints.last_mut() {
-                Some(last) if last.can_merge(&event) => {
-                    last.merge_right(&event);
-                }
-                _ => {
-                    self.event_hints.push(event);
-                }
+
+        debug_assert_eq!(
+            event.rle_len(),
+            op.atom_len(),
+            "event:{:#?} \nop:{:#?}",
+            &event,
+            &op
+        );
+
+        match self.event_hints.last_mut() {
+            Some(last) if last.can_merge(&event) => {
+                last.merge_right(&event);
+            }
+            _ => {
+                self.event_hints.push(event);
             }
         }
         self.local_ops.push(op);
@@ -722,7 +722,7 @@ fn change_to_diff(
                     diff: Diff::Counter(diff),
                 });
             }
-            EventHint::None => {}
+            EventHint::None(_) => {}
         }
 
         lamport += ops

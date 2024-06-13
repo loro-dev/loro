@@ -316,7 +316,7 @@ impl TreeHandler {
                     action: TreeExternalDiff::Delete,
                 }])
             } else {
-                EventHint::None
+                EventHint::None(1)
             },
             &inner.state,
         )
@@ -400,7 +400,7 @@ impl TreeHandler {
 
             EventHint::Tree(hint)
         } else {
-            EventHint::None
+            EventHint::None(1)
         };
 
         a.with_txn(|txn| {
@@ -462,7 +462,7 @@ impl TreeHandler {
                 },
             }])
         } else {
-            EventHint::None
+            EventHint::None(1)
         };
 
         a.with_txn(|txn| {
