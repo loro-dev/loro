@@ -57,7 +57,7 @@ impl From<Option<TreeID>> for TreeParentId {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 enum NodeChildren {
     Vec(Vec<(NodePosition, TreeID)>),
     BTree(btree::ChildTree),
@@ -77,10 +77,20 @@ impl NodeChildren {
         }
     }
 
-    fn get_node_position_at(&self, pos: usize) -> &NodePosition {
+    fn get_last_insert_index_by_position(
+        &self,
+        node_position: &NodePosition,
+    ) -> Result<usize, usize> {
         match self {
-            NodeChildren::Vec(v) => &v[pos].0,
-            NodeChildren::BTree(btree) => &btree.get_elem_at(pos).unwrap().pos,
+            NodeChildren::Vec(v) => v.binary_search_by_key(&node_position, |x| &x.0),
+            NodeChildren::BTree(btree) => btree.get_index_by_node_position(node_position),
+        }
+    }
+
+    fn get_node_position_at(&self, pos: usize) -> Option<&NodePosition> {
+        match self {
+            NodeChildren::Vec(v) => v.get(pos).map(|x| &x.0),
+            NodeChildren::BTree(btree) => btree.get_elem_at(pos).map(|x| x.pos.as_ref()),
         }
     }
 
@@ -98,9 +108,12 @@ impl NodeChildren {
         {
             let mut right = None;
             let children_num = self.len();
+            if children_num == 0 {
+                return FractionalIndexGenResult::Ok(FractionalIndex::default());
+            }
 
             if pos > 0 {
-                left = Some(self.get_node_position_at(pos - 1));
+                left = self.get_node_position_at(pos - 1);
             }
             if pos < children_num {
                 right = self.get_elem_at(pos);
@@ -114,7 +127,8 @@ impl NodeChildren {
                     // TODO: the min length between left and right
                     reset_ids.push(*right.unwrap().1);
                     for i in (pos + 1)..children_num {
-                        let this_position = &self.get_node_position_at(i).position;
+                        let this_position =
+                            self.get_node_position_at(i).map(|x| &x.position).unwrap();
                         if this_position == left_fi {
                             reset_ids.push(*self.get_elem_at(i).unwrap().1);
                         } else {
@@ -317,6 +331,33 @@ mod btree {
             );
 
             Some(ans)
+        }
+
+        pub(super) fn get_index_by_node_position(
+            &self,
+            node_position: &NodePosition,
+        ) -> Result<usize, usize> {
+            let Some(res) = self.tree.query::<KeyQuery>(node_position) else {
+                return Ok(0);
+            };
+            let mut ans = 0;
+            self.tree
+                .visit_previous_caches(res.cursor, |prev| match prev {
+                    generic_btree::PreviousCache::NodeCache(c) => {
+                        ans += c.len;
+                    }
+                    generic_btree::PreviousCache::PrevSiblingElem(_) => {
+                        ans += 1;
+                    }
+                    generic_btree::PreviousCache::ThisElemAndOffset { elem: _, offset } => {
+                        ans += offset;
+                    }
+                });
+            if res.found {
+                Ok(ans)
+            } else {
+                Err(ans)
+            }
         }
     }
 
@@ -521,13 +562,13 @@ pub struct TreeState {
     jitter: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
-struct NodePosition {
-    position: FractionalIndex,
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct NodePosition {
+    pub(crate) position: FractionalIndex,
     // different nodes created by a peer may have the same position
     // when we merge updates that cause cycles.
     // for example [::fuzz::test::test_tree::same_peer_have_same_position()]
-    idlp: IdLp,
+    pub(crate) idlp: IdLp,
 }
 
 impl NodePosition {
@@ -580,22 +621,10 @@ impl TreeState {
             self.delete_position(&old_parent, target);
         }
 
-        if !parent.is_deleted() {
-            let entry = self.children.entry(parent).or_default();
-            let node_position = NodePosition::new(position.clone().unwrap(), id.idlp());
-            debug_assert!(!entry.has_child(&node_position));
-            entry.insert_child(node_position, target);
-        } else {
-            // clean the cache recursively, otherwise the index of event will be calculated incorrectly
-            let mut q = vec![target];
-            while let Some(id) = q.pop() {
-                let parent = TreeParentId::from(Some(id));
-                if let Some(children) = self.children.get(&parent) {
-                    q.extend(children.iter().map(|x| x.1));
-                }
-                self.children.remove(&parent);
-            }
-        }
+        let entry = self.children.entry(parent).or_default();
+        let node_position = NodePosition::new(position.clone().unwrap_or_default(), id.idlp());
+        debug_assert!(!entry.has_child(&node_position));
+        entry.insert_child(node_position, target);
 
         self.trees.insert(
             target,
@@ -721,11 +750,10 @@ impl TreeState {
         self.children.get(parent).map(|x| x.len())
     }
 
-    pub fn children(&self, parent: &TreeParentId) -> Vec<TreeID> {
+    pub fn children(&self, parent: &TreeParentId) -> Option<Vec<TreeID>> {
         self.children
             .get(parent)
             .map(|x| x.iter().map(|x| *x.1).collect())
-            .unwrap_or_default()
     }
 
     /// Determine whether the target is the child of the node
@@ -776,6 +804,19 @@ impl TreeState {
                     .and_then(|x| x.get_index_by_child_id(target))
             })
             .flatten()
+    }
+
+    pub(crate) fn get_index_by_position(
+        &self,
+        parent: &TreeParentId,
+        node_position: &NodePosition,
+    ) -> Option<usize> {
+        self.children.get(parent).map(|c| {
+            match c.get_last_insert_index_by_position(node_position) {
+                Ok(i) => i,
+                Err(i) => i,
+            }
+        })
     }
 
     pub(crate) fn get_id_by_index(&self, parent: &TreeParentId, index: usize) -> Option<TreeID> {
@@ -834,8 +875,6 @@ impl ContainerState for TreeState {
                         });
                     }
                     TreeInternalDiff::Move { parent, position } => {
-                        let old_parent = self.trees.get(&target).unwrap().parent;
-                        let old_index = self.get_index_by_tree_id(&target).unwrap();
                         self.mov(target, *parent, last_move_op, Some(position.clone()), false)
                             .unwrap();
                         let index = self.get_index_by_tree_id(&target).unwrap();
@@ -845,22 +884,15 @@ impl ContainerState for TreeState {
                                 parent: parent.into_node().ok(),
                                 index,
                                 position: position.clone(),
-                                old_parent,
-                                old_index,
                             },
                         });
                     }
                     TreeInternalDiff::Delete { parent, position } => {
-                        let old_parent = self.trees.get(&target).unwrap().parent;
-                        let old_index = self.get_index_by_tree_id(&target).unwrap();
                         self.mov(target, *parent, last_move_op, position.clone(), false)
                             .unwrap();
                         ans.push(TreeDiffItem {
                             target,
-                            action: TreeExternalDiff::Delete {
-                                old_parent,
-                                old_index,
-                            },
+                            action: TreeExternalDiff::Delete,
                         });
                     }
                     TreeInternalDiff::MoveInDelete { parent, position } => {
@@ -868,14 +900,9 @@ impl ContainerState for TreeState {
                             .unwrap();
                     }
                     TreeInternalDiff::UnCreate => {
-                        let old_parent = self.trees.get(&target).unwrap().parent;
-                        let old_index = self.get_index_by_tree_id(&target).unwrap();
                         ans.push(TreeDiffItem {
                             target,
-                            action: TreeExternalDiff::Delete {
-                                old_parent,
-                                old_index,
-                            },
+                            action: TreeExternalDiff::Delete,
                         });
                         // delete it from state
                         let parent = self.trees.remove(&target);
@@ -1120,9 +1147,14 @@ mod jitter {
             {
                 let mut right = None;
                 let children_num = self.len();
+                if children_num == 0 {
+                    return FractionalIndexGenResult::Ok(FractionalIndex::jitter_default(
+                        rng, jitter,
+                    ));
+                }
 
                 if pos > 0 {
-                    left = Some(self.get_node_position_at(pos - 1));
+                    left = self.get_node_position_at(pos - 1);
                 }
                 if pos < children_num {
                     right = self.get_elem_at(pos);
@@ -1136,7 +1168,7 @@ mod jitter {
                         // TODO: the min length between left and right
                         reset_ids.push(*right.unwrap().1);
                         for i in (pos + 1)..children_num {
-                            let this_position = &self.get_node_position_at(i).position;
+                            let this_position = &self.get_node_position_at(i).unwrap().position;
                             if this_position == left_fi {
                                 reset_ids.push(*self.get_elem_at(i).unwrap().1);
                             } else {

@@ -8,11 +8,7 @@ use loro_common::LoroValue;
 
 use crate::{
     change::Change,
-    container::{
-        list::list_op::{ListOp},
-        map::MapSet,
-        tree::tree_op::TreeOp,
-    },
+    container::{list::list_op::ListOp, map::MapSet, tree::tree_op::TreeOp},
     op::{ListSlice, RawOp, RawOpContent},
     DocState, OpLog,
 };

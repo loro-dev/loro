@@ -1,5 +1,6 @@
 use fractional_index::FractionalIndex;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
+use itertools::Itertools;
 use loro_common::{IdFull, TreeID};
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
@@ -28,13 +29,8 @@ pub enum TreeExternalDiff {
         parent: Option<TreeID>,
         index: usize,
         position: FractionalIndex,
-        old_parent: TreeParentId,
-        old_index: usize,
     },
-    Delete {
-        old_parent: TreeParentId,
-        old_index: usize,
-    },
+    Delete,
 }
 
 impl TreeDiff {
@@ -49,15 +45,39 @@ impl TreeDiff {
         self
     }
 
+    fn to_hash_map_mut(&mut self) -> FxHashMap<TreeID, usize> {
+        let mut ans = FxHashSet::default();
+        for index in (0..self.diff.len()).rev() {
+            let target = self.diff[index].target;
+            if ans.contains(&target) {
+                self.diff.remove(index);
+                continue;
+            }
+            ans.insert(target);
+        }
+        self.iter()
+            .map(|x| x.target)
+            .enumerate()
+            .map(|(i, x)| (x, i))
+            .collect()
+    }
+
     pub(crate) fn transform(&mut self, b: &TreeDiff, left_prior: bool) {
-        // println!("\ntransform {:?} \nb {:?}\n", self, b);
+        // println!("\ntransform prior {:?} {:?} \nb {:?}", left_prior, self, b);
         if b.is_empty() || self.is_empty() {
             return;
         }
-        if left_prior {
-            *self = Forest::default().transform_diff(self.clone(), b.clone());
-        } else {
-            *self = Forest::default().transform_diff(b.clone(), self.clone());
+        if !left_prior {
+            let mut self_update = self.to_hash_map_mut();
+            for i in b
+                .iter()
+                .map(|x| x.target)
+                .filter_map(|x| self_update.remove(&x))
+                .sorted()
+                .rev()
+            {
+                self.remove(i);
+            }
         }
     }
 }
@@ -182,238 +202,4 @@ impl DerefMut for TreeDiff {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.diff
     }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct Node {
-    target: TreeID,
-    index: Option<usize>,
-    position: Option<FractionalIndex>,
-}
-
-#[derive(Debug, Default)]
-struct Forest {
-    parent: FxHashMap<TreeID, TreeParentId>,
-    children: FxHashMap<TreeParentId, Vec<Node>>,
-    move_in_out: FxHashMap<TreeParentId, Vec<i32>>,
-}
-
-impl Forest {
-    fn transform_diff(&mut self, left: TreeDiff, right: TreeDiff) -> TreeDiff {
-        println!("\n\n####left {:?}\nright {:?}", left, right);
-        // apply right first
-        self.apply_diff(right);
-
-        self.move_in_out
-            .iter_mut()
-            .for_each(|(_, v)| v.sort_unstable_by_key(|i| i.abs()));
-        // transform left
-        let mut ans = TreeDiff::default();
-        for mut diff in left.diff.into_iter() {
-            let target = diff.target;
-            match &mut diff.action {
-                TreeExternalDiff::Create {
-                    parent,
-                    index,
-                    position: _,
-                } => {
-                    let effect = self
-                        .parent
-                        .get(&target)
-                        .is_some_and(|p| p == &TreeParentId::from(*parent));
-                    if !effect {
-                        self.reset_index(index, &TreeParentId::from(*parent));
-                        ans.push(diff.clone());
-                        if self
-                            .parent
-                            .get(&target)
-                            .is_some_and(|p| p == &TreeParentId::Deleted)
-                        {
-                            if let Some(children) = self.children.get(&TreeParentId::Node(target)) {
-                                for child in children.iter().cloned() {
-                                    // TODO: index
-                                    ans.push(TreeDiffItem {
-                                        target: child.target,
-                                        action: TreeExternalDiff::Create {
-                                            parent: Some(target),
-                                            index: child.index.unwrap(),
-                                            position: child.position.unwrap(),
-                                        },
-                                    })
-                                }
-                            }
-                        }
-                        self.apply_diff_item(diff, false);
-                    }
-                }
-                TreeExternalDiff::Move {
-                    parent,
-                    index,
-                    position: _,
-                    old_parent,
-                    old_index,
-                } => {
-                    let effect = self
-                        .parent
-                        .get(&target)
-                        .is_some_and(|p| p == &TreeParentId::from(*parent));
-                    if !effect {
-                        self.reset_index(index, &TreeParentId::from(*parent));
-                        self.reset_index(old_index, old_parent);
-                        ans.push(diff.clone());
-                        if self
-                            .parent
-                            .get(&target)
-                            .is_some_and(|p| p == &TreeParentId::Deleted)
-                        {
-                            if let Some(children) = self.children.get(&TreeParentId::Node(target)) {
-                                for child in children.iter().cloned() {
-                                    ans.push(TreeDiffItem {
-                                        target: child.target,
-                                        action: TreeExternalDiff::Create {
-                                            parent: Some(target),
-                                            index: child.index.unwrap(),
-                                            position: child.position.unwrap(),
-                                        },
-                                    })
-                                }
-                            }
-                        }
-                        self.apply_diff_item(diff, false);
-                    }
-                }
-                TreeExternalDiff::Delete {
-                    old_index,
-                    old_parent,
-                } => {
-                    if let Some(v) = self.children.get(&TreeParentId::Deleted) {
-                        if v.iter().any(|n| n.target == target) {
-                            self.reset_index(old_index, old_parent);
-                            ans.push(diff.clone());
-                            self.apply_diff_item(diff, false);
-                        }
-                    }
-                }
-            }
-        }
-        ans
-    }
-
-    fn apply_diff(&mut self, diff: TreeDiff) {
-        for item in diff.diff.into_iter() {
-            self.apply_diff_item(item, true);
-        }
-    }
-
-    fn apply_diff_item(&mut self, item: TreeDiffItem, record_index: bool) {
-        let target = item.target;
-        match item.action {
-            TreeExternalDiff::Create {
-                parent,
-                index,
-                position,
-            } => {
-                let parent = TreeParentId::from(parent);
-                self.parent.insert(target, parent);
-                // we need not to modify the index of node
-                self.children.entry(parent).or_default().push(Node {
-                    target,
-                    index: Some(index),
-                    position: Some(position),
-                });
-                // index
-                if record_index {
-                    self.move_in_out
-                        .entry(parent)
-                        .or_default()
-                        .push(index as i32);
-                }
-            }
-            TreeExternalDiff::Move {
-                parent,
-                index,
-                position,
-                old_index,
-                old_parent,
-            } => {
-                let parent = TreeParentId::from(parent);
-                self.children.entry(parent).or_default().push(Node {
-                    target,
-                    index: Some(index),
-                    position: Some(position),
-                });
-                if let Some(parent) = self.parent.insert(target, parent) {
-                    if let Some(v) = self.children.get_mut(&parent) {
-                        let index = v.binary_search_by(|x| x.target.cmp(&target));
-                        if let Ok(index) = index {
-                            v.remove(index);
-                        }
-                    }
-                }
-                if record_index {
-                    // position
-                    self.move_in_out
-                        .entry(old_parent)
-                        .or_default()
-                        .push(-(old_index as i32));
-                    self.move_in_out
-                        .entry(parent)
-                        .or_default()
-                        .push(index as i32);
-                }
-            }
-            TreeExternalDiff::Delete {
-                old_index,
-                old_parent,
-            } => {
-                self.children
-                    .entry(TreeParentId::Deleted)
-                    .or_default()
-                    .push(Node {
-                        target,
-                        index: None,
-                        position: None,
-                    });
-                if let Some(parent) = self.parent.insert(target, TreeParentId::Deleted) {
-                    if let Some(v) = self.children.get_mut(&parent) {
-                        let index = v.binary_search_by(|x| x.target.cmp(&target));
-                        if let Ok(index) = index {
-                            v.remove(index);
-                        }
-                    }
-                }
-                if record_index {
-                    // position
-                    self.move_in_out
-                        .entry(old_parent)
-                        .or_default()
-                        .push(-(old_index as i32));
-                }
-            }
-        }
-    }
-
-    fn reset_index(&self, index: &mut usize, parent: &TreeParentId) {
-        if let Some(b_indices) = self.move_in_out.get(parent) {
-            for i in b_indices.iter() {
-                if (i.unsigned_abs() as usize) < *index
-                // || (i.unsigned_abs() as usize == *index && !left_priority)
-                {
-                    if i > &0 {
-                        *index += 1;
-                    } else if *index > (i.unsigned_abs() as usize) {
-                        *index = index.saturating_sub(1);
-                    }
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_diff_index_tree_undo() {}
 }

@@ -1103,23 +1103,15 @@ impl Handler {
                     match diff.action {
                         TreeExternalDiff::Create {
                             parent,
-                            index,
-                            position: _,
-                        } => {
-                            // For undo, maybe the parent has been deleted, we should apply the diff but not emit the event
-                            let without_event = parent.is_some_and(|p| !x.contains(p));
-                            x.create_at_with_target(parent, index, target, true)?;
-                        }
-                        TreeExternalDiff::Delete { .. } => x.delete(target)?,
-                        TreeExternalDiff::Move { parent, index, .. } => {
-                            // For undo, maybe the parent has been deleted, we should apply the diff but not emit the event
-                            let without_event = parent.is_some_and(|p| !x.contains(p));
-                            if !x.contains(target) {
-                                x.create_at_with_target(parent, index, target, true)?;
-                            } else {
-                                x.move_to_inner(target, parent, index, true)?
-                            }
-                        }
+                            index: _,
+                            position,
+                        } => x.create_at_with_target_for_apply_diff(parent, position, target)?,
+                        TreeExternalDiff::Move {
+                            parent,
+                            index: _,
+                            position,
+                        } => x.move_at_with_target_for_apply_diff(parent, position, target)?,
+                        TreeExternalDiff::Delete => x.delete_inner(target)?,
                     }
                 }
             }
