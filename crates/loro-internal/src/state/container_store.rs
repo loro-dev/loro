@@ -137,7 +137,9 @@ impl ContainerWrapper {
 }
 
 mod encode {
-    use loro_common::{ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult};
+    use loro_common::{
+        ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, PeerID,
+    };
     use serde::{Deserialize, Serialize};
     use serde_columnar::{
         izip, AnyRleDecoder, AnyRleEncoder, BoolRleDecoder, BoolRleEncoder, DeltaRleDecoder,
@@ -264,22 +266,10 @@ mod encode {
             }
         }
 
-        let mut peers = Vec::with_capacity(peers_bytes.len() / 8);
-        {
-            // decode peer_ids
-            let mut bytes: &[u8] = &peers_bytes;
-            for _ in 0..peers_bytes.len() / 8 {
-                let mut buf = [0; 8];
-                buf.copy_from_slice(&bytes[..8]);
-                peers.push(u64::from_le_bytes(buf));
-                bytes = &bytes[8..];
-            }
-        }
-
         let mut counters: DeltaRleDecoder<i32> = DeltaRleDecoder::new(&counters);
         let mut offsets: DeltaRleDecoder<usize> = DeltaRleDecoder::new(&offsets);
+        let mut peer_iter: AnyRleDecoder<u64> = AnyRleDecoder::new(&peers_bytes);
         let mut s_iter = strings.into_iter();
-        let mut peer_iter = peers.into_iter();
 
         for (t, is_root) in types.zip(is_root_iter) {
             let ty = ContainerType::try_from_u8(t.unwrap()).unwrap();
@@ -297,7 +287,7 @@ mod encode {
                 }
                 false => ans.push((
                     ContainerID::Normal {
-                        peer: peer_iter.next().unwrap(),
+                        peer: peer_iter.next().unwrap().unwrap(),
                         counter: counters.next().unwrap().unwrap() as Counter,
                         container_type: ty,
                     },
@@ -307,5 +297,55 @@ mod encode {
         }
 
         Ok(ans)
+    }
+
+    #[cfg(test)]
+    mod test {
+        use super::*;
+
+        #[test]
+        fn test_container_store() {
+            let mut encoder = CidOffsetEncoder::new();
+            let input = [
+                (
+                    ContainerID::Root {
+                        name: "map".into(),
+                        container_type: ContainerType::Map,
+                    },
+                    0,
+                ),
+                (
+                    ContainerID::Root {
+                        name: "list".into(),
+                        container_type: ContainerType::List,
+                    },
+                    1,
+                ),
+                (
+                    ContainerID::Normal {
+                        peer: 1,
+                        counter: 0,
+                        container_type: ContainerType::Map,
+                    },
+                    2,
+                ),
+                (
+                    ContainerID::Normal {
+                        peer: 2,
+                        counter: 1,
+                        container_type: ContainerType::List,
+                    },
+                    4,
+                ),
+            ];
+            for (cid, offset) in input.iter() {
+                encoder.push(cid, *offset);
+            }
+            let mut bytes = Vec::new();
+            encoder.to_io(&mut bytes);
+
+            let cids = decode_cids(&bytes).unwrap();
+            assert_eq!(&cids, &input)
+        }
     }
 }

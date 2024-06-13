@@ -432,7 +432,6 @@ impl ChangesBlock {
 
     fn get_change_index_by_lamport(&self, lamport: Lamport) -> Option<usize> {
         let changes = self.content.try_changes().unwrap();
-        dbg!(&changes, lamport);
         let r = changes.binary_search_by(|c| {
             if c.lamport > lamport {
                 Ordering::Greater
