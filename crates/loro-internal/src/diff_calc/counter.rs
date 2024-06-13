@@ -9,7 +9,7 @@ use super::DiffCalculatorTrait;
 #[derive(Debug)]
 pub(crate) struct CounterDiffCalculator {
     idx: ContainerIdx,
-    ops: BTreeMap<ID, i64>,
+    ops: BTreeMap<ID, f64>,
 }
 
 impl CounterDiffCalculator {
@@ -46,7 +46,7 @@ impl DiffCalculatorTrait for CounterDiffCalculator {
         to: &crate::VersionVector,
         _on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
-        let mut diff = 0;
+        let mut diff = 0.;
         let (b, a) = from.diff_iter(to);
 
         for sub in b {

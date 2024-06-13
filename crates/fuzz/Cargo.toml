@@ -10,15 +10,15 @@ publish = false
 loro-without-counter = { path = "../loro", package = "loro" }
 loro = { git = "https://github.com/loro-dev/loro.git", features = [
     "counter",
-], rev = "83938290ab2666d85c0c72169127611585a05cf9" }
+], rev = "052ca29dc398eba150c8d9a4cebd6f506f1fb2e7" }
 loro-common = { git = "https://github.com/loro-dev/loro.git", features = [
     "counter",
-], rev = "83938290ab2666d85c0c72169127611585a05cf9" }
+], rev = "052ca29dc398eba150c8d9a4cebd6f506f1fb2e7" }
 # loro = { path = "../loro", package = "loro", features = ["counter"] }
 # loro-common = { path = "../loro-common", package = "loro-common", features = [
 #     "counter",
 # ] }
-# loro-without-counter = { git = "https://github.com/loro-dev/loro.git", rev = "eb6daf4f064238cbc5c3d357615f5ed73767e98c", package = "loro" }
+# loro-without-counter = { git = "https://github.com/loro-dev/loro.git", rev = "43cc07daf7aada060d01505da5efcbc4e6cc2de8", package = "loro" }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
 enum-as-inner = { workspace = true }

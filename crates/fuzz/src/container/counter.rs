@@ -113,7 +113,7 @@ impl Actionable for CounterAction {
     fn apply(&self, actor: &mut ActionExecutor, container: usize) -> Option<Container> {
         let actor = actor.as_counter_actor_mut().unwrap();
         let counter = actor.containers.get(container).unwrap();
-        counter.increment(self.0 as i64).unwrap();
+        counter.increment(self.0 as f64).unwrap();
         None
     }
 
@@ -145,13 +145,13 @@ impl FromGenericAction for CounterAction {
 
 #[derive(Debug)]
 pub struct CounterTracker {
-    v: i64,
+    v: f64,
     id: ContainerID,
 }
 
 impl ApplyDiff for CounterTracker {
     fn empty(id: ContainerID) -> Self {
-        Self { v: 0, id }
+        Self { v: 0., id }
     }
 
     fn id(&self) -> &ContainerID {
@@ -165,6 +165,6 @@ impl ApplyDiff for CounterTracker {
     }
 
     fn to_value(&self) -> LoroValue {
-        LoroValue::I64(self.v)
+        LoroValue::Double(self.v)
     }
 }

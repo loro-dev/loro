@@ -960,3 +960,16 @@ fn tree_attach() {
         json!({"key":"value"})
     )
 }
+
+#[test]
+#[cfg(feature = "counter")]
+fn counter() {
+    let doc = LoroDoc::new_auto_commit();
+    let counter = doc.get_counter("counter");
+    counter.increment(1.).unwrap();
+    counter.increment(2.).unwrap();
+    counter.decrement(1.).unwrap();
+    let json = doc.export_json_updates(&Default::default());
+    let doc2 = LoroDoc::new_auto_commit();
+    doc2.import_json_updates(json).unwrap();
+}

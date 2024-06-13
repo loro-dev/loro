@@ -362,7 +362,7 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                         continue;
                     }
 
-                    if !eq(v, b.get(k).unwrap_or(&LoroValue::I64(0))) {
+                    if !eq(v, b.get(k).unwrap_or(&LoroValue::Double(0.))) {
                         return false;
                     }
                 }
@@ -378,7 +378,7 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                         continue;
                     }
 
-                    if !eq(v, a.get(k).unwrap_or(&LoroValue::I64(0))) {
+                    if !eq(v, a.get(k).unwrap_or(&LoroValue::Double(0.))) {
                         return false;
                     }
                 }

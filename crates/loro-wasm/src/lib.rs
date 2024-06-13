@@ -29,6 +29,12 @@ use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 
+#[cfg(feature = "counter")]
+mod counter;
+#[cfg(feature = "counter")]
+pub use counter::LoroCounter;
+#[cfg(feature = "counter")]
+use loro_internal::handler::counter::CounterHandler;
 mod awareness;
 mod log;
 
@@ -665,6 +671,19 @@ impl Loro {
         })
     }
 
+    /// Get a LoroCounter by container id
+    #[cfg(feature = "counter")]
+    #[wasm_bindgen(js_name = "getCounter")]
+    pub fn get_counter(&self, cid: &JsIntoContainerID) -> JsResult<LoroCounter> {
+        let counter = self
+            .0
+            .get_counter(js_value_to_container_id(cid, ContainerType::Counter)?);
+        Ok(LoroCounter {
+            handler: counter,
+            doc: Some(self.0.clone()),
+        })
+    }
+
     /// Get a LoroTree by container id
     ///
     /// The object returned is a new js object each time because it need to cross
@@ -742,6 +761,15 @@ impl Loro {
                 let movelist = self.0.get_movable_list(container_id);
                 LoroMovableList {
                     handler: movelist,
+                    doc: Some(self.0.clone()),
+                }
+                .into()
+            }
+            #[cfg(feature = "counter")]
+            ContainerType::Counter => {
+                let counter = self.0.get_counter(container_id);
+                LoroCounter {
+                    handler: counter,
                     doc: Some(self.0.clone()),
                 }
                 .into()
@@ -893,7 +921,7 @@ impl Loro {
             json_end_vv = vv.0;
         }
         let json_schema = self.0.export_json_updates(&json_start_vv, &json_end_vv);
-        let s = serde_wasm_bindgen::Serializer::new();
+        let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
         let v = json_schema
             .serialize(&s)
             .map_err(std::convert::Into::<JsValue>::into)?;
@@ -3127,7 +3155,6 @@ impl LoroTree {
     /// const node2 = node.createNode();
     /// console.log(tree.nodes());
     /// ```
-    #[wasm_bindgen]
     pub fn nodes(&mut self) -> Vec<LoroTreeNode> {
         self.handler
             .nodes()
@@ -3137,7 +3164,6 @@ impl LoroTree {
     }
 
     /// Get the root nodes of the forest.
-    #[wasm_bindgen]
     pub fn roots(&self) -> Vec<LoroTreeNode> {
         self.handler
             .roots()

@@ -1,6 +1,6 @@
 use std::sync::{Mutex, Weak};
 
-use loro_common::{ContainerID, LoroResult, LoroValue};
+use loro_common::{ContainerID, LoroError, LoroResult, LoroValue};
 
 use crate::{
     arena::SharedArena,
@@ -17,12 +17,12 @@ use super::ContainerState;
 #[derive(Debug, Clone)]
 pub struct CounterState {
     idx: ContainerIdx,
-    value: i64,
+    value: f64,
 }
 
 impl CounterState {
     pub(crate) fn new(idx: ContainerIdx) -> Self {
-        Self { idx, value: 0 }
+        Self { idx, value: 0. }
     }
 }
 
@@ -85,7 +85,7 @@ impl ContainerState for CounterState {
     }
 
     fn get_value(&mut self) -> LoroValue {
-        LoroValue::I64(self.value)
+        LoroValue::Double(self.value)
     }
 
     #[doc = " Get the index of the child container"]
@@ -105,15 +105,19 @@ impl ContainerState for CounterState {
     #[doc = " The ops should be encoded into the snapshot as well as the blob."]
     #[doc = " The users then can use the ops and the blob to restore the state to the current state."]
     fn encode_snapshot(&self, _encoder: StateSnapshotEncoder) -> Vec<u8> {
-        let mut ans = vec![];
-        leb128::write::signed(&mut ans, self.value).unwrap();
-        ans
+        self.value.to_be_bytes().to_vec()
     }
 
     #[doc = " Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
-        let mut reader = ctx.blob;
-        self.value = leb128::read::signed(&mut reader).unwrap();
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
+        let reader = ctx.blob;
+        let Some(bytes) = reader.get(0..8) else {
+            return Err(LoroError::DecodeDataCorruptionError);
+        };
+        let mut buf = [0; 8];
+        buf.copy_from_slice(bytes);
+        self.value = f64::from_be_bytes(buf);
+        Ok(())
     }
 
     #[allow(unused)]

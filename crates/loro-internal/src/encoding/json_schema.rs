@@ -1,7 +1,7 @@
 use std::{borrow::Cow, sync::Arc};
 
 use loro_common::{ContainerID, ContainerType, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID};
-use rle::{HasLength, Sliceable};
+use rle::{HasLength, RleVec, Sliceable};
 
 use crate::{
     arena::SharedArena,
@@ -60,7 +60,7 @@ pub(crate) fn export_json<'a, 'c: 'a>(
 }
 
 pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<()> {
-    let changes = decode_changes(json, &oplog.arena);
+    let changes = decode_changes(json, &oplog.arena)?;
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
@@ -378,10 +378,8 @@ fn encode_changes(
                     match f {
                         FutureInnerContent::Counter(x) => {
                             JsonOpContent::Future(op::FutureOpWrapper {
-                                prop: *x as i32,
-                                value: op::FutureOp::Counter(super::value::OwnedValue::Future(
-                                    super::value::OwnedFutureValue::Counter,
-                                )),
+                                prop: 0,
+                                value: op::FutureOp::Counter(super::OwnedValue::F64(*x)),
                             })
                         }
                         _ => unreachable!(),
@@ -411,7 +409,7 @@ fn encode_changes(
     changes
 }
 
-fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
+fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Change>> {
     let JsonSchema { peers, changes, .. } = json;
     let mut ans = Vec::with_capacity(changes.len());
     for op::Change {
@@ -420,14 +418,15 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
         deps,
         lamport,
         msg: _,
-        ops,
+        ops: json_ops,
     } in changes
     {
         let id = convert_id(&id, &peers);
-        let ops = ops
-            .into_iter()
-            .map(|op| decode_op(op, arena, &peers))
-            .collect();
+        let mut ops: RleVec<[Op; 1]> = RleVec::new();
+        for op in json_ops {
+            ops.push(decode_op(op, arena, &peers)?);
+        }
+
         let change = Change {
             id,
             timestamp,
@@ -438,10 +437,10 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
         };
         ans.push(change);
     }
-    ans
+    Ok(ans)
 }
 
-fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> Op {
+fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op> {
     let op::JsonOp {
         counter,
         container,
@@ -618,24 +617,28 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> Op {
         },
         #[cfg(feature = "counter")]
         ContainerType::Counter => {
-            let JsonOpContent::Future(op::FutureOpWrapper { prop, value }) = content else {
+            let JsonOpContent::Future(op::FutureOpWrapper { prop: _, value }) = content else {
                 unreachable!()
             };
+            use crate::encoding::OwnedValue;
             match value {
-                op::FutureOp::Counter(_) => {
-                    InnerContent::Future(FutureInnerContent::Counter(prop as i64))
+                op::FutureOp::Counter(OwnedValue::F64(c))
+                | op::FutureOp::Unknown(OwnedValue::F64(c)) => {
+                    InnerContent::Future(FutureInnerContent::Counter(c))
                 }
-                op::FutureOp::Unknown(_) => {
-                    InnerContent::Future(FutureInnerContent::Counter(prop as i64))
+                op::FutureOp::Counter(OwnedValue::I64(c))
+                | op::FutureOp::Unknown(OwnedValue::I64(c)) => {
+                    InnerContent::Future(FutureInnerContent::Counter(c as f64))
                 }
+                _ => unreachable!(),
             }
         } // Note: The Future Type need try to parse Op from the unknown content
     };
-    Op {
+    Ok(Op {
         counter,
         container: idx,
         content,
-    }
+    })
 }
 
 impl TryFrom<&str> for JsonSchema {
@@ -831,6 +834,9 @@ pub mod op {
             Deserialize, Deserializer, Serialize, Serializer,
         };
 
+        #[allow(unused_imports)]
+        use crate::encoding::OwnedValue;
+
         impl Serialize for super::JsonOp {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
@@ -898,14 +904,11 @@ pub mod op {
                                 }
                                 #[cfg(feature = "counter")]
                                 ContainerType::Counter => {
-                                    let (_key, v) = map.next_entry::<String, i64>()?.unwrap();
+                                    let (_key, v) =
+                                        map.next_entry::<String, OwnedValue>()?.unwrap();
                                     super::JsonOpContent::Future(super::FutureOpWrapper {
-                                        prop: v as i32,
-                                        value: super::FutureOp::Counter(
-                                            crate::encoding::value::OwnedValue::Future(
-                                                crate::encoding::value::OwnedFutureValue::Counter,
-                                            ),
-                                        ),
+                                        prop: 0,
+                                        value: super::FutureOp::Counter(v),
                                     })
                                 }
                                 _ => unreachable!(),
@@ -923,70 +926,6 @@ pub mod op {
                 deserializer.deserialize_struct("JsonOp", FIELDS, __Visitor)
             }
         }
-
-        // pub mod future_op {
-
-        //     use serde::{Deserialize, Deserializer};
-
-        //     use crate::encoding::json_schema::op::FutureOp;
-
-        //     impl<'de> Deserialize<'de> for FutureOp {
-        //         fn deserialize<D>(d: D) -> Result<FutureOp, D::Error>
-        //         where
-        //             D: Deserializer<'de>,
-        //         {
-        //             enum Field {
-        //                 #[cfg(feature = "counter")]
-        //                 Counter,
-        //                 Unknown,
-        //             }
-        //             struct FieldVisitor;
-        //             impl<'de> serde::de::Visitor<'de> for FieldVisitor {
-        //                 type Value = Field;
-        //                 fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        //                     f.write_str("field identifier")
-        //                 }
-        //                 fn visit_str<E>(self, value: &str) -> Result<Field, E>
-        //                 where
-        //                     E: serde::de::Error,
-        //                 {
-        //                     match value {
-        //                         #[cfg(feature = "counter")]
-        //                         "counter" => Ok(Field::Counter),
-        //                         _ => Ok(Field::Unknown),
-        //                     }
-        //                 }
-        //             }
-        //             impl<'de> Deserialize<'de> for Field {
-        //                 fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        //                 where
-        //                     D: Deserializer<'de>,
-        //                 {
-        //                     deserializer.deserialize_identifier(FieldVisitor)
-        //                 }
-        //             }
-        //             let (tag, content) = d.deserialize_any(
-        //                 serde::__private::de::TaggedContentVisitor::<Field>::new(
-        //                     "type",
-        //                     "internally tagged enum FutureOp",
-        //                 ),
-        //             )?;
-        //             let __deserializer =
-        //                 serde::__private::de::ContentDeserializer::<D::Error>::new(content);
-        //             match tag {
-        //                 #[cfg(feature = "counter")]
-        //                 Field::Counter => {
-        //                     let v = serde::Deserialize::deserialize(__deserializer)?;
-        //                     Ok(FutureOp::Counter(v))
-        //                 }
-        //                 _ => {
-        //                     let v = serde::Deserialize::deserialize(__deserializer)?;
-        //                     Ok(FutureOp::Unknown(v))
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
 
         pub mod id {
             use loro_common::ID;

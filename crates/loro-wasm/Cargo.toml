@@ -24,3 +24,4 @@ serde_json = "1"
 
 [features]
 default = ["console_error_panic_hook"]
+counter = ["loro-internal/counter"]
