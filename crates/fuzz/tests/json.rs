@@ -16,8 +16,9 @@ fn unknown_json() {
     let counter = doc.get_counter("counter");
     counter.increment(5.).unwrap();
     counter.increment(1.).unwrap();
+    doc.commit();
     // json format with counter
-    let json = doc.export_json_updates(&Default::default());
+    let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
     // Test1: old version import newer version json
     if doc_with_unknown
         .import_json_updates(serde_json::to_string(&json).unwrap())
