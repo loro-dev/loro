@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    io::Write,
     sync::{atomic::AtomicU8, Arc, Mutex, RwLock, Weak},
 };
 
@@ -82,6 +83,14 @@ impl std::fmt::Debug for DocState {
             .field("peer", &self.peer)
             .finish()
     }
+}
+
+pub(crate) trait FastStateSnashot {
+    fn encode_snapshot_fast<W: Write>(&mut self, w: W);
+    fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])>;
+    fn decode_snapshot_fast(idx: ContainerIdx, v: (LoroValue, &[u8])) -> LoroResult<Self>
+    where
+        Self: Sized;
 }
 
 #[enum_dispatch]
