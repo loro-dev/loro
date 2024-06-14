@@ -103,6 +103,11 @@ mod text_chunk {
         }
 
         #[inline]
+        pub fn id_full(&self) -> IdFull {
+            self.id
+        }
+
+        #[inline]
         pub fn bytes(&self) -> &BytesSlice {
             &self.bytes
         }

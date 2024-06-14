@@ -85,10 +85,19 @@ impl std::fmt::Debug for DocState {
     }
 }
 
+pub(crate) struct ContainerCreationContext<'a> {
+    configure: &'a Configure,
+    peer: PeerID,
+}
+
 pub(crate) trait FastStateSnashot {
     fn encode_snapshot_fast<W: Write>(&mut self, w: W);
     fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])>;
-    fn decode_snapshot_fast(idx: ContainerIdx, v: (LoroValue, &[u8])) -> LoroResult<Self>
+    fn decode_snapshot_fast(
+        idx: ContainerIdx,
+        v: (LoroValue, &[u8]),
+        ctx: ContainerCreationContext,
+    ) -> LoroResult<Self>
     where
         Self: Sized;
 }

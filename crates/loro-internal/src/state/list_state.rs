@@ -547,7 +547,7 @@ mod snapshot {
     use loro_common::{Counter, Lamport, PeerID};
     use serde::Serialize;
 
-    use crate::encoding::value_register::ValueRegister;
+    use crate::{encoding::value_register::ValueRegister, state::ContainerCreationContext};
 
     use super::*;
 
@@ -577,6 +577,7 @@ mod snapshot {
         fn decode_snapshot_fast(
             idx: ContainerIdx,
             (v, mut bytes): (LoroValue, &[u8]),
+            ctx: ContainerCreationContext,
         ) -> LoroResult<Self>
         where
             Self: Sized,
@@ -625,6 +626,8 @@ mod snapshot {
 mod test {
     use loro_common::{Counter, Lamport};
 
+    use crate::state::ContainerCreationContext;
+
     use super::*;
 
     fn id(name: &str) -> ContainerID {
@@ -661,6 +664,10 @@ mod test {
         let mut new_list = ListState::decode_snapshot_fast(
             ContainerIdx::from_index_and_type(0, loro_common::ContainerType::List),
             (v.clone(), left),
+            ContainerCreationContext {
+                configure: &Default::default(),
+                peer: 0,
+            },
         )
         .unwrap();
         new_list.check();

@@ -1523,7 +1523,7 @@ mod snapshot {
 
     use crate::{
         encoding::value_register::ValueRegister,
-        state::{ContainerState, FastStateSnashot},
+        state::{ContainerCreationContext, ContainerState, FastStateSnashot},
     };
 
     use super::{
@@ -1613,6 +1613,7 @@ mod snapshot {
         fn decode_snapshot_fast(
             idx: crate::container::idx::ContainerIdx,
             (list_value, mut bytes): (loro_common::LoroValue, &[u8]),
+            ctx: ContainerCreationContext,
         ) -> loro_common::LoroResult<Self>
         where
             Self: Sized,
@@ -1765,6 +1766,10 @@ mod snapshot {
             let mut list2 = MovableListState::decode_snapshot_fast(
                 ContainerIdx::from_index_and_type(0, loro_common::ContainerType::MovableList),
                 (v.clone(), bytes),
+                ContainerCreationContext {
+                    configure: &Default::default(),
+                    peer: 0,
+                },
             )
             .unwrap();
             assert_eq!(&list2.get_value(), &v);

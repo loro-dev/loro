@@ -840,3 +840,252 @@ impl RichtextStateLoader {
         self.elements.is_empty()
     }
 }
+
+mod snapshot {
+    use fxhash::FxHashMap;
+    use loro_common::{IdFull, InternalString, LoroValue, PeerID};
+    use serde_columnar::columnar;
+    use std::{io::Read, sync::Arc};
+
+    use crate::{
+        container::richtext::{
+            self, richtext_state::RichtextStateChunk, str_slice::StrSlice, StyleOp,
+            TextStyleInfoFlag,
+        },
+        encoding::value_register::ValueRegister,
+        state::{ContainerCreationContext, ContainerState, FastStateSnashot},
+        utils::lazy::LazyLoad,
+    };
+
+    use super::{RichtextState, RichtextStateLoader};
+
+    #[columnar(vec, ser, de, iterable)]
+    #[derive(Debug, Clone)]
+    struct EncodedTextSpan {
+        #[columnar(strategy = "DeltaRle")]
+        peer_idx: usize,
+        #[columnar(strategy = "DeltaRle")]
+        counter: i32,
+        #[columnar(strategy = "DeltaRle")]
+        lamport: u32,
+        /// positive for text
+        /// 0 for mark start
+        /// -1 for mark end
+        #[columnar(strategy = "DeltaRle")]
+        len: i32,
+    }
+
+    #[columnar(vec, ser, de, iterable)]
+    #[derive(Debug, Clone)]
+    struct EncodedMark {
+        key: InternalString,
+        value: LoroValue,
+        info: u8,
+    }
+
+    #[columnar(ser, de)]
+    struct EncodedText {
+        #[columnar(class = "vec", iter = "EncodedTextSpan")]
+        spans: Vec<EncodedTextSpan>,
+        #[columnar(class = "vec", iter = "EncodedMark")]
+        marks: Vec<EncodedMark>,
+    }
+
+    impl FastStateSnashot for RichtextState {
+        fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
+            let value = self.get_value();
+            postcard::to_io(&value, &mut w).unwrap();
+            let mut spans = Vec::new();
+            let mut marks = Vec::new();
+
+            let mut peers: ValueRegister<PeerID> = ValueRegister::new();
+            let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;
+            let mut a;
+            let mut b;
+            match &self.state {
+                LazyLoad::Src(s) => {
+                    a = Some(s.elements.iter());
+                    iter = &mut *a.as_mut().unwrap();
+                }
+                LazyLoad::Dst(s) => {
+                    b = Some(s.iter_chunk());
+                    iter = &mut *b.as_mut().unwrap();
+                }
+            }
+
+            for chunk in iter {
+                match chunk {
+                    RichtextStateChunk::Text(t) => {
+                        let id = t.id_full();
+                        assert!(t.unicode_len() > 0);
+                        spans.push(EncodedTextSpan {
+                            peer_idx: peers.register(&id.peer),
+                            counter: id.counter,
+                            lamport: id.lamport,
+                            len: t.unicode_len(),
+                        })
+                    }
+                    RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
+                        richtext::AnchorType::Start => {
+                            let id = style.id_full();
+                            spans.push(EncodedTextSpan {
+                                peer_idx: peers.register(&id.peer),
+                                counter: id.counter,
+                                lamport: id.lamport,
+                                len: 0,
+                            });
+                            marks.push(EncodedMark {
+                                key: style.key.clone(),
+                                value: style.value.clone(),
+                                info: style.info.to_byte(),
+                            })
+                        }
+                        richtext::AnchorType::End => {
+                            let id = style.id_full();
+                            spans.push(EncodedTextSpan {
+                                peer_idx: peers.register(&id.peer),
+                                counter: id.counter + 1,
+                                lamport: id.lamport + 1,
+                                len: -1,
+                            })
+                        }
+                    },
+                }
+            }
+
+            let peers = peers.unwrap_vec();
+            leb128::write::unsigned(&mut w, peers.len() as u64).unwrap();
+            for peer in peers {
+                w.write_all(&peer.to_le_bytes()).unwrap();
+            }
+
+            dbg!(&spans);
+            dbg!(&marks);
+            let bytes = serde_columnar::to_vec(&EncodedText { spans, marks }).unwrap();
+            w.write_all(&bytes).unwrap();
+        }
+
+        fn decode_value(bytes: &[u8]) -> loro_common::LoroResult<(loro_common::LoroValue, &[u8])> {
+            postcard::take_from_bytes(bytes).map_err(|_| {
+                loro_common::LoroError::DecodeError(
+                    "Decode list value failed".to_string().into_boxed_str(),
+                )
+            })
+        }
+
+        fn decode_snapshot_fast(
+            idx: crate::container::idx::ContainerIdx,
+            (string, mut bytes): (loro_common::LoroValue, &[u8]),
+            ctx: ContainerCreationContext,
+        ) -> loro_common::LoroResult<Self>
+        where
+            Self: Sized,
+        {
+            let mut text = RichtextState::new(idx, ctx.configure.text_style_config.clone());
+            let mut loader = RichtextStateLoader::default();
+            let peer_num = leb128::read::unsigned(&mut bytes).unwrap() as usize;
+            let mut peers = Vec::with_capacity(peer_num);
+            for _ in 0..peer_num {
+                let mut buf = [0u8; 8];
+                bytes.read_exact(&mut buf).unwrap();
+                peers.push(PeerID::from_le_bytes(buf));
+            }
+
+            let string = string.into_string().unwrap();
+            let mut s = StrSlice::new_from_str(&string);
+            let iters = serde_columnar::from_bytes::<EncodedText>(bytes).unwrap();
+            let span_iter = iters.spans.into_iter();
+            let mut mark_iter = iters.marks.into_iter();
+            let mut id_to_style = FxHashMap::default();
+            for span in span_iter {
+                let EncodedTextSpan {
+                    peer_idx,
+                    counter,
+                    lamport,
+                    len,
+                } = span;
+                let id_full = IdFull::new(peers[peer_idx], counter, lamport);
+                let chunk = match len {
+                    0 => {
+                        // Style Start
+                        let EncodedMark { key, value, info } = mark_iter.next().unwrap();
+                        let style_op = Arc::new(StyleOp {
+                            lamport,
+                            peer: id_full.peer,
+                            cnt: id_full.counter,
+                            key,
+                            value,
+                            info: TextStyleInfoFlag::from_byte(info),
+                        });
+                        id_to_style.insert(id_full.id(), style_op.clone());
+                        RichtextStateChunk::new_style(style_op, richtext::AnchorType::Start)
+                    }
+                    -1 => {
+                        // Style End
+                        let style = id_to_style.remove(&id_full.id().inc(-1)).unwrap();
+                        RichtextStateChunk::new_style(style, richtext::AnchorType::End)
+                    }
+                    len => {
+                        // Text
+                        let (new, rest) = s.split_at_unicode_pos(len as usize);
+                        s = rest;
+                        RichtextStateChunk::new_text(new.bytes().clone(), id_full)
+                    }
+                };
+
+                loader.push(chunk);
+            }
+            text.state = LazyLoad::Src(loader);
+            Ok(text)
+        }
+    }
+
+    #[cfg(test)]
+    mod test {
+        use crate::{container::idx::ContainerIdx, HandlerTrait, LoroDoc};
+
+        use super::*;
+
+        #[test]
+        fn test_richtext_snapshot_fast() {
+            let doc = LoroDoc::new();
+            doc.start_auto_commit();
+            let text = doc.get_text("text");
+            text.insert(0, "Hello world!").unwrap();
+            text.mark(0, 8, "bold", true.into()).unwrap();
+            text.mark(3, 10, "comment", 123456789.into()).unwrap();
+            text.insert(4, "abc").unwrap();
+            text.delete(2, 5).unwrap();
+            let mut bytes = Vec::new();
+            doc.app_state()
+                .lock()
+                .unwrap()
+                .get_text("text")
+                .unwrap()
+                .encode_snapshot_fast(&mut bytes);
+            let delta = doc
+                .app_state()
+                .lock()
+                .unwrap()
+                .get_text("text")
+                .unwrap()
+                .get_delta();
+
+            let decoded = RichtextState::decode_value(&bytes).unwrap();
+            assert_eq!(&decoded.0, &text.get_value());
+            let mut new_text = RichtextState::decode_snapshot_fast(
+                ContainerIdx::from_index_and_type(0, loro_common::ContainerType::Text),
+                decoded,
+                ContainerCreationContext {
+                    configure: &Default::default(),
+                    peer: 1,
+                },
+            )
+            .unwrap();
+            let mut new_bytes = Vec::new();
+            new_text.encode_snapshot_fast(&mut new_bytes);
+            assert_eq!(delta, new_text.get_delta());
+            assert_eq!(&bytes, &new_bytes);
+        }
+    }
+}

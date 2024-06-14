@@ -244,7 +244,7 @@ mod snapshot {
 
     use crate::{
         delta::MapValue,
-        state::{ContainerState, FastStateSnashot},
+        state::{ContainerCreationContext, ContainerState, FastStateSnashot},
     };
 
     use super::MapState;
@@ -280,6 +280,7 @@ mod snapshot {
         fn decode_snapshot_fast(
             idx: crate::container::idx::ContainerIdx,
             (value, bytes): (loro_common::LoroValue, &[u8]),
+            ctx: ContainerCreationContext,
         ) -> loro_common::LoroResult<Self>
         where
             Self: Sized,
@@ -364,6 +365,10 @@ mod snapshot {
             let new_map = MapState::decode_snapshot_fast(
                 ContainerIdx::from_index_and_type(0, loro_common::ContainerType::Map),
                 (value, bytes),
+                ContainerCreationContext {
+                    configure: &Default::default(),
+                    peer: 0,
+                },
             )
             .unwrap();
             let v = new_map.map.get(&"2".into()).unwrap();
