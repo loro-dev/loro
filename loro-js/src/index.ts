@@ -638,7 +638,7 @@ declare module "loro-wasm" {
      * The objects returned are new js objects each time because they need to cross
      * the WASM boundary.
      */
-    children(): Array<LoroTreeNode<T>>;
+    children(): Array<LoroTreeNode<T>> | undefined;
   }
 
   interface AwarenessWasm<T extends Value = Value> {

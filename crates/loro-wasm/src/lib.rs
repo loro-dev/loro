@@ -29,11 +29,9 @@ use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 
-#[cfg(feature = "counter")]
 mod counter;
-#[cfg(feature = "counter")]
 pub use counter::LoroCounter;
-#[cfg(feature = "counter")]
+
 use loro_internal::handler::counter::CounterHandler;
 mod awareness;
 mod log;
@@ -316,7 +314,7 @@ impl Loro {
     /// If enabled, the Unix timestamp will be recorded for each change automatically.
     ///
     /// You can also set each timestamp manually when you commit a change.
-    /// The timstamp manually set will override the automatic one.
+    /// The timestamp manually set will override the automatic one.
     ///
     /// NOTE: Timestamps are forced to be in ascending order.
     /// If you commit a new change with a timestamp that is less than the existing one,
@@ -672,7 +670,6 @@ impl Loro {
     }
 
     /// Get a LoroCounter by container id
-    #[cfg(feature = "counter")]
     #[wasm_bindgen(js_name = "getCounter")]
     pub fn get_counter(&self, cid: &JsIntoContainerID) -> JsResult<LoroCounter> {
         let counter = self
@@ -765,7 +762,6 @@ impl Loro {
                 }
                 .into()
             }
-            #[cfg(feature = "counter")]
             ContainerType::Counter => {
                 let counter = self.0.get_counter(container_id);
                 LoroCounter {
@@ -1660,7 +1656,7 @@ impl LoroText {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -2015,7 +2011,7 @@ impl LoroMap {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -2301,7 +2297,7 @@ impl LoroList {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -2626,7 +2622,7 @@ impl LoroMovableList {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -2937,14 +2933,16 @@ impl LoroTreeNode {
     ///
     /// The objects returned are new js objects each time because they need to cross
     /// the WASM boundary.
-    #[wasm_bindgen(skip_typescript)]
-    pub fn children(&self) -> Array {
-        let children = self.tree.children(Some(self.id));
+    #[wasm_bindgen]
+    pub fn children(&self) -> JsValue {
+        let Some(children) = self.tree.children(Some(self.id)) else {
+            return JsValue::undefined();
+        };
         let children = children.into_iter().map(|c| {
             let node = LoroTreeNode::from_tree(c, self.tree.clone(), self.doc.clone());
             JsValue::from(node)
         });
-        Array::from_iter(children)
+        Array::from_iter(children).into()
     }
 }
 
@@ -3255,7 +3253,7 @@ impl LoroTree {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -3334,7 +3332,7 @@ impl Cursor {
 
     /// Get the ID that represents the position.
     ///
-    /// It can be undefined if it's not binded into a specific ID.
+    /// It can be undefined if it's not bind into a specific ID.
     pub fn pos(&self) -> Option<JsID> {
         match self.pos.id {
             Some(id) => {

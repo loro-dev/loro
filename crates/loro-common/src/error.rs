@@ -1,3 +1,5 @@
+use std::backtrace::Backtrace;
+
 use serde_columnar::ColumnarError;
 use thiserror::Error;
 
@@ -32,8 +34,12 @@ pub enum LoroError {
     NotFoundError(Box<str>),
     #[error("Transaction error ({0})")]
     TransactionError(Box<str>),
-    #[error("Index out of bound. The given pos is {pos}, but the length is {len}")]
-    OutOfBound { pos: usize, len: usize },
+    #[error("Index out of bound. The given pos is {pos}, but the length is {len}. {info}")]
+    OutOfBound {
+        pos: usize,
+        len: usize,
+        info: Box<str>,
+    },
     #[error("Every op id should be unique. ID {id} has been used. You should use a new PeerID to edit the content. ")]
     UsedOpID { id: ID },
     #[error("Movable Tree Error: {0}")]

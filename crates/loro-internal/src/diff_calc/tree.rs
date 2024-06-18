@@ -50,7 +50,6 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
                 on_new_container(&d.target.associated_meta_container())
             }
         });
-
         tracing::info!("\ndiff {:?}", diff);
 
         InternalDiff::Tree(diff)
@@ -451,7 +450,7 @@ impl TreeCacheForDiff {
                 ans.push((*tree_id, op.position.clone(), op.id_full()));
             }
         }
-
+        ans.sort_by(|a, b| a.1.cmp(&b.1));
         ans
     }
 }

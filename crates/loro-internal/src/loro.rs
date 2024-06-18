@@ -796,6 +796,8 @@ impl LoroDoc {
             before_diff,
         );
 
+        // println!("\n undo_internal: diff: {:?}", diff);
+
         self.checkout_without_emitting(&latest_frontiers)?;
         self.detached.store(false, Release);
         if was_recording {
@@ -1048,7 +1050,6 @@ impl LoroDoc {
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
             ));
         };
-
         let diff = calc.calc_diff_internal(
             &oplog,
             before,

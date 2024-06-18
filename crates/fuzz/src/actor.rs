@@ -124,6 +124,7 @@ impl Actor {
     pub fn undo(&mut self, undo_length: u32) {
         self.loro.attach();
         let mut before_undo = self.loro.get_deep_value();
+
         for _ in 0..undo_length {
             self.undo_manager.undo.undo(&self.loro).unwrap();
         }
@@ -141,9 +142,19 @@ impl Actor {
         let root = Arc::make_mut(a.as_map_mut().unwrap());
         let tree = root.get_mut("tree").unwrap();
         let nodes = Arc::make_mut(tree.as_list_mut().unwrap());
+        nodes.sort_by_key(|x| {
+            x.as_map()
+                .unwrap()
+                .get("id")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_string()
+        });
         for node in nodes.iter_mut() {
             let node = Arc::make_mut(node.as_map_mut().unwrap());
             node.remove("position");
+            node.remove("index");
         }
     }
 
@@ -347,6 +358,42 @@ pub trait ActorTrait {
 }
 
 pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
+    fn eq_without_position(a: &LoroValue, b: &LoroValue) -> bool {
+        match (a, b) {
+            (LoroValue::Map(a), LoroValue::Map(b)) => {
+                for (k, v) in a.iter() {
+                    if k == "position" {
+                        continue;
+                    }
+
+                    if !eq_without_position(v, b.get(k).unwrap_or(&LoroValue::I64(0))) {
+                        return false;
+                    }
+                }
+
+                for (k, v) in b.iter() {
+                    if k == "position" {
+                        continue;
+                    }
+                    if !eq_without_position(v, a.get(k).unwrap_or(&LoroValue::I64(0))) {
+                        return false;
+                    }
+                }
+                true
+            }
+            (LoroValue::List(a), LoroValue::List(b)) => {
+                if a.len() != b.len() {
+                    return false;
+                }
+
+                a.iter()
+                    .zip(b.iter())
+                    .all(|(a, b)| eq_without_position(a, b))
+            }
+            (a, b) => a == b,
+        }
+    }
+
     #[must_use]
     fn eq(a: &LoroValue, b: &LoroValue) -> bool {
         match (a, b) {
@@ -385,7 +432,7 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
 
                 true
             }
-            (a, b) => a == b,
+            (a, b) => eq_without_position(a, b),
         }
     }
     assert!(

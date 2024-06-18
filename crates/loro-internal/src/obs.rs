@@ -100,7 +100,6 @@ impl Observer {
             self.inner.lock().unwrap().event_queue.push(doc_diff);
             return;
         }
-
         let mut inner = self.take_inner();
         self.emit_inner(&doc_diff, &mut inner);
         self.reset_inner(inner);

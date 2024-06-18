@@ -61,20 +61,14 @@ mod tree {
             let mut versions = vec![];
             let size = 1000;
             for _ in 0..size {
-                ids.push(
-                    loro.with_txn(|txn| tree.create_with_txn(txn, None, 0))
-                        .unwrap(),
-                )
+                ids.push(tree.create(None).unwrap())
             }
             let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
             let mut n = 1000;
             while n > 0 {
                 let i = rng.gen::<usize>() % size;
                 let j = rng.gen::<usize>() % size;
-                if loro
-                    .with_txn(|txn| tree.mov_with_txn(txn, ids[i], ids[j], 0))
-                    .is_ok()
-                {
+                if tree.mov(ids[i], ids[j]).is_ok() {
                     versions.push(loro.oplog_frontiers());
                     n -= 1;
                 };
@@ -94,15 +88,11 @@ mod tree {
             let tree = loro.get_tree("tree");
             let mut ids = vec![];
             let mut versions = vec![];
-            let id1 = loro
-                .with_txn(|txn| tree.create_with_txn(txn, None, 0))
-                .unwrap();
+            let id1 = tree.create(None).unwrap();
             ids.push(id1);
             versions.push(loro.oplog_frontiers());
             for _ in 1..depth {
-                let id = loro
-                    .with_txn(|txn| tree.create_with_txn(txn, *ids.last().unwrap(), 0))
-                    .unwrap();
+                let id = tree.create(*ids.last().unwrap()).unwrap();
                 ids.push(id);
                 versions.push(loro.oplog_frontiers());
             }
@@ -124,11 +114,7 @@ mod tree {
             let mut ids = vec![];
             let size = 1000;
             for _ in 0..size {
-                ids.push(
-                    doc_a
-                        .with_txn(|txn| tree_a.create_with_txn(txn, None, 0))
-                        .unwrap(),
-                )
+                ids.push(tree_a.create(None).unwrap())
             }
             doc_b.import(&doc_a.export_snapshot()).unwrap();
             let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
@@ -138,16 +124,10 @@ mod tree {
                     let i = rng.gen::<usize>() % size;
                     let j = rng.gen::<usize>() % size;
                     if t % 2 == 0 {
-                        let mut txn = doc_a.txn().unwrap();
-                        tree_a
-                            .mov_with_txn(&mut txn, ids[i], ids[j], 0)
-                            .unwrap_or_default();
+                        tree_a.mov(ids[i], ids[j]).unwrap_or_default();
                         doc_b.import(&doc_a.export_from(&doc_b.oplog_vv())).unwrap();
                     } else {
-                        let mut txn = doc_b.txn().unwrap();
-                        tree_b
-                            .mov_with_txn(&mut txn, ids[i], ids[j], 0)
-                            .unwrap_or_default();
+                        tree_b.mov(ids[i], ids[j]).unwrap_or_default();
                         doc_a.import(&doc_b.export_from(&doc_a.oplog_vv())).unwrap();
                     }
                 }
