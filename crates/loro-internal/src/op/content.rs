@@ -12,7 +12,6 @@ use crate::{
         tree::tree_op::TreeOp,
     },
     encoding::OwnedValue,
-    estimated_size::EstimatedSize,
 };
 
 #[derive(EnumAsInner, Debug, Clone)]
@@ -90,7 +89,7 @@ impl FutureInnerContent {
         match self {
             #[cfg(feature = "counter")]
             FutureInnerContent::Counter(_) => 4,
-            FutureInnerContent::Unknown { prop, value } => 6,
+            FutureInnerContent::Unknown { .. } => 6,
         }
     }
 }

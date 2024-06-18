@@ -6,9 +6,9 @@ use std::{
 use loro_common::{CounterSpan, HasIdSpan, HasLamport};
 use rle::RleCollection;
 
-use crate::{change::Change, OpLog, VersionVector};
+use crate::{OpLog, VersionVector};
 
-use super::{change_store::ChangesBlock, AppDag, AppDagNode, BlockChangeRef};
+use super::{change_store::ChangesBlock, BlockChangeRef};
 
 pub(crate) struct PeerChangesIter {
     blocks: VecDeque<Arc<ChangesBlock>>,

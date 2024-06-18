@@ -1,6 +1,6 @@
 use std::{borrow::Cow, ops::Deref};
 
-use crate::{container::tree::tree_op::TreeOp, InternalString};
+use crate::{InternalString};
 use fxhash::FxHashSet;
 use itertools::Itertools;
 use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, PeerID, ID};

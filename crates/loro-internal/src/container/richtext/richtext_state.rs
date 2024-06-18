@@ -103,6 +103,7 @@ mod text_chunk {
         }
 
         #[inline]
+        #[allow(unused)]
         pub fn id_full(&self) -> IdFull {
             self.id
         }

@@ -67,13 +67,11 @@ use std::io::Write;
 use loro_common::{
     ContainerID, Counter, InternalString, Lamport, LoroError, LoroResult, PeerID, ID,
 };
-use num::complex::ParseComplexError;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, DeltaRleDecoder, Itertools};
 
 use super::delta_rle_encode::{UnsignedDeltaDecoder, UnsignedDeltaEncoder};
-use super::ChangesBlock;
 use crate::arena::SharedArena;
 use crate::change::{Change, Timestamp};
 use crate::encoding::arena::ContainerArena;
@@ -313,7 +311,7 @@ impl ValueEncodeRegister for Registers {
 
     fn encode_tree_op(
         &mut self,
-        op: &crate::container::tree::tree_op::TreeOp,
+        _op: &crate::container::tree::tree_op::TreeOp,
     ) -> crate::encoding::value::Value<'static> {
         todo!()
     }
@@ -367,8 +365,8 @@ fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, Loro
     let first_counter = *first_counter as Counter;
     let n_changes = *n_changes as usize;
     let peer_num = peers_bytes.len() / 8;
-    let mut peers = Vec::with_capacity(peer_num as usize);
-    for i in 0..peer_num as usize {
+    let mut peers = Vec::with_capacity(peer_num);
+    for i in 0..peer_num {
         let peer_id =
             PeerID::from_le_bytes((&peers_bytes[(8 * i)..(8 * (i + 1))]).try_into().unwrap());
         peers.push(peer_id);
@@ -377,8 +375,8 @@ fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, Loro
     // ┌───────────────────┬──────────────────────────────────────────┐    │
     // │ LEB First Counter │         N LEB128 Change AtomLen          │◁───┼─────  Important metadata
     // └───────────────────┴──────────────────────────────────────────┘    │
-    let mut lengths = Vec::with_capacity(n_changes as usize);
-    let mut lengths_bytes: &[u8] = &*lengths_bytes;
+    let mut lengths = Vec::with_capacity(n_changes);
+    let mut lengths_bytes: &[u8] = lengths_bytes;
     for _ in 0..n_changes {
         lengths.push(leb128::read::unsigned(&mut lengths_bytes).unwrap() as Counter);
     }
@@ -387,13 +385,13 @@ fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, Loro
     // │N DepOnSelf BoolRle│ N Delta Rle Deps Lens  │    N Dep IDs    │◁───┘
     // └───────────────────┴────────────────────────┴─────────────────┘
 
-    let mut dep_self_decoder = BoolRleDecoder::new(&dep_on_self);
+    let mut dep_self_decoder = BoolRleDecoder::new(dep_on_self);
     let mut this_counter = first_counter;
     let deps: Vec<Frontiers> = Vec::with_capacity(n_changes);
     let n = n_changes;
-    let mut deps_len = AnyRleDecoder::<u64>::new(&dep_len);
-    let deps_peers_decoder = AnyRleDecoder::<u32>::new(&dep_peer_idxs);
-    let deps_counters_decoder = AnyRleDecoder::<u32>::new(&dep_counters);
+    let mut deps_len = AnyRleDecoder::<u64>::new(dep_len);
+    let deps_peers_decoder = AnyRleDecoder::<u32>::new(dep_peer_idxs);
+    let deps_counters_decoder = AnyRleDecoder::<u32>::new(dep_counters);
     let mut deps_peers_iter = deps_peers_decoder;
     let mut deps_counters_iter = deps_counters_decoder;
     for i in 0..n {
@@ -421,7 +419,7 @@ fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, Loro
         last += lengths[i];
     }
     counters.push(last);
-    let mut lamport_decoder = UnsignedDeltaDecoder::new(&lamports, n_changes);
+    let mut lamport_decoder = UnsignedDeltaDecoder::new(lamports, n_changes);
     let mut lamports = Vec::with_capacity(n_changes);
     for _ in 0..n_changes {
         lamports.push(lamport_decoder.next().unwrap() as Lamport);
@@ -479,9 +477,9 @@ impl<'a> ValueDecodedArenasTrait for ValueDecodeArena<'a> {
 
     fn decode_tree_op(
         &self,
-        positions: &[Vec<u8>],
-        op: crate::encoding::value::EncodedTreeMove,
-        id: ID,
+        _positions: &[Vec<u8>],
+        _op: crate::encoding::value::EncodedTreeMove,
+        _id: ID,
     ) -> LoroResult<crate::container::tree::tree_op::TreeOp> {
         unreachable!()
     }
@@ -498,26 +496,19 @@ pub fn decode_block(
     let mut header_on_stack = None;
     let header = header.unwrap_or_else(|| {
         header_on_stack = Some(decode_header_from_doc(&doc).unwrap());
-        &header_on_stack.as_ref().unwrap()
+        header_on_stack.as_ref().unwrap()
     });
     let EncodedBlock {
         version,
         n_changes,
         first_counter,
-        peers,
-        lengths,
-        dep_on_self,
-        dep_len,
-        dep_peer_idxs,
-        dep_counters,
-        lamports,
         timestamps,
         commit_msg_lengths,
-        commit_msgs,
         cids,
         keys,
         ops,
         values,
+        ..
     } = doc;
     let mut changes = Vec::with_capacity(n_changes as usize);
     if version != VERSION {

@@ -2,8 +2,7 @@ use crate::{arena::SharedArena, container::idx::ContainerIdx};
 use bytes::Bytes;
 use encode::{decode_cids, CidOffsetEncoder};
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, LoroResult, LoroValue};
-use once_cell::sync::OnceCell;
+use loro_common::{LoroResult, LoroValue};
 
 use super::{ContainerState, State};
 
@@ -138,11 +137,11 @@ impl ContainerWrapper {
 
 mod encode {
     use loro_common::{
-        ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, PeerID,
+        ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult,
     };
     use serde::{Deserialize, Serialize};
     use serde_columnar::{
-        izip, AnyRleDecoder, AnyRleEncoder, BoolRleDecoder, BoolRleEncoder, DeltaRleDecoder,
+        AnyRleDecoder, AnyRleEncoder, BoolRleDecoder, BoolRleEncoder, DeltaRleDecoder,
         DeltaRleEncoder,
     };
     use std::{borrow::Cow, io::Write};

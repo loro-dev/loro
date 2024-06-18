@@ -278,11 +278,11 @@ impl<'a> RichOp<'a> {
     }
 
     pub fn new_iter_by_cnt_range(change: BlockChangeRef, span: CounterSpan) -> RichOpBlockIter {
-        return RichOpBlockIter {
+        RichOpBlockIter {
             change,
             span,
             op_index: 0,
-        };
+        }
     }
 
     pub fn op(&self) -> Cow<'_, Op> {

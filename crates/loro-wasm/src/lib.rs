@@ -6,7 +6,7 @@
 use convert::resolved_diff_to_js;
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
-    change::{Change, Lamport},
+    change::Lamport,
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
     cursor::{self, Side},
@@ -18,7 +18,6 @@ use loro_internal::{
     id::{Counter, PeerID, TreeID, ID},
     loro::CommitOptions,
     obs::SubID,
-    oplog::BlockChangeRef,
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
     ContainerType, DiffEvent, FxHashMap, HandlerTrait, JsonSchema, LoroDoc, LoroValue,
@@ -34,8 +33,6 @@ use wasm_bindgen_derive::TryFromJsValue;
 mod counter;
 #[cfg(feature = "counter")]
 pub use counter::LoroCounter;
-#[cfg(feature = "counter")]
-use loro_internal::handler::counter::CounterHandler;
 mod awareness;
 mod log;
 
@@ -2737,9 +2734,8 @@ pub struct LoroTree {
 
 extern crate alloc;
 /// The handler of a tree node.
-#[derive(TryFromJsValue)]
+#[derive(TryFromJsValue, Clone)]
 #[wasm_bindgen]
-#[derive(Clone)]
 pub struct LoroTreeNode {
     id: TreeID,
     tree: TreeHandler,

@@ -6,7 +6,6 @@ mod pending_changes;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::mem::take;
 use std::rc::Rc;
 
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
@@ -17,18 +16,16 @@ use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::group::OpGroups;
 use crate::id::{Counter, PeerID, ID};
-use crate::op::{FutureInnerContent, ListSlice, Op, RawOpContent, RemoteOp, RichOp};
+use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::BlockOpRef;
 pub use change_store::{BlockChangeRef, ChangeStore};
 use fxhash::FxHashMap;
-use itertools::Itertools;
-use loro_common::{HasCounter, HasId, IdLp, IdSpan};
+use loro_common::{IdLp, IdSpan};
 use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
-use tracing::debug;
 
 type ClientChanges = FxHashMap<PeerID, Vec<Change>>;
 pub use self::dag::FrontiersNotIncluded;
@@ -233,7 +230,7 @@ impl OpLog {
     }
 
     /// This is the **only** place to update the `OpLog.changes`
-    pub(crate) fn insert_new_change(&mut self, mut change: Change, _: EnsureChangeDepsAreAtTheEnd) {
+    pub(crate) fn insert_new_change(&mut self, change: Change, _: EnsureChangeDepsAreAtTheEnd) {
         self.op_groups.insert_by_change(&change);
         self.change_store.insert_change(change.clone());
         self.register_container_and_parent_link(&change);

@@ -543,10 +543,10 @@ impl ContainerState for ListState {
 }
 
 mod snapshot {
-    use std::{borrow::Cow, io::Read};
+    use std::{io::Read};
 
     use loro_common::{Counter, Lamport, PeerID};
-    use serde::Serialize;
+    
 
     use crate::{encoding::value_register::ValueRegister, state::ContainerCreationContext};
 

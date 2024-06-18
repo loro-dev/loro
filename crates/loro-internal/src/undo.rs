@@ -6,7 +6,7 @@ use std::{
 use either::Either;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult,
+    ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult,
     LoroValue, PeerID,
 };
 use tracing::{debug_span, info_span, instrument};

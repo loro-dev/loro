@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{sync::Arc};
 
 use either::Either;
 use loro_common::{ContainerID, ContainerType, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID};

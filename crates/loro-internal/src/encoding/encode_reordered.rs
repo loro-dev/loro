@@ -899,7 +899,7 @@ mod encode {
         container::{idx::ContainerIdx, tree::tree_op::TreeOp},
         encoding::{
             value::{
-                EncodedTreeMove, MarkStart, Value, ValueEncodeRegister, ValueKind, ValueWriter,
+                MarkStart, Value, ValueEncodeRegister, ValueKind, ValueWriter,
             },
             value_register::ValueRegister,
         },
@@ -1070,8 +1070,8 @@ mod encode {
 
     use super::{EncodedChange, EncodedDeleteStartId, EncodedOp, EncodedRegisters};
 
-    pub(super) fn init_encode<'a>(
-        oplog: &'a OpLog,
+    pub(super) fn init_encode(
+        oplog: &OpLog,
         vv: &'_ VersionVector,
         peer_register: &mut ValueRegister<PeerID>,
     ) -> (Vec<i32>, Vec<Either<Change, BlockChangeRef>>) {

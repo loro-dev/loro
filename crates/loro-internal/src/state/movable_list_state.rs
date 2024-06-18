@@ -1528,7 +1528,7 @@ mod snapshot {
     };
 
     use super::{
-        inner::PushElemInfo, EncodedFastSnapshot, EncodedId, EncodedIdFull, EncodedItem,
+        inner::PushElemInfo, EncodedFastSnapshot, EncodedId, EncodedIdFull,
         EncodedItemForFastSnapshot, MovableListState,
     };
 

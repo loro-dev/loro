@@ -756,8 +756,8 @@ impl DocState {
             }
         };
 
-        let idx = idx.unwrap();
-        idx
+        
+        idx.unwrap()
     }
 
     #[inline(always)]
