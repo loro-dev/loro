@@ -1524,7 +1524,7 @@ mod snapshot {
 
     use crate::{
         encoding::value_register::ValueRegister,
-        state::{ContainerCreationContext, ContainerState, FastStateSnashot},
+        state::{ContainerCreationContext, ContainerState, FastStateSnapshot},
     };
 
     use super::{
@@ -1532,7 +1532,7 @@ mod snapshot {
         EncodedItemForFastSnapshot, MovableListState,
     };
 
-    impl FastStateSnashot for MovableListState {
+    impl FastStateSnapshot for MovableListState {
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
             let value = self.get_value();
             postcard::to_io(&value, &mut w).unwrap();

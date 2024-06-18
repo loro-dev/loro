@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use super::{ContainerState, FastStateSnashot};
+use super::{ContainerState, FastStateSnapshot};
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, list::list_op::ListOp, ContainerID},
@@ -552,7 +552,7 @@ mod snapshot {
 
     use super::*;
 
-    impl FastStateSnashot for ListState {
+    impl FastStateSnapshot for ListState {
         fn encode_snapshot_fast<W: Write>(&mut self, mut w: W) {
             let value = self.get_value();
             postcard::to_io(&value, &mut w).unwrap();

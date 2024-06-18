@@ -1234,7 +1234,7 @@ mod snapshot {
     use loro_common::{IdFull, PeerID, TreeID};
     use serde_columnar::columnar;
 
-    use crate::{encoding::value_register::ValueRegister, state::FastStateSnashot};
+    use crate::{encoding::value_register::ValueRegister, state::FastStateSnapshot};
 
     use super::{TreeNode, TreeParentId, TreeState};
 
@@ -1302,7 +1302,7 @@ mod snapshot {
         )
     }
 
-    impl FastStateSnashot for TreeState {
+    impl FastStateSnapshot for TreeState {
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
             let alive_tree_nodes = self.tree_nodes();
             let deleted_tree_nodes = self.deleted_tree_nodes();

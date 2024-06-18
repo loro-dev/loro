@@ -877,7 +877,7 @@ mod snapshot {
             TextStyleInfoFlag,
         },
         encoding::value_register::ValueRegister,
-        state::{ContainerCreationContext, ContainerState, FastStateSnashot},
+        state::{ContainerCreationContext, ContainerState, FastStateSnapshot},
         utils::lazy::LazyLoad,
     };
 
@@ -915,7 +915,7 @@ mod snapshot {
         marks: Vec<EncodedMark>,
     }
 
-    impl FastStateSnashot for RichtextState {
+    impl FastStateSnapshot for RichtextState {
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
             let value = self.get_value();
             postcard::to_io(&value, &mut w).unwrap();

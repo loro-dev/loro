@@ -125,3 +125,36 @@ impl ContainerState for CounterState {
         false
     }
 }
+
+mod snapshot {
+    use crate::state::FastStateSnapshot;
+
+    use super::*;
+
+    impl FastStateSnapshot for CounterState {
+        fn encode_snapshot_fast<W: std::io::Write>(&mut self, mut w: W) {
+            let bytes = self.value.to_le_bytes();
+            w.write_all(&bytes).unwrap();
+        }
+
+        fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
+            Ok((
+                LoroValue::Double(f64::from_le_bytes(bytes.try_into().unwrap())),
+                &[],
+            ))
+        }
+
+        fn decode_snapshot_fast(
+            idx: ContainerIdx,
+            v: (LoroValue, &[u8]),
+            ctx: crate::state::ContainerCreationContext,
+        ) -> LoroResult<Self>
+        where
+            Self: Sized,
+        {
+            let mut counter = CounterState::new(idx);
+            counter.value = *v.0.as_double().unwrap();
+            Ok(counter)
+        }
+    }
+}

@@ -90,7 +90,7 @@ pub(crate) struct ContainerCreationContext<'a> {
     peer: PeerID,
 }
 
-pub(crate) trait FastStateSnashot {
+pub(crate) trait FastStateSnapshot {
     fn encode_snapshot_fast<W: Write>(&mut self, w: W);
     fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])>;
     fn decode_snapshot_fast(

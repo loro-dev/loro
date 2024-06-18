@@ -245,12 +245,12 @@ mod snapshot {
 
     use crate::{
         delta::MapValue,
-        state::{ContainerCreationContext, ContainerState, FastStateSnashot},
+        state::{ContainerCreationContext, ContainerState, FastStateSnapshot},
     };
 
     use super::MapState;
 
-    impl FastStateSnashot for MapState {
+    impl FastStateSnapshot for MapState {
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
             let value = self.get_value();
             postcard::to_io(&value, &mut w).unwrap();

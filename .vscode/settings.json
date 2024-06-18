@@ -44,7 +44,8 @@
     "DEBUG": "*"
   },
   "rust-analyzer.cargo.features": [
-    "test_utils"
+    "test_utils",
+    "counter"
   ],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
   "rust-analyzer.server.extraEnv": {
