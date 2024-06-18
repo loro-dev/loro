@@ -15,9 +15,6 @@ use crate::{
 use wasm_bindgen::__rt::IntoJsResult;
 use wasm_bindgen::convert::RefFromWasmAbi;
 
-#[cfg(feature = "counter")]
-use crate::LoroCounter;
-
 /// Convert a `JsValue` to `T` by constructor's name.
 ///
 /// more details can be found in https://github.com/rustwasm/wasm-bindgen/issues/2231#issuecomment-656293288
@@ -137,7 +134,6 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
             .unwrap();
         }
 
-        #[cfg(feature = "counter")]
         Diff::Counter(v) => {
             js_sys::Reflect::set(
                 &obj,

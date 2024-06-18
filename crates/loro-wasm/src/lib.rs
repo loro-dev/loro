@@ -31,6 +31,7 @@ use wasm_bindgen_derive::TryFromJsValue;
 
 mod counter;
 pub use counter::LoroCounter;
+
 use loro_internal::handler::counter::CounterHandler;
 mod awareness;
 mod log;
