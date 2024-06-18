@@ -5580,14 +5580,13 @@ fn unknown_container() {
         &list.id(),
         Arc::new(|e| {
             assert_eq!(e.events.len(), 2);
-            assert!(e.events[1].is_unknown)
         }),
     );
 
     let doc2 = LoroDoc::new();
     let list2 = doc2.get_list("list");
     let counter = list2.insert_container(0, LoroCounter::new()).unwrap();
-    counter.increment(2).unwrap();
+    counter.increment(2.).unwrap();
 
     doc.import(&doc2.export_snapshot()).unwrap();
 }

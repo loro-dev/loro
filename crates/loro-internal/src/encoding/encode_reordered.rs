@@ -32,6 +32,9 @@ use super::{
     ImportBlobMetadata,
 };
 
+#[allow(unused_imports)]
+use super::value::FutureValue;
+
 /// If any section of the document is longer than this, we will not decode it.
 /// It will return an data corruption error instead.
 pub(super) const MAX_DECODED_SIZE: usize = 1 << 30;
@@ -862,7 +865,7 @@ fn decode_snapshot_states(
                 mode: crate::encoding::EncodeMode::Snapshot,
                 peers: &peers.peer_ids,
             },
-        );
+        )?;
     }
 
     let s = take(&mut state.states);
@@ -1138,7 +1141,7 @@ mod encode {
     fn get_future_op_prop(op: &FutureInnerContent) -> i32 {
         match &op {
             #[cfg(feature = "counter")]
-            FutureInnerContent::Counter(c) => *c as i32,
+            FutureInnerContent::Counter(_) => 0,
             FutureInnerContent::Unknown { prop, .. } => *prop,
         }
     }
@@ -1269,7 +1272,14 @@ mod encode {
             }
             crate::op::InnerContent::Future(f) => match f {
                 #[cfg(feature = "counter")]
-                FutureInnerContent::Counter(_) => Value::Future(FutureValue::Counter),
+                FutureInnerContent::Counter(c) => {
+                    let c_abs = c.abs();
+                    if c_abs.fract() < std::f64::EPSILON && (c_abs as i64) < (2 << 26) {
+                        Value::I64(*c as i64)
+                    } else {
+                        Value::F64(*c)
+                    }
+                }
                 FutureInnerContent::Unknown { prop: _, value } => Value::from_owned(value),
             },
         };
@@ -1443,9 +1453,11 @@ fn decode_op(
             }
         }
         #[cfg(feature = "counter")]
-        ContainerType::Counter => {
-            crate::op::InnerContent::Future(FutureInnerContent::Counter(prop as i64))
-        }
+        ContainerType::Counter => match value {
+            Value::F64(c) => crate::op::InnerContent::Future(FutureInnerContent::Counter(c)),
+            Value::I64(c) => crate::op::InnerContent::Future(FutureInnerContent::Counter(c as f64)),
+            _ => unreachable!(),
+        },
         // NOTE: The future container type need also try to parse the unknown type
         ContainerType::Unknown(_) => crate::op::InnerContent::Future(FutureInnerContent::Unknown {
             prop,

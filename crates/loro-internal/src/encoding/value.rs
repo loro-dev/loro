@@ -85,8 +85,6 @@ impl LoroValueKind {
 
 #[derive(Debug)]
 pub enum FutureValueKind {
-    #[cfg(feature = "counter")]
-    Counter, // 16
     Unknown(u8),
 }
 
@@ -110,8 +108,6 @@ impl ValueKind {
             ValueKind::ListMove => 14,
             ValueKind::ListSet => 15,
             ValueKind::Future(future_value_kind) => match future_value_kind {
-                #[cfg(feature = "counter")]
-                FutureValueKind::Counter => 16,
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
             },
         }
@@ -136,8 +132,6 @@ impl ValueKind {
             13 => ValueKind::TreeMove,
             14 => ValueKind::ListMove,
             15 => ValueKind::ListSet,
-            #[cfg(feature = "counter")]
-            16 => ValueKind::Future(FutureValueKind::Counter),
             _ => ValueKind::Future(FutureValueKind::Unknown(kind)),
         }
     }
@@ -175,13 +169,8 @@ pub enum Value<'a> {
 
 #[derive(Debug)]
 pub enum FutureValue<'a> {
-    #[cfg(feature = "counter")]
-    Counter,
     // The future value cannot depend on the arena for encoding.
-    Unknown {
-        kind: u8,
-        data: &'a [u8],
-    },
+    Unknown { kind: u8, data: &'a [u8] },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -218,13 +207,8 @@ pub enum OwnedValue {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "value_type", content = "value")]
 pub enum OwnedFutureValue {
-    #[cfg(feature = "counter")]
-    Counter,
     // The future value cannot depend on the arena for encoding.
-    Unknown {
-        kind: u8,
-        data: Arc<Vec<u8>>,
-    },
+    Unknown { kind: u8, data: Arc<Vec<u8>> },
 }
 
 impl<'a> Value<'a> {
@@ -263,8 +247,6 @@ impl<'a> Value<'a> {
                 value: value.clone(),
             },
             OwnedValue::Future(value) => match value {
-                #[cfg(feature = "counter")]
-                OwnedFutureValue::Counter => Value::Future(FutureValue::Counter),
                 OwnedFutureValue::Unknown { kind, data } => Value::Future(FutureValue::Unknown {
                     kind: *kind,
                     data: data.as_slice(),
@@ -308,8 +290,6 @@ impl<'a> Value<'a> {
                 value,
             },
             Value::Future(value) => match value {
-                #[cfg(feature = "counter")]
-                FutureValue::Counter => OwnedValue::Future(OwnedFutureValue::Counter),
                 FutureValue::Unknown { kind, data } => {
                     OwnedValue::Future(OwnedFutureValue::Unknown {
                         kind,
@@ -326,11 +306,11 @@ impl<'a> Value<'a> {
     ) -> LoroResult<Self> {
         let bytes = value_reader.read_binary()?;
         let value = match future_kind {
-            #[cfg(feature = "counter")]
-            FutureValueKind::Counter => FutureValue::Counter,
-            FutureValueKind::Unknown(kind) => FutureValue::Unknown { kind, data: bytes },
+            FutureValueKind::Unknown(kind) => {
+                Value::Future(FutureValue::Unknown { kind, data: bytes })
+            }
         };
-        Ok(Value::Future(value))
+        Ok(value)
     }
 
     pub(super) fn decode<'r: 'a>(
@@ -393,12 +373,6 @@ impl<'a> Value<'a> {
         // when decoding, we will use reader.read_binary() to read the binary data.
         // So such as FutureValue::Counter, we should write 0 as the length of binary data first.
         match value {
-            #[cfg(feature = "counter")]
-            FutureValue::Counter => {
-                // write bytes length
-                value_writer.write_u8(0);
-                (FutureValueKind::Counter, 1)
-            }
             FutureValue::Unknown { kind, data } => (
                 FutureValueKind::Unknown(kind),
                 value_writer.write_binary(data),
@@ -860,7 +834,7 @@ impl<'a> ValueReader<'a> {
             .map_err(|_| LoroError::DecodeDataCorruptionError)
     }
 
-    fn read_f64(&mut self) -> LoroResult<f64> {
+    pub fn read_f64(&mut self) -> LoroResult<f64> {
         if self.raw.len() < 8 {
             return Err(LoroError::DecodeDataCorruptionError);
         }

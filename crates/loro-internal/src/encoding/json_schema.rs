@@ -1,7 +1,7 @@
 use std::{borrow::Cow, sync::Arc};
 
 use loro_common::{ContainerID, ContainerType, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID};
-use rle::{HasLength, Sliceable};
+use rle::{HasLength, RleVec, Sliceable};
 
 use crate::{
     arena::SharedArena,
@@ -22,27 +22,34 @@ use op::{JsonOpContent, JsonSchema};
 
 const SCHEMA_VERSION: u8 = 1;
 
-pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> JsonSchema {
-    let actual_start_vv: VersionVector = vv
-        .iter()
-        .filter_map(|(&peer, &end_counter)| {
-            if end_counter == 0 {
-                return None;
-            }
+fn refine_vv(vv: &VersionVector, oplog: &OpLog) -> VersionVector {
+    let mut refined = VersionVector::new();
+    for (peer, counter) in vv.iter() {
+        if counter == &0 {
+            continue;
+        }
+        let end = oplog.vv().get(peer).copied().unwrap_or(0);
+        if end <= *counter {
+            refined.insert(*peer, end);
+        } else {
+            refined.insert(*peer, *counter);
+        }
+    }
+    refined
+}
 
-            let this_end = oplog.vv().get(&peer).cloned().unwrap_or(0);
-            if this_end <= end_counter {
-                return Some((peer, this_end));
-            }
-
-            Some((peer, end_counter))
-        })
-        .collect();
+pub(crate) fn export_json<'a, 'c: 'a>(
+    oplog: &'c OpLog,
+    start_vv: &VersionVector,
+    end_vv: &VersionVector,
+) -> JsonSchema {
+    let actual_start_vv = refine_vv(start_vv, oplog);
+    let actual_end_vv = refine_vv(end_vv, oplog);
 
     let frontiers = oplog.dag.vv_to_frontiers(&actual_start_vv);
 
     let mut peer_register = ValueRegister::<PeerID>::new();
-    let diff_changes = init_encode(oplog, &actual_start_vv);
+    let diff_changes = init_encode(oplog, &actual_start_vv, &actual_end_vv);
     let changes = encode_changes(&diff_changes, &oplog.arena, &mut peer_register);
     JsonSchema {
         changes,
@@ -53,7 +60,7 @@ pub(crate) fn export_json<'a, 'c: 'a>(oplog: &'c OpLog, vv: &VersionVector) -> J
 }
 
 pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<()> {
-    let changes = decode_changes(json, &oplog.arena);
+    let changes = decode_changes(json, &oplog.arena)?;
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
@@ -62,15 +69,24 @@ pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<()>
     Ok(())
 }
 
-fn init_encode<'s, 'a: 's>(oplog: &'a OpLog, vv: &'_ VersionVector) -> Vec<Cow<'s, Change>> {
-    let self_vv = oplog.vv();
-    let start_vv = vv.trim(oplog.vv());
+fn init_encode<'s, 'a: 's>(
+    oplog: &'a OpLog,
+    start_vv: &VersionVector,
+    end_vv: &VersionVector,
+) -> Vec<Cow<'s, Change>> {
     let mut diff_changes: Vec<Cow<'a, Change>> = Vec::new();
-    for change in oplog.iter_changes_peer_by_peer(&start_vv, self_vv) {
+    for change in oplog.iter_changes_peer_by_peer(start_vv, end_vv) {
         let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
+        let end_cnt = end_vv.get(&change.id.peer).copied().unwrap_or(0);
         if change.id.counter < start_cnt {
             let offset = start_cnt - change.id.counter;
-            diff_changes.push(Cow::Owned(change.slice(offset as usize, change.atom_len())));
+            let to = change
+                .atom_len()
+                .min((end_cnt - change.id.counter) as usize);
+            diff_changes.push(Cow::Owned(change.slice(offset as usize, to)));
+        } else if change.id.counter + change.atom_len() as i32 > end_cnt {
+            let len = end_cnt - change.id.counter;
+            diff_changes.push(Cow::Owned(change.slice(0, len as usize)));
         } else {
             diff_changes.push(Cow::Borrowed(change));
         }
@@ -362,10 +378,8 @@ fn encode_changes(
                     match f {
                         FutureInnerContent::Counter(x) => {
                             JsonOpContent::Future(op::FutureOpWrapper {
-                                prop: *x as i32,
-                                value: op::FutureOp::Counter(super::value::OwnedValue::Future(
-                                    super::value::OwnedFutureValue::Counter,
-                                )),
+                                prop: 0,
+                                value: op::FutureOp::Counter(super::OwnedValue::F64(*x)),
                             })
                         }
                         _ => unreachable!(),
@@ -395,7 +409,7 @@ fn encode_changes(
     changes
 }
 
-fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
+fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Change>> {
     let JsonSchema { peers, changes, .. } = json;
     let mut ans = Vec::with_capacity(changes.len());
     for op::Change {
@@ -404,14 +418,15 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
         deps,
         lamport,
         msg: _,
-        ops,
+        ops: json_ops,
     } in changes
     {
         let id = convert_id(&id, &peers);
-        let ops = ops
-            .into_iter()
-            .map(|op| decode_op(op, arena, &peers))
-            .collect();
+        let mut ops: RleVec<[Op; 1]> = RleVec::new();
+        for op in json_ops {
+            ops.push(decode_op(op, arena, &peers)?);
+        }
+
         let change = Change {
             id,
             timestamp,
@@ -422,10 +437,10 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> Vec<Change> {
         };
         ans.push(change);
     }
-    ans
+    Ok(ans)
 }
 
-fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> Op {
+fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op> {
     let op::JsonOp {
         counter,
         container,
@@ -602,24 +617,28 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> Op {
         },
         #[cfg(feature = "counter")]
         ContainerType::Counter => {
-            let JsonOpContent::Future(op::FutureOpWrapper { prop, value }) = content else {
+            let JsonOpContent::Future(op::FutureOpWrapper { prop: _, value }) = content else {
                 unreachable!()
             };
+            use crate::encoding::OwnedValue;
             match value {
-                op::FutureOp::Counter(_) => {
-                    InnerContent::Future(FutureInnerContent::Counter(prop as i64))
+                op::FutureOp::Counter(OwnedValue::F64(c))
+                | op::FutureOp::Unknown(OwnedValue::F64(c)) => {
+                    InnerContent::Future(FutureInnerContent::Counter(c))
                 }
-                op::FutureOp::Unknown(_) => {
-                    InnerContent::Future(FutureInnerContent::Counter(prop as i64))
+                op::FutureOp::Counter(OwnedValue::I64(c))
+                | op::FutureOp::Unknown(OwnedValue::I64(c)) => {
+                    InnerContent::Future(FutureInnerContent::Counter(c as f64))
                 }
+                _ => unreachable!(),
             }
         } // Note: The Future Type need try to parse Op from the unknown content
     };
-    Op {
+    Ok(Op {
         counter,
         container: idx,
         content,
-    }
+    })
 }
 
 impl TryFrom<&str> for JsonSchema {
@@ -815,6 +834,9 @@ pub mod op {
             Deserialize, Deserializer, Serialize, Serializer,
         };
 
+        #[allow(unused_imports)]
+        use crate::encoding::OwnedValue;
+
         impl Serialize for super::JsonOp {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
@@ -882,14 +904,11 @@ pub mod op {
                                 }
                                 #[cfg(feature = "counter")]
                                 ContainerType::Counter => {
-                                    let (_key, v) = map.next_entry::<String, i64>()?.unwrap();
+                                    let (_key, v) =
+                                        map.next_entry::<String, OwnedValue>()?.unwrap();
                                     super::JsonOpContent::Future(super::FutureOpWrapper {
-                                        prop: v as i32,
-                                        value: super::FutureOp::Counter(
-                                            crate::encoding::value::OwnedValue::Future(
-                                                crate::encoding::value::OwnedFutureValue::Counter,
-                                            ),
-                                        ),
+                                        prop: 0,
+                                        value: super::FutureOp::Counter(v),
                                     })
                                 }
                                 _ => unreachable!(),
@@ -907,70 +926,6 @@ pub mod op {
                 deserializer.deserialize_struct("JsonOp", FIELDS, __Visitor)
             }
         }
-
-        // pub mod future_op {
-
-        //     use serde::{Deserialize, Deserializer};
-
-        //     use crate::encoding::json_schema::op::FutureOp;
-
-        //     impl<'de> Deserialize<'de> for FutureOp {
-        //         fn deserialize<D>(d: D) -> Result<FutureOp, D::Error>
-        //         where
-        //             D: Deserializer<'de>,
-        //         {
-        //             enum Field {
-        //                 #[cfg(feature = "counter")]
-        //                 Counter,
-        //                 Unknown,
-        //             }
-        //             struct FieldVisitor;
-        //             impl<'de> serde::de::Visitor<'de> for FieldVisitor {
-        //                 type Value = Field;
-        //                 fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        //                     f.write_str("field identifier")
-        //                 }
-        //                 fn visit_str<E>(self, value: &str) -> Result<Field, E>
-        //                 where
-        //                     E: serde::de::Error,
-        //                 {
-        //                     match value {
-        //                         #[cfg(feature = "counter")]
-        //                         "counter" => Ok(Field::Counter),
-        //                         _ => Ok(Field::Unknown),
-        //                     }
-        //                 }
-        //             }
-        //             impl<'de> Deserialize<'de> for Field {
-        //                 fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        //                 where
-        //                     D: Deserializer<'de>,
-        //                 {
-        //                     deserializer.deserialize_identifier(FieldVisitor)
-        //                 }
-        //             }
-        //             let (tag, content) = d.deserialize_any(
-        //                 serde::__private::de::TaggedContentVisitor::<Field>::new(
-        //                     "type",
-        //                     "internally tagged enum FutureOp",
-        //                 ),
-        //             )?;
-        //             let __deserializer =
-        //                 serde::__private::de::ContentDeserializer::<D::Error>::new(content);
-        //             match tag {
-        //                 #[cfg(feature = "counter")]
-        //                 Field::Counter => {
-        //                     let v = serde::Deserialize::deserialize(__deserializer)?;
-        //                     Ok(FutureOp::Counter(v))
-        //                 }
-        //                 _ => {
-        //                     let v = serde::Deserialize::deserialize(__deserializer)?;
-        //                     Ok(FutureOp::Unknown(v))
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
 
         pub mod id {
             use loro_common::ID;
@@ -1171,5 +1126,30 @@ pub mod op {
                 Ok(fi)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{LoroDoc, VersionVector};
+
+    #[test]
+    fn json_range_version() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(0).unwrap();
+        let list = doc.get_list("list");
+        list.insert(0, "a").unwrap();
+        list.insert(0, "b").unwrap();
+        list.insert(0, "c").unwrap();
+        let json = doc.export_json_updates(
+            &VersionVector::from_iter(vec![(0, 1)]),
+            &VersionVector::from_iter(vec![(0, 2)]),
+        );
+        assert_eq!(json.changes[0].ops.len(), 1);
+        let json = doc.export_json_updates(
+            &VersionVector::from_iter(vec![(0, 0)]),
+            &VersionVector::from_iter(vec![(0, 2)]),
+        );
+        assert_eq!(json.changes[0].ops.len(), 2);
     }
 }

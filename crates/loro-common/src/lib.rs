@@ -221,7 +221,7 @@ impl ContainerType {
             ContainerType::Tree => LoroValue::List(Arc::new(Default::default())),
             ContainerType::MovableList => LoroValue::List(Arc::new(Default::default())),
             #[cfg(feature = "counter")]
-            ContainerType::Counter => LoroValue::I64(0),
+            ContainerType::Counter => LoroValue::Double(0.),
             ContainerType::Unknown(_) => unreachable!(),
         }
     }
@@ -386,6 +386,8 @@ mod container {
                 "Text" | "text" => Ok(ContainerType::Text),
                 "Tree" | "tree" => Ok(ContainerType::Tree),
                 "MovableList" | "movableList" => Ok(ContainerType::MovableList),
+                #[cfg(feature = "counter")]
+                "Counter" | "counter" => Ok(ContainerType::Counter),
                 a => {
                     if a.ends_with(')') {
                         let start = a.find('(').ok_or_else(|| {

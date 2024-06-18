@@ -586,10 +586,14 @@ impl LoroDoc {
         Ok(())
     }
 
-    pub fn export_json_updates(&self, vv: &VersionVector) -> JsonSchema {
+    pub fn export_json_updates(
+        &self,
+        start_vv: &VersionVector,
+        end_vv: &VersionVector,
+    ) -> JsonSchema {
         self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
-        let json = crate::encoding::json_schema::export_json(&oplog, vv);
+        let json = crate::encoding::json_schema::export_json(&oplog, start_vv, end_vv);
         drop(oplog);
         self.renew_txn_if_auto_commit();
         json

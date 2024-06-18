@@ -4,6 +4,7 @@ use loro_internal::{
 
 use crate::{Container, ContainerTrait, SealedTrait};
 
+/// A counter that can be incremented or decremented.
 #[derive(Debug, Clone)]
 pub struct LoroCounter {
     pub(crate) handler: CounterHandler,
@@ -16,6 +17,7 @@ impl Default for LoroCounter {
 }
 
 impl LoroCounter {
+    /// Create a new Counter.
     pub fn new() -> Self {
         Self {
             handler: CounterHandler::new_detached(),
@@ -27,10 +29,17 @@ impl LoroCounter {
         self.handler.id().clone()
     }
 
-    pub fn increment(&self, value: i64) -> LoroResult<()> {
+    /// Increment the counter by the given value.
+    pub fn increment(&self, value: f64) -> LoroResult<()> {
         self.handler.increment(value)
     }
 
+    /// Decrement the counter by the given value.
+    pub fn decrement(&self, value: f64) -> LoroResult<()> {
+        self.handler.decrement(value)
+    }
+
+    /// Get the current value of the counter.
     pub fn get_value(&self) -> LoroValue {
         self.handler.get_value()
     }

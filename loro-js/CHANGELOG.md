@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.4
+
+### Patch Changes
+
+- afac347: feat: implement `Counter` and expose it to js side
+- Updated dependencies [afac347]
+  - loro-wasm@0.16.4
+
 ## 0.16.4-alpha.0
 
 ### Patch Changes

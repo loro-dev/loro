@@ -127,7 +127,7 @@ pub(super) enum EventHint {
     Tree(SmallVec<[TreeDiffItem; 1]>),
     MarkEnd,
     #[cfg(feature = "counter")]
-    Counter(i64),
+    Counter(f64),
     /// Do not emit any event
     None(usize),
 }

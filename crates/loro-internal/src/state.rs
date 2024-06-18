@@ -139,7 +139,7 @@ pub(crate) trait ContainerState: Clone {
     fn encode_snapshot(&self, encoder: StateSnapshotEncoder) -> Vec<u8>;
 
     /// Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext);
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()>;
 }
 
 impl<T: ContainerState> ContainerState for Box<T> {
@@ -219,7 +219,7 @@ impl<T: ContainerState> ContainerState for Box<T> {
     }
 
     #[doc = r" Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
         self.as_mut().import_from_snapshot_ops(ctx)
     }
 }
@@ -609,10 +609,10 @@ impl DocState {
         &mut self,
         cid: ContainerID,
         decode_ctx: StateSnapshotDecodeContext,
-    ) {
+    ) -> LoroResult<()> {
         let idx = self.arena.register_container(&cid);
         let state = get_or_create!(self, idx);
-        state.import_from_snapshot_ops(decode_ctx);
+        state.import_from_snapshot_ops(decode_ctx)
     }
 
     pub(crate) fn init_unknown_container(&mut self, cid: ContainerID) {
@@ -1107,8 +1107,8 @@ impl DocState {
             }
             #[cfg(feature = "counter")]
             if id.container_type() == ContainerType::Counter {
-                if let LoroValue::I64(c) = value {
-                    if c == 0 {
+                if let LoroValue::Double(c) = value {
+                    if c.abs() < f64::EPSILON {
                         return None;
                     }
                 }
