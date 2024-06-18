@@ -720,28 +720,44 @@ impl DocState {
         &mut self,
         id: I,
     ) -> Option<&mut richtext_state::RichtextState> {
+        let idx = self.id_to_idx(id, ContainerType::Text);
+        self.states
+            .entry(idx)
+            .or_insert_with(|| State::new_richtext(idx, self.config.text_style_config.clone()))
+            .as_richtext_state_mut()
+            .map(|x| &mut **x)
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub(crate) fn get_tree<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Option<&mut TreeState> {
+        let idx = self.id_to_idx(id, ContainerType::Tree);
+        self.states
+            .entry(idx)
+            .or_insert_with(|| State::new_richtext(idx, self.config.text_style_config.clone()))
+            .as_tree_state_mut()
+            .map(|x| &mut **x)
+    }
+
+    fn id_to_idx<I: Into<ContainerIdRaw>>(&mut self, id: I, kind: ContainerType) -> ContainerIdx {
         let id: ContainerIdRaw = id.into();
         let cid;
         let idx = match id {
             ContainerIdRaw::Root { name } => {
                 cid = crate::container::ContainerID::Root {
                     name,
-                    container_type: crate::ContainerType::Text,
+                    container_type: kind,
                 };
                 Some(self.arena.register_container(&cid))
             }
             ContainerIdRaw::Normal { id: _ } => {
-                cid = id.with_type(crate::ContainerType::Text);
+                cid = id.with_type(kind);
                 self.arena.id_to_idx(&cid)
             }
         };
 
         let idx = idx.unwrap();
-        self.states
-            .entry(idx)
-            .or_insert_with(|| State::new_richtext(idx, self.config.text_style_config.clone()))
-            .as_richtext_state_mut()
-            .map(|x| &mut **x)
+        idx
     }
 
     #[inline(always)]

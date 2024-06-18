@@ -21,6 +21,7 @@ impl StrSlice {
     }
 
     pub fn as_str(&self) -> &str {
+        // SAFETY: We ensure that the content is always valid utf8
         unsafe { std::str::from_utf8_unchecked(&self.0) }
     }
 

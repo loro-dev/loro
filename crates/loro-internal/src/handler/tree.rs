@@ -9,7 +9,7 @@ use loro_common::{
 use crate::{
     container::tree::tree_op::TreeOp,
     delta::{TreeDiffItem, TreeExternalDiff},
-    state::{FractionalIndexGenResult, TreeParentId},
+    state::{FractionalIndexGenResult, TreeParentId, TreeState},
     txn::{EventHint, Transaction},
     BasicHandler, HandlerTrait, MapHandler,
 };

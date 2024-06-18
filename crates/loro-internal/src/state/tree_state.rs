@@ -1205,7 +1205,7 @@ mod snapshot {
         #[columnar(strategy = "DeltaRle")]
         counter: i32,
         #[columnar(strategy = "DeltaRle")]
-        parent_peer_idx: usize,
+        parent_peer_idx_plus_one: usize,
         #[columnar(strategy = "DeltaRle")]
         parent_counter: i32,
         #[columnar(strategy = "DeltaRle")]
@@ -1239,10 +1239,11 @@ mod snapshot {
             nodes.push(EncodedTreeNode {
                 peer_idx: peers.register(&node.id.peer),
                 counter: node.id.counter,
-                // FIXME: this unwrap may panic
-                parent_peer_idx: peers.register(&node.parent.unwrap().peer),
-                // FIXME: this unwrap may panic
-                parent_counter: node.parent.unwrap().counter,
+                parent_peer_idx_plus_one: node
+                    .parent
+                    .map(|p| peers.register(&p.peer) + 1)
+                    .unwrap_or(0),
+                parent_counter: node.parent.map(|p| p.counter).unwrap_or(0),
                 last_set_peer_idx: peers.register(&last_set_id.peer),
                 last_set_counter: last_set_id.counter,
                 last_set_lamport: last_set_id.lamport,
@@ -1283,6 +1284,7 @@ mod snapshot {
         ) -> loro_common::LoroResult<(loro_common::LoroValue, &[u8])> {
             // TODO: PREF: FIXME: The performance for decoding the whole tree
             // can be improved a lot
+            let original_bytes = bytes;
             let peer_num = leb128::read::unsigned(&mut bytes).unwrap() as usize;
             let mut peers = Vec::with_capacity(peer_num);
             for _ in 0..peer_num {
@@ -1296,10 +1298,14 @@ mod snapshot {
             for node in encoded.nodes.into_iter().take(encoded.alive_len as usize) {
                 let node = TreeNode {
                     id: TreeID::new(peers[node.peer_idx], node.counter),
-                    parent: Some(TreeID::new(
-                        peers[node.parent_peer_idx],
-                        node.parent_counter,
-                    )),
+                    parent: if node.parent_peer_idx_plus_one == 0 {
+                        None
+                    } else {
+                        Some(TreeID::new(
+                            peers[node.parent_peer_idx_plus_one - 1],
+                            node.parent_counter,
+                        ))
+                    },
                     position: FractionalIndex::from_bytes(node.position),
                     index: node.index as usize,
                 };
@@ -1307,7 +1313,7 @@ mod snapshot {
                 nodes.push(node.into_value());
             }
 
-            Ok((nodes.into(), bytes))
+            Ok((nodes.into(), original_bytes))
         }
 
         fn decode_snapshot_fast(
@@ -1335,9 +1341,11 @@ mod snapshot {
                     TreeID::new(peers[node.peer_idx], node.counter),
                     if is_dead {
                         TreeParentId::Deleted
+                    } else if node.parent_peer_idx_plus_one == 0 {
+                        TreeParentId::Root
                     } else {
                         TreeParentId::Node(TreeID::new(
-                            peers[node.parent_peer_idx],
+                            peers[node.parent_peer_idx_plus_one - 1],
                             node.parent_counter,
                         ))
                     },
@@ -1353,6 +1361,54 @@ mod snapshot {
             }
 
             Ok(tree)
+        }
+    }
+
+    #[cfg(test)]
+    mod test {
+        use crate::{
+            container::idx::ContainerIdx,
+            state::{ContainerCreationContext, ContainerState},
+            LoroDoc,
+        };
+
+        use super::*;
+
+        #[test]
+        fn test_tree_state_snapshot() {
+            let doc = LoroDoc::new();
+            doc.set_peer_id(0).unwrap();
+            doc.start_auto_commit();
+            let tree = doc.get_tree("tree");
+            let a = tree.create(None).unwrap();
+            let b = tree.create(None).unwrap();
+            let _c = tree.create(None).unwrap();
+            tree.mov(b, a).unwrap();
+            let (bytes, value) = {
+                let mut doc_state = doc.app_state().lock().unwrap();
+                let tree_state = doc_state.get_tree("tree").unwrap();
+                let value = tree_state.get_value();
+                let mut bytes = Vec::new();
+                tree_state.encode_snapshot_fast(&mut bytes);
+                (bytes, value)
+            };
+            let (decoded_value, bytes) = TreeState::decode_value(&bytes).unwrap();
+            assert_eq!(decoded_value, value);
+            let mut new_tree_state = TreeState::decode_snapshot_fast(
+                ContainerIdx::from_index_and_type(0, loro_common::ContainerType::Tree),
+                (decoded_value, bytes),
+                ContainerCreationContext {
+                    configure: &Default::default(),
+                    peer: 0,
+                },
+            )
+            .unwrap();
+
+            let mut doc_state = doc.app_state().lock().unwrap();
+            let tree_state = doc_state.get_tree("tree").unwrap();
+            assert_eq!(&tree_state.trees, &new_tree_state.trees);
+            let new_v = new_tree_state.get_value();
+            assert_eq!(value, new_v);
         }
     }
 }
