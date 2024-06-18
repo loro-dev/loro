@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 loro = { path = "../loro", features = ["counter"], package = "loro" }
-loro-without-counter = { git = "https://github.com/loro-dev/loro.git", rev = "35c3929fc3fee1875b634d53d17f7278201d2d30", package = "loro", features = [
+loro-without-counter = { git = "https://github.com/loro-dev/loro.git", rev = "83938290ab2666d85c0c72169127611585a05cf9", package = "loro", features = [
 ] }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
@@ -26,3 +26,4 @@ dev-utils = { path = "../dev-utils" }
 tracing-subscriber = "0.3.18"
 tracing-chrome = "0.7.1"
 color-backtrace = "0.6.1"
+serde_json = "1"

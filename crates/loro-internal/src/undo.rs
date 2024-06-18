@@ -142,6 +142,8 @@ impl UndoOrRedo {
     }
 }
 
+/// When a undo/redo item is pushed, the undo manager will call the on_push callback to get the meta data of the undo item.
+/// The returned cursors will be recorded for a new pushed undo item.
 pub type OnPush = Box<dyn Fn(UndoOrRedo, CounterSpan) -> UndoItemMeta + Send + Sync>;
 pub type OnPop = Box<dyn Fn(UndoOrRedo, CounterSpan, UndoItemMeta) + Send + Sync>;
 
@@ -154,6 +156,7 @@ struct UndoManagerInner {
     merge_interval: i64,
     max_stack_size: usize,
     exclude_origin_prefixes: Vec<Box<str>>,
+    last_popped_selection: Option<Vec<CursorWithPos>>,
     on_push: Option<OnPush>,
     on_pop: Option<OnPop>,
 }
@@ -189,13 +192,13 @@ struct StackItem {
 ///
 /// The cursors inside the metadata will be transformed by remote operations as well.
 /// So that when the item is popped, users can restore the cursors position correctly.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct UndoItemMeta {
     pub value: LoroValue,
     pub cursors: Vec<CursorWithPos>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CursorWithPos {
     pub cursor: Cursor,
     pub pos: AbsolutePosition,
@@ -366,6 +369,7 @@ impl UndoManagerInner {
             last_undo_time: 0,
             max_stack_size: usize::MAX,
             exclude_origin_prefixes: vec![],
+            last_popped_selection: None,
             on_pop: None,
             on_push: None,
         }
@@ -389,6 +393,7 @@ impl UndoManagerInner {
             .as_ref()
             .map(|x| x(UndoOrRedo::Undo, span))
             .unwrap_or_default();
+
         if !self.undo_stack.is_empty() && now - self.last_undo_time < self.merge_interval {
             self.undo_stack.push_with_merge(span, meta, true);
         } else {
@@ -528,6 +533,60 @@ impl UndoManager {
         get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         kind: UndoOrRedo,
     ) -> LoroResult<bool> {
+        // When in the undo/redo loop, the new undo/redo stack item should restore the selection
+        // to the state it was in before the item that was popped two steps ago from the stack.
+        //
+        //                          ┌────────────┐
+        //                          │Selection 1 │
+        //                          └─────┬──────┘
+        //                                │   Some
+        //                                ▼   ops
+        //                          ┌────────────┐
+        //                          │Selection 2 │
+        //                          └─────┬──────┘
+        //                                │   Some
+        //                                ▼   ops
+        //                          ┌────────────┐
+        //                          │Selection 3 │◁ ─ ─ ─ ─ ─ ─ ─  Restore  ─ ─ ─
+        //                          └─────┬──────┘                               │
+        //                                │
+        //                                │                                      │
+        //                                │                              ┌ ─ ─ ─ ─ ─ ─ ─
+        //           Enter the            │   Undo ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─▶   Push Redo   │
+        //           undo/redo ─ ─ ─ ▶    ▼                              └ ─ ─ ─ ─ ─ ─ ─
+        //             loop         ┌────────────┐                               │
+        //                          │Selection 2 │◁─ ─ ─  Restore  ─
+        //                          └─────┬──────┘                  │            │
+        //                                │
+        //                                │                         │            │
+        //                                │                 ┌ ─ ─ ─ ─ ─ ─ ─
+        //                                │   Undo ─ ─ ─ ─ ▶   Push Redo   │     │
+        //                                ▼                 └ ─ ─ ─ ─ ─ ─ ─
+        //                          ┌────────────┐                  │            │
+        //                          │Selection 1 │
+        //                          └─────┬──────┘                  │            │
+        //                                │   Redo ◀ ─ ─ ─ ─ ─ ─ ─ ─
+        //                                ▼                                      │
+        //                          ┌────────────┐
+        //         ┌   Restore   ─ ▷│Selection 2 │                               │
+        //                          └─────┬──────┘
+        //         │                      │                                      │
+        // ┌ ─ ─ ─ ─ ─ ─ ─                │
+        //    Push Undo   │◀─ ─ ─ ─ ─ ─ ─ │   Redo ◀ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+        // └ ─ ─ ─ ─ ─ ─ ─                ▼
+        //         │                ┌────────────┐
+        //                          │Selection 3 │
+        //         │                └─────┬──────┘
+        //          ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ▶ │   Undo
+        //                                ▼
+        //                          ┌────────────┐
+        //                          │Selection 2 │
+        //                          └────────────┘
+        //
+        // Because users may change the selections during the undo/redo loop, it's
+        // more stable to keep the selection stored in the last stack item
+        // rather than using the current selection directly.
+
         self.record_new_checkpoint(doc)?;
         let end_counter = get_counter_end(doc, self.peer);
         let mut top = {
@@ -538,31 +597,29 @@ impl UndoManager {
 
         let mut executed = false;
         while let Some((mut span, remote_diff)) = top {
+            let mut next_push_selection = None;
             {
                 let inner = self.inner.clone();
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
                 let remote_change_clone = remote_diff.try_lock().unwrap().clone();
-                trace_span!("Perform Undo/Redo").in_scope(|| {
-                    trace!("Transform based remote change {:?}", &remote_change_clone);
-                    let commit = doc.undo_internal(
-                        IdSpan {
-                            peer: self.peer,
-                            counter: span.span,
-                        },
-                        &mut self.container_remap,
-                        Some(&remote_change_clone),
-                        &mut |diff| {
-                            info_span!("transform remote diff").in_scope(|| {
-                                let mut inner = inner.try_lock().unwrap();
-                                // <transform_delta>
-                                get_stack(&mut inner).transform_based_on_this_delta(diff);
-                            });
-                        },
-                    )?;
-                    drop(commit);
-                    Ok::<(), loro_common::LoroError>(())
-                })?;
-                if let Some(x) = self.inner.try_lock().unwrap().on_pop.as_ref() {
+                let commit = doc.undo_internal(
+                    IdSpan {
+                        peer: self.peer,
+                        counter: span.span,
+                    },
+                    &mut self.container_remap,
+                    Some(&remote_change_clone),
+                    &mut |diff| {
+                        info_span!("transform remote diff").in_scope(|| {
+                            let mut inner = inner.try_lock().unwrap();
+                            // <transform_delta>
+                            get_stack(&mut inner).transform_based_on_this_delta(diff);
+                        });
+                    },
+                )?;
+                drop(commit);
+                let mut inner = self.inner.try_lock().unwrap();
+                if let Some(x) = inner.on_pop.as_ref() {
                     for cursor in span.meta.cursors.iter_mut() {
                         // <cursor_transform> We need to transform cursor here.
                         // Note that right now <transform_delta> is already done,
@@ -574,17 +631,28 @@ impl UndoManager {
                             &self.container_remap,
                         );
                     }
-                    x(kind, span.span, span.meta)
+
+                    x(kind, span.span, span.meta.clone());
+                    let take = inner.last_popped_selection.take();
+                    next_push_selection = take;
+                    inner.last_popped_selection = Some(span.meta.cursors);
                 }
             }
             let new_counter = get_counter_end(doc, self.peer);
             if end_counter != new_counter {
                 let mut inner = self.inner.try_lock().unwrap();
-                let meta = inner
+                let mut meta = inner
                     .on_push
                     .as_ref()
                     .map(|x| x(kind.opposite(), CounterSpan::new(end_counter, new_counter)))
                     .unwrap_or_default();
+                if matches!(kind, UndoOrRedo::Undo) && get_opposite(&mut inner).is_empty() {
+                    // If it's the first undo, we use the cursors from the users
+                } else if let Some(inner) = next_push_selection.take() {
+                    // Otherwise, we use the cursors from the undo/redo loop
+                    meta.cursors = inner;
+                }
+
                 get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter), meta);
                 inner.latest_counter = Some(new_counter);
                 executed = true;

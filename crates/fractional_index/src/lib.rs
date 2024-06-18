@@ -1,4 +1,7 @@
-use std::{fmt::Display, sync::Arc};
+use std::{
+    fmt::{Display, Write},
+    sync::Arc,
+};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -25,6 +28,16 @@ impl FractionalIndex {
 
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         FractionalIndex(Arc::new(bytes))
+    }
+
+    pub fn from_hex_string<T: AsRef<str>>(str: T) -> Self {
+        let s = str.as_ref();
+        let mut bytes = Vec::with_capacity(s.len() / 2);
+        for i in 0..s.len() / 2 {
+            let byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap();
+            bytes.push(byte);
+        }
+        FractionalIndex::from_bytes(bytes)
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -61,7 +74,7 @@ pub(crate) fn new_after(bytes: &[u8]) -> Vec<u8> {
 }
 
 pub(crate) fn new_between(left: &[u8], right: &[u8], extra_capacity: usize) -> Option<Vec<u8>> {
-    let shorter_len = left.len().min(right.len()) - 1;
+    let shorter_len = left.len().min(right.len());
     for i in 0..shorter_len {
         if left[i] < right[i] - 1 {
             let mut ans: Vec<u8> = left[0..=i].into();
@@ -183,19 +196,9 @@ impl Display for FractionalIndex {
     }
 }
 
-const HEX_CHARS: &[u8] = b"0123456789abcdef";
-
-pub fn byte_to_hex(byte: u8) -> String {
-    let mut s = String::new();
-    s.push(HEX_CHARS[(byte >> 4) as usize] as char);
-    s.push(HEX_CHARS[(byte & 0xf) as usize] as char);
-    s
-}
-
 pub fn bytes_to_hex(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        s.push_str(&byte_to_hex(*byte));
-    }
-    s
+    bytes.iter().fold(String::new(), |mut output, b| {
+        let _ = write!(output, "{b:02X}");
+        output
+    })
 }

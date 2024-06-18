@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.16.4-alpha.0
+
+### Patch Changes
+
+- Export/import JSON schema
+- Updated dependencies
+  - loro-wasm@0.16.4
+
+## 0.16.3
+
+### Patch Changes
+
+- 6d47015: Make cursors transformation better in undo/redo loop
+- dc55055: Perf(wasm) cache text.toDelta
+- Updated dependencies [6d47015]
+- Updated dependencies [dc55055]
+  - loro-wasm@0.16.3
+
 ## 0.16.2
 
 ### Patch Changes

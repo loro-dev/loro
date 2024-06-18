@@ -255,7 +255,7 @@ impl HandlerTrait for TreeHandler {
 impl std::fmt::Debug for TreeHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.inner {
-            MaybeDetached::Detached(_) => write!(f, "TreeHandler Dettached"),
+            MaybeDetached::Detached(_) => write!(f, "TreeHandler Detached"),
             MaybeDetached::Attached(a) => write!(f, "TreeHandler {}", a.id),
         }
     }
@@ -305,11 +305,7 @@ impl TreeHandler {
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
             inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp {
-                target,
-                parent: Some(TreeID::delete_root()),
-                position: None,
-            }),
+            crate::op::RawOpContent::Tree(TreeOp::Delete { target }),
             if with_event {
                 EventHint::Tree(smallvec![TreeDiffItem {
                     target,
@@ -407,10 +403,10 @@ impl TreeHandler {
             let inner = self.inner.try_attached_state()?;
             txn.apply_local_op(
                 inner.container_idx,
-                crate::op::RawOpContent::Tree(TreeOp {
+                crate::op::RawOpContent::Tree(TreeOp::Create {
                     target,
                     parent,
-                    position: Some(position.clone()),
+                    position: position.clone(),
                 }),
                 event_hint,
                 &inner.state,
@@ -469,10 +465,10 @@ impl TreeHandler {
             let inner = self.inner.try_attached_state()?;
             txn.apply_local_op(
                 inner.container_idx,
-                crate::op::RawOpContent::Tree(TreeOp {
+                crate::op::RawOpContent::Tree(TreeOp::Move {
                     target,
                     parent,
-                    position: Some(position.clone()),
+                    position: position.clone(),
                 }),
                 event_hint,
                 &inner.state,
@@ -629,10 +625,10 @@ impl TreeHandler {
     ) -> LoroResult<TreeID> {
         txn.apply_local_op(
             inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp {
+            crate::op::RawOpContent::Tree(TreeOp::Create {
                 target: tree_id,
                 parent,
-                position: Some(position.clone()),
+                position: position.clone(),
             }),
             EventHint::Tree(smallvec![TreeDiffItem {
                 target: tree_id,
@@ -659,10 +655,10 @@ impl TreeHandler {
     ) -> LoroResult<()> {
         txn.apply_local_op(
             inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp {
+            crate::op::RawOpContent::Tree(TreeOp::Move {
                 target,
                 parent,
-                position: Some(position.clone()),
+                position: position.clone(),
             }),
             EventHint::Tree(smallvec![TreeDiffItem {
                 target,

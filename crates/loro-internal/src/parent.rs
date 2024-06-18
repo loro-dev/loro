@@ -67,7 +67,8 @@ impl DocState {
                     self.arena.set_parent(idx, Some(container));
                 }
             }
-            RawOpContent::Tree(TreeOp { target, .. }) => {
+            RawOpContent::Tree(tree) => {
+                let target = tree.target();
                 // create associated metadata container
                 // TODO: maybe we could create map container only when setting metadata
                 let container_id = target.associated_meta_container();

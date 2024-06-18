@@ -207,7 +207,7 @@ pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
     })
 }
 
-fn import_changes_to_oplog(
+pub(crate) fn import_changes_to_oplog(
     changes: Vec<Change>,
     oplog: &mut OpLog,
 ) -> Result<(Vec<ID>, Vec<Change>), LoroError> {
@@ -356,13 +356,7 @@ fn extract_ops(
         let peer = arenas.peer_ids[peer_idx as usize];
         let cid = &containers[container_index as usize];
         let kind = ValueKind::from_u8(value_type);
-        let value = Value::decode(
-            kind,
-            &mut value_reader,
-            arenas,
-            ID::new(peer, counter),
-            prop,
-        )?;
+        let value = Value::decode(kind, &mut value_reader, arenas, ID::new(peer, counter))?;
 
         let content = decode_op(
             cid,
@@ -372,6 +366,7 @@ fn extract_ops(
             arenas,
             &positions,
             prop,
+            ID::new(peer, counter),
         )?;
 
         let container = shared_arena.register_container(cid);
@@ -886,7 +881,7 @@ mod encode {
     use crate::{
         arena::SharedArena,
         change::{Change, Lamport},
-        container::idx::ContainerIdx,
+        container::{idx::ContainerIdx, tree::tree_op::TreeOp},
         encoding::value::{EncodedTreeMove, MarkStart, Value, ValueKind, ValueWriter},
         op::{FutureInnerContent, Op},
     };
@@ -1178,18 +1173,16 @@ mod encode {
                 let key = registers.key.register(&map.key);
                 key as i32
             }
-            crate::op::InnerContent::Tree(op) => {
-                if let Some(position) = &op.position {
-                    if let either::Either::Left(position_register) = &mut registers.position {
-                        position_register.insert(position.as_bytes());
-                    } else {
+            crate::op::InnerContent::Tree(op) => match op {
+                TreeOp::Create { position, .. } | TreeOp::Move { position, .. } => {
+                    let either::Either::Left(position_register) = &mut registers.position else {
                         unreachable!()
-                    }
+                    };
+                    position_register.insert(position.as_bytes());
                     0
-                } else {
-                    -1
                 }
-            }
+                TreeOp::Delete { .. } => 0,
+            },
             crate::op::InnerContent::Future(f) => match f {
                 #[cfg(feature = "counter")]
                 FutureInnerContent::Counter(_) => 0,
@@ -1286,6 +1279,7 @@ mod encode {
 }
 
 #[inline]
+#[allow(clippy::too_many_arguments)]
 fn decode_op(
     cid: &ContainerID,
     value: Value<'_>,
@@ -1294,6 +1288,7 @@ fn decode_op(
     arenas: &DecodedArenas<'_>,
     positions: &[Vec<u8>],
     prop: i32,
+    op_id: ID,
 ) -> LoroResult<crate::op::InnerContent> {
     let content = match cid.container_type() {
         ContainerType::Text => match value {
@@ -1390,6 +1385,7 @@ fn decode_op(
                 &arenas.peer_ids,
                 positions,
                 &arenas.tree_ids.tree_ids,
+                op_id,
             )?),
             _ => {
                 unreachable!()
@@ -1450,7 +1446,7 @@ fn decode_op(
         ContainerType::Counter => {
             crate::op::InnerContent::Future(FutureInnerContent::Counter(prop as i64))
         }
-
+        // NOTE: The future container type need also try to parse the unknown type
         ContainerType::Unknown(_) => crate::op::InnerContent::Future(FutureInnerContent::Unknown {
             prop,
             value: value.into_owned(),

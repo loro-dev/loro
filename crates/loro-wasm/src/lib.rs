@@ -20,7 +20,7 @@ use loro_internal::{
     obs::SubID,
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
-    ContainerType, DiffEvent, HandlerTrait, LoroDoc, LoroValue, MovableListHandler,
+    ContainerType, DiffEvent, HandlerTrait, JsonSchema, LoroDoc, LoroValue, MovableListHandler,
     UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
@@ -159,6 +159,10 @@ extern "C" {
     pub type JsCursorQueryAns;
     #[wasm_bindgen(typescript_type = "UndoConfig")]
     pub type JsUndoConfig;
+    #[wasm_bindgen(typescript_type = "JsonSchema")]
+    pub type JsJsonSchema;
+    #[wasm_bindgen(typescript_type = "string | JsonSchema")]
+    pub type JsJsonSchemaOrString;
 }
 
 mod observer {
@@ -588,6 +592,7 @@ impl Loro {
         Ok(LoroText {
             handler: text,
             doc: Some(self.0.clone()),
+            delta_cache: None,
         })
     }
 
@@ -721,6 +726,7 @@ impl Loro {
                 LoroText {
                     handler: richtext,
                     doc: Some(self.0.clone()),
+                    delta_cache: None,
                 }
                 .into()
             }
@@ -872,6 +878,39 @@ impl Loro {
         } else {
             Ok(self.0.export_from(&Default::default()))
         }
+    }
+
+    /// Export updates from the specific version to the current version with JSON format.
+    #[wasm_bindgen(js_name = "exportJsonUpdates")]
+    pub fn export_json_updates(&self, vv: Option<VersionVector>) -> JsResult<JsJsonSchema> {
+        let mut json_vv = Default::default();
+        if let Some(vv) = vv {
+            json_vv = vv.0;
+        }
+        let json_schema = self.0.export_json_updates(&json_vv);
+        let s = serde_wasm_bindgen::Serializer::new();
+        let v = json_schema
+            .serialize(&s)
+            .map_err(std::convert::Into::<JsValue>::into)?;
+        Ok(v.into())
+    }
+
+    /// Import updates from the JSON format.
+    ///
+    /// only supports backward compatibility but not forward compatibility.
+    #[wasm_bindgen(js_name = "importJsonUpdates")]
+    pub fn import_json_updates(&self, json: JsJsonSchemaOrString) -> JsResult<()> {
+        let json: JsValue = json.into();
+        if JsValue::is_string(&json) {
+            let json_str = json.as_string().unwrap();
+            return self
+                .0
+                .import_json_updates(json_str.as_str())
+                .map_err(|e| e.into());
+        }
+        let json_schema: JsonSchema = serde_wasm_bindgen::from_value(json)?;
+        self.0.import_json_updates(json_schema)?;
+        Ok(())
     }
 
     /// Import a snapshot or a update to current doc.
@@ -1351,6 +1390,7 @@ fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsValue 
 pub struct LoroText {
     handler: TextHandler,
     doc: Option<Arc<LoroDoc>>,
+    delta_cache: Option<(usize, JsValue)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1370,6 +1410,7 @@ impl LoroText {
         Self {
             handler: TextHandler::new_detached(),
             doc: None,
+            delta_cache: None,
         }
     }
 
@@ -1483,10 +1524,19 @@ impl LoroText {
     /// console.log(text.toDelta());  // [ { insert: 'Hello', attributes: { bold: true } } ]
     /// ```
     #[wasm_bindgen(js_name = "toDelta")]
-    pub fn to_delta(&self) -> JsStringDelta {
+    pub fn to_delta(&mut self) -> JsStringDelta {
+        let version = self.handler.version_id();
+        if let Some((v, delta)) = self.delta_cache.as_ref() {
+            if *v == version {
+                return delta.clone().into();
+            }
+        }
+
         let delta = self.handler.get_richtext_value();
         let value: JsValue = delta.into();
-        value.into()
+        let ans: JsStringDelta = value.clone().into();
+        self.delta_cache = Some((version, value));
+        ans
     }
 
     /// Get the container id of the text.
@@ -2716,7 +2766,7 @@ impl LoroTreeNode {
     /// //    /  \
     /// // node2 node
     /// ```
-    #[wasm_bindgen(js_name = "createNode")]
+    #[wasm_bindgen(js_name = "createNode", skip_typescript)]
     pub fn create_node(&self, index: Option<usize>) -> JsResult<LoroTreeNode> {
         let id = if let Some(index) = index {
             self.tree.create_at(Some(self.id), index)?
@@ -2904,7 +2954,7 @@ impl LoroTree {
     /// //    /   \
     /// // node  root
     /// ```
-    #[wasm_bindgen(js_name = "createNode")]
+    #[wasm_bindgen(js_name = "createNode", skip_typescript)]
     pub fn create_node(
         &mut self,
         parent: &JsParentTreeID,
@@ -2975,7 +3025,7 @@ impl LoroTree {
     }
 
     /// Get LoroTreeNode by the TreeID.
-    #[wasm_bindgen(js_name = "getNodeByID")]
+    #[wasm_bindgen(js_name = "getNodeByID", skip_typescript)]
     pub fn get_node_by_id(&self, target: &JsTreeID) -> Option<LoroTreeNode> {
         let target: JsValue = target.into();
         let target = TreeID::try_from(target).ok()?;
@@ -4011,4 +4061,126 @@ interface LoroMovableList {
 }
 
 export type Side = -1 | 0 | 1;
+"#;
+
+#[wasm_bindgen(typescript_custom_section)]
+const JSON_SCHEMA_TYPES: &'static str = r#"
+export type JsonOpID = `${number}@${PeerID}`;
+export type JsonContainerID =  `🦜:${ContainerID}` ;
+export type JsonValue  =
+  | JsonContainerID
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: JsonValue }
+  | Uint8Array
+  | JsonValue[];
+
+export type JsonSchema = {
+  schema_version: number;
+  start_version: Map<string, number>,
+  peers: PeerID[],
+  changes: JsonChange[]
+};
+
+export type JsonChange = {
+  id: JsonOpID
+  timestamp: number,
+  deps: JsonOpID[],
+  lamport: number,
+  msg: string | null,
+  ops: JsonOp[]
+}
+
+export type JsonOp = {
+  container: ContainerID,
+  counter: number,
+  content: ListOp | TextOp | MapOp | TreeOp | MovableListOp | UnknownOp
+}
+
+export type ListOp = {
+  type: "insert",
+  pos: number,
+  value: JsonValue
+} | {
+  type: "delete",
+  pos: number,
+  len: number,
+  start_id: JsonOpID,
+};
+
+export type MovableListOp = {
+  type: "insert",
+  pos: number,
+  value: JsonValue
+} | {
+  type: "delete",
+  pos: number,
+  len: number,
+  start_id: JsonOpID,
+}| {
+  type: "move",
+  from: number,
+  to: number,
+  elem_id: JsonOpID,
+}|{
+  type: "set",
+  elem_id: JsonOpID,
+  value: JsonValue
+}
+
+export type TextOp = {
+  type: "insert",
+  pos: number,
+  text: string
+} | {
+  type: "delete",
+  pos: number,
+  len: number,
+  start_id: JsonOpID,
+} | {
+  type: "mark",
+  start: number,
+  end: number,
+  style_key: string,
+  style_value: JsonValue,
+  info: number
+}|{
+  type: "mark_end"
+};
+
+export type MapOp = {
+  type: "insert",
+  key: string,
+  value: JsonValue
+} | {
+  type: "delete",
+  key: string,
+};
+
+export type TreeOp = {
+  type: "create",
+  target: TreeID,
+  parent: TreeID | undefined,
+  fractional_index: string
+}|{
+  type: "move",
+  target: TreeID,
+  parent: TreeID | undefined,
+  fractional_index: string
+}|{
+  type: "delete",
+  target: TreeID
+};
+
+export type UnknownOp = {
+  type: "unknown"
+  prop: number,
+  value_type: "unknown",
+  value: {
+    kind: number,
+    data: Uint8Array
+  }
+};
 "#;

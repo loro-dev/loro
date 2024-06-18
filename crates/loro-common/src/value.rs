@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash, ops::Index, sync::Arc};
 
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
-use serde::{de::VariantAccess, ser::SerializeStruct, Deserialize, Serialize};
+use serde::{de::VariantAccess, Deserialize, Serialize};
 
 use crate::ContainerID;
 
@@ -481,6 +481,8 @@ pub mod wasm {
     }
 }
 
+const LORO_CONTAINER_ID_PREFIX: &str = "🦜:";
+
 impl Serialize for LoroValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -498,9 +500,7 @@ impl Serialize for LoroValue {
                 LoroValue::List(l) => serializer.collect_seq(l.iter()),
                 LoroValue::Map(m) => serializer.collect_map(m.iter()),
                 LoroValue::Container(id) => {
-                    let mut state = serializer.serialize_struct("Container", 1)?;
-                    state.serialize_field("Container", id)?;
-                    state.end()
+                    serializer.serialize_str(&format!("{}{}", LORO_CONTAINER_ID_PREFIX, id))
                 }
             }
         } else {
@@ -610,6 +610,12 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
     where
         E: serde::de::Error,
     {
+        if let Some(id) = v.strip_prefix(LORO_CONTAINER_ID_PREFIX) {
+            return Ok(LoroValue::Container(
+                ContainerID::try_from(id)
+                    .map_err(|_| serde::de::Error::custom("Invalid container id"))?,
+            ));
+        }
         Ok(LoroValue::String(Arc::new(v.to_owned())))
     }
 
@@ -617,6 +623,13 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
     where
         E: serde::de::Error,
     {
+        if let Some(id) = v.strip_prefix(LORO_CONTAINER_ID_PREFIX) {
+            return Ok(LoroValue::Container(
+                ContainerID::try_from(id)
+                    .map_err(|_| serde::de::Error::custom("Invalid container id"))?,
+            ));
+        }
+
         Ok(LoroValue::String(v.into()))
     }
 
@@ -652,9 +665,7 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
         A: serde::de::MapAccess<'de>,
     {
         let mut ans: FxHashMap<String, _> = FxHashMap::default();
-        let mut last_key = None;
         while let Some((key, value)) = map.next_entry::<String, _>()? {
-            last_key.get_or_insert_with(|| key.clone());
             ans.insert(key, value);
         }
 

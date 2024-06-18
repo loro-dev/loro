@@ -68,6 +68,8 @@ pub enum LoroError {
     UndoInvalidIdSpan(ID),
     #[error("PeerID cannot be changed. Expected: {expected:?}, Actual: {actual:?}")]
     UndoWithDifferentPeerId { expected: PeerID, actual: PeerID },
+    #[error("The input JSON schema is invalid")]
+    InvalidJsonSchema,
 }
 
 #[derive(Error, Debug)]
