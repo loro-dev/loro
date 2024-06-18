@@ -101,5 +101,7 @@ impl ContainerState for UnknownState {
     }
 
     #[doc = r" Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, _ctx: StateSnapshotDecodeContext) {}
+    fn import_from_snapshot_ops(&mut self, _ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
+        Ok(())
+    }
 }

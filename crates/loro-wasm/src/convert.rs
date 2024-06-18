@@ -15,6 +15,9 @@ use crate::{
 use wasm_bindgen::__rt::IntoJsResult;
 use wasm_bindgen::convert::RefFromWasmAbi;
 
+#[cfg(feature = "counter")]
+use crate::LoroCounter;
+
 /// Convert a `JsValue` to `T` by constructor's name.
 ///
 /// more details can be found in https://github.com/rustwasm/wasm-bindgen/issues/2231#issuecomment-656293288
@@ -130,6 +133,22 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
                 &obj,
                 &JsValue::from_str("updated"),
                 &map_delta_to_js(map, doc),
+            )
+            .unwrap();
+        }
+
+        #[cfg(feature = "counter")]
+        Diff::Counter(v) => {
+            js_sys::Reflect::set(
+                &obj,
+                &JsValue::from_str("type"),
+                &JsValue::from_str("counter"),
+            )
+            .unwrap();
+            js_sys::Reflect::set(
+                &obj,
+                &JsValue::from_str("increment"),
+                &JsValue::from_f64(*v),
             )
             .unwrap();
         }
@@ -316,13 +335,18 @@ fn map_delta_to_js(value: &ResolvedMapDelta, doc: &Arc<LoroDoc>) -> JsValue {
 
 pub(crate) fn handler_to_js_value(handler: Handler, doc: Option<Arc<LoroDoc>>) -> JsValue {
     match handler {
-        Handler::Text(t) => LoroText { handler: t, doc }.into(),
+        Handler::Text(t) => LoroText {
+            handler: t,
+            doc,
+            delta_cache: None,
+        }
+        .into(),
         Handler::Map(m) => LoroMap { handler: m, doc }.into(),
         Handler::List(l) => LoroList { handler: l, doc }.into(),
         Handler::Tree(t) => LoroTree { handler: t, doc }.into(),
         Handler::MovableList(m) => LoroMovableList { handler: m, doc }.into(),
         #[cfg(feature = "counter")]
-        Handler::Counter(c) => unimplemented!(),
+        Handler::Counter(c) => LoroCounter { handler: c, doc }.into(),
         Handler::Unknown(_) => unreachable!(),
     }
 }

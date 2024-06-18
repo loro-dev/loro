@@ -53,7 +53,7 @@ impl InnerContent {
                 }
             }
             crate::op::InnerContent::Tree(t) => {
-                let id = t.target.associated_meta_container();
+                let id = t.target().associated_meta_container();
                 f(&id);
             }
             crate::op::InnerContent::Future(f) => match &f {
@@ -79,7 +79,7 @@ impl InnerContent {
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum FutureInnerContent {
     #[cfg(feature = "counter")]
-    Counter(i64),
+    Counter(f64),
     Unknown {
         prop: i32,
         value: OwnedValue,
@@ -103,7 +103,7 @@ pub enum RawOpContent<'a> {
     List(ListOp<'a>),
     Tree(TreeOp),
     #[cfg(feature = "counter")]
-    Counter(i64),
+    Counter(f64),
     Unknown {
         prop: i32,
         value: OwnedValue,

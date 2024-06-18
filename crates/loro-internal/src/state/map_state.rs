@@ -173,7 +173,7 @@ impl ContainerState for MapState {
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
         assert_eq!(ctx.mode, EncodeMode::Snapshot);
         for op in ctx.ops {
             debug_assert_eq!(
@@ -192,6 +192,7 @@ impl ContainerState for MapState {
                 },
             );
         }
+        Ok(())
     }
 }
 

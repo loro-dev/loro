@@ -3,7 +3,7 @@ use std::{borrow::Cow, ops::Deref};
 use crate::{container::tree::tree_op::TreeOp, InternalString};
 use fxhash::FxHashSet;
 use itertools::Itertools;
-use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, PeerID};
+use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, PeerID, ID};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, ColumnarError};
 
@@ -118,8 +118,14 @@ impl<'a> ValueDecodedArenasTrait for DecodedArenas<'a> {
         &self,
         positions: &[Vec<u8>],
         op: super::value::EncodedTreeMove,
+        id: ID,
     ) -> LoroResult<crate::container::tree::tree_op::TreeOp> {
-        op.as_tree_op(&self.peer_ids.peer_ids, positions, &self.tree_ids.tree_ids)
+        op.as_tree_op(
+            &self.peer_ids.peer_ids,
+            positions,
+            &self.tree_ids.tree_ids,
+            id,
+        )
     }
 }
 

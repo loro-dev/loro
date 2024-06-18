@@ -12,35 +12,51 @@ use crate::state::TreeParentId;
 /// - **Move**: move target tree node a child node of the specified parent node.
 /// - **Delete**: move target tree node to [`loro_common::DELETED_TREE_ROOT`].
 ///
-
+///
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct TreeOp {
-    pub(crate) target: TreeID,
-    pub(crate) parent: Option<TreeID>,
-    // If the op is `delete`, the position is None
-    pub(crate) position: Option<FractionalIndex>,
+pub enum TreeOp {
+    Create {
+        target: TreeID,
+        parent: Option<TreeID>,
+        position: FractionalIndex,
+    },
+    Move {
+        target: TreeID,
+        parent: Option<TreeID>,
+        position: FractionalIndex,
+    },
+    Delete {
+        target: TreeID,
+    },
 }
 
 impl TreeOp {
+    pub(crate) fn target(&self) -> TreeID {
+        match self {
+            TreeOp::Create { target, .. } => *target,
+            TreeOp::Move { target, .. } => *target,
+            TreeOp::Delete { target, .. } => *target,
+        }
+    }
     pub(crate) fn parent_id(&self) -> TreeParentId {
-        match self.parent {
-            Some(parent) => {
-                if TreeID::is_deleted_root(&parent) {
-                    TreeParentId::Deleted
-                } else {
-                    TreeParentId::Node(parent)
-                }
+        match self {
+            TreeOp::Create { parent, .. } => TreeParentId::from(*parent),
+            TreeOp::Move { parent, .. } => TreeParentId::from(*parent),
+            TreeOp::Delete { .. } => TreeParentId::Deleted,
+        }
+    }
+    pub(crate) fn fractional_index(&self) -> Option<FractionalIndex> {
+        match self {
+            TreeOp::Create { position, .. } | TreeOp::Move { position, .. } => {
+                Some(position.clone())
             }
-            None => TreeParentId::Root,
+            TreeOp::Delete { .. } => None,
         }
     }
 
     pub(crate) fn estimate_storage_size(&self) -> usize {
-        8 + self
-            .position
-            .as_ref()
-            .map(|x| x.as_bytes().len())
-            .unwrap_or_default()
+        // TODO: use a better value
+        20
     }
 }
 

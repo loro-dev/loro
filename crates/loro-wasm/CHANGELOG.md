@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.16.4
+
+### Patch Changes
+
+- afac347: feat: implement `Counter` and expose it to js side
+
+## 0.16.4-alpha.0
+
+### Patch Changes
+
+- Export/import JSON schema
+
+## 0.16.3
+
+### Patch Changes
+
+- 6d47015: Make cursors transformation better in undo/redo loop
+- dc55055: Perf(wasm) cache text.toDelta
+
 ## 0.16.2
 
 ### Patch Changes

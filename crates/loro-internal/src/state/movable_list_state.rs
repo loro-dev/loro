@@ -1366,7 +1366,7 @@ impl ContainerState for MovableListState {
         serde_columnar::to_vec(&out).unwrap()
     }
 
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
         let iter = serde_columnar::iter_from_bytes::<EncodedSnapshot>(ctx.blob).unwrap();
         let item_iter = iter.items;
         let mut item_ids = iter.ids;
@@ -1452,6 +1452,7 @@ impl ContainerState for MovableListState {
 
         assert!(item_ids.next().is_none());
         assert!(last_set_op_iter.next().is_none());
+        Ok(())
     }
 }
 

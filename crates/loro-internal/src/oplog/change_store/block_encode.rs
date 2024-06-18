@@ -481,6 +481,7 @@ impl<'a> ValueDecodedArenasTrait for ValueDecodeArena<'a> {
         &self,
         positions: &[Vec<u8>],
         op: crate::encoding::value::EncodedTreeMove,
+        id: ID,
     ) -> LoroResult<crate::container::tree::tree_op::TreeOp> {
         unreachable!()
     }
@@ -564,7 +565,6 @@ pub fn decode_block(
             &mut value_reader,
             &decode_arena,
             ID::new(peer, counter),
-            prop,
         )?;
 
         let cid = &cids[container_index as usize];
@@ -576,6 +576,7 @@ pub fn decode_block(
             &decode_arena,
             &[],
             prop,
+            ID::new(peer, counter),
         )?;
 
         let c_idx = shared_arena.register_container(cid);

@@ -5,6 +5,7 @@ pub(crate) mod value_register;
 pub(crate) use encode_reordered::{
     decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
 };
+pub(crate) mod json_schema;
 
 use crate::op::OpWithId;
 use crate::version::Frontiers;

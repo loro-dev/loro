@@ -3,8 +3,8 @@ use criterion::black_box;
 use loro_internal::loro::LoroDoc;
 
 fn main() {
-    // log_size();
-    bench_decode();
+    log_size();
+    // bench_decode();
     // bench_decode_updates();
 }
 
@@ -23,9 +23,13 @@ fn log_size() {
         txn.commit().unwrap();
         let snapshot = loro.export_snapshot();
         let updates = loro.export_from(&Default::default());
+        let json_updates =
+            serde_json::to_string(&loro.export_json_updates(&Default::default(), &loro.oplog_vv()))
+                .unwrap();
         println!("\n");
         println!("Snapshot size={}", snapshot.len());
         println!("Updates size={}", updates.len());
+        println!("Json Updates size={}", json_updates.as_bytes().len());
         println!("\n");
         loro.diagnose_size();
     }

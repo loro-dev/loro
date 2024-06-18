@@ -62,28 +62,18 @@ fn main() {
         output.len(),
     );
 
-    let start = Instant::now();
-    let blocks_bytes = loro.export_blocks();
-    println!("blocks time {}ms", start.elapsed().as_millis());
-    println!("blocks size {}", blocks_bytes.len());
-    let blocks_bytes_compressed = miniz_oxide::deflate::compress_to_vec(&blocks_bytes, 6);
+    let json_updates =
+        serde_json::to_string(&loro.export_json_updates(&Default::default(), &loro.oplog_vv()))
+            .unwrap();
+    let output = miniz_oxide::deflate::compress_to_vec(json_updates.as_bytes(), 6);
     println!(
-        "blocks size after compression {}",
-        blocks_bytes_compressed.len()
+        "json updates size {} after compression {}",
+        json_updates.len(),
+        output.len(),
     );
-    let start = Instant::now();
-    let blocks_bytes = loro.export_blocks();
-    println!("export blocks time {:?} (2nd time)", start.elapsed());
-    println!("export blocks size {}", blocks_bytes.len());
-    let _blocks_bytes_compressed = miniz_oxide::deflate::compress_to_vec(&blocks_bytes, 6);
-    println!(
-        "blocks time after compression {}ms",
-        start.elapsed().as_millis()
-    );
-    let start = Instant::now();
-    let new_loro = LoroDoc::default();
-    new_loro.import_blocks(&blocks_bytes).unwrap();
-    println!("blocks decode time {:?}", start.elapsed());
+
+    // {
+    //     // Delta encoding
 
     {
         // Delta encoding

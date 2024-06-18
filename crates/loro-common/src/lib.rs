@@ -302,7 +302,7 @@ impl ContainerType {
             ContainerType::Tree => LoroValue::List(Arc::new(Default::default())),
             ContainerType::MovableList => LoroValue::List(Arc::new(Default::default())),
             #[cfg(feature = "counter")]
-            ContainerType::Counter => LoroValue::I64(0),
+            ContainerType::Counter => LoroValue::Double(0.),
             ContainerType::Unknown(_) => unreachable!(),
         }
     }
@@ -467,9 +467,30 @@ mod container {
                 "Text" | "text" => Ok(ContainerType::Text),
                 "Tree" | "tree" => Ok(ContainerType::Tree),
                 "MovableList" | "movableList" => Ok(ContainerType::MovableList),
-                _ => Err(LoroError::DecodeError(
+                #[cfg(feature = "counter")]
+                "Counter" | "counter" => Ok(ContainerType::Counter),
+                a => {
+                    if a.ends_with(')') {
+                        let start = a.find('(').ok_or_else(|| {
+                            LoroError::DecodeError(
+                                format!("Invalid container type string \"{}\"", value).into(),
+                            )
+                        })?;
+                        let k = a[start+1..a.len() - 1].parse().map_err(|_| {
+                            LoroError::DecodeError(
                     format!("Unknown container type \"{}\". The valid options are Map|List|Text|Tree|MovableList.", value).into(),
-                )),
+                )
+                        })?;
+                        match ContainerType::try_from_u8(k) {
+                            Ok(k) => Ok(k),
+                            Err(_) => Ok(ContainerType::Unknown(k)),
+                        }
+                    } else {
+                        Err(LoroError::DecodeError(
+                    format!("Unknown container type \"{}\". The valid options are Map|List|Text|Tree|MovableList.", value).into(),
+                ))
+                    }
+                }
             }
         }
     }
@@ -608,5 +629,6 @@ mod test {
         assert!(ContainerID::try_from("cid:@:Map").is_err());
         assert!(ContainerID::try_from("cid:x@0:Map").is_err());
         assert!(ContainerID::try_from("id:0@0:Map").is_err());
+        assert!(ContainerID::try_from("cid:0@0:Unknown(6)").is_ok());
     }
 }

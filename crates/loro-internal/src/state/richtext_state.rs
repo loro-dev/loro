@@ -37,7 +37,10 @@ use super::ContainerState;
 pub struct RichtextState {
     idx: ContainerIdx,
     config: Arc<RwLock<StyleConfigMap>>,
-    pub(crate) state: LazyLoad<RichtextStateLoader, InnerState>,
+    state: LazyLoad<RichtextStateLoader, InnerState>,
+    /// This is used to indicate whether the richtext state is changed, so the downstream has an easy way to cache
+    /// NOTE: We need to ensure the invariance that the version id is always increased when the richtext state is changed
+    version_id: usize,
 }
 
 struct Pos {
@@ -52,7 +55,21 @@ impl RichtextState {
             idx,
             config,
             state: LazyLoad::Src(Default::default()),
+            version_id: 0,
         }
+    }
+
+    #[inline]
+    fn update_version(&mut self) {
+        self.version_id = self.version_id.wrapping_add(1);
+    }
+
+    /// Get the version id of the richtext
+    ///
+    /// This can be used to detect whether the richtext is changed
+    #[inline]
+    pub fn get_version_id(&self) -> usize {
+        self.version_id
     }
 
     /// Get the text content of the richtext
@@ -84,6 +101,7 @@ impl RichtextState {
         style_starts: &mut FxHashMap<Arc<StyleOp>, Pos>,
         style: &Arc<StyleOp>,
     ) -> Pos {
+        self.update_version();
         match style_starts.remove(style) {
             Some(x) => x,
             None => {
@@ -213,6 +231,7 @@ impl Clone for RichtextState {
             idx: self.idx,
             config: self.config.clone(),
             state: self.state.clone(),
+            version_id: self.version_id,
         }
     }
 }
@@ -244,6 +263,7 @@ impl ContainerState for RichtextState {
         _txn: &Weak<Mutex<Option<Transaction>>>,
         _state: &Weak<Mutex<DocState>>,
     ) -> Diff {
+        self.update_version();
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
         };
@@ -425,6 +445,7 @@ impl ContainerState for RichtextState {
         _txn: &Weak<Mutex<Option<Transaction>>>,
         _state: &Weak<Mutex<DocState>>,
     ) {
+        self.update_version();
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
         };
@@ -511,6 +532,7 @@ impl ContainerState for RichtextState {
     }
 
     fn apply_local_op(&mut self, r_op: &RawOp, op: &Op) -> LoroResult<()> {
+        self.update_version();
         match &op.content {
             crate::op::InnerContent::List(l) => match l {
                 list_op::InnerListOp::Insert { slice: _, pos: _ } => {
@@ -633,7 +655,8 @@ impl ContainerState for RichtextState {
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
+        self.update_version();
         assert_eq!(ctx.mode, EncodeMode::Snapshot);
         let mut loader = RichtextStateLoader::default();
         let mut id_to_style = FxHashMap::default();
@@ -669,6 +692,7 @@ impl ContainerState for RichtextState {
 
         self.state = LazyLoad::Src(loader);
         // self.check_consistency_between_content_and_style_ranges();
+        Ok(())
     }
 }
 

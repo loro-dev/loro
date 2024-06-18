@@ -17,7 +17,7 @@ use crate::{
     arena::SharedArena,
     change::{Change, Lamport, Timestamp},
     container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
-    encoding::{value_register::ValueRegister, StateSnapshotDecodeContext},
+    encoding::StateSnapshotDecodeContext,
     op::{FutureInnerContent, Op, OpWithId, SliceRange},
     state::ContainerState,
     version::Frontiers,
@@ -32,6 +32,11 @@ use super::{
     value::{Value, ValueDecodedArenasTrait, ValueKind, ValueReader, ValueWriter},
     ImportBlobMetadata,
 };
+
+pub(crate) use crate::encoding::value_register::ValueRegister;
+
+#[allow(unused_imports)]
+use super::value::FutureValue;
 
 /// If any section of the document is longer than this, we will not decode it.
 /// It will return an data corruption error instead.
@@ -211,7 +216,7 @@ pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
     })
 }
 
-fn import_changes_to_oplog(
+pub(crate) fn import_changes_to_oplog(
     changes: Vec<Change>,
     oplog: &mut OpLog,
 ) -> Result<(Vec<ID>, Vec<Change>), LoroError> {
@@ -359,13 +364,7 @@ fn extract_ops(
         let peer = arenas.peer_ids[peer_idx as usize];
         let cid = &containers[container_index as usize];
         let kind = ValueKind::from_u8(value_type);
-        let value = Value::decode(
-            kind,
-            &mut value_reader,
-            arenas,
-            ID::new(peer, counter),
-            prop,
-        )?;
+        let value = Value::decode(kind, &mut value_reader, arenas, ID::new(peer, counter))?;
 
         let content = decode_op(
             cid,
@@ -375,6 +374,7 @@ fn extract_ops(
             arenas,
             &positions,
             prop,
+            ID::new(peer, counter),
         )?;
 
         let container = shared_arena.register_container(cid);
@@ -876,7 +876,7 @@ fn decode_snapshot_states(
                 mode: crate::encoding::EncodeMode::Snapshot,
                 peers: &peers.peer_ids,
             },
-        );
+        )?;
     }
 
     let s = take(&mut state.states);
@@ -896,7 +896,7 @@ mod encode {
     use crate::{
         arena::SharedArena,
         change::{Change, Lamport},
-        container::idx::ContainerIdx,
+        container::{idx::ContainerIdx, tree::tree_op::TreeOp},
         encoding::{
             value::{
                 EncodedTreeMove, MarkStart, Value, ValueEncodeRegister, ValueKind, ValueWriter,
@@ -1106,7 +1106,7 @@ mod encode {
     fn get_future_op_prop(op: &FutureInnerContent) -> i32 {
         match &op {
             #[cfg(feature = "counter")]
-            FutureInnerContent::Counter(c) => *c as i32,
+            FutureInnerContent::Counter(_) => 0,
             FutureInnerContent::Unknown { prop, .. } => *prop,
         }
     }
@@ -1141,18 +1141,16 @@ mod encode {
                 let key = registers.key.register(&map.key);
                 key as i32
             }
-            crate::op::InnerContent::Tree(op) => {
-                if let Some(position) = &op.position {
-                    if let either::Either::Left(position_register) = &mut registers.position {
-                        position_register.insert(position.as_bytes());
-                    } else {
+            crate::op::InnerContent::Tree(op) => match op {
+                TreeOp::Create { position, .. } | TreeOp::Move { position, .. } => {
+                    let either::Either::Left(position_register) = &mut registers.position else {
                         unreachable!()
-                    }
+                    };
+                    position_register.insert(position.as_bytes());
                     0
-                } else {
-                    -1
                 }
-            }
+                TreeOp::Delete { .. } => 0,
+            },
             crate::op::InnerContent::Future(f) => match f {
                 #[cfg(feature = "counter")]
                 FutureInnerContent::Counter(_) => 0,
@@ -1239,7 +1237,14 @@ mod encode {
             }
             crate::op::InnerContent::Future(f) => match f {
                 #[cfg(feature = "counter")]
-                FutureInnerContent::Counter(_) => Value::Future(FutureValue::Counter),
+                FutureInnerContent::Counter(c) => {
+                    let c_abs = c.abs();
+                    if c_abs.fract() < std::f64::EPSILON && (c_abs as i64) < (2 << 26) {
+                        Value::I64(*c as i64)
+                    } else {
+                        Value::F64(*c)
+                    }
+                }
                 FutureInnerContent::Unknown { prop: _, value } => Value::from_owned(value),
             },
         };
@@ -1248,7 +1253,7 @@ mod encode {
     }
 }
 
-#[inline]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn decode_op(
     cid: &ContainerID,
     value: Value<'_>,
@@ -1257,6 +1262,7 @@ pub(crate) fn decode_op(
     arenas: &dyn ValueDecodedArenasTrait,
     positions: &[Vec<u8>],
     prop: i32,
+    op_id: ID,
 ) -> LoroResult<crate::op::InnerContent> {
     let content = match cid.container_type() {
         ContainerType::Text => match value {
@@ -1349,7 +1355,7 @@ pub(crate) fn decode_op(
         }
         ContainerType::Tree => match value {
             Value::TreeMove(op) => {
-                crate::op::InnerContent::Tree(arenas.decode_tree_op(positions, op)?)
+                crate::op::InnerContent::Tree(arenas.decode_tree_op(positions, op, op_id)?)
             }
             _ => {
                 unreachable!()
@@ -1407,10 +1413,12 @@ pub(crate) fn decode_op(
             }
         }
         #[cfg(feature = "counter")]
-        ContainerType::Counter => {
-            crate::op::InnerContent::Future(FutureInnerContent::Counter(prop as i64))
-        }
-
+        ContainerType::Counter => match value {
+            Value::F64(c) => crate::op::InnerContent::Future(FutureInnerContent::Counter(c)),
+            Value::I64(c) => crate::op::InnerContent::Future(FutureInnerContent::Counter(c as f64)),
+            _ => unreachable!(),
+        },
+        // NOTE: The future container type need also try to parse the unknown type
         ContainerType::Unknown(_) => crate::op::InnerContent::Future(FutureInnerContent::Unknown {
             prop,
             value: value.into_owned(),

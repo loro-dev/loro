@@ -4,7 +4,6 @@ use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, delta_trait::DeltaAttr, DeltaItem, DeltaRope};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use tracing::trace;
 
 use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
@@ -229,7 +228,7 @@ pub(crate) enum InternalDiff {
     Tree(TreeDelta),
     MovableList(MovableListInnerDelta),
     #[cfg(feature = "counter")]
-    Counter(i64),
+    Counter(f64),
     Unknown,
 }
 
@@ -315,7 +314,7 @@ pub enum Diff {
     Map(ResolvedMapDelta),
     Tree(TreeDiff),
     #[cfg(feature = "counter")]
-    Counter(i64),
+    Counter(f64),
     Unknown,
 }
 
@@ -334,7 +333,7 @@ impl InternalDiff {
             InternalDiff::Tree(t) => t.is_empty(),
             InternalDiff::MovableList(t) => t.is_empty(),
             #[cfg(feature = "counter")]
-            InternalDiff::Counter(c) => *c == 0,
+            InternalDiff::Counter(c) => c.abs() < f64::EPSILON,
             InternalDiff::Unknown => true,
         }
     }
@@ -424,7 +423,7 @@ impl Diff {
             Diff::Map(m) => m.updated.is_empty(),
             Diff::Tree(t) => t.diff.is_empty(),
             #[cfg(feature = "counter")]
-            Diff::Counter(c) => *c == 0,
+            Diff::Counter(c) => c.abs() < f64::EPSILON,
             Diff::Unknown => true,
         }
     }
@@ -457,12 +456,11 @@ impl Diff {
 
     /// Transform the cursor based on this diff
     pub(crate) fn transform_cursor(&self, pos: usize, left_prior: bool) -> usize {
-        let ans = match self {
+        match self {
             Diff::List(list) => list.transform_pos(pos, left_prior),
             Diff::Text(text) => text.transform_pos(pos, left_prior),
             _ => pos,
-        };
-        ans
+        }
     }
 }
 

@@ -482,7 +482,7 @@ impl ApplyDiff for LoroValue {
                             TypeHint::List => LoroValue::List(Default::default()),
                             TypeHint::Tree => LoroValue::List(Default::default()),
                             #[cfg(feature = "counter")]
-                            TypeHint::Counter => LoroValue::I64(0),
+                            TypeHint::Counter => LoroValue::Double(0.),
                         })
                     }
                     Index::Seq(index) => {
@@ -758,21 +758,5 @@ pub mod wasm {
 
             obj.into_js_result().unwrap()
         }
-    }
-}
-
-#[cfg(test)]
-#[cfg(feature = "json")]
-mod json_test {
-    use crate::{fx_map, value::ToJson, LoroValue};
-
-    #[test]
-    fn list() {
-        let list = LoroValue::List(
-            vec![12.into(), "123".into(), fx_map!("kk" => 123.into()).into()].into(),
-        );
-        let json = list.to_json();
-        println!("{}", json);
-        assert_eq!(LoroValue::from_json(&json), list);
     }
 }

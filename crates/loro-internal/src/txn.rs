@@ -126,7 +126,7 @@ pub(super) enum EventHint {
     Tree(TreeDiffItem),
     MarkEnd,
     #[cfg(feature = "counter")]
-    Counter(i64),
+    Counter(f64),
 }
 
 impl generic_btree::rle::HasLength for EventHint {

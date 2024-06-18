@@ -77,10 +77,10 @@ impl NodeChildren {
         }
     }
 
-    fn get_node_position_at(&self, pos: usize) -> &NodePosition {
+    fn get_node_position_at(&self, pos: usize) -> Option<&NodePosition> {
         match self {
-            NodeChildren::Vec(v) => &v[pos].0,
-            NodeChildren::BTree(btree) => &btree.get_elem_at(pos).unwrap().pos,
+            NodeChildren::Vec(v) => v.get(pos).map(|x| &x.0),
+            NodeChildren::BTree(btree) => btree.get_elem_at(pos).map(|x| x.pos.as_ref()),
         }
     }
 
@@ -98,9 +98,12 @@ impl NodeChildren {
         {
             let mut right = None;
             let children_num = self.len();
+            if children_num == 0 {
+                return FractionalIndexGenResult::Ok(FractionalIndex::default());
+            }
 
             if pos > 0 {
-                left = Some(self.get_node_position_at(pos - 1));
+                left = self.get_node_position_at(pos - 1);
             }
             if pos < children_num {
                 right = self.get_elem_at(pos);
@@ -114,7 +117,8 @@ impl NodeChildren {
                     // TODO: the min length between left and right
                     reset_ids.push(*right.unwrap().1);
                     for i in (pos + 1)..children_num {
-                        let this_position = &self.get_node_position_at(i).position;
+                        let this_position =
+                            self.get_node_position_at(i).map(|x| &x.position).unwrap();
                         if this_position == left_fi {
                             reset_ids.push(*self.get_elem_at(i).unwrap().1);
                         } else {
@@ -953,15 +957,31 @@ impl ContainerState for TreeState {
 
     fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
         match &raw_op.content {
-            crate::op::RawOpContent::Tree(tree) => {
-                let TreeOp {
+            crate::op::RawOpContent::Tree(tree) => match tree {
+                TreeOp::Create {
                     target,
                     parent,
                     position,
-                } = tree;
-                let parent = TreeParentId::from(*parent);
-                self.mov(*target, parent, raw_op.id_full(), position.clone(), true)
-            }
+                }
+                | TreeOp::Move {
+                    target,
+                    parent,
+                    position,
+                } => {
+                    let parent = TreeParentId::from(*parent);
+                    self.mov(
+                        *target,
+                        parent,
+                        raw_op.id_full(),
+                        Some(position.clone()),
+                        true,
+                    )
+                }
+                TreeOp::Delete { target } => {
+                    let parent = TreeParentId::Deleted;
+                    self.mov(*target, parent, raw_op.id_full(), None, true)
+                }
+            },
             _ => unreachable!(),
         }
     }
@@ -1056,18 +1076,34 @@ impl ContainerState for TreeState {
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
         assert_eq!(ctx.mode, EncodeMode::Snapshot);
         for op in ctx.ops {
             assert_eq!(op.op.atom_len(), 1);
             let content = op.op.content.as_tree().unwrap();
-            let target = content.target;
-            let parent = content.parent;
-            let position = content.position.clone();
-            let parent = TreeParentId::from(parent);
-            self.mov(target, parent, op.id_full(), position, false)
-                .unwrap();
+            match content {
+                TreeOp::Create {
+                    target,
+                    parent,
+                    position,
+                }
+                | TreeOp::Move {
+                    target,
+                    parent,
+                    position,
+                } => {
+                    let parent = TreeParentId::from(*parent);
+                    self.mov(*target, parent, op.id_full(), Some(position.clone()), false)
+                        .unwrap()
+                }
+                TreeOp::Delete { target } => {
+                    let parent = TreeParentId::Deleted;
+                    self.mov(*target, parent, op.id_full(), None, false)
+                        .unwrap()
+                }
+            };
         }
+        Ok(())
     }
 }
 
@@ -1128,9 +1164,14 @@ mod jitter {
             {
                 let mut right = None;
                 let children_num = self.len();
+                if children_num == 0 {
+                    return FractionalIndexGenResult::Ok(FractionalIndex::jitter_default(
+                        rng, jitter,
+                    ));
+                }
 
                 if pos > 0 {
-                    left = Some(self.get_node_position_at(pos - 1));
+                    left = self.get_node_position_at(pos - 1);
                 }
                 if pos < children_num {
                     right = self.get_elem_at(pos);
@@ -1144,7 +1185,7 @@ mod jitter {
                         // TODO: the min length between left and right
                         reset_ids.push(*right.unwrap().1);
                         for i in (pos + 1)..children_num {
-                            let this_position = &self.get_node_position_at(i).position;
+                            let this_position = &self.get_node_position_at(i).unwrap().position;
                             if this_position == left_fi {
                                 reset_ids.push(*self.get_elem_at(i).unwrap().1);
                             } else {
