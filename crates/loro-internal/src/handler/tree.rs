@@ -615,17 +615,16 @@ impl TreeHandler {
     }
 
     // TODO: iterator
-    pub fn children(&self, parent: Option<TreeID>) -> Vec<TreeID> {
+    pub fn children(&self, parent: Option<TreeID>) -> Option<Vec<TreeID>> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.try_lock().unwrap();
-                t.value.get_children(parent).unwrap()
+                t.value.get_children(parent)
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
                 a.get_children(&TreeParentId::from(parent))
-                    .unwrap()
-                    .collect()
+                    .map(|x| x.collect())
             }),
         }
     }
@@ -696,7 +695,7 @@ impl TreeHandler {
     }
 
     pub fn roots(&self) -> Vec<TreeID> {
-        self.children(None)
+        self.children(None).unwrap_or_default()
     }
 
     #[allow(non_snake_case)]
