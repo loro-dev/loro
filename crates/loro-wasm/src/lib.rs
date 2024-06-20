@@ -2939,7 +2939,7 @@ impl LoroTreeNode {
     /// the WASM boundary.
     #[wasm_bindgen(skip_typescript)]
     pub fn children(&self) -> Array {
-        let children = self.tree.children(Some(self.id));
+        let children = self.tree.children(Some(self.id)).unwrap_or_default();
         let children = children.into_iter().map(|c| {
             let node = LoroTreeNode::from_tree(c, self.tree.clone(), self.doc.clone());
             JsValue::from(node)
