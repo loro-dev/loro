@@ -114,9 +114,7 @@ mod snapshot {
     use super::UnknownState;
 
     impl FastStateSnapshot for UnknownState {
-        fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
-            w.write_all(&[]);
-        }
+        fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, _w: W) {}
 
         fn decode_value(bytes: &[u8]) -> loro_common::LoroResult<(loro_common::LoroValue, &[u8])> {
             Ok((LoroValue::Null, bytes))
@@ -124,8 +122,8 @@ mod snapshot {
 
         fn decode_snapshot_fast(
             idx: crate::container::idx::ContainerIdx,
-            v: (loro_common::LoroValue, &[u8]),
-            ctx: crate::state::ContainerCreationContext,
+            _v: (loro_common::LoroValue, &[u8]),
+            _ctx: crate::state::ContainerCreationContext,
         ) -> loro_common::LoroResult<Self>
         where
             Self: Sized,

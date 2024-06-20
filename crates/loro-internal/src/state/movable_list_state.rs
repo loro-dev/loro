@@ -1614,7 +1614,7 @@ mod snapshot {
         fn decode_snapshot_fast(
             idx: crate::container::idx::ContainerIdx,
             (list_value, mut bytes): (loro_common::LoroValue, &[u8]),
-            ctx: ContainerCreationContext,
+            _ctx: ContainerCreationContext,
         ) -> loro_common::LoroResult<Self>
         where
             Self: Sized,

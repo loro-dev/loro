@@ -86,7 +86,7 @@ impl ChangeStore {
         while !reader.is_empty() {
             let size = leb128::read::unsigned(&mut reader).unwrap();
             let block_bytes = &reader[0..size as usize];
-            let block = ChangesBlock::from_bytes(Bytes::copy_from_slice(block_bytes), &self.arena)?;
+            let block = ChangesBlock::from_bytes(Bytes::copy_from_slice(block_bytes))?;
             kv.insert(block.id(), Arc::new(block));
             reader = &reader[size as usize..];
         }
@@ -216,7 +216,7 @@ impl ChangeStore {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockChangeRef {
     pub block: Arc<ChangesBlock>,
     pub change_index: usize,
@@ -244,7 +244,7 @@ impl BlockChangeRef {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockOpRef {
     pub block: Arc<ChangesBlock>,
     pub change_index: usize,
@@ -261,7 +261,6 @@ impl Deref for BlockOpRef {
 
 #[derive(Debug, Clone)]
 pub struct ChangesBlock {
-    arena: SharedArena,
     peer: PeerID,
     counter_range: (Counter, Counter),
     lamport_range: (Lamport, Lamport),
@@ -271,7 +270,7 @@ pub struct ChangesBlock {
 }
 
 impl ChangesBlock {
-    pub fn from_bytes(bytes: Bytes, arena: &SharedArena) -> LoroResult<Self> {
+    pub fn from_bytes(bytes: Bytes) -> LoroResult<Self> {
         let len = bytes.len();
         let mut bytes = ChangesBlockBytes::new(bytes);
         let peer = bytes.peer();
@@ -279,7 +278,6 @@ impl ChangesBlock {
         let lamport_range = bytes.lamport_range();
         let content = ChangesBlockContent::Bytes(bytes);
         Ok(Self {
-            arena: arena.clone(),
             peer,
             estimated_size: len,
             counter_range,
@@ -300,7 +298,6 @@ impl ChangesBlock {
         let peer = change.id.peer;
         let content = ChangesBlockContent::Changes(Arc::new(vec![change]));
         Self {
-            arena: a.clone(),
             peer,
             counter_range,
             lamport_range,

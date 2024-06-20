@@ -543,10 +543,9 @@ impl ContainerState for ListState {
 }
 
 mod snapshot {
-    use std::{io::Read};
+    use std::io::Read;
 
     use loro_common::{Counter, Lamport, PeerID};
-    
 
     use crate::{encoding::value_register::ValueRegister, state::ContainerCreationContext};
 
@@ -578,7 +577,7 @@ mod snapshot {
         fn decode_snapshot_fast(
             idx: ContainerIdx,
             (v, mut bytes): (LoroValue, &[u8]),
-            ctx: ContainerCreationContext,
+            _ctx: ContainerCreationContext,
         ) -> LoroResult<Self>
         where
             Self: Sized,

@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cell::RefCell, cmp::Ordering, mem::take, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, cmp::Ordering, rc::Rc};
 
 use either::Either;
 pub(crate) use encode::{encode_op, get_op_prop};

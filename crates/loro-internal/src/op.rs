@@ -277,7 +277,10 @@ impl<'a> RichOp<'a> {
         })
     }
 
-    pub fn new_iter_by_cnt_range(change: BlockChangeRef, span: CounterSpan) -> RichOpBlockIter {
+    pub(crate) fn new_iter_by_cnt_range(
+        change: BlockChangeRef,
+        span: CounterSpan,
+    ) -> RichOpBlockIter {
         RichOpBlockIter {
             change,
             span,
