@@ -230,7 +230,7 @@ fn encode_header_and_body(mode: EncodeMode, body: Vec<u8>) -> Vec<u8> {
 pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
     let body = encode_reordered::encode_snapshot(
         &doc.oplog().try_lock().unwrap(),
-        &doc.app_state().try_lock().unwrap(),
+        &mut doc.app_state().try_lock().unwrap(),
         &Default::default(),
     );
 

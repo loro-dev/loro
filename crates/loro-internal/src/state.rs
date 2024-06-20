@@ -1,9 +1,13 @@
 use std::{
     borrow::Cow,
     io::Write,
-    sync::{atomic::AtomicU8, Arc, Mutex, RwLock, Weak},
+    sync::{
+        atomic::{AtomicU64, AtomicU8, Ordering},
+        Arc, Mutex, RwLock, Weak,
+    },
 };
 
+use container_store::ContainerStore;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
@@ -43,27 +47,33 @@ pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
 pub(crate) use tree_state::{get_meta_value, FractionalIndexGenResult, TreeParentId, TreeState};
 
-use self::unknown_state::UnknownState;
+use self::{container_store::ContainerWrapper, unknown_state::UnknownState};
+
+#[cfg(feature = "counter")]
+use self::counter_state::CounterState;
 
 use super::{arena::SharedArena, event::InternalDocDiff};
 
 macro_rules! get_or_create {
     ($doc_state: ident, $idx: expr) => {{
-        if !$doc_state.states.contains_key(&$idx) {
+        if !$doc_state.store.contains($idx) {
             let state = $doc_state.create_state($idx);
-            $doc_state.states.insert($idx, state);
+            $doc_state
+                .store
+                .insert($idx, ContainerWrapper::new(state, &$doc_state.arena));
         }
 
-        $doc_state.states.get_mut(&$idx).unwrap()
+        $doc_state.store.get_container_mut($idx).unwrap()
     }};
 }
 
 #[derive(Clone)]
 pub struct DocState {
-    pub(super) peer: PeerID,
+    pub(super) peer: Arc<AtomicU64>,
 
     pub(super) frontiers: Frontiers,
-    pub(super) states: FxHashMap<ContainerIdx, State>,
+    // pub(super) states: FxHashMap<ContainerIdx, State>,
+    pub(super) store: ContainerStore,
     pub(super) arena: SharedArena,
     pub(crate) config: Configure,
     // resolve event stuff
@@ -156,6 +166,27 @@ pub(crate) trait ContainerState: Clone {
 
     /// Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()>;
+}
+
+impl<T: FastStateSnapshot> FastStateSnapshot for Box<T> {
+    fn encode_snapshot_fast<W: Write>(&mut self, w: W) {
+        self.as_mut().encode_snapshot_fast(w)
+    }
+
+    fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
+        T::decode_value(bytes)
+    }
+
+    fn decode_snapshot_fast(
+        idx: ContainerIdx,
+        v: (LoroValue, &[u8]),
+        ctx: ContainerCreationContext,
+    ) -> LoroResult<Self>
+    where
+        Self: Sized,
+    {
+        T::decode_snapshot_fast(idx, v, ctx).map(|x| Box::new(x))
+    }
 }
 
 impl<T: ContainerState> ContainerState for Box<T> {
@@ -251,7 +282,44 @@ pub enum State {
     TreeState(Box<TreeState>),
     #[cfg(feature = "counter")]
     CounterState(Box<counter_state::CounterState>),
-    UnknownState(Box<UnknownState>),
+    UnknownState(UnknownState),
+}
+
+impl From<ListState> for State {
+    fn from(s: ListState) -> Self {
+        Self::ListState(Box::new(s))
+    }
+}
+
+impl From<RichtextState> for State {
+    fn from(s: RichtextState) -> Self {
+        Self::RichtextState(Box::new(s))
+    }
+}
+
+impl From<MovableListState> for State {
+    fn from(s: MovableListState) -> Self {
+        Self::MovableListState(Box::new(s))
+    }
+}
+
+impl From<MapState> for State {
+    fn from(s: MapState) -> Self {
+        Self::MapState(Box::new(s))
+    }
+}
+
+impl From<TreeState> for State {
+    fn from(s: TreeState) -> Self {
+        Self::TreeState(Box::new(s))
+    }
+}
+
+#[cfg(feature = "counter")]
+impl From<CounterState> for State {
+    fn from(s: CounterState) -> Self {
+        Self::CounterState(Box::new(s))
+    }
 }
 
 impl State {
@@ -272,7 +340,20 @@ impl State {
     }
 
     pub fn new_unknown(idx: ContainerIdx) -> Self {
-        Self::UnknownState(Box::new(UnknownState::new(idx)))
+        Self::UnknownState(UnknownState::new(idx))
+    }
+
+    pub fn encode_snapshot_fast<W: Write>(&mut self, mut w: W) {
+        match self {
+            State::ListState(s) => s.encode_snapshot_fast(&mut w),
+            State::MovableListState(s) => s.encode_snapshot_fast(&mut w),
+            State::MapState(s) => s.encode_snapshot_fast(&mut w),
+            State::RichtextState(s) => s.encode_snapshot_fast(&mut w),
+            State::TreeState(s) => s.encode_snapshot_fast(&mut w),
+            #[cfg(feature = "counter")]
+            State::CounterState(s) => s.encode_snapshot_fast(&mut w),
+            State::UnknownState(s) => s.encode_snapshot_fast(&mut w),
+        }
     }
 }
 
@@ -286,11 +367,12 @@ impl DocState {
         let peer = DefaultRandom.next_u64();
         // TODO: maybe we should switch to certain version in oplog?
         Arc::new_cyclic(|weak| {
+            let peer = Arc::new(AtomicU64::new(peer));
             Mutex::new(Self {
+                store: ContainerStore::new(arena.clone(), config.clone(), peer.clone()),
                 peer,
                 arena,
                 frontiers: Frontiers::default(),
-                states: FxHashMap::default(),
                 weak_state: weak.clone(),
                 config,
                 global_txn,
@@ -321,7 +403,10 @@ impl DocState {
     }
 
     pub fn refresh_peer_id(&mut self) {
-        self.peer = DefaultRandom.next_u64();
+        self.peer.store(
+            DefaultRandom.next_u64(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     /// Take all the diffs that are recorded and convert them to events.
@@ -395,11 +480,11 @@ impl DocState {
     /// It changes the peer id for the future txn on this AppState
     #[inline]
     pub fn set_peer_id(&mut self, peer: PeerID) {
-        self.peer = peer;
+        self.peer.store(peer, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn peer_id(&self) -> PeerID {
-        self.peer
+        self.peer.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// It's expected that diff only contains [`InternalDiff`]
@@ -455,13 +540,7 @@ impl DocState {
                 let to_create = std::mem::take(&mut to_revive_in_this_layer);
                 to_revive_in_this_layer = std::mem::take(&mut to_revive_in_next_layer);
                 for new in to_create {
-                    let state = {
-                        if !self.states.contains_key(&new) {
-                            continue;
-                        }
-                        self.states.get_mut(&new).unwrap()
-                    };
-
+                    let state = get_or_create!(self, new);
                     if state.is_state_empty() {
                         continue;
                     }
@@ -545,13 +624,7 @@ impl DocState {
         while !to_revive_in_this_layer.is_empty() || !to_revive_in_next_layer.is_empty() {
             let to_create = std::mem::take(&mut to_revive_in_this_layer);
             for new in to_create {
-                let state = {
-                    if !self.states.contains_key(&new) {
-                        continue;
-                    }
-                    self.states.get_mut(&new).unwrap()
-                };
-
+                let state = get_or_create!(self, new);
                 if state.is_state_empty() {
                     continue;
                 }
@@ -598,12 +671,8 @@ impl DocState {
         self.in_txn = false;
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &State> {
-        self.states.values()
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut State> {
-        self.states.values_mut()
+    pub fn iter_and_decode_all(&mut self) -> impl Iterator<Item = &mut State> {
+        self.store.iter_and_decode_all()
     }
 
     pub(crate) fn init_container(
@@ -630,22 +699,12 @@ impl DocState {
     }
 
     #[inline]
-    #[allow(unused)]
-    pub(super) fn get_state_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
-        self.states.get_mut(&idx)
-    }
-
-    #[inline]
-    #[allow(unused)]
-    pub(super) fn get_state(&self, idx: ContainerIdx) -> Option<&State> {
-        self.states.get(&idx)
+    pub(super) fn get_container_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
+        self.store.get_container_mut(idx)
     }
 
     pub(crate) fn get_value_by_idx(&mut self, container_idx: ContainerIdx) -> LoroValue {
-        self.states
-            .get_mut(&container_idx)
-            .map(|x| x.get_value())
-            .unwrap_or_else(|| container_idx.get_type().default_value())
+        self.store.get_value(container_idx).unwrap()
     }
 
     /// Set the state of the container with the given container idx.
@@ -656,18 +715,17 @@ impl DocState {
     /// If the state is not empty.
     pub(super) fn init_with_states_and_version(
         &mut self,
-        states: FxHashMap<ContainerIdx, State>,
         frontiers: Frontiers,
         oplog: &OpLog,
         unknown_containers: Vec<ContainerIdx>,
     ) {
-        assert!(self.states.is_empty(), "overriding states");
         self.pre_txn(Default::default(), EventTriggerKind::Import);
-        self.states = states;
-        for (idx, state) in self.states.iter() {
-            for child_id in state.get_child_containers() {
+        for state in self.store.iter_and_decode_all() {
+            let idx = state.container_idx();
+            let s = state;
+            for child_id in s.get_child_containers() {
                 let child_idx = self.arena.register_container(&child_id);
-                self.arena.set_parent(child_idx, Some(*idx));
+                self.arena.set_parent(child_idx, Some(idx));
             }
         }
 
@@ -691,13 +749,20 @@ impl DocState {
 
         if self.is_recording() {
             let diff: Vec<_> = self
-                .states
+                .store
                 .iter_mut()
                 .map(|(&idx, state)| InternalContainerDiff {
                     idx,
                     bring_back: false,
                     is_container_deleted: false,
                     diff: state
+                        .get_state_mut(
+                            idx,
+                            ContainerCreationContext {
+                                configure: &self.config,
+                                peer: self.peer.load(Ordering::Relaxed),
+                            },
+                        )
                         .to_diff(&self.arena, &self.global_txn, &self.weak_state)
                         .into(),
                 })
@@ -721,9 +786,18 @@ impl DocState {
         id: I,
     ) -> Option<&mut richtext_state::RichtextState> {
         let idx = self.id_to_idx(id, ContainerType::Text);
-        self.states
-            .entry(idx)
-            .or_insert_with(|| State::new_richtext(idx, self.config.text_style_config.clone()))
+        self.store
+            .get_or_create(idx, || {
+                let state = State::new_richtext(idx, self.config.text_style_config.clone());
+                ContainerWrapper::new(state, &self.arena)
+            })
+            .get_state_mut(
+                idx,
+                ContainerCreationContext {
+                    configure: &self.config,
+                    peer: self.peer.load(Ordering::Relaxed),
+                },
+            )
             .as_richtext_state_mut()
             .map(|x| &mut **x)
     }
@@ -732,9 +806,22 @@ impl DocState {
     /// if it's str it will use Root container, which will not be None
     pub(crate) fn get_tree<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Option<&mut TreeState> {
         let idx = self.id_to_idx(id, ContainerType::Tree);
-        self.states
-            .entry(idx)
-            .or_insert_with(|| State::new_richtext(idx, self.config.text_style_config.clone()))
+        self.store
+            .get_or_create(idx, || {
+                let state = State::new_tree(
+                    idx,
+                    self.peer.load(std::sync::atomic::Ordering::Relaxed),
+                    self.config.tree_position_jitter.clone(),
+                );
+                ContainerWrapper::new(state, &self.arena)
+            })
+            .get_state_mut(
+                idx,
+                ContainerCreationContext {
+                    configure: &self.config,
+                    peer: self.peer.load(Ordering::Relaxed),
+                },
+            )
             .as_tree_state_mut()
             .map(|x| &mut **x)
     }
@@ -756,7 +843,6 @@ impl DocState {
             }
         };
 
-        
         idx.unwrap()
     }
 
@@ -766,15 +852,27 @@ impl DocState {
     where
         F: FnOnce(&State) -> R,
     {
-        let state = self.states.get(&idx);
-        if let Some(state) = state {
-            f(state)
-        } else {
-            let state = self.create_state(idx);
-            let ans = f(&state);
-            self.states.insert(idx, state);
-            ans
-        }
+        let depth = self.arena.get_depth(idx).unwrap().get() as usize;
+        let parent = self
+            .arena
+            .get_parent(idx)
+            .and_then(|a| self.arena.get_container_id(a));
+        let state = self
+            .store
+            .get_or_create(idx, || {
+                ContainerWrapper::new(
+                    create_state_(idx, &self.config, self.peer.load(Ordering::Relaxed)),
+                    &self.arena,
+                )
+            })
+            .get_state_mut(
+                idx,
+                ContainerCreationContext {
+                    configure: &self.config,
+                    peer: self.peer.load(Ordering::Relaxed),
+                },
+            );
+        f(state)
     }
 
     #[inline(always)]
@@ -782,15 +880,20 @@ impl DocState {
     where
         F: FnOnce(&mut State) -> R,
     {
-        let state = self.states.get_mut(&idx);
-        if let Some(state) = state {
-            f(state)
-        } else {
-            let mut state = self.create_state(idx);
-            let ans = f(&mut state);
-            self.states.insert(idx, state);
-            ans
-        }
+        let state = self
+            .store
+            .get_or_create(idx, || {
+                let state = create_state_(idx, &self.config, self.peer.load(Ordering::Relaxed));
+                ContainerWrapper::new(state, &self.arena)
+            })
+            .get_state_mut(
+                idx,
+                ContainerCreationContext {
+                    configure: &self.config,
+                    peer: self.peer.load(Ordering::Relaxed),
+                },
+            );
+        f(state)
     }
 
     pub(super) fn is_in_txn(&self) -> bool {
@@ -798,7 +901,7 @@ impl DocState {
     }
 
     pub fn is_empty(&self) -> bool {
-        !self.in_txn && self.states.is_empty() && self.arena.can_import_snapshot()
+        !self.in_txn && self.store.is_empty() && self.arena.can_import_snapshot()
     }
 
     pub fn get_deep_value(&mut self) -> LoroValue {
@@ -846,7 +949,7 @@ impl DocState {
         id: Option<ContainerID>,
     ) -> LoroValue {
         let id = id.unwrap_or_else(|| self.arena.idx_to_id(container).unwrap());
-        let Some(state) = self.states.get_mut(&container) else {
+        let Some(state) = self.store.get_container_mut(container) else {
             return container.get_type().default_value();
         };
         let value = state.get_value();
@@ -907,7 +1010,7 @@ impl DocState {
     }
 
     pub fn get_container_deep_value(&mut self, container: ContainerIdx) -> LoroValue {
-        let Some(state) = self.states.get_mut(&container) else {
+        let Some(state) = self.store.get_container_mut(container) else {
             return container.get_type().default_value();
         };
         let value = state.get_value();
@@ -1026,14 +1129,14 @@ impl DocState {
         }
     }
 
-    pub(crate) fn get_reachable(&self, id: &ContainerID) -> bool {
+    pub(crate) fn get_reachable(&mut self, id: &ContainerID) -> bool {
         let Some(mut idx) = self.arena.id_to_idx(id) else {
             return false;
         };
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                let Some(parent_state) = self.states.get(&parent_idx) else {
+                let Some(parent_state) = self.store.get_container_mut(parent_idx) else {
                     return false;
                 };
                 if !parent_state.contains_child(&id) {
@@ -1051,13 +1154,13 @@ impl DocState {
     }
 
     // the container may be override, so it may return None
-    fn get_path(&self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
+    fn get_path(&mut self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
         let mut ans = Vec::new();
         let mut idx = idx;
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                let parent_state = self.states.get(&parent_idx)?;
+                let parent_state = self.store.get_container_mut(parent_idx)?;
                 let Some(prop) = parent_state.get_child_index(&id) else {
                     tracing::info!("Missing in parent children");
                     return None;
@@ -1135,16 +1238,16 @@ impl DocState {
         }
 
         let self_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> = self
-            .states
-            .values_mut()
+            .store
+            .iter_and_decode_all()
             .filter_map(|state: &mut State| {
                 let arena = &self.arena;
                 get_entries_for_state(arena, state)
             })
             .collect();
         let mut other_id_to_states: FxHashMap<ContainerID, (ContainerIdx, LoroValue)> = other
-            .states
-            .values_mut()
+            .store
+            .iter_and_decode_all()
             .filter_map(|state: &mut State| {
                 let arena = &other.arena;
                 get_entries_for_state(arena, state)
@@ -1173,52 +1276,32 @@ impl DocState {
     }
 
     pub fn log_estimated_size(&self) {
-        let state_entries_size = self.states.len()
-            * (std::mem::size_of::<State>() + std::mem::size_of::<ContainerIdx>());
+        let state_entries_size =
+            self.store.len() * (std::mem::size_of::<State>() + std::mem::size_of::<ContainerIdx>());
         let mut state_size_sum = 0;
-        for state in self.states.values() {
-            state_size_sum += state.estimate_size();
-        }
+        state_size_sum += self.store.estimate_size();
 
         eprintln!(
             "ContainerNum: {}\nEstimated state size: \nEntries: {} \nSum: {}",
-            self.states.len(),
+            self.store.len(),
             state_entries_size,
             state_size_sum
         );
     }
 
     pub fn create_state(&self, idx: ContainerIdx) -> State {
-        match idx.get_type() {
-            ContainerType::Map => State::MapState(Box::new(MapState::new(idx))),
-            ContainerType::List => State::ListState(Box::new(ListState::new(idx))),
-            ContainerType::Text => State::RichtextState(Box::new(RichtextState::new(
-                idx,
-                self.config.text_style_config.clone(),
-            ))),
-            ContainerType::Tree => State::TreeState(Box::new(TreeState::new(
-                idx,
-                self.peer,
-                self.config.tree_position_jitter.clone(),
-            ))),
-            ContainerType::MovableList => {
-                State::MovableListState(Box::new(MovableListState::new(idx)))
-            }
-            #[cfg(feature = "counter")]
-            ContainerType::Counter => {
-                State::CounterState(Box::new(counter_state::CounterState::new(idx)))
-            }
-            ContainerType::Unknown(_) => State::UnknownState(Box::new(UnknownState::new(idx))),
-        }
+        let config = &self.config;
+        let peer = self.peer.load(std::sync::atomic::Ordering::Relaxed);
+        create_state_(idx, config, peer)
     }
 
     pub fn create_unknown_state(&self, idx: ContainerIdx) -> State {
-        State::UnknownState(Box::new(UnknownState::new(idx)))
+        State::UnknownState(UnknownState::new(idx))
     }
 
     pub fn get_relative_position(&mut self, pos: &Cursor, use_event_index: bool) -> Option<usize> {
         let idx = self.arena.register_container(&pos.container);
-        let state = self.states.get_mut(&idx)?;
+        let state = self.store.get_container_mut(idx)?;
         if let Some(id) = pos.id {
             match state {
                 State::ListState(s) => s.get_index_of_id(id),
@@ -1264,7 +1347,7 @@ impl DocState {
         }
 
         for index in path[..path.len() - 1].iter().skip(1) {
-            let parent_state = self.states.get(&state_idx)?;
+            let parent_state = self.store.get_container_mut(state_idx)?;
             match parent_state {
                 State::ListState(l) => {
                     let Some(LoroValue::Container(c)) = l.get(*index.as_seq()?) else {
@@ -1297,7 +1380,7 @@ impl DocState {
             }
         }
 
-        let parent_state = self.states.get_mut(&state_idx)?;
+        let parent_state = self.store.get_container_mut(state_idx)?;
         let index = path.last().unwrap();
         let value: LoroValue = match parent_state {
             State::ListState(l) => l.get(*index.as_seq()?).cloned()?,
@@ -1320,6 +1403,28 @@ impl DocState {
         };
 
         Some(value)
+    }
+}
+
+fn create_state_(idx: ContainerIdx, config: &Configure, peer: u64) -> State {
+    match idx.get_type() {
+        ContainerType::Map => State::MapState(Box::new(MapState::new(idx))),
+        ContainerType::List => State::ListState(Box::new(ListState::new(idx))),
+        ContainerType::Text => State::RichtextState(Box::new(RichtextState::new(
+            idx,
+            config.text_style_config.clone(),
+        ))),
+        ContainerType::Tree => State::TreeState(Box::new(TreeState::new(
+            idx,
+            peer,
+            config.tree_position_jitter.clone(),
+        ))),
+        ContainerType::MovableList => State::MovableListState(Box::new(MovableListState::new(idx))),
+        #[cfg(feature = "counter")]
+        ContainerType::Counter => {
+            State::CounterState(Box::new(counter_state::CounterState::new(idx)))
+        }
+        ContainerType::Unknown(_) => State::UnknownState(UnknownState::new(idx)),
     }
 }
 

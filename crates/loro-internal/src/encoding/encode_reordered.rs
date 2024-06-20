@@ -408,7 +408,7 @@ fn extract_ops(
     })
 }
 
-pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVector) -> Vec<u8> {
+pub(crate) fn encode_snapshot(oplog: &OpLog, state: &mut DocState, vv: &VersionVector) -> Vec<u8> {
     assert!(!state.is_in_txn());
     assert_eq!(oplog.frontiers(), &state.frontiers);
 
@@ -419,18 +419,21 @@ pub(crate) fn encode_snapshot(oplog: &OpLog, state: &DocState, vv: &VersionVecto
         cid_idx_pairs: c_pairs,
         container_to_index: container_idx2index,
     } = extract_containers_in_order(
-        &mut state.iter().map(|x| x.container_idx()).chain(
-            diff_changes
-                .iter()
-                .flat_map(|x| {
-                    let c = match x {
-                        Either::Left(c) => c,
-                        Either::Right(c) => c,
-                    };
-                    c.ops.iter()
-                })
-                .map(|x| x.container),
-        ),
+        &mut state
+            .iter_and_decode_all()
+            .map(|x| x.container_idx())
+            .chain(
+                diff_changes
+                    .iter()
+                    .flat_map(|x| {
+                        let c = match x {
+                            Either::Left(c) => c,
+                            Either::Right(c) => c,
+                        };
+                        c.ops.iter()
+                    })
+                    .map(|x| x.container),
+            ),
         &oplog.arena,
     );
     let mut dep_arena = DepsArena::default();
@@ -703,7 +706,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
 
 fn encode_snapshot_states(
     container_idxs: impl Iterator<Item = ContainerIdx>,
-    state: &DocState,
+    state: &mut DocState,
     oplog: &OpLog,
     container_idx2index: &FxHashMap<ContainerIdx, usize>,
     registers: Rc<RefCell<EncodedRegisters>>,
@@ -731,7 +734,7 @@ fn encode_snapshot_states(
             continue;
         }
 
-        let state = match state.get_state(container) {
+        let state = match state.get_container_mut(container) {
             Some(state) if !state.is_state_empty() => state,
             _ => {
                 states.push(EncodedStateInfo {
@@ -879,8 +882,7 @@ fn decode_snapshot_states(
         )?;
     }
 
-    let s = take(&mut state.states);
-    state.init_with_states_and_version(s, frontiers, oplog, unknown_containers);
+    state.init_with_states_and_version(frontiers, oplog, unknown_containers);
     Ok(())
 }
 
@@ -898,9 +900,7 @@ mod encode {
         change::{Change, Lamport},
         container::{idx::ContainerIdx, tree::tree_op::TreeOp},
         encoding::{
-            value::{
-                MarkStart, Value, ValueEncodeRegister, ValueKind, ValueWriter,
-            },
+            value::{MarkStart, Value, ValueEncodeRegister, ValueKind, ValueWriter},
             value_register::ValueRegister,
         },
         op::{FutureInnerContent, Op},

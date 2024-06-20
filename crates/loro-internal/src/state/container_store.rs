@@ -1,10 +1,28 @@
-use crate::{arena::SharedArena, container::idx::ContainerIdx};
+use std::{
+    io::Write,
+    mem,
+    sync::{atomic::AtomicU64, Arc},
+};
+
+use crate::{
+    arena::SharedArena,
+    configure::Configure,
+    container::idx::ContainerIdx,
+    state::{FastStateSnapshot, RichtextState},
+};
 use bytes::Bytes;
 use encode::{decode_cids, CidOffsetEncoder};
 use fxhash::FxHashMap;
-use loro_common::{LoroResult, LoroValue};
+use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
+use tracing::field::Visit;
 
-use super::{ContainerState, State};
+use super::{
+    unknown_state::UnknownState, ContainerCreationContext, ContainerState, ListState, MapState,
+    MovableListState, State, TreeState,
+};
+
+#[cfg(feature = "counter")]
+use super::counter_state::CounterState;
 
 ///  Encoding Schema for Container Store
 ///
@@ -39,23 +57,63 @@ use super::{ContainerState, State};
 /// │                                                   │
 /// │                                                   │
 /// └───────────────────────────────────────────────────┘
+#[derive(Clone)]
 pub(crate) struct ContainerStore {
     arena: SharedArena,
     store: FxHashMap<ContainerIdx, ContainerWrapper>,
+    conf: Configure,
+    peer: Arc<AtomicU64>,
+}
+
+impl std::fmt::Debug for ContainerStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContainerStore")
+            .field("store", &self.store)
+            .finish()
+    }
 }
 
 impl ContainerStore {
-    pub fn get_container(&mut self, idx: ContainerIdx) -> Option<&mut ContainerWrapper> {
-        self.store.get_mut(&idx)
+    pub fn new(arena: SharedArena, conf: Configure, peer: Arc<AtomicU64>) -> Self {
+        ContainerStore {
+            arena,
+            store: Default::default(),
+            conf,
+            peer,
+        }
+    }
+
+    pub fn get_container_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
+        self.store.get_mut(&idx).map(|x| {
+            x.get_state_mut(
+                idx,
+                ContainerCreationContext {
+                    configure: &self.conf,
+                    peer: self.peer.load(std::sync::atomic::Ordering::Relaxed),
+                },
+            )
+        })
+    }
+
+    pub fn get_container(&mut self, idx: ContainerIdx) -> Option<&State> {
+        self.store.get_mut(&idx).map(|x| {
+            x.get_state(
+                idx,
+                ContainerCreationContext {
+                    configure: &self.conf,
+                    peer: self.peer.load(std::sync::atomic::Ordering::Relaxed),
+                },
+            )
+        })
     }
 
     pub fn get_value(&mut self, idx: ContainerIdx) -> Option<LoroValue> {
-        self.store.get_mut(&idx).and_then(|c| c.get_value())
+        self.store.get_mut(&idx).map(|c| c.get_value())
     }
 
-    pub fn encode(&self) -> Bytes {
+    pub fn encode(&mut self) -> Bytes {
         let mut id_bytes_pairs = Vec::with_capacity(self.store.len());
-        for (idx, container) in self.store.iter() {
+        for (idx, container) in self.store.iter_mut() {
             let id = self.arena.get_container_id(*idx).unwrap();
             id_bytes_pairs.push((id, container.encode()))
         }
@@ -98,47 +156,259 @@ impl ContainerStore {
 
         Ok(())
     }
+
+    pub fn iter_and_decode_all(&mut self) -> impl Iterator<Item = &mut State> {
+        self.store.iter_mut().map(|(idx, v)| {
+            v.get_state_mut(
+                *idx,
+                ContainerCreationContext {
+                    configure: &self.conf,
+                    peer: self.peer.load(std::sync::atomic::Ordering::Relaxed),
+                },
+            )
+        })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.store.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.store.len()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&ContainerIdx, &ContainerWrapper)> {
+        self.store.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&ContainerIdx, &mut ContainerWrapper)> {
+        self.store.iter_mut()
+    }
+
+    pub(super) fn get_or_create(
+        &mut self,
+        idx: ContainerIdx,
+        f: impl FnOnce() -> ContainerWrapper,
+    ) -> &mut ContainerWrapper {
+        let s = self.store.entry(idx).or_insert_with(f);
+        s
+    }
+
+    pub(crate) fn estimate_size(&self) -> usize {
+        self.store.len() * 4
+            + self
+                .store
+                .values()
+                .map(|v| v.estimate_size())
+                .sum::<usize>()
+    }
+
+    pub(super) fn contains(&self, idx: ContainerIdx) -> bool {
+        self.store.contains_key(&idx)
+    }
+
+    pub(super) fn insert(&mut self, idx: ContainerIdx, state: ContainerWrapper) {
+        self.store.insert(idx, state);
+    }
 }
 
-pub(crate) enum ContainerWrapper {
-    Bytes(Bytes),
-    PartialParsed { bytes: Bytes, value: LoroValue },
-    Parsed { bytes: Bytes, state: State },
-    State(State),
+#[derive(Clone, Debug)]
+pub(crate) struct ContainerWrapper {
+    depth: usize,
+    kind: ContainerType,
+    parent: Option<ContainerID>,
+    /// The possible combinations of is_some() are:
+    ///
+    /// 1. bytes: new container decoded from bytes
+    /// 2. bytes + value: new container decoded from bytes, with value decoded
+    /// 3. state + bytes + value: new container decoded from bytes, with value and state decoded
+    /// 4. state
+    bytes: Option<Bytes>,
+    value: Option<LoroValue>,
+    bytes_offset_for_state: Option<usize>,
+    state: Option<State>,
 }
 
 impl ContainerWrapper {
-    pub fn get_state(&mut self) -> Option<&State> {
-        match self {
-            ContainerWrapper::Bytes(_) => todo!(),
-            ContainerWrapper::PartialParsed { bytes, value } => todo!(),
-            ContainerWrapper::Parsed { bytes, state } => todo!(),
-            ContainerWrapper::State(_) => todo!(),
+    pub fn new(state: State, arena: &SharedArena) -> Self {
+        let idx = state.container_idx();
+        let parent = arena
+            .get_parent(idx)
+            .and_then(|p| arena.get_container_id(p));
+        let depth = arena.get_depth(idx).unwrap().get() as usize;
+        Self {
+            depth,
+            parent,
+            kind: idx.get_type(),
+            state: Some(state),
+            bytes: None,
+            value: None,
+            bytes_offset_for_state: None,
         }
     }
 
-    pub fn get_value(&mut self) -> Option<LoroValue> {
-        match self {
-            ContainerWrapper::Bytes(bytes) => todo!("partial parse"),
-            ContainerWrapper::PartialParsed { bytes, value } => Some(value.clone()),
-            ContainerWrapper::Parsed { bytes, state } => Some(state.get_value()),
-            ContainerWrapper::State(s) => Some(s.get_value()),
+    /// It will not decode the state if it is not decoded
+    pub fn try_get_state(&self) -> Option<&State> {
+        self.state.as_ref()
+    }
+
+    /// It will decode the state if it is not decoded
+    pub fn get_state(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> &State {
+        self.decode_state(idx, ctx).unwrap();
+        self.state.as_ref().expect("ContainerWrapper is empty")
+    }
+
+    /// It will decode the state if it is not decoded
+    pub fn get_state_mut(
+        &mut self,
+        idx: ContainerIdx,
+        ctx: ContainerCreationContext,
+    ) -> &mut State {
+        self.decode_state(idx, ctx).unwrap();
+        self.bytes = None;
+        self.value = None;
+        self.state.as_mut().unwrap()
+    }
+
+    pub fn get_value(&mut self) -> LoroValue {
+        if let Some(v) = self.value.as_ref() {
+            return v.clone();
+        }
+
+        self.decode_value().unwrap();
+        if self.value.is_none() {
+            return self.state.as_mut().unwrap().get_value();
+        }
+
+        self.value.as_ref().unwrap().clone()
+    }
+
+    pub fn encode(&mut self) -> Bytes {
+        if let Some(bytes) = self.bytes.as_ref() {
+            return bytes.clone();
+        }
+
+        // ContainerType
+        // Depth
+        // ParentID
+        // StateSnapshot
+        let mut output = Vec::new();
+        output.push(self.kind.to_u8());
+        leb128::write::unsigned(&mut output, self.depth as u64).unwrap();
+        postcard::to_io(&self.parent, &mut output).unwrap();
+        self.state
+            .as_mut()
+            .unwrap()
+            .encode_snapshot_fast(&mut output);
+        output.into()
+    }
+
+    pub fn new_from_bytes(b: Bytes) -> Self {
+        let src: &[u8] = &b;
+        let bytes: &[u8] = &b;
+        let kind = ContainerType::try_from_u8(bytes[0]).unwrap();
+        let mut bytes = &bytes[1..];
+        let depth = leb128::read::unsigned(&mut bytes).unwrap();
+        let (parent, bytes) = postcard::take_from_bytes(bytes).unwrap();
+        // SAFETY: bytes is a slice of b
+        let size = unsafe { bytes.as_ptr().offset_from(src.as_ptr()) };
+        Self {
+            depth: depth as usize,
+            kind,
+            parent,
+            state: None,
+            value: None,
+            bytes: Some(b.slice(size as usize..)),
+            bytes_offset_for_state: None,
         }
     }
 
-    pub fn encode(&self) -> Bytes {
-        todo!("encode container")
+    pub fn ensure_value(&mut self) -> &LoroValue {
+        if self.value.is_some() {
+        } else if self.state.is_some() {
+            let value = self.state.as_mut().unwrap().get_value();
+            self.value = Some(value);
+        } else {
+            self.decode_value().unwrap();
+        }
+
+        self.value.as_ref().unwrap()
     }
 
-    pub fn new_from_bytes(bytes: Bytes) -> Self {
-        ContainerWrapper::Bytes(bytes)
+    fn decode_value(&mut self) -> LoroResult<()> {
+        let Some(b) = self.bytes.as_ref() else {
+            return Ok(());
+        };
+
+        let (v, rest) = match self.kind {
+            ContainerType::Text => RichtextState::decode_value(b)?,
+            ContainerType::Map => MapState::decode_value(b)?,
+            ContainerType::List => ListState::decode_value(b)?,
+            ContainerType::MovableList => MovableListState::decode_value(b)?,
+            ContainerType::Tree => TreeState::decode_value(b)?,
+            #[cfg(feature = "counter")]
+            ContainerType::Counter => CounterState::decode_value(b)?,
+            ContainerType::Unknown(_) => UnknownState::decode_value(b)?,
+        };
+
+        self.value = Some(v);
+        // SAFETY: rest is a slice of b
+        let offset = unsafe { rest.as_ptr().offset_from(b.as_ptr()) };
+        self.bytes_offset_for_state = Some(offset as usize);
+        Ok(())
+    }
+
+    fn decode_state(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> LoroResult<()> {
+        if self.state.is_some() {
+            return Ok(());
+        }
+
+        if self.value.is_none() {
+            self.decode_value()?;
+        }
+
+        let b = self.bytes.as_ref().unwrap();
+        let offset = self.bytes_offset_for_state.unwrap();
+        let b = &b[offset..];
+        let v = self.value.as_ref().unwrap().clone();
+        let state: State = match self.kind {
+            ContainerType::Text => RichtextState::decode_snapshot_fast(idx, (v, b), ctx)?.into(),
+            ContainerType::Map => MapState::decode_snapshot_fast(idx, (v, b), ctx)?.into(),
+            ContainerType::List => ListState::decode_snapshot_fast(idx, (v, b), ctx)?.into(),
+            ContainerType::MovableList => {
+                MovableListState::decode_snapshot_fast(idx, (v, b), ctx)?.into()
+            }
+            ContainerType::Tree => TreeState::decode_snapshot_fast(idx, (v, b), ctx)?.into(),
+            #[cfg(feature = "counter")]
+            ContainerType::Counter => CounterState::decode_snapshot_fast(idx, (v, b), ctx)?.into(),
+            ContainerType::Unknown(_) => {
+                UnknownState::decode_snapshot_fast(idx, (v, b), ctx)?.into()
+            }
+        };
+        self.state = Some(state);
+        Ok(())
+    }
+
+    pub fn estimate_size(&self) -> usize {
+        if let Some(bytes) = self.bytes.as_ref() {
+            return bytes.len();
+        }
+
+        self.state.as_ref().unwrap().estimate_size()
+    }
+
+    pub(crate) fn is_state_empty(&self) -> bool {
+        if let Some(state) = self.state.as_ref() {
+            return state.is_state_empty();
+        }
+
+        // FIXME: it's not very accurate...
+        self.bytes.as_ref().unwrap().len() > 10
     }
 }
 
 mod encode {
-    use loro_common::{
-        ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult,
-    };
+    use loro_common::{ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult};
     use serde::{Deserialize, Serialize};
     use serde_columnar::{
         AnyRleDecoder, AnyRleEncoder, BoolRleDecoder, BoolRleEncoder, DeltaRleDecoder,
