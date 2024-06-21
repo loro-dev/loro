@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.5
+
+### Patch Changes
+
+- 439e4e9: Update pkg desc
+
 ## 0.16.4
 
 ### Patch Changes
