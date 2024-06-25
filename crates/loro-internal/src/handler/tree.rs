@@ -350,7 +350,6 @@ impl TreeHandler {
         let MaybeDetached::Attached(a) = &self.inner else {
             unreachable!();
         };
-
         if let Some(p) = self.get_node_parent(&target) {
             if p == parent {
                 return Ok(());
@@ -381,16 +380,21 @@ impl TreeHandler {
                 },
             }];
 
-            if let Some(children) = self.children(Some(target)) {
-                for (index, child) in children.into_iter().enumerate() {
-                    hint.push(TreeDiffItem {
-                        target: child,
-                        action: TreeExternalDiff::Create {
-                            parent: Some(target),
-                            index,
-                            position: self.get_position_by_tree_id(&child).unwrap(),
-                        },
-                    });
+            let children = self.children(Some(target)).unwrap_or_default();
+            let mut q = VecDeque::from_iter(children.iter().map(|x| (*x, target)).enumerate());
+
+            while let Some((index, (child, parent))) = q.pop_front() {
+                hint.push(TreeDiffItem {
+                    target: child,
+                    action: TreeExternalDiff::Create {
+                        parent: Some(parent),
+                        index,
+                        position: self.get_position_by_tree_id(&child).unwrap(),
+                    },
+                });
+                let children = self.children(Some(child)).unwrap_or_default();
+                for (index, c) in children.into_iter().enumerate() {
+                    q.push_back((index, (c, child)));
                 }
             }
 
