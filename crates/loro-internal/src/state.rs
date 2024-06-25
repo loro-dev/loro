@@ -533,6 +533,9 @@ impl DocState {
             }
 
             to_revive_in_this_layer.remove(&idx);
+            if diff.diff.is_empty() {
+                continue;
+            }
             diffs.push(diff);
         }
 
@@ -560,6 +563,9 @@ impl DocState {
                     &self.arena,
                 );
 
+                if external_diff.is_empty() {
+                    continue;
+                }
                 diffs.push(InternalContainerDiff {
                     idx: new,
                     bring_back: true,
