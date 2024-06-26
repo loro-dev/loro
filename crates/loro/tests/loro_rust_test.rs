@@ -1,4 +1,7 @@
-use std::{cmp::Ordering, sync::Arc};
+use std::{
+    cmp::Ordering,
+    sync::{atomic::AtomicBool, Arc},
+};
 
 use loro::{
     awareness::Awareness, FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText,
@@ -39,6 +42,34 @@ fn insert_an_inserted_movable_handler() -> Result<(), LoroError> {
         doc.get_deep_value().to_json_value(),
         json!({"list": [1, 2, 3, 4, 5], "list2": [[10, 1, 2, 3, 4, 5]]})
     );
+    Ok(())
+}
+
+#[test]
+fn fork_doc() -> anyhow::Result<()> {
+    let doc0 = LoroDoc::new();
+    let text = doc0.get_text("123");
+    text.insert(0, "123")?;
+    let triggered = Arc::new(AtomicBool::new(false));
+    let trigger_cloned = triggered.clone();
+    doc0.commit();
+    doc0.subscribe_root(Arc::new(move |e| {
+        for e in e.events {
+            let _t = e.diff.as_text().unwrap();
+            triggered.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }));
+    let doc1 = doc0.fork();
+    let text1 = doc1.get_text("123");
+    assert_eq!(&text1.to_string(), "123");
+    text1.insert(3, "456")?;
+    assert_eq!(&text.to_string(), "123");
+    assert_eq!(&text1.to_string(), "123456");
+    assert!(!trigger_cloned.load(std::sync::atomic::Ordering::Acquire),);
+    doc0.import(&doc1.export_from(&Default::default()))?;
+    assert!(trigger_cloned.load(std::sync::atomic::Ordering::Acquire),);
+    assert_eq!(text.to_string(), text1.to_string());
+    assert_ne!(doc0.peer_id(), doc1.peer_id());
     Ok(())
 }
 

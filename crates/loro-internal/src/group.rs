@@ -19,13 +19,22 @@ use crate::{
     VersionVector,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct OpGroups {
     arena: SharedArena,
     groups: FxHashMap<ContainerIdx, OpGroup>,
 }
 
 impl OpGroups {
+    pub(crate) fn fork(&self, arena: SharedArena) -> Self {
+        let mut groups = FxHashMap::with_capacity_and_hasher(self.groups.len(), Default::default());
+        for (container_idx, group) in self.groups.iter() {
+            groups.insert(*container_idx, group.fork(&arena));
+        }
+
+        Self { arena, groups }
+    }
+
     pub(crate) fn new(arena: SharedArena) -> Self {
         Self {
             arena,
@@ -106,6 +115,23 @@ pub(crate) enum OpGroup {
     Map(MapOpGroup),
     Tree(TreeOpGroup),
     MovableList(MovableListOpGroup),
+}
+
+impl OpGroup {
+    fn fork(&self, a: &SharedArena) -> Self {
+        match self {
+            OpGroup::Map(m) => OpGroup::Map(m.clone()),
+            OpGroup::Tree(t) => OpGroup::Tree(TreeOpGroup {
+                ops: t.ops.clone(),
+                tree_for_diff: Arc::new(Mutex::new(Default::default())),
+            }),
+            OpGroup::MovableList(m) => OpGroup::MovableList(MovableListOpGroup {
+                arena: a.clone(),
+                elem_mappings: m.elem_mappings.clone(),
+                pos_to_elem: m.pos_to_elem.clone(),
+            }),
+        }
+    }
 }
 
 #[enum_dispatch]
