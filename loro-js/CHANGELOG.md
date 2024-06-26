@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.6
+
+### Patch Changes
+
+- 1e94248: Add `.fork()` to duplicate the doc
+- Updated dependencies [1e94248]
+  - loro-wasm@0.16.6
+
 ## 0.16.5
 
 ### Patch Changes
