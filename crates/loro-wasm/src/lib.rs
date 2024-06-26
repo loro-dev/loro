@@ -483,6 +483,30 @@ impl Loro {
         self.0.is_detached()
     }
 
+    /// Detach the document state from the latest known version.
+    ///
+    /// After detaching, all import operations will be recorded in the `OpLog` without being applied to the `DocState`.
+    /// When `detached`, the document is not editable.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// doc.detach();
+    /// console.log(doc.is_detached());  // true
+    /// ```
+    pub fn detach(&self) {
+        self.0.detach()
+    }
+
+    /// Duplicate the document with a different PeerID
+    ///
+    /// The time complexity and space complexity of this operation are both O(n),
+    pub fn fork(&self) -> Self {
+        Self(Arc::new(self.0.fork()))
+    }
+
     /// Checkout the `DocState` to the latest version of `OpLog`.
     ///
     /// > The document becomes detached during a `checkout` operation.
