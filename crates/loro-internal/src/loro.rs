@@ -757,7 +757,6 @@ impl LoroDoc {
         post_transform_base: Option<&DiffBatch>,
         before_diff: &mut dyn FnMut(&DiffBatch),
     ) -> LoroResult<CommitWhenDrop> {
-        println!("id_span: {:?}", id_span);
         if self.is_detached() {
             return Err(LoroError::EditWhenDetached);
         }
@@ -789,7 +788,6 @@ impl LoroDoc {
                 None => Either::Left(&latest_frontiers),
             },
             |from, to| {
-                println!("from: {:?}, to: {:?}", from, to);
                 self.checkout_without_emitting(from).unwrap();
                 self.state.lock().unwrap().start_recording();
                 self.checkout_without_emitting(to).unwrap();

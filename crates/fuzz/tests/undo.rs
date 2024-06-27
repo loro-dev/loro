@@ -1,6 +1,6 @@
 use fuzz::{
     actions::{ActionWrapper::*, GenericAction},
-    crdt_fuzzer::{minify_error, test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
+    crdt_fuzzer::{test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
 };
 use loro::ContainerType::*;
 
