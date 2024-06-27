@@ -883,7 +883,7 @@ impl LoroDoc {
 
         for mut id in containers {
             let mut remapped = false;
-            let mut diff = diff.0.remove(&id).unwrap();
+            let diff = diff.0.remove(&id).unwrap();
 
             while let Some(rid) = container_remap.get(&id) {
                 remapped = true;
@@ -894,47 +894,8 @@ impl LoroDoc {
                 continue;
             }
 
-            // TODO: a better way to process TreeID
-            if let Diff::Tree(tree_diff) = &mut diff {
-                for item in tree_diff.iter_mut() {
-                    let target = &mut item.target;
-                    let (target, parent) = match &mut item.action {
-                        TreeExternalDiff::Create { parent, .. } => (None, Some(parent)),
-                        TreeExternalDiff::Move { parent, .. } => (Some(target), Some(parent)),
-                        TreeExternalDiff::Delete => (Some(target), None),
-                    };
-                    fn remap_tree_id(
-                        id: &mut TreeID,
-                        container_remap: &FxHashMap<ContainerID, ContainerID>,
-                    ) {
-                        let mut remapped = false;
-                        let mut map_id = id.associated_meta_container();
-                        while let Some(rid) = container_remap.get(&map_id) {
-                            remapped = true;
-                            map_id = rid.clone();
-                        }
-                        if remapped {
-                            *id = TreeID::new(
-                                *map_id.as_normal().unwrap().0,
-                                *map_id.as_normal().unwrap().1,
-                            )
-                        }
-                    }
-                    if let Some(target) = target {
-                        remap_tree_id(target, container_remap)
-                    }
-
-                    if let Some(Some(p)) = parent {
-                        remap_tree_id(p, container_remap)
-                    }
-                }
-            }
-
             let h = self.get_handler(id);
-            h.apply_diff(diff, &mut |old_id, new_id| {
-                container_remap.insert(old_id, new_id);
-            })
-            .unwrap();
+            h.apply_diff(diff, container_remap).unwrap();
         }
 
         Ok(())
