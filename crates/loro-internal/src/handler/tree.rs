@@ -346,6 +346,7 @@ impl TreeHandler {
         parent: Option<TreeID>,
         position: FractionalIndex,
         target: TreeID,
+        on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
     ) -> LoroResult<()> {
         let MaybeDetached::Attached(a) = &self.inner else {
             unreachable!();
@@ -355,7 +356,12 @@ impl TreeHandler {
                 return Ok(());
                 // If parent is deleted, we need to create the node, so this op from move_apply_diff
             } else if !p.is_some_and(|p| !self.contains(p)) {
-                return self.move_at_with_target_for_apply_diff(parent, position, target);
+                return self.move_at_with_target_for_apply_diff(
+                    parent,
+                    position,
+                    target,
+                    on_container_remap,
+                );
             }
         }
 
@@ -370,51 +376,54 @@ impl TreeHandler {
             // TODO: parent has deleted？
             .unwrap_or(0);
         let with_event = !parent.is_some_and(|p| !self.contains(p));
-        let event_hint = if with_event {
-            let mut hint = smallvec![TreeDiffItem {
-                target,
-                action: TreeExternalDiff::Create {
-                    parent,
-                    index,
-                    position: position.clone(),
-                },
-            }];
-
-            let children = self.children(Some(target)).unwrap_or_default();
-            let mut q = VecDeque::from_iter(children.iter().map(|x| (*x, target)).enumerate());
-
-            while let Some((index, (child, parent))) = q.pop_front() {
-                hint.push(TreeDiffItem {
-                    target: child,
-                    action: TreeExternalDiff::Create {
-                        parent: Some(parent),
-                        index,
-                        position: self.get_position_by_tree_id(&child).unwrap(),
-                    },
-                });
-                let children = self.children(Some(child)).unwrap_or_default();
-                for (index, c) in children.into_iter().enumerate() {
-                    q.push_back((index, (c, child)));
-                }
-            }
-
-            EventHint::Tree(hint)
-        } else {
-            EventHint::None(1)
-        };
-
         a.with_txn(|txn| {
             let inner = self.inner.try_attached_state()?;
+
+            let new_target = TreeID::from_id(txn.next_id());
+
+            on_container_remap(
+                target.associated_meta_container(),
+                new_target.associated_meta_container(),
+            );
+
+            let (event_hint, children) = if with_event {
+                let hint = smallvec![TreeDiffItem {
+                    target: new_target,
+                    action: TreeExternalDiff::Create {
+                        parent,
+                        index,
+                        position: position.clone(),
+                    },
+                }];
+                let children = self.children(Some(target)).unwrap_or_default();
+
+                (EventHint::Tree(hint), Some(children))
+            } else {
+                (EventHint::None(1), None)
+            };
+
             txn.apply_local_op(
                 inner.container_idx,
                 crate::op::RawOpContent::Tree(TreeOp::Create {
-                    target,
+                    target: new_target,
                     parent,
                     position: position.clone(),
                 }),
                 event_hint,
                 &inner.state,
             )?;
+            if let Some(children) = children {
+                for child in children {
+                    let position = self.get_position_by_tree_id(&child).unwrap();
+                    self.create_at_with_target_for_apply_diff(
+                        Some(new_target),
+                        position,
+                        child,
+                        on_container_remap,
+                    )?;
+                }
+            }
+
             Ok(())
         })
     }
@@ -425,6 +434,7 @@ impl TreeHandler {
         parent: Option<TreeID>,
         position: FractionalIndex,
         target: TreeID,
+        on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
     ) -> LoroResult<()> {
         let MaybeDetached::Attached(a) = &self.inner else {
             unreachable!();
@@ -432,7 +442,12 @@ impl TreeHandler {
 
         // the move node does not exist, create it
         if !self.contains(target) {
-            return self.create_at_with_target_for_apply_diff(parent, position, target);
+            return self.create_at_with_target_for_apply_diff(
+                parent,
+                position,
+                target,
+                on_container_remap,
+            );
         }
 
         if let Some(p) = self.get_node_parent(&target) {
