@@ -371,6 +371,7 @@ impl DocState {
         let diffs = std::mem::take(&mut recorder.diffs);
         let start = recorder.diff_start_version.take().unwrap();
         recorder.diff_start_version = Some((*diffs.last().unwrap().new_version).to_owned());
+        println!("diff {:?}\n", diffs);
         let event = self.diffs_to_event(diffs, start);
         self.event_recorder.events.push(event);
     }
@@ -1057,7 +1058,7 @@ impl DocState {
                 // this container may be deleted
                 let Ok(prop) = id.clone().into_root() else {
                     let id = format!("{}", &id);
-                    info!(?id, "Missing parent - container is deleted");
+                    tracing::info!(?id, "Missing parent - container is deleted");
                     return None;
                 };
                 ans.push((id, Index::Key(prop.0)));

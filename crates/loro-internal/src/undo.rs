@@ -182,7 +182,7 @@ struct Stack {
     size: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct StackItem {
     span: CounterSpan,
     meta: UndoItemMeta,
@@ -769,6 +769,7 @@ pub(crate) fn undo(
             // 3. Transform event A'_i based on B_i, call it C_i
             // --------------------------------------------------
             event_a_prime.transform(event_b_i, true);
+
             let c_i = event_a_prime;
             last_ci = Some(c_i);
         });
