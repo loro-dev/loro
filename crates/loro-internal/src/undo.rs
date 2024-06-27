@@ -9,7 +9,7 @@ use loro_common::{
     ContainerID, Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult,
     LoroValue, PeerID,
 };
-use tracing::{debug_span, info_span, instrument, trace, trace_span};
+use tracing::{debug_span, info_span, instrument};
 
 use crate::{
     change::get_sys_timestamp,

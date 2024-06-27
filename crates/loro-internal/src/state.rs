@@ -8,7 +8,7 @@ use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
-use tracing::{info, instrument};
+use tracing::instrument;
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},

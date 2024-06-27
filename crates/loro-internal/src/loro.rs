@@ -41,7 +41,7 @@ use crate::{
     oplog::dag::FrontiersNotIncluded,
     undo::DiffBatch,
     version::Frontiers,
-    HandlerTrait, InternalString, LoroError, ToJson, VersionVector,
+    HandlerTrait, InternalString, LoroError, VersionVector,
 };
 
 use super::{
