@@ -3676,88 +3676,73 @@ fn tree_meta_unknown() {
                     prop: 18446744073709551615,
                 }),
             },
-            // Handle {
-            //     site: 31,
-            //     target: 31,
-            //     container: 31,
-            //     action: Generic(GenericAction {
-            //         value: I32(522133279),
-            //         bool: false,
-            //         key: 4294909727,
-            //         pos: 720575940379279359,
-            //         length: 18446744073693366537,
-            //         prop: 19,
-            //     }),
-            // },
-            // Handle {
-            //     site: 31,
-            //     target: 120,
-            //     container: 31,
-            //     action: Generic(GenericAction {
-            //         value: Container(Text),
-            //         bool: true,
-            //         key: 522133279,
-            //         pos: 10779248702831402783,
-            //         length: 3144638436309304213,
-            //         prop: 2305842113780110847,
-            //     }),
-            // },
-            // Handle {
-            //     site: 31,
-            //     target: 31,
-            //     container: 31,
-            //     action: Generic(GenericAction {
-            //         value: I32(522133279),
-            //         bool: false,
-            //         key: 4294909727,
-            //         pos: 720575940379279359,
-            //         length: 18446744073693366537,
-            //         prop: 18446744073709549567,
-            //     }),
-            // },
-            // Handle {
-            //     site: 120,
-            //     target: 31,
-            //     container: 59,
-            //     action: Generic(GenericAction {
-            //         value: Container(Text),
-            //         bool: true,
-            //         key: 522133279,
-            //         pos: 10778687951896697631,
-            //         length: 18411740021513994627,
-            //         prop: 18383693678912722219,
-            //     }),
-            // },
-            // Handle {
-            //     site: 31,
-            //     target: 31,
-            //     container: 31,
-            //     action: Generic(GenericAction {
-            //         value: I32(2015305503),
-            //         bool: true,
-            //         key: 4294967295,
-            //         pos: 18446744073709551615,
-            //         length: 2305843009213693951,
-            //         prop: 2242545357980376863,
-            //     }),
-            // },
-            // Handle {
-            //     site: 0,
-            //     target: 0,
-            //     container: 0,
-            //     action: Generic(GenericAction {
-            //         value: Container(List),
-            //         bool: true,
-            //         key: 939524095,
-            //         pos: 18446744073561321951,
-            //         length: 71725349863423,
-            //         prop: 18444310994424758272,
-            //     }),
-            // },
             Undo {
                 site: 31,
                 op_len: 7,
             },
+        ],
+    )
+}
+
+#[test]
+fn tree_small_issue() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Tree],
+        &mut [
+            Handle {
+                site: 63,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(-1761484928),
+                    bool: false,
+                    key: 513,
+                    pos: 2341377969152,
+                    length: 18380315979205849600,
+                    prop: 4251405740540952575,
+                }),
+            },
+            Handle {
+                site: 10,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(40528415),
+                    bool: false,
+                    key: 3238038528,
+                    pos: 0,
+                    length: 0,
+                    prop: 18446744073692774400,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 33,
+                target: 2,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(335577214),
+                    bool: true,
+                    key: 16777215,
+                    pos: 2836986853897275135,
+                    length: 7667975533558178817,
+                    prop: 10746995183846424578,
+                }),
+            },
+            SyncAllUndo {
+                site: 155,
+                op_len: 2610666395,
+            },
+            SyncAllUndo {
+                site: 155,
+                op_len: 2610666395,
+            },
+            Checkout {
+                site: 155,
+                to: 2610666296,
+            },
+            SyncAll,
         ],
     )
 }
