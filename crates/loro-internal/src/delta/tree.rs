@@ -30,6 +30,11 @@ pub enum TreeExternalDiff {
         index: usize,
         position: FractionalIndex,
     },
+    CreateFromDeleted {
+        parent: Option<TreeID>,
+        index: usize,
+        position: FractionalIndex,
+    },
     Delete,
 }
 

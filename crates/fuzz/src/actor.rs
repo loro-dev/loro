@@ -1,5 +1,7 @@
 use std::{
     fmt::{Debug, Formatter},
+    fs::File,
+    io::Write,
     sync::{Arc, Mutex},
 };
 
@@ -7,7 +9,8 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
 use loro::{
-    Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, UndoManager, ID,
+    Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, ToJson,
+    UndoManager, ID,
 };
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use tracing::info_span;
@@ -129,9 +132,18 @@ impl Actor {
             self.undo_manager.undo.undo(&self.loro).unwrap();
         }
 
+        println!("\n\n\nstart redo ########\n\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.redo(&self.loro).unwrap();
+            let json = self
+                .loro
+                .export_json_updates(&Default::default(), &self.loro.oplog_vv());
+            File::create("/Users/leon/code/loro/crates/fuzz/loro.json")
+                .unwrap()
+                .write_all(serde_json::to_string_pretty(&json).unwrap().as_bytes())
+                .unwrap();
         }
+
         let mut after_undo = self.loro.get_deep_value();
         Self::patch_tree_undo_position(&mut before_undo);
         Self::patch_tree_undo_position(&mut after_undo);
