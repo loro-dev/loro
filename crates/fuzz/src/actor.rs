@@ -125,10 +125,12 @@ impl Actor {
         self.loro.attach();
         let before_undo = self.loro.get_deep_value();
 
+        println!("\n\nstart undo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.undo(&self.loro).unwrap();
         }
 
+        println!("\n\nstart redo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.redo(&self.loro).unwrap();
         }
