@@ -132,16 +132,8 @@ impl Actor {
             self.undo_manager.undo.undo(&self.loro).unwrap();
         }
 
-        println!("\n\n\nstart redo ########\n\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.redo(&self.loro).unwrap();
-            let json = self
-                .loro
-                .export_json_updates(&Default::default(), &self.loro.oplog_vv());
-            File::create("/Users/leon/code/loro/crates/fuzz/loro.json")
-                .unwrap()
-                .write_all(serde_json::to_string_pretty(&json).unwrap().as_bytes())
-                .unwrap();
         }
 
         let mut after_undo = self.loro.get_deep_value();

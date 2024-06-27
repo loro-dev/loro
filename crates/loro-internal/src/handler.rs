@@ -1106,12 +1106,22 @@ impl Handler {
                             parent,
                             index: _,
                             position,
-                        } => x.create_at_with_target_for_apply_diff(parent, position, target)?,
+                        } => x.create_at_with_target_for_apply_diff(
+                            parent,
+                            position,
+                            target,
+                            on_container_remap,
+                        )?,
                         TreeExternalDiff::Move {
                             parent,
                             index: _,
                             position,
-                        } => x.move_at_with_target_for_apply_diff(parent, position, target)?,
+                        } => x.move_at_with_target_for_apply_diff(
+                            parent,
+                            position,
+                            target,
+                            on_container_remap,
+                        )?,
                         TreeExternalDiff::Delete => x.delete_inner(target)?,
                     }
                 }
