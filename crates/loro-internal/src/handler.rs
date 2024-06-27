@@ -19,7 +19,8 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
 use loro_common::{
-    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, ID,
+    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, TreeID,
+    ID,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -1060,8 +1061,11 @@ impl Handler {
     pub(crate) fn apply_diff(
         &self,
         diff: Diff,
-        on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
+        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
     ) -> LoroResult<()> {
+        let on_container_remap = &mut |old_id, new_id| {
+            container_remap.insert(old_id, new_id);
+        };
         match self {
             Self::Map(x) => {
                 let diff = diff.into_map().unwrap();
@@ -1098,30 +1102,56 @@ impl Handler {
                 x.apply_delta(delta, on_container_remap)?;
             }
             Self::Tree(x) => {
+                fn remap_tree_id(
+                    id: &mut TreeID,
+                    container_remap: &FxHashMap<ContainerID, ContainerID>,
+                ) {
+                    let mut remapped = false;
+                    let mut map_id = id.associated_meta_container();
+                    while let Some(rid) = container_remap.get(&map_id) {
+                        remapped = true;
+                        map_id = rid.clone();
+                    }
+                    if remapped {
+                        *id = TreeID::new(
+                            *map_id.as_normal().unwrap().0,
+                            *map_id.as_normal().unwrap().1,
+                        )
+                    }
+                }
                 for diff in diff.into_tree().unwrap().diff {
-                    let target = diff.target;
+                    let mut target = diff.target;
                     match diff.action {
                         TreeExternalDiff::Create {
-                            parent,
+                            mut parent,
                             index: _,
                             position,
-                        } => x.create_at_with_target_for_apply_diff(
-                            parent,
-                            position,
-                            target,
-                            on_container_remap,
-                        )?,
+                        } => {
+                            let new_target = x.__internal__next_tree_id();
+                            container_remap.insert(
+                                target.associated_meta_container(),
+                                new_target.associated_meta_container(),
+                            );
+                            if let Some(p) = parent.as_mut() {
+                                remap_tree_id(p, container_remap)
+                            }
+                            x.create_at_with_target_for_apply_diff(parent, position, new_target)?
+                        }
                         TreeExternalDiff::Move {
-                            parent,
+                            mut parent,
                             index: _,
                             position,
-                        } => x.move_at_with_target_for_apply_diff(
-                            parent,
-                            position,
-                            target,
-                            on_container_remap,
-                        )?,
-                        TreeExternalDiff::Delete => x.delete_inner(target)?,
+                        } => {
+                            if let Some(p) = parent.as_mut() {
+                                remap_tree_id(p, container_remap)
+                            }
+                            remap_tree_id(&mut target, container_remap);
+                            x.move_at_with_target_for_apply_diff(parent, position, target)?
+                        }
+                        TreeExternalDiff::Delete => {
+                            remap_tree_id(&mut target, container_remap);
+                            x.delete_inner(target)?
+                        }
                     }
                 }
             }
