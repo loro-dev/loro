@@ -1,16 +1,13 @@
 use std::{
     fmt::{Debug, Formatter},
-    fs::File,
-    io::Write,
     sync::{Arc, Mutex},
 };
 
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use loro::{
-    Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, ToJson,
-    UndoManager, ID,
+    Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, UndoManager, ID,
 };
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use tracing::info_span;
@@ -126,7 +123,7 @@ impl Actor {
 
     pub fn undo(&mut self, undo_length: u32) {
         self.loro.attach();
-        let mut before_undo = self.loro.get_deep_value();
+        let before_undo = self.loro.get_deep_value();
 
         for _ in 0..undo_length {
             self.undo_manager.undo.undo(&self.loro).unwrap();
@@ -136,30 +133,8 @@ impl Actor {
             self.undo_manager.undo.redo(&self.loro).unwrap();
         }
 
-        let mut after_undo = self.loro.get_deep_value();
-        Self::patch_tree_undo_position(&mut before_undo);
-        Self::patch_tree_undo_position(&mut after_undo);
+        let after_undo = self.loro.get_deep_value();
         assert_value_eq(&before_undo, &after_undo);
-    }
-
-    fn patch_tree_undo_position(a: &mut LoroValue) {
-        let root = Arc::make_mut(a.as_map_mut().unwrap());
-        let tree = root.get_mut("tree").unwrap();
-        let nodes = Arc::make_mut(tree.as_list_mut().unwrap());
-        nodes.sort_by_key(|x| {
-            x.as_map()
-                .unwrap()
-                .get("id")
-                .unwrap()
-                .as_string()
-                .unwrap()
-                .to_string()
-        });
-        for node in nodes.iter_mut() {
-            let node = Arc::make_mut(node.as_map_mut().unwrap());
-            node.remove("position");
-            node.remove("index");
-        }
     }
 
     pub fn check_tracker(&self) {
@@ -436,6 +411,14 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
 
                 true
             }
+            (LoroValue::List(a_list), LoroValue::List(b_list)) => {
+                if determine_whether_is_tree(a_list.as_ref()) {
+                    assert_tree_value(a_list, b_list);
+                    true
+                } else {
+                    eq_without_position(a, b)
+                }
+            }
             (a, b) => eq_without_position(a, b),
         }
     }
@@ -445,4 +428,33 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
         a,
         b
     );
+}
+
+pub fn determine_whether_is_tree(value: &[LoroValue]) -> bool {
+    if let Some(LoroValue::Map(map)) = value.first() {
+        let map_keys = map.as_ref().keys().cloned().collect::<FxHashSet<_>>();
+        return map_keys.contains("id")
+            && map_keys.contains("parent")
+            && map_keys.contains("meta")
+            && map_keys.contains("position");
+    }
+    false
+}
+
+pub fn assert_tree_value(a: &[LoroValue], b: &[LoroValue]) {
+    let mut id_mapping = FxHashMap::default();
+    for (a_item, b_item) in a.iter().zip(b.iter()) {
+        let mut a_map = a_item.as_map().unwrap().as_ref().clone();
+        let b_map = b_item.as_map().unwrap().as_ref();
+
+        let b_id = id_mapping
+            .entry(a_map.get("id").unwrap().clone())
+            .or_insert(b_map.get("id").unwrap().clone());
+        a_map.insert("id".into(), b_id.clone());
+        let b_parent = id_mapping
+            .entry(a_map.get("parent").unwrap().clone())
+            .or_insert(b_map.get("parent").unwrap().clone());
+        a_map.insert("parent".into(), b_parent.clone());
+        assert_value_eq(&a_map.into(), b_item)
+    }
 }

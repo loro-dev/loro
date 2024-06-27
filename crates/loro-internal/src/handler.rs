@@ -1062,7 +1062,6 @@ impl Handler {
         diff: Diff,
         on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
     ) -> LoroResult<()> {
-        println!("apply diff {:?}", diff);
         match self {
             Self::Map(x) => {
                 let diff = diff.into_map().unwrap();

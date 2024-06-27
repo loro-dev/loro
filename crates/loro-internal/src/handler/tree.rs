@@ -376,7 +376,7 @@ impl TreeHandler {
             // TODO: parent has deleted？
             .unwrap_or(0);
         let with_event = !parent.is_some_and(|p| !self.contains(p));
-        a.with_txn(|txn| {
+        let (new_target, children) = a.with_txn(|txn| {
             let inner = self.inner.try_attached_state()?;
 
             let new_target = TreeID::from_id(txn.next_id());
@@ -412,20 +412,21 @@ impl TreeHandler {
                 event_hint,
                 &inner.state,
             )?;
-            if let Some(children) = children {
-                for child in children {
-                    let position = self.get_position_by_tree_id(&child).unwrap();
-                    self.create_at_with_target_for_apply_diff(
-                        Some(new_target),
-                        position,
-                        child,
-                        on_container_remap,
-                    )?;
-                }
-            }
 
-            Ok(())
-        })
+            Ok((new_target, children))
+        })?;
+        if let Some(children) = children {
+            for child in children {
+                let position = self.get_position_by_tree_id(&child).unwrap();
+                self.create_at_with_target_for_apply_diff(
+                    Some(new_target),
+                    position,
+                    child,
+                    on_container_remap,
+                )?;
+            }
+        }
+        Ok(())
     }
 
     /// For undo/redo, Specify the TreeID of the created node
