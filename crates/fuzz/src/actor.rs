@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     fmt::{Debug, Formatter},
     sync::{Arc, Mutex},
 };
@@ -448,47 +449,143 @@ pub fn determine_whether_is_tree(value: &[LoroValue]) -> bool {
     }
     false
 }
+#[derive(Debug, Clone)]
+struct Node {
+    children: Vec<Node>,
+    meta: FxHashMap<String, LoroValue>,
+    position: String,
+}
 
-pub fn assert_tree_value(a: &[LoroValue], b: &[LoroValue]) {
-    let mut id_mapping = FxHashMap::default();
-    let b_ids = b
-        .iter()
-        .map(|v| v.as_map().unwrap().get("id").unwrap().clone())
-        .collect::<FxHashSet<_>>();
-    for (a_item, b_item) in a
-        .iter()
-        .sorted_by_key(|x| {
-            let map = x.as_map().unwrap();
-            let position = map.get("position").unwrap().as_string().unwrap();
-            let meta = map.get("meta").unwrap().as_map().unwrap();
-            (position, meta.keys().cloned().sorted().collect::<String>())
-        })
-        .zip(b.iter().sorted_by_key(|x| {
-            let map = x.as_map().unwrap();
-            let position = map.get("position").unwrap().as_string().unwrap();
-            let meta = map.get("meta").unwrap().as_map().unwrap();
-            (position, meta.keys().cloned().sorted().collect::<String>())
-        }))
-    {
-        let mut a_map = a_item.as_map().unwrap().as_ref().clone();
-        let mut b_map = b_item.as_map().unwrap().as_ref().clone();
-        // undo redo index may change
-        a_map.remove("index");
-        b_map.remove("index");
+struct FlatNode {
+    id: String,
+    parent: Option<String>,
+    meta: FxHashMap<String, LoroValue>,
+    index: usize,
+    position: String,
+}
 
-        let a_id = a_map.get("id").unwrap().clone();
-        if b_ids.contains(&a_id) {
-            continue;
+impl FlatNode {
+    fn from_loro_value(value: &LoroValue) -> Self {
+        let map = value.as_map().unwrap();
+        let id = map.get("id").unwrap().as_string().unwrap().to_string();
+        let parent = map
+            .get("parent")
+            .unwrap()
+            .as_string()
+            .map_or(None, |x| Some(x.to_string()));
+
+        let meta = map.get("meta").unwrap().as_map().unwrap().as_ref().clone();
+        let index = *map.get("index").unwrap().as_i64().unwrap() as usize;
+        let position = map
+            .get("position")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_string();
+        FlatNode {
+            id,
+            parent,
+            meta,
+            index,
+            position,
+        }
+    }
+}
+
+impl Node {
+    fn from_loro_value(value: &[LoroValue]) -> Vec<Self> {
+        let mut node_map = FxHashMap::default();
+        let mut parent_child_map = FxHashMap::default();
+
+        // 首先，将所有扁平节点转换为TreeNode，并存储在HashMap中以便快速查找
+        for flat_node in value.iter() {
+            let flat_node = FlatNode::from_loro_value(flat_node);
+            let tree_node = Node {
+                // id: flat_node.id.clone(),
+                // parent: flat_node.parent.clone(),
+                children: vec![],
+                meta: flat_node.meta,
+                // index: flat_node.index,
+                position: flat_node.position,
+            };
+
+            node_map.insert(flat_node.id.clone(), tree_node);
+
+            parent_child_map
+                .entry(flat_node.parent)
+                .or_insert_with(Vec::new)
+                .push((flat_node.index, flat_node.id));
+        }
+        let mut node_map_clone = node_map.clone();
+        for (parent_id, child_ids) in parent_child_map.iter() {
+            if let Some(parent_id) = parent_id {
+                if let Some(parent_node) = node_map.get_mut(parent_id) {
+                    for (_, child_id) in child_ids.into_iter().sorted_by_key(|x| x.0) {
+                        if let Some(child_node) = node_map_clone.remove(child_id) {
+                            parent_node.children.push(child_node);
+                        }
+                    }
+                }
+            }
         }
 
-        let b_id = id_mapping
-            .entry(a_id)
-            .or_insert(b_map.get("id").unwrap().clone());
-        a_map.insert("id".into(), b_id.clone());
-        let b_parent = id_mapping
-            .entry(a_map.get("parent").unwrap().clone())
-            .or_insert(b_map.get("parent").unwrap().clone());
-        a_map.insert("parent".into(), b_parent.clone());
-        assert_value_eq(&a_map.into(), &b_map.into());
+        parent_child_map.get(&None).map_or(vec![], |root_ids| {
+            root_ids
+                .iter()
+                .filter_map(|(_i, id)| node_map.remove(id))
+                .collect::<Vec<_>>()
+        })
+    }
+}
+
+pub fn assert_tree_value(a: &[LoroValue], b: &[LoroValue]) {
+    let a_tree = Node::from_loro_value(a);
+    let b_tree = Node::from_loro_value(b);
+    let mut a_q = VecDeque::from_iter([a_tree]);
+    let mut b_q = VecDeque::from_iter([b_tree]);
+    while let (Some(a_node), Some(b_node)) = (a_q.pop_front(), b_q.pop_front()) {
+        let mut childrens_a = vec![];
+        let mut childrens_b = vec![];
+        let a_meta = a_node
+            .into_iter()
+            .map(|x| {
+                childrens_a.extend(x.children);
+                let mut meta = x
+                    .meta
+                    .into_iter()
+                    .sorted_by_key(|(k, _)| k.clone())
+                    .map(|(mut k, v)| {
+                        k.push_str(v.as_string().map_or("", |f| f.as_str()));
+                        k
+                    })
+                    .collect::<String>();
+                meta.push_str(&x.position);
+                meta
+            })
+            .collect::<FxHashSet<_>>();
+        let b_meta = b_node
+            .into_iter()
+            .map(|x| {
+                childrens_b.extend(x.children);
+                let mut meta = x
+                    .meta
+                    .into_iter()
+                    .sorted_by_key(|(k, _)| k.clone())
+                    .map(|(mut k, v)| {
+                        k.push_str(v.as_string().map_or("", |f| f.as_str()));
+                        k
+                    })
+                    .collect::<String>();
+                meta.push_str(&x.position);
+                meta
+            })
+            .collect::<FxHashSet<_>>();
+        assert!(a_meta.difference(&b_meta).count() == 0);
+        assert_eq!(childrens_a.len(), childrens_b.len());
+        if childrens_a.is_empty() {
+            continue;
+        }
+        a_q.push_back(childrens_a);
+        b_q.push_back(childrens_b);
     }
 }
