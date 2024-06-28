@@ -1,4 +1,3 @@
-use std::backtrace::Backtrace;
 
 use serde_columnar::ColumnarError;
 use thiserror::Error;
