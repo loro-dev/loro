@@ -128,8 +128,6 @@ pub(super) enum EventHint {
     MarkEnd,
     #[cfg(feature = "counter")]
     Counter(f64),
-    /// Do not emit any event
-    None(usize),
 }
 
 impl generic_btree::rle::HasLength for EventHint {
@@ -149,7 +147,6 @@ impl generic_btree::rle::HasLength for EventHint {
             EventHint::SetList { .. } => 1,
             #[cfg(feature = "counter")]
             EventHint::Counter(_) => 1,
-            EventHint::None(l) => *l,
         }
     }
 }
@@ -722,7 +719,6 @@ fn change_to_diff(
                     diff: Diff::Counter(diff),
                 });
             }
-            EventHint::None(_) => {}
         }
 
         lamport += ops
