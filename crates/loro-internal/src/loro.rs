@@ -14,7 +14,7 @@ use either::Either;
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, TreeID, ID,
+    ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID,
 };
 use rle::HasLength;
 use tracing::{info_span, instrument};
@@ -29,12 +29,11 @@ use crate::{
     },
     cursor::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
     dag::DagUtils,
-    delta::TreeExternalDiff,
     encoding::{
         decode_snapshot, export_snapshot, json_schema::op::JsonSchema, parse_header_and_body,
         EncodeMode, ParsedHeaderAndBody,
     },
-    event::{str_to_path, Diff, EventTriggerKind, Index},
+    event::{str_to_path, EventTriggerKind, Index},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     op::InnerContent,
