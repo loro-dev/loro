@@ -1152,7 +1152,9 @@ impl Handler {
                         }
                         TreeExternalDiff::Delete => {
                             remap_tree_id(&mut target, container_remap);
-                            x.delete_inner(target)?
+                            if x.contains(target) {
+                                x.delete(target)?
+                            }
                         }
                     }
                 }

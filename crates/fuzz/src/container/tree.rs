@@ -103,7 +103,6 @@ impl TreeActor {
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let tree = tracker.clone();
-        let p = loro.peer_id();
         loro.subscribe(
             &ContainerID::new_root("tree", ContainerType::Tree),
             Arc::new(move |event| {
@@ -112,13 +111,6 @@ impl TreeActor {
                 //     "{:?}",
                 //     event.events.iter().map(|e| &e.diff).collect::<Vec<_>>()
                 // );
-
-                // if p == 0 {
-                //     println!(
-                //         "\nevent {:?}",
-                //         event.events.iter().map(|e| &e.diff).collect::<Vec<_>>()
-                //     );
-                // }
                 tree.lock().unwrap().apply_diff(event);
                 // println!("after {:?}\n", tree.lock().unwrap().as_map().unwrap());
             }),

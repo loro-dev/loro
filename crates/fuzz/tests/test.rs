@@ -6850,6 +6850,104 @@ fn unknown_undo_err_1() {
 }
 
 #[test]
+fn tree_delete_parent_and_delete_child() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Tree],
+        &mut [
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(67108864),
+                    bool: false,
+                    key: 5120,
+                    pos: 18374967954648273920,
+                    length: 2244797026329624582,
+                    prop: 18434758041542467359,
+                }),
+            },
+            Handle {
+                site: 4,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 18446521976655708160,
+                }),
+            },
+            Handle {
+                site: 126,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 3520188881,
+                    pos: 6872316421537386961,
+                    length: 6872316419617283935,
+                    prop: 6872316419617283935,
+                }),
+            },
+            Undo {
+                site: 95,
+                op_len: 1600085855,
+            },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(47),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 4107282860161957883,
+                    prop: 18390450177879048246,
+                }),
+            },
+            Handle {
+                site: 48,
+                target: 0,
+                container: 31,
+                action: Generic(GenericAction {
+                    value: I32(520093696),
+                    bool: false,
+                    key: 0,
+                    pos: 72349003438748113,
+                    length: 72340172853149953,
+                    prop: 6872316418034041089,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 48,
+                target: 0,
+                container: 31,
+                action: Generic(GenericAction {
+                    value: I32(520093696),
+                    bool: false,
+                    key: 0,
+                    pos: 72349003438748113,
+                    length: 72340172853149953,
+                    prop: 6872316418034041089,
+                }),
+            },
+            Undo {
+                site: 209,
+                op_len: 4291920003,
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,
