@@ -308,7 +308,6 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
         info_span!("ApplyAction", ?action).in_scope(|| {
             applied.push(action.clone());
             info!("OptionsTable \n{}", (&applied).table());
-
             fuzzer.apply_action(action);
         });
     }
@@ -470,7 +469,7 @@ where
     }
     let minified = normalize(site_num, &mut minified);
 
-    dbg!(&minified);
+    println!("{:?}", &minified);
     println!(
         "Old Length {}, New Length {}",
         actions.len(),

@@ -461,13 +461,13 @@ pub fn assert_tree_value(a: &[LoroValue], b: &[LoroValue]) {
             let map = x.as_map().unwrap();
             let position = map.get("position").unwrap().as_string().unwrap();
             let meta = map.get("meta").unwrap().as_map().unwrap();
-            (position, meta.keys().cloned().collect::<Vec<_>>())
+            (position, meta.keys().cloned().sorted().collect::<String>())
         })
         .zip(b.iter().sorted_by_key(|x| {
             let map = x.as_map().unwrap();
             let position = map.get("position").unwrap().as_string().unwrap();
             let meta = map.get("meta").unwrap().as_map().unwrap();
-            (position, meta.keys().cloned().collect::<Vec<_>>())
+            (position, meta.keys().cloned().sorted().collect::<String>())
         }))
     {
         let mut a_map = a_item.as_map().unwrap().as_ref().clone();
