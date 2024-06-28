@@ -13,9 +13,7 @@ use std::{
 use either::Either;
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{
-    ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID,
-};
+use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
 use rle::HasLength;
 use tracing::{info_span, instrument};
 

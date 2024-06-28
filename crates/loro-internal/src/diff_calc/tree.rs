@@ -69,7 +69,6 @@ impl TreeDiffCalculator {
     fn checkout(&mut self, to: &VersionVector, oplog: &OpLog) {
         let tree_ops = oplog.op_groups.get_tree(&self.container).unwrap();
         let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
-
         let s = format!("checkout current {:?} to {:?}", &tree_cache.current_vv, &to);
         let s = tracing::span!(tracing::Level::INFO, "checkout", s = s);
         let _e = s.enter();
@@ -385,12 +384,6 @@ impl TreeCacheForDiff {
         if self.is_ancestor_of(&node.target, &node.parent) {
             effected = false;
         }
-
-        // maybe create a new node and move it to the deleted node
-        if matches!(node.parent, TreeParentId::Node(_)) && self.is_parent_deleted(node.parent) {
-            effected = false;
-        }
-
         node.effected = effected;
         self.current_vv.set_last(node.id);
         self.tree.entry(node.target).or_default().insert(node);

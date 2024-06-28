@@ -147,7 +147,6 @@ impl TreeDeltaItem {
         is_old_parent_deleted: bool,
         position: Option<FractionalIndex>,
     ) -> Self {
-        // TODO: check op id
         let action = if matches!(parent, TreeParentId::Unexist) {
             TreeInternalDiff::UnCreate
         } else {

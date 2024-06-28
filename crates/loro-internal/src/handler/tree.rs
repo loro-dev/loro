@@ -343,6 +343,11 @@ impl TreeHandler {
             return Ok(false);
         }
 
+        // println!(
+        //     "create_at_with_target_for_apply_diff: {:?} {:?}",
+        //     target, parent
+        // );
+
         let index = self
             .get_index_by_fractional_index(
                 parent,
@@ -420,6 +425,11 @@ impl TreeHandler {
         if !with_event {
             return Ok(false);
         }
+
+        // println!(
+        //     "move_at_with_target_for_apply_diff: {:?} {:?}",
+        //     target, parent
+        // );
 
         a.with_txn(|txn| {
             let inner = self.inner.try_attached_state()?;
