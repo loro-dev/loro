@@ -218,6 +218,7 @@ dependencies = [
  "loro 0.16.2",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=39caa6cedf66d8f6c77f0886e70ec1270a96bd1a)",
  "rand",
+ "serde_json",
  "tabled",
  "tracing",
 ]

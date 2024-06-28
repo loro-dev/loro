@@ -280,40 +280,19 @@ impl TreeHandler {
                 t.value.delete(target)?;
                 Ok(())
             }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, target, true)),
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, target)),
         }
     }
 
-    pub(crate) fn delete_inner(&self, target: TreeID) -> LoroResult<()> {
-        match &self.inner {
-            MaybeDetached::Detached(_) => {
-                unreachable!()
-            }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| {
-                let with_event = self.contains(target);
-                self.delete_with_txn(txn, target, with_event)
-            }),
-        }
-    }
-
-    pub(crate) fn delete_with_txn(
-        &self,
-        txn: &mut Transaction,
-        target: TreeID,
-        with_event: bool,
-    ) -> LoroResult<()> {
+    pub(crate) fn delete_with_txn(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
             inner.container_idx,
             crate::op::RawOpContent::Tree(TreeOp::Delete { target }),
-            if with_event {
-                EventHint::Tree(smallvec![TreeDiffItem {
-                    target,
-                    action: TreeExternalDiff::Delete,
-                }])
-            } else {
-                EventHint::None(1)
-            },
+            EventHint::Tree(smallvec![TreeDiffItem {
+                target,
+                action: TreeExternalDiff::Delete,
+            }]),
             &inner.state,
         )
     }
@@ -358,6 +337,7 @@ impl TreeHandler {
                 return self.move_at_with_target_for_apply_diff(parent, position, target);
             }
         }
+
         let with_event = !parent.is_some_and(|p| !self.contains(p));
         if !with_event {
             return Ok(false);

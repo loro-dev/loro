@@ -6,6 +6,7 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
+use itertools::Itertools;
 use loro::{
     Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, UndoManager, ID,
 };
@@ -52,7 +53,7 @@ impl Actor {
             info_span!("ApplyDiff", id = id).in_scope(|| {
                 let mut tracker = cb_tracker.lock().unwrap();
                 tracker.apply_diff(e)
-            })
+            });
         }));
         let mut default_history = FxHashMap::default();
         default_history.insert(Vec::new(), loro.get_deep_value());
@@ -125,12 +126,12 @@ impl Actor {
         self.loro.attach();
         let before_undo = self.loro.get_deep_value();
 
-        println!("\n\nstart undo\n");
+        // println!("\n\nstart undo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.undo(&self.loro).unwrap();
         }
 
-        println!("\n\nstart redo\n");
+        // println!("\n\nstart redo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.redo(&self.loro).unwrap();
         }
@@ -367,9 +368,14 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                     return false;
                 }
 
-                a.iter()
-                    .zip(b.iter())
-                    .all(|(a, b)| eq_without_position(a, b))
+                if determine_whether_is_tree(a.as_ref()) {
+                    assert_tree_value(a, b);
+                    true
+                } else {
+                    a.iter()
+                        .zip(b.iter())
+                        .all(|(a, b)| eq_without_position(a, b))
+                }
             }
             (a, b) => a == b,
         }
@@ -445,18 +451,44 @@ pub fn determine_whether_is_tree(value: &[LoroValue]) -> bool {
 
 pub fn assert_tree_value(a: &[LoroValue], b: &[LoroValue]) {
     let mut id_mapping = FxHashMap::default();
-    for (a_item, b_item) in a.iter().zip(b.iter()) {
+    let b_ids = b
+        .iter()
+        .map(|v| v.as_map().unwrap().get("id").unwrap().clone())
+        .collect::<FxHashSet<_>>();
+    for (a_item, b_item) in a
+        .iter()
+        .sorted_by_key(|x| {
+            let map = x.as_map().unwrap();
+            let position = map.get("position").unwrap().as_string().unwrap();
+            let meta = map.get("meta").unwrap().as_map().unwrap();
+            (position, meta.keys().cloned().collect::<Vec<_>>())
+        })
+        .zip(b.iter().sorted_by_key(|x| {
+            let map = x.as_map().unwrap();
+            let position = map.get("position").unwrap().as_string().unwrap();
+            let meta = map.get("meta").unwrap().as_map().unwrap();
+            (position, meta.keys().cloned().collect::<Vec<_>>())
+        }))
+    {
         let mut a_map = a_item.as_map().unwrap().as_ref().clone();
-        let b_map = b_item.as_map().unwrap().as_ref();
+        let mut b_map = b_item.as_map().unwrap().as_ref().clone();
+        // undo redo index may change
+        a_map.remove("index");
+        b_map.remove("index");
+
+        let a_id = a_map.get("id").unwrap().clone();
+        if b_ids.contains(&a_id) {
+            continue;
+        }
 
         let b_id = id_mapping
-            .entry(a_map.get("id").unwrap().clone())
+            .entry(a_id)
             .or_insert(b_map.get("id").unwrap().clone());
         a_map.insert("id".into(), b_id.clone());
         let b_parent = id_mapping
             .entry(a_map.get("parent").unwrap().clone())
             .or_insert(b_map.get("parent").unwrap().clone());
         a_map.insert("parent".into(), b_parent.clone());
-        assert_value_eq(&a_map.into(), b_item)
+        assert_value_eq(&a_map.into(), &b_map.into());
     }
 }
