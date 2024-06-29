@@ -6948,6 +6948,72 @@ fn tree_delete_parent_and_delete_child() {
 }
 
 #[test]
+fn undo_text() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 255,
+                target: 49,
+                container: 25,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 421075225,
+                    pos: 2096734697103628569,
+                    length: 14952233337343252761,
+                    prop: 1808504324185078624,
+                }),
+            },
+            Handle {
+                site: 25,
+                target: 25,
+                container: 25,
+                action: Generic(GenericAction {
+                    value: I32(421085465),
+                    bool: true,
+                    key: 4284514577,
+                    pos: 18375812379578413347,
+                    length: 1,
+                    prop: 4553463601266163552,
+                }),
+            },
+            Handle {
+                site: 255,
+                target: 49,
+                container: 25,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 421075225,
+                    pos: 2096734697103628569,
+                    length: 14952233337343252761,
+                    prop: 1808504324185078624,
+                }),
+            },
+            Handle {
+                site: 5,
+                target: 39,
+                container: 49,
+                action: Generic(GenericAction {
+                    value: I32(-16646145),
+                    bool: true,
+                    key: 33554431,
+                    pos: 4294967295,
+                    length: 18446743369335635968,
+                    prop: 288229276640083998,
+                }),
+            },
+            Undo {
+                site: 255,
+                op_len: 654648099,
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,

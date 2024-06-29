@@ -16,7 +16,7 @@ use crate::{
 };
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::HasLength;
 use loro_common::{
     ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, TreeID,
@@ -25,11 +25,13 @@ use loro_common::{
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
+    cmp::Reverse,
+    collections::BinaryHeap,
     fmt::Debug,
     ops::Deref,
     sync::{Arc, Mutex, Weak},
 };
-use tracing::{error, info, instrument};
+use tracing::{debug, error, info, instrument, trace};
 
 mod tree;
 pub use tree::TreeHandler;
@@ -2944,7 +2946,54 @@ impl MovableListHandler {
                 unimplemented!();
             }
             MaybeDetached::Attached(_) => {
+                debug!("movable list apply_delta {:#?}", &delta);
+                // preprocess all deletions. They will be used to infer the move ops
                 let mut index = 0;
+                let mut to_delete = FxHashMap::default();
+                for d in delta.iter() {
+                    match d {
+                        loro_delta::DeltaItem::Retain { len, .. } => {
+                            index += len;
+                        }
+                        loro_delta::DeltaItem::Replace { delete, .. } => {
+                            if *delete > 0 {
+                                for i in index..index + *delete {
+                                    if let Some(LoroValue::Container(c)) = self.get(i) {
+                                        to_delete.insert(c, i);
+                                    }
+                                }
+
+                                index += *delete;
+                            }
+                        }
+                    }
+                }
+
+                fn update_on_insert(
+                    d: &mut FxHashMap<ContainerID, usize>,
+                    index: usize,
+                    len: usize,
+                ) {
+                    for pos in d.values_mut() {
+                        if *pos >= index {
+                            *pos += len;
+                        }
+                    }
+                }
+
+                fn update_on_delete(d: &mut FxHashMap<ContainerID, usize>, index: usize) {
+                    for pos in d.values_mut() {
+                        if *pos >= index {
+                            *pos -= 1;
+                        }
+                    }
+                }
+
+                // process all insertions and moves
+                let mut index = 0;
+                let mut deleted = Vec::new();
+                let mut next_deleted = BinaryHeap::new();
+                let mut index_shift = 0;
                 for d in delta.iter() {
                     match d {
                         loro_delta::DeltaItem::Retain { len, .. } => {
@@ -2953,28 +3002,97 @@ impl MovableListHandler {
                         loro_delta::DeltaItem::Replace {
                             value,
                             delete,
-                            attr: _attr,
+                            attr,
                         } => {
-                            // TODO: handle move error
-                            self.delete(index, *delete)?;
+                            if *delete > 0 {
+                                // skip the deletion if it is already processed by moving
+                                let mut d = *delete;
+                                while let Some(Reverse(old_index)) = next_deleted.peek() {
+                                    if *old_index + index_shift < index + d {
+                                        assert!(index <= *old_index + index_shift);
+                                        assert!(d > 0);
+                                        next_deleted.pop();
+                                        d -= 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                index += d;
+                            }
+
                             for v in value.iter() {
                                 match v {
                                     ValueOrHandler::Value(v) => {
                                         self.insert(index, v.clone())?;
+                                        update_on_insert(&mut to_delete, index, 1);
+                                        index += 1;
+                                        index_shift += 1;
                                     }
                                     ValueOrHandler::Handler(h) => {
                                         let old_id = h.id();
-                                        let new_h = self.insert_container(
-                                            index,
-                                            Handler::new_unattached(old_id.container_type()),
-                                        )?;
-                                        let new_id = new_h.id();
-                                        on_container_remap(old_id, new_id);
+                                        if attr.from_move {
+                                            // So this is a move op
+                                            let old_index = to_delete
+                                                .remove(&old_id)
+                                                .expect("Cannot find move origin");
+                                            if old_index > index {
+                                                self.mov(old_index, index)?;
+                                                next_deleted.push(Reverse(old_index));
+                                                index += 1;
+                                                index_shift += 1;
+                                            } else {
+                                                // we need to sub 1 because old_index < index, and index means the position before the move
+                                                // but the param is the position after the move
+                                                self.mov(old_index, index - 1)?;
+                                            }
+                                            deleted.push(old_index);
+                                            update_on_delete(&mut to_delete, old_index);
+                                            update_on_insert(&mut to_delete, index, 1);
+                                        } else {
+                                            let new_h = self.insert_container(
+                                                index,
+                                                Handler::new_unattached(old_id.container_type()),
+                                            )?;
+                                            let new_id = new_h.id();
+                                            on_container_remap(old_id, new_id);
+                                            update_on_insert(&mut to_delete, index, 1);
+                                            index += 1;
+                                            index_shift += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // apply the rest of the deletions
+
+                // sort deleted indexes from large to small
+                deleted.sort_by_key(|x| -(*x as i32));
+                let mut index = 0;
+                for d in delta.iter() {
+                    match d {
+                        loro_delta::DeltaItem::Retain { len, .. } => {
+                            index += len;
+                        }
+                        loro_delta::DeltaItem::Replace { delete, value, .. } => {
+                            if *delete > 0 {
+                                let mut d = *delete;
+                                while let Some(last) = deleted.last() {
+                                    if *last < index + d {
+                                        deleted.pop();
+                                        d -= 1;
+                                    } else {
+                                        break;
                                     }
                                 }
 
-                                index += 1;
+                                self.delete(index, d)?;
                             }
+
+                            index += value.len();
                         }
                     }
                 }
