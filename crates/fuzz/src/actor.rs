@@ -369,8 +369,8 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                     return false;
                 }
 
-                if determine_whether_is_tree(a.as_ref()) {
-                    assert_tree_value(a, b);
+                if is_tree_values(a.as_ref()) {
+                    assert_tree_value_eq(a, b);
                     true
                 } else {
                     a.iter()
@@ -421,8 +421,8 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                 true
             }
             (LoroValue::List(a_list), LoroValue::List(b_list)) => {
-                if determine_whether_is_tree(a_list.as_ref()) {
-                    assert_tree_value(a_list, b_list);
+                if is_tree_values(a_list.as_ref()) {
+                    assert_tree_value_eq(a_list, b_list);
                     true
                 } else {
                     eq_without_position(a, b)
@@ -439,7 +439,7 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
     );
 }
 
-pub fn determine_whether_is_tree(value: &[LoroValue]) -> bool {
+pub fn is_tree_values(value: &[LoroValue]) -> bool {
     if let Some(LoroValue::Map(map)) = value.first() {
         let map_keys = map.as_ref().keys().cloned().collect::<FxHashSet<_>>();
         return map_keys.contains("id")
@@ -538,18 +538,18 @@ impl Node {
     }
 }
 
-pub fn assert_tree_value(a: &[LoroValue], b: &[LoroValue]) {
+pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
     let a_tree = Node::from_loro_value(a);
     let b_tree = Node::from_loro_value(b);
     let mut a_q = VecDeque::from_iter([a_tree]);
     let mut b_q = VecDeque::from_iter([b_tree]);
     while let (Some(a_node), Some(b_node)) = (a_q.pop_front(), b_q.pop_front()) {
-        let mut childrens_a = vec![];
-        let mut childrens_b = vec![];
+        let mut children_a = vec![];
+        let mut children_b = vec![];
         let a_meta = a_node
             .into_iter()
             .map(|x| {
-                childrens_a.extend(x.children);
+                children_a.extend(x.children);
                 let mut meta = x
                     .meta
                     .into_iter()
@@ -566,7 +566,7 @@ pub fn assert_tree_value(a: &[LoroValue], b: &[LoroValue]) {
         let b_meta = b_node
             .into_iter()
             .map(|x| {
-                childrens_b.extend(x.children);
+                children_b.extend(x.children);
                 let mut meta = x
                     .meta
                     .into_iter()
@@ -581,11 +581,11 @@ pub fn assert_tree_value(a: &[LoroValue], b: &[LoroValue]) {
             })
             .collect::<FxHashSet<_>>();
         assert!(a_meta.difference(&b_meta).count() == 0);
-        assert_eq!(childrens_a.len(), childrens_b.len());
-        if childrens_a.is_empty() {
+        assert_eq!(children_a.len(), children_b.len());
+        if children_a.is_empty() {
             continue;
         }
-        a_q.push_back(childrens_a);
-        b_q.push_back(childrens_b);
+        a_q.push_back(children_a);
+        b_q.push_back(children_b);
     }
 }
