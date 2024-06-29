@@ -533,10 +533,9 @@ impl DocState {
             }
 
             to_revive_in_this_layer.remove(&idx);
-            if diff.diff.is_empty() {
-                continue;
+            if !diff.diff.is_empty() {
+                diffs.push(diff);
             }
-            diffs.push(diff);
         }
 
         // Revive the last several layers
@@ -563,15 +562,14 @@ impl DocState {
                     &self.arena,
                 );
 
-                if external_diff.is_empty() {
-                    continue;
+                if !external_diff.is_empty() {
+                    diffs.push(InternalContainerDiff {
+                        idx: new,
+                        bring_back: true,
+                        is_container_deleted: false,
+                        diff: external_diff.into(),
+                    });
                 }
-                diffs.push(InternalContainerDiff {
-                    idx: new,
-                    bring_back: true,
-                    is_container_deleted: false,
-                    diff: external_diff.into(),
-                });
             }
 
             to_revive_in_this_layer = std::mem::take(&mut to_revive_in_next_layer);
