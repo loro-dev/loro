@@ -3031,11 +3031,7 @@ impl MovableListHandler {
                                     }
                                     ValueOrHandler::Handler(h) => {
                                         let old_id = h.id();
-                                        if attr.from_move {
-                                            // So this is a move op
-                                            let old_index = to_delete
-                                                .remove(&old_id)
-                                                .expect("Cannot find move origin");
+                                        if let Some(old_index) = to_delete.remove(&old_id) {
                                             if old_index > index {
                                                 self.mov(old_index, index)?;
                                                 next_deleted.push(Reverse(old_index));
