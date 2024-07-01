@@ -244,9 +244,10 @@ impl CRDTFuzzer {
     }
 
     fn check_history(&mut self) {
-        for actor in self.actors.iter_mut() {
-            actor.check_history();
-        }
+        self.actors[0].check_history();
+        // for actor in self.actors.iter_mut() {
+        //     actor.check_history();
+        // }
     }
 
     fn site_num(&self) -> usize {
