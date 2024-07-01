@@ -17,6 +17,7 @@ itertools = { workspace = true }
 arbitrary = "1"
 tabled = "0.10"
 rand = "0.8.5"
+serde_json = "1"
 
 [dev-dependencies]
 ctor = "0.2"

@@ -796,7 +796,7 @@ impl LoroDoc {
             before_diff,
         );
 
-        // println!("\n undo_internal: diff: {:?}", diff);
+        // println!("\nundo_internal: diff: {:?}", diff);
 
         self.checkout_without_emitting(&latest_frontiers)?;
         self.detached.store(false, Release);
@@ -894,10 +894,7 @@ impl LoroDoc {
             }
 
             let h = self.get_handler(id);
-            h.apply_diff(diff, &mut |old_id, new_id| {
-                container_remap.insert(old_id, new_id);
-            })
-            .unwrap();
+            h.apply_diff(diff, container_remap).unwrap();
         }
 
         Ok(())

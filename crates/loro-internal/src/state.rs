@@ -8,7 +8,7 @@ use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
-use tracing::{info, instrument};
+use tracing::instrument;
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -533,7 +533,9 @@ impl DocState {
             }
 
             to_revive_in_this_layer.remove(&idx);
-            diffs.push(diff);
+            if !diff.diff.is_empty() {
+                diffs.push(diff);
+            }
         }
 
         // Revive the last several layers
@@ -560,12 +562,14 @@ impl DocState {
                     &self.arena,
                 );
 
-                diffs.push(InternalContainerDiff {
-                    idx: new,
-                    bring_back: true,
-                    is_container_deleted: false,
-                    diff: external_diff.into(),
-                });
+                if !external_diff.is_empty() {
+                    diffs.push(InternalContainerDiff {
+                        idx: new,
+                        bring_back: true,
+                        is_container_deleted: false,
+                        diff: external_diff.into(),
+                    });
+                }
             }
 
             to_revive_in_this_layer = std::mem::take(&mut to_revive_in_next_layer);
@@ -1051,7 +1055,7 @@ impl DocState {
                 // this container may be deleted
                 let Ok(prop) = id.clone().into_root() else {
                     let id = format!("{}", &id);
-                    info!(?id, "Missing parent - container is deleted");
+                    tracing::info!(?id, "Missing parent - container is deleted");
                     return None;
                 };
                 ans.push((id, Index::Key(prop.0)));

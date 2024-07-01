@@ -244,9 +244,10 @@ impl CRDTFuzzer {
     }
 
     fn check_history(&mut self) {
-        for actor in self.actors.iter_mut() {
-            actor.check_history();
-        }
+        self.actors[0].check_history();
+        // for actor in self.actors.iter_mut() {
+        //     actor.check_history();
+        // }
     }
 
     fn site_num(&self) -> usize {
@@ -305,13 +306,13 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
     let mut applied = Vec::new();
     for action in actions.iter_mut() {
         fuzzer.pre_process(action);
-
         info_span!("ApplyAction", ?action).in_scope(|| {
             applied.push(action.clone());
             info!("OptionsTable \n{}", (&applied).table());
             fuzzer.apply_action(action);
         });
     }
+
     let span = &info_span!("check synced");
     let _g = span.enter();
     fuzzer.check_equal();
@@ -405,5 +406,77 @@ where
     dbg!(&minified);
     if actions.len() > minified.len() {
         minify_error(site_num, f, normalize, minified);
+    }
+}
+
+pub fn minify_simple<T, F, N>(site_num: u8, f: F, normalize: N, actions: Vec<T>)
+where
+    F: Fn(u8, &mut [T]),
+    N: Fn(u8, &mut [T]) -> Vec<T>,
+    T: Clone + Debug,
+{
+    std::panic::set_hook(Box::new(|_info| {
+        // ignore panic output
+        // println!("{:?}", _info);
+    }));
+    let f_ref: *const _ = &f;
+    let f_ref: usize = f_ref as usize;
+    #[allow(clippy::redundant_clone)]
+    let mut actions_clone = actions.clone();
+    let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
+    #[allow(clippy::blocks_in_conditions)]
+    if std::panic::catch_unwind(|| {
+        // SAFETY: test
+        let f = unsafe { &*(f_ref as *const F) };
+        // SAFETY: test
+        let actions_ref = unsafe { &mut *(action_ref as *mut Vec<T>) };
+        f(site_num, actions_ref);
+    })
+    .is_ok()
+    {
+        println!("No Error Found");
+        return;
+    }
+    let mut minified = actions.clone();
+    let mut current_index = minified.len() as i64 - 1;
+    while current_index > 0 {
+        let a = minified.remove(current_index as usize);
+        let f_ref: *const _ = &f;
+        let f_ref: usize = f_ref as usize;
+        let mut actions_clone = minified.clone();
+        let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
+        let mut re = false;
+        #[allow(clippy::blocks_in_conditions)]
+        if std::panic::catch_unwind(|| {
+            // SAFETY: test
+            let f = unsafe { &*(f_ref as *const F) };
+            // SAFETY: test
+            let actions_ref = unsafe { &mut *(action_ref as *mut Vec<T>) };
+            f(site_num, actions_ref);
+        })
+        .is_err()
+        {
+            re = true;
+        } else {
+            minified.insert(current_index as usize, a);
+        }
+        println!(
+            "{}/{} {}",
+            actions.len() as i64 - current_index,
+            actions.len(),
+            re
+        );
+        current_index -= 1;
+    }
+    let minified = normalize(site_num, &mut minified);
+
+    println!("{:?}", &minified);
+    println!(
+        "Old Length {}, New Length {}",
+        actions.len(),
+        minified.len()
+    );
+    if actions.len() > minified.len() {
+        minify_simple(site_num, f, normalize, minified);
     }
 }

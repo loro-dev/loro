@@ -900,10 +900,13 @@ impl ContainerState for TreeState {
                             .unwrap();
                     }
                     TreeInternalDiff::UnCreate => {
-                        ans.push(TreeDiffItem {
-                            target,
-                            action: TreeExternalDiff::Delete,
-                        });
+                        // maybe the node created and moved to the parent deleted
+                        if !self.is_node_deleted(&target) {
+                            ans.push(TreeDiffItem {
+                                target,
+                                action: TreeExternalDiff::Delete,
+                            });
+                        }
                         // delete it from state
                         let parent = self.trees.remove(&target);
                         if let Some(parent) = parent {

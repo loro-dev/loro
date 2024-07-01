@@ -69,7 +69,6 @@ impl TreeDiffCalculator {
     fn checkout(&mut self, to: &VersionVector, oplog: &OpLog) {
         let tree_ops = oplog.op_groups.get_tree(&self.container).unwrap();
         let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
-
         let s = format!("checkout current {:?} to {:?}", &tree_cache.current_vv, &to);
         let s = tracing::span!(tracing::Level::INFO, "checkout", s = s);
         let _e = s.enter();
