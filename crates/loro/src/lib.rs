@@ -11,9 +11,7 @@ use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
-use loro_internal::loro::CommitOptions;
 use loro_internal::undo::{OnPop, OnPush};
-use loro_internal::JsonSchema;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 
@@ -40,10 +38,13 @@ pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
 pub use loro_internal::event::Index;
 pub use loro_internal::handler::TextDelta;
 pub use loro_internal::id::{PeerID, TreeID, ID};
+pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::obs::SubID;
 pub use loro_internal::oplog::FrontiersNotIncluded;
 pub use loro_internal::undo;
 pub use loro_internal::version::{Frontiers, VersionVector};
+pub use loro_internal::ApplyDiff;
+pub use loro_internal::JsonSchema;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
@@ -73,6 +74,14 @@ impl LoroDoc {
         let doc = InnerLoroDoc::default();
         doc.start_auto_commit();
 
+        LoroDoc { doc }
+    }
+
+    /// Duplicate the document with a different PeerID
+    ///
+    /// The time complexity and space complexity of this operation are both O(n),
+    pub fn fork(&self) -> Self {
+        let doc = self.doc.fork();
         LoroDoc { doc }
     }
 

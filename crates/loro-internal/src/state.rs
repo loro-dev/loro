@@ -59,7 +59,6 @@ macro_rules! get_or_create {
     }};
 }
 
-#[derive(Clone)]
 pub struct DocState {
     pub(super) peer: PeerID,
 
@@ -277,6 +276,28 @@ impl DocState {
                 states: FxHashMap::default(),
                 weak_state: weak.clone(),
                 config,
+                global_txn,
+                in_txn: false,
+                changed_idx_in_txn: FxHashSet::default(),
+                event_recorder: Default::default(),
+            })
+        })
+    }
+
+    pub fn fork(
+        &self,
+        arena: SharedArena,
+        global_txn: Weak<Mutex<Option<Transaction>>>,
+        config: Configure,
+    ) -> Arc<Mutex<Self>> {
+        Arc::new_cyclic(|weak| {
+            Mutex::new(Self {
+                peer: DefaultRandom.next_u64(),
+                frontiers: self.frontiers.clone(),
+                states: self.states.clone(),
+                arena,
+                config,
+                weak_state: weak.clone(),
                 global_txn,
                 in_txn: false,
                 changed_idx_in_txn: FxHashSet::default(),

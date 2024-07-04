@@ -79,18 +79,18 @@ pub struct AppDagNode {
     pub(crate) len: usize,
 }
 
-impl Clone for OpLog {
-    fn clone(&self) -> Self {
+impl OpLog {
+    pub(crate) fn fork(&self, arena: SharedArena, configure: Configure) -> Self {
         Self {
             dag: self.dag.clone(),
-            arena: self.arena.clone(),
+            op_groups: self.op_groups.fork(arena.clone()),
+            arena,
             changes: self.changes.clone(),
-            op_groups: self.op_groups.clone(),
             next_lamport: self.next_lamport,
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
             batch_importing: false,
-            configure: self.configure.clone(),
+            configure,
         }
     }
 }

@@ -480,6 +480,30 @@ impl Loro {
         self.0.is_detached()
     }
 
+    /// Detach the document state from the latest known version.
+    ///
+    /// After detaching, all import operations will be recorded in the `OpLog` without being applied to the `DocState`.
+    /// When `detached`, the document is not editable.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// doc.detach();
+    /// console.log(doc.is_detached());  // true
+    /// ```
+    pub fn detach(&self) {
+        self.0.detach()
+    }
+
+    /// Duplicate the document with a different PeerID
+    ///
+    /// The time complexity and space complexity of this operation are both O(n),
+    pub fn fork(&self) -> Self {
+        Self(Arc::new(self.0.fork()))
+    }
+
     /// Checkout the `DocState` to the latest version of `OpLog`.
     ///
     /// > The document becomes detached during a `checkout` operation.
@@ -1411,8 +1435,37 @@ fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsValue 
     path
 }
 
-/// The handler of a text or richtext container.
+/// The handler of a text container. It supports rich text CRDT.
 ///
+/// ## Updating Text Content Using a Diff Algorithm
+///
+/// A common requirement is to update the current text to a target text.
+/// You can implement this using a text diff algorithm of your choice.
+/// Below is a sample you can directly copy into your code, which uses the
+/// [fast-diff](https://www.npmjs.com/package/fast-diff) package.
+///
+/// ```ts
+/// import { diff } from "fast-diff";
+/// import { LoroText } from "loro-crdt";
+///
+/// function updateText(text: LoroText, newText: string) {
+///   const src = text.toString();
+///   const delta = diff(src, newText);
+///   let index = 0;
+///   for (const [op, text] of delta) {
+///     if (op === 0) {
+///     index += text.length;
+///   } else if (op === 1) {
+///     text.insert(index, text);
+///     index += text.length;
+///   } else {
+///     text.delete(index, text.length);
+///   }
+/// }
+/// ```
+///
+///
+/// Learn more at https://loro.dev/docs/tutorial/text
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroText {
@@ -1701,6 +1754,8 @@ impl Default for LoroText {
 }
 
 /// The handler of a map container.
+///
+/// Learn more at https://loro.dev/docs/tutorial/map
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroMap {
@@ -2042,6 +2097,8 @@ impl Default for LoroMap {
 }
 
 /// The handler of a list container.
+///
+/// Learn more at https://loro.dev/docs/tutorial/list
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroList {
@@ -2361,6 +2418,8 @@ impl Default for LoroList {
 }
 
 /// The handler of a list container.
+///
+/// Learn more at https://loro.dev/docs/tutorial/list
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroMovableList {
@@ -2718,6 +2777,8 @@ impl LoroMovableList {
 }
 
 /// The handler of a tree(forest) container.
+///
+/// Learn more at https://loro.dev/docs/tutorial/tree
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroTree {
@@ -2932,7 +2993,7 @@ impl LoroTreeNode {
     ///
     /// The objects returned are new js objects each time because they need to cross
     /// the WASM boundary.
-    #[wasm_bindgen]
+    #[wasm_bindgen(skip_typescript)]
     pub fn children(&self) -> JsValue {
         let Some(children) = self.tree.children(Some(self.id)) else {
             return JsValue::undefined();

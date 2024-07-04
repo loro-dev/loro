@@ -1,6 +1,6 @@
 {
   "name": "loro-crdt",
-  "version": "0.16.4",
+  "version": "0.16.6",
   "description": "Loro CRDTs is a high-performance CRDT framework that makes your app state synchronized, collaborative and maintainable effortlessly.",
   "keywords": [
     "crdt",
@@ -10,6 +10,10 @@
     "sync",
     "p2p"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loro-dev/loro.git"
+  },
   "main": "dist/loro.js",
   "module": "dist/loro.mjs",
   "typings": "dist/loro.d.ts",

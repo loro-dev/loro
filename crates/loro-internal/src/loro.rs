@@ -118,6 +118,41 @@ impl LoroDoc {
         }
     }
 
+    pub fn fork(&self) -> Self {
+        self.commit_then_stop();
+        let arena = self.arena.fork();
+        let config = self.config.fork();
+        let txn = Arc::new(Mutex::new(None));
+        let new_state =
+            self.state
+                .lock()
+                .unwrap()
+                .fork(arena.clone(), Arc::downgrade(&txn), config.clone());
+        let doc = LoroDoc {
+            oplog: Arc::new(Mutex::new(
+                self.oplog()
+                    .lock()
+                    .unwrap()
+                    .fork(arena.clone(), config.clone()),
+            )),
+            state: new_state,
+            arena,
+            config,
+            observer: Arc::new(Observer::new(self.arena.clone())),
+            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
+            txn,
+            auto_commit: AtomicBool::new(false),
+            detached: AtomicBool::new(self.detached.load(std::sync::atomic::Ordering::Relaxed)),
+        };
+
+        if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
+            doc.start_auto_commit();
+        }
+
+        self.renew_txn_if_auto_commit();
+        doc
+    }
+
     /// Set whether to record the timestamp of each change. Default is `false`.
     ///
     /// If enabled, the Unix timestamp will be recorded for each change automatically.
