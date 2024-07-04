@@ -1,3 +1,4 @@
+use block_encode::decode_block_range;
 use bytes::Bytes;
 use itertools::Itertools;
 use loro_common::{
@@ -14,7 +15,8 @@ use std::{
 mod block_encode;
 mod delta_rle_encode;
 use crate::{
-    arena::SharedArena, change::Change, estimated_size::EstimatedSize, op::Op, version::Frontiers,
+    arena::SharedArena, change::Change, estimated_size::EstimatedSize, kv_store::KvStore, op::Op,
+    version::Frontiers, VersionVector,
 };
 
 use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
@@ -24,20 +26,27 @@ const MAX_BLOCK_SIZE: usize = 1024 * 4;
 #[derive(Debug, Clone)]
 pub struct ChangeStore {
     arena: SharedArena,
+    /// max known version vector
+    vv: VersionVector,
+    // it should be more like a cache
     kv: Arc<Mutex<BTreeMap<ID, Arc<ChangesBlock>>>>,
+    store: Arc<Mutex<dyn KvStore>>,
     merge_interval: Arc<AtomicI64>,
 }
 
 impl ChangeStore {
-    pub fn new(a: &SharedArena, merge_interval: Arc<AtomicI64>) -> Self {
+    pub fn new_mem(a: &SharedArena, merge_interval: Arc<AtomicI64>) -> Self {
         Self {
             merge_interval,
+            vv: VersionVector::new(),
             arena: a.clone(),
             kv: Arc::new(Mutex::new(BTreeMap::new())),
+            store: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
     pub fn insert_change(&self, mut change: Change) {
+        todo!("update vv");
         let id = change.id;
         let mut kv = self.kv.lock().unwrap();
         if let Some((_id, block)) = kv.range_mut(..id).next_back() {
@@ -56,16 +65,13 @@ impl ChangeStore {
         kv.insert(id, Arc::new(ChangesBlock::new(change, &self.arena)));
     }
 
-    pub fn insert_block(&mut self, block: ChangesBlock) {
-        unimplemented!()
-    }
-
     pub fn block_num(&self) -> usize {
         let kv = self.kv.lock().unwrap();
         kv.len()
     }
 
     pub(crate) fn encode_all(&self) -> Vec<u8> {
+        todo!("replace with kv store");
         let mut kv = self.kv.lock().unwrap();
         let mut bytes = Vec::new();
         let iter = kv
@@ -80,6 +86,7 @@ impl ChangeStore {
     }
 
     pub(crate) fn decode_all(&self, blocks: &[u8]) -> Result<(), LoroError> {
+        todo!("replace with kv store");
         let mut kv = self.kv.lock().unwrap();
         assert!(kv.is_empty());
         let mut reader = blocks;
@@ -95,6 +102,8 @@ impl ChangeStore {
     }
 
     pub fn get_change(&self, id: ID) -> Option<BlockChangeRef> {
+        todo!("check vv to know whether it should be none");
+        todo!("fallback to kv_store if not found in cache");
         let mut kv = self.kv.lock().unwrap();
         let (_id, block) = kv.range_mut(..=id).next_back()?;
         if block.peer == id.peer && block.counter_range.1 > id.counter {
@@ -112,6 +121,7 @@ impl ChangeStore {
     ///
     /// If not found, return the change with the greatest lamport that is smaller than the given lamport.
     pub fn get_change_by_idlp(&self, idlp: IdLp) -> Option<BlockChangeRef> {
+        todo!("scan cache then fallback to kv_store; data in cache is newer");
         // TODO: this can be optimized if we use a more customized tree structure
         let mut kv = self.kv.lock().unwrap();
         let mut iter = kv.range_mut(ID::new(idlp.peer, 0)..ID::new(idlp.peer, i32::MAX));
@@ -140,6 +150,7 @@ impl ChangeStore {
     }
 
     pub fn iter_changes(&self, id_span: IdSpan) -> impl Iterator<Item = BlockChangeRef> + '_ {
+        todo!("ensure data in the given range is in cache");
         let mut kv = self.kv.lock().unwrap();
         let start_counter = kv
             .range(..=id_span.id_start())
@@ -579,19 +590,19 @@ impl ChangesBlockBytes {
     }
 
     fn counter_range(&mut self) -> (Counter, Counter) {
-        self.ensure_header().unwrap();
-        (
-            self.header.get().unwrap().counter,
-            *self.header.get().unwrap().counters.last().unwrap(),
-        )
+        if let Some(header) = self.header.get() {
+            (header.counter, *header.counters.last().unwrap())
+        } else {
+            decode_block_range(&self.bytes).unwrap().0
+        }
     }
 
     fn lamport_range(&mut self) -> (Lamport, Lamport) {
-        self.ensure_header().unwrap();
-        (
-            self.header.get().unwrap().lamports[0],
-            *self.header.get().unwrap().lamports.last().unwrap(),
-        )
+        if let Some(header) = self.header.get() {
+            (header.lamports[0], *header.lamports.last().unwrap())
+        } else {
+            decode_block_range(&self.bytes).unwrap().1
+        }
     }
 
     /// Length of the changes

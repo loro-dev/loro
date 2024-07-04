@@ -1,71 +1,75 @@
 //! # Encode
 //!
 //! ```log
+//! ≈4KB after compression
 //!
-//!    ≈4KB after compression
+//!  N = Number of Changes
 //!
-//!     N = Number of Changes
-//!
-//!     Peer_1 = This Peer
+//!  Peer_1 = This Peer
 //!
 //!
-//!    ┌──────────┬─────┬────────────┬───────────────────────────────┐
-//!    │2B Version│LEB N│LEB Peer Num│     8B Peer_1,...,Peer_x      │◁────┐
-//!    └──────────┴─────┴────────────┴───────────────────────────────┘     │
-//!    ┌───────────────────┬──────────────────────────────────────────┐    │
-//!    │ LEB First Counter │         N LEB128 Change AtomLen          │◁───┼─────  Important metadata
-//!    └───────────────────┴──────────────────────────────────────────┘    │
-//!    ┌───────────────────┬────────────────────────┬─────────────────┐    │
-//!    │N DepOnSelf BoolRle│ N Delta Rle Deps Lens  │     Dep IDs     │◁───┤
-//!    └───────────────────┴────────────────────────┴─────────────────┘    │
-//!    ┌──────────────────────────────────────────────────────────────┐    │
-//!    │                   N LEB128 Delta Lamports                    │◁───┘
-//!    └──────────────────────────────────────────────────────────────┘
-//!    ┌──────────────────────────────────────────────────────────────┐
-//!    │                  N LEB128 Delta Timestamps                   │
-//!    └──────────────────────────────────────────────────────────────┘
-//!    ┌────────────────────────────────┬─────────────────────────────┐
-//!    │    N Rle Commit Msg Lengths    │       Commit Messages       │
-//!    └────────────────────────────────┴─────────────────────────────┘
+//! ┌──────────┬─────────────────────────┬─────────────────────────┐
+//! │2B Version│  LEB Counter Start&Len  │  LEB Lamport Start&Len  │◁───┐
+//! └──────────┴─────────────────────────┴─────────────────────────┘    │
+//! ┌──────────────┬──────────────┬────────────────────────────────┐    │
+//! │    LEB N     │ LEB Peer Num │      8B Peer_1,...,Peer_x      │◁───┤
+//! └──────────────┴──────────────┴────────────────────────────────┘    │
+//! ┌──────────────────────────────────────────────────────────────┐    │
+//! │                   N LEB128 Change AtomLen                    │◁───┼─────  Important metadata
+//! └──────────────────────────────────────────────────────────────┘    │
+//! ┌───────────────────┬────────────────────────┬─────────────────┐    │
+//! │N DepOnSelf BoolRle│ N Delta Rle Deps Lens  │     Dep IDs     │◁───┤
+//! └───────────────────┴────────────────────────┴─────────────────┘    │
+//! ┌──────────────────────────────────────────────────────────────┐    │
+//! │                   N LEB128 Delta Lamports                    │◁───┘
+//! └──────────────────────────────────────────────────────────────┘
+//! ┌──────────────────────────────────────────────────────────────┐
+//! │                N LEB128 Delta Rle Timestamps                 │
+//! └──────────────────────────────────────────────────────────────┘
+//! ┌────────────────────────────────┬─────────────────────────────┐
+//! │    N Rle Commit Msg Lengths    │       Commit Messages       │
+//! └────────────────────────────────┴─────────────────────────────┘
 //!
-//!     ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ Encoded Operations ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+//!  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ Encoded Operations ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 //!
-//!    ┌────────────────────┬─────────────────────────────────────────┐
-//!    │ ContainerIDs Size  │             ContainerIDs                │
-//!    └────────────────────┴─────────────────────────────────────────┘
-//!    ┌────────────────────┬─────────────────────────────────────────┐
-//!    │  Key Strings Size  │               Key Strings               │
-//!    └────────────────────┴─────────────────────────────────────────┘
-//!    ┌────────┬──────────┬──────────┬───────┬───────────────────────┐
-//!    │        │          │          │       │                       │
-//!    │        │          │          │       │                       │
-//!    │        │          │          │       │                       │
-//!    │  Ops   │  LEB128  │   RLE    │ Delta │                       │
-//!    │  Size  │ Lengths  │Containers│  RLE  │       ValueType       │
-//!    │        │          │          │ Props │                       │
-//!    │        │          │          │       │                       │
-//!    │        │          │          │       │                       │
-//!    │        │          │          │       │                       │
-//!    └────────┴──────────┴──────────┴───────┴───────────────────────┘
-//!    ┌────────────────┬─────────────────────────────────────────────┐
-//!    │                │                                             │
-//!    │Value Bytes Size│                Value Bytes                  │
-//!    │                │                                             │
-//!    └────────────────┴─────────────────────────────────────────────┘
-//!    ┌──────────────────────────────────────────────────────────────┐
-//!    │                                                              │
-//!    │                       Delete Start IDs                       │
-//!    │                                                              │
-//!    └──────────────────────────────────────────────────────────────┘
+//! ┌────────────────────┬─────────────────────────────────────────┐
+//! │ ContainerIDs Size  │             ContainerIDs                │
+//! └────────────────────┴─────────────────────────────────────────┘
+//! ┌────────────────────┬─────────────────────────────────────────┐
+//! │  Key Strings Size  │               Key Strings               │
+//! └────────────────────┴─────────────────────────────────────────┘
+//! ┌────────┬──────────┬──────────┬───────┬───────────────────────┐
+//! │        │          │          │       │                       │
+//! │        │          │          │       │                       │
+//! │        │          │          │       │                       │
+//! │  Ops   │  LEB128  │   RLE    │ Delta │                       │
+//! │  Size  │ Lengths  │Containers│  RLE  │       ValueType       │
+//! │        │          │          │ Props │                       │
+//! │        │          │          │       │                       │
+//! │        │          │          │       │                       │
+//! │        │          │          │       │                       │
+//! └────────┴──────────┴──────────┴───────┴───────────────────────┘
+//! ┌────────────────┬─────────────────────────────────────────────┐
+//! │                │                                             │
+//! │Value Bytes Size│                Value Bytes                  │
+//! │                │                                             │
+//! └────────────────┴─────────────────────────────────────────────┘
+//! ┌──────────────────────────────────────────────────────────────┐
+//! │                                                              │
+//! │                       Delete Start IDs                       │
+//! │                                                              │
+//! └──────────────────────────────────────────────────────────────┘
 //! ```
 //!
 //!
 
 use std::borrow::Cow;
 use std::io::Write;
+use std::ops::Range;
 
 use loro_common::{
-    ContainerID, Counter, InternalString, Lamport, LoroError, LoroResult, PeerID, ID,
+    ContainerID, Counter, HasIdSpan, HasLamportSpan, InternalString, Lamport, LoroError,
+    LoroResult, PeerID, ID,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
@@ -87,6 +91,10 @@ use serde_columnar::{
 #[derive(Serialize, Deserialize)]
 struct EncodedBlock<'a> {
     version: u16,
+    counter_start: u32,
+    counter_len: u32,
+    lamport_start: u32,
+    lamport_len: u32,
     n_changes: u32,
     first_counter: u32,
     #[serde(borrow)]
@@ -248,6 +256,10 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     let value_bytes = value_writer.finish();
     let out = EncodedBlock {
         version: VERSION,
+        counter_start: block[0].id.counter as u32,
+        counter_len: (block.last().unwrap().id_end().counter - block[0].id.counter) as u32,
+        lamport_start: block[0].lamport(),
+        lamport_len: block.last().unwrap().lamport_end() - block[0].lamport(),
         n_changes: block.len() as u32,
         first_counter: block[0].id.counter as u32,
         peers: Cow::Owned(peer_bytes),
@@ -353,6 +365,10 @@ fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, Loro
         dep_counters,
         lamports,
         version,
+        counter_len,
+        counter_start,
+        lamport_len,
+        lamport_start,
         ..
     } = doc;
 
@@ -419,11 +435,19 @@ fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, Loro
         last += lengths[i];
     }
     counters.push(last);
+    assert_eq!(last, (counter_start + counter_len) as Counter);
     let mut lamport_decoder = UnsignedDeltaDecoder::new(lamports, n_changes);
-    let mut lamports = Vec::with_capacity(n_changes);
-    for _ in 0..n_changes {
+    let mut lamports = Vec::with_capacity(n + 1);
+    for _ in 0..n {
         lamports.push(lamport_decoder.next().unwrap() as Lamport);
     }
+
+    let last_lamport = *lamports.last().unwrap();
+    lamports.push(last_lamport + lengths.last().copied().unwrap() as Lamport);
+    assert_eq!(
+        *lamports.last().unwrap(),
+        (lamport_start + lamport_len) as Lamport
+    );
     Ok(ChangesBlockHeader {
         peer: peers[0],
         counter: first_counter,
@@ -483,6 +507,29 @@ impl<'a> ValueDecodedArenasTrait for ValueDecodeArena<'a> {
     ) -> LoroResult<crate::container::tree::tree_op::TreeOp> {
         unreachable!()
     }
+}
+
+pub fn decode_block_range(
+    mut bytes: &[u8],
+) -> LoroResult<((Counter, Counter), (Lamport, Lamport))> {
+    let version = leb128::read::unsigned(&mut bytes).map_err(|e| {
+        LoroError::DecodeError(format!("Failed to read version: {}", e).into_boxed_str())
+    })?;
+
+    if version as u16 != VERSION {
+        return Err(LoroError::DecodeError(
+            "Version mismatch".to_string().into_boxed_str(),
+        ));
+    }
+
+    let counter_start = leb128::read::unsigned(&mut bytes).unwrap() as Counter;
+    let counter_len = leb128::read::unsigned(&mut bytes).unwrap() as Counter;
+    let lamport_start = leb128::read::unsigned(&mut bytes).unwrap() as Lamport;
+    let lamport_len = leb128::read::unsigned(&mut bytes).unwrap() as Lamport;
+    Ok((
+        (counter_start, counter_start + counter_len),
+        (lamport_start, lamport_start + lamport_len),
+    ))
 }
 
 pub fn decode_block(

@@ -27,7 +27,6 @@ use loro_common::{IdLp, IdSpan};
 use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
 
-type ClientChanges = FxHashMap<PeerID, Vec<Change>>;
 pub use self::dag::FrontiersNotIncluded;
 use self::iter::MergedChangeIter;
 use self::pending_changes::PendingChanges;
@@ -175,7 +174,7 @@ impl OpLog {
         let arena = SharedArena::new();
         let cfg = Configure::default();
         Self {
-            change_store: ChangeStore::new(&arena, cfg.merge_interval.clone()),
+            change_store: ChangeStore::new_mem(&arena, cfg.merge_interval.clone()),
             dag: AppDag::default(),
             op_groups: OpGroups::new(arena.clone()),
             arena,

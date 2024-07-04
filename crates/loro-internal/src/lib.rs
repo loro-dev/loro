@@ -23,6 +23,7 @@ pub use state::DocState;
 pub use undo::UndoManager;
 pub mod awareness;
 pub mod cursor;
+mod kv_store;
 pub mod loro;
 pub mod obs;
 pub mod oplog;
