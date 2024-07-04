@@ -16,19 +16,22 @@ use crate::{
 };
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::HasLength;
 use loro_common::{
-    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, ID,
+    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, TreeID,
+    ID,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
+    cmp::Reverse,
+    collections::BinaryHeap,
     fmt::Debug,
     ops::Deref,
     sync::{Arc, Mutex, Weak},
 };
-use tracing::{error, info, instrument};
+use tracing::{debug, error, info, instrument, trace};
 
 mod tree;
 pub use tree::TreeHandler;
@@ -1060,8 +1063,11 @@ impl Handler {
     pub(crate) fn apply_diff(
         &self,
         diff: Diff,
-        on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
+        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
     ) -> LoroResult<()> {
+        let on_container_remap = &mut |old_id, new_id| {
+            container_remap.insert(old_id, new_id);
+        };
         match self {
             Self::Map(x) => {
                 let diff = diff.into_map().unwrap();
@@ -1098,20 +1104,60 @@ impl Handler {
                 x.apply_delta(delta, on_container_remap)?;
             }
             Self::Tree(x) => {
+                fn remap_tree_id(
+                    id: &mut TreeID,
+                    container_remap: &FxHashMap<ContainerID, ContainerID>,
+                ) {
+                    let mut remapped = false;
+                    let mut map_id = id.associated_meta_container();
+                    while let Some(rid) = container_remap.get(&map_id) {
+                        remapped = true;
+                        map_id = rid.clone();
+                    }
+                    if remapped {
+                        *id = TreeID::new(
+                            *map_id.as_normal().unwrap().0,
+                            *map_id.as_normal().unwrap().1,
+                        )
+                    }
+                }
                 for diff in diff.into_tree().unwrap().diff {
-                    let target = diff.target;
+                    let mut target = diff.target;
                     match diff.action {
                         TreeExternalDiff::Create {
-                            parent,
-                            index,
-                            position: _,
+                            mut parent,
+                            index: _,
+                            position,
                         } => {
-                            x.create_at_with_target(parent, index, target)?;
-                            // create map event
+                            let new_target = x.__internal__next_tree_id();
+                            if let Some(p) = parent.as_mut() {
+                                remap_tree_id(p, container_remap)
+                            }
+                            if x.create_at_with_target_for_apply_diff(parent, position, new_target)?
+                            {
+                                container_remap.insert(
+                                    target.associated_meta_container(),
+                                    new_target.associated_meta_container(),
+                                );
+                            }
                         }
-                        TreeExternalDiff::Delete { .. } => x.delete(target)?,
-                        TreeExternalDiff::Move { parent, index, .. } => {
-                            x.move_to(target, parent, index)?
+                        TreeExternalDiff::Move {
+                            mut parent,
+                            index: _,
+                            position,
+                        } => {
+                            if let Some(p) = parent.as_mut() {
+                                remap_tree_id(p, container_remap)
+                            }
+                            remap_tree_id(&mut target, container_remap);
+                            x.move_at_with_target_for_apply_diff(parent, position, target)?;
+                        }
+                        TreeExternalDiff::Delete => {
+                            remap_tree_id(&mut target, container_remap);
+                            // println!("delete {:?}", target);
+                            if x.contains(target) {
+                                x.delete(target)?
+                            }
                         }
                     }
                 }
@@ -1329,6 +1375,7 @@ impl TextHandler {
             return Err(LoroError::OutOfBound {
                 pos,
                 len: self.len_event(),
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
             });
         }
 
@@ -1426,6 +1473,7 @@ impl TextHandler {
             return Err(LoroError::OutOfBound {
                 pos: pos + len,
                 len: self.len_event(),
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
             });
         }
 
@@ -1503,7 +1551,11 @@ impl TextHandler {
             ));
         }
         if end > len {
-            return Err(LoroError::OutOfBound { pos: end, len });
+            return Err(LoroError::OutOfBound {
+                pos: end,
+                len,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
         }
         let (entity_range, styles) =
             state.get_entity_range_and_text_styles_at_range(start..end, PosType::Event);
@@ -1579,7 +1631,11 @@ impl TextHandler {
 
         let len = self.len_event();
         if end > len {
-            return Err(LoroError::OutOfBound { pos: end, len });
+            return Err(LoroError::OutOfBound {
+                pos: end,
+                len,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
         }
 
         let inner = self.inner.try_attached_state()?;
@@ -1873,6 +1929,7 @@ impl ListHandler {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -1957,6 +2014,7 @@ impl ListHandler {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -1997,6 +2055,7 @@ impl ListHandler {
         if pos + len > self.len() {
             return Err(LoroError::OutOfBound {
                 pos: pos + len,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2031,6 +2090,7 @@ impl ListHandler {
                 let list = l.try_lock().unwrap();
                 let value = list.value.get(index).ok_or(LoroError::OutOfBound {
                     pos: index,
+                    info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                     len: list.value.len(),
                 })?;
                 match value {
@@ -2050,6 +2110,7 @@ impl ListHandler {
                 }) else {
                     return Err(LoroError::OutOfBound {
                         pos: index,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: a.with_state(|state| state.as_list_state().unwrap().len()),
                     });
                 };
@@ -2249,6 +2310,7 @@ impl MovableListHandler {
                 if pos > d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: d.value.len(),
                     });
                 }
@@ -2271,6 +2333,7 @@ impl MovableListHandler {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2310,12 +2373,14 @@ impl MovableListHandler {
                 if from >= d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos: from,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: d.value.len(),
                     });
                 }
                 if to >= d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos: to,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: d.value.len(),
                     });
                 }
@@ -2337,6 +2402,7 @@ impl MovableListHandler {
         if from >= self.len() {
             return Err(LoroError::OutOfBound {
                 pos: from,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2344,6 +2410,7 @@ impl MovableListHandler {
         if to >= self.len() {
             return Err(LoroError::OutOfBound {
                 pos: to,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2439,6 +2506,7 @@ impl MovableListHandler {
                 if pos > d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: d.value.len(),
                     });
                 }
@@ -2461,6 +2529,7 @@ impl MovableListHandler {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2495,6 +2564,7 @@ impl MovableListHandler {
                 if index >= d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos: index,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: d.value.len(),
                     });
                 }
@@ -2516,6 +2586,7 @@ impl MovableListHandler {
         if index >= self.len() {
             return Err(LoroError::OutOfBound {
                 pos: index,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2604,6 +2675,7 @@ impl MovableListHandler {
         if pos + len > self.len() {
             return Err(LoroError::OutOfBound {
                 pos: pos + len,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2651,6 +2723,7 @@ impl MovableListHandler {
                 let list = l.try_lock().unwrap();
                 let value = list.value.get(index).ok_or(LoroError::OutOfBound {
                     pos: index,
+                    info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                     len: list.value.len(),
                 })?;
                 match value {
@@ -2675,6 +2748,7 @@ impl MovableListHandler {
                 }) else {
                     return Err(LoroError::OutOfBound {
                         pos: index,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: a.with_state(|state| state.as_list_state().unwrap().len()),
                     });
                 };
@@ -2872,7 +2946,54 @@ impl MovableListHandler {
                 unimplemented!();
             }
             MaybeDetached::Attached(_) => {
+                debug!("movable list apply_delta {:#?}", &delta);
+                // preprocess all deletions. They will be used to infer the move ops
                 let mut index = 0;
+                let mut to_delete = FxHashMap::default();
+                for d in delta.iter() {
+                    match d {
+                        loro_delta::DeltaItem::Retain { len, .. } => {
+                            index += len;
+                        }
+                        loro_delta::DeltaItem::Replace { delete, .. } => {
+                            if *delete > 0 {
+                                for i in index..index + *delete {
+                                    if let Some(LoroValue::Container(c)) = self.get(i) {
+                                        to_delete.insert(c, i);
+                                    }
+                                }
+
+                                index += *delete;
+                            }
+                        }
+                    }
+                }
+
+                fn update_on_insert(
+                    d: &mut FxHashMap<ContainerID, usize>,
+                    index: usize,
+                    len: usize,
+                ) {
+                    for pos in d.values_mut() {
+                        if *pos >= index {
+                            *pos += len;
+                        }
+                    }
+                }
+
+                fn update_on_delete(d: &mut FxHashMap<ContainerID, usize>, index: usize) {
+                    for pos in d.values_mut() {
+                        if *pos >= index {
+                            *pos -= 1;
+                        }
+                    }
+                }
+
+                // process all insertions and moves
+                let mut index = 0;
+                let mut deleted = Vec::new();
+                let mut next_deleted = BinaryHeap::new();
+                let mut index_shift = 0;
                 for d in delta.iter() {
                     match d {
                         loro_delta::DeltaItem::Retain { len, .. } => {
@@ -2881,28 +3002,93 @@ impl MovableListHandler {
                         loro_delta::DeltaItem::Replace {
                             value,
                             delete,
-                            attr: _attr,
+                            attr,
                         } => {
-                            // TODO: handle move error
-                            self.delete(index, *delete)?;
+                            if *delete > 0 {
+                                // skip the deletion if it is already processed by moving
+                                let mut d = *delete;
+                                while let Some(Reverse(old_index)) = next_deleted.peek() {
+                                    if *old_index + index_shift < index + d {
+                                        assert!(index <= *old_index + index_shift);
+                                        assert!(d > 0);
+                                        next_deleted.pop();
+                                        d -= 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                index += d;
+                            }
+
                             for v in value.iter() {
                                 match v {
                                     ValueOrHandler::Value(v) => {
                                         self.insert(index, v.clone())?;
+                                        update_on_insert(&mut to_delete, index, 1);
+                                        index += 1;
+                                        index_shift += 1;
                                     }
                                     ValueOrHandler::Handler(h) => {
                                         let old_id = h.id();
-                                        let new_h = self.insert_container(
-                                            index,
-                                            Handler::new_unattached(old_id.container_type()),
-                                        )?;
-                                        let new_id = new_h.id();
-                                        on_container_remap(old_id, new_id);
+                                        if let Some(old_index) = to_delete.remove(&old_id) {
+                                            if old_index > index {
+                                                self.mov(old_index, index)?;
+                                                next_deleted.push(Reverse(old_index));
+                                                index += 1;
+                                                index_shift += 1;
+                                            } else {
+                                                // we need to sub 1 because old_index < index, and index means the position before the move
+                                                // but the param is the position after the move
+                                                self.mov(old_index, index - 1)?;
+                                            }
+                                            deleted.push(old_index);
+                                            update_on_delete(&mut to_delete, old_index);
+                                            update_on_insert(&mut to_delete, index, 1);
+                                        } else {
+                                            let new_h = self.insert_container(
+                                                index,
+                                                Handler::new_unattached(old_id.container_type()),
+                                            )?;
+                                            let new_id = new_h.id();
+                                            on_container_remap(old_id, new_id);
+                                            update_on_insert(&mut to_delete, index, 1);
+                                            index += 1;
+                                            index_shift += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // apply the rest of the deletions
+
+                // sort deleted indexes from large to small
+                deleted.sort_by_key(|x| -(*x as i32));
+                let mut index = 0;
+                for d in delta.iter() {
+                    match d {
+                        loro_delta::DeltaItem::Retain { len, .. } => {
+                            index += len;
+                        }
+                        loro_delta::DeltaItem::Replace { delete, value, .. } => {
+                            if *delete > 0 {
+                                let mut d = *delete;
+                                while let Some(last) = deleted.last() {
+                                    if *last < index + d {
+                                        deleted.pop();
+                                        d -= 1;
+                                    } else {
+                                        break;
                                     }
                                 }
 
-                                index += 1;
+                                self.delete(index, d)?;
                             }
+
+                            index += value.len();
                         }
                     }
                 }

@@ -831,6 +831,8 @@ impl LoroDoc {
             before_diff,
         );
 
+        // println!("\nundo_internal: diff: {:?}", diff);
+
         self.checkout_without_emitting(&latest_frontiers)?;
         self.detached.store(false, Release);
         if was_recording {
@@ -927,10 +929,7 @@ impl LoroDoc {
             }
 
             let h = self.get_handler(id);
-            h.apply_diff(diff, &mut |old_id, new_id| {
-                container_remap.insert(old_id, new_id);
-            })
-            .unwrap();
+            h.apply_diff(diff, container_remap).unwrap();
         }
 
         Ok(())
@@ -1083,7 +1082,6 @@ impl LoroDoc {
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
             ));
         };
-
         let diff = calc.calc_diff_internal(
             &oplog,
             before,

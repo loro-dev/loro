@@ -7,18 +7,8 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-loro-without-counter = { path = "../loro", package = "loro" }
-loro = { git = "https://github.com/loro-dev/loro.git", features = [
-    "counter",
-], branch = "main" }
-loro-common = { git = "https://github.com/loro-dev/loro.git", features = [
-    "counter",
-], branch = "main" }
-# loro = { path = "../loro", package = "loro", features = ["counter"] }
-# loro-common = { path = "../loro-common", package = "loro-common", features = [
-#     "counter",
-# ] }
-# loro-without-counter = { git = "https://github.com/loro-dev/loro.git", branch = "main", package = "loro" }
+loro = { path = "../loro", features = ["counter"], package = "loro" }
+loro-without-counter = { git = "https://github.com/loro-dev/loro.git", rev = "39caa6cedf66d8f6c77f0886e70ec1270a96bd1a", package = "loro", default-features = false }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
 enum-as-inner = { workspace = true }
@@ -27,6 +17,7 @@ itertools = { workspace = true }
 arbitrary = "1"
 tabled = "0.10"
 rand = "0.8.5"
+serde_json = "1"
 
 [dev-dependencies]
 ctor = "0.2"

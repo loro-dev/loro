@@ -1377,6 +1377,8 @@ impl LoroTree {
     }
 
     /// Return all children of the target node.
+    ///
+    /// If the parent node does not exist, return `None`.
     pub fn children(&self, parent: Option<TreeID>) -> Option<Vec<TreeID>> {
         self.handler.children(parent)
     }
