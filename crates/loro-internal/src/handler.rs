@@ -5,12 +5,12 @@ use crate::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, DeleteSpanWithId, ListOp},
         richtext::{
-            richtext_state::{utf8_to_unicode_index, utf8_to_unicode_index_with_len, PosType},
+            richtext_state::{utf8_to_unicode_index_with_len, PosType},
             RichtextState, StyleOp, TextStyleInfoFlag,
         },
     },
     cursor::{Cursor, Side},
-    delta::{DeltaItem, StyleMeta, TreeExternalDiff},
+    delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
     event::{Diff, TextDiffItem},
     op::ListSlice,
     state::{ContainerState, IndexType, State},
@@ -19,7 +19,7 @@ use crate::{
 };
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
 use loro_common::{
     ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, TreeID,
@@ -34,7 +34,8 @@ use std::{
     ops::Deref,
     sync::{Arc, Mutex, Weak},
 };
-use tracing::{debug, error, info, instrument, trace};
+
+use tracing::{debug, error, info, instrument, Event};
 
 mod tree;
 pub use tree::TreeHandler;
@@ -1340,7 +1341,8 @@ impl TextHandler {
                 let mut t = t.try_lock().unwrap();
                 let index = t
                     .value
-                    .get_entity_index_for_text_insert(pos, PosType::Event);
+                    .get_entity_index_for_text_insert(pos, PosType::Event)
+                    .unwrap();
                 t.value.insert_at_entity_index(
                     index,
                     BytesSlice::from_bytes(s.as_bytes()),
@@ -1353,27 +1355,13 @@ impl TextHandler {
     }
 
     pub fn insert_utf8(&self, pos: usize, s: &str) -> LoroResult<()> {
-        let pos = match utf8_to_unicode_index(&self.to_string().as_str(), pos) {
-            Ok(pos) => pos,
-            Err(pos) => {
-                if pos >= self.len_event() {
-                    return Err(LoroError::OutOfBound {
-                        pos: pos,
-                        len: self.len_event(),
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                    });
-                }
-                {
-                    return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
-                }
-            }
-        };
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut t = t.try_lock().unwrap();
                 let index = t
                     .value
-                    .get_entity_index_for_text_insert(pos, PosType::Unicode);
+                    .get_entity_index_for_text_insert(pos, PosType::Bytes)
+                    .unwrap();
                 t.value.insert_at_entity_index(
                     index,
                     BytesSlice::from_bytes(s.as_bytes()),
@@ -1381,7 +1369,7 @@ impl TextHandler {
                 );
                 Ok(())
             }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| self.insert_with_txn(txn, pos, s)),
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.insert_with_txn_utf8(txn, pos, s)),
         }
     }
 
@@ -1390,7 +1378,17 @@ impl TextHandler {
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
     pub fn insert_with_txn(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
-        self.insert_with_txn_and_attr(txn, pos, s, None)?;
+        self.insert_with_txn_and_attr(txn, pos, s, None, PosType::Event)?;
+        Ok(())
+    }
+
+    pub fn insert_with_txn_utf8(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        s: &str,
+    ) -> LoroResult<()> {
+        self.insert_with_txn_and_attr(txn, pos, s, None, PosType::Bytes)?;
         Ok(())
     }
 
@@ -1445,7 +1443,7 @@ impl TextHandler {
         }
     }
 
-    /// If attr is specified, it will be used as the attribute of the inserted text.
+    /// If attr is specified, it will be used as the at tribute of the inserted text.
     /// It will override the existing attribute of the text.
     fn insert_with_txn_and_attr(
         &self,
@@ -1453,26 +1451,50 @@ impl TextHandler {
         pos: usize,
         s: &str,
         attr: Option<&FxHashMap<String, LoroValue>>,
+        pos_type: PosType,
     ) -> Result<Vec<(InternalString, LoroValue)>, LoroError> {
         if s.is_empty() {
             return Ok(Vec::new());
         }
 
-        if pos > self.len_event() {
-            return Err(LoroError::OutOfBound {
-                pos,
-                len: self.len_event(),
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-            });
+        match pos_type {
+            PosType::Event => {
+                if pos > self.len_event() {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        len: self.len_event(),
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+            }
+            PosType::Bytes => {
+                if pos > self.len_utf8() {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        len: self.len_utf8(),
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+            }
+            _ => (),
         }
 
         let inner = self.inner.try_attached_state()?;
         let (entity_index, styles) = inner.with_state(|state| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
-            let pos = richtext_state.get_entity_index_for_text_insert(pos);
+            let pos = richtext_state.get_entity_index_for_text_insert(pos, pos_type);
+            let pos = match pos {
+                Err(_) => return (pos, StyleMeta::empty()),
+                Ok(x) => x,
+            };
             let styles = richtext_state.get_styles_at_entity_index(pos);
-            (pos, styles)
+            (Ok(pos), styles)
         });
+
+        let entity_index = match entity_index {
+            Err(x) => return Err(x),
+            _ => entity_index.unwrap(),
+        };
 
         let mut override_styles = Vec::new();
         if let Some(attr) = attr {
@@ -1815,6 +1837,7 @@ impl TextHandler {
                         index,
                         insert.as_str(),
                         Some(attributes.as_ref().unwrap_or(&Default::default())),
+                        PosType::Event,
                     )?;
 
                     for (key, value) in override_styles {
@@ -3624,13 +3647,13 @@ pub mod counter {
 #[cfg(test)]
 mod test {
 
+    use super::{HandlerTrait, TextDelta};
+    use crate::container::richtext::richtext_state::PosType;
     use crate::loro::LoroDoc;
     use crate::version::Frontiers;
     use crate::{fx_map, ToJson};
     use loro_common::ID;
     use serde_json::json;
-
-    use super::{HandlerTrait, TextDelta};
 
     #[test]
     fn import() {

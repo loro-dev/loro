@@ -974,7 +974,7 @@ fn test_insert_utf8() {
 }
 
 #[test]
-fn test_insert_utf8_cross_unicode() {
+fn test_insert_utf8_cross_unicode_1() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
     text.insert_utf8(0, "你好").unwrap();
@@ -982,6 +982,18 @@ fn test_insert_utf8_cross_unicode() {
     assert_eq!(
         text.get_richtext_value().to_json_value(),
         json!([{"insert":"你World好"}])
+    )
+}
+
+#[test]
+fn test_insert_utf8_cross_unicode_2() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "你好").unwrap();
+    text.insert_utf8(6, "World").unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"你好World"}])
     )
 }
 
