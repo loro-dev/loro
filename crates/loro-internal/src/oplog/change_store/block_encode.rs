@@ -65,7 +65,6 @@
 
 use std::borrow::Cow;
 use std::io::Write;
-use std::ops::Range;
 
 use loro_common::{
     ContainerID, Counter, HasIdSpan, HasLamportSpan, InternalString, Lamport, LoroError,

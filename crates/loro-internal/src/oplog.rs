@@ -20,6 +20,7 @@ use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
+use bytes::Bytes;
 use change_store::BlockOpRef;
 pub use change_store::{BlockChangeRef, ChangeStore};
 use fxhash::FxHashMap;
@@ -800,11 +801,11 @@ impl OpLog {
         ans
     }
 
-    pub(crate) fn export_blocks(&mut self) -> Vec<u8> {
+    pub(crate) fn export_blocks(&mut self) -> Bytes {
         self.change_store.encode_all()
     }
 
-    pub(crate) fn import_blocks(&mut self, blocks: &[u8]) -> Result<(), LoroError> {
+    pub(crate) fn import_blocks(&mut self, blocks: Bytes) -> Result<(), LoroError> {
         self.change_store.decode_all(blocks)
     }
 }

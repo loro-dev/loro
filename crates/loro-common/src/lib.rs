@@ -34,6 +34,29 @@ pub struct ID {
     pub counter: Counter,
 }
 
+impl ID {
+    pub fn to_bytes(&self) -> [u8; 12] {
+        let mut bytes = [0; 12];
+        bytes[..8].copy_from_slice(&self.peer.to_be_bytes());
+        bytes[8..].copy_from_slice(&self.counter.to_be_bytes());
+        bytes
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        if bytes.len() != 12 {
+            panic!(
+                "Invalid ID bytes. Expected 12 bytes but got {} bytes",
+                bytes.len()
+            );
+        }
+
+        Self {
+            peer: u64::from_be_bytes(bytes[..8].try_into().unwrap()),
+            counter: i32::from_be_bytes(bytes[8..].try_into().unwrap()),
+        }
+    }
+}
+
 /// It's the unique ID of an Op represented by [PeerID] and [Counter].
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct CompactId {

@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use std::ops::Bound;
 
+pub type CompareFn = Box<dyn FnMut(&Bytes, &Bytes) -> std::cmp::Ordering>;
 pub trait KvStore: std::fmt::Debug + Send + Sync {
     fn get(&self, key: &[u8]) -> Option<Bytes>;
     fn set(&mut self, key: &[u8], value: Bytes);
@@ -11,9 +12,15 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
         &self,
         start: Bound<&[u8]>,
         end: Bound<&[u8]>,
-    ) -> Box<dyn Iterator<Item = (Bytes, Bytes)>>;
+    ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)>>;
     fn len(&self) -> usize;
     fn size(&self) -> usize;
+    fn binary_search_by(
+        &self,
+        start: Bound<&[u8]>,
+        end: Bound<&[u8]>,
+        f: CompareFn,
+    ) -> Option<(Bytes, Bytes)>;
     fn export_all(&self) -> Bytes;
     fn import_all(&mut self, bytes: Bytes) -> Result<(), String>;
 }
@@ -66,7 +73,7 @@ mod mem {
             &self,
             start: Bound<&[u8]>,
             end: Bound<&[u8]>,
-        ) -> Box<dyn Iterator<Item = (Bytes, Bytes)>> {
+        ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)>> {
             todo!()
         }
 
@@ -83,6 +90,15 @@ mod mem {
         }
 
         fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
+            todo!()
+        }
+
+        fn binary_search_by(
+            &self,
+            start: Bound<&[u8]>,
+            end: Bound<&[u8]>,
+            f: Box<dyn FnMut(&Bytes, &Bytes) -> std::cmp::Ordering>,
+        ) -> Option<(Bytes, Bytes)> {
             todo!()
         }
     }

@@ -424,7 +424,7 @@ impl LoroDoc {
         ans
     }
 
-    pub fn export_blocks(&self) -> Vec<u8> {
+    pub fn export_blocks(&self) -> bytes::Bytes {
         self.commit_then_stop();
         let ans = self.oplog.lock().unwrap().export_blocks();
         self.renew_txn_if_auto_commit();
@@ -446,8 +446,11 @@ impl LoroDoc {
     }
 
     /// TODO: FIXME: HACK: This is just for experiment
-    pub fn import_blocks(&self, blocks_bytes: &[u8]) -> LoroResult<()> {
-        self.oplog.lock().unwrap().import_blocks(blocks_bytes)
+    pub fn import_blocks(&self, blocks_bytes: impl Into<bytes::Bytes>) -> LoroResult<()> {
+        self.oplog
+            .lock()
+            .unwrap()
+            .import_blocks(blocks_bytes.into())
     }
 
     fn _import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
