@@ -1355,6 +1355,12 @@ impl TextHandler {
     pub fn insert_utf8(&self, pos: usize, s: &str) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
+                let pos = match utf8_to_unicode_index(&self.to_string().as_str(), pos) {
+                    Ok(pos) => pos,
+                    Err(pos) => {
+                        return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
+                    }
+                };
                 let mut t = t.try_lock().unwrap();
                 let index = t
                     .value
