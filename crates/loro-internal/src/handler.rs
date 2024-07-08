@@ -1385,7 +1385,13 @@ impl TextHandler {
         pos: usize,
         s: &str,
     ) -> LoroResult<()> {
-        self.insert_with_txn_and_attr_utf8(txn, pos, s, None)?;
+        let pos = match utf8_to_unicode_index(&self.to_string().as_str(), pos) {
+            Ok(pos) => pos,
+            Err(pos) => {
+                return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
+            }
+        };
+        self.insert_with_txn_and_attr(txn, pos, s, None)?;
         Ok(())
     }
 
@@ -1467,114 +1473,6 @@ impl TextHandler {
         )?;
 
         Ok(override_styles)
-    }
-
-    /// If attr is specified, it will be used as the attribute of the inserted text.
-    /// It will override the existing attribute of the text.
-    fn insert_with_txn_and_attr_utf8(
-        &self,
-        txn: &mut Transaction,
-        pos: usize,
-        s: &str,
-        attr: Option<&FxHashMap<String, LoroValue>>,
-    ) -> Result<Vec<(InternalString, LoroValue)>, LoroError> {
-        if s.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let pos = match utf8_to_unicode_index(&self.to_string().as_str(), pos) {
-            Ok(pos) => pos,
-            Err(pos) => {
-                return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
-            }
-        };
-
-        if pos > self.len_event() {
-            return Err(LoroError::OutOfBound {
-                pos,
-                len: self.len_event(),
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-            });
-        }
-
-        let inner = self.inner.try_attached_state()?;
-        let (entity_index, styles) = inner.with_state(|state| {
-            let richtext_state = state.as_richtext_state_mut().unwrap();
-            let pos = richtext_state.get_entity_index_for_text_insert(pos);
-            let styles = richtext_state.get_styles_at_entity_index(pos);
-            (pos, styles)
-        });
-
-        let mut override_styles = Vec::new();
-        if let Some(attr) = attr {
-            // current styles
-            let map: FxHashMap<_, _> = styles.iter().map(|x| (x.0.clone(), x.1.data)).collect();
-            for (key, style) in map.iter() {
-                match attr.get(key.deref()) {
-                    Some(v) if v == style => {}
-                    new_style_value => {
-                        // need to override
-                        let new_style_value = new_style_value.cloned().unwrap_or(LoroValue::Null);
-                        override_styles.push((key.clone(), new_style_value));
-                    }
-                }
-            }
-
-            for (key, style) in attr.iter() {
-                let key = key.as_str().into();
-                if !map.contains_key(&key) {
-                    override_styles.push((key, style.clone()));
-                }
-            }
-        }
-
-        let unicode_len = s.chars().count();
-        let event_len = if cfg!(feature = "wasm") {
-            count_utf16_len(s.as_bytes())
-        } else {
-            unicode_len
-        };
-
-        txn.apply_local_op(
-            inner.container_idx,
-            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
-                slice: ListSlice::RawStr {
-                    str: Cow::Borrowed(s),
-                    unicode_len,
-                },
-                pos: entity_index,
-            }),
-            EventHint::InsertText {
-                pos: pos as u32,
-                styles,
-                unicode_len: unicode_len as u32,
-                event_len: event_len as u32,
-            },
-            &inner.state,
-        )?;
-
-        Ok(override_styles)
-    }
-
-    /// `pos` is a Event Index:
-    ///
-    /// - if feature="wasm", pos is a UTF-16 index
-    /// - if feature!="wasm", pos is a Unicode index
-    ///
-    /// This method requires auto_commit to be enabled.
-    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
-        match &self.inner {
-            MaybeDetached::Detached(t) => {
-                let mut t = t.try_lock().unwrap();
-                let ranges = t.value.get_text_entity_ranges(pos, len, PosType::Event);
-                for range in ranges.iter().rev() {
-                    t.value
-                        .drain_by_entity_index(range.entity_start, range.entity_len(), None);
-                }
-                Ok(())
-            }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, pos, len)),
-        }
     }
 
     /// `pos` is a Event Index:
