@@ -121,6 +121,12 @@ impl<O> HasId for Change<O> {
     }
 }
 
+impl<O> HasCounter for Change<O> {
+    fn ctr_start(&self) -> Counter {
+        self.id.counter
+    }
+}
+
 impl<O> HasLamport for Change<O> {
     fn lamport(&self) -> Lamport {
         self.lamport

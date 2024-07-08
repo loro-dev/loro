@@ -6,7 +6,7 @@ use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
-use loro_common::HasIdSpan;
+use loro_common::{HasCounter, HasIdSpan};
 use rle::{HasIndex, HasLength, Mergable, RleCollection, Sliceable};
 
 use super::{AppDag, AppDagNode};
@@ -42,6 +42,12 @@ impl HasId for AppDagNode {
             peer: self.peer,
             counter: self.cnt,
         }
+    }
+}
+
+impl HasCounter for AppDagNode {
+    fn ctr_start(&self) -> Counter {
+        self.cnt
     }
 }
 

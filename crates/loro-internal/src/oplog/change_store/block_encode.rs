@@ -67,8 +67,8 @@ use std::borrow::Cow;
 use std::io::Write;
 
 use loro_common::{
-    ContainerID, Counter, HasIdSpan, HasLamportSpan, InternalString, Lamport, LoroError,
-    LoroResult, PeerID, ID,
+    ContainerID, Counter, HasCounterSpan, HasIdSpan, HasLamportSpan, InternalString, Lamport,
+    LoroError, LoroResult, PeerID, ID,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
@@ -256,7 +256,7 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     let out = EncodedBlock {
         version: VERSION,
         counter_start: block[0].id.counter as u32,
-        counter_len: (block.last().unwrap().id_end().counter - block[0].id.counter) as u32,
+        counter_len: (block.last().unwrap().ctr_end() - block[0].id.counter) as u32,
         lamport_start: block[0].lamport(),
         lamport_len: block.last().unwrap().lamport_end() - block[0].lamport(),
         n_changes: block.len() as u32,

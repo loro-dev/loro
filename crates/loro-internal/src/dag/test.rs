@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use loro_common::HasCounter;
 use proptest::prelude::*;
 use std::cmp::Ordering;
 
@@ -60,6 +61,12 @@ impl HasLamport for TestNode {
 impl HasId for TestNode {
     fn id_start(&self) -> ID {
         self.id
+    }
+}
+
+impl HasCounter for TestNode {
+    fn ctr_start(&self) -> Counter {
+        self.id.counter
     }
 }
 
@@ -1110,6 +1117,8 @@ mod find_common_ancestors_proptest {
 
 #[cfg(test)]
 mod dag_partial_iter {
+    use loro_common::HasCounterSpan;
+
     use crate::{dag::iter::IterReturn, tests::PROPTEST_FACTOR_10};
 
     use super::*;
@@ -1193,7 +1202,7 @@ mod dag_partial_iter {
                     data_vv.shrink_to_exclude(IdSpan::new(
                         sliced.id.peer,
                         sliced.id.counter,
-                        sliced.id_end().counter,
+                        sliced.ctr_end(),
                     ));
                     assert_eq!(vv, data_vv, "{} {}", data.id, sliced.id);
                 }

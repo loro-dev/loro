@@ -2,7 +2,8 @@ use block_encode::decode_block_range;
 use bytes::Bytes;
 use itertools::Itertools;
 use loro_common::{
-    Counter, HasId, HasIdSpan, IdLp, IdSpan, Lamport, LoroError, LoroResult, PeerID, ID,
+    Counter, HasCounterSpan, HasId, HasIdSpan, IdLp, IdSpan, Lamport, LoroError, LoroResult,
+    PeerID, ID,
 };
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable};
@@ -354,7 +355,7 @@ impl Deref for BlockChangeRef {
 
 impl BlockChangeRef {
     pub fn get_op_with_counter(&self, counter: Counter) -> Option<BlockOpRef> {
-        if counter >= self.id_end().counter {
+        if counter >= self.ctr_end() {
             return None;
         }
 
