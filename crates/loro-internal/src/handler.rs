@@ -5,7 +5,7 @@ use crate::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, DeleteSpanWithId, ListOp},
         richtext::{
-            richtext_state::{utf8_to_unicode_index, PosType},
+            richtext_state::{utf8_to_unicode_index, utf8_to_unicode_index_with_len, PosType},
             RichtextState, StyleOp, TextStyleInfoFlag,
         },
     },
@@ -1353,23 +1353,23 @@ impl TextHandler {
     }
 
     pub fn insert_utf8(&self, pos: usize, s: &str) -> LoroResult<()> {
+        let pos = match utf8_to_unicode_index(&self.to_string().as_str(), pos) {
+            Ok(pos) => pos,
+            Err(pos) => {
+                if pos >= self.len_event() {
+                    return Err(LoroError::OutOfBound {
+                        pos: pos,
+                        len: self.len_event(),
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+                {
+                    return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
+                }
+            }
+        };
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let pos = match utf8_to_unicode_index(&self.to_string().as_str(), pos) {
-                    Ok(pos) => pos,
-                    Err(pos) => {
-                        if pos > self.len_event() {
-                            return Err(LoroError::OutOfBound {
-                                pos: pos,
-                                len: self.len_event(),
-                                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                            });
-                        }
-                        {
-                            return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
-                        }
-                    }
-                };
                 let mut t = t.try_lock().unwrap();
                 let index = t
                     .value
@@ -1381,7 +1381,7 @@ impl TextHandler {
                 );
                 Ok(())
             }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| self.insert_with_txn_utf8(txn, pos, s)),
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.insert_with_txn(txn, pos, s)),
         }
     }
 
@@ -1394,31 +1394,6 @@ impl TextHandler {
         Ok(())
     }
 
-    pub fn insert_with_txn_utf8(
-        &self,
-        txn: &mut Transaction,
-        pos: usize,
-        s: &str,
-    ) -> LoroResult<()> {
-        let pos = match utf8_to_unicode_index(&self.to_string().as_str(), pos) {
-            Ok(pos) => pos,
-            Err(pos) => {
-                if pos > self.len_event() {
-                    return Err(LoroError::OutOfBound {
-                        pos: pos,
-                        len: self.len_event(),
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                    });
-                }
-                {
-                    return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
-                }
-            }
-        };
-        self.insert_with_txn_and_attr(txn, pos, s, None)?;
-        Ok(())
-    }
-
     /// `pos` is a Event Index:
     ///
     /// - if feature="wasm", pos is a UTF-16 index
@@ -1426,6 +1401,36 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let mut t = t.try_lock().unwrap();
+                let ranges = t.value.get_text_entity_ranges(pos, len, PosType::Event);
+                for range in ranges.iter().rev() {
+                    t.value
+                        .drain_by_entity_index(range.entity_start, range.entity_len(), None);
+                }
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, pos, len)),
+        }
+    }
+
+    pub fn delete_utf8(&self, pos: usize, len: usize) -> LoroResult<()> {
+        let (pos, len) = match utf8_to_unicode_index_with_len(&self.to_string().as_str(), pos, len)
+        {
+            Ok((pos, len)) => (pos, len),
+            Err((pos, len)) => {
+                if pos + len >= self.len_event() {
+                    return Err(LoroError::OutOfBound {
+                        pos: pos,
+                        len: self.len_event(),
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                } else {
+                    return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
+                }
+            }
+        };
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut t = t.try_lock().unwrap();

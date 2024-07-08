@@ -673,10 +673,59 @@ pub(crate) fn utf8_to_unicode_index(s: &str, utf8_index: usize) -> Result<usize,
         current_unicode_index = i + 1;
     }
 
-    if (current_unicode_index == current_utf8_index) {
+    if current_utf8_index == utf8_index {
         Ok(current_unicode_index)
     } else {
         Err(current_unicode_index)
+    }
+}
+
+pub(crate) fn utf8_to_unicode_index_with_len(
+    s: &str,
+    utf8_index: usize,
+    utf8_len: usize,
+) -> Result<(usize, usize), (usize, usize)> {
+    if utf8_index == 0 && utf8_len == 0 {
+        return Ok((0, 0));
+    }
+
+    let mut current_utf8_index = 0;
+    let mut current_unicode_index = 0;
+    let mut unicode_len = 0;
+    let mut in_range = false;
+
+    for (i, c) in s.chars().enumerate() {
+        let char_start = current_utf8_index;
+        let char_end = current_utf8_index + c.len_utf8();
+
+        if utf8_index >= char_start && utf8_index < char_end {
+            if utf8_index != char_start {
+                tracing::info!("WARNING: UTF-8 index is in the middle of a codepoint!");
+                return Err((current_unicode_index, unicode_len));
+            }
+            current_unicode_index = i;
+            in_range = true;
+        }
+
+        if in_range {
+            unicode_len += 1;
+        }
+
+        if utf8_index + utf8_len > char_start && utf8_index + utf8_len <= char_end {
+            if utf8_index + utf8_len != char_end {
+                tracing::info!("WARNING: UTF-8 length ends in the middle of a codepoint!");
+                return Err((current_unicode_index, unicode_len - 1));
+            }
+            return Ok((current_unicode_index, unicode_len));
+        }
+
+        current_utf8_index = char_end;
+    }
+
+    if in_range && utf8_index + utf8_len < current_utf8_index {
+        Ok((current_unicode_index, unicode_len))
+    } else {
+        Err((current_unicode_index, unicode_len))
     }
 }
 
