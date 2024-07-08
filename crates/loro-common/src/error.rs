@@ -1,4 +1,3 @@
-
 use serde_columnar::ColumnarError;
 use thiserror::Error;
 
@@ -69,6 +68,8 @@ pub enum LoroError {
     UndoWithDifferentPeerId { expected: PeerID, actual: PeerID },
     #[error("The input JSON schema is invalid")]
     InvalidJsonSchema,
+    #[error("Cannot insert utf-8 in the middle of the codepoint in Unicode.")]
+    UTF8InUnicodeCodePoint { pos: usize },
 }
 
 #[derive(Error, Debug)]

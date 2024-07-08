@@ -960,3 +960,25 @@ fn counter() {
     let doc2 = LoroDoc::new_auto_commit();
     doc2.import_json_updates(json).unwrap();
 }
+
+//#[cfg(not(feature = "wasm"))]
+#[test]
+fn test_insert_utf8() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "Hello ").unwrap();
+    text.insert_utf8(6, "World").unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"Hello World"}])
+    )
+}
+
+#[test]
+#[should_panic]
+fn test_insert_utf8_panic() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "你好").unwrap();
+    text.insert_utf8(1, "World").unwrap();
+}

@@ -636,8 +636,7 @@ pub(crate) fn utf16_to_unicode_index(s: &str, utf16_index: usize) -> Result<usiz
     let mut current_utf16_index = 0;
     let mut current_unicode_index = 0;
     for (i, c) in s.chars().enumerate() {
-        let len = c.len_utf16();
-        current_utf16_index += len;
+        current_utf16_index += c.len_utf16();
         if current_utf16_index == utf16_index {
             return Ok(i + 1);
         }
@@ -652,9 +651,34 @@ pub(crate) fn utf16_to_unicode_index(s: &str, utf16_index: usize) -> Result<usiz
     Err(current_unicode_index)
 }
 
+pub(crate) fn utf8_to_unicode_index(s: &str, utf8_index: usize) -> Result<usize, usize> {
+    if utf8_index == 0 {
+        return Ok(0);
+    }
+
+    let mut current_utf8_index = 0;
+    let mut current_unicode_index = 0;
+    for (i, c) in s.chars().enumerate() {
+        let char_start = current_utf8_index;
+        current_utf8_index += c.len_utf8();
+
+        if utf8_index == char_start {
+            return Ok(i);
+        }
+
+        if utf8_index < current_utf8_index {
+            tracing::info!("WARNING: UTF-8 index is in the middle of a codepoint!");
+            return Err(i);
+        }
+        current_unicode_index = i + 1;
+    }
+
+    Ok(current_unicode_index)
+}
+
 fn pos_to_unicode_index(s: &str, pos: usize, kind: PosType) -> Option<usize> {
     match kind {
-        PosType::Bytes => todo!(),
+        PosType::Bytes => utf8_to_unicode_index(s, pos).ok(),
         PosType::Unicode => Some(pos),
         PosType::Utf16 => utf16_to_unicode_index(s, pos).ok(),
         PosType::Entity => Some(pos),
@@ -1215,7 +1239,7 @@ impl RichtextState {
         }
 
         let (c, entity_index) = match pos_type {
-            PosType::Bytes => todo!(),
+            PosType::Bytes => self.find_best_insert_pos::<UnicodeQueryT>(pos),
             PosType::Unicode => self.find_best_insert_pos::<UnicodeQueryT>(pos),
             PosType::Utf16 => self.find_best_insert_pos::<Utf16QueryT>(pos),
             PosType::Entity => self.find_best_insert_pos::<EntityQueryT>(pos),
