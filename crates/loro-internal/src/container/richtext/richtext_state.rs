@@ -673,12 +673,16 @@ pub(crate) fn utf8_to_unicode_index(s: &str, utf8_index: usize) -> Result<usize,
         current_unicode_index = i + 1;
     }
 
-    Ok(current_unicode_index)
+    if (current_unicode_index == current_utf8_index) {
+        Ok(current_unicode_index)
+    } else {
+        Err(current_unicode_index)
+    }
 }
 
 fn pos_to_unicode_index(s: &str, pos: usize, kind: PosType) -> Option<usize> {
     match kind {
-        PosType::Bytes => utf8_to_unicode_index(s, pos).ok(),
+        PosType::Bytes => unreachable!(),
         PosType::Unicode => Some(pos),
         PosType::Utf16 => utf16_to_unicode_index(s, pos).ok(),
         PosType::Entity => Some(pos),
@@ -1239,7 +1243,7 @@ impl RichtextState {
         }
 
         let (c, entity_index) = match pos_type {
-            PosType::Bytes => self.find_best_insert_pos::<UnicodeQueryT>(pos),
+            PosType::Bytes => unreachable!(),
             PosType::Unicode => self.find_best_insert_pos::<UnicodeQueryT>(pos),
             PosType::Utf16 => self.find_best_insert_pos::<Utf16QueryT>(pos),
             PosType::Entity => self.find_best_insert_pos::<EntityQueryT>(pos),

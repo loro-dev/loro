@@ -1358,13 +1358,22 @@ impl TextHandler {
                 let pos = match utf8_to_unicode_index(&self.to_string().as_str(), pos) {
                     Ok(pos) => pos,
                     Err(pos) => {
-                        return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
+                        if pos > self.len_event() {
+                            return Err(LoroError::OutOfBound {
+                                pos: pos,
+                                len: self.len_event(),
+                                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                            });
+                        }
+                        {
+                            return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
+                        }
                     }
                 };
                 let mut t = t.try_lock().unwrap();
                 let index = t
                     .value
-                    .get_entity_index_for_text_insert(pos, PosType::Bytes);
+                    .get_entity_index_for_text_insert(pos, PosType::Unicode);
                 t.value.insert_at_entity_index(
                     index,
                     BytesSlice::from_bytes(s.as_bytes()),
@@ -1394,11 +1403,41 @@ impl TextHandler {
         let pos = match utf8_to_unicode_index(&self.to_string().as_str(), pos) {
             Ok(pos) => pos,
             Err(pos) => {
-                return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
+                if pos > self.len_event() {
+                    return Err(LoroError::OutOfBound {
+                        pos: pos,
+                        len: self.len_event(),
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+                {
+                    return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
+                }
             }
         };
         self.insert_with_txn_and_attr(txn, pos, s, None)?;
         Ok(())
+    }
+
+    /// `pos` is a Event Index:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
+    ///
+    /// This method requires auto_commit to be enabled.
+    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let mut t = t.try_lock().unwrap();
+                let ranges = t.value.get_text_entity_ranges(pos, len, PosType::Event);
+                for range in ranges.iter().rev() {
+                    t.value
+                        .drain_by_entity_index(range.entity_start, range.entity_len(), None);
+                }
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, pos, len)),
+        }
     }
 
     /// If attr is specified, it will be used as the attribute of the inserted text.

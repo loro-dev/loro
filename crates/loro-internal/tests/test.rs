@@ -961,7 +961,6 @@ fn counter() {
     doc2.import_json_updates(json).unwrap();
 }
 
-//#[cfg(not(feature = "wasm"))]
 #[test]
 fn test_insert_utf8() {
     let doc = LoroDoc::new_auto_commit();
@@ -976,9 +975,18 @@ fn test_insert_utf8() {
 
 #[test]
 #[should_panic]
-fn test_insert_utf8_panic() {
+fn test_insert_utf8_panic_cross_unicode() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
     text.insert_utf8(0, "你好").unwrap();
     text.insert_utf8(1, "World").unwrap();
+}
+
+#[test]
+#[should_panic]
+fn test_insert_utf8_panic_out_bound() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello ").unwrap();
+    text.insert(7, "World").unwrap();
 }
