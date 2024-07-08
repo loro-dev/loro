@@ -12,9 +12,14 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
         &self,
         start: Bound<&[u8]>,
         end: Bound<&[u8]>,
-    ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)>>;
+    ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)> + '_>;
     fn len(&self) -> usize;
     fn size(&self) -> usize;
+    /// Performs a binary search over the keys in the store.
+    ///
+    /// The comparator function should return an order code that indicates
+    /// whether its argument is `Less`, `Equal` or `Greater` the desired
+    /// target.
     fn binary_search_by(
         &self,
         start: Bound<&[u8]>,
@@ -73,8 +78,11 @@ mod mem {
             &self,
             start: Bound<&[u8]>,
             end: Bound<&[u8]>,
-        ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)>> {
-            todo!()
+        ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)> + '_> {
+            Box::new(
+                self.range::<[u8], _>((start, end))
+                    .map(|(k, v)| (k.clone(), v.clone())),
+            )
         }
 
         fn len(&self) -> usize {
@@ -97,9 +105,17 @@ mod mem {
             &self,
             start: Bound<&[u8]>,
             end: Bound<&[u8]>,
-            f: Box<dyn FnMut(&Bytes, &Bytes) -> std::cmp::Ordering>,
+            mut f: Box<dyn FnMut(&Bytes, &Bytes) -> std::cmp::Ordering>,
         ) -> Option<(Bytes, Bytes)> {
-            todo!()
+            for (k, v) in self.range::<[u8], _>((start, end)) {
+                match f(k, v) {
+                    std::cmp::Ordering::Equal => return Some((k.clone(), v.clone())),
+                    std::cmp::Ordering::Less => continue,
+                    std::cmp::Ordering::Greater => break,
+                }
+            }
+
+            None
         }
     }
 }

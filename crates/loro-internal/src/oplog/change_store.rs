@@ -165,7 +165,10 @@ impl ChangeStore {
         }
 
         let store = self.external_kv.lock().unwrap();
-        let mut iter = store.scan(std::ops::Bound::Unbounded, Bound::Included(&id.to_bytes()));
+        let mut iter = store.scan(
+            std::ops::Bound::Unbounded,
+            Bound::Included(&Bytes::copy_from_slice(&id.to_bytes())),
+        );
         let (b_id, b_bytes) = iter.next_back()?;
         let block_id: ID = ID::from_bytes(&b_id[..]);
         let block = ChangesBlock::from_bytes(b_bytes, true).unwrap();
