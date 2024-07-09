@@ -1515,6 +1515,21 @@ impl LoroText {
         Ok(())
     }
 
+    /// Insert some string at utf-8 index.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert_utf8(0, "Hello");
+    /// ```
+    pub fn insert_utf8(&mut self, index: usize, content: &str) -> JsResult<()> {
+        self.handler.insert_utf8(index, content)?;
+        Ok(())
+    }
+
     /// Delete elements from index to index + len
     ///
     /// @example
@@ -1530,6 +1545,24 @@ impl LoroText {
     /// ```
     pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
         self.handler.delete(index, len)?;
+        Ok(())
+    }
+
+    /// Delete elements from index to utf-8 index + len
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert_utf8(0, "Hello");
+    /// text.delete_utf8(1, 3);
+    /// const s = text.toString();
+    /// console.log(s); // "Ho"
+    /// ```
+    pub fn delete_utf8(&mut self, index: usize, len: usize) -> JsResult<()> {
+        self.handler.delete_utf8(index, len)?;
         Ok(())
     }
 

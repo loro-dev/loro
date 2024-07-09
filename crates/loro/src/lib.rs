@@ -983,9 +983,19 @@ impl LoroText {
         self.handler.insert(pos, s)
     }
 
+    /// Insert a string at the given utf-8 position.
+    pub fn insert_utf8(&self, pos: usize, s: &str) -> LoroResult<()> {
+        self.handler.insert_utf8(pos, s)
+    }
+
     /// Delete a range of text at the given unicode position with unicode length.
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
         self.handler.delete(pos, len)
+    }
+
+    /// Delete a range of text at the given utf-8 position with utf-8 length.
+    pub fn delete_utf8(&self, pos: usize, len: usize) -> LoroResult<()> {
+        self.handler.delete_utf8(pos, len)
     }
 
     /// Whether the text container is empty.
