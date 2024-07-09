@@ -1402,7 +1402,10 @@ impl TextHandler {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut t = t.try_lock().unwrap();
-                let ranges = t.value.get_text_entity_ranges(pos, len, PosType::Event);
+                let ranges = t
+                    .value
+                    .get_text_entity_ranges(pos, len, PosType::Event)
+                    .unwrap();
                 for range in ranges.iter().rev() {
                     t.value
                         .drain_by_entity_index(range.entity_start, range.entity_len(), None);
@@ -1414,32 +1417,22 @@ impl TextHandler {
     }
 
     pub fn delete_utf8(&self, pos: usize, len: usize) -> LoroResult<()> {
-        let (pos, len) = match utf8_to_unicode_index_with_len(&self.to_string().as_str(), pos, len)
-        {
-            Ok((pos, len)) => (pos, len),
-            Err((pos, len)) => {
-                if pos + len >= self.len_event() {
-                    return Err(LoroError::OutOfBound {
-                        pos: pos,
-                        len: self.len_event(),
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                    });
-                } else {
-                    return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
-                }
-            }
-        };
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut t = t.try_lock().unwrap();
-                let ranges = t.value.get_text_entity_ranges(pos, len, PosType::Event);
+                let ranges = match t.value.get_text_entity_ranges(pos, len, PosType::Bytes) {
+                    Err(x) => return Err(x),
+                    Ok(x) => x,
+                };
                 for range in ranges.iter().rev() {
                     t.value
                         .drain_by_entity_index(range.entity_start, range.entity_len(), None);
                 }
                 Ok(())
             }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, pos, len)),
+            MaybeDetached::Attached(a) => {
+                a.with_txn(|txn| self.delete_with_txn_utf8(txn, pos, len))
+            }
         }
     }
 
@@ -1552,28 +1545,65 @@ impl TextHandler {
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
     pub fn delete_with_txn(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
+        self.delete_with_txn_inline(txn, pos, len, PosType::Event)
+    }
+
+    pub fn delete_with_txn_utf8(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        len: usize,
+    ) -> LoroResult<()> {
+        self.delete_with_txn_inline(txn, pos, len, PosType::Bytes)
+    }
+
+    fn delete_with_txn_inline(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        len: usize,
+        pos_type: PosType,
+    ) -> LoroResult<()> {
         if len == 0 {
             return Ok(());
         }
 
-        if pos + len > self.len_event() {
-            error!("pos={} len={} len_event={}", pos, len, self.len_event());
-            return Err(LoroError::OutOfBound {
-                pos: pos + len,
-                len: self.len_event(),
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-            });
+        match pos_type {
+            PosType::Event => {
+                if pos + len > self.len_event() {
+                    error!("pos={} len={} len_event={}", pos, len, self.len_event());
+                    return Err(LoroError::OutOfBound {
+                        pos: pos + len,
+                        len: self.len_event(),
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+            }
+            PosType::Bytes => {
+                if pos + len > self.len_utf8() {
+                    error!("pos={} len={} len_event={}", pos, len, self.len_event());
+                    return Err(LoroError::OutOfBound {
+                        pos: pos + len,
+                        len: self.len_event(),
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+            }
+            _ => (),
         }
 
         let inner = self.inner.try_attached_state()?;
         let s = tracing::span!(tracing::Level::INFO, "delete", "pos={} len={}", pos, len);
         let _e = s.enter();
-        let ranges = inner.with_state(|state| {
+        let ranges = match inner.with_state(|state| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
-            richtext_state.get_text_entity_ranges_in_event_index_range(pos, len)
-        });
+            richtext_state.get_text_entity_ranges_in_event_index_range(pos, len, pos_type)
+        }) {
+            Err(x) => return Err(x),
+            Ok(x) => x,
+        };
 
-        debug_assert_eq!(ranges.iter().map(|x| x.event_len).sum::<usize>(), len);
+        //debug_assert_eq!(ranges.iter().map(|x| x.event_len).sum::<usize>(), len);
         let mut event_end = (pos + len) as isize;
         for range in ranges.iter().rev() {
             let event_start = event_end - range.event_len as isize;

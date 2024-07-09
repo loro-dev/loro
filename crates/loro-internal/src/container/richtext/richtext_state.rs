@@ -4,7 +4,9 @@ use generic_btree::{
     rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, Cursor,
 };
-use loro_common::{Counter, IdFull, IdLpSpan, IdSpan, Lamport, LoroError, LoroValue, ID};
+use loro_common::{
+    Counter, IdFull, IdLpSpan, IdSpan, Lamport, LoroError, LoroResult, LoroValue, ID,
+};
 use query::{ByteQuery, ByteQueryT};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{
@@ -993,6 +995,7 @@ mod query {
 
                     // Allow left to not at the correct utf16 boundary. If so fallback to the last position.
                     // TODO: if we remove the use of query(pos-1), we won't need this fallback behavior
+                    // WARNING: Unable to report error!!!
                     let offset = utf16_to_unicode_index(s.as_str(), left).unwrap_or_else(|e| e);
                     (offset, true)
                 }
@@ -1072,6 +1075,7 @@ mod query {
 
                     // Allow left to not at the correct utf16 boundary. If so fallback to the last position.
                     // TODO: if we remove the use of query(pos-1), we won't need this fallback behavior
+                    // WARNING: Unable to report error!!!
                     let offset = utf8_to_unicode_index(s.as_str(), left).unwrap_or_else(|e| e);
                     (offset, true)
                 }
@@ -1828,17 +1832,17 @@ impl RichtextState {
         pos: usize,
         len: usize,
         pos_type: PosType,
-    ) -> Vec<EntityRangeInfo> {
+    ) -> LoroResult<Vec<EntityRangeInfo>> {
         if self.tree.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         if len == 0 {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         if pos + len > self.len(pos_type) {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         let mut ans: Vec<EntityRangeInfo> = Vec::new();
@@ -1910,7 +1914,7 @@ impl RichtextState {
             }
         }
 
-        ans
+        Ok(ans)
     }
 
     // PERF: can be splitted into two methods. One is without cursor_to_event_index
@@ -2447,7 +2451,7 @@ impl RichtextState {
         pos: usize,
         kind: PosType,
     ) -> Option<ID> {
-        let v = &self.get_text_entity_ranges(pos, 1, kind);
+        let v = &self.get_text_entity_ranges(pos, 1, kind).unwrap();
         let a = v.first()?;
         Some(a.id_start)
     }
@@ -2580,7 +2584,8 @@ mod test {
         fn delete(&mut self, pos: usize, len: usize) {
             let ranges = self
                 .state
-                .get_text_entity_ranges(pos, len, PosType::Unicode);
+                .get_text_entity_ranges(pos, len, PosType::Unicode)
+                .unwrap();
             for range in ranges.into_iter().rev() {
                 self.state.drain_by_entity_index(
                     range.entity_start,

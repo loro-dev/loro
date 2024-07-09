@@ -775,10 +775,11 @@ impl RichtextState {
         &mut self,
         pos: usize,
         len: usize,
-    ) -> Vec<EntityRangeInfo> {
+        pos_type: PosType,
+    ) -> LoroResult<Vec<EntityRangeInfo>> {
         self.state
             .get_mut()
-            .get_text_entity_ranges(pos, len, PosType::Event)
+            .get_text_entity_ranges(pos, len, pos_type)
     }
 
     #[inline]
