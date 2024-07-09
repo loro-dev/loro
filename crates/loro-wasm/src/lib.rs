@@ -1523,8 +1523,9 @@ impl LoroText {
     ///
     /// const doc = new Loro();
     /// const text = doc.getText("text");
-    /// text.insert_utf8(0, "Hello");
+    /// text.insertUtf8(0, "Hello");
     /// ```
+    #[wasm_bindgen(js_name = "insertUtf8")]
     pub fn insert_utf8(&mut self, index: usize, content: &str) -> JsResult<()> {
         self.handler.insert_utf8(index, content)?;
         Ok(())
@@ -1556,11 +1557,12 @@ impl LoroText {
     ///
     /// const doc = new Loro();
     /// const text = doc.getText("text");
-    /// text.insert_utf8(0, "Hello");
-    /// text.delete_utf8(1, 3);
+    /// text.insertUtf8(0, "Hello");
+    /// text.deleteUtf8(1, 3);
     /// const s = text.toString();
     /// console.log(s); // "Ho"
     /// ```
+    #[wasm_bindgen(js_name = "deleteUtf8")]
     pub fn delete_utf8(&mut self, index: usize, len: usize) -> JsResult<()> {
         self.handler.delete_utf8(index, len)?;
         Ok(())

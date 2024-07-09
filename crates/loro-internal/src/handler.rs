@@ -4,10 +4,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, DeleteSpanWithId, ListOp},
-        richtext::{
-            richtext_state::{utf8_to_unicode_index_with_len, PosType},
-            RichtextState, StyleOp, TextStyleInfoFlag,
-        },
+        richtext::{richtext_state::PosType, RichtextState, StyleOp, TextStyleInfoFlag},
     },
     cursor::{Cursor, Side},
     delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
