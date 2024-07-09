@@ -1223,6 +1223,9 @@ mod cursor_cache {
                             return Ok(());
                         };
                         let utf16offset = unicode_to_utf16_index(s, cursor.offset).unwrap();
+                        if pos < utf16offset {
+                            return Err(pos);
+                        }
                         self.entity = Some(EntityIndexCacheItem {
                             pos: pos - utf16offset,
                             pos_type: kind,
@@ -1388,7 +1391,11 @@ impl RichtextState {
                     c,
                     &self.tree,
                 ) {
-                    return Err(LoroError::UTF8InUnicodeCodePoint { pos: pos });
+                    return match pos_type {
+                        PosType::Bytes => Err(LoroError::UTF8InUnicodeCodePoint { pos: pos }),
+                        PosType::Utf16 => Err(LoroError::UTF16InUnicodeCodePoint { pos: pos }),
+                        _ => unreachable!(),
+                    };
                 }
             }
         }
