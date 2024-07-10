@@ -1330,6 +1330,40 @@ impl TextHandler {
     ///
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
+    pub fn char_at(&self, pos: usize) -> LoroResult<char> {
+        if pos > self.len_event() {
+            return Err(LoroError::OutOfBound {
+                pos: pos,
+                len: self.len_event(),
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
+        }
+        if let Ok(c) = match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = t.try_lock().unwrap();
+                t.value.get_char_by_event_index(pos - 1)
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                state
+                    .as_richtext_state_mut()
+                    .unwrap()
+                    .get_char_by_event_index(pos - 1)
+            }),
+        } {
+            Ok(c)
+        } else {
+            Err(LoroError::OutOfBound {
+                pos: pos,
+                len: self.len_event(),
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            })
+        }
+    }
+
+    /// `pos` is a Event Index:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
     ///
     /// This method requires auto_commit to be enabled.
     pub fn insert(&self, pos: usize, s: &str) -> LoroResult<()> {

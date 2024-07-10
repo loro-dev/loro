@@ -1104,3 +1104,44 @@ fn test_delete_utf8_panic_out_bound_len() {
     text.insert(0, "Hello").unwrap();
     text.delete_utf8(1, 10).unwrap();
 }
+
+#[test]
+fn test_char_at() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert(0, "Herld").unwrap();
+    text.insert(2, "llo Wo").unwrap();
+    assert_eq!(text.char_at(1).unwrap(), 'H');
+    assert_eq!(text.char_at(2).unwrap(), 'e');
+    assert_eq!(text.char_at(3).unwrap(), 'l');
+    assert_eq!(text.char_at(4).unwrap(), 'l');
+    let err = text.char_at(15).unwrap_err();
+    assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }))
+}
+
+#[test]
+fn test_char_at_detached() {
+    let text = TextHandler::new_detached();
+    text.insert(0, "Herld").unwrap();
+    text.insert(2, "llo Wo").unwrap();
+    assert_eq!(text.char_at(1).unwrap(), 'H');
+    assert_eq!(text.char_at(2).unwrap(), 'e');
+    assert_eq!(text.char_at(3).unwrap(), 'l');
+    assert_eq!(text.char_at(4).unwrap(), 'l');
+    let err = text.char_at(15).unwrap_err();
+    assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }))
+}
+
+#[test]
+fn test_char_at_wchar() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert(0, "你好").unwrap();
+    text.insert(1, "世界").unwrap();
+    assert_eq!(text.char_at(1).unwrap(), '你');
+    assert_eq!(text.char_at(2).unwrap(), '世');
+    assert_eq!(text.char_at(3).unwrap(), '界');
+    assert_eq!(text.char_at(4).unwrap(), '好');
+    let err = text.char_at(5).unwrap_err();
+    assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }))
+}

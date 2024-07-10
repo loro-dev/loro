@@ -1620,6 +1620,27 @@ impl RichtextState {
         self.style_ranges.as_mut().unwrap()
     }
 
+    pub(crate) fn get_char_by_event_index(&self, pos: usize) -> Result<char, ()> {
+        let cursor = self.tree.query::<EventIndexQuery>(&pos).unwrap().cursor;
+        let Some(str) = &self.tree.get_elem(cursor.leaf) else {
+            return Err(());
+        };
+        if cfg!(not(feature = "wasm")) {
+            let mut char_iter = str.as_str().unwrap().chars();
+            match &mut char_iter.nth(cursor.offset) {
+                Some(c) => Ok(*c),
+                None => Err(()),
+            }
+        } else {
+            let s = str.as_str().unwrap();
+            let utf16offset = unicode_to_utf16_index(s, cursor.offset).unwrap();
+            match s.encode_utf16().nth(utf16offset) {
+                Some(c) => Ok(std::char::from_u32(c as u32).unwrap()),
+                None => Err(()),
+            }
+        }
+    }
+
     /// Find the best insert position based on algorithm similar to Peritext.
     /// The result is only different from `query` when there are style anchors around the insert pos.
     /// Returns the right neighbor of the insert pos and the entity index.

@@ -96,6 +96,10 @@ impl RichtextState {
         }
     }
 
+    pub(crate) fn get_char_by_event_index(&mut self, pos: usize) -> Result<char, ()> {
+        self.state.get_mut().get_char_by_event_index(pos)
+    }
+
     fn get_style_start(
         &mut self,
         style_starts: &mut FxHashMap<Arc<StyleOp>, Pos>,
