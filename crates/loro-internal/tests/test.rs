@@ -960,3 +960,147 @@ fn counter() {
     let doc2 = LoroDoc::new_auto_commit();
     doc2.import_json_updates(json).unwrap();
 }
+
+#[test]
+fn test_insert_utf8() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "Hello ").unwrap();
+    text.insert_utf8(6, "World").unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"Hello World"}])
+    )
+}
+
+#[test]
+fn test_insert_utf8_cross_unicode_1() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "你好").unwrap();
+    text.insert_utf8(3, "World").unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"你World好"}])
+    )
+}
+
+#[test]
+fn test_insert_utf8_cross_unicode_2() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "你好").unwrap();
+    text.insert_utf8(6, "World").unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"你好World"}])
+    )
+}
+
+#[test]
+fn test_insert_utf8_detached() {
+    let text = TextHandler::new_detached();
+    text.insert_utf8(0, "Hello ").unwrap();
+    text.insert_utf8(6, "World").unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"Hello World"}])
+    )
+}
+
+#[test]
+#[should_panic]
+fn test_insert_utf8_panic_cross_unicode() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "你好").unwrap();
+    text.insert_utf8(1, "World").unwrap();
+}
+
+#[test]
+#[should_panic]
+fn test_insert_utf8_panic_out_bound() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "Hello ").unwrap();
+    text.insert_utf8(7, "World").unwrap();
+}
+
+//    println!("{}", text.get_richtext_value().to_json_value().to_string());
+
+#[test]
+fn test_delete_utf8() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "Hello").unwrap();
+    text.delete_utf8(1, 3).unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"Ho"}])
+    )
+}
+
+#[test]
+fn test_delete_utf8_with_zero_len() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "Hello").unwrap();
+    text.delete_utf8(1, 0).unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"Hello"}])
+    )
+}
+
+#[test]
+fn test_delete_utf8_cross_unicode() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "你好").unwrap();
+    text.delete_utf8(0, 3).unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"好"}])
+    )
+}
+
+#[test]
+fn test_delete_utf8_detached() {
+    let text = TextHandler::new_detached();
+    text.insert_utf8(0, "Hello").unwrap();
+    text.delete_utf8(1, 3).unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"Ho"}])
+    )
+}
+
+// WARNING:
+// Due to the current inability to report an error on
+// get_offset_and_found on BTree, this test won't be ok.
+// #[test]
+// #[should_panic]
+// fn test_delete_utf8_panic_cross_unicode() {
+//     let doc = LoroDoc::new_auto_commit();
+//     let text = doc.get_text("text");
+//     text.insert_utf8(0, "你好").unwrap();
+//     text.delete_utf8(0, 2).unwrap();
+// }
+
+#[test]
+#[should_panic]
+fn test_delete_utf8_panic_out_bound_pos() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    text.delete_utf8(10, 1).unwrap();
+}
+
+#[test]
+#[should_panic]
+fn test_delete_utf8_panic_out_bound_len() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    text.delete_utf8(1, 10).unwrap();
+}
