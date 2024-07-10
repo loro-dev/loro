@@ -576,6 +576,42 @@ impl CanRemove for RichtextStateChunk {
     }
 }
 
+//TODO: use Cow to perf code
+pub(crate) fn slice_string_by_event_index(
+    s: &str,
+    start_index: usize,
+    end_index: usize,
+) -> Result<String, ()> {
+    if cfg!(feature = "wasm") {
+        utf16_slice(s, start_index, end_index)
+    } else {
+        unicode_slice(s, start_index, end_index)
+    }
+}
+
+//TODO: start/end can be scanned in one loop, but now it takes twice the time
+fn unicode_slice(s: &str, start_index: usize, end_index: usize) -> Result<String, ()> {
+    let (Some(start), Some(end)) = (
+        unicode_to_utf8_index(s, start_index),
+        unicode_to_utf8_index(s, end_index),
+    ) else {
+        return Err(());
+    };
+    Ok(s[start..end].to_string())
+}
+
+fn utf16_slice(s: &str, start_index: usize, end_index: usize) -> Result<String, ()> {
+    let utf16: Vec<u16> = s.encode_utf16().collect();
+
+    if start_index > utf16.len() || end_index > utf16.len() || start_index > end_index {
+        return Err(());
+    }
+
+    let utf16_slice = &utf16[start_index..end_index];
+
+    Ok(String::from_utf16(utf16_slice).unwrap())
+}
+
 pub(crate) fn unicode_to_utf8_index(s: &str, unicode_index: usize) -> Option<usize> {
     let mut current_unicode_index = 0;
     for (byte_index, _) in s.char_indices() {
@@ -1882,6 +1918,55 @@ impl RichtextState {
                 }
                 RichtextStateChunk::Style { .. } => {
                     entity_index += 1;
+                }
+            }
+        }
+
+        Ok(ans)
+    }
+
+    pub(crate) fn get_text_slice_by_event_index(
+        &self,
+        pos: usize,
+        len: usize,
+    ) -> LoroResult<String> {
+        if self.tree.is_empty() {
+            return Ok(String::new());
+        }
+
+        if len == 0 {
+            return Ok(String::new());
+        }
+
+        if pos + len > self.len_event() {
+            return Err(LoroError::OutOfBound {
+                pos: pos + len,
+                len: self.len_event(),
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
+        }
+
+        let mut ans = String::new();
+        let (start, end) = (
+            self.tree.query::<EventIndexQuery>(&pos).unwrap().cursor,
+            self.tree
+                .query::<EventIndexQuery>(&(pos + len))
+                .unwrap()
+                .cursor,
+        );
+
+        for span in self.tree.iter_range(start..end) {
+            let start = span.start.unwrap_or(0);
+            let end = span.end.unwrap_or(span.elem.rle_len());
+            if end == 0 {
+                break;
+            }
+
+            if let RichtextStateChunk::Text(s) = span.elem {
+                let range = s.entity_range_to_event_range(start..end);
+                match slice_string_by_event_index(&s.as_str(), range.start, range.end) {
+                    Ok(x) => ans.push_str(&x),
+                    Err(()) => return Err(LoroError::UTF16InUnicodeCodePoint { pos: pos + len }),
                 }
             }
         }

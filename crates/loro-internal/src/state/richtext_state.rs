@@ -96,6 +96,14 @@ impl RichtextState {
         }
     }
 
+    pub(crate) fn get_text_slice_by_event_index(
+        &mut self,
+        pos: usize,
+        len: usize,
+    ) -> LoroResult<String> {
+        self.state.get_mut().get_text_slice_by_event_index(pos, len)
+    }
+
     pub(crate) fn get_char_by_event_index(&mut self, pos: usize) -> Result<char, ()> {
         self.state.get_mut().get_char_by_event_index(pos)
     }

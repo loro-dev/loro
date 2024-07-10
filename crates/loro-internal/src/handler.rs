@@ -1360,6 +1360,28 @@ impl TextHandler {
         }
     }
 
+    pub fn slice(&self, start_index: usize, end_index: usize) -> LoroResult<String> {
+        if end_index < start_index {
+            return Err(LoroError::EndIndexLessThanStartIndex {
+                start: start_index,
+                end: end_index,
+            });
+        }
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = t.try_lock().unwrap();
+                t.value
+                    .get_text_slice_by_event_index(start_index - 1, end_index - start_index)
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                state
+                    .as_richtext_state_mut()
+                    .unwrap()
+                    .get_text_slice_by_event_index(start_index - 1, end_index - start_index)
+            }),
+        }
+    }
+
     /// `pos` is a Event Index:
     ///
     /// - if feature="wasm", pos is a UTF-16 index
