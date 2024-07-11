@@ -306,7 +306,7 @@ describe("richtext", () => {
     const doc = new Loro();
     const text = doc.getText('t');
     text.insert(0, "你好");
-    expect(text.slice(1, 2)).toStrictEqual("你");
+    expect(text.slice(0, 1)).toStrictEqual("你");
   });
 
   it("charAt", () => {

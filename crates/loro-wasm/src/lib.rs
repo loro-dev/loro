@@ -1524,7 +1524,7 @@ impl LoroText {
     /// const doc = new Loro();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
-    /// text.slice(1,3); // "He"
+    /// text.slice(0, 2); // "He"
     /// ```
     pub fn slice(&mut self, start_index: usize, end_index: usize) -> JsResult<String> {
         match self.handler.slice(start_index, end_index) {

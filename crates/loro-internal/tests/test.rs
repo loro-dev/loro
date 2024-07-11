@@ -1152,8 +1152,8 @@ fn test_text_slice() {
     let text = doc.get_text("text");
     text.insert(0, "Hello").unwrap();
     text.insert(1, "World").unwrap();
-    assert_eq!(text.slice(1, 4).unwrap(), "HWo");
-    assert_eq!(text.slice(1, 1).unwrap(), "");
+    assert_eq!(text.slice(0, 4).unwrap(), "HWor");
+    assert_eq!(text.slice(0, 1).unwrap(), "H");
 }
 
 #[test]
@@ -1161,8 +1161,8 @@ fn test_text_slice_detached() {
     let text = TextHandler::new_detached();
     text.insert(0, "Herld").unwrap();
     text.insert(2, "llo Wo").unwrap();
-    assert_eq!(text.slice(1, 4).unwrap(), "Hel");
-    assert_eq!(text.slice(1, 1).unwrap(), "");
+    assert_eq!(text.slice(0, 4).unwrap(), "Hell");
+    assert_eq!(text.slice(0, 1).unwrap(), "H");
 }
 
 #[test]
@@ -1171,7 +1171,7 @@ fn test_text_slice_wchar() {
     let text = doc.get_text("text");
     text.insert(0, "你好").unwrap();
     text.insert(1, "世界").unwrap();
-    assert_eq!(text.slice(1, 3).unwrap(), "你世");
+    assert_eq!(text.slice(0, 3).unwrap(), "你世界");
 }
 
 #[test]

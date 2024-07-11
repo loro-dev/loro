@@ -1376,13 +1376,13 @@ impl TextHandler {
             MaybeDetached::Detached(t) => {
                 let t = t.try_lock().unwrap();
                 t.value
-                    .get_text_slice_by_event_index(start_index - 1, end_index - start_index)
+                    .get_text_slice_by_event_index(start_index, end_index - start_index)
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 state
                     .as_richtext_state_mut()
                     .unwrap()
-                    .get_text_slice_by_event_index(start_index - 1, end_index - start_index)
+                    .get_text_slice_by_event_index(start_index, end_index - start_index)
             }),
         }
     }
@@ -1394,7 +1394,7 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn splice(&self, pos: usize, len: usize, s: &str) -> LoroResult<String> {
-        let x = self.slice(pos + 1, pos + len + 1)?;
+        let x = self.slice(pos, pos + len)?;
         self.delete(pos, len)?;
         self.insert(pos, s)?;
         Ok(x)
