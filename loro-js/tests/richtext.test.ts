@@ -300,27 +300,27 @@ describe("richtext", () => {
     expect(text.toDelta()).toStrictEqual([
       { insert: "你b"},
     ]);
+  });
 
-    it("Slice", () => {
-      const doc = new Loro();
-      const text = doc.getText('t');
-      text.insert(0, "你好");
-      expect(text.slice(1, 2)).toStrictEqual("你");
-    });
+  it("Slice", () => {
+    const doc = new Loro();
+    const text = doc.getText('t');
+    text.insert(0, "你好");
+    expect(text.slice(1, 2)).toStrictEqual("你");
+  });
 
-    it("charAt", () => {
-      const doc = new Loro();
-      const text = doc.getText('t');
-      text.insert(0, "你好");
-      expect(text.charAt(1)).toStrictEqual("你");
-    });
+  it("charAt", () => {
+    const doc = new Loro();
+    const text = doc.getText('t');
+    text.insert(0, "你好");
+    expect(text.charAt(1)).toStrictEqual("你");
+  });
 
-    it("splice", () => {
-      const doc = new Loro();
-      const text = doc.getText('t');
-      text.insert(0, "你好");
-      text.splice(1, 1, "我")
-      expect(text.toString()).toStrictEqual("我好");
-    });
+  it("splice", () => {
+    const doc = new Loro();
+    const text = doc.getText('t');
+    text.insert(0, "你好");
+    text.splice(1, 1, "我")
+    expect(text.toString()).toStrictEqual("你我");
   });
 });

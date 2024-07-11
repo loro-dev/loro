@@ -32,7 +32,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use tracing::{debug, error, info, instrument, Event};
+use tracing::{debug, error, info, instrument};
 
 mod tree;
 pub use tree::TreeHandler;
