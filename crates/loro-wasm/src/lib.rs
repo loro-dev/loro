@@ -1552,7 +1552,7 @@ impl LoroText {
         }
     }
 
-    /// Delete specified character and insert string at the same position at given position.
+    /// Delete and return the string at the given range and insert a string at the same position.
     ///
     /// @example
     /// ```ts
