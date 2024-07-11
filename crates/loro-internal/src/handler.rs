@@ -1135,7 +1135,20 @@ impl Handler {
                                 remap_tree_id(p, container_remap)
                             }
                             remap_tree_id(&mut target, container_remap);
+
                             if x.contains(target) {
+                                // 1@0 is the parent of 2@1
+                                // ┌────┐    ┌───────────────┐
+                                // │xxxx│◀───│Move 2@1 to 0@0◀┐
+                                // └────┘    └───────────────┘│
+                                // ┌───────┐                  │ ┌────────┐
+                                // │Del 1@0│◀─────────────────┴─│Meta 2@1│ ◀───  undo 2 ops redo 2 ops
+                                // └───────┘                    └────────┘
+                                //
+                                // When we undo the delete operation, we should not create a new tree node and its child.
+                                // However, the concurrent operation has moved the child to another parent. It's still alive.
+                                // So when we redo the delete operation, we should check if the target is still alive.
+                                // If it's alive, we should move it back instead of creating new one.
                                 x.move_at_with_target_for_apply_diff(parent, position, target)?;
                             } else {
                                 let new_target = x.__internal__next_tree_id();
