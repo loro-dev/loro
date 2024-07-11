@@ -1533,7 +1533,7 @@ impl LoroText {
         }
     }
 
-    /// Get the characters at given position.
+    /// Get the character at the given position.
     ///
     /// @example
     /// ```ts
