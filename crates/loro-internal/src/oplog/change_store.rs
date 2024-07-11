@@ -24,7 +24,7 @@ use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlock
 
 const MAX_BLOCK_SIZE: usize = 1024 * 4;
 
-/// # Invariances
+/// # Invariance
 ///
 /// - We don't allow holes in a block or between two blocks with the same peer id.
 ///   The [Change] should be continuous for each peer.
@@ -51,6 +51,19 @@ impl ChangeStore {
             merge_interval,
             vv: VersionVector::new(),
             arena: a.clone(),
+            start_vv: VersionVector::new(),
+            start_frontiers: Frontiers::default(),
+            mem_parsed_kv: Arc::new(Mutex::new(BTreeMap::new())),
+            external_kv: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    #[cfg(test)]
+    fn new_for_test() -> Self {
+        Self {
+            merge_interval: Arc::new(AtomicI64::new(0)),
+            vv: VersionVector::new(),
+            arena: SharedArena::new(),
             start_vv: VersionVector::new(),
             start_frontiers: Frontiers::default(),
             mem_parsed_kv: Arc::new(Mutex::new(BTreeMap::new())),
@@ -136,12 +149,16 @@ impl ChangeStore {
         self.external_kv.lock().unwrap().export_all()
     }
 
-    pub(crate) fn decode_all(&self, blocks: Bytes) -> Result<(), LoroError> {
-        self.external_kv
-            .lock()
-            .unwrap()
+    pub(crate) fn decode_all(&mut self, blocks: Bytes) -> Result<(), LoroError> {
+        let kv_store = &mut self.external_kv.lock().unwrap();
+        kv_store
             .import_all(blocks)
-            .map_err(|e| LoroError::DecodeError(e.into_boxed_str()))
+            .map_err(|e| LoroError::DecodeError(e.into_boxed_str()))?;
+        let vv_bytes = kv_store.get(b"vv").unwrap_or_default();
+        let vv = VersionVector::decode(&vv_bytes).unwrap();
+        self.vv = vv;
+        Ok(())
+
         // todo!("replace with kv store");
         // let mut kv = self.mem_kv.lock().unwrap();
         // assert!(kv.is_empty());
@@ -160,15 +177,19 @@ impl ChangeStore {
         let mut kv = self.mem_parsed_kv.lock().unwrap();
         let (_id, block) = kv.range_mut(..=id).next_back()?;
         if block.peer == id.peer && block.counter_range.1 > id.counter {
-            block.ensure_changes().expect("Parse block error");
+            block
+                .ensure_changes(&self.arena)
+                .expect("Parse block error");
             return Some(block.clone());
         }
 
         let store = self.external_kv.lock().unwrap();
-        let mut iter = store.scan(
-            std::ops::Bound::Unbounded,
-            Bound::Included(&Bytes::copy_from_slice(&id.to_bytes())),
-        );
+        let mut iter = store
+            .scan(
+                Bound::Unbounded,
+                Bound::Included(&Bytes::copy_from_slice(&id.to_bytes())),
+            )
+            .filter(|(id, _)| id.len() == 12);
         let (b_id, b_bytes) = iter.next_back()?;
         let block_id: ID = ID::from_bytes(&b_id[..]);
         let block = ChangesBlock::from_bytes(b_bytes, true).unwrap();
@@ -177,7 +198,9 @@ impl ChangeStore {
             && block.counter_range.1 > id.counter
         {
             let mut arc_block = Arc::new(block);
-            arc_block.ensure_changes().expect("Parse block error");
+            arc_block
+                .ensure_changes(&self.arena)
+                .expect("Parse block error");
             kv.insert(block_id, arc_block.clone());
             return Some(arc_block);
         }
@@ -201,7 +224,9 @@ impl ChangeStore {
         let mut iter = kv.range_mut(ID::new(idlp.peer, 0)..ID::new(idlp.peer, i32::MAX));
         while let Some((_id, block)) = iter.next_back() {
             if block.lamport_range.0 <= idlp.lamport {
-                block.ensure_changes().unwrap();
+                block
+                    .ensure_changes(&self.arena)
+                    .expect("Parse block error");
                 let index = block.get_change_index_by_lamport(idlp.lamport)?;
                 return Some(BlockChangeRef {
                     change_index: index,
@@ -213,7 +238,7 @@ impl ChangeStore {
         let (id, bytes) = self.external_kv.lock().unwrap().binary_search_by(
             Bound::Included(&ID::new(idlp.peer, 0).to_bytes()),
             Bound::Excluded(&ID::new(idlp.peer, Counter::MAX).to_bytes()),
-            Box::new(move |_k, v| {
+            &mut |_k, v| {
                 let mut b = ChangesBlockBytes::new(v.clone());
                 let range = b.lamport_range();
                 if range.0 <= idlp.lamport && range.1 > idlp.lamport {
@@ -223,12 +248,14 @@ impl ChangeStore {
                 } else {
                     Ordering::Greater
                 }
-            }),
+            },
         )?;
 
         let block_id = ID::from_bytes(&id);
         let mut block = Arc::new(ChangesBlock::from_bytes(bytes, true).unwrap());
-        block.ensure_changes().unwrap();
+        block
+            .ensure_changes(&self.arena)
+            .expect("Parse block error");
         kv.insert(block_id, block.clone());
         let index = block.get_change_index_by_lamport(idlp.lamport)?;
         Some(BlockChangeRef {
@@ -241,7 +268,9 @@ impl ChangeStore {
         self.ensure_block_parsed_in_range(Bound::Unbounded, Bound::Unbounded);
         let mut mem_kv = self.mem_parsed_kv.lock().unwrap();
         for (_, block) in mem_kv.iter_mut() {
-            block.ensure_changes().unwrap();
+            block
+                .ensure_changes(&self.arena)
+                .expect("Parse block error");
             for c in block.content.try_changes().unwrap() {
                 f(c);
             }
@@ -251,7 +280,7 @@ impl ChangeStore {
     fn ensure_block_parsed_in_range(&self, start: Bound<&[u8]>, end: Bound<&[u8]>) {
         let kv = self.external_kv.lock().unwrap();
         let mut mem_kv = self.mem_parsed_kv.lock().unwrap();
-        for (id, bytes) in kv.scan(start, end) {
+        for (id, bytes) in kv.scan(start, end).filter(|(id, _)| id.len() == 12) {
             let id = ID::from_bytes(&id);
             if mem_kv.contains_key(&id) {
                 continue;
@@ -282,7 +311,9 @@ impl ChangeStore {
                     return None;
                 }
 
-                block.ensure_changes().unwrap();
+                block
+                    .ensure_changes(&self.arena)
+                    .expect("Parse block error");
                 Some(block.clone())
             })
             // TODO: PERF avoid alloc
@@ -329,7 +360,9 @@ impl ChangeStore {
                     return None;
                 }
 
-                block.ensure_changes().unwrap();
+                block
+                    .ensure_changes(&self.arena)
+                    .expect("Parse block error");
                 Some(block.clone())
             })
             // TODO: PERF avoid alloc
@@ -525,12 +558,12 @@ impl ChangesBlock {
         }
     }
 
-    pub fn ensure_changes(self: &mut Arc<Self>) -> LoroResult<()> {
+    pub fn ensure_changes(self: &mut Arc<Self>, a: &SharedArena) -> LoroResult<()> {
         match &self.content {
             ChangesBlockContent::Changes(_) => Ok(()),
             ChangesBlockContent::Both(_, _) => Ok(()),
             ChangesBlockContent::Bytes(bytes) => {
-                let changes = bytes.parse(&SharedArena::new())?;
+                let changes = bytes.parse(&a)?;
                 let b = bytes.clone();
                 let this = Arc::make_mut(self);
                 this.content = ChangesBlockContent::Both(Arc::new(changes), b);
@@ -732,5 +765,112 @@ impl ChangesBlockBytes {
 
     fn find_deps_for(&mut self, id: ID) -> Frontiers {
         unimplemented!()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        oplog::convert_change_to_remote, ListHandler, LoroDoc, MovableListHandler, TextHandler,
+        TreeHandler,
+    };
+
+    use super::*;
+
+    fn test_encode_decode(doc: LoroDoc) {
+        let mut oplog = doc.oplog().lock().unwrap();
+        let bytes = oplog.change_store.encode_all();
+        let mut store = ChangeStore::new_for_test();
+        store.decode_all(bytes.clone()).unwrap();
+        assert_eq!(&store.vv, &oplog.change_store.vv);
+        assert_eq!(store.external_kv.lock().unwrap().export_all(), bytes);
+        let mut changes_parsed = Vec::new();
+        let a = store.arena.clone();
+        store.visit_all_changes(&mut |c| {
+            changes_parsed.push(convert_change_to_remote(&a, c));
+        });
+        let mut changes = Vec::new();
+        oplog.change_store.visit_all_changes(&mut |c| {
+            changes.push(convert_change_to_remote(&oplog.arena, c));
+        });
+        assert_eq!(changes_parsed, changes);
+    }
+
+    #[test]
+    fn test_change_store() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_record_timestamp(true);
+        let t = doc.get_text("t");
+        t.insert(0, "hello").unwrap();
+        doc.commit_then_renew();
+        let t = doc.get_list("t");
+        t.insert(0, "hello").unwrap();
+        test_encode_decode(doc);
+    }
+
+    #[test]
+    fn test_synced_doc() -> LoroResult<()> {
+        let doc_a = LoroDoc::new_auto_commit();
+        let doc_b = LoroDoc::new_auto_commit();
+        let doc_c = LoroDoc::new_auto_commit();
+
+        {
+            // A: Create initial structure
+            let map = doc_a.get_map("root");
+            map.insert_container("text", TextHandler::new_detached())?;
+            map.insert_container("list", ListHandler::new_detached())?;
+            map.insert_container("tree", TreeHandler::new_detached())?;
+        }
+
+        {
+            // Sync initial state to B and C
+            let initial_state = doc_a.export_from(&Default::default());
+            doc_b.import(&initial_state)?;
+            doc_c.import(&initial_state)?;
+        }
+
+        {
+            // B: Edit text and list
+            let map = doc_b.get_map("root");
+            let text = map
+                .insert_container("text", TextHandler::new_detached())
+                .unwrap();
+            text.insert(0, "Hello, ")?;
+
+            let list = map
+                .insert_container("list", ListHandler::new_detached())
+                .unwrap();
+            list.push("world".into())?;
+        }
+
+        {
+            // C: Edit tree and movable list
+            let map = doc_c.get_map("root");
+            let tree = map
+                .insert_container("tree", TreeHandler::new_detached())
+                .unwrap();
+            let node_id = tree.create(None)?;
+            tree.get_meta(node_id)?.insert("key", "value")?;
+            let node_b = tree.create(None)?;
+            tree.move_to(node_b, None, 0);
+
+            let movable_list = map
+                .insert_container("movable", MovableListHandler::new_detached())
+                .unwrap();
+            movable_list.push("item1".into())?;
+            movable_list.push("item2".into())?;
+            movable_list.mov(0, 1)?;
+        }
+
+        // Sync B's changes to A
+        let b_changes = doc_b.export_from(&doc_a.oplog_vv());
+        doc_a.import(&b_changes)?;
+
+        // Sync C's changes to A
+        let c_changes = doc_c.export_from(&doc_a.oplog_vv());
+        doc_a.import(&c_changes)?;
+
+        test_encode_decode(doc_a);
+        Ok(())
     }
 }

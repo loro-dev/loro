@@ -5,6 +5,7 @@
 //! Note: `dep` can only point to the end of the other [Change]. This is the invariant of [Change]s.
 
 use crate::{
+    arena::SharedArena,
     dag::DagNode,
     estimated_size::EstimatedSize,
     id::{Counter, ID},
@@ -24,7 +25,7 @@ pub type Lamport = u32;
 ///
 /// When undo/redo we should always undo/redo a whole [Change].
 // PERF change slice and getting length is kinda slow I guess
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Change<O = Op> {
     pub(crate) ops: RleVec<[O; 1]>,
     pub(crate) deps: Frontiers,

@@ -2,12 +2,13 @@ use std::{borrow::Cow, cell::RefCell, cmp::Ordering, rc::Rc};
 
 use either::Either;
 pub(crate) use encode::{encode_op, get_op_prop};
+use fractional_index::FractionalIndex;
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
 use itertools::Itertools;
 use loro_common::{
     ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp,
-    LoroError, LoroResult, PeerID, ID,
+    LoroError, LoroResult, PeerID, TreeID, ID,
 };
 use rle::HasLength;
 use serde_columnar::{columnar, ColumnarError};
@@ -16,7 +17,10 @@ use tracing::instrument;
 use crate::{
     arena::SharedArena,
     change::{Change, Lamport, Timestamp},
-    container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
+    container::{
+        idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag,
+        tree::tree_op::TreeOp,
+    },
     encoding::StateSnapshotDecodeContext,
     op::{FutureInnerContent, Op, OpWithId, SliceRange},
     state::ContainerState,
@@ -1356,6 +1360,42 @@ pub(crate) fn decode_op(
         ContainerType::Tree => match value {
             Value::TreeMove(op) => {
                 crate::op::InnerContent::Tree(arenas.decode_tree_op(positions, op, op_id)?)
+            }
+            Value::RawTreeMove(op) => {
+                let subject = TreeID::new(
+                    arenas.peers()[op.subject_peer_idx],
+                    op.subject_cnt as Counter,
+                );
+                let parent = if op.is_parent_null {
+                    None
+                } else {
+                    let parent_id =
+                        TreeID::new(arenas.peers()[op.parent_peer_idx], op.parent_cnt as Counter);
+                    if parent_id.is_deleted_root() {
+                        return Ok(crate::op::InnerContent::Tree(TreeOp::Delete {
+                            target: subject,
+                        }));
+                    }
+
+                    Some(parent_id)
+                };
+
+                let fi = FractionalIndex::from_bytes(op.fractional_index);
+                let is_create = subject.id() == op_id;
+                let ans = if is_create {
+                    TreeOp::Create {
+                        target: subject,
+                        parent,
+                        position: fi,
+                    }
+                } else {
+                    TreeOp::Move {
+                        target: subject,
+                        parent,
+                        position: fi,
+                    }
+                };
+                crate::op::InnerContent::Tree(ans)
             }
             _ => {
                 unreachable!()

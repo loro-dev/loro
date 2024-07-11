@@ -437,138 +437,9 @@ impl OpLog {
         })
     }
 
-    pub fn get_remote_change_at(&self, id: ID) -> Option<Change<RemoteOp>> {
+    pub fn get_remote_change_at(&self, id: ID) -> Option<Change<RemoteOp<'static>>> {
         let change = self.get_change_at(id)?;
-        Some(self.convert_change_to_remote(&change))
-    }
-
-    fn convert_change_to_remote(&self, change: &Change) -> Change<RemoteOp> {
-        let mut ops = RleVec::new();
-        for op in change.ops.iter() {
-            for op in self.local_op_to_remote(op) {
-                ops.push(op);
-            }
-        }
-
-        Change {
-            ops,
-            id: change.id,
-            deps: change.deps.clone(),
-            lamport: change.lamport,
-            timestamp: change.timestamp,
-        }
-    }
-
-    pub(crate) fn local_op_to_remote(&self, op: &crate::op::Op) -> SmallVec<[RemoteOp<'_>; 1]> {
-        let container = self.arena.get_container_id(op.container).unwrap();
-        let mut contents: SmallVec<[_; 1]> = SmallVec::new();
-        match &op.content {
-            crate::op::InnerContent::List(list) => match list {
-                list_op::InnerListOp::Insert { slice, pos } => match container.container_type() {
-                    loro_common::ContainerType::Text => {
-                        let str = self.arena.slice_str_by_unicode_range(
-                            slice.0.start as usize..slice.0.end as usize,
-                        );
-                        contents.push(RawOpContent::List(list_op::ListOp::Insert {
-                            slice: ListSlice::RawStr {
-                                unicode_len: str.chars().count(),
-                                str: Cow::Owned(str),
-                            },
-                            pos: *pos,
-                        }));
-                    }
-                    loro_common::ContainerType::List | loro_common::ContainerType::MovableList => {
-                        contents.push(RawOpContent::List(list_op::ListOp::Insert {
-                            slice: ListSlice::RawData(Cow::Owned(
-                                self.arena
-                                    .get_values(slice.0.start as usize..slice.0.end as usize),
-                            )),
-                            pos: *pos,
-                        }))
-                    }
-                    _ => unreachable!(),
-                },
-                list_op::InnerListOp::InsertText {
-                    slice,
-                    unicode_len: len,
-                    unicode_start: _,
-                    pos,
-                } => match container.container_type() {
-                    loro_common::ContainerType::Text => {
-                        contents.push(RawOpContent::List(list_op::ListOp::Insert {
-                            slice: ListSlice::RawStr {
-                                unicode_len: *len as usize,
-                                str: Cow::Owned(std::str::from_utf8(slice).unwrap().to_owned()),
-                            },
-                            pos: *pos as usize,
-                        }));
-                    }
-                    _ => unreachable!(),
-                },
-                list_op::InnerListOp::Delete(del) => {
-                    contents.push(RawOpContent::List(list_op::ListOp::Delete(*del)))
-                }
-                list_op::InnerListOp::StyleStart {
-                    start,
-                    end,
-                    key,
-                    value,
-                    info,
-                } => contents.push(RawOpContent::List(list_op::ListOp::StyleStart {
-                    start: *start,
-                    end: *end,
-                    key: key.clone(),
-                    value: value.clone(),
-                    info: *info,
-                })),
-                list_op::InnerListOp::StyleEnd => {
-                    contents.push(RawOpContent::List(list_op::ListOp::StyleEnd))
-                }
-                list_op::InnerListOp::Move { from, from_id, to } => {
-                    contents.push(RawOpContent::List(list_op::ListOp::Move {
-                        from: *from,
-                        elem_id: *from_id,
-                        to: *to,
-                    }))
-                }
-                list_op::InnerListOp::Set { elem_id, value } => {
-                    contents.push(RawOpContent::List(list_op::ListOp::Set {
-                        elem_id: *elem_id,
-                        value: value.clone(),
-                    }))
-                }
-            },
-            crate::op::InnerContent::Map(map) => {
-                let value = map.value.clone();
-                contents.push(RawOpContent::Map(crate::container::map::MapSet {
-                    key: map.key.clone(),
-                    value,
-                }))
-            }
-            crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(tree.clone())),
-            crate::op::InnerContent::Future(f) => match f {
-                #[cfg(feature = "counter")]
-                crate::op::FutureInnerContent::Counter(c) => {
-                    contents.push(RawOpContent::Counter(*c))
-                }
-                FutureInnerContent::Unknown { prop, value } => {
-                    contents.push(crate::op::RawOpContent::Unknown {
-                        prop: *prop,
-                        value: value.clone(),
-                    })
-                }
-            },
-        };
-
-        let mut ans = SmallVec::with_capacity(contents.len());
-        for content in contents {
-            ans.push(RemoteOp {
-                container: container.clone(),
-                content,
-                counter: op.counter,
-            })
-        }
-        ans
+        Some(convert_change_to_remote(&self.arena, &change))
     }
 
     pub(crate) fn import_unknown_lamport_pending_changes(
@@ -816,4 +687,135 @@ pub struct SizeInfo {
     pub total_ops: usize,
     pub total_atom_ops: usize,
     pub total_dag_node: usize,
+}
+
+pub(crate) fn convert_change_to_remote(
+    arena: &SharedArena,
+    change: &Change,
+) -> Change<RemoteOp<'static>> {
+    let mut ops = RleVec::new();
+    for op in change.ops.iter() {
+        for op in local_op_to_remote(arena, op) {
+            ops.push(op);
+        }
+    }
+
+    Change {
+        ops,
+        id: change.id,
+        deps: change.deps.clone(),
+        lamport: change.lamport,
+        timestamp: change.timestamp,
+    }
+}
+
+pub(crate) fn local_op_to_remote(
+    arena: &SharedArena,
+    op: &crate::op::Op,
+) -> SmallVec<[RemoteOp<'static>; 1]> {
+    let container = arena.get_container_id(op.container).unwrap();
+    let mut contents: SmallVec<[_; 1]> = SmallVec::new();
+    match &op.content {
+        crate::op::InnerContent::List(list) => match list {
+            list_op::InnerListOp::Insert { slice, pos } => match container.container_type() {
+                loro_common::ContainerType::Text => {
+                    let str = arena
+                        .slice_str_by_unicode_range(slice.0.start as usize..slice.0.end as usize);
+                    contents.push(RawOpContent::List(list_op::ListOp::Insert {
+                        slice: ListSlice::RawStr {
+                            unicode_len: str.chars().count(),
+                            str: Cow::Owned(str),
+                        },
+                        pos: *pos,
+                    }));
+                }
+                loro_common::ContainerType::List | loro_common::ContainerType::MovableList => {
+                    contents.push(RawOpContent::List(list_op::ListOp::Insert {
+                        slice: ListSlice::RawData(Cow::Owned(
+                            arena.get_values(slice.0.start as usize..slice.0.end as usize),
+                        )),
+                        pos: *pos,
+                    }))
+                }
+                _ => unreachable!(),
+            },
+            list_op::InnerListOp::InsertText {
+                slice,
+                unicode_len: len,
+                unicode_start: _,
+                pos,
+            } => match container.container_type() {
+                loro_common::ContainerType::Text => {
+                    contents.push(RawOpContent::List(list_op::ListOp::Insert {
+                        slice: ListSlice::RawStr {
+                            unicode_len: *len as usize,
+                            str: Cow::Owned(std::str::from_utf8(slice).unwrap().to_owned()),
+                        },
+                        pos: *pos as usize,
+                    }));
+                }
+                _ => unreachable!(),
+            },
+            list_op::InnerListOp::Delete(del) => {
+                contents.push(RawOpContent::List(list_op::ListOp::Delete(*del)))
+            }
+            list_op::InnerListOp::StyleStart {
+                start,
+                end,
+                key,
+                value,
+                info,
+            } => contents.push(RawOpContent::List(list_op::ListOp::StyleStart {
+                start: *start,
+                end: *end,
+                key: key.clone(),
+                value: value.clone(),
+                info: *info,
+            })),
+            list_op::InnerListOp::StyleEnd => {
+                contents.push(RawOpContent::List(list_op::ListOp::StyleEnd))
+            }
+            list_op::InnerListOp::Move { from, from_id, to } => {
+                contents.push(RawOpContent::List(list_op::ListOp::Move {
+                    from: *from,
+                    elem_id: *from_id,
+                    to: *to,
+                }))
+            }
+            list_op::InnerListOp::Set { elem_id, value } => {
+                contents.push(RawOpContent::List(list_op::ListOp::Set {
+                    elem_id: *elem_id,
+                    value: value.clone(),
+                }))
+            }
+        },
+        crate::op::InnerContent::Map(map) => {
+            let value = map.value.clone();
+            contents.push(RawOpContent::Map(crate::container::map::MapSet {
+                key: map.key.clone(),
+                value,
+            }))
+        }
+        crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(tree.clone())),
+        crate::op::InnerContent::Future(f) => match f {
+            #[cfg(feature = "counter")]
+            crate::op::FutureInnerContent::Counter(c) => contents.push(RawOpContent::Counter(*c)),
+            FutureInnerContent::Unknown { prop, value } => {
+                contents.push(crate::op::RawOpContent::Unknown {
+                    prop: *prop,
+                    value: value.clone(),
+                })
+            }
+        },
+    };
+
+    let mut ans = SmallVec::with_capacity(contents.len());
+    for content in contents {
+        ans.push(RemoteOp {
+            container: container.clone(),
+            content,
+            counter: op.counter,
+        })
+    }
+    ans
 }

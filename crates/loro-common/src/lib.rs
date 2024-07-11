@@ -556,8 +556,8 @@ impl TreeID {
     }
 
     /// return `true` if the `TreeID` is deleted root
-    pub fn is_deleted_root(target: &TreeID) -> bool {
-        target == &DELETED_TREE_ROOT
+    pub fn is_deleted_root(&self) -> bool {
+        self == &DELETED_TREE_ROOT
     }
 
     pub fn from_id(id: ID) -> Self {

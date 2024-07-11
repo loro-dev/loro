@@ -71,7 +71,7 @@ impl OpWithId {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "wasm", derive(Serialize, Deserialize))]
 pub struct RemoteOp<'a> {
     pub(crate) counter: Counter,

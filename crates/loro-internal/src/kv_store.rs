@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use std::ops::Bound;
 
-pub type CompareFn = Box<dyn FnMut(&Bytes, &Bytes) -> std::cmp::Ordering>;
+pub type CompareFn<'a> = &'a mut dyn FnMut(&Bytes, &Bytes) -> std::cmp::Ordering;
 pub trait KvStore: std::fmt::Debug + Send + Sync {
     fn get(&self, key: &[u8]) -> Option<Bytes>;
     fn set(&mut self, key: &[u8], value: Bytes);
@@ -32,6 +32,8 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
 
 mod default_binary_format {
     //! Default binary format for the key-value store.
+    //!
+    //! It will compress the prefix of the keys that are common with the previous key.
 
     use bytes::Bytes;
 
@@ -191,7 +193,7 @@ mod mem {
             &self,
             start: Bound<&[u8]>,
             end: Bound<&[u8]>,
-            mut f: Box<dyn FnMut(&Bytes, &Bytes) -> std::cmp::Ordering>,
+            f: CompareFn,
         ) -> Option<(Bytes, Bytes)> {
             for (k, v) in self.range::<[u8], _>((start, end)) {
                 match f(k, v) {

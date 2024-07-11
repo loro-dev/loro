@@ -68,7 +68,7 @@ use std::io::Write;
 
 use loro_common::{
     ContainerID, Counter, HasCounterSpan, HasIdSpan, HasLamportSpan, InternalString, Lamport,
-    LoroError, LoroResult, PeerID, ID,
+    LoroError, LoroResult, PeerID, TreeID, ID,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
@@ -77,17 +77,18 @@ use serde_columnar::{columnar, DeltaRleDecoder, Itertools};
 use super::delta_rle_encode::{UnsignedDeltaDecoder, UnsignedDeltaEncoder};
 use crate::arena::SharedArena;
 use crate::change::{Change, Timestamp};
+use crate::container::tree::tree_op;
 use crate::encoding::arena::ContainerArena;
 use crate::encoding::value_register::ValueRegister;
 use crate::encoding::{
-    decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
+    self, decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
 };
 use crate::op::Op;
 use serde_columnar::{
     AnyRleDecoder, AnyRleEncoder, BoolRleDecoder, BoolRleEncoder, DeltaRleEncoder,
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct EncodedBlock<'a> {
     version: u16,
     counter_start: u32,
@@ -129,6 +130,7 @@ struct EncodedBlock<'a> {
 
 const VERSION: u16 = 0;
 
+// MARK: encode_block
 /// It's assume that every change in the block share the same peer.
 pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     if block.is_empty() {
@@ -308,7 +310,8 @@ struct Registers {
 }
 
 use crate::encoding::value::{
-    Value, ValueDecodedArenasTrait, ValueEncodeRegister, ValueKind, ValueReader, ValueWriter,
+    RawTreeMove, Value, ValueDecodedArenasTrait, ValueEncodeRegister, ValueKind, ValueReader,
+    ValueWriter,
 };
 use crate::version::Frontiers;
 impl ValueEncodeRegister for Registers {
@@ -320,15 +323,50 @@ impl ValueEncodeRegister for Registers {
         &mut self.peer_register
     }
 
-    fn encode_tree_op(
-        &mut self,
-        _op: &crate::container::tree::tree_op::TreeOp,
-    ) -> crate::encoding::value::Value<'static> {
-        todo!()
+    fn encode_tree_op(&mut self, op: &tree_op::TreeOp) -> encoding::value::Value<'static> {
+        match op {
+            tree_op::TreeOp::Create {
+                target,
+                parent,
+                position,
+            } => encoding::value::Value::RawTreeMove(RawTreeMove {
+                subject_peer_idx: self.peer_register.register(&target.peer),
+                subject_cnt: target.counter,
+                is_parent_null: parent.is_none(),
+                parent_peer_idx: parent.map_or(0, |p| self.peer_register.register(&p.peer)),
+                parent_cnt: parent.map_or(0, |p| p.counter),
+                // PERF: maybe we can use Bytes for position
+                fractional_index: position.as_bytes().into(),
+            }),
+            tree_op::TreeOp::Move {
+                target,
+                parent,
+                position,
+            } => encoding::value::Value::RawTreeMove(RawTreeMove {
+                subject_peer_idx: self.peer_register.register(&target.peer),
+                subject_cnt: target.counter,
+                is_parent_null: parent.is_none(),
+                parent_peer_idx: parent.map_or(0, |p| self.peer_register.register(&p.peer)),
+                parent_cnt: parent.map_or(0, |p| p.counter),
+                // PERF: maybe we can use Bytes for position
+                fractional_index: position.as_bytes().into(),
+            }),
+            tree_op::TreeOp::Delete { target } => {
+                let parent = TreeID::delete_root();
+                encoding::value::Value::RawTreeMove(RawTreeMove {
+                    subject_peer_idx: self.peer_register.register(&target.peer),
+                    subject_cnt: target.counter,
+                    is_parent_null: false,
+                    parent_peer_idx: self.peer_register.register(&parent.peer),
+                    parent_cnt: parent.counter,
+                    fractional_index: Vec::new(),
+                })
+            }
+        }
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct ChangesBlockHeader {
     pub peer: PeerID,
     pub counter: Counter,
@@ -341,7 +379,7 @@ pub(crate) struct ChangesBlockHeader {
     pub counters: Vec<Counter>,
     /// This has n elements
     pub lamports: Vec<Lamport>,
-    pub deps: Vec<Frontiers>,
+    pub deps_groups: Vec<Frontiers>,
 }
 
 pub fn decode_header(m_bytes: &[u8]) -> LoroResult<ChangesBlockHeader> {
@@ -352,6 +390,7 @@ pub fn decode_header(m_bytes: &[u8]) -> LoroResult<ChangesBlockHeader> {
     decode_header_from_doc(&doc)
 }
 
+// MARK: decode_block_from_doc
 fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, LoroError> {
     let EncodedBlock {
         n_changes,
@@ -402,7 +441,7 @@ fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, Loro
 
     let mut dep_self_decoder = BoolRleDecoder::new(dep_on_self);
     let mut this_counter = first_counter;
-    let deps: Vec<Frontiers> = Vec::with_capacity(n_changes);
+    let mut deps: Vec<Frontiers> = Vec::with_capacity(n_changes);
     let n = n_changes;
     let mut deps_len = AnyRleDecoder::<u64>::new(dep_len);
     let deps_peers_decoder = AnyRleDecoder::<u32>::new(dep_peer_idxs);
@@ -424,6 +463,7 @@ fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, Loro
             f.push(ID::new(peer, counter));
         }
 
+        deps.push(f);
         this_counter += lengths[i];
     }
 
@@ -453,7 +493,7 @@ fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, Loro
         n_changes,
         peers,
         counters,
-        deps,
+        deps_groups: deps,
         lamports,
     })
 }
@@ -501,9 +541,9 @@ impl<'a> ValueDecodedArenasTrait for ValueDecodeArena<'a> {
     fn decode_tree_op(
         &self,
         _positions: &[Vec<u8>],
-        _op: crate::encoding::value::EncodedTreeMove,
+        _op: encoding::value::EncodedTreeMove,
         _id: ID,
-    ) -> LoroResult<crate::container::tree::tree_op::TreeOp> {
+    ) -> LoroResult<tree_op::TreeOp> {
         unreachable!()
     }
 }
@@ -531,6 +571,7 @@ pub fn decode_block_range(
     ))
 }
 
+// MARK: decode_block
 pub fn decode_block(
     m_bytes: &[u8],
     shared_arena: &SharedArena,
@@ -580,7 +621,7 @@ pub fn decode_block(
     for i in 0..(n_changes as usize) {
         changes.push(Change {
             ops: Default::default(),
-            deps: header.deps[i].clone(),
+            deps: header.deps_groups[i].clone(),
             id: ID::new(header.peer, header.counters[i]),
             lamport: header.lamports[i],
             timestamp: timestamp_decoder.next().unwrap().unwrap() as Timestamp,

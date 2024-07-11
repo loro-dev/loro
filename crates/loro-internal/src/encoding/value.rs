@@ -363,7 +363,7 @@ impl<'a> Value<'a> {
             }
             ValueKind::MarkStart => Value::MarkStart(value_reader.read_mark(arenas.keys(), id)?),
             ValueKind::TreeMove => Value::TreeMove(value_reader.read_tree_move()?),
-            ValueKind::RawTreeMove => Value::RawTreeMove(value_reader.read_raw_tree_move(arenas)?),
+            ValueKind::RawTreeMove => Value::RawTreeMove(value_reader.read_raw_tree_move()?),
             ValueKind::ListMove => {
                 let from = value_reader.read_usize()?;
                 let from_idx = value_reader.read_usize()?;
@@ -453,7 +453,7 @@ impl<'a> Value<'a> {
                 let (k, i) = Self::encode_without_registers(value, value_writer);
                 (ValueKind::Future(k), i)
             }
-            Value::RawTreeMove(_) => unimplemented!(),
+            Value::RawTreeMove(x) => (ValueKind::RawTreeMove, value_writer.write_raw_tree_move(x)),
         }
     }
 }
@@ -469,10 +469,10 @@ pub struct MarkStart {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RawTreeMove {
     pub subject_peer_idx: usize,
-    pub subject_cnt: usize,
+    pub subject_cnt: Counter,
     pub is_parent_null: bool,
     pub parent_peer_idx: usize,
-    pub parent_cnt: usize,
+    pub parent_cnt: Counter,
     pub fractional_index: Vec<u8>,
 }
 
@@ -908,6 +908,16 @@ impl<'a> ValueReader<'a> {
         Ok(ans)
     }
 
+    fn read_binary_vec(&mut self) -> LoroResult<Vec<u8>> {
+        let len = self.read_usize()?;
+        if self.raw.len() < len {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+        let ans = &self.raw[..len];
+        self.raw = &self.raw[len..];
+        Ok(ans.to_vec())
+    }
+
     fn read_u8(&mut self) -> LoroResult<u8> {
         if self.raw.is_empty() {
             return Err(LoroError::DecodeDataCorruptionError);
@@ -965,8 +975,26 @@ impl<'a> ValueReader<'a> {
         })
     }
 
-    fn read_raw_tree_move(&self, arenas: &dyn ValueDecodedArenasTrait) -> LoroResult<RawTreeMove> {
-        unimplemented!()
+    fn read_raw_tree_move(&mut self) -> LoroResult<RawTreeMove> {
+        let subject_peer_idx = self.read_usize()?;
+        let subject_cnt = self.read_usize()?;
+        let fractional_index = self.read_binary_vec()?;
+        let is_parent_null = self.read_u8()? != 0;
+        let mut parent_peer_idx = 0;
+        let mut parent_cnt = 0;
+        if !is_parent_null {
+            parent_peer_idx = self.read_usize()?;
+            parent_cnt = self.read_usize()?;
+        }
+
+        Ok(RawTreeMove {
+            subject_peer_idx,
+            subject_cnt: subject_cnt as i32,
+            fractional_index,
+            is_parent_null,
+            parent_peer_idx,
+            parent_cnt: parent_cnt as i32,
+        })
     }
 }
 
@@ -1098,6 +1126,22 @@ impl ValueWriter {
 
     pub(crate) fn finish(self) -> Vec<u8> {
         self.buffer
+    }
+
+    fn write_raw_tree_move(&mut self, op: RawTreeMove) -> usize {
+        let len = self.buffer.len();
+        self.write_usize(op.subject_peer_idx);
+        self.write_usize(op.subject_cnt as usize);
+        self.write_usize(op.fractional_index.len());
+        self.buffer.extend_from_slice(&op.fractional_index);
+
+        self.write_u8(op.is_parent_null as u8);
+        if op.is_parent_null {
+            return self.buffer.len() - len;
+        }
+        self.write_usize(op.parent_peer_idx);
+        self.write_usize(op.parent_cnt as usize);
+        self.buffer.len() - len
     }
 }
 
