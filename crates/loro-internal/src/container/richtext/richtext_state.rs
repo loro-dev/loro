@@ -576,12 +576,11 @@ impl CanRemove for RichtextStateChunk {
     }
 }
 
-//TODO: use Cow to perf code
 pub(crate) fn slice_string_by_event_index(
     s: &str,
     start_index: usize,
     end_index: usize,
-) -> Result<String, ()> {
+) -> Result<&str, ()> {
     if cfg!(feature = "wasm") {
         utf16_slice(s, start_index, end_index)
     } else {
@@ -590,26 +589,24 @@ pub(crate) fn slice_string_by_event_index(
 }
 
 //TODO: start/end can be scanned in one loop, but now it takes twice the time
-fn unicode_slice(s: &str, start_index: usize, end_index: usize) -> Result<String, ()> {
+fn unicode_slice(s: &str, start_index: usize, end_index: usize) -> Result<&str, ()> {
     let (Some(start), Some(end)) = (
         unicode_to_utf8_index(s, start_index),
         unicode_to_utf8_index(s, end_index),
     ) else {
         return Err(());
     };
-    Ok(s[start..end].to_string())
+    Ok(&s[start..end])
 }
 
-fn utf16_slice(s: &str, start_index: usize, end_index: usize) -> Result<String, ()> {
-    let utf16: Vec<u16> = s.encode_utf16().collect();
-
-    if start_index > utf16.len() || end_index > utf16.len() || start_index > end_index {
+fn utf16_slice(s: &str, start_index: usize, end_index: usize) -> Result<&str, ()> {
+    let (Some(start), Some(end)) = (
+        utf16_to_utf8_index(s, start_index),
+        utf16_to_utf8_index(s, end_index),
+    ) else {
         return Err(());
-    }
-
-    let utf16_slice = &utf16[start_index..end_index];
-
-    Ok(String::from_utf16(utf16_slice).unwrap())
+    };
+    Ok(&s[start..end])
 }
 
 pub(crate) fn unicode_to_utf8_index(s: &str, unicode_index: usize) -> Option<usize> {

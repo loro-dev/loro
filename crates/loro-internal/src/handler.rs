@@ -1341,13 +1341,13 @@ impl TextHandler {
         if let Ok(c) = match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.try_lock().unwrap();
-                t.value.get_char_by_event_index(pos - 1)
+                t.value.get_char_by_event_index(pos)
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 state
                     .as_richtext_state_mut()
                     .unwrap()
-                    .get_char_by_event_index(pos - 1)
+                    .get_char_by_event_index(pos)
             }),
         } {
             Ok(c)
@@ -1393,14 +1393,11 @@ impl TextHandler {
     /// - if feature!="wasm", pos is a Unicode index
     ///
     /// This method requires auto_commit to be enabled.
-    pub fn splice(&self, pos: usize, len: usize, s: &str) -> LoroResult<()> {
-        match self.delete(pos, len) {
-            Ok(()) => match self.insert(pos, s) {
-                Ok(()) => Ok(()),
-                Err(x) => Err(x),
-            },
-            Err(x) => Err(x),
-        }
+    pub fn splice(&self, pos: usize, len: usize, s: &str) -> LoroResult<String> {
+        let x = self.slice(pos + 1, pos + len + 1)?;
+        self.delete(pos, len)?;
+        self.insert(pos, s)?;
+        Ok(x)
     }
 
     /// `pos` is a Event Index:

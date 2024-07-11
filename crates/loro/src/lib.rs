@@ -1009,7 +1009,7 @@ impl LoroText {
     }
 
     /// Delete specified character and insert string at the same position at given unicode position.
-    pub fn splice(&self, pos: usize, len: usize, s: &str) -> LoroResult<()> {
+    pub fn splice(&self, pos: usize, len: usize, s: &str) -> LoroResult<String> {
         self.handler.splice(pos, len, s)
     }
 

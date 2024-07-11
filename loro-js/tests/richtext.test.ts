@@ -313,14 +313,14 @@ describe("richtext", () => {
     const doc = new Loro();
     const text = doc.getText('t');
     text.insert(0, "你好");
-    expect(text.charAt(1)).toStrictEqual("你");
+    expect(text.charAt(1)).toStrictEqual("好");
   });
 
   it("splice", () => {
     const doc = new Loro();
     const text = doc.getText('t');
     text.insert(0, "你好");
-    text.splice(1, 1, "我")
+    expect(text.splice(1, 1, "我")).toStrictEqual("好");
     expect(text.toString()).toStrictEqual("你我");
   });
 });
