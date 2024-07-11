@@ -402,7 +402,7 @@ fn tree() {
     root_meta.insert("color", "red").unwrap();
     assert_eq!(
         tree.get_value_with_meta().to_json(),
-        r#"[{"parent":null,"meta":{"color":"red"},"id":"0@1","index":0,"position":"80"},{"parent":"0@1","meta":{},"id":"1@1","index":0,"position":"80"}]"#
+        r#"[{"parent":null,"meta":{"color":"red"},"id":"0@1","index":0,"fractional_index":"80"},{"parent":"0@1","meta":{},"id":"1@1","index":0,"fractional_index":"80"}]"#
     )
 }
 

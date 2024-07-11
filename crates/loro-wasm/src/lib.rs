@@ -3184,7 +3184,7 @@ impl LoroTree {
     /// but also the metadata, you should use `toJson()`.
     ///
     // TODO: perf
-    #[wasm_bindgen(js_name = "toArray")]
+    #[wasm_bindgen(js_name = "toArray", skip_typescript)]
     pub fn to_array(&mut self) -> JsResult<Array> {
         let value = self.handler.get_value().into_list().unwrap();
         let ans = Array::new();
@@ -3204,13 +3204,17 @@ impl LoroTree {
                 .unwrap_or(JsValue::undefined())
                 .into();
             let index = *v["index"].as_i64().unwrap() as u32;
-            let position = v["position"].as_string().unwrap();
+            let position = v["fractional_index"].as_string().unwrap();
             let map: LoroMap = self.get_node_by_id(&id).unwrap().data()?;
             let obj = Object::new();
             js_sys::Reflect::set(&obj, &"id".into(), &id)?;
             js_sys::Reflect::set(&obj, &"parent".into(), &parent)?;
             js_sys::Reflect::set(&obj, &"index".into(), &JsValue::from(index))?;
-            js_sys::Reflect::set(&obj, &"position".into(), &JsValue::from_str(position))?;
+            js_sys::Reflect::set(
+                &obj,
+                &"fractional_index".into(),
+                &JsValue::from_str(position),
+            )?;
             js_sys::Reflect::set(&obj, &"meta".into(), &map.into())?;
             ans.push(&obj);
         }
@@ -4142,6 +4146,18 @@ interface LoroList {
      * ```
      */
     getCursor(pos: number, side?: Side): Cursor | undefined;
+}
+
+export type TreeNodeValue = {
+    id: TreeID,
+    parent: TreeID | undefined,
+    index: number,
+    fractionalIndex: string,
+    meta: LoroMap,
+}
+
+interface LoroTree{
+    toArray(): TreeNodeValue[];
 }
 
 interface LoroMovableList {

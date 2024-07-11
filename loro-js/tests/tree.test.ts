@@ -1,4 +1,4 @@
-import { describe, expect, it} from "vitest";
+import { assert, describe, expect, it} from "vitest";
 import { Loro, LoroTree, LoroTreeNode } from "../src";
 
 function assertEquals(a: any, b: any) {
@@ -83,6 +83,12 @@ describe("loro tree", () => {
     tree2.createNode(root.id);
     const arr = tree2.toArray();
     assertEquals(arr.length, 3);
+    const keys = Object.keys(arr[0]);
+    assert(keys.includes("id"));
+    assert(keys.includes("parent"));
+    assert(keys.includes("index"));
+    assert(keys.includes("fractional_index"));
+    assert(keys.includes("meta"));
   });
 
   it("subscribe", async () => {
