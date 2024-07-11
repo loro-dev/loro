@@ -341,47 +341,6 @@ pub trait ActorTrait {
 }
 
 pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
-    fn eq_without_position(a: &LoroValue, b: &LoroValue) -> bool {
-        match (a, b) {
-            (LoroValue::Map(a), LoroValue::Map(b)) => {
-                for (k, v) in a.iter() {
-                    if k == "position" {
-                        continue;
-                    }
-
-                    if !eq_without_position(v, b.get(k).unwrap_or(&LoroValue::I64(0))) {
-                        return false;
-                    }
-                }
-
-                for (k, v) in b.iter() {
-                    if k == "position" {
-                        continue;
-                    }
-                    if !eq_without_position(v, a.get(k).unwrap_or(&LoroValue::I64(0))) {
-                        return false;
-                    }
-                }
-                true
-            }
-            (LoroValue::List(a), LoroValue::List(b)) => {
-                if a.len() != b.len() {
-                    return false;
-                }
-
-                if is_tree_values(a.as_ref()) {
-                    assert_tree_value_eq(a, b);
-                    true
-                } else {
-                    a.iter()
-                        .zip(b.iter())
-                        .all(|(a, b)| eq_without_position(a, b))
-                }
-            }
-            (a, b) => a == b,
-        }
-    }
-
     #[must_use]
     fn eq(a: &LoroValue, b: &LoroValue) -> bool {
         match (a, b) {
@@ -425,10 +384,10 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                     assert_tree_value_eq(a_list, b_list);
                     true
                 } else {
-                    eq_without_position(a, b)
+                    a_list.iter().zip(b_list.iter()).all(|(a, b)| eq(a, b))
                 }
             }
-            (a, b) => eq_without_position(a, b),
+            (a, b) => a == b,
         }
     }
     assert!(
@@ -445,7 +404,7 @@ pub fn is_tree_values(value: &[LoroValue]) -> bool {
         return map_keys.contains("id")
             && map_keys.contains("parent")
             && map_keys.contains("meta")
-            && map_keys.contains("position");
+            && map_keys.contains("fractional_index");
     }
     false
 }
@@ -477,7 +436,7 @@ impl FlatNode {
         let meta = map.get("meta").unwrap().as_map().unwrap().as_ref().clone();
         let index = *map.get("index").unwrap().as_i64().unwrap() as usize;
         let position = map
-            .get("position")
+            .get("fractional_index")
             .unwrap()
             .as_string()
             .unwrap()
@@ -497,7 +456,6 @@ impl Node {
         let mut node_map = FxHashMap::default();
         let mut parent_child_map = FxHashMap::default();
 
-        // 首先，将所有扁平节点转换为TreeNode，并存储在HashMap中以便快速查找
         for flat_node in value.iter() {
             let flat_node = FlatNode::from_loro_value(flat_node);
             let tree_node = Node {

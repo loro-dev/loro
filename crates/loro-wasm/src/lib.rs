@@ -3184,7 +3184,7 @@ impl LoroTree {
     /// but also the metadata, you should use `toJson()`.
     ///
     // TODO: perf
-    #[wasm_bindgen(js_name = "toArray")]
+    #[wasm_bindgen(js_name = "toArray", skip_typescript)]
     pub fn to_array(&mut self) -> JsResult<Array> {
         let value = self.handler.get_value().into_list().unwrap();
         let ans = Array::new();
@@ -4146,6 +4146,18 @@ interface LoroList {
      * ```
      */
     getCursor(pos: number, side?: Side): Cursor | undefined;
+}
+
+export type TreeNodeValue = {
+    id: TreeID,
+    parent: TreeID | undefined,
+    index: number,
+    fractionalIndex: string,
+    meta: LoroMap,
+}
+
+interface LoroTree{
+    toArray(): TreeNodeValue[];
 }
 
 interface LoroMovableList {
