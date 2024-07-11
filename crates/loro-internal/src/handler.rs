@@ -1122,6 +1122,7 @@ impl Handler {
                         )
                     }
                 }
+
                 for diff in diff.into_tree().unwrap().diff {
                     let mut target = diff.target;
                     match diff.action {
@@ -1130,16 +1131,22 @@ impl Handler {
                             index: _,
                             position,
                         } => {
-                            let new_target = x.__internal__next_tree_id();
                             if let Some(p) = parent.as_mut() {
                                 remap_tree_id(p, container_remap)
                             }
-                            if x.create_at_with_target_for_apply_diff(parent, position, new_target)?
-                            {
-                                container_remap.insert(
-                                    target.associated_meta_container(),
-                                    new_target.associated_meta_container(),
-                                );
+                            remap_tree_id(&mut target, container_remap);
+                            if x.contains(target) {
+                                x.move_at_with_target_for_apply_diff(parent, position, target)?;
+                            } else {
+                                let new_target = x.__internal__next_tree_id();
+                                if x.create_at_with_target_for_apply_diff(
+                                    parent, position, new_target,
+                                )? {
+                                    container_remap.insert(
+                                        target.associated_meta_container(),
+                                        new_target.associated_meta_container(),
+                                    );
+                                }
                             }
                         }
                         TreeExternalDiff::Move {
@@ -1155,9 +1162,8 @@ impl Handler {
                         }
                         TreeExternalDiff::Delete => {
                             remap_tree_id(&mut target, container_remap);
-                            // println!("delete {:?}", target);
                             if x.contains(target) {
-                                x.delete(target)?
+                                x.delete(target)?;
                             }
                         }
                     }

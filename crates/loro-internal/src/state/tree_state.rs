@@ -677,8 +677,7 @@ impl TreeState {
             .unwrap_or(TreeParentId::Unexist)
     }
 
-    /// If the node is not deleted or does not exist, return false.
-    /// only the node is deleted and exists, return true
+    /// If the node exists and is not deleted, return false.
     fn is_node_deleted(&self, target: &TreeID) -> bool {
         match self.trees.get(target) {
             Some(x) => match x.parent {
@@ -687,7 +686,7 @@ impl TreeState {
                 TreeParentId::Node(p) => self.is_node_deleted(&p),
                 TreeParentId::Unexist => unreachable!(),
             },
-            None => false,
+            None => true,
         }
     }
 

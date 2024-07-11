@@ -472,7 +472,7 @@ impl FlatNode {
             .get("parent")
             .unwrap()
             .as_string()
-            .map_or(None, |x| Some(x.to_string()));
+            .map(|x| x.to_string());
 
         let meta = map.get("meta").unwrap().as_map().unwrap().as_ref().clone();
         let index = *map.get("index").unwrap().as_i64().unwrap() as usize;
@@ -539,6 +539,8 @@ impl Node {
 }
 
 pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
+    // println!("\n\na = {:#?}", a);
+    // println!("b = {:#?}", b);
     let a_tree = Node::from_loro_value(a);
     let b_tree = Node::from_loro_value(b);
     let mut a_q = VecDeque::from_iter([a_tree]);
