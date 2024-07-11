@@ -1360,6 +1360,11 @@ impl TextHandler {
         }
     }
 
+    /// `start_index` and `end_index` are Event Index:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
+    ///
     pub fn slice(&self, start_index: usize, end_index: usize) -> LoroResult<String> {
         if end_index < start_index {
             return Err(LoroError::EndIndexLessThanStartIndex {
@@ -1379,6 +1384,22 @@ impl TextHandler {
                     .unwrap()
                     .get_text_slice_by_event_index(start_index - 1, end_index - start_index)
             }),
+        }
+    }
+
+    /// `pos` is a Event Index:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
+    ///
+    /// This method requires auto_commit to be enabled.
+    pub fn splice(&self, pos: usize, len: usize, s: &str) -> LoroResult<()> {
+        match self.delete(pos, len) {
+            Ok(()) => match self.insert(pos, s) {
+                Ok(()) => Ok(()),
+                Err(x) => Err(x),
+            },
+            Err(x) => Err(x),
         }
     }
 
