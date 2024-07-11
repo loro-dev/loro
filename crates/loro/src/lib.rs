@@ -11,9 +11,7 @@ use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
-use loro_internal::loro::CommitOptions;
 use loro_internal::undo::{OnPop, OnPush};
-use loro_internal::JsonSchema;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 
@@ -40,10 +38,13 @@ pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
 pub use loro_internal::event::Index;
 pub use loro_internal::handler::TextDelta;
 pub use loro_internal::id::{PeerID, TreeID, ID};
+pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::obs::SubID;
 pub use loro_internal::oplog::FrontiersNotIncluded;
 pub use loro_internal::undo;
 pub use loro_internal::version::{Frontiers, VersionVector};
+pub use loro_internal::ApplyDiff;
+pub use loro_internal::JsonSchema;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
@@ -73,6 +74,14 @@ impl LoroDoc {
         let doc = InnerLoroDoc::default();
         doc.start_auto_commit();
 
+        LoroDoc { doc }
+    }
+
+    /// Duplicate the document with a different PeerID
+    ///
+    /// The time complexity and space complexity of this operation are both O(n),
+    pub fn fork(&self) -> Self {
+        let doc = self.doc.fork();
         LoroDoc { doc }
     }
 
@@ -298,8 +307,12 @@ impl LoroDoc {
     }
 
     /// Export the current state with json-string format of the document.
-    pub fn export_json_updates(&self, vv: &VersionVector) -> JsonSchema {
-        self.doc.export_json_updates(vv)
+    pub fn export_json_updates(
+        &self,
+        start_vv: &VersionVector,
+        end_vv: &VersionVector,
+    ) -> JsonSchema {
+        self.doc.export_json_updates(start_vv, end_vv)
     }
 
     /// Export all the ops not included in the given `VersionVector`
@@ -970,9 +983,19 @@ impl LoroText {
         self.handler.insert(pos, s)
     }
 
+    /// Insert a string at the given utf-8 position.
+    pub fn insert_utf8(&self, pos: usize, s: &str) -> LoroResult<()> {
+        self.handler.insert_utf8(pos, s)
+    }
+
     /// Delete a range of text at the given unicode position with unicode length.
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
         self.handler.delete(pos, len)
+    }
+
+    /// Delete a range of text at the given utf-8 position with utf-8 length.
+    pub fn delete_utf8(&self, pos: usize, len: usize) -> LoroResult<()> {
+        self.handler.delete_utf8(pos, len)
     }
 
     /// Whether the text container is empty.
@@ -1364,7 +1387,9 @@ impl LoroTree {
     }
 
     /// Return all children of the target node.
-    pub fn children(&self, parent: Option<TreeID>) -> Vec<TreeID> {
+    ///
+    /// If the parent node does not exist, return `None`.
+    pub fn children(&self, parent: Option<TreeID>) -> Option<Vec<TreeID>> {
         self.handler.children(parent)
     }
 

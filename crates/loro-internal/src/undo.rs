@@ -40,9 +40,11 @@ impl DiffBatch {
             return;
         }
 
-        for (idx, diff) in self.0.iter_mut() {
-            if let Some(b_diff) = other.0.get(idx) {
-                diff.compose_ref(b_diff);
+        for (idx, diff) in other.0.iter() {
+            if let Some(this_diff) = self.0.get_mut(idx) {
+                this_diff.compose_ref(diff);
+            } else {
+                self.0.insert(idx.clone(), diff.clone());
             }
         }
     }
@@ -146,7 +148,7 @@ pub type OnPush = Box<dyn Fn(UndoOrRedo, CounterSpan) -> UndoItemMeta + Send + S
 pub type OnPop = Box<dyn Fn(UndoOrRedo, CounterSpan, UndoItemMeta) + Send + Sync>;
 
 struct UndoManagerInner {
-    latest_counter: Counter,
+    latest_counter: Option<Counter>,
     undo_stack: Stack,
     redo_stack: Stack,
     processing_undo: bool,
@@ -180,7 +182,7 @@ struct Stack {
     size: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct StackItem {
     span: CounterSpan,
     meta: UndoItemMeta,
@@ -210,7 +212,7 @@ impl UndoItemMeta {
         }
     }
 
-    /// It's assumed that the cursor is just acqured before the ops that
+    /// It's assumed that the cursor is just acquired before the ops that
     /// need to be undo/redo.
     ///
     /// We need to rely on the validity of the original pos value
@@ -271,19 +273,14 @@ impl Stack {
 
     pub fn push_with_merge(&mut self, span: CounterSpan, meta: UndoItemMeta, can_merge: bool) {
         let last = self.stack.back_mut().unwrap();
-        let mut last_remote_diff = last.1.try_lock().unwrap();
+        let last_remote_diff = last.1.try_lock().unwrap();
         if !last_remote_diff.0.is_empty() {
             // If the remote diff is not empty, we cannot merge
-            if last.0.is_empty() {
-                last.0.push_back(StackItem { span, meta });
-                last_remote_diff.clear();
-            } else {
-                drop(last_remote_diff);
-                let mut v = VecDeque::new();
-                v.push_back(StackItem { span, meta });
-                self.stack
-                    .push_back((v, Arc::new(Mutex::new(DiffBatch::default()))));
-            }
+            drop(last_remote_diff);
+            let mut v = VecDeque::new();
+            v.push_back(StackItem { span, meta });
+            self.stack
+                .push_back((v, Arc::new(Mutex::new(DiffBatch::default()))));
 
             self.size += 1;
         } else {
@@ -322,7 +319,6 @@ impl Stack {
         if self.is_empty() {
             return;
         }
-
         let remote_diff = &mut self.stack.back_mut().unwrap().1;
         remote_diff.try_lock().unwrap().transform(diff, false);
     }
@@ -365,7 +361,7 @@ impl Default for Stack {
 impl UndoManagerInner {
     fn new(last_counter: Counter) -> Self {
         UndoManagerInner {
-            latest_counter: last_counter,
+            latest_counter: Some(last_counter),
             undo_stack: Default::default(),
             redo_stack: Default::default(),
             processing_undo: false,
@@ -380,13 +376,18 @@ impl UndoManagerInner {
     }
 
     fn record_checkpoint(&mut self, latest_counter: Counter) {
-        if latest_counter == self.latest_counter {
+        if Some(latest_counter) == self.latest_counter {
             return;
         }
 
-        assert!(self.latest_counter < latest_counter);
+        if self.latest_counter.is_none() {
+            self.latest_counter = Some(latest_counter);
+            return;
+        }
+
+        assert!(self.latest_counter.unwrap() < latest_counter);
         let now = get_sys_timestamp();
-        let span = CounterSpan::new(self.latest_counter, latest_counter);
+        let span = CounterSpan::new(self.latest_counter.unwrap(), latest_counter);
         let meta = self
             .on_push
             .as_ref()
@@ -400,7 +401,7 @@ impl UndoManagerInner {
             self.undo_stack.push(span, meta);
         }
 
-        self.latest_counter = latest_counter;
+        self.latest_counter = Some(latest_counter);
         self.redo_stack.clear();
         while self.undo_stack.len() > self.max_stack_size {
             self.undo_stack.pop_front();
@@ -445,7 +446,7 @@ impl UndoManager {
                         // a remote event.
                         inner.undo_stack.compose_remote_event(event.events);
                         inner.redo_stack.compose_remote_event(event.events);
-                        inner.latest_counter = id.counter + 1;
+                        inner.latest_counter = Some(id.counter + 1);
                     } else {
                         inner.record_checkpoint(id.counter + 1);
                     }
@@ -456,7 +457,12 @@ impl UndoManager {
                 inner.undo_stack.compose_remote_event(event.events);
                 inner.redo_stack.compose_remote_event(event.events);
             }
-            EventTriggerKind::Checkout => {}
+            EventTriggerKind::Checkout => {
+                let mut inner = inner_clone.try_lock().unwrap();
+                inner.undo_stack.clear();
+                inner.redo_stack.clear();
+                inner.latest_counter = None;
+            }
         }));
 
         UndoManager {
@@ -648,7 +654,7 @@ impl UndoManager {
                 }
 
                 get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter), meta);
-                inner.latest_counter = new_counter;
+                inner.latest_counter = Some(new_counter);
                 executed = true;
                 break;
             } else {
@@ -749,7 +755,6 @@ pub(crate) fn undo(
                 // ------------------------------------------------------------------------------
                 // 1.b Transform and apply Ci-1 based on Ai, call it A'i
                 // ------------------------------------------------------------------------------
-
                 last_ci.transform(&event_a_i, true);
 
                 event_a_i.compose(&last_ci);
@@ -760,13 +765,12 @@ pub(crate) fn undo(
             if i == spans.len() - 1 {
                 on_last_event_a(&event_a_prime);
             }
-
             // --------------------------------------------------
             // 3. Transform event A'_i based on B_i, call it C_i
             // --------------------------------------------------
             event_a_prime.transform(event_b_i, true);
-            let c_i = event_a_prime;
 
+            let c_i = event_a_prime;
             last_ci = Some(c_i);
         });
     }

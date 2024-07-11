@@ -9,8 +9,8 @@ use loro_internal::{ListDiffItem, LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
 use crate::{
-    frontiers_to_ids, Container, Cursor, JsContainer, JsImportBlobMetadata, LoroList, LoroMap,
-    LoroMovableList, LoroText, LoroTree,
+    frontiers_to_ids, Container, Cursor, JsContainer, JsImportBlobMetadata, LoroCounter, LoroList,
+    LoroMap, LoroMovableList, LoroText, LoroTree,
 };
 use wasm_bindgen::__rt::IntoJsResult;
 use wasm_bindgen::convert::RefFromWasmAbi;
@@ -130,6 +130,21 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
                 &obj,
                 &JsValue::from_str("updated"),
                 &map_delta_to_js(map, doc),
+            )
+            .unwrap();
+        }
+
+        Diff::Counter(v) => {
+            js_sys::Reflect::set(
+                &obj,
+                &JsValue::from_str("type"),
+                &JsValue::from_str("counter"),
+            )
+            .unwrap();
+            js_sys::Reflect::set(
+                &obj,
+                &JsValue::from_str("increment"),
+                &JsValue::from_f64(*v),
             )
             .unwrap();
         }
@@ -326,8 +341,7 @@ pub(crate) fn handler_to_js_value(handler: Handler, doc: Option<Arc<LoroDoc>>) -
         Handler::List(l) => LoroList { handler: l, doc }.into(),
         Handler::Tree(t) => LoroTree { handler: t, doc }.into(),
         Handler::MovableList(m) => LoroMovableList { handler: m, doc }.into(),
-        #[cfg(feature = "counter")]
-        Handler::Counter(c) => unimplemented!(),
+        Handler::Counter(c) => LoroCounter { handler: c, doc }.into(),
         Handler::Unknown(_) => unreachable!(),
     }
 }

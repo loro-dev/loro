@@ -55,7 +55,7 @@ pub enum Diff<'a> {
     Tree(&'a TreeDiff),
     #[cfg(feature = "counter")]
     /// A counter diff.
-    Counter(i64),
+    Counter(f64),
     /// An unknown diff.
     Unknown,
 }

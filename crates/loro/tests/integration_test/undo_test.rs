@@ -1209,7 +1209,8 @@ fn undo_tree_concurrent_delete2() -> LoroResult<()> {
             .get("id")
             .unwrap()
             .to_json_value(),
-        json!("1@1")
+        // create a new node
+        json!("1@2")
     );
     Ok(())
 }

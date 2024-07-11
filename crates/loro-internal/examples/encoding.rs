@@ -63,7 +63,8 @@ fn main() {
     );
 
     let json_updates =
-        serde_json::to_string(&loro.export_json_updates(&Default::default())).unwrap();
+        serde_json::to_string(&loro.export_json_updates(&Default::default(), &loro.oplog_vv()))
+            .unwrap();
     let output = miniz_oxide::deflate::compress_to_vec(json_updates.as_bytes(), 6);
     println!(
         "json updates size {} after compression {}",

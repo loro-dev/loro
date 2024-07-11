@@ -8,6 +8,7 @@ import {
   LoroMap,
   LoroText,
   LoroTree,
+  LoroCounter,
   OpId,
   TreeID,
   Value,
@@ -103,13 +104,18 @@ export type TreeDiff = {
   diff: TreeDiffItem[];
 };
 
-export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
+export type CounterDiff = {
+  type: "counter";
+  increment: number;
+}
+
+export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff | CounterDiff;
 
 interface Listener {
   (event: LoroEventBatch): void;
 }
 
-const CONTAINER_TYPES = ["Map", "Text", "List", "Tree", "MovableList"];
+const CONTAINER_TYPES = ["Map", "Text", "List", "Tree", "MovableList", "Counter"];
 
 export function isContainerId(s: string): s is ContainerID {
   return s.startsWith("cid:");
@@ -173,6 +179,7 @@ export function getType<T>(
       ? "Tree"
       : T extends LoroList<any>
         ? "List"
+        :T extends LoroCounter?"Counter"
         : "Json" {
   if (isContainer(value)) {
     return value.kind() as unknown as any;
@@ -631,7 +638,7 @@ declare module "loro-wasm" {
      * The objects returned are new js objects each time because they need to cross
      * the WASM boundary.
      */
-    children(): Array<LoroTreeNode<T>>;
+    children(): Array<LoroTreeNode<T>> | undefined;
   }
 
   interface AwarenessWasm<T extends Value = Value> {

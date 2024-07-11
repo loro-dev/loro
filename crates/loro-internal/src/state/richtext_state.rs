@@ -5,7 +5,7 @@ use std::{
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::HasLength;
-use loro_common::{ContainerID, InternalString, LoroResult, LoroValue, ID};
+use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
 use loro_delta::DeltaRopeBuilder;
 
 use crate::{
@@ -655,7 +655,7 @@ impl ContainerState for RichtextState {
     }
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) {
+    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
         self.update_version();
         assert_eq!(ctx.mode, EncodeMode::Snapshot);
         let mut loader = RichtextStateLoader::default();
@@ -692,6 +692,7 @@ impl ContainerState for RichtextState {
 
         self.state = LazyLoad::Src(loader);
         // self.check_consistency_between_content_and_style_ranges();
+        Ok(())
     }
 }
 
@@ -742,10 +743,14 @@ impl RichtextState {
     }
 
     #[inline]
-    pub(crate) fn get_entity_index_for_text_insert(&mut self, event_index: usize) -> usize {
+    pub(crate) fn get_entity_index_for_text_insert(
+        &mut self,
+        event_index: usize,
+        pos_type: PosType,
+    ) -> Result<usize, LoroError> {
         self.state
             .get_mut()
-            .get_entity_index_for_text_insert(event_index, PosType::Event)
+            .get_entity_index_for_text_insert(event_index, pos_type)
     }
 
     pub(crate) fn get_entity_range_and_styles_at_range(
@@ -770,10 +775,11 @@ impl RichtextState {
         &mut self,
         pos: usize,
         len: usize,
-    ) -> Vec<EntityRangeInfo> {
+        pos_type: PosType,
+    ) -> LoroResult<Vec<EntityRangeInfo>> {
         self.state
             .get_mut()
-            .get_text_entity_ranges(pos, len, PosType::Event)
+            .get_text_entity_ranges(pos, len, pos_type)
     }
 
     #[inline]

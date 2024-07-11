@@ -482,7 +482,7 @@ impl ApplyDiff for LoroValue {
                             TypeHint::List => LoroValue::List(Default::default()),
                             TypeHint::Tree => LoroValue::List(Default::default()),
                             #[cfg(feature = "counter")]
-                            TypeHint::Counter => LoroValue::I64(0),
+                            TypeHint::Counter => LoroValue::Double(0.),
                         })
                     }
                     Index::Seq(index) => {

@@ -118,6 +118,41 @@ impl LoroDoc {
         }
     }
 
+    pub fn fork(&self) -> Self {
+        self.commit_then_stop();
+        let arena = self.arena.fork();
+        let config = self.config.fork();
+        let txn = Arc::new(Mutex::new(None));
+        let new_state =
+            self.state
+                .lock()
+                .unwrap()
+                .fork(arena.clone(), Arc::downgrade(&txn), config.clone());
+        let doc = LoroDoc {
+            oplog: Arc::new(Mutex::new(
+                self.oplog()
+                    .lock()
+                    .unwrap()
+                    .fork(arena.clone(), config.clone()),
+            )),
+            state: new_state,
+            arena,
+            config,
+            observer: Arc::new(Observer::new(self.arena.clone())),
+            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
+            txn,
+            auto_commit: AtomicBool::new(false),
+            detached: AtomicBool::new(self.detached.load(std::sync::atomic::Ordering::Relaxed)),
+        };
+
+        if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
+            doc.start_auto_commit();
+        }
+
+        self.renew_txn_if_auto_commit();
+        doc
+    }
+
     /// Set whether to record the timestamp of each change. Default is `false`.
     ///
     /// If enabled, the Unix timestamp will be recorded for each change automatically.
@@ -586,10 +621,14 @@ impl LoroDoc {
         Ok(())
     }
 
-    pub fn export_json_updates(&self, vv: &VersionVector) -> JsonSchema {
+    pub fn export_json_updates(
+        &self,
+        start_vv: &VersionVector,
+        end_vv: &VersionVector,
+    ) -> JsonSchema {
         self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
-        let json = crate::encoding::json_schema::export_json(&oplog, vv);
+        let json = crate::encoding::json_schema::export_json(&oplog, start_vv, end_vv);
         drop(oplog);
         self.renew_txn_if_auto_commit();
         json
@@ -792,6 +831,8 @@ impl LoroDoc {
             before_diff,
         );
 
+        // println!("\nundo_internal: diff: {:?}", diff);
+
         self.checkout_without_emitting(&latest_frontiers)?;
         self.detached.store(false, Release);
         if was_recording {
@@ -888,10 +929,7 @@ impl LoroDoc {
             }
 
             let h = self.get_handler(id);
-            h.apply_diff(diff, &mut |old_id, new_id| {
-                container_remap.insert(old_id, new_id);
-            })
-            .unwrap();
+            h.apply_diff(diff, container_remap).unwrap();
         }
 
         Ok(())
@@ -1044,7 +1082,6 @@ impl LoroDoc {
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
             ));
         };
-
         let diff = calc.calc_diff_internal(
             &oplog,
             before,

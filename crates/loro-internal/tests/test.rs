@@ -720,26 +720,18 @@ fn map_concurrent_checkout() {
 
 #[test]
 fn tree_checkout() {
-    let doc_a = LoroDoc::new();
+    let doc_a = LoroDoc::new_auto_commit();
     doc_a.subscribe_root(Arc::new(|_e| {}));
     doc_a.set_peer_id(1).unwrap();
     let tree = doc_a.get_tree("root");
-    let id1 = doc_a
-        .with_txn(|txn| tree.create_with_txn(txn, None, 0))
-        .unwrap();
-    let id2 = doc_a
-        .with_txn(|txn| tree.create_with_txn(txn, id1, 0))
-        .unwrap();
+    let id1 = tree.create(None).unwrap();
+    let id2 = tree.create(id1).unwrap();
     let v1_state = tree.get_deep_value();
     let v1 = doc_a.oplog_frontiers();
-    let _id3 = doc_a
-        .with_txn(|txn| tree.create_with_txn(txn, id2, 0))
-        .unwrap();
+    let _id3 = tree.create(id2).unwrap();
     let v2_state = tree.get_deep_value();
     let v2 = doc_a.oplog_frontiers();
-    doc_a
-        .with_txn(|txn| tree.delete_with_txn(txn, id2))
-        .unwrap();
+    tree.delete(id2).unwrap();
     let v3_state = tree.get_deep_value();
     let v3 = doc_a.oplog_frontiers();
     doc_a.checkout(&v1).unwrap();
@@ -765,12 +757,7 @@ fn tree_checkout() {
     );
 
     doc_a.attach();
-    doc_a
-        .with_txn(|txn| {
-            tree.create_with_txn(txn, None, 0)
-            //tree.insert_meta(txn, id1, "a", 1.into())
-        })
-        .unwrap();
+    tree.create(None).unwrap();
 }
 
 #[test]
@@ -959,4 +946,161 @@ fn tree_attach() {
             .to_json_value(),
         json!({"key":"value"})
     )
+}
+
+#[test]
+#[cfg(feature = "counter")]
+fn counter() {
+    let doc = LoroDoc::new_auto_commit();
+    let counter = doc.get_counter("counter");
+    counter.increment(1.).unwrap();
+    counter.increment(2.).unwrap();
+    counter.decrement(1.).unwrap();
+    let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let doc2 = LoroDoc::new_auto_commit();
+    doc2.import_json_updates(json).unwrap();
+}
+
+#[test]
+fn test_insert_utf8() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "Hello ").unwrap();
+    text.insert_utf8(6, "World").unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"Hello World"}])
+    )
+}
+
+#[test]
+fn test_insert_utf8_cross_unicode_1() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "你好").unwrap();
+    text.insert_utf8(3, "World").unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"你World好"}])
+    )
+}
+
+#[test]
+fn test_insert_utf8_cross_unicode_2() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "你好").unwrap();
+    text.insert_utf8(6, "World").unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"你好World"}])
+    )
+}
+
+#[test]
+fn test_insert_utf8_detached() {
+    let text = TextHandler::new_detached();
+    text.insert_utf8(0, "Hello ").unwrap();
+    text.insert_utf8(6, "World").unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"Hello World"}])
+    )
+}
+
+#[test]
+#[should_panic]
+fn test_insert_utf8_panic_cross_unicode() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "你好").unwrap();
+    text.insert_utf8(1, "World").unwrap();
+}
+
+#[test]
+#[should_panic]
+fn test_insert_utf8_panic_out_bound() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "Hello ").unwrap();
+    text.insert_utf8(7, "World").unwrap();
+}
+
+//    println!("{}", text.get_richtext_value().to_json_value().to_string());
+
+#[test]
+fn test_delete_utf8() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "Hello").unwrap();
+    text.delete_utf8(1, 3).unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"Ho"}])
+    )
+}
+
+#[test]
+fn test_delete_utf8_with_zero_len() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "Hello").unwrap();
+    text.delete_utf8(1, 0).unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"Hello"}])
+    )
+}
+
+#[test]
+fn test_delete_utf8_cross_unicode() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert_utf8(0, "你好").unwrap();
+    text.delete_utf8(0, 3).unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"好"}])
+    )
+}
+
+#[test]
+fn test_delete_utf8_detached() {
+    let text = TextHandler::new_detached();
+    text.insert_utf8(0, "Hello").unwrap();
+    text.delete_utf8(1, 3).unwrap();
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        json!([{"insert":"Ho"}])
+    )
+}
+
+// WARNING:
+// Due to the current inability to report an error on
+// get_offset_and_found on BTree, this test won't be ok.
+// #[test]
+// #[should_panic]
+// fn test_delete_utf8_panic_cross_unicode() {
+//     let doc = LoroDoc::new_auto_commit();
+//     let text = doc.get_text("text");
+//     text.insert_utf8(0, "你好").unwrap();
+//     text.delete_utf8(0, 2).unwrap();
+// }
+
+#[test]
+#[should_panic]
+fn test_delete_utf8_panic_out_bound_pos() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    text.delete_utf8(10, 1).unwrap();
+}
+
+#[test]
+#[should_panic]
+fn test_delete_utf8_panic_out_bound_len() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    text.delete_utf8(1, 10).unwrap();
 }

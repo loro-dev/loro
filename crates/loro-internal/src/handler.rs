@@ -7,7 +7,7 @@ use crate::{
         richtext::{richtext_state::PosType, RichtextState, StyleOp, TextStyleInfoFlag},
     },
     cursor::{Cursor, Side},
-    delta::{DeltaItem, StyleMeta, TreeExternalDiff},
+    delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
     event::{Diff, TextDiffItem},
     op::ListSlice,
     state::{ContainerState, IndexType, State},
@@ -19,16 +19,20 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
 use loro_common::{
-    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, ID,
+    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, TreeID,
+    ID,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
+    cmp::Reverse,
+    collections::BinaryHeap,
     fmt::Debug,
     ops::Deref,
     sync::{Arc, Mutex, Weak},
 };
-use tracing::{error, info, instrument};
+
+use tracing::{debug, error, info, instrument, Event};
 
 mod tree;
 pub use tree::TreeHandler;
@@ -1060,8 +1064,11 @@ impl Handler {
     pub(crate) fn apply_diff(
         &self,
         diff: Diff,
-        on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
+        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
     ) -> LoroResult<()> {
+        let on_container_remap = &mut |old_id, new_id| {
+            container_remap.insert(old_id, new_id);
+        };
         match self {
             Self::Map(x) => {
                 let diff = diff.into_map().unwrap();
@@ -1098,20 +1105,60 @@ impl Handler {
                 x.apply_delta(delta, on_container_remap)?;
             }
             Self::Tree(x) => {
+                fn remap_tree_id(
+                    id: &mut TreeID,
+                    container_remap: &FxHashMap<ContainerID, ContainerID>,
+                ) {
+                    let mut remapped = false;
+                    let mut map_id = id.associated_meta_container();
+                    while let Some(rid) = container_remap.get(&map_id) {
+                        remapped = true;
+                        map_id = rid.clone();
+                    }
+                    if remapped {
+                        *id = TreeID::new(
+                            *map_id.as_normal().unwrap().0,
+                            *map_id.as_normal().unwrap().1,
+                        )
+                    }
+                }
                 for diff in diff.into_tree().unwrap().diff {
-                    let target = diff.target;
+                    let mut target = diff.target;
                     match diff.action {
                         TreeExternalDiff::Create {
-                            parent,
-                            index,
-                            position: _,
+                            mut parent,
+                            index: _,
+                            position,
                         } => {
-                            x.create_at_with_target(parent, index, target)?;
-                            // create map event
+                            let new_target = x.__internal__next_tree_id();
+                            if let Some(p) = parent.as_mut() {
+                                remap_tree_id(p, container_remap)
+                            }
+                            if x.create_at_with_target_for_apply_diff(parent, position, new_target)?
+                            {
+                                container_remap.insert(
+                                    target.associated_meta_container(),
+                                    new_target.associated_meta_container(),
+                                );
+                            }
                         }
-                        TreeExternalDiff::Delete { .. } => x.delete(target)?,
-                        TreeExternalDiff::Move { parent, index, .. } => {
-                            x.move_to(target, parent, index)?
+                        TreeExternalDiff::Move {
+                            mut parent,
+                            index: _,
+                            position,
+                        } => {
+                            if let Some(p) = parent.as_mut() {
+                                remap_tree_id(p, container_remap)
+                            }
+                            remap_tree_id(&mut target, container_remap);
+                            x.move_at_with_target_for_apply_diff(parent, position, target)?;
+                        }
+                        TreeExternalDiff::Delete => {
+                            remap_tree_id(&mut target, container_remap);
+                            // println!("delete {:?}", target);
+                            if x.contains(target) {
+                                x.delete(target)?
+                            }
                         }
                     }
                 }
@@ -1291,7 +1338,8 @@ impl TextHandler {
                 let mut t = t.try_lock().unwrap();
                 let index = t
                     .value
-                    .get_entity_index_for_text_insert(pos, PosType::Event);
+                    .get_entity_index_for_text_insert(pos, PosType::Event)
+                    .unwrap();
                 t.value.insert_at_entity_index(
                     index,
                     BytesSlice::from_bytes(s.as_bytes()),
@@ -1303,16 +1351,89 @@ impl TextHandler {
         }
     }
 
+    pub fn insert_utf8(&self, pos: usize, s: &str) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let mut t = t.try_lock().unwrap();
+                let index = t
+                    .value
+                    .get_entity_index_for_text_insert(pos, PosType::Bytes)
+                    .unwrap();
+                t.value.insert_at_entity_index(
+                    index,
+                    BytesSlice::from_bytes(s.as_bytes()),
+                    IdFull::NONE_ID,
+                );
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.insert_with_txn_utf8(txn, pos, s)),
+        }
+    }
+
     /// `pos` is a Event Index:
     ///
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
     pub fn insert_with_txn(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
-        self.insert_with_txn_and_attr(txn, pos, s, None)?;
+        self.insert_with_txn_and_attr(txn, pos, s, None, PosType::Event)?;
         Ok(())
     }
 
-    /// If attr is specified, it will be used as the attribute of the inserted text.
+    pub fn insert_with_txn_utf8(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        s: &str,
+    ) -> LoroResult<()> {
+        self.insert_with_txn_and_attr(txn, pos, s, None, PosType::Bytes)?;
+        Ok(())
+    }
+
+    /// `pos` is a Event Index:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
+    ///
+    /// This method requires auto_commit to be enabled.
+    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let mut t = t.try_lock().unwrap();
+                let ranges = t
+                    .value
+                    .get_text_entity_ranges(pos, len, PosType::Event)
+                    .unwrap();
+                for range in ranges.iter().rev() {
+                    t.value
+                        .drain_by_entity_index(range.entity_start, range.entity_len(), None);
+                }
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, pos, len)),
+        }
+    }
+
+    pub fn delete_utf8(&self, pos: usize, len: usize) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let mut t = t.try_lock().unwrap();
+                let ranges = match t.value.get_text_entity_ranges(pos, len, PosType::Bytes) {
+                    Err(x) => return Err(x),
+                    Ok(x) => x,
+                };
+                for range in ranges.iter().rev() {
+                    t.value
+                        .drain_by_entity_index(range.entity_start, range.entity_len(), None);
+                }
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => {
+                a.with_txn(|txn| self.delete_with_txn_utf8(txn, pos, len))
+            }
+        }
+    }
+
+    /// If attr is specified, it will be used as the at tribute of the inserted text.
     /// It will override the existing attribute of the text.
     fn insert_with_txn_and_attr(
         &self,
@@ -1320,25 +1441,50 @@ impl TextHandler {
         pos: usize,
         s: &str,
         attr: Option<&FxHashMap<String, LoroValue>>,
+        pos_type: PosType,
     ) -> Result<Vec<(InternalString, LoroValue)>, LoroError> {
         if s.is_empty() {
             return Ok(Vec::new());
         }
 
-        if pos > self.len_event() {
-            return Err(LoroError::OutOfBound {
-                pos,
-                len: self.len_event(),
-            });
+        match pos_type {
+            PosType::Event => {
+                if pos > self.len_event() {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        len: self.len_event(),
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+            }
+            PosType::Bytes => {
+                if pos > self.len_utf8() {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        len: self.len_utf8(),
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+            }
+            _ => (),
         }
 
         let inner = self.inner.try_attached_state()?;
         let (entity_index, styles) = inner.with_state(|state| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
-            let pos = richtext_state.get_entity_index_for_text_insert(pos);
+            let pos = richtext_state.get_entity_index_for_text_insert(pos, pos_type);
+            let pos = match pos {
+                Err(_) => return (pos, StyleMeta::empty()),
+                Ok(x) => x,
+            };
             let styles = richtext_state.get_styles_at_entity_index(pos);
-            (pos, styles)
+            (Ok(pos), styles)
         });
+
+        let entity_index = match entity_index {
+            Err(x) => return Err(x),
+            _ => entity_index.unwrap(),
+        };
 
         let mut override_styles = Vec::new();
         if let Some(attr) = attr {
@@ -1395,49 +1541,66 @@ impl TextHandler {
     ///
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
-    ///
-    /// This method requires auto_commit to be enabled.
-    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
-        match &self.inner {
-            MaybeDetached::Detached(t) => {
-                let mut t = t.try_lock().unwrap();
-                let ranges = t.value.get_text_entity_ranges(pos, len, PosType::Event);
-                for range in ranges.iter().rev() {
-                    t.value
-                        .drain_by_entity_index(range.entity_start, range.entity_len(), None);
-                }
-                Ok(())
-            }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, pos, len)),
-        }
+    pub fn delete_with_txn(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
+        self.delete_with_txn_inline(txn, pos, len, PosType::Event)
     }
 
-    /// `pos` is a Event Index:
-    ///
-    /// - if feature="wasm", pos is a UTF-16 index
-    /// - if feature!="wasm", pos is a Unicode index
-    pub fn delete_with_txn(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
+    pub fn delete_with_txn_utf8(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        len: usize,
+    ) -> LoroResult<()> {
+        self.delete_with_txn_inline(txn, pos, len, PosType::Bytes)
+    }
+
+    fn delete_with_txn_inline(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        len: usize,
+        pos_type: PosType,
+    ) -> LoroResult<()> {
         if len == 0 {
             return Ok(());
         }
 
-        if pos + len > self.len_event() {
-            error!("pos={} len={} len_event={}", pos, len, self.len_event());
-            return Err(LoroError::OutOfBound {
-                pos: pos + len,
-                len: self.len_event(),
-            });
+        match pos_type {
+            PosType::Event => {
+                if pos + len > self.len_event() {
+                    error!("pos={} len={} len_event={}", pos, len, self.len_event());
+                    return Err(LoroError::OutOfBound {
+                        pos: pos + len,
+                        len: self.len_event(),
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+            }
+            PosType::Bytes => {
+                if pos + len > self.len_utf8() {
+                    error!("pos={} len={} len_event={}", pos, len, self.len_event());
+                    return Err(LoroError::OutOfBound {
+                        pos: pos + len,
+                        len: self.len_event(),
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+            }
+            _ => (),
         }
 
         let inner = self.inner.try_attached_state()?;
         let s = tracing::span!(tracing::Level::INFO, "delete", "pos={} len={}", pos, len);
         let _e = s.enter();
-        let ranges = inner.with_state(|state| {
+        let ranges = match inner.with_state(|state| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
-            richtext_state.get_text_entity_ranges_in_event_index_range(pos, len)
-        });
+            richtext_state.get_text_entity_ranges_in_event_index_range(pos, len, pos_type)
+        }) {
+            Err(x) => return Err(x),
+            Ok(x) => x,
+        };
 
-        debug_assert_eq!(ranges.iter().map(|x| x.event_len).sum::<usize>(), len);
+        //debug_assert_eq!(ranges.iter().map(|x| x.event_len).sum::<usize>(), len);
         let mut event_end = (pos + len) as isize;
         for range in ranges.iter().rev() {
             let event_start = event_end - range.event_len as isize;
@@ -1503,7 +1666,11 @@ impl TextHandler {
             ));
         }
         if end > len {
-            return Err(LoroError::OutOfBound { pos: end, len });
+            return Err(LoroError::OutOfBound {
+                pos: end,
+                len,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
         }
         let (entity_range, styles) =
             state.get_entity_range_and_text_styles_at_range(start..end, PosType::Event);
@@ -1579,7 +1746,11 @@ impl TextHandler {
 
         let len = self.len_event();
         if end > len {
-            return Err(LoroError::OutOfBound { pos: end, len });
+            return Err(LoroError::OutOfBound {
+                pos: end,
+                len,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
         }
 
         let inner = self.inner.try_attached_state()?;
@@ -1693,6 +1864,7 @@ impl TextHandler {
                         index,
                         insert.as_str(),
                         Some(attributes.as_ref().unwrap_or(&Default::default())),
+                        PosType::Event,
                     )?;
 
                     for (key, value) in override_styles {
@@ -1873,6 +2045,7 @@ impl ListHandler {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -1957,6 +2130,7 @@ impl ListHandler {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -1997,6 +2171,7 @@ impl ListHandler {
         if pos + len > self.len() {
             return Err(LoroError::OutOfBound {
                 pos: pos + len,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2031,6 +2206,7 @@ impl ListHandler {
                 let list = l.try_lock().unwrap();
                 let value = list.value.get(index).ok_or(LoroError::OutOfBound {
                     pos: index,
+                    info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                     len: list.value.len(),
                 })?;
                 match value {
@@ -2050,6 +2226,7 @@ impl ListHandler {
                 }) else {
                     return Err(LoroError::OutOfBound {
                         pos: index,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: a.with_state(|state| state.as_list_state().unwrap().len()),
                     });
                 };
@@ -2249,6 +2426,7 @@ impl MovableListHandler {
                 if pos > d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: d.value.len(),
                     });
                 }
@@ -2271,6 +2449,7 @@ impl MovableListHandler {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2310,12 +2489,14 @@ impl MovableListHandler {
                 if from >= d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos: from,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: d.value.len(),
                     });
                 }
                 if to >= d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos: to,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: d.value.len(),
                     });
                 }
@@ -2337,6 +2518,7 @@ impl MovableListHandler {
         if from >= self.len() {
             return Err(LoroError::OutOfBound {
                 pos: from,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2344,6 +2526,7 @@ impl MovableListHandler {
         if to >= self.len() {
             return Err(LoroError::OutOfBound {
                 pos: to,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2439,6 +2622,7 @@ impl MovableListHandler {
                 if pos > d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: d.value.len(),
                     });
                 }
@@ -2461,6 +2645,7 @@ impl MovableListHandler {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2495,6 +2680,7 @@ impl MovableListHandler {
                 if index >= d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos: index,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: d.value.len(),
                     });
                 }
@@ -2516,6 +2702,7 @@ impl MovableListHandler {
         if index >= self.len() {
             return Err(LoroError::OutOfBound {
                 pos: index,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2604,6 +2791,7 @@ impl MovableListHandler {
         if pos + len > self.len() {
             return Err(LoroError::OutOfBound {
                 pos: pos + len,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 len: self.len(),
             });
         }
@@ -2651,6 +2839,7 @@ impl MovableListHandler {
                 let list = l.try_lock().unwrap();
                 let value = list.value.get(index).ok_or(LoroError::OutOfBound {
                     pos: index,
+                    info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                     len: list.value.len(),
                 })?;
                 match value {
@@ -2675,6 +2864,7 @@ impl MovableListHandler {
                 }) else {
                     return Err(LoroError::OutOfBound {
                         pos: index,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                         len: a.with_state(|state| state.as_list_state().unwrap().len()),
                     });
                 };
@@ -2872,7 +3062,54 @@ impl MovableListHandler {
                 unimplemented!();
             }
             MaybeDetached::Attached(_) => {
+                debug!("movable list apply_delta {:#?}", &delta);
+                // preprocess all deletions. They will be used to infer the move ops
                 let mut index = 0;
+                let mut to_delete = FxHashMap::default();
+                for d in delta.iter() {
+                    match d {
+                        loro_delta::DeltaItem::Retain { len, .. } => {
+                            index += len;
+                        }
+                        loro_delta::DeltaItem::Replace { delete, .. } => {
+                            if *delete > 0 {
+                                for i in index..index + *delete {
+                                    if let Some(LoroValue::Container(c)) = self.get(i) {
+                                        to_delete.insert(c, i);
+                                    }
+                                }
+
+                                index += *delete;
+                            }
+                        }
+                    }
+                }
+
+                fn update_on_insert(
+                    d: &mut FxHashMap<ContainerID, usize>,
+                    index: usize,
+                    len: usize,
+                ) {
+                    for pos in d.values_mut() {
+                        if *pos >= index {
+                            *pos += len;
+                        }
+                    }
+                }
+
+                fn update_on_delete(d: &mut FxHashMap<ContainerID, usize>, index: usize) {
+                    for pos in d.values_mut() {
+                        if *pos >= index {
+                            *pos -= 1;
+                        }
+                    }
+                }
+
+                // process all insertions and moves
+                let mut index = 0;
+                let mut deleted = Vec::new();
+                let mut next_deleted = BinaryHeap::new();
+                let mut index_shift = 0;
                 for d in delta.iter() {
                     match d {
                         loro_delta::DeltaItem::Retain { len, .. } => {
@@ -2881,28 +3118,93 @@ impl MovableListHandler {
                         loro_delta::DeltaItem::Replace {
                             value,
                             delete,
-                            attr: _attr,
+                            attr,
                         } => {
-                            // TODO: handle move error
-                            self.delete(index, *delete)?;
+                            if *delete > 0 {
+                                // skip the deletion if it is already processed by moving
+                                let mut d = *delete;
+                                while let Some(Reverse(old_index)) = next_deleted.peek() {
+                                    if *old_index + index_shift < index + d {
+                                        assert!(index <= *old_index + index_shift);
+                                        assert!(d > 0);
+                                        next_deleted.pop();
+                                        d -= 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                index += d;
+                            }
+
                             for v in value.iter() {
                                 match v {
                                     ValueOrHandler::Value(v) => {
                                         self.insert(index, v.clone())?;
+                                        update_on_insert(&mut to_delete, index, 1);
+                                        index += 1;
+                                        index_shift += 1;
                                     }
                                     ValueOrHandler::Handler(h) => {
                                         let old_id = h.id();
-                                        let new_h = self.insert_container(
-                                            index,
-                                            Handler::new_unattached(old_id.container_type()),
-                                        )?;
-                                        let new_id = new_h.id();
-                                        on_container_remap(old_id, new_id);
+                                        if let Some(old_index) = to_delete.remove(&old_id) {
+                                            if old_index > index {
+                                                self.mov(old_index, index)?;
+                                                next_deleted.push(Reverse(old_index));
+                                                index += 1;
+                                                index_shift += 1;
+                                            } else {
+                                                // we need to sub 1 because old_index < index, and index means the position before the move
+                                                // but the param is the position after the move
+                                                self.mov(old_index, index - 1)?;
+                                            }
+                                            deleted.push(old_index);
+                                            update_on_delete(&mut to_delete, old_index);
+                                            update_on_insert(&mut to_delete, index, 1);
+                                        } else {
+                                            let new_h = self.insert_container(
+                                                index,
+                                                Handler::new_unattached(old_id.container_type()),
+                                            )?;
+                                            let new_id = new_h.id();
+                                            on_container_remap(old_id, new_id);
+                                            update_on_insert(&mut to_delete, index, 1);
+                                            index += 1;
+                                            index_shift += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // apply the rest of the deletions
+
+                // sort deleted indexes from large to small
+                deleted.sort_by_key(|x| -(*x as i32));
+                let mut index = 0;
+                for d in delta.iter() {
+                    match d {
+                        loro_delta::DeltaItem::Retain { len, .. } => {
+                            index += len;
+                        }
+                        loro_delta::DeltaItem::Replace { delete, value, .. } => {
+                            if *delete > 0 {
+                                let mut d = *delete;
+                                while let Some(last) = deleted.last() {
+                                    if *last < index + d {
+                                        deleted.pop();
+                                        d -= 1;
+                                    } else {
+                                        break;
                                     }
                                 }
 
-                                index += 1;
+                                self.delete(index, d)?;
                             }
+
+                            index += value.len();
                         }
                     }
                 }
@@ -3239,17 +3541,17 @@ pub mod counter {
 
     #[derive(Clone)]
     pub struct CounterHandler {
-        pub(super) inner: MaybeDetached<i64>,
+        pub(super) inner: MaybeDetached<f64>,
     }
 
     impl CounterHandler {
         pub fn new_detached() -> Self {
             Self {
-                inner: MaybeDetached::new_detached(0),
+                inner: MaybeDetached::new_detached(0.),
             }
         }
 
-        pub fn increment(&self, n: i64) -> LoroResult<()> {
+        pub fn increment(&self, n: f64) -> LoroResult<()> {
             match &self.inner {
                 MaybeDetached::Detached(d) => {
                     let d = &mut d.try_lock().unwrap().value;
@@ -3260,7 +3562,18 @@ pub mod counter {
             }
         }
 
-        fn increment_with_txn(&self, txn: &mut Transaction, n: i64) -> LoroResult<()> {
+        pub fn decrement(&self, n: f64) -> LoroResult<()> {
+            match &self.inner {
+                MaybeDetached::Detached(d) => {
+                    let d = &mut d.try_lock().unwrap().value;
+                    *d -= n;
+                    Ok(())
+                }
+                MaybeDetached::Attached(a) => a.with_txn(|txn| self.increment_with_txn(txn, -n)),
+            }
+        }
+
+        fn increment_with_txn(&self, txn: &mut Transaction, n: f64) -> LoroResult<()> {
             let inner = self.inner.try_attached_state()?;
             txn.apply_local_op(
                 inner.container_idx,
@@ -3340,7 +3653,7 @@ pub mod counter {
                 MaybeDetached::Attached(a) => {
                     let new_inner = create_handler(a, self_id);
                     let ans = new_inner.into_counter().unwrap();
-                    let delta = *self.get_value().as_i64().unwrap();
+                    let delta = *self.get_value().as_double().unwrap();
                     ans.increment_with_txn(txn, delta)?;
                     Ok(ans)
                 }
@@ -3361,13 +3674,13 @@ pub mod counter {
 #[cfg(test)]
 mod test {
 
+    use super::{HandlerTrait, TextDelta};
+    use crate::container::richtext::richtext_state::PosType;
     use crate::loro::LoroDoc;
     use crate::version::Frontiers;
     use crate::{fx_map, ToJson};
     use loro_common::ID;
     use serde_json::json;
-
-    use super::{HandlerTrait, TextDelta};
 
     #[test]
     fn import() {
