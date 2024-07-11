@@ -998,6 +998,21 @@ impl LoroText {
         self.handler.delete_utf8(pos, len)
     }
 
+    /// Get a string slice at given unicode position with unicode length.
+    pub fn slice(&self, start_index: usize, end_index: usize) -> LoroResult<String> {
+        self.handler.slice(start_index, end_index)
+    }
+
+    /// Get the characters at given unicode position.
+    pub fn char_at(&self, pos: usize) -> LoroResult<char> {
+        self.handler.char_at(pos)
+    }
+
+    /// Delete specified character and insert string at the same position at given unicode position.
+    pub fn splice(&self, pos: usize, len: usize, s: &str) -> LoroResult<()> {
+        self.handler.splice(pos, len, s)
+    }
+
     /// Whether the text container is empty.
     pub fn is_empty(&self) -> bool {
         self.handler.is_empty()

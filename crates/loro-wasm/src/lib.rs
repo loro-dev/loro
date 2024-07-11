@@ -1515,6 +1515,59 @@ impl LoroText {
         Ok(())
     }
 
+    /// Get a string slice.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// text.slice(1,3); // "He"
+    /// ```
+    pub fn slice(&mut self, start_index: usize, end_index: usize) -> JsResult<String> {
+        match self.handler.slice(start_index, end_index) {
+            Ok(x) => Ok(x),
+            Err(x) => Err(x.into()),
+        }
+    }
+
+    /// Get the characters at given position.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// text.charAt(1); // "H"
+    /// ```
+    #[wasm_bindgen(js_name = "charAt")]
+    pub fn char_at(&mut self, pos: usize) -> JsResult<char> {
+        match self.handler.char_at(pos) {
+            Ok(x) => Ok(x),
+            Err(x) => Err(x.into()),
+        }
+    }
+
+    /// Delete specified character and insert string at the same position at given position.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// text.splice(2, 3, "llo");
+    /// ```
+    pub fn splice(&mut self, pos: usize, len: usize, s: &str) -> JsResult<()> {
+        self.handler.splice(pos, len, s)?;
+        Ok(())
+    }
+
     /// Insert some string at utf-8 index.
     ///
     /// @example
