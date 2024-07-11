@@ -576,33 +576,11 @@ impl CanRemove for RichtextStateChunk {
     }
 }
 
-pub(crate) fn slice_string_by_event_index(
-    s: &str,
-    start_index: usize,
-    end_index: usize,
-) -> Result<&str, ()> {
-    if cfg!(feature = "wasm") {
-        utf16_slice(s, start_index, end_index)
-    } else {
-        unicode_slice(s, start_index, end_index)
-    }
-}
-
 //TODO: start/end can be scanned in one loop, but now it takes twice the time
 fn unicode_slice(s: &str, start_index: usize, end_index: usize) -> Result<&str, ()> {
     let (Some(start), Some(end)) = (
         unicode_to_utf8_index(s, start_index),
         unicode_to_utf8_index(s, end_index),
-    ) else {
-        return Err(());
-    };
-    Ok(&s[start..end])
-}
-
-fn utf16_slice(s: &str, start_index: usize, end_index: usize) -> Result<&str, ()> {
-    let (Some(start), Some(end)) = (
-        utf16_to_utf8_index(s, start_index),
-        utf16_to_utf8_index(s, end_index),
     ) else {
         return Err(());
     };
@@ -1960,7 +1938,7 @@ impl RichtextState {
             }
 
             if let RichtextStateChunk::Text(s) = span.elem {
-                match slice_string_by_event_index(&s.as_str(), start, end) {
+                match unicode_slice(&s.as_str(), start, end) {
                     Ok(x) => ans.push_str(&x),
                     Err(()) => return Err(LoroError::UTF16InUnicodeCodePoint { pos: pos + len }),
                 }

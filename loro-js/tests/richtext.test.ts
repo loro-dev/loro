@@ -309,14 +309,21 @@ describe("richtext", () => {
     expect(text.slice(0, 1)).toStrictEqual("你");
   });
 
-  it("charAt", () => {
+  it("Slice emoji", () => {
+    const doc = new Loro();
+    const text = doc.getText('t');
+    text.insert(0, "😡😡😡");
+    expect(text.slice(0, 2)).toStrictEqual("😡");
+  });
+
+  it("CharAt", () => {
     const doc = new Loro();
     const text = doc.getText('t');
     text.insert(0, "你好");
     expect(text.charAt(1)).toStrictEqual("好");
   });
 
-  it("splice", () => {
+  it("Splice", () => {
     const doc = new Loro();
     const text = doc.getText('t');
     text.insert(0, "你好");
