@@ -998,7 +998,7 @@ impl LoroText {
         self.handler.delete_utf8(pos, len)
     }
 
-    /// Get a string slice at given unicode position with unicode length.
+    /// Get a string slice at the given Unicode range
     pub fn slice(&self, start_index: usize, end_index: usize) -> LoroResult<String> {
         self.handler.slice(start_index, end_index)
     }
