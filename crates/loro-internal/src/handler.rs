@@ -1331,7 +1331,7 @@ impl TextHandler {
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
     pub fn char_at(&self, pos: usize) -> LoroResult<char> {
-        if pos > self.len_event() {
+        if pos >= self.len_event() {
             return Err(LoroError::OutOfBound {
                 pos: pos,
                 len: self.len_event(),

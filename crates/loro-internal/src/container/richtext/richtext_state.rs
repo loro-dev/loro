@@ -1960,8 +1960,7 @@ impl RichtextState {
             }
 
             if let RichtextStateChunk::Text(s) = span.elem {
-                let range = s.entity_range_to_event_range(start..end);
-                match slice_string_by_event_index(&s.as_str(), range.start, range.end) {
+                match slice_string_by_event_index(&s.as_str(), start, end) {
                     Ok(x) => ans.push_str(&x),
                     Err(()) => return Err(LoroError::UTF16InUnicodeCodePoint { pos: pos + len }),
                 }
