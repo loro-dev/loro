@@ -178,7 +178,6 @@ impl Actor {
         }
 
         self.loro.checkout(&f).unwrap();
-        dbg!(&f);
         self.loro.check_state_correctness_slow();
         // check snapshot correctness after checkout
         self.loro.checkout_to_latest();

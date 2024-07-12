@@ -1187,11 +1187,6 @@ impl LoroDoc {
             let doc = Self::new();
             doc.detach();
             doc.import(&bytes).unwrap();
-            dbg!(
-                self.state_frontiers(),
-                self.oplog_frontiers(),
-                self.oplog_vv()
-            );
             doc.checkout(&self.state_frontiers()).unwrap();
             let mut calculated_state = doc.app_state().try_lock().unwrap();
             let mut current_state = self.app_state().try_lock().unwrap();
@@ -1516,7 +1511,6 @@ mod test {
         b.get_text("text").insert(0, "hello").unwrap();
         b.commit_then_renew();
         let oplog = b.oplog().lock().unwrap();
-        dbg!(&oplog.arena);
         drop(oplog);
         b.export_from(&Default::default());
     }
