@@ -1508,7 +1508,7 @@ impl LoroText {
     ///
     /// const doc = new Loro();
     /// const text = doc.getText("text");
-    /// text.iter((c) => { console.log(c) });
+    /// text.iter((c) => (console.log(c), true));
     /// ```
     pub fn iter(&self, callback: &js_sys::Function) {
         let context = JsValue::NULL;
