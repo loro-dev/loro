@@ -113,11 +113,6 @@ impl ChangeStore {
         kv.insert(id, Arc::new(ChangesBlock::new(change, &self.arena)));
     }
 
-    pub fn block_num(&self) -> usize {
-        let kv = self.mem_parsed_kv.lock().unwrap();
-        kv.len()
-    }
-
     /// Flush the cached change to kv_store
     fn flush(&mut self) {
         let mut mem = self.mem_parsed_kv.lock().unwrap();

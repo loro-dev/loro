@@ -6,7 +6,7 @@ use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
-use loro_common::{HasCounter, HasIdSpan};
+use loro_common::{HasCounter, HasCounterSpan, HasIdSpan};
 use rle::{HasIndex, HasLength, Mergable, RleCollection, Sliceable};
 
 use super::{AppDag, AppDagNode};
@@ -124,11 +124,33 @@ impl AppDag {
     pub fn get_vv(&self, id: ID) -> Option<ImVersionVector> {
         self.map.get(&id.peer).and_then(|rle| {
             rle.get_by_atom_index(id.counter).map(|x| {
-                let mut vv = x.element.vv.clone();
+                let mut vv = self.ensure_vv_for(x.element);
                 vv.insert(id.peer, id.counter + 1);
                 vv
             })
         })
+    }
+
+    fn ensure_vv_for(&self, node: &AppDagNode) -> ImVersionVector {
+        if let Some(vv) = node.vv.get() {
+            return vv.clone();
+        }
+
+        let mut ans_vv = ImVersionVector::default();
+        for id in node.deps.iter() {
+            let node = self.get(*id).expect("deps should be in the dag");
+            let dep_vv = self.ensure_vv_for(node);
+            if ans_vv.is_empty() {
+                ans_vv = dep_vv;
+            } else {
+                ans_vv.extend_to_include_vv(dep_vv.iter());
+            }
+
+            ans_vv.insert(node.peer, node.ctr_last());
+        }
+
+        node.vv.set(ans_vv.clone()).unwrap();
+        ans_vv
     }
 
     /// Compare the causal order of two versions.
@@ -174,7 +196,8 @@ impl AppDag {
         for id in frontiers.iter() {
             let rle = self.map.get(&id.peer)?;
             let x = rle.get_by_atom_index(id.counter)?;
-            vv.extend_to_include_vv(x.element.vv.iter());
+            let target_vv = self.ensure_vv_for(x.element);
+            vv.extend_to_include_vv(target_vv.iter());
             vv.extend_to_include_last_id(*id);
         }
 
@@ -194,7 +217,8 @@ impl AppDag {
             let Some(x) = rle.get_by_atom_index(id.counter) else {
                 unreachable!()
             };
-            let mut vv = x.element.vv.clone();
+
+            let mut vv = self.ensure_vv_for(x.element);
             vv.extend_to_include_last_id(id);
             vv
         };
@@ -206,7 +230,8 @@ impl AppDag {
             let Some(x) = rle.get_by_atom_index(id.counter) else {
                 unreachable!()
             };
-            vv.extend_to_include_vv(x.element.vv.iter());
+            let x = self.ensure_vv_for(x.element);
+            vv.extend_to_include_vv(x.iter());
             vv.extend_to_include_last_id(*id);
         }
 

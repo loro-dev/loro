@@ -4,7 +4,7 @@ mod iter;
 mod pending_changes;
 
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::cmp::Ordering;
 use std::rc::Rc;
 
@@ -74,7 +74,7 @@ pub struct AppDagNode {
     pub(crate) cnt: Counter,
     pub(crate) lamport: Lamport,
     pub(crate) deps: Frontiers,
-    pub(crate) vv: ImVersionVector,
+    pub(crate) vv: OnceCell<ImVersionVector>,
     /// A flag indicating whether any other nodes depend on this node.
     /// The calculation of frontiers is based on this value.
     pub(crate) has_succ: bool,
@@ -311,7 +311,7 @@ impl OpLog {
                 );
             }
             dag_row.push_rle_element(AppDagNode {
-                vv,
+                vv: OnceCell::from(vv),
                 peer: change.id.peer,
                 cnt: change.id.counter,
                 lamport: change.lamport,
@@ -537,8 +537,9 @@ impl OpLog {
             std::iter::from_fn(move || {
                 if let Some(inner) = &node {
                     let mut inner_vv = vv.borrow_mut();
+                    // FIXME: PERF: it looks slow for large vv, like 10000+ entries
                     inner_vv.clear();
-                    inner_vv.extend_to_include_vv(inner.data.vv.iter());
+                    inner_vv.extend_to_include_vv(inner.data.vv.get().unwrap().iter());
                     let peer = inner.data.peer;
                     let cnt = inner
                         .data

@@ -30,6 +30,13 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
     fn import_all(&mut self, bytes: Bytes) -> Result<(), String>;
 }
 
+pub trait KvEntry {
+    type Key;
+    type Value;
+
+    fn parse(key: Bytes, value: Bytes) -> (Self::Key, Self::Value);
+}
+
 mod default_binary_format {
     //! Default binary format for the key-value store.
     //!
