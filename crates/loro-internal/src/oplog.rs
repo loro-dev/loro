@@ -81,18 +81,20 @@ pub struct AppDagNode {
     pub(crate) len: usize,
 }
 
-impl Clone for OpLog {
-    fn clone(&self) -> Self {
+impl OpLog {
+    pub(crate) fn fork(&self, arena: SharedArena, configure: Configure) -> Self {
         Self {
+            change_store: self
+                .change_store
+                .fork(arena.clone(), configure.merge_interval.clone()),
             dag: self.dag.clone(),
             arena: self.arena.clone(),
-            op_groups: self.op_groups.clone(),
-            change_store: self.change_store.clone(),
+            op_groups: self.op_groups.fork(arena.clone()),
             next_lamport: self.next_lamport,
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
             batch_importing: false,
-            configure: self.configure.clone(),
+            configure,
         }
     }
 }
@@ -475,7 +477,7 @@ impl OpLog {
         b: &VersionVector,
         mut f: impl FnMut(&Change),
     ) {
-        let spans = b.sub_iter(a);
+        let spans = b.iter_between(a);
         for span in spans {
             for c in self.change_store.iter_changes(span) {
                 f(&c);

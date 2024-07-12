@@ -2,7 +2,6 @@ use std::sync::{Arc, Mutex};
 
 use loro::{Container, ContainerID, ContainerType, LoroDoc, LoroText};
 
-
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
     actor::{ActionExecutor, ActorTrait},
@@ -13,9 +12,9 @@ const STYLES_NAME: [&str; 4] = ["bold", "comment", "link", "highlight"];
 
 #[derive(Debug, Clone)]
 pub struct TextAction {
-    pos: usize,
-    len: usize,
-    action: TextActionInner,
+    pub pos: usize,
+    pub len: usize,
+    pub action: TextActionInner,
 }
 
 #[derive(Debug, Clone)]

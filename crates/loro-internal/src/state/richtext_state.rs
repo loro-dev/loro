@@ -5,7 +5,7 @@ use std::{
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::HasLength;
-use loro_common::{ContainerID, InternalString, LoroResult, LoroValue, ID};
+use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
 use loro_delta::DeltaRopeBuilder;
 
 use crate::{
@@ -743,10 +743,14 @@ impl RichtextState {
     }
 
     #[inline]
-    pub(crate) fn get_entity_index_for_text_insert(&mut self, event_index: usize) -> usize {
+    pub(crate) fn get_entity_index_for_text_insert(
+        &mut self,
+        event_index: usize,
+        pos_type: PosType,
+    ) -> Result<usize, LoroError> {
         self.state
             .get_mut()
-            .get_entity_index_for_text_insert(event_index, PosType::Event)
+            .get_entity_index_for_text_insert(event_index, pos_type)
     }
 
     pub(crate) fn get_entity_range_and_styles_at_range(
@@ -771,10 +775,11 @@ impl RichtextState {
         &mut self,
         pos: usize,
         len: usize,
-    ) -> Vec<EntityRangeInfo> {
+        pos_type: PosType,
+    ) -> LoroResult<Vec<EntityRangeInfo>> {
         self.state
             .get_mut()
-            .get_text_entity_ranges(pos, len, PosType::Event)
+            .get_text_entity_ranges(pos, len, pos_type)
     }
 
     #[inline]

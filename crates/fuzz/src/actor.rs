@@ -1,11 +1,13 @@
 use std::{
+    collections::VecDeque,
     fmt::{Debug, Formatter},
     sync::{Arc, Mutex},
 };
 
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
+use itertools::Itertools;
 use loro::{
     Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, UndoManager, ID,
 };
@@ -52,7 +54,7 @@ impl Actor {
             info_span!("ApplyDiff", id = id).in_scope(|| {
                 let mut tracker = cb_tracker.lock().unwrap();
                 tracker.apply_diff(e)
-            })
+            });
         }));
         let mut default_history = FxHashMap::default();
         default_history.insert(Vec::new(), loro.get_deep_value());
@@ -123,28 +125,20 @@ impl Actor {
 
     pub fn undo(&mut self, undo_length: u32) {
         self.loro.attach();
-        let mut before_undo = self.loro.get_deep_value();
+        let before_undo = self.loro.get_deep_value();
+
+        // println!("\n\nstart undo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.undo(&self.loro).unwrap();
         }
 
+        // println!("\n\nstart redo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.redo(&self.loro).unwrap();
         }
-        let mut after_undo = self.loro.get_deep_value();
-        Self::patch_tree_undo_position(&mut before_undo);
-        Self::patch_tree_undo_position(&mut after_undo);
-        assert_value_eq(&before_undo, &after_undo);
-    }
 
-    fn patch_tree_undo_position(a: &mut LoroValue) {
-        let root = Arc::make_mut(a.as_map_mut().unwrap());
-        let tree = root.get_mut("tree").unwrap();
-        let nodes = Arc::make_mut(tree.as_list_mut().unwrap());
-        for node in nodes.iter_mut() {
-            let node = Arc::make_mut(node.as_map_mut().unwrap());
-            node.remove("position");
-        }
+        let after_undo = self.loro.get_deep_value();
+        assert_value_eq(&before_undo, &after_undo);
     }
 
     pub fn check_tracker(&self) {
@@ -184,6 +178,7 @@ impl Actor {
         }
 
         self.loro.checkout(&f).unwrap();
+        dbg!(&f);
         self.loro.check_state_correctness_slow();
         // check snapshot correctness after checkout
         self.loro.checkout_to_latest();
@@ -385,6 +380,14 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
 
                 true
             }
+            (LoroValue::List(a_list), LoroValue::List(b_list)) => {
+                if is_tree_values(a_list.as_ref()) {
+                    assert_tree_value_eq(a_list, b_list);
+                    true
+                } else {
+                    a_list.iter().zip(b_list.iter()).all(|(a, b)| eq(a, b))
+                }
+            }
             (a, b) => a == b,
         }
     }
@@ -394,4 +397,156 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
         a,
         b
     );
+}
+
+pub fn is_tree_values(value: &[LoroValue]) -> bool {
+    if let Some(LoroValue::Map(map)) = value.first() {
+        let map_keys = map.as_ref().keys().cloned().collect::<FxHashSet<_>>();
+        return map_keys.contains("id")
+            && map_keys.contains("parent")
+            && map_keys.contains("meta")
+            && map_keys.contains("fractional_index");
+    }
+    false
+}
+#[derive(Debug, Clone)]
+struct Node {
+    children: Vec<Node>,
+    meta: FxHashMap<String, LoroValue>,
+    position: String,
+}
+
+struct FlatNode {
+    id: String,
+    parent: Option<String>,
+    meta: FxHashMap<String, LoroValue>,
+    index: usize,
+    position: String,
+}
+
+impl FlatNode {
+    fn from_loro_value(value: &LoroValue) -> Self {
+        let map = value.as_map().unwrap();
+        let id = map.get("id").unwrap().as_string().unwrap().to_string();
+        let parent = map
+            .get("parent")
+            .unwrap()
+            .as_string()
+            .map(|x| x.to_string());
+
+        let meta = map.get("meta").unwrap().as_map().unwrap().as_ref().clone();
+        let index = *map.get("index").unwrap().as_i64().unwrap() as usize;
+        let position = map
+            .get("fractional_index")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_string();
+        FlatNode {
+            id,
+            parent,
+            meta,
+            index,
+            position,
+        }
+    }
+}
+
+impl Node {
+    fn from_loro_value(value: &[LoroValue]) -> Vec<Self> {
+        let mut node_map = FxHashMap::default();
+        let mut parent_child_map = FxHashMap::default();
+
+        for flat_node in value.iter() {
+            let flat_node = FlatNode::from_loro_value(flat_node);
+            let tree_node = Node {
+                // id: flat_node.id.clone(),
+                // parent: flat_node.parent.clone(),
+                children: vec![],
+                meta: flat_node.meta,
+                // index: flat_node.index,
+                position: flat_node.position,
+            };
+
+            node_map.insert(flat_node.id.clone(), tree_node);
+
+            parent_child_map
+                .entry(flat_node.parent)
+                .or_insert_with(Vec::new)
+                .push((flat_node.index, flat_node.id));
+        }
+        let mut node_map_clone = node_map.clone();
+        for (parent_id, child_ids) in parent_child_map.iter() {
+            if let Some(parent_id) = parent_id {
+                if let Some(parent_node) = node_map.get_mut(parent_id) {
+                    for (_, child_id) in child_ids.into_iter().sorted_by_key(|x| x.0) {
+                        if let Some(child_node) = node_map_clone.remove(child_id) {
+                            parent_node.children.push(child_node);
+                        }
+                    }
+                }
+            }
+        }
+
+        parent_child_map.get(&None).map_or(vec![], |root_ids| {
+            root_ids
+                .iter()
+                .filter_map(|(_i, id)| node_map.remove(id))
+                .collect::<Vec<_>>()
+        })
+    }
+}
+
+pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
+    // println!("\n\na = {:#?}", a);
+    // println!("b = {:#?}", b);
+    let a_tree = Node::from_loro_value(a);
+    let b_tree = Node::from_loro_value(b);
+    let mut a_q = VecDeque::from_iter([a_tree]);
+    let mut b_q = VecDeque::from_iter([b_tree]);
+    while let (Some(a_node), Some(b_node)) = (a_q.pop_front(), b_q.pop_front()) {
+        let mut children_a = vec![];
+        let mut children_b = vec![];
+        let a_meta = a_node
+            .into_iter()
+            .map(|x| {
+                children_a.extend(x.children);
+                let mut meta = x
+                    .meta
+                    .into_iter()
+                    .sorted_by_key(|(k, _)| k.clone())
+                    .map(|(mut k, v)| {
+                        k.push_str(v.as_string().map_or("", |f| f.as_str()));
+                        k
+                    })
+                    .collect::<String>();
+                meta.push_str(&x.position);
+                meta
+            })
+            .collect::<FxHashSet<_>>();
+        let b_meta = b_node
+            .into_iter()
+            .map(|x| {
+                children_b.extend(x.children);
+                let mut meta = x
+                    .meta
+                    .into_iter()
+                    .sorted_by_key(|(k, _)| k.clone())
+                    .map(|(mut k, v)| {
+                        k.push_str(v.as_string().map_or("", |f| f.as_str()));
+                        k
+                    })
+                    .collect::<String>();
+                meta.push_str(&x.position);
+                meta
+            })
+            .collect::<FxHashSet<_>>();
+        assert!(a_meta.difference(&b_meta).count() == 0);
+        assert_eq!(children_a.len(), children_b.len());
+        if children_a.is_empty() {
+            continue;
+        }
+        a_q.push_back(children_a);
+        b_q.push_back(children_b);
+    }
 }

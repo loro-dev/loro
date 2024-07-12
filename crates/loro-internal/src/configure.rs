@@ -21,6 +21,26 @@ impl Default for Configure {
 }
 
 impl Configure {
+    pub fn fork(&self) -> Self {
+        Self {
+            text_style_config: Arc::new(RwLock::new(
+                self.text_style_config.read().unwrap().clone(),
+            )),
+            record_timestamp: Arc::new(AtomicBool::new(
+                self.record_timestamp
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            )),
+            merge_interval: Arc::new(AtomicI64::new(
+                self.merge_interval
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            )),
+            tree_position_jitter: Arc::new(AtomicU8::new(
+                self.tree_position_jitter
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            )),
+        }
+    }
+
     pub fn text_style_config(&self) -> &Arc<RwLock<StyleConfigMap>> {
         &self.text_style_config
     }

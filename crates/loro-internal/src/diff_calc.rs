@@ -778,6 +778,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         to: &crate::VersionVector,
         _: impl FnMut(&ContainerID),
     ) -> InternalDiff {
+        tracing::debug!("CalcDiff {:?} {:?}", from, to);
         let mut delta = Delta::new();
         for item in self.tracker.diff(from, to) {
             match item {

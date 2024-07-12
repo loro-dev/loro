@@ -286,4 +286,20 @@ describe("richtext", () => {
     const text = doc.getText("text");
     text.insert(0, `“aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`);
   });
+
+  it("Insert/delete by utf8 index", () => {
+    const doc = new Loro();
+    const text = doc.getText('t');
+    text.insert(0, "你好");
+    text.insertUtf8(3, "a");
+    text.insertUtf8(7, "b");
+    expect(text.toDelta()).toStrictEqual([
+      { insert: "你a好b" },
+    ]);
+    text.deleteUtf8(3, 4);
+    expect(text.toDelta()).toStrictEqual([
+      { insert: "你b"},
+    ]);
+
+  });
 });

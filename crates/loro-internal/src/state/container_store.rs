@@ -1,6 +1,4 @@
-use std::{
-    sync::{atomic::AtomicU64, Arc},
-};
+use std::sync::{atomic::AtomicU64, Arc};
 
 use crate::{
     arena::SharedArena,
@@ -206,6 +204,25 @@ impl ContainerStore {
 
     pub(super) fn insert(&mut self, idx: ContainerIdx, state: ContainerWrapper) {
         self.store.insert(idx, state);
+    }
+
+    pub(crate) fn fork(
+        &self,
+        arena: SharedArena,
+        peer: Arc<AtomicU64>,
+        config: Configure,
+    ) -> ContainerStore {
+        let mut store = FxHashMap::default();
+        for (idx, container) in self.store.iter() {
+            store.insert(*idx, container.clone());
+        }
+
+        ContainerStore {
+            arena,
+            store,
+            conf: config,
+            peer,
+        }
     }
 }
 

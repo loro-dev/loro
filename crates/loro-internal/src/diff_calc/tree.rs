@@ -50,7 +50,6 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
                 on_new_container(&d.target.associated_meta_container())
             }
         });
-
         tracing::info!("\ndiff {:?}", diff);
 
         InternalDiff::Tree(diff)
@@ -70,7 +69,6 @@ impl TreeDiffCalculator {
     fn checkout(&mut self, to: &VersionVector, oplog: &OpLog) {
         let tree_ops = oplog.op_groups.get_tree(&self.container).unwrap();
         let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
-
         let s = format!("checkout current {:?} to {:?}", &tree_cache.current_vv, &to);
         let s = tracing::span!(tracing::Level::INFO, "checkout", s = s);
         let _e = s.enter();
@@ -451,7 +449,7 @@ impl TreeCacheForDiff {
                 ans.push((*tree_id, op.position.clone(), op.id_full()));
             }
         }
-
+        ans.sort_by(|a, b| a.1.cmp(&b.1));
         ans
     }
 }

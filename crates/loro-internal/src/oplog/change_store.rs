@@ -369,6 +369,18 @@ impl ChangeStore {
         let mut kv = self.mem_parsed_kv.lock().unwrap();
         kv.iter_mut().map(|(_, block)| block.change_num()).sum()
     }
+
+    pub fn fork(&self, arena: SharedArena, merge_interval: Arc<AtomicI64>) -> Self {
+        Self {
+            arena,
+            vv: self.vv.clone(),
+            start_vv: self.start_vv.clone(),
+            start_frontiers: self.start_frontiers.clone(),
+            mem_parsed_kv: Arc::new(Mutex::new(BTreeMap::new())),
+            external_kv: self.external_kv.lock().unwrap().clone_store(),
+            merge_interval,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

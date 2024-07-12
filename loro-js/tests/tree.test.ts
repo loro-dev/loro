@@ -1,4 +1,4 @@
-import { describe, expect, it} from "vitest";
+import { assert, describe, expect, it} from "vitest";
 import { Loro, LoroTree, LoroTreeNode } from "../src";
 
 function assertEquals(a: any, b: any) {
@@ -34,7 +34,7 @@ describe("loro tree", () => {
     assertEquals(child2.parent()!.id, root.id);
     tree.move(child2.id, child.id);
     assertEquals(child2.parent()!.id, child.id);
-    assertEquals(child.children()[0].id, child2.id);
+    assertEquals(child.children()![0].id, child2.id);
     expect(()=>tree.move(child2.id, child.id, 1)).toThrowError();
   });
 
@@ -70,9 +70,9 @@ describe("loro tree", () => {
     const root = tree.createNode();
     const child = tree.createNode(root.id);
     const child2 = tree.createNode(root.id);
-    assertEquals(root.children().length, 2);
-    assertEquals(root.children()[0].id, child.id);
-    assertEquals(root.children()[1].id, child2.id);
+    assertEquals(root.children()!.length, 2);
+    assertEquals(root.children()![0].id, child.id);
+    assertEquals(root.children()![1].id, child2.id);
   });
 
   it("toArray", ()=>{
@@ -83,6 +83,12 @@ describe("loro tree", () => {
     tree2.createNode(root.id);
     const arr = tree2.toArray();
     assertEquals(arr.length, 3);
+    const keys = Object.keys(arr[0]);
+    assert(keys.includes("id"));
+    assert(keys.includes("parent"));
+    assert(keys.includes("index"));
+    assert(keys.includes("fractional_index"));
+    assert(keys.includes("meta"));
   });
 
   it("subscribe", async () => {
@@ -141,7 +147,7 @@ describe("loro tree node", ()=>{
         assertEquals(child2.parent()!.id, root.id);
         child2.move(child);
         assertEquals(child2.parent()!.id, child.id);
-        assertEquals(child.children()[0].id, child2.id);
+        assertEquals(child.children()![0].id, child2.id);
         expect(()=>child2.move(child, 1)).toThrowError();
     });
 

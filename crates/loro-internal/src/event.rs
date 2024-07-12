@@ -216,6 +216,14 @@ impl DiffVariant {
             (a, _) => Err(a),
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            DiffVariant::Internal(diff) => diff.is_empty(),
+            DiffVariant::External(diff) => diff.is_empty(),
+            DiffVariant::None => true,
+        }
+    }
 }
 
 #[non_exhaustive]

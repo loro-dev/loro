@@ -123,7 +123,8 @@ pub(super) enum EventHint {
         key: InternalString,
         value: Option<LoroValue>,
     },
-    Tree(TreeDiffItem),
+    // use vec because we could bring back some node that has children
+    Tree(SmallVec<[TreeDiffItem; 1]>),
     MarkEnd,
     #[cfg(feature = "counter")]
     Counter(f64),
@@ -403,6 +404,7 @@ impl Transaction {
         let op = self.arena.convert_raw_op(&raw_op);
         state.apply_local_op(&raw_op, &op)?;
         drop(state);
+
         debug_assert_eq!(
             event.rle_len(),
             op.atom_len(),
@@ -410,6 +412,7 @@ impl Transaction {
             &event,
             &op
         );
+
         match self.event_hints.last_mut() {
             Some(last) if last.can_merge(&event) => {
                 last.merge_right(&event);
@@ -485,6 +488,17 @@ impl Transaction {
             peer: self.peer,
             counter: self.next_counter,
         }
+    }
+
+    pub fn next_idlp(&self) -> IdLp {
+        IdLp {
+            peer: self.peer,
+            lamport: self.next_lamport,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.local_ops.is_empty()
     }
 }
 
@@ -650,7 +664,7 @@ fn change_to_diff(
             }),
             EventHint::Tree(tree_diff) => {
                 let mut diff = TreeDiff::default();
-                diff.push(tree_diff);
+                diff.diff.extend(tree_diff.into_iter());
                 ans.push(TxnContainerDiff {
                     idx: op.container,
                     diff: Diff::Tree(diff),
@@ -709,6 +723,5 @@ fn change_to_diff(
             .map(|x| x.content_len() as Lamport)
             .sum::<Lamport>();
     }
-
     ans
 }

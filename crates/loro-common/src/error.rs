@@ -32,8 +32,12 @@ pub enum LoroError {
     NotFoundError(Box<str>),
     #[error("Transaction error ({0})")]
     TransactionError(Box<str>),
-    #[error("Index out of bound. The given pos is {pos}, but the length is {len}")]
-    OutOfBound { pos: usize, len: usize },
+    #[error("Index out of bound. The given pos is {pos}, but the length is {len}. {info}")]
+    OutOfBound {
+        pos: usize,
+        len: usize,
+        info: Box<str>,
+    },
     #[error("Every op id should be unique. ID {id} has been used. You should use a new PeerID to edit the content. ")]
     UsedOpID { id: ID },
     #[error("Movable Tree Error: {0}")]
@@ -64,6 +68,10 @@ pub enum LoroError {
     UndoWithDifferentPeerId { expected: PeerID, actual: PeerID },
     #[error("The input JSON schema is invalid")]
     InvalidJsonSchema,
+    #[error("Cannot insert or delete utf-8 in the middle of the codepoint in Unicode.")]
+    UTF8InUnicodeCodePoint { pos: usize },
+    #[error("Cannot insert or delete utf-16 in the middle of the codepoint in Unicode.")]
+    UTF16InUnicodeCodePoint { pos: usize },
 }
 
 #[derive(Error, Debug)]

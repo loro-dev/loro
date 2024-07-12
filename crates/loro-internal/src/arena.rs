@@ -63,6 +63,24 @@ impl SharedArena {
         }
     }
 
+    pub fn fork(&self) -> Self {
+        Self {
+            inner: Arc::new(InnerSharedArena {
+                container_idx_to_id: Mutex::new(
+                    self.inner.container_idx_to_id.lock().unwrap().clone(),
+                ),
+                depth: Mutex::new(self.inner.depth.lock().unwrap().clone()),
+                container_id_to_idx: Mutex::new(
+                    self.inner.container_id_to_idx.lock().unwrap().clone(),
+                ),
+                parents: Mutex::new(self.inner.parents.lock().unwrap().clone()),
+                values: Mutex::new(self.inner.values.lock().unwrap().clone()),
+                root_c_idx: Mutex::new(self.inner.root_c_idx.lock().unwrap().clone()),
+                str: Mutex::new(self.inner.str.lock().unwrap().clone()),
+            }),
+        }
+    }
+
     pub fn register_container(&self, id: &ContainerID) -> ContainerIdx {
         let mut container_id_to_idx = self.inner.container_id_to_idx.lock().unwrap();
         if let Some(&idx) = container_id_to_idx.get(id) {

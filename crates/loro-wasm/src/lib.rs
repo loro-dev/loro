@@ -29,9 +29,7 @@ use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 
-#[cfg(feature = "counter")]
 mod counter;
-#[cfg(feature = "counter")]
 pub use counter::LoroCounter;
 mod awareness;
 mod log;
@@ -314,7 +312,7 @@ impl Loro {
     /// If enabled, the Unix timestamp will be recorded for each change automatically.
     ///
     /// You can also set each timestamp manually when you commit a change.
-    /// The timstamp manually set will override the automatic one.
+    /// The timestamp manually set will override the automatic one.
     ///
     /// NOTE: Timestamps are forced to be in ascending order.
     /// If you commit a new change with a timestamp that is less than the existing one,
@@ -479,6 +477,30 @@ impl Loro {
     #[wasm_bindgen(js_name = "isDetached")]
     pub fn is_detached(&self) -> bool {
         self.0.is_detached()
+    }
+
+    /// Detach the document state from the latest known version.
+    ///
+    /// After detaching, all import operations will be recorded in the `OpLog` without being applied to the `DocState`.
+    /// When `detached`, the document is not editable.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// doc.detach();
+    /// console.log(doc.is_detached());  // true
+    /// ```
+    pub fn detach(&self) {
+        self.0.detach()
+    }
+
+    /// Duplicate the document with a different PeerID
+    ///
+    /// The time complexity and space complexity of this operation are both O(n),
+    pub fn fork(&self) -> Self {
+        Self(Arc::new(self.0.fork()))
     }
 
     /// Checkout the `DocState` to the latest version of `OpLog`.
@@ -670,7 +692,6 @@ impl Loro {
     }
 
     /// Get a LoroCounter by container id
-    #[cfg(feature = "counter")]
     #[wasm_bindgen(js_name = "getCounter")]
     pub fn get_counter(&self, cid: &JsIntoContainerID) -> JsResult<LoroCounter> {
         let counter = self
@@ -763,7 +784,6 @@ impl Loro {
                 }
                 .into()
             }
-            #[cfg(feature = "counter")]
             ContainerType::Counter => {
                 let counter = self.0.get_counter(container_id);
                 LoroCounter {
@@ -1418,8 +1438,37 @@ fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsValue 
     path
 }
 
-/// The handler of a text or richtext container.
+/// The handler of a text container. It supports rich text CRDT.
 ///
+/// ## Updating Text Content Using a Diff Algorithm
+///
+/// A common requirement is to update the current text to a target text.
+/// You can implement this using a text diff algorithm of your choice.
+/// Below is a sample you can directly copy into your code, which uses the
+/// [fast-diff](https://www.npmjs.com/package/fast-diff) package.
+///
+/// ```ts
+/// import { diff } from "fast-diff";
+/// import { LoroText } from "loro-crdt";
+///
+/// function updateText(text: LoroText, newText: string) {
+///   const src = text.toString();
+///   const delta = diff(src, newText);
+///   let index = 0;
+///   for (const [op, text] of delta) {
+///     if (op === 0) {
+///     index += text.length;
+///   } else if (op === 1) {
+///     text.insert(index, text);
+///     index += text.length;
+///   } else {
+///     text.delete(index, text.length);
+///   }
+/// }
+/// ```
+///
+///
+/// Learn more at https://loro.dev/docs/tutorial/text
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroText {
@@ -1469,6 +1518,22 @@ impl LoroText {
         Ok(())
     }
 
+    /// Insert some string at utf-8 index.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insertUtf8(0, "Hello");
+    /// ```
+    #[wasm_bindgen(js_name = "insertUtf8")]
+    pub fn insert_utf8(&mut self, index: usize, content: &str) -> JsResult<()> {
+        self.handler.insert_utf8(index, content)?;
+        Ok(())
+    }
+
     /// Delete elements from index to index + len
     ///
     /// @example
@@ -1484,6 +1549,25 @@ impl LoroText {
     /// ```
     pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
         self.handler.delete(index, len)?;
+        Ok(())
+    }
+
+    /// Delete elements from index to utf-8 index + len
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insertUtf8(0, "Hello");
+    /// text.deleteUtf8(1, 3);
+    /// const s = text.toString();
+    /// console.log(s); // "Ho"
+    /// ```
+    #[wasm_bindgen(js_name = "deleteUtf8")]
+    pub fn delete_utf8(&mut self, index: usize, len: usize) -> JsResult<()> {
+        self.handler.delete_utf8(index, len)?;
         Ok(())
     }
 
@@ -1662,7 +1746,7 @@ impl LoroText {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -1708,6 +1792,8 @@ impl Default for LoroText {
 }
 
 /// The handler of a map container.
+///
+/// Learn more at https://loro.dev/docs/tutorial/map
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroMap {
@@ -2017,7 +2103,7 @@ impl LoroMap {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -2049,6 +2135,8 @@ impl Default for LoroMap {
 }
 
 /// The handler of a list container.
+///
+/// Learn more at https://loro.dev/docs/tutorial/list
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroList {
@@ -2303,7 +2391,7 @@ impl LoroList {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -2368,6 +2456,8 @@ impl Default for LoroList {
 }
 
 /// The handler of a list container.
+///
+/// Learn more at https://loro.dev/docs/tutorial/list
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroMovableList {
@@ -2628,7 +2718,7 @@ impl LoroMovableList {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -2725,6 +2815,8 @@ impl LoroMovableList {
 }
 
 /// The handler of a tree(forest) container.
+///
+/// Learn more at https://loro.dev/docs/tutorial/tree
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroTree {
@@ -2939,13 +3031,15 @@ impl LoroTreeNode {
     /// The objects returned are new js objects each time because they need to cross
     /// the WASM boundary.
     #[wasm_bindgen(skip_typescript)]
-    pub fn children(&self) -> Array {
-        let children = self.tree.children(Some(self.id));
+    pub fn children(&self) -> JsValue {
+        let Some(children) = self.tree.children(Some(self.id)) else {
+            return JsValue::undefined();
+        };
         let children = children.into_iter().map(|c| {
             let node = LoroTreeNode::from_tree(c, self.tree.clone(), self.doc.clone());
             JsValue::from(node)
         });
-        Array::from_iter(children)
+        Array::from_iter(children).into()
     }
 }
 
@@ -3092,7 +3186,7 @@ impl LoroTree {
     /// but also the metadata, you should use `toJson()`.
     ///
     // TODO: perf
-    #[wasm_bindgen(js_name = "toArray")]
+    #[wasm_bindgen(js_name = "toArray", skip_typescript)]
     pub fn to_array(&mut self) -> JsResult<Array> {
         let value = self.handler.get_value().into_list().unwrap();
         let ans = Array::new();
@@ -3112,13 +3206,17 @@ impl LoroTree {
                 .unwrap_or(JsValue::undefined())
                 .into();
             let index = *v["index"].as_i64().unwrap() as u32;
-            let position = v["position"].as_string().unwrap();
+            let position = v["fractional_index"].as_string().unwrap();
             let map: LoroMap = self.get_node_by_id(&id).unwrap().data()?;
             let obj = Object::new();
             js_sys::Reflect::set(&obj, &"id".into(), &id)?;
             js_sys::Reflect::set(&obj, &"parent".into(), &parent)?;
             js_sys::Reflect::set(&obj, &"index".into(), &JsValue::from(index))?;
-            js_sys::Reflect::set(&obj, &"position".into(), &JsValue::from_str(position))?;
+            js_sys::Reflect::set(
+                &obj,
+                &"fractional_index".into(),
+                &JsValue::from_str(position),
+            )?;
             js_sys::Reflect::set(&obj, &"meta".into(), &map.into())?;
             ans.push(&obj);
         }
@@ -3256,7 +3354,7 @@ impl LoroTree {
         }
     }
 
-    /// Whether the container is attached to a docuemnt.
+    /// Whether the container is attached to a document.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -3335,7 +3433,7 @@ impl Cursor {
 
     /// Get the ID that represents the position.
     ///
-    /// It can be undefined if it's not binded into a specific ID.
+    /// It can be undefined if it's not bind into a specific ID.
     pub fn pos(&self) -> Option<JsID> {
         match self.pos.id {
             Some(id) => {
@@ -4050,6 +4148,18 @@ interface LoroList {
      * ```
      */
     getCursor(pos: number, side?: Side): Cursor | undefined;
+}
+
+export type TreeNodeValue = {
+    id: TreeID,
+    parent: TreeID | undefined,
+    index: number,
+    fractionalIndex: string,
+    meta: LoroMap,
+}
+
+interface LoroTree{
+    toArray(): TreeNodeValue[];
 }
 
 interface LoroMovableList {

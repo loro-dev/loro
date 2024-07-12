@@ -118,6 +118,41 @@ impl LoroDoc {
         }
     }
 
+    pub fn fork(&self) -> Self {
+        self.commit_then_stop();
+        let arena = self.arena.fork();
+        let config = self.config.fork();
+        let txn = Arc::new(Mutex::new(None));
+        let new_state =
+            self.state
+                .lock()
+                .unwrap()
+                .fork(arena.clone(), Arc::downgrade(&txn), config.clone());
+        let doc = LoroDoc {
+            oplog: Arc::new(Mutex::new(
+                self.oplog()
+                    .lock()
+                    .unwrap()
+                    .fork(arena.clone(), config.clone()),
+            )),
+            state: new_state,
+            arena,
+            config,
+            observer: Arc::new(Observer::new(self.arena.clone())),
+            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
+            txn,
+            auto_commit: AtomicBool::new(false),
+            detached: AtomicBool::new(self.detached.load(std::sync::atomic::Ordering::Relaxed)),
+        };
+
+        if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
+            doc.start_auto_commit();
+        }
+
+        self.renew_txn_if_auto_commit();
+        doc
+    }
+
     /// Set whether to record the timestamp of each change. Default is `false`.
     ///
     /// If enabled, the Unix timestamp will be recorded for each change automatically.
@@ -819,6 +854,9 @@ impl LoroDoc {
             before_diff,
         );
 
+        // println!("\nundo_internal: diff: {:?}", diff);
+        // println!("container remap: {:?}", container_remap);
+
         self.checkout_without_emitting(&latest_frontiers)?;
         self.detached.store(false, Release);
         if was_recording {
@@ -915,10 +953,7 @@ impl LoroDoc {
             }
 
             let h = self.get_handler(id);
-            h.apply_diff(diff, &mut |old_id, new_id| {
-                container_remap.insert(old_id, new_id);
-            })
-            .unwrap();
+            h.apply_diff(diff, container_remap).unwrap();
         }
 
         Ok(())
@@ -1054,6 +1089,7 @@ impl LoroDoc {
 
     #[instrument(level = "info", skip(self))]
     fn checkout_without_emitting(&self, frontiers: &Frontiers) -> Result<(), LoroError> {
+        tracing::debug!("Checkout from {:?}", self.state_frontiers());
         self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
         let mut state = self.state.lock().unwrap();
@@ -1071,7 +1107,8 @@ impl LoroDoc {
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
             ));
         };
-
+        tracing::trace!("before: {:?}", before);
+        tracing::trace!("after: {:?}", after);
         let diff = calc.calc_diff_internal(
             &oplog,
             before,
@@ -1080,6 +1117,7 @@ impl LoroDoc {
             Some(frontiers),
             None,
         );
+        tracing::debug!("diff: {:?}", &diff);
         state.apply_diff(InternalDocDiff {
             origin: "checkout".into(),
             diff: Cow::Owned(diff),
@@ -1149,6 +1187,11 @@ impl LoroDoc {
             let doc = Self::new();
             doc.detach();
             doc.import(&bytes).unwrap();
+            dbg!(
+                self.state_frontiers(),
+                self.oplog_frontiers(),
+                self.oplog_vv()
+            );
             doc.checkout(&self.state_frontiers()).unwrap();
             let mut calculated_state = doc.app_state().try_lock().unwrap();
             let mut current_state = self.app_state().try_lock().unwrap();

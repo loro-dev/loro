@@ -461,3 +461,18 @@ it("get elem by path", () => {
   map1.set("key1", 1);
   expect(doc.getByPath("map/key1")).toBe(1);
 });
+
+it("fork", () => {
+  const doc = new Loro();
+  const map = doc.getMap("map");
+  map.set("key", 1);
+  const doc2 = doc.fork();
+  const map2 = doc2.getMap("map");
+  expect(map2.get("key")).toBe(1);
+  expect(doc2.toJSON()).toStrictEqual({ map: { key: 1 } });
+  map2.set("key", 2);
+  expect(doc.toJSON()).toStrictEqual({ map: { key: 1 } });
+  expect(doc2.toJSON()).toStrictEqual({ map: { key: 2 } });
+  doc.import(doc2.exportSnapshot());
+  expect(doc.toJSON()).toStrictEqual({ map: { key: 2 } });
+});

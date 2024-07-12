@@ -13,12 +13,13 @@ use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
-use tracing::{info, instrument};
+use tracing::instrument;
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
     cursor::Cursor,
+    delta::TreeExternalDiff,
     diff_calc::DiffCalculator,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
@@ -45,7 +46,9 @@ pub(crate) use self::movable_list_state::{IndexType, MovableListState};
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
-pub(crate) use tree_state::{get_meta_value, FractionalIndexGenResult, TreeParentId, TreeState};
+pub(crate) use tree_state::{
+    get_meta_value, FractionalIndexGenResult, NodePosition, TreeParentId, TreeState,
+};
 
 use self::{container_store::ContainerWrapper, unknown_state::UnknownState};
 
@@ -67,7 +70,6 @@ macro_rules! get_or_create {
     }};
 }
 
-#[derive(Clone)]
 pub struct DocState {
     pub(super) peer: Arc<AtomicU64>,
 
@@ -383,6 +385,29 @@ impl DocState {
         })
     }
 
+    pub fn fork(
+        &self,
+        arena: SharedArena,
+        global_txn: Weak<Mutex<Option<Transaction>>>,
+        config: Configure,
+    ) -> Arc<Mutex<Self>> {
+        Arc::new_cyclic(|weak| {
+            let peer = Arc::new(AtomicU64::new(DefaultRandom.next_u64()));
+            Mutex::new(Self {
+                peer: peer.clone(),
+                frontiers: self.frontiers.clone(),
+                store: self.store.fork(arena.clone(), peer, config.clone()),
+                arena,
+                config,
+                weak_state: weak.clone(),
+                global_txn,
+                in_txn: false,
+                changed_idx_in_txn: FxHashSet::default(),
+                event_recorder: Default::default(),
+            })
+        })
+    }
+
     pub fn start_recording(&mut self) {
         if self.is_recording() {
             return;
@@ -527,7 +552,6 @@ impl DocState {
 
         // We need to ensure diff is processed in order
         diffs.sort_by_cached_key(|diff| self.arena.get_depth(diff.idx).unwrap());
-
         let mut to_revive_in_next_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
         let mut to_revive_in_this_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
         let mut last_depth = 0;
@@ -547,9 +571,13 @@ impl DocState {
 
                     let external_diff =
                         state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
-                    trigger_on_new_container(&external_diff, |cid| {
-                        to_revive_in_this_layer.insert(cid);
-                    });
+                    trigger_on_new_container(
+                        &external_diff,
+                        |cid| {
+                            to_revive_in_this_layer.insert(cid);
+                        },
+                        &self.arena,
+                    );
 
                     diffs.push(InternalContainerDiff {
                         idx: new,
@@ -570,9 +598,13 @@ impl DocState {
                         let state = get_or_create!(self, diff.idx);
                         let extern_diff =
                             state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
-                        trigger_on_new_container(&extern_diff, |cid| {
-                            to_revive_in_next_layer.insert(cid);
-                        });
+                        trigger_on_new_container(
+                            &extern_diff,
+                            |cid| {
+                                to_revive_in_next_layer.insert(cid);
+                            },
+                            &self.arena,
+                        );
                         diff.diff = extern_diff.into();
                     }
                 }
@@ -600,9 +632,13 @@ impl DocState {
                                     &self.weak_state,
                                 )
                             };
-                        trigger_on_new_container(&external_diff, |cid| {
-                            to_revive_in_next_layer.insert(cid);
-                        });
+                        trigger_on_new_container(
+                            &external_diff,
+                            |cid| {
+                                to_revive_in_next_layer.insert(cid);
+                            },
+                            &self.arena,
+                        );
                         diff.diff = external_diff.into();
                     } else {
                         state.apply_diff(
@@ -617,7 +653,9 @@ impl DocState {
             }
 
             to_revive_in_this_layer.remove(&idx);
-            diffs.push(diff);
+            if !diff.diff.is_empty() {
+                diffs.push(diff);
+            }
         }
 
         // Revive the last several layers
@@ -630,16 +668,22 @@ impl DocState {
                 }
 
                 let external_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
-                trigger_on_new_container(&external_diff, |cid| {
-                    to_revive_in_next_layer.insert(cid);
-                });
+                trigger_on_new_container(
+                    &external_diff,
+                    |cid| {
+                        to_revive_in_next_layer.insert(cid);
+                    },
+                    &self.arena,
+                );
 
-                diffs.push(InternalContainerDiff {
-                    idx: new,
-                    bring_back: true,
-                    is_container_deleted: false,
-                    diff: external_diff.into(),
-                });
+                if !external_diff.is_empty() {
+                    diffs.push(InternalContainerDiff {
+                        idx: new,
+                        bring_back: true,
+                        is_container_deleted: false,
+                        diff: external_diff.into(),
+                    });
+                }
             }
 
             to_revive_in_this_layer = std::mem::take(&mut to_revive_in_next_layer);
@@ -1086,8 +1130,9 @@ impl DocState {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
                         tracing::warn!(
-                            "⚠️ WARNING: ignore event because cannot find its path {:#?}",
+                            "⚠️ WARNING: ignore event because cannot find its path {:#?} container id:{}",
                             &container_diff,
+                            self.arena.idx_to_id(container_diff.idx).unwrap()
                         );
                     }
 
@@ -1171,7 +1216,7 @@ impl DocState {
                 // this container may be deleted
                 let Ok(prop) = id.clone().into_root() else {
                     let id = format!("{}", &id);
-                    info!(?id, "Missing parent - container is deleted");
+                    tracing::info!(?id, "Missing parent - container is deleted");
                     return None;
                 };
                 ans.push((id, Index::Key(prop.0)));
@@ -1428,7 +1473,11 @@ fn create_state_(idx: ContainerIdx, config: &Configure, peer: u64) -> State {
     }
 }
 
-fn trigger_on_new_container(state_diff: &Diff, mut listener: impl FnMut(ContainerIdx)) {
+fn trigger_on_new_container(
+    state_diff: &Diff,
+    mut listener: impl FnMut(ContainerIdx),
+    arena: &SharedArena,
+) {
     match state_diff {
         Diff::List(list) => {
             for delta in list.iter() {
@@ -1456,6 +1505,14 @@ fn trigger_on_new_container(state_diff: &Diff, mut listener: impl FnMut(Containe
                 if let Some(ValueOrHandler::Handler(h)) = &v.value {
                     let idx = h.container_idx();
                     listener(idx);
+                }
+            }
+        }
+        Diff::Tree(tree) => {
+            for item in tree.iter() {
+                if matches!(item.action, TreeExternalDiff::Create { .. }) {
+                    let id = item.target.associated_meta_container();
+                    listener(arena.id_to_idx(&id).unwrap());
                 }
             }
         }

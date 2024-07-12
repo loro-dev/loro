@@ -477,6 +477,12 @@ impl VersionVector {
         })
     }
 
+    /// Iter all span from a -> b and b -> a
+    pub fn iter_between<'a>(&'a self, other: &'a Self) -> impl Iterator<Item = IdSpan> + 'a {
+        // PERF: can be optimized a little
+        self.sub_iter(other).chain(other.sub_iter(self))
+    }
+
     pub fn sub_vec(&self, rhs: &Self) -> IdSpanVector {
         self.sub_iter(rhs).map(|x| (x.peer, x.counter)).collect()
     }

@@ -168,11 +168,11 @@ impl Actionable for TreeAction {
                 *target = (id.peer, id.counter);
             }
             TreeActionInner::Delete => {
-                let target_index = target.1 as usize % node_num;
+                let target_index = target.0 as usize % node_num;
                 *target = (nodes[target_index].peer, nodes[target_index].counter);
             }
             TreeActionInner::Move { parent, index } => {
-                let target_index = target.1 as usize % node_num;
+                let target_index = target.0 as usize % node_num;
                 *target = (nodes[target_index].peer, nodes[target_index].counter);
                 let mut parent_idx = parent.0 as usize % node_num;
                 while target_index == parent_idx {
@@ -202,7 +202,7 @@ impl Actionable for TreeAction {
                 *c = nodes[other_idx].counter;
             }
             TreeActionInner::Meta { meta: (_, v) } => {
-                let target_index = target.1 as usize % node_num;
+                let target_index = target.0 as usize % node_num;
                 *target = (nodes[target_index].peer, nodes[target_index].counter);
                 if matches!(v, FuzzValue::Container(_)) {
                     *v = FuzzValue::I32(0);
@@ -507,7 +507,7 @@ impl TreeNode {
                 None => LoroValue::Null,
             },
         );
-        map.insert("position".to_string(), self.position.clone().into());
+        map.insert("fractional_index".to_string(), self.position.clone().into());
         map.insert("index".to_string(), (index as i64).into());
         map
     }

@@ -1,5 +1,8 @@
 use bytes::Bytes;
-use std::ops::Bound;
+use std::{
+    ops::Bound,
+    sync::{Arc, Mutex},
+};
 
 pub type CompareFn<'a> = &'a mut dyn FnMut(&Bytes, &Bytes) -> std::cmp::Ordering;
 pub trait KvStore: std::fmt::Debug + Send + Sync {
@@ -28,6 +31,7 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
     ) -> Option<(Bytes, Bytes)>;
     fn export_all(&self) -> Bytes;
     fn import_all(&mut self, bytes: Bytes) -> Result<(), String>;
+    fn clone_store(&self) -> Arc<Mutex<dyn KvStore>>;
 }
 
 pub trait KvEntry {
@@ -127,7 +131,7 @@ mod default_binary_format {
 
 mod mem {
     use super::*;
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, sync::Arc};
     pub type MemKvStore = BTreeMap<Bytes, Bytes>;
 
     impl KvStore for MemKvStore {
@@ -211,6 +215,10 @@ mod mem {
             }
 
             None
+        }
+
+        fn clone_store(&self) -> Arc<Mutex<dyn KvStore>> {
+            Arc::new(Mutex::new(self.clone()))
         }
     }
 
