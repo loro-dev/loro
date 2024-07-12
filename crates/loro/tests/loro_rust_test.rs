@@ -257,7 +257,6 @@ fn time_travel() {
                 let Some(delta) = event.diff.as_text() else {
                     continue;
                 };
-                dbg!(&delta);
                 text2.apply_delta(delta).unwrap();
             }
         }),

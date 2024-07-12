@@ -123,18 +123,20 @@ impl Actor {
         }
     }
 
-    pub fn undo(&mut self, undo_length: u32) {
+    pub fn test_undo(&mut self, undo_length: u32) {
         self.loro.attach();
         let before_undo = self.loro.get_deep_value();
 
         // println!("\n\nstart undo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.undo(&self.loro).unwrap();
+            self.loro.commit();
         }
 
         // println!("\n\nstart redo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.redo(&self.loro).unwrap();
+            self.loro.commit();
         }
 
         let after_undo = self.loro.get_deep_value();

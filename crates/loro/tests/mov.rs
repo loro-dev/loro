@@ -55,18 +55,3 @@ fn conflict_moves() -> Result<(), LoroError> {
 
     Ok(())
 }
-
-#[test]
-fn movable_list_event() -> Result<(), LoroError> {
-    let doc1 = LoroDoc::new();
-    doc1.set_peer_id(1)?;
-    doc1.subscribe_root(Arc::new(|e| {
-        dbg!(e);
-    }));
-
-    let list1 = doc1.get_movable_list("list");
-    let _ = list1.insert_container(0, LoroList::new());
-    let _ = list1.insert_container(1, LoroMovableList::new());
-    doc1.commit();
-    Ok(())
-}

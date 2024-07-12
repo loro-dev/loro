@@ -3,9 +3,11 @@ pub(crate) mod dag;
 mod iter;
 mod pending_changes;
 
+use once_cell::sync::OnceCell;
 use std::borrow::Cow;
-use std::cell::{OnceCell, RefCell};
+use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
@@ -23,9 +25,8 @@ use crate::LoroError;
 use bytes::Bytes;
 use change_store::BlockOpRef;
 pub use change_store::{BlockChangeRef, ChangeStore};
-use fxhash::FxHashMap;
-use loro_common::{IdLp, IdSpan};
-use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
+use loro_common::{HasId, IdLp, IdSpan};
+use rle::{HasLength, Mergable, RleVec, Sliceable};
 use smallvec::SmallVec;
 
 pub use self::dag::FrontiersNotIncluded;
@@ -63,7 +64,7 @@ pub struct OpLog {
 /// It's faster to answer the question like what's the LCA version
 #[derive(Debug, Clone, Default)]
 pub struct AppDag {
-    pub(crate) map: FxHashMap<PeerID, Vec<AppDagNode>>,
+    pub(crate) map: BTreeMap<ID, AppDagNode>,
     pub(crate) frontiers: Frontiers,
     pub(crate) vv: VersionVector,
 }
@@ -101,33 +102,28 @@ impl OpLog {
 
 impl AppDag {
     pub fn get_mut(&mut self, id: ID) -> Option<&mut AppDagNode> {
-        let ID {
-            peer: client_id,
-            counter,
-        } = id;
-        self.map.get_mut(&client_id).and_then(|rle| {
-            if counter >= rle.sum_atom_len() {
-                return None;
-            }
-
-            let index = rle.search_atom_index(counter);
-            Some(&mut rle[index])
-        })
+        let x = self.map.range_mut(..=id).next_back()?;
+        if x.1.contains_id(id) {
+            Some(x.1)
+        } else {
+            None
+        }
     }
 
     pub(crate) fn refresh_frontiers(&mut self) {
-        self.frontiers = self
-            .map
-            .iter()
-            .filter(|(_, vec)| {
-                if vec.is_empty() {
-                    return false;
+        let vv_iter = self.vv.iter();
+        // PERF:
+        self.frontiers = vv_iter
+            .filter_map(|(peer, _)| {
+                let node = self.get_last_of_peer(*peer)?;
+                if node.has_succ {
+                    return None;
                 }
 
-                !vec.last().unwrap().has_succ
+                Some(ID::new(*peer, node.ctr_last()))
             })
-            .map(|(peer, vec)| ID::new(*peer, vec.last().unwrap().ctr_last()))
             .collect();
+        // dbg!(&self);
     }
 
     /// If the lamport of change can be calculated, return Ok, otherwise, Err
@@ -144,17 +140,30 @@ impl AppDag {
     }
 
     pub(crate) fn find_deps_of_id(&self, id: ID) -> Frontiers {
-        if let Some(nodes) = self.map.get(&id.peer) {
-            if let Some(d) = nodes.get_by_atom_index(id.counter) {
-                if d.offset == 0 {
-                    return d.element.deps.clone();
-                } else {
-                    return ID::new(id.peer, d.element.cnt + d.offset - 1).into();
-                }
-            }
-        }
+        let Some(node) = self.get(id) else {
+            return Frontiers::default();
+        };
 
-        Frontiers::default()
+        let offset = id.counter - node.cnt;
+        if offset == 0 {
+            return node.deps.clone();
+        } else {
+            return ID::new(id.peer, node.cnt + offset - 1).into();
+        }
+    }
+
+    pub(crate) fn get_last_of_peer(&self, peer: PeerID) -> Option<&AppDagNode> {
+        self.map
+            .range(..=ID::new(peer, Counter::MAX))
+            .next_back()
+            .map(|(_, v)| v)
+    }
+
+    pub(crate) fn get_last_mut_of_peer(&mut self, peer: PeerID) -> Option<&mut AppDagNode> {
+        self.map
+            .range_mut(..=ID::new(peer, Counter::MAX))
+            .next_back()
+            .map(|(_, v)| v)
     }
 }
 
@@ -287,8 +296,7 @@ impl OpLog {
         let len = change.content_len();
         if change.deps_on_self() {
             // don't need to push new element to dag because it only depends on itself
-            let nodes = self.dag.map.get_mut(&change.id.peer).unwrap();
-            let last = nodes.last_mut().unwrap();
+            let last = self.dag.get_last_mut_of_peer(change.id.peer).unwrap();
             assert_eq!(last.peer, change.id.peer, "peer id is not the same");
             assert_eq!(
                 last.cnt + last.len as Counter,
@@ -304,15 +312,8 @@ impl OpLog {
             last.has_succ = false;
         } else {
             let vv = self.dag.frontiers_to_im_vv(&change.deps);
-            let dag_row = &mut self.dag.map.entry(change.id.peer).or_default();
-            if change.id.counter > 0 {
-                assert_eq!(
-                    dag_row.last().unwrap().ctr_end(),
-                    change.id.counter,
-                    "counter is not continuous"
-                );
-            }
-            dag_row.push_rle_element(AppDagNode {
+            let mut pushed = false;
+            let node = AppDagNode {
                 vv: OnceCell::from(vv),
                 peer: change.id.peer,
                 cnt: change.id.counter,
@@ -320,7 +321,25 @@ impl OpLog {
                 deps: change.deps.clone(),
                 has_succ: false,
                 len,
-            });
+            };
+            if let Some(last) = self.dag.get_last_mut_of_peer(change.id.peer) {
+                if change.id.counter > 0 {
+                    assert_eq!(
+                        last.ctr_end(),
+                        change.id.counter,
+                        "counter is not continuous"
+                    );
+                }
+
+                if last.is_mergable(&node, &()) {
+                    pushed = true;
+                    last.merge(&node, &());
+                }
+            }
+
+            if !pushed {
+                self.dag.map.insert(node.id_start(), node);
+            }
 
             for dep in change.deps.iter() {
                 let target = self.dag.get_mut(*dep).unwrap();

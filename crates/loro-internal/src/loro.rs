@@ -1089,7 +1089,6 @@ impl LoroDoc {
 
     #[instrument(level = "info", skip(self))]
     fn checkout_without_emitting(&self, frontiers: &Frontiers) -> Result<(), LoroError> {
-        tracing::debug!("Checkout from {:?}", self.state_frontiers());
         self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
         let mut state = self.state.lock().unwrap();
@@ -1107,8 +1106,6 @@ impl LoroDoc {
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
             ));
         };
-        tracing::trace!("before: {:?}", before);
-        tracing::trace!("after: {:?}", after);
         let diff = calc.calc_diff_internal(
             &oplog,
             before,
@@ -1117,7 +1114,6 @@ impl LoroDoc {
             Some(frontiers),
             None,
         );
-        tracing::debug!("diff: {:?}", &diff);
         state.apply_diff(InternalDocDiff {
             origin: "checkout".into(),
             diff: Cow::Owned(diff),
