@@ -1104,3 +1104,39 @@ fn test_delete_utf8_panic_out_bound_len() {
     text.insert(0, "Hello").unwrap();
     text.delete_utf8(1, 10).unwrap();
 }
+
+#[test]
+fn test_text_iter() {
+    let mut str = String::new();
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    text.iter(|c| {
+        str.push(c);
+        return true;
+    });
+    assert_eq!(str, "Hello");
+    str = String::new();
+    let mut i = 0;
+    text.iter(|c| {
+        if i == 3 {
+            return false;
+        }
+        str.push(c);
+        i = i + 1;
+        return true;
+    });
+    assert_eq!(str, "Hel");
+}
+
+#[test]
+fn test_text_iter_detached() {
+    let mut str = String::new();
+    let text = TextHandler::new_detached();
+    text.insert_utf8(0, "Hello").unwrap();
+    text.iter(|c| {
+        str.push(c);
+        return true;
+    });
+    assert_eq!(str, "Hello");
+}

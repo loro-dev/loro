@@ -1326,6 +1326,26 @@ impl TextHandler {
         }
     }
 
+    pub fn iter(&self, mut callback: impl FnMut(char) -> bool) -> () {
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = t.try_lock().unwrap();
+                for span in t.value.iter() {
+                    for c in span.text.as_str().chars() {
+                        if !callback(c) {
+                            return;
+                        }
+                    }
+                }
+            }
+            MaybeDetached::Attached(a) => {
+                a.with_state(|state| -> () {
+                    state.as_richtext_state_mut().unwrap().iter(callback);
+                });
+            }
+        }
+    }
+
     /// `pos` is a Event Index:
     ///
     /// - if feature="wasm", pos is a UTF-16 index

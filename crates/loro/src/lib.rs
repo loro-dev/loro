@@ -978,6 +978,11 @@ impl LoroText {
         self.handler.id().clone()
     }
 
+    /// Iterate on the text.
+    pub fn iter(&self, callback: impl FnMut(char) -> bool) -> () {
+        self.handler.iter(callback);
+    }
+
     /// Insert a string at the given unicode position.
     pub fn insert(&self, pos: usize, s: &str) -> LoroResult<()> {
         self.handler.insert(pos, s)
