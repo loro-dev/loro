@@ -991,8 +991,9 @@ impl DocState {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
                         tracing::warn!(
-                            "⚠️ WARNING: ignore event because cannot find its path {:#?}",
+                            "⚠️ WARNING: ignore event because cannot find its path {:#?} container id:{}",
                             &container_diff,
+                            self.arena.idx_to_id(container_diff.idx).unwrap()
                         );
                     }
 

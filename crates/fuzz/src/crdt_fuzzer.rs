@@ -309,6 +309,7 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
         info_span!("ApplyAction", ?action).in_scope(|| {
             applied.push(action.clone());
             info!("OptionsTable \n{}", (&applied).table());
+            // info!("Apply Action {:?}", applied);
             fuzzer.apply_action(action);
         });
     }
