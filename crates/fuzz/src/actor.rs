@@ -161,6 +161,12 @@ impl Actor {
     }
 
     pub fn check_history(&mut self) {
+        // let json = self
+        //     .loro
+        //     .export_json_updates(&Default::default(), &self.loro.oplog_vv());
+        // let string = serde_json::to_string_pretty(&json).unwrap();
+        // tracing::info!("json = {}", string);
+
         for (f, v) in self.history.iter() {
             let f = Frontiers::from(f);
             let from = &self.loro.state_frontiers();
