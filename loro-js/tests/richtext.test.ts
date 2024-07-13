@@ -329,6 +329,7 @@ describe("richtext", () => {
     text.insert(0, "你好");
     expect(text.splice(1, 1, "我")).toStrictEqual("好");
     expect(text.toString()).toStrictEqual("你我");
+  });
 
   it("Text iter", () => {
     const doc = new Loro();
