@@ -108,6 +108,14 @@ impl RichtextState {
         self.state.get_mut().get_char_by_event_index(pos)
     }
 
+    pub(crate) fn iter(&mut self, mut callback: impl FnMut(&str) -> bool) -> () {
+        for span in self.state.get_mut().iter() {
+            if !callback(span.text.as_str()) {
+                return;
+            }
+        }
+    }
+
     fn get_style_start(
         &mut self,
         style_starts: &mut FxHashMap<Arc<StyleOp>, Pos>,

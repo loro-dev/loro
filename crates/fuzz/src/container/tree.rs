@@ -507,7 +507,7 @@ impl TreeNode {
                 None => LoroValue::Null,
             },
         );
-        map.insert("position".to_string(), self.position.clone().into());
+        map.insert("fractional_index".to_string(), self.position.clone().into());
         map.insert("index".to_string(), (index as i64).into());
         map
     }

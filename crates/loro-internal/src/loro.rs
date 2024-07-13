@@ -832,6 +832,7 @@ impl LoroDoc {
         );
 
         // println!("\nundo_internal: diff: {:?}", diff);
+        // println!("container remap: {:?}", container_remap);
 
         self.checkout_without_emitting(&latest_frontiers)?;
         self.detached.store(false, Release);

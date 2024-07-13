@@ -1202,3 +1202,40 @@ fn test_text_splice() {
     assert_eq!(text.splice(1, 1, "世界").unwrap(), "好");
     assert_eq!(text.to_string(), "你世界");
 }
+
+fn test_text_iter() {
+    let mut str = String::new();
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    text.insert(1, "Hello").unwrap();
+    text.iter(|s| {
+        str.push_str(s);
+        return true;
+    });
+    assert_eq!(str, "HHelloello");
+    str = String::new();
+    let mut i = 0;
+    text.iter(|s| {
+        if i == 1 {
+            return false;
+        }
+        str.push_str(s);
+        i = i + 1;
+        return true;
+    });
+    assert_eq!(str, "H");
+}
+
+#[test]
+fn test_text_iter_detached() {
+    let mut str = String::new();
+    let text = TextHandler::new_detached();
+    text.insert(0, "Hello").unwrap();
+    text.insert(1, "Hello").unwrap();
+    text.iter(|s| {
+        str.push_str(s);
+        return true;
+    });
+    assert_eq!(str, "HHelloello");
+}

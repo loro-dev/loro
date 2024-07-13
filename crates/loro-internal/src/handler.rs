@@ -1122,6 +1122,7 @@ impl Handler {
                         )
                     }
                 }
+
                 for diff in diff.into_tree().unwrap().diff {
                     let mut target = diff.target;
                     match diff.action {
@@ -1130,16 +1131,35 @@ impl Handler {
                             index: _,
                             position,
                         } => {
-                            let new_target = x.__internal__next_tree_id();
                             if let Some(p) = parent.as_mut() {
                                 remap_tree_id(p, container_remap)
                             }
-                            if x.create_at_with_target_for_apply_diff(parent, position, new_target)?
-                            {
-                                container_remap.insert(
-                                    target.associated_meta_container(),
-                                    new_target.associated_meta_container(),
-                                );
+                            remap_tree_id(&mut target, container_remap);
+
+                            if x.contains(target) {
+                                // 1@0 is the parent of 2@1
+                                // ┌────┐    ┌───────────────┐
+                                // │xxxx│◀───│Move 2@1 to 0@0◀┐
+                                // └────┘    └───────────────┘│
+                                // ┌───────┐                  │ ┌────────┐
+                                // │Del 1@0│◀─────────────────┴─│Meta 2@1│ ◀───  undo 2 ops redo 2 ops
+                                // └───────┘                    └────────┘
+                                //
+                                // When we undo the delete operation, we should not create a new tree node and its child.
+                                // However, the concurrent operation has moved the child to another parent. It's still alive.
+                                // So when we redo the delete operation, we should check if the target is still alive.
+                                // If it's alive, we should move it back instead of creating new one.
+                                x.move_at_with_target_for_apply_diff(parent, position, target)?;
+                            } else {
+                                let new_target = x.__internal__next_tree_id();
+                                if x.create_at_with_target_for_apply_diff(
+                                    parent, position, new_target,
+                                )? {
+                                    container_remap.insert(
+                                        target.associated_meta_container(),
+                                        new_target.associated_meta_container(),
+                                    );
+                                }
                             }
                         }
                         TreeExternalDiff::Move {
@@ -1155,9 +1175,8 @@ impl Handler {
                         }
                         TreeExternalDiff::Delete => {
                             remap_tree_id(&mut target, container_remap);
-                            // println!("delete {:?}", target);
                             if x.contains(target) {
-                                x.delete(target)?
+                                x.delete(target)?;
                             }
                         }
                     }
@@ -1322,6 +1341,24 @@ impl TextHandler {
             }
             MaybeDetached::Attached(a) => {
                 a.with_state(|state| state.as_richtext_state_mut().unwrap().diagnose());
+            }
+        }
+    }
+
+    pub fn iter(&self, mut callback: impl FnMut(&str) -> bool) -> () {
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = t.try_lock().unwrap();
+                for span in t.value.iter() {
+                    if !callback(span.text.as_str()) {
+                        return;
+                    }
+                }
+            }
+            MaybeDetached::Attached(a) => {
+                a.with_state(|state| -> () {
+                    state.as_richtext_state_mut().unwrap().iter(callback);
+                });
             }
         }
     }
@@ -3931,7 +3968,7 @@ mod test {
             .unwrap();
         assert_eq!(meta, 123.into());
         assert_eq!(
-            r#"[{"parent":null,"meta":{"a":123},"id":"0@1","index":0,"position":"80"}]"#,
+            r#"[{"parent":null,"meta":{"a":123},"id":"0@1","index":0,"fractional_index":"80"}]"#,
             tree.get_deep_value().to_json()
         );
         let bytes = loro.export_snapshot();

@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use fuzz::{
     actions::{
+        ActionInner,
         ActionWrapper::{self, *},
         GenericAction,
     },
-    container::{TreeAction, TreeActionInner},
+    container::{MapAction, TextAction, TextActionInner, TreeAction, TreeActionInner},
     crdt_fuzzer::{minify_error, test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
 };
 use loro::{ContainerType::*, LoroCounter, LoroDoc};
@@ -7694,6 +7695,323 @@ fn undo_movable_list_1() {
                     prop: 15384779033,
                 }),
             },
+        ],
+    )
+}
+
+#[test]
+fn unknown_fuzz_err() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 0),
+                    action: TreeActionInner::Create { index: 0 },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 1),
+                    action: TreeActionInner::Create { index: 0 },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 2),
+                    action: TreeActionInner::Create { index: 2 },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 2),
+                    action: TreeActionInner::Delete,
+                })),
+            },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 1),
+                    action: TreeActionInner::Move {
+                        parent: (2, 0),
+                        index: 0,
+                    },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 0),
+                    action: TreeActionInner::Meta {
+                        meta: ("117901063".into(), I32(117901063)),
+                    },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 0),
+                    action: TreeActionInner::Meta {
+                        meta: ("117901063".into(), I32(117908231)),
+                    },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 0),
+                    action: TreeActionInner::Delete,
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 7),
+                    action: TreeActionInner::Create { index: 0 },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 7),
+                    action: TreeActionInner::Delete,
+                })),
+            },
+            SyncAll,
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 9),
+                    action: TreeActionInner::Create { index: 0 },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 10),
+                    action: TreeActionInner::Create { index: 0 },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 9),
+                    action: TreeActionInner::Meta {
+                        meta: ("117901063".into(), I32(119736071)),
+                    },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 12),
+                    action: TreeActionInner::Create { index: 0 },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 10),
+                    action: TreeActionInner::Meta {
+                        meta: ("117901091".into(), I32(117901063)),
+                    },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 10),
+                    action: TreeActionInner::Move {
+                        parent: (2, 9),
+                        index: 0,
+                    },
+                })),
+            },
+            SyncAll,
+            Handle {
+                site: 3,
+                target: 3,
+                container: 0,
+                action: Action(ActionInner::Map(MapAction::Insert {
+                    key: 17,
+                    value: Container(Text),
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 12),
+                    action: TreeActionInner::Meta {
+                        meta: ("117901063".into(), I32(117908231)),
+                    },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 12),
+                    action: TreeActionInner::Meta {
+                        meta: ("117917447".into(), I32(117901063)),
+                    },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 12),
+                    action: TreeActionInner::Meta {
+                        meta: ("117901063".into(), I32(117901063)),
+                    },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 18),
+                    action: TreeActionInner::Create { index: 1 },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 12),
+                    action: TreeActionInner::Meta {
+                        meta: ("4227595259".into(), I32(555819297)),
+                    },
+                })),
+            },
+            Handle {
+                site: 3,
+                target: 0,
+                container: 1,
+                action: Action(ActionInner::Text(TextAction {
+                    pos: 0,
+                    len: 1,
+                    action: TextActionInner::Insert,
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 12),
+                    action: TreeActionInner::Meta {
+                        meta: ("117901063".into(), I32(117901091)),
+                    },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 12),
+                    action: TreeActionInner::Meta {
+                        meta: ("2231830279".into(), I32(117901063)),
+                    },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 22),
+                    action: TreeActionInner::Create { index: 0 },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 10),
+                    action: TreeActionInner::Move {
+                        parent: (2, 12),
+                        index: 0,
+                    },
+                })),
+            },
+            Handle {
+                site: 2,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 24),
+                    action: TreeActionInner::Create { index: 2 },
+                })),
+            },
+            Handle {
+                site: 3,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 9),
+                    action: TreeActionInner::Delete,
+                })),
+            },
+            SyncAll,
+            Handle {
+                site: 3,
+                target: 2,
+                container: 0,
+                action: Action(ActionInner::Tree(TreeAction {
+                    target: (2, 10),
+                    action: TreeActionInner::Meta {
+                        meta: ("abc".into(), I32(123)),
+                    },
+                })),
+            },
+            SyncAllUndo { site: 3, op_len: 3 },
         ],
     )
 }

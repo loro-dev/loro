@@ -978,6 +978,14 @@ impl LoroText {
         self.handler.id().clone()
     }
 
+    /// Iterate each span(internal storage unit) of the text.
+    ///
+    /// The callback function will be called for each character in the text.
+    /// If the callback returns `false`, the iteration will stop.
+    pub fn iter(&self, callback: impl FnMut(&str) -> bool) -> () {
+        self.handler.iter(callback);
+    }
+
     /// Insert a string at the given unicode position.
     pub fn insert(&self, pos: usize, s: &str) -> LoroResult<()> {
         self.handler.insert(pos, s)

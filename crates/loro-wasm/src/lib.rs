@@ -1500,6 +1500,28 @@ impl LoroText {
         JsValue::from_str("Text").into()
     }
 
+    /// Iterate each span(internal storage unit) of the text.
+    ///
+    /// The callback function will be called for each span in the text.
+    /// If the callback returns `false`, the iteration will stop.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello")
+    /// text.iter((str) => (console.log(str), true));
+    /// ```
+    pub fn iter(&self, callback: &js_sys::Function) {
+        let context = JsValue::NULL;
+        self.handler.iter(|c| {
+            let result = callback.call1(&context, &JsValue::from(c)).unwrap();
+            result.as_bool().unwrap()
+        })
+    }
+
     /// Insert some string at index.
     ///
     /// @example
@@ -3239,7 +3261,7 @@ impl LoroTree {
     /// but also the metadata, you should use `toJson()`.
     ///
     // TODO: perf
-    #[wasm_bindgen(js_name = "toArray")]
+    #[wasm_bindgen(js_name = "toArray", skip_typescript)]
     pub fn to_array(&mut self) -> JsResult<Array> {
         let value = self.handler.get_value().into_list().unwrap();
         let ans = Array::new();
@@ -3259,13 +3281,17 @@ impl LoroTree {
                 .unwrap_or(JsValue::undefined())
                 .into();
             let index = *v["index"].as_i64().unwrap() as u32;
-            let position = v["position"].as_string().unwrap();
+            let position = v["fractional_index"].as_string().unwrap();
             let map: LoroMap = self.get_node_by_id(&id).unwrap().data()?;
             let obj = Object::new();
             js_sys::Reflect::set(&obj, &"id".into(), &id)?;
             js_sys::Reflect::set(&obj, &"parent".into(), &parent)?;
             js_sys::Reflect::set(&obj, &"index".into(), &JsValue::from(index))?;
-            js_sys::Reflect::set(&obj, &"position".into(), &JsValue::from_str(position))?;
+            js_sys::Reflect::set(
+                &obj,
+                &"fractional_index".into(),
+                &JsValue::from_str(position),
+            )?;
             js_sys::Reflect::set(&obj, &"meta".into(), &map.into())?;
             ans.push(&obj);
         }
@@ -4197,6 +4223,18 @@ interface LoroList {
      * ```
      */
     getCursor(pos: number, side?: Side): Cursor | undefined;
+}
+
+export type TreeNodeValue = {
+    id: TreeID,
+    parent: TreeID | undefined,
+    index: number,
+    fractionalIndex: string,
+    meta: LoroMap,
+}
+
+interface LoroTree{
+    toArray(): TreeNodeValue[];
 }
 
 interface LoroMovableList {
