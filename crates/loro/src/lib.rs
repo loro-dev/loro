@@ -978,11 +978,11 @@ impl LoroText {
         self.handler.id().clone()
     }
 
-    /// Iterate over the characters in the text.
+    /// Iterate each span(internal storage unit) of the text.
     ///
     /// The callback function will be called for each character in the text.
     /// If the callback returns `false`, the iteration will stop.
-    pub fn iter(&self, callback: impl FnMut(char) -> bool) -> () {
+    pub fn iter(&self, callback: impl FnMut(&str) -> bool) -> () {
         self.handler.iter(callback);
     }
 

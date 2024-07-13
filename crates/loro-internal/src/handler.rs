@@ -1326,15 +1326,13 @@ impl TextHandler {
         }
     }
 
-    pub fn iter(&self, mut callback: impl FnMut(char) -> bool) -> () {
+    pub fn iter(&self, mut callback: impl FnMut(&str) -> bool) -> () {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.try_lock().unwrap();
                 for span in t.value.iter() {
-                    for c in span.text.as_str().chars() {
-                        if !callback(c) {
-                            return;
-                        }
+                    if !callback(span.text.as_str()) {
+                        return;
                     }
                 }
             }

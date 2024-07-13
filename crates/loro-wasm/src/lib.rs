@@ -1500,9 +1500,9 @@ impl LoroText {
         JsValue::from_str("Text").into()
     }
 
-    /// Iterate over the characters in the text.
+    /// Iterate each span(internal storage unit) of the text.
     ///
-    /// The callback function will be called for each character in the text.
+    /// The callback function will be called for each span in the text.
     /// If the callback returns `false`, the iteration will stop.
     ///
     /// @example
@@ -1511,14 +1511,13 @@ impl LoroText {
     ///
     /// const doc = new Loro();
     /// const text = doc.getText("text");
-    /// text.iter((c) => (console.log(c), true));
+    /// text.insert(0, "Hello")
+    /// text.iter((str) => (console.log(str), true));
     /// ```
     pub fn iter(&self, callback: &js_sys::Function) {
         let context = JsValue::NULL;
         self.handler.iter(|c| {
-            let result = callback
-                .call1(&context, &JsValue::from(c.to_string()))
-                .unwrap();
+            let result = callback.call1(&context, &JsValue::from(c)).unwrap();
             result.as_bool().unwrap()
         })
     }

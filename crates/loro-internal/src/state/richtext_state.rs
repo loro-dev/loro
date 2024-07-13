@@ -96,12 +96,10 @@ impl RichtextState {
         }
     }
 
-    pub(crate) fn iter(&mut self, mut callback: impl FnMut(char) -> bool) -> () {
+    pub(crate) fn iter(&mut self, mut callback: impl FnMut(&str) -> bool) -> () {
         for span in self.state.get_mut().iter() {
-            for c in span.text.as_str().chars() {
-                if !callback(c) {
-                    return;
-                }
+            if !callback(span.text.as_str()) {
+                return;
             }
         }
     }
