@@ -1500,7 +1500,10 @@ impl LoroText {
         JsValue::from_str("Text").into()
     }
 
-    /// Iterate on the text.
+    /// Iterate over the characters in the text.
+    ///
+    /// The callback function will be called for each character in the text.
+    /// If the callback returns `false`, the iteration will stop.
     ///
     /// @example
     /// ```ts
