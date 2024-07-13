@@ -1500,6 +1500,28 @@ impl LoroText {
         JsValue::from_str("Text").into()
     }
 
+    /// Iterate each span(internal storage unit) of the text.
+    ///
+    /// The callback function will be called for each span in the text.
+    /// If the callback returns `false`, the iteration will stop.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello")
+    /// text.iter((str) => (console.log(str), true));
+    /// ```
+    pub fn iter(&self, callback: &js_sys::Function) {
+        let context = JsValue::NULL;
+        self.handler.iter(|c| {
+            let result = callback.call1(&context, &JsValue::from(c)).unwrap();
+            result.as_bool().unwrap()
+        })
+    }
+
     /// Insert some string at index.
     ///
     /// @example

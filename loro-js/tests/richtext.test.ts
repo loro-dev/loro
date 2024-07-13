@@ -300,6 +300,17 @@ describe("richtext", () => {
     expect(text.toDelta()).toStrictEqual([
       { insert: "你b"},
     ]);
+  });
 
+  it("Text iter", () => {
+    const doc = new Loro();
+    const text = doc.getText('t');
+    text.insert(0, "你好");
+    let str = "";
+    text.iter((s : string)=>{
+      str = str + s;
+      return true;
+    });
+    expect(text.toString(), "你好");
   });
 });
