@@ -854,3 +854,20 @@ fn awareness() {
     );
     assert_eq!(b.get_all_states().get(&2).map(|x| x.state.clone()), None);
 }
+
+#[test]
+// https://github.com/loro-dev/loro/issues/397
+fn len_and_is_empty_inconsistency() {
+    let doc = LoroDoc::new();
+    let map = doc.get_map("map");
+    println!("{:#?}", map);
+    assert!(map.is_empty());
+    map.insert("leaf", 42i64).unwrap();
+    println!("{:#?}", map.get("leaf"));
+
+    assert_eq!(map.len(), 1);
+    map.delete("leaf").unwrap();
+    println!("{:#?}", map.get("leaf"));
+    assert_eq!(map.len(), 0);
+    assert!(map.is_empty());
+}
