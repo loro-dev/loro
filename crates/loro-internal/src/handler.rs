@@ -32,7 +32,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use tracing::{debug, error, info, instrument, Event};
+use tracing::{debug, error, info, instrument};
 
 mod tree;
 pub use tree::TreeHandler;
@@ -1361,6 +1361,80 @@ impl TextHandler {
                 });
             }
         }
+    }
+
+    /// `pos` is a Event Index:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
+    pub fn char_at(&self, pos: usize) -> LoroResult<char> {
+        if pos >= self.len_event() {
+            return Err(LoroError::OutOfBound {
+                pos: pos,
+                len: self.len_event(),
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
+        }
+        if let Ok(c) = match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = t.try_lock().unwrap();
+                t.value.get_char_by_event_index(pos)
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                state
+                    .as_richtext_state_mut()
+                    .unwrap()
+                    .get_char_by_event_index(pos)
+            }),
+        } {
+            Ok(c)
+        } else {
+            Err(LoroError::OutOfBound {
+                pos: pos,
+                len: self.len_event(),
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            })
+        }
+    }
+
+    /// `start_index` and `end_index` are Event Index:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
+    ///
+    pub fn slice(&self, start_index: usize, end_index: usize) -> LoroResult<String> {
+        if end_index < start_index {
+            return Err(LoroError::EndIndexLessThanStartIndex {
+                start: start_index,
+                end: end_index,
+            });
+        }
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = t.try_lock().unwrap();
+                t.value
+                    .get_text_slice_by_event_index(start_index, end_index - start_index)
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                state
+                    .as_richtext_state_mut()
+                    .unwrap()
+                    .get_text_slice_by_event_index(start_index, end_index - start_index)
+            }),
+        }
+    }
+
+    /// `pos` is a Event Index:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
+    ///
+    /// This method requires auto_commit to be enabled.
+    pub fn splice(&self, pos: usize, len: usize, s: &str) -> LoroResult<String> {
+        let x = self.slice(pos, pos + len)?;
+        self.delete(pos, len)?;
+        self.insert(pos, s)?;
+        Ok(x)
     }
 
     /// `pos` is a Event Index:
