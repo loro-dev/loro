@@ -50,7 +50,6 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
                 on_new_container(&d.target.associated_meta_container())
             }
         });
-        // tracing::info!("\ndiff {:?}", diff);
 
         InternalDiff::Tree(diff)
     }
@@ -451,7 +450,12 @@ impl TreeCacheForDiff {
                 ans.push((*tree_id, op.position.clone(), op.id_full()));
             }
         }
-        ans.sort_by(|a, b| a.1.cmp(&b.1));
+        // The children should be sorted by the position.
+        // If the fractional index is the same, then sort by the lamport and peer.
+        ans.sort_by(|a, b| {
+            a.1.cmp(&b.1)
+                .then(a.2.lamport.cmp(&b.2.lamport).then(a.2.peer.cmp(&b.2.peer)))
+        });
         ans
     }
 }
