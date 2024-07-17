@@ -27,41 +27,40 @@ fn is_not_empty_range(range: &Range<usize>) -> bool {
     range.start < range.end
 }
 
-fn common_prefix_len<T: PartialEq>(
-    old: &[T],
+fn common_prefix_len(
+    old: &[u8],
     old_range: Range<usize>,
-    new: &[T],
+    new: &[u8],
     new_range: Range<usize>,
 ) -> usize {
-    if is_empty_range(&old_range) || is_empty_range(&new_range) {
-        return 0;
+    let mut len = 0;
+    let mut old_iter = old[old_range].iter();
+    let mut new_iter = new[new_range].iter();
+    while let (Some(o), Some(n)) = (old_iter.next(), new_iter.next()) {
+        if o != n {
+            break;
+        }
+        len += 1;
     }
-    new_range
-        .zip(old_range)
-        .take_while(
-            #[inline(always)]
-            |x| new[x.0] == old[x.1],
-        )
-        .count()
+    len
 }
 
-fn common_suffix_len<T: PartialEq>(
-    old: &[T],
+fn common_suffix_len(
+    old: &[u8],
     old_range: Range<usize>,
-    new: &[T],
+    new: &[u8],
     new_range: Range<usize>,
 ) -> usize {
-    if is_empty_range(&old_range) || is_empty_range(&new_range) {
-        return 0;
+    let mut len = 0;
+    let mut old_iter = old[old_range].iter().rev();
+    let mut new_iter = new[new_range].iter().rev();
+    while let (Some(o), Some(n)) = (old_iter.next(), new_iter.next()) {
+        if o != n {
+            break;
+        }
+        len += 1;
     }
-    new_range
-        .rev()
-        .zip(old_range.rev())
-        .take_while(
-            #[inline(always)]
-            |x| new[x.0] == old[x.1],
-        )
-        .count()
+    len
 }
 
 pub(crate) trait DiffHandler {
@@ -130,10 +129,10 @@ impl<D: DiffHandler> OperateProxy<D> {
     }
 }
 
-pub(crate) fn myers_diff<D: DiffHandler, T: PartialEq>(
+pub(crate) fn myers_diff<D: DiffHandler>(
     proxy: &mut OperateProxy<D>,
-    old: &[T],
-    new: &[T],
+    old: &[u8],
+    new: &[u8],
 ) -> () {
     let max_d = (old.len() + new.len() + 1) / 2 + 1;
     let mut vb = OffsetVec::new(max_d);
@@ -180,10 +179,10 @@ fn split_at(range: Range<usize>, at: usize) -> (Range<usize>, Range<usize>) {
     (range.start..at, at..range.end)
 }
 
-fn find_middle_snake<T: PartialEq>(
-    old: &[T],
+fn find_middle_snake(
+    old: &[u8],
     old_range: Range<usize>,
-    new: &[T],
+    new: &[u8],
     new_range: Range<usize>,
     vf: &mut OffsetVec,
     vb: &mut OffsetVec,
@@ -247,11 +246,11 @@ fn find_middle_snake<T: PartialEq>(
     None
 }
 
-fn conquer<D: DiffHandler, T: PartialEq>(
+fn conquer<D: DiffHandler>(
     proxy: &mut OperateProxy<D>,
-    old: &[T],
+    old: &[u8],
     mut old_range: Range<usize>,
-    new: &[T],
+    new: &[u8],
     mut new_range: Range<usize>,
     vf: &mut OffsetVec,
     vb: &mut OffsetVec,
