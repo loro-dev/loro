@@ -693,14 +693,6 @@ impl OpLog {
 
         ans
     }
-
-    pub(crate) fn export_blocks(&mut self) -> Bytes {
-        self.change_store.encode_all()
-    }
-
-    pub(crate) fn import_blocks(&mut self, blocks: Bytes) -> Result<(), LoroError> {
-        self.change_store.decode_all(blocks)
-    }
 }
 
 #[derive(Debug)]
