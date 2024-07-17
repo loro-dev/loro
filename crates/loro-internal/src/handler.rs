@@ -1491,7 +1491,7 @@ impl TextHandler {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut t = t.try_lock().unwrap();
-                let index = t
+                let (index, _) = t
                     .value
                     .get_entity_index_for_text_insert(pos, PosType::Event)
                     .unwrap();
@@ -1510,7 +1510,7 @@ impl TextHandler {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut t = t.try_lock().unwrap();
-                let index = t
+                let (index, _) = t
                     .value
                     .get_entity_index_for_text_insert(pos, PosType::Bytes)
                     .unwrap();
@@ -1522,6 +1522,28 @@ impl TextHandler {
                 Ok(())
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| self.insert_with_txn_utf8(txn, pos, s)),
+        }
+    }
+
+    pub(crate) fn insert_unicode(&self, pos: usize, s: &str) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let mut t = t.try_lock().unwrap();
+                let (index, _) = t
+                    .value
+                    .get_entity_index_for_text_insert(pos, PosType::Unicode)
+                    .unwrap();
+                t.value.insert_at_entity_index(
+                    index,
+                    BytesSlice::from_bytes(s.as_bytes()),
+                    IdFull::NONE_ID,
+                );
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| {
+                self.insert_with_txn_and_attr(txn, pos, s, None, PosType::Unicode)?;
+                Ok(())
+            }),
         }
     }
 
@@ -1583,12 +1605,32 @@ impl TextHandler {
                 Ok(())
             }
             MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| self.delete_with_txn_utf8(txn, pos, len))
+                a.with_txn(|txn| self.delete_with_txn_inline(txn, pos, len, PosType::Bytes))
             }
         }
     }
 
-    /// If attr is specified, it will be used as the at tribute of the inserted text.
+    pub fn delete_unicode(&self, pos: usize, len: usize) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let mut t = t.try_lock().unwrap();
+                let ranges = match t.value.get_text_entity_ranges(pos, len, PosType::Unicode) {
+                    Err(x) => return Err(x),
+                    Ok(x) => x,
+                };
+                for range in ranges.iter().rev() {
+                    t.value
+                        .drain_by_entity_index(range.entity_start, range.entity_len(), None);
+                }
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => {
+                a.with_txn(|txn| self.delete_with_txn_inline(txn, pos, len, PosType::Unicode))
+            }
+        }
+    }
+
+    /// If attr is specified, it will be used as the atribute of the inserted text.
     /// It will override the existing attribute of the text.
     fn insert_with_txn_and_attr(
         &self,
@@ -1621,19 +1663,71 @@ impl TextHandler {
                     });
                 }
             }
-            _ => (),
+            PosType::Unicode => {
+                if pos > self.len_unicode() {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        len: self.len_unicode(),
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+            }
+            PosType::Entity => {}
+            PosType::Utf16 => {
+                if pos > self.len_utf16() {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        len: self.len_utf16(),
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+            }
         }
 
         let inner = self.inner.try_attached_state()?;
-        let (entity_index, styles) = inner.with_state(|state| {
+        let (entity_index, event_index, styles) = inner.with_state(|state| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
-            let pos = richtext_state.get_entity_index_for_text_insert(pos, pos_type);
-            let pos = match pos {
-                Err(_) => return (pos, StyleMeta::empty()),
+            let ret = richtext_state.get_entity_index_for_text_insert(pos, pos_type);
+            let (entity_index, cursor) = match ret {
+                Err(_) => match pos_type {
+                    PosType::Bytes => {
+                        return (
+                            Err(LoroError::UTF8InUnicodeCodePoint { pos }),
+                            0,
+                            StyleMeta::empty(),
+                        );
+                    }
+                    PosType::Utf16 | PosType::Event => {
+                        return (
+                            Err(LoroError::UTF16InUnicodeCodePoint { pos }),
+                            0,
+                            StyleMeta::empty(),
+                        );
+                    }
+                    _ => unreachable!(),
+                },
                 Ok(x) => x,
             };
-            let styles = richtext_state.get_styles_at_entity_index(pos);
-            (Ok(pos), styles)
+            let event_index = if let Some(cursor) = cursor {
+                if pos_type == PosType::Event {
+                    debug_assert_eq!(
+                        richtext_state.get_event_index_by_cursor(cursor),
+                        pos,
+                        "pos={} cursor={:?} state={:#?}",
+                        pos,
+                        cursor,
+                        &richtext_state
+                    );
+                    pos
+                } else {
+                    richtext_state.get_event_index_by_cursor(cursor)
+                }
+            } else {
+                assert_eq!(entity_index, 0);
+                0
+            };
+            let styles = richtext_state.get_styles_at_entity_index(entity_index);
+            (Ok(entity_index), event_index, styles)
         });
 
         let entity_index = match entity_index {
@@ -1681,7 +1775,7 @@ impl TextHandler {
                 pos: entity_index,
             }),
             EventHint::InsertText {
-                pos: pos as u32,
+                pos: event_index as u32,
                 styles,
                 unicode_len: unicode_len as u32,
                 event_len: event_len as u32,
@@ -1698,15 +1792,6 @@ impl TextHandler {
     /// - if feature!="wasm", pos is a Unicode index
     pub fn delete_with_txn(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
         self.delete_with_txn_inline(txn, pos, len, PosType::Event)
-    }
-
-    pub fn delete_with_txn_utf8(
-        &self,
-        txn: &mut Transaction,
-        pos: usize,
-        len: usize,
-    ) -> LoroResult<()> {
-        self.delete_with_txn_inline(txn, pos, len, PosType::Bytes)
     }
 
     fn delete_with_txn_inline(
@@ -1747,16 +1832,21 @@ impl TextHandler {
         let inner = self.inner.try_attached_state()?;
         let s = tracing::span!(tracing::Level::INFO, "delete", "pos={} len={}", pos, len);
         let _e = s.enter();
-        let ranges = match inner.with_state(|state| {
+        let mut event_pos = 0;
+        let mut event_len = 0;
+        let ranges = inner.with_state(|state| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
-            richtext_state.get_text_entity_ranges_in_event_index_range(pos, len, pos_type)
-        }) {
-            Err(x) => return Err(x),
-            Ok(x) => x,
-        };
+            event_pos = richtext_state.index_to_event_index(pos, pos_type);
+            let event_end = richtext_state.index_to_event_index(pos + len, pos_type);
+            event_len = event_end - event_pos;
+
+            richtext_state.get_text_entity_ranges_in_event_index_range(event_pos, event_len)
+        })?;
 
         //debug_assert_eq!(ranges.iter().map(|x| x.event_len).sum::<usize>(), len);
-        let mut event_end = (pos + len) as isize;
+        let pos = event_pos as isize;
+        let len = event_len as isize;
+        let mut event_end = pos + len;
         for range in ranges.iter().rev() {
             let event_start = event_end - range.event_len as isize;
             txn.apply_local_op(
