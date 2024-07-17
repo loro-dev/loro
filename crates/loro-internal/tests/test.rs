@@ -1203,6 +1203,7 @@ fn test_text_splice() {
     assert_eq!(text.to_string(), "你世界");
 }
 
+#[test]
 fn test_text_iter() {
     let mut str = String::new();
     let doc = LoroDoc::new_auto_commit();
@@ -1238,4 +1239,13 @@ fn test_text_iter_detached() {
         return true;
     });
     assert_eq!(str, "HHelloello");
+}
+
+#[test]
+fn test_text_update() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello 😊Bro").unwrap();
+    text.update("Hello World Bro😊");
+    assert_eq!(text.to_string(), "Hello World Bro😊");
 }

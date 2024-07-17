@@ -1511,7 +1511,7 @@ impl LoroText {
     ///
     /// const doc = new Loro();
     /// const text = doc.getText("text");
-    /// text.insert(0, "Hello")
+    /// text.insert(0, "Hello");
     /// text.iter((str) => (console.log(str), true));
     /// ```
     pub fn iter(&self, callback: &js_sys::Function) {
@@ -1520,6 +1520,21 @@ impl LoroText {
             let result = callback.call1(&context, &JsValue::from(c)).unwrap();
             result.as_bool().unwrap()
         })
+    }
+
+    /// Update the current text based on the provided text.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// text.update("Hello World");
+    /// ```
+    pub fn update(&self, text: &str) -> () {
+        self.handler.update(text);
     }
 
     /// Insert some string at index.

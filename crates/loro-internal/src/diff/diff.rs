@@ -130,7 +130,7 @@ impl<D: DiffHandler> OperateProxy<D> {
     }
 }
 
-pub(crate) fn diff<D: DiffHandler, T: PartialEq>(
+pub(crate) fn myers_diff<D: DiffHandler, T: PartialEq>(
     proxy: &mut OperateProxy<D>,
     old: &[T],
     new: &[T],

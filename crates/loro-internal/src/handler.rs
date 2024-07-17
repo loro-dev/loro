@@ -8,7 +8,7 @@ use crate::{
     },
     cursor::{Cursor, Side},
     delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
-    diff::{diff, DiffHandler, OperateProxy},
+    diff::{myers_diff, DiffHandler, OperateProxy},
     event::{Diff, TextDiffItem},
     op::ListSlice,
     state::{ContainerState, IndexType, State},
@@ -53,13 +53,13 @@ impl<'a> DiffHook<'a> {
 impl DiffHandler for DiffHook<'_> {
     fn insert(&mut self, old_index: usize, new_index: usize, new_len: usize) {
         self.text
-            .insert(old_index, &self.new[new_index..new_index + new_len]);
+            .insert_utf8(old_index, &self.new[new_index..new_index + new_len]);
     }
     fn delete(&mut self, old_index: usize, old_len: usize) {
-        self.text.delete(old_index, old_len);
+        self.text.delete_utf8(old_index, old_len);
     }
     fn replace(&mut self, old_index: usize, old_len: usize, new_index: usize, new_len: usize) {
-        self.text.splice(
+        self.text.splice_utf8(
             old_index,
             old_len,
             &self.new[new_index..new_index + new_len],
@@ -1464,6 +1464,13 @@ impl TextHandler {
         Ok(x)
     }
 
+    pub fn splice_utf8(&self, pos: usize, len: usize, s: &str) -> LoroResult<String> {
+        let x = self.slice(pos, pos + len)?;
+        self.delete_utf8(pos, len)?;
+        self.insert_utf8(pos, s)?;
+        Ok(x)
+    }
+
     /// `pos` is a Event Index:
     ///
     /// - if feature="wasm", pos is a UTF-16 index
@@ -2042,7 +2049,16 @@ impl TextHandler {
         Ok(())
     }
 
-    pub fn update(&mut self, text: &str) -> () {}
+    pub fn update(&self, text: &str) -> () {
+        let old_str = self.to_string();
+        let old = old_str.as_bytes();
+        let new = text.as_bytes();
+        myers_diff(
+            &mut OperateProxy::new(DiffHook::new(self, text)),
+            &old,
+            &new,
+        );
+    }
 
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
