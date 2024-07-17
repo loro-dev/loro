@@ -14,53 +14,47 @@
 //!
 //! The implementation of this algorithm is based on the implementation by
 //! Brandon Williams.
-use std::ops::{Index, IndexMut, Range};
+use std::iter::zip;
+use std::ops::{Index, IndexMut};
 
 /// Utility function to check if a range is empty that works on older rust versions
 #[inline(always)]
-fn is_empty_range(range: &Range<usize>) -> bool {
-    !(range.start < range.end)
+fn is_empty_range(start: usize, end: usize) -> bool {
+    !(start < end)
 }
 
 #[inline(always)]
-fn is_not_empty_range(range: &Range<usize>) -> bool {
-    range.start < range.end
+fn is_not_empty_range(start: usize, end: usize) -> bool {
+    start < end
 }
 
-fn common_prefix_len(
-    old: &[u8],
-    old_range: Range<usize>,
-    new: &[u8],
-    new_range: Range<usize>,
-) -> usize {
-    let mut len = 0;
-    let mut old_iter = old[old_range].iter();
-    let mut new_iter = new[new_range].iter();
-    while let (Some(o), Some(n)) = (old_iter.next(), new_iter.next()) {
-        if o != n {
-            break;
-        }
-        len += 1;
-    }
-    len
+fn common_prefix(xs: &[u8], ys: &[u8]) -> usize {
+    let chunk_size = 16;
+    let off = zip(xs.chunks_exact(chunk_size), ys.chunks_exact(chunk_size))
+        .take_while(|(xs_chunk, ys_chunk)| xs_chunk == ys_chunk)
+        .count()
+        * chunk_size;
+    off + zip(&xs[off..], &ys[off..])
+        .take_while(|(x, y)| x == y)
+        .count()
 }
 
-fn common_suffix_len(
-    old: &[u8],
-    old_range: Range<usize>,
-    new: &[u8],
-    new_range: Range<usize>,
-) -> usize {
-    let mut len = 0;
-    let mut old_iter = old[old_range].iter().rev();
-    let mut new_iter = new[new_range].iter().rev();
-    while let (Some(o), Some(n)) = (old_iter.next(), new_iter.next()) {
-        if o != n {
-            break;
-        }
-        len += 1;
-    }
-    len
+fn common_suffix_len(old: &[u8], new: &[u8]) -> usize {
+    let chunk_size = 16;
+    let old_len = old.len();
+    let new_len = new.len();
+
+    let off = zip(old.rchunks_exact(chunk_size), new.rchunks_exact(chunk_size))
+        .take_while(|(old_chunk, new_chunk)| old_chunk == new_chunk)
+        .count()
+        * chunk_size;
+
+    off + zip(
+        old[..old_len - off].iter().rev(),
+        new[..new_len - off].iter().rev(),
+    )
+    .take_while(|(o, n)| o == n)
+    .count()
 }
 
 pub(crate) trait DiffHandler {
@@ -140,9 +134,11 @@ pub(crate) fn myers_diff<D: DiffHandler>(
     conquer(
         proxy,
         old,
-        0..old.len(),
+        0,
+        old.len(),
         new,
-        0..new.len(),
+        0,
+        new.len(),
         &mut vf,
         &mut vb,
     );
@@ -174,21 +170,18 @@ impl IndexMut<isize> for OffsetVec {
     }
 }
 
-#[inline(always)]
-fn split_at(range: Range<usize>, at: usize) -> (Range<usize>, Range<usize>) {
-    (range.start..at, at..range.end)
-}
-
 fn find_middle_snake(
     old: &[u8],
-    old_range: Range<usize>,
+    old_start: usize,
+    old_end: usize,
     new: &[u8],
-    new_range: Range<usize>,
+    new_start: usize,
+    new_end: usize,
     vf: &mut OffsetVec,
     vb: &mut OffsetVec,
 ) -> Option<(usize, usize)> {
-    let n = old_range.len();
-    let m = new_range.len();
+    let n = old_end - old_start;
+    let m = new_end - new_start;
     let delta = n as isize - m as isize;
     let odd = delta & 1 != 0;
     vf[1] = 0;
@@ -207,17 +200,13 @@ fn find_middle_snake(
             let y = (x as isize - k) as usize;
             let (x0, y0) = (x, y);
             if x < n && y < m {
-                let advance = common_prefix_len(
-                    old,
-                    old_range.start + x..old_range.end,
-                    new,
-                    new_range.start + y..new_range.end,
-                );
+                let advance =
+                    common_prefix(&old[old_start + x..old_end], &new[new_start + y..new_end]);
                 x += advance;
             }
             vf[k] = x;
             if odd && (k - delta).abs() <= (d - 1) && vf[k] + vb[delta - k] >= n {
-                return Some((x0 + old_range.start, y0 + new_range.start));
+                return Some((x0 + old_start, y0 + new_start));
             }
         }
         for k in (-d..=d).rev().step_by(2) {
@@ -229,17 +218,15 @@ fn find_middle_snake(
             let mut y = (x as isize - k) as usize;
             if x < n && y < m {
                 let advance = common_suffix_len(
-                    old,
-                    old_range.start..old_range.start + n - x,
-                    new,
-                    new_range.start..new_range.start + m - y,
+                    &old[old_start..old_start + n - x],
+                    &new[new_start..new_start + m - y],
                 );
                 x += advance;
                 y += advance;
             }
             vb[k] = x;
             if !odd && (k - delta).abs() <= d && vb[k] + vf[delta - k] >= n {
-                return Some((n - x + old_range.start, m - y + new_range.start));
+                return Some((n - x + old_start, m - y + new_start));
             }
         }
     }
@@ -249,42 +236,39 @@ fn find_middle_snake(
 fn conquer<D: DiffHandler>(
     proxy: &mut OperateProxy<D>,
     old: &[u8],
-    mut old_range: Range<usize>,
+    mut old_start: usize,
+    mut old_end: usize,
     new: &[u8],
-    mut new_range: Range<usize>,
+    mut new_start: usize,
+    mut new_end: usize,
     vf: &mut OffsetVec,
     vb: &mut OffsetVec,
 ) -> () {
-    let common_prefix_len = common_prefix_len(old, old_range.clone(), new, new_range.clone());
+    let common_prefix_len = common_prefix(&old[old_start..old_end], &new[new_start..new_end]);
     if common_prefix_len > 0 {
         proxy.flush_del_ins();
-        old_range.start += common_prefix_len;
-        new_range.start += common_prefix_len;
+        old_start += common_prefix_len;
+        new_start += common_prefix_len;
     }
 
-    let common_suffix_len = common_suffix_len(old, old_range.clone(), new, new_range.clone());
-    old_range.end -= common_suffix_len;
-    new_range.end -= common_suffix_len;
-
-    if is_not_empty_range(&old_range) || is_not_empty_range(&new_range) {
-        if is_empty_range(&new_range) {
-            proxy.delete(old_range.start, old_range.len());
-        } else if is_empty_range(&old_range) {
-            proxy.insert(old_range.start, new_range.start, new_range.len());
+    let common_suffix_len = common_suffix_len(&old[old_start..old_end], &new[new_start..new_end]);
+    old_end -= common_suffix_len;
+    new_end -= common_suffix_len;
+    if is_not_empty_range(old_start, old_end) || is_not_empty_range(new_start, new_end) {
+        if is_empty_range(new_start, new_end) {
+            proxy.delete(old_start, old_end - old_start);
+        } else if is_empty_range(old_start, old_end) {
+            proxy.insert(old_start, new_start, new_end - new_start);
         } else if let Some((x_start, y_start)) =
-            find_middle_snake(old, old_range.clone(), new, new_range.clone(), vf, vb)
+            find_middle_snake(old, old_start, old_end, new, new_start, new_end, vf, vb)
         {
-            let (old_a, old_b) = split_at(old_range, x_start);
-            let (new_a, new_b) = split_at(new_range, y_start);
-            conquer(proxy, old, old_a, new, new_a, vf, vb);
-            conquer(proxy, old, old_b, new, new_b, vf, vb);
-        } else {
-            proxy.delete(old_range.start, old_range.end - old_range.start);
-            proxy.insert(
-                old_range.start,
-                new_range.start,
-                new_range.end - new_range.start,
+            conquer(
+                proxy, old, old_start, x_start, new, new_start, y_start, vf, vb,
             );
+            conquer(proxy, old, x_start, old_end, new, y_start, new_end, vf, vb);
+        } else {
+            proxy.delete(old_start, old_end - old_start);
+            proxy.insert(old_start, new_start, new_end - new_start);
         }
     }
 
