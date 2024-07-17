@@ -19,13 +19,18 @@ use crate::{
     VersionVector,
 };
 
+/// A cache for the history of a container.
+///
+/// There are cases where a container needs a view of the history of the container.
+/// For example, when switching to an older version, a map container may need to know the value of a key at a certain version.
+/// This cache provides a faster way to do that than scanning the oplog.
 #[derive(Debug)]
-pub(crate) struct OpGroups {
+pub(crate) struct ContainerHistoryCache {
     arena: SharedArena,
     groups: FxHashMap<ContainerIdx, OpGroup>,
 }
 
-impl OpGroups {
+impl ContainerHistoryCache {
     pub(crate) fn fork(&self, arena: SharedArena) -> Self {
         let mut groups = FxHashMap::with_capacity_and_hasher(self.groups.len(), Default::default());
         for (container_idx, group) in self.groups.iter() {

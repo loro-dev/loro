@@ -54,7 +54,7 @@ pub mod event;
 
 pub use error::{LoroError, LoroResult};
 pub mod estimated_size;
-pub(crate) mod group;
+pub(crate) mod history_cache;
 pub(crate) mod macros;
 pub(crate) mod state;
 pub mod undo;

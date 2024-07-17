@@ -16,7 +16,7 @@ use crate::container::list::list_op;
 use crate::dag::{Dag, DagUtils};
 use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
-use crate::group::OpGroups;
+use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
@@ -45,7 +45,7 @@ pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
     change_store: ChangeStore,
-    pub(crate) op_groups: OpGroups,
+    pub(crate) op_groups: ContainerHistoryCache,
     /// **lamport starts from 0**
     pub(crate) next_lamport: Lamport,
     pub(crate) latest_timestamp: Timestamp,
@@ -187,7 +187,7 @@ impl OpLog {
         Self {
             change_store: ChangeStore::new_mem(&arena, cfg.merge_interval.clone()),
             dag: AppDag::default(),
-            op_groups: OpGroups::new(arena.clone()),
+            op_groups: ContainerHistoryCache::new(arena.clone()),
             arena,
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
