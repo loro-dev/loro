@@ -5,6 +5,7 @@ use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 pub(crate) struct StrSlice(BytesSlice);
 
 impl StrSlice {
+    #[allow(unused)]
     pub fn new(bytes: BytesSlice) -> Option<Self> {
         let _str = std::str::from_utf8(&bytes).ok()?;
         Some(Self(bytes))

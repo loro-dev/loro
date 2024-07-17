@@ -570,7 +570,7 @@ impl ChangesBlock {
             ChangesBlockContent::Changes(_) => Ok(()),
             ChangesBlockContent::Both(_, _) => Ok(()),
             ChangesBlockContent::Bytes(bytes) => {
-                let changes = bytes.parse(&a)?;
+                let changes = bytes.parse(a)?;
                 let b = bytes.clone();
                 let this = Arc::make_mut(self);
                 this.content = ChangesBlockContent::Both(Arc::new(changes), b);

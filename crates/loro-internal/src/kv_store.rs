@@ -78,7 +78,7 @@ mod default_binary_format {
         buf.into()
     }
 
-    fn get_common_prefix_len_and_strip<'a, 'b>(this: &'a Bytes, last: &'b Bytes) -> (u8, &'a [u8]) {
+    fn get_common_prefix_len_and_strip<'a>(this: &'a Bytes, last: &Bytes) -> (u8, &'a [u8]) {
         let mut common_prefix_len = 0;
         for (i, (a, b)) in this.iter().zip(last.iter()).enumerate() {
             if a != b || i == 255 {

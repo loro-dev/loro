@@ -1,6 +1,5 @@
-use std::sync::Arc;
 
-use loro::{LoroDoc, LoroError, LoroList, LoroMovableList, ToJson};
+use loro::{LoroDoc, LoroError, ToJson};
 use serde_json::json;
 use tracing::debug_span;
 

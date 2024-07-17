@@ -486,7 +486,7 @@ impl Node {
         for (parent_id, child_ids) in parent_child_map.iter() {
             if let Some(parent_id) = parent_id {
                 if let Some(parent_node) = node_map.get_mut(parent_id) {
-                    for (_, child_id) in child_ids.into_iter().sorted_by_key(|x| x.0) {
+                    for (_, child_id) in child_ids.iter().sorted_by_key(|x| x.0) {
                         if let Some(child_node) = node_map_clone.remove(child_id) {
                             parent_node.children.push(child_node);
                         }

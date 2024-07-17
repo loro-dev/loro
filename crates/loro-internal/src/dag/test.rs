@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use loro_common::HasCounter;
 use proptest::prelude::*;
 use std::cmp::Ordering;

@@ -3374,6 +3374,7 @@ fn tree_parent_remap() {
     )
 }
 
+#[test]
 fn tree_undo_sort_index() {
     test_multi_sites(
         5,

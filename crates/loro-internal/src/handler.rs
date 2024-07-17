@@ -32,7 +32,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use tracing::{debug, error, info, instrument, Event};
+use tracing::{debug, error, info, instrument};
 
 mod tree;
 pub use tree::TreeHandler;
@@ -1345,7 +1345,7 @@ impl TextHandler {
         }
     }
 
-    pub fn iter(&self, mut callback: impl FnMut(&str) -> bool) -> () {
+    pub fn iter(&self, mut callback: impl FnMut(&str) -> bool) {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.try_lock().unwrap();
@@ -1356,7 +1356,7 @@ impl TextHandler {
                 }
             }
             MaybeDetached::Attached(a) => {
-                a.with_state(|state| -> () {
+                a.with_state(|state| {
                     state.as_richtext_state_mut().unwrap().iter(callback);
                 });
             }
@@ -3712,7 +3712,7 @@ pub mod counter {
 mod test {
 
     use super::{HandlerTrait, TextDelta};
-    use crate::container::richtext::richtext_state::PosType;
+    
     use crate::loro::LoroDoc;
     use crate::version::Frontiers;
     use crate::{fx_map, ToJson};

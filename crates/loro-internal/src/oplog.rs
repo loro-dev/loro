@@ -22,7 +22,6 @@ use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
-use bytes::Bytes;
 use change_store::BlockOpRef;
 pub use change_store::{BlockChangeRef, ChangeStore};
 use loro_common::{HasId, IdLp, IdSpan};
@@ -146,9 +145,9 @@ impl AppDag {
 
         let offset = id.counter - node.cnt;
         if offset == 0 {
-            return node.deps.clone();
+            node.deps.clone()
         } else {
-            return ID::new(id.peer, node.cnt + offset - 1).into();
+            ID::new(id.peer, node.cnt + offset - 1).into()
         }
     }
 

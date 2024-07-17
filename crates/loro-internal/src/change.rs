@@ -5,7 +5,6 @@
 //! Note: `dep` can only point to the end of the other [Change]. This is the invariant of [Change]s.
 
 use crate::{
-    arena::SharedArena,
     dag::DagNode,
     estimated_size::EstimatedSize,
     id::{Counter, ID},

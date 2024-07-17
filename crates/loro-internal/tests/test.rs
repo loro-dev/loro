@@ -1114,7 +1114,7 @@ fn test_text_iter() {
     text.insert(1, "Hello").unwrap();
     text.iter(|s| {
         str.push_str(s);
-        return true;
+        true
     });
     assert_eq!(str, "HHelloello");
     str = String::new();
@@ -1124,8 +1124,8 @@ fn test_text_iter() {
             return false;
         }
         str.push_str(s);
-        i = i + 1;
-        return true;
+        i += 1;
+        true
     });
     assert_eq!(str, "H");
 }
@@ -1138,7 +1138,7 @@ fn test_text_iter_detached() {
     text.insert(1, "Hello").unwrap();
     text.iter(|s| {
         str.push_str(s);
-        return true;
+        true
     });
     assert_eq!(str, "HHelloello");
 }

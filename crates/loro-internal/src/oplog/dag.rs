@@ -7,7 +7,7 @@ use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use loro_common::{HasCounter, HasCounterSpan, HasIdSpan};
-use rle::{HasIndex, HasLength, Mergable, RleCollection, Sliceable};
+use rle::{HasIndex, HasLength, Mergable, Sliceable};
 
 use super::{AppDag, AppDagNode};
 
@@ -99,7 +99,7 @@ impl Dag for AppDag {
     fn get(&self, id: ID) -> Option<&Self::Node> {
         let x = self.map.range(..=id).next_back()?;
         if x.1.contains_id(id) {
-            Some(&x.1)
+            Some(x.1)
         } else {
             None
         }
