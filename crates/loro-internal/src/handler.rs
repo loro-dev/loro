@@ -8,7 +8,7 @@ use crate::{
     },
     cursor::{Cursor, Side},
     delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
-    diff::{diff,OperateProxy,DiffHandler}
+    diff::{diff, DiffHandler, OperateProxy},
     event::{Diff, TextDiffItem},
     op::ListSlice,
     state::{ContainerState, IndexType, State},
@@ -33,12 +33,39 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 use tracing::{debug, error, info, instrument};
-
 mod tree;
 pub use tree::TreeHandler;
 
 const INSERT_CONTAINER_VALUE_ARG_ERROR: &str =
     "Cannot insert a LoroValue::Container directly. To create child container, use insert_container";
+
+struct DiffHook<'a> {
+    text: &'a TextHandler,
+    new: &'a str,
+}
+
+impl<'a> DiffHook<'a> {
+    fn new(text: &'a TextHandler, new: &'a str) -> Self {
+        Self { text, new }
+    }
+}
+
+impl DiffHandler for DiffHook<'_> {
+    fn insert(&mut self, old_index: usize, new_index: usize, new_len: usize) {
+        self.text
+            .insert(old_index, &self.new[new_index..new_index + new_len]);
+    }
+    fn delete(&mut self, old_index: usize, old_len: usize) {
+        self.text.delete(old_index, old_len);
+    }
+    fn replace(&mut self, old_index: usize, old_len: usize, new_index: usize, new_len: usize) {
+        self.text.splice(
+            old_index,
+            old_len,
+            &self.new[new_index..new_index + new_len],
+        );
+    }
+}
 
 pub trait HandlerTrait: Clone + Sized {
     fn is_attached(&self) -> bool;

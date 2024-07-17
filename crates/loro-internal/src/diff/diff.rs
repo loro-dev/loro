@@ -65,9 +65,9 @@ fn common_suffix_len<T: PartialEq>(
 }
 
 pub(crate) trait DiffHandler {
-    fn insert(&self, old_index: usize, new_index: usize, new_len: usize) -> ();
-    fn delete(&self, old_index: usize, old_len: usize) -> ();
-    fn replace(&self, old_index: usize, old_len: usize, new_index: usize, new_len: usize) -> ();
+    fn insert(&mut self, old_index: usize, new_index: usize, new_len: usize);
+    fn delete(&mut self, old_index: usize, old_len: usize);
+    fn replace(&mut self, old_index: usize, old_len: usize, new_index: usize, new_len: usize);
 }
 
 #[derive(Debug)]
