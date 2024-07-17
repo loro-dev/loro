@@ -302,6 +302,35 @@ describe("richtext", () => {
     ]);
   });
 
+  it("Slice", () => {
+    const doc = new Loro();
+    const text = doc.getText('t');
+    text.insert(0, "你好");
+    expect(text.slice(0, 1)).toStrictEqual("你");
+  });
+
+  it("Slice emoji", () => {
+    const doc = new Loro();
+    const text = doc.getText('t');
+    text.insert(0, "😡😡😡");
+    expect(text.slice(0, 2)).toStrictEqual("😡");
+  });
+
+  it("CharAt", () => {
+    const doc = new Loro();
+    const text = doc.getText('t');
+    text.insert(0, "你好");
+    expect(text.charAt(1)).toStrictEqual("好");
+  });
+
+  it("Splice", () => {
+    const doc = new Loro();
+    const text = doc.getText('t');
+    text.insert(0, "你好");
+    expect(text.splice(1, 1, "我")).toStrictEqual("好");
+    expect(text.toString()).toStrictEqual("你我");
+  });
+
   it("Text iter", () => {
     const doc = new Loro();
     const text = doc.getText('t');

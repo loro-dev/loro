@@ -68,10 +68,12 @@ pub enum LoroError {
     UndoWithDifferentPeerId { expected: PeerID, actual: PeerID },
     #[error("The input JSON schema is invalid")]
     InvalidJsonSchema,
-    #[error("Cannot insert or delete utf-8 in the middle of the codepoint in Unicode.")]
+    #[error("Cannot insert or delete utf-8 in the middle of the codepoint in Unicode")]
     UTF8InUnicodeCodePoint { pos: usize },
-    #[error("Cannot insert or delete utf-16 in the middle of the codepoint in Unicode.")]
+    #[error("Cannot insert or delete utf-16 in the middle of the codepoint in Unicode")]
     UTF16InUnicodeCodePoint { pos: usize },
+    #[error("The end index cannot be less than the start index")]
+    EndIndexLessThanStartIndex { start: usize, end: usize },
 }
 
 #[derive(Error, Debug)]

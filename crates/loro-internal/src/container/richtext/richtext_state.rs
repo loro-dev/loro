@@ -582,6 +582,17 @@ impl CanRemove for RichtextStateChunk {
     }
 }
 
+//TODO: start/end can be scanned in one loop, but now it takes twice the time
+fn unicode_slice(s: &str, start_index: usize, end_index: usize) -> Result<&str, ()> {
+    let (Some(start), Some(end)) = (
+        unicode_to_utf8_index(s, start_index),
+        unicode_to_utf8_index(s, end_index),
+    ) else {
+        return Err(());
+    };
+    Ok(&s[start..end])
+}
+
 pub(crate) fn unicode_to_utf8_index(s: &str, unicode_index: usize) -> Option<usize> {
     let mut current_unicode_index = 0;
     for (byte_index, _) in s.char_indices() {
@@ -1626,6 +1637,27 @@ impl RichtextState {
         self.style_ranges.as_mut().unwrap()
     }
 
+    pub(crate) fn get_char_by_event_index(&self, pos: usize) -> Result<char, ()> {
+        let cursor = self.tree.query::<EventIndexQuery>(&pos).unwrap().cursor;
+        let Some(str) = &self.tree.get_elem(cursor.leaf) else {
+            return Err(());
+        };
+        if cfg!(not(feature = "wasm")) {
+            let mut char_iter = str.as_str().unwrap().chars();
+            match &mut char_iter.nth(cursor.offset) {
+                Some(c) => Ok(*c),
+                None => Err(()),
+            }
+        } else {
+            let s = str.as_str().unwrap();
+            let utf16offset = unicode_to_utf16_index(s, cursor.offset).unwrap();
+            match s.encode_utf16().nth(utf16offset) {
+                Some(c) => Ok(std::char::from_u32(c as u32).unwrap()),
+                None => Err(()),
+            }
+        }
+    }
+
     /// Find the best insert position based on algorithm similar to Peritext.
     /// The result is only different from `query` when there are style anchors around the insert pos.
     /// Returns the right neighbor of the insert pos and the entity index.
@@ -1867,6 +1899,54 @@ impl RichtextState {
                 }
                 RichtextStateChunk::Style { .. } => {
                     entity_index += 1;
+                }
+            }
+        }
+
+        Ok(ans)
+    }
+
+    pub(crate) fn get_text_slice_by_event_index(
+        &self,
+        pos: usize,
+        len: usize,
+    ) -> LoroResult<String> {
+        if self.tree.is_empty() {
+            return Ok(String::new());
+        }
+
+        if len == 0 {
+            return Ok(String::new());
+        }
+
+        if pos + len > self.len_event() {
+            return Err(LoroError::OutOfBound {
+                pos: pos + len,
+                len: self.len_event(),
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
+        }
+
+        let mut ans = String::new();
+        let (start, end) = (
+            self.tree.query::<EventIndexQuery>(&pos).unwrap().cursor,
+            self.tree
+                .query::<EventIndexQuery>(&(pos + len))
+                .unwrap()
+                .cursor,
+        );
+
+        for span in self.tree.iter_range(start..end) {
+            let start = span.start.unwrap_or(0);
+            let end = span.end.unwrap_or(span.elem.rle_len());
+            if end == 0 {
+                break;
+            }
+
+            if let RichtextStateChunk::Text(s) = span.elem {
+                match unicode_slice(&s.as_str(), start, end) {
+                    Ok(x) => ans.push_str(&x),
+                    Err(()) => return Err(LoroError::UTF16InUnicodeCodePoint { pos: pos + len }),
                 }
             }
         }
