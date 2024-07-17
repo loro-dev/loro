@@ -8,6 +8,7 @@ use crate::{
     },
     cursor::{Cursor, Side},
     delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
+    diff::{diff,OperateProxy,DiffHandler}
     event::{Diff, TextDiffItem},
     op::ListSlice,
     state::{ContainerState, IndexType, State},
@@ -31,7 +32,6 @@ use std::{
     ops::Deref,
     sync::{Arc, Mutex, Weak},
 };
-
 use tracing::{debug, error, info, instrument};
 
 mod tree;
@@ -2014,6 +2014,8 @@ impl TextHandler {
 
         Ok(())
     }
+
+    pub fn update(&mut self, text: &str) -> () {}
 
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
