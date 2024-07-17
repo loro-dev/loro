@@ -13,6 +13,9 @@ libfuzzer-sys = "0.4"
 [dependencies.fuzz]
 path = ".."
 
+[dependencies.loro]
+path = "../../loro"
+
 # Prevent this from interfering with workspaces
 [workspace]
 members = ["."]
@@ -42,5 +45,11 @@ doc = false
 [[bin]]
 name = "counter"
 path = "fuzz_targets/counter.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "text-update"
+path = "fuzz_targets/text-update.rs"
 test = false
 doc = false
