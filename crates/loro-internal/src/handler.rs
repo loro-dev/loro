@@ -41,11 +41,11 @@ const INSERT_CONTAINER_VALUE_ARG_ERROR: &str =
 
 struct DiffHook<'a> {
     text: &'a TextHandler,
-    new: &'a str,
+    new: &'a [char],
 }
 
 impl<'a> DiffHook<'a> {
-    fn new(text: &'a TextHandler, new: &'a str) -> Self {
+    fn new(text: &'a TextHandler, new: &'a [char]) -> Self {
         Self { text, new }
     }
 }
@@ -53,17 +53,27 @@ impl<'a> DiffHook<'a> {
 impl DiffHandler for DiffHook<'_> {
     fn insert(&mut self, old_index: usize, new_index: usize, new_len: usize) {
         self.text
-            .insert_utf8(old_index, &self.new[new_index..new_index + new_len]);
+            .insert_unicode(
+                old_index,
+                &self.new[new_index..new_index + new_len]
+                    .iter()
+                    .collect::<String>(),
+            )
+            .unwrap();
     }
     fn delete(&mut self, old_index: usize, old_len: usize) {
-        self.text.delete_utf8(old_index, old_len);
+        self.text.delete_unicode(old_index, old_len).unwrap();
     }
     fn replace(&mut self, old_index: usize, old_len: usize, new_index: usize, new_len: usize) {
-        self.text.splice_utf8(
-            old_index,
-            old_len,
-            &self.new[new_index..new_index + new_len],
-        );
+        self.text
+            .splice_unicode(
+                old_index,
+                old_len,
+                &self.new[new_index..new_index + new_len]
+                    .iter()
+                    .collect::<String>(),
+            )
+            .unwrap();
     }
 }
 
@@ -2051,11 +2061,10 @@ impl TextHandler {
 
     pub fn update(&self, text: &str) -> () {
         let old_str = self.to_string();
-        let old = old_str.as_bytes();
-        let new = text.as_bytes();
+        let new = text.chars().collect::<Vec<char>>();
         myers_diff(
-            &mut OperateProxy::new(DiffHook::new(self, text)),
-            &old,
+            &mut OperateProxy::new(DiffHook::new(self, &new)),
+            &old_str.chars().collect::<Vec<char>>(),
             &new,
         );
     }

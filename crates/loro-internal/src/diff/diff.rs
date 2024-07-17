@@ -28,8 +28,8 @@ fn is_not_empty_range(start: usize, end: usize) -> bool {
     start < end
 }
 
-fn common_prefix(xs: &[u8], ys: &[u8]) -> usize {
-    let chunk_size = 16;
+fn common_prefix(xs: &[char], ys: &[char]) -> usize {
+    let chunk_size = 4;
     let off = zip(xs.chunks_exact(chunk_size), ys.chunks_exact(chunk_size))
         .take_while(|(xs_chunk, ys_chunk)| xs_chunk == ys_chunk)
         .count()
@@ -39,8 +39,8 @@ fn common_prefix(xs: &[u8], ys: &[u8]) -> usize {
         .count()
 }
 
-fn common_suffix_len(old: &[u8], new: &[u8]) -> usize {
-    let chunk_size = 16;
+fn common_suffix_len(old: &[char], new: &[char]) -> usize {
+    let chunk_size = 4;
     let old_len = old.len();
     let new_len = new.len();
 
@@ -125,8 +125,8 @@ impl<D: DiffHandler> OperateProxy<D> {
 
 pub(crate) fn myers_diff<D: DiffHandler>(
     proxy: &mut OperateProxy<D>,
-    old: &[u8],
-    new: &[u8],
+    old: &[char],
+    new: &[char],
 ) -> () {
     let max_d = (old.len() + new.len() + 1) / 2 + 1;
     let mut vb = OffsetVec::new(max_d);
@@ -171,10 +171,10 @@ impl IndexMut<isize> for OffsetVec {
 }
 
 fn find_middle_snake(
-    old: &[u8],
+    old: &[char],
     old_start: usize,
     old_end: usize,
-    new: &[u8],
+    new: &[char],
     new_start: usize,
     new_end: usize,
     vf: &mut OffsetVec,
@@ -235,10 +235,10 @@ fn find_middle_snake(
 
 fn conquer<D: DiffHandler>(
     proxy: &mut OperateProxy<D>,
-    old: &[u8],
+    old: &[char],
     mut old_start: usize,
     mut old_end: usize,
-    new: &[u8],
+    new: &[char],
     mut new_start: usize,
     mut new_end: usize,
     vf: &mut OffsetVec,
