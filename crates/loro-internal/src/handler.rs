@@ -61,9 +61,11 @@ impl DiffHandler for DiffHook<'_> {
             )
             .unwrap();
     }
+
     fn delete(&mut self, old_index: usize, old_len: usize) {
         self.text.delete_unicode(old_index, old_len).unwrap();
     }
+
     fn replace(&mut self, old_index: usize, old_len: usize, new_index: usize, new_len: usize) {
         self.text.delete_unicode(old_index, old_len).unwrap();
         self.text
@@ -1472,6 +1474,20 @@ impl TextHandler {
         self.delete(pos, len)?;
         self.insert(pos, s)?;
         Ok(x)
+    }
+
+    pub fn splice_utf8(&self, pos: usize, len: usize, s: &str) -> LoroResult<()> {
+        // let x = self.slice(pos, pos + len)?;
+        self.delete_utf8(pos, len)?;
+        self.insert_utf8(pos, s)?;
+        Ok(())
+    }
+
+    pub fn splice_unicode(&self, pos: usize, len: usize, s: &str) -> LoroResult<()> {
+        // let x = self.slice(pos, pos + len)?;
+        self.delete_unicode(pos, len)?;
+        self.insert_unicode(pos, s)?;
+        Ok(())
     }
 
     /// `pos` is a Event Index:

@@ -2487,9 +2487,7 @@ impl RichtextState {
                             event_index += offset;
                         }
                     }
-                    RichtextStateChunk::Style { .. } => {
-                        assert!(offset == 0);
-                    }
+                    RichtextStateChunk::Style { .. } => {}
                 },
             });
         event_index
