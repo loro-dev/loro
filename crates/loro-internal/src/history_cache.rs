@@ -27,7 +27,7 @@ use crate::{
 #[derive(Debug)]
 pub(crate) struct ContainerHistoryCache {
     arena: SharedArena,
-    groups: FxHashMap<ContainerIdx, OpGroup>,
+    groups: FxHashMap<ContainerIdx, HistoryCache>,
 }
 
 impl ContainerHistoryCache {
@@ -67,18 +67,18 @@ impl ContainerHistoryCache {
                 self.groups
                     .entry(container_idx)
                     .or_insert_with(|| match op.container.get_type() {
-                        ContainerType::Map => OpGroup::Map(MapOpGroup::default()),
+                        ContainerType::Map => HistoryCache::Map(MapOpGroup::default()),
                         ContainerType::MovableList => {
-                            OpGroup::MovableList(MovableListOpGroup::new(self.arena.clone()))
+                            HistoryCache::MovableList(MovableListOpGroup::new(self.arena.clone()))
                         }
-                        ContainerType::Tree => OpGroup::Tree(TreeOpGroup::default()),
+                        ContainerType::Tree => HistoryCache::Tree(TreeOpGroup::default()),
                         _ => unreachable!(),
                     });
             manager.insert(&rich_op)
         }
     }
 
-    pub(crate) fn get(&self, container_idx: &ContainerIdx) -> Option<&OpGroup> {
+    pub(crate) fn get(&self, container_idx: &ContainerIdx) -> Option<&HistoryCache> {
         self.groups.get(container_idx)
     }
 
@@ -89,7 +89,7 @@ impl ContainerHistoryCache {
         self.groups
             .get(container_idx)
             .and_then(|group| match group {
-                OpGroup::MovableList(movable_list) => Some(movable_list),
+                HistoryCache::MovableList(movable_list) => Some(movable_list),
                 _ => None,
             })
     }
@@ -98,7 +98,7 @@ impl ContainerHistoryCache {
         self.groups
             .get(container_idx)
             .and_then(|group| match group {
-                OpGroup::Tree(tree) => Some(tree),
+                HistoryCache::Tree(tree) => Some(tree),
                 _ => None,
             })
     }
@@ -108,7 +108,7 @@ impl ContainerHistoryCache {
         self.groups
             .get(container_idx)
             .and_then(|group| match group {
-                OpGroup::Map(map) => Some(map),
+                HistoryCache::Map(map) => Some(map),
                 _ => None,
             })
     }
@@ -116,21 +116,21 @@ impl ContainerHistoryCache {
 
 #[enum_dispatch(OpGroupTrait)]
 #[derive(Debug, Clone, EnumAsInner)]
-pub(crate) enum OpGroup {
+pub(crate) enum HistoryCache {
     Map(MapOpGroup),
     Tree(TreeOpGroup),
     MovableList(MovableListOpGroup),
 }
 
-impl OpGroup {
+impl HistoryCache {
     fn fork(&self, a: &SharedArena) -> Self {
         match self {
-            OpGroup::Map(m) => OpGroup::Map(m.clone()),
-            OpGroup::Tree(t) => OpGroup::Tree(TreeOpGroup {
+            HistoryCache::Map(m) => HistoryCache::Map(m.clone()),
+            HistoryCache::Tree(t) => HistoryCache::Tree(TreeOpGroup {
                 ops: t.ops.clone(),
                 tree_for_diff: Arc::new(Mutex::new(Default::default())),
             }),
-            OpGroup::MovableList(m) => OpGroup::MovableList(MovableListOpGroup {
+            HistoryCache::MovableList(m) => HistoryCache::MovableList(MovableListOpGroup {
                 arena: a.clone(),
                 elem_mappings: m.elem_mappings.clone(),
                 pos_to_elem: m.pos_to_elem.clone(),
