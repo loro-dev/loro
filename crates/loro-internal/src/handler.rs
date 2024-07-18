@@ -1483,13 +1483,6 @@ impl TextHandler {
         Ok(())
     }
 
-    pub fn splice_unicode(&self, pos: usize, len: usize, s: &str) -> LoroResult<()> {
-        // let x = self.slice(pos, pos + len)?;
-        self.delete_unicode(pos, len)?;
-        self.insert_unicode(pos, s)?;
-        Ok(())
-    }
-
     /// `pos` is a Event Index:
     ///
     /// - if feature="wasm", pos is a UTF-16 index
