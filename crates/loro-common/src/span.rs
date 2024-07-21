@@ -397,13 +397,6 @@ pub trait HasCounterSpan: HasCounter + HasLength {
 
 impl<T: HasCounter + HasLength> HasCounterSpan for T {}
 
-impl<T: HasId> HasCounter for T {
-    #[inline]
-    fn ctr_start(&self) -> Counter {
-        self.id_start().counter
-    }
-}
-
 pub trait HasIdSpan: HasId + HasLength {
     fn intersect<T: HasIdSpan>(&self, other: &T) -> bool {
         let self_start = self.id_start();
@@ -456,6 +449,13 @@ impl HasId for IdSpan {
     #[inline]
     fn id_start(&self) -> ID {
         self.norm_id_start()
+    }
+}
+
+impl HasCounter for IdSpan {
+    #[inline]
+    fn ctr_start(&self) -> Counter {
+        self.counter.min()
     }
 }
 

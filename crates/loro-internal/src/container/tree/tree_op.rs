@@ -53,6 +53,11 @@ impl TreeOp {
             TreeOp::Delete { .. } => None,
         }
     }
+
+    pub(crate) fn estimate_storage_size(&self) -> usize {
+        // TODO: use a better value
+        20
+    }
 }
 
 impl HasLength for TreeOp {

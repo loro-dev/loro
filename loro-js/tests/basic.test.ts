@@ -392,6 +392,7 @@ it("can control the mergeable interval", () => {
     doc.commit(undefined, 110);
     doc.getText("123").insert(0, "1");
     doc.commit(undefined, 120);
+    console.log(doc.getAllChanges());
     expect(doc.getAllChanges().get("1")?.length).toBe(2);
   }
 });

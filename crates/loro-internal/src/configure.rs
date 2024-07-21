@@ -4,7 +4,7 @@ pub use crate::container::richtext::config::{StyleConfig, StyleConfigMap};
 pub struct Configure {
     pub(crate) text_style_config: Arc<RwLock<StyleConfigMap>>,
     record_timestamp: Arc<AtomicBool>,
-    merge_interval: Arc<AtomicI64>,
+    pub(crate) merge_interval: Arc<AtomicI64>,
     /// do not use `jitter` by default
     pub(crate) tree_position_jitter: Arc<AtomicU8>,
 }

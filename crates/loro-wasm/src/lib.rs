@@ -15,13 +15,13 @@ use loro_internal::{
     handler::{
         Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrHandler,
     },
-    id::{Counter, TreeID, ID},
+    id::{Counter, PeerID, TreeID, ID},
     loro::CommitOptions,
     obs::SubID,
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
-    ContainerType, DiffEvent, HandlerTrait, JsonSchema, LoroDoc, LoroValue, MovableListHandler,
-    UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
+    ContainerType, DiffEvent, FxHashMap, HandlerTrait, JsonSchema, LoroDoc, LoroValue,
+    MovableListHandler, UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
@@ -1127,26 +1127,30 @@ impl Loro {
     pub fn get_all_changes(&self) -> JsChanges {
         let borrow_mut = &self.0;
         let oplog = borrow_mut.oplog().lock().unwrap();
-        let changes = oplog.changes();
+        let mut changes: FxHashMap<PeerID, Vec<ChangeMeta>> = FxHashMap::default();
+        oplog.change_store().visit_all_changes(&mut |c| {
+            let change_meta = ChangeMeta {
+                lamport: c.lamport(),
+                length: c.atom_len() as u32,
+                peer: c.peer().to_string(),
+                counter: c.id().counter,
+                deps: c
+                    .deps()
+                    .iter()
+                    .map(|dep| StringID {
+                        peer: dep.peer.to_string(),
+                        counter: dep.counter,
+                    })
+                    .collect(),
+                timestamp: c.timestamp() as f64,
+            };
+            changes.entry(c.peer()).or_default().push(change_meta);
+        });
+
         let ans = js_sys::Map::new();
         for (peer_id, changes) in changes {
             let row = js_sys::Array::new_with_length(changes.len() as u32);
             for (i, change) in changes.iter().enumerate() {
-                let change = ChangeMeta {
-                    lamport: change.lamport(),
-                    length: change.atom_len() as u32,
-                    peer: change.peer().to_string(),
-                    counter: change.id().counter,
-                    deps: change
-                        .deps()
-                        .iter()
-                        .map(|dep| StringID {
-                            peer: dep.peer.to_string(),
-                            counter: dep.counter,
-                        })
-                        .collect(),
-                    timestamp: change.timestamp() as f64,
-                };
                 row.set(i as u32, change.to_js());
             }
             ans.set(&peer_id.to_string().into(), &row);
@@ -2900,9 +2904,8 @@ pub struct LoroTree {
 
 extern crate alloc;
 /// The handler of a tree node.
-#[derive(TryFromJsValue)]
+#[derive(TryFromJsValue, Clone)]
 #[wasm_bindgen]
-#[derive(Clone)]
 pub struct LoroTreeNode {
     id: TreeID,
     tree: TreeHandler,

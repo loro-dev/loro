@@ -106,6 +106,12 @@ mod text_chunk {
         }
 
         #[inline]
+        #[allow(unused)]
+        pub fn id_full(&self) -> IdFull {
+            self.id
+        }
+
+        #[inline]
         pub fn bytes(&self) -> &BytesSlice {
             &self.bytes
         }
@@ -1059,7 +1065,7 @@ mod cursor_cache {
         RichtextTreeTrait,
     };
     use generic_btree::{rle::HasLength, BTree, Cursor, LeafIndex};
-    use loro_common::LoroError;
+    
 
     #[derive(Debug, Clone)]
     struct CursorCacheItem {
@@ -1358,8 +1364,8 @@ impl RichtextState {
                     &self.tree,
                 ) {
                     return match pos_type {
-                        PosType::Bytes => Err(LoroError::UTF8InUnicodeCodePoint { pos: pos }),
-                        PosType::Utf16 => Err(LoroError::UTF16InUnicodeCodePoint { pos: pos }),
+                        PosType::Bytes => Err(LoroError::UTF8InUnicodeCodePoint { pos }),
+                        PosType::Utf16 => Err(LoroError::UTF16InUnicodeCodePoint { pos }),
                         _ => unreachable!(),
                     };
                 }

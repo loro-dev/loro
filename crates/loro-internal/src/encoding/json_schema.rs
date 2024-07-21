@@ -1,5 +1,6 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{sync::Arc};
 
+use either::Either;
 use loro_common::{ContainerID, ContainerType, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID};
 use rle::{HasLength, RleVec, Sliceable};
 
@@ -13,6 +14,7 @@ use crate::{
         tree::tree_op::TreeOp,
     },
     op::{FutureInnerContent, InnerContent, Op, SliceRange},
+    oplog::BlockChangeRef,
     version::Frontiers,
     OpLog, VersionVector,
 };
@@ -73,8 +75,8 @@ fn init_encode<'s, 'a: 's>(
     oplog: &'a OpLog,
     start_vv: &VersionVector,
     end_vv: &VersionVector,
-) -> Vec<Cow<'s, Change>> {
-    let mut diff_changes: Vec<Cow<'a, Change>> = Vec::new();
+) -> Vec<Either<BlockChangeRef, Change>> {
+    let mut diff_changes: Vec<Either<BlockChangeRef, Change>> = Vec::new();
     for change in oplog.iter_changes_peer_by_peer(start_vv, end_vv) {
         let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
         let end_cnt = end_vv.get(&change.id.peer).copied().unwrap_or(0);
@@ -83,15 +85,18 @@ fn init_encode<'s, 'a: 's>(
             let to = change
                 .atom_len()
                 .min((end_cnt - change.id.counter) as usize);
-            diff_changes.push(Cow::Owned(change.slice(offset as usize, to)));
+            diff_changes.push(Either::Right(change.slice(offset as usize, to)));
         } else if change.id.counter + change.atom_len() as i32 > end_cnt {
             let len = end_cnt - change.id.counter;
-            diff_changes.push(Cow::Owned(change.slice(0, len as usize)));
+            diff_changes.push(Either::Right(change.slice(0, len as usize)));
         } else {
-            diff_changes.push(Cow::Borrowed(change));
+            diff_changes.push(Either::Left(change));
         }
     }
-    diff_changes.sort_by_key(|x| x.lamport);
+    diff_changes.sort_by_key(|x| match x {
+        Either::Left(c) => c.lamport,
+        Either::Right(c) => c.lamport,
+    });
     diff_changes
 }
 
@@ -169,12 +174,16 @@ fn convert_tree_id(tree: &TreeID, peers: &[PeerID]) -> TreeID {
 }
 
 fn encode_changes(
-    diff_changes: &[Cow<'_, Change>],
+    diff_changes: &[Either<BlockChangeRef, Change>],
     arena: &SharedArena,
     peer_register: &mut ValueRegister<PeerID>,
 ) -> Vec<op::Change> {
     let mut changes = Vec::with_capacity(diff_changes.len());
     for change in diff_changes.iter() {
+        let change: &Change = match change {
+            Either::Left(c) => c,
+            Either::Right(c) => c,
+        };
         let mut ops = Vec::with_capacity(change.ops().len());
         for Op {
             counter,
@@ -433,7 +442,6 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
             deps: Frontiers::from_iter(deps.into_iter().map(|id| convert_id(&id, &peers))),
             lamport,
             ops,
-            has_dependents: false,
         };
         ans.push(change);
     }

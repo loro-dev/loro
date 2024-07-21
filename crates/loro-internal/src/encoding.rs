@@ -1,8 +1,11 @@
-mod arena;
+pub(crate) mod arena;
 mod encode_reordered;
+pub(crate) mod value;
+pub(crate) mod value_register;
+pub(crate) use encode_reordered::{
+    decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
+};
 pub(crate) mod json_schema;
-mod value;
-pub(crate) use value::OwnedValue;
 
 use crate::op::OpWithId;
 use crate::version::Frontiers;
@@ -12,6 +15,7 @@ use loro_common::{IdLpSpan, LoroResult, PeerID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 use serde::{Deserialize, Serialize};
+pub(crate) use value::OwnedValue;
 const MAGIC_BYTES: [u8; 4] = *b"loro";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -226,7 +230,7 @@ fn encode_header_and_body(mode: EncodeMode, body: Vec<u8>) -> Vec<u8> {
 pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
     let body = encode_reordered::encode_snapshot(
         &doc.oplog().try_lock().unwrap(),
-        &doc.app_state().try_lock().unwrap(),
+        &mut doc.app_state().try_lock().unwrap(),
         &Default::default(),
     );
 

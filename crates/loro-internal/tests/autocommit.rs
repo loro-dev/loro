@@ -40,6 +40,11 @@ fn auto_commit_list() {
     assert_eq!(value.to_json_value(), json!({"list": ["world", "hello"]}))
 }
 
+#[ctor::ctor]
+fn init() {
+    dev_utils::setup_test_log();
+}
+
 #[test]
 fn auto_commit_with_checkout() {
     let doc = LoroDoc::default();

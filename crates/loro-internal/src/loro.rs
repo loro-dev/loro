@@ -243,14 +243,20 @@ impl LoroDoc {
 
     #[inline(always)]
     pub fn peer_id(&self) -> PeerID {
-        self.state.lock().unwrap().peer
+        self.state
+            .lock()
+            .unwrap()
+            .peer
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     #[inline(always)]
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
         if self.auto_commit.load(Acquire) {
-            let mut doc_state = self.state.lock().unwrap();
-            doc_state.peer = peer;
+            let doc_state = self.state.lock().unwrap();
+            doc_state
+                .peer
+                .store(peer, std::sync::atomic::Ordering::Relaxed);
             drop(doc_state);
 
             let txn = self.txn.lock().unwrap().take();
@@ -263,7 +269,7 @@ impl LoroDoc {
             return Ok(());
         }
 
-        let mut doc_state = self.state.lock().unwrap();
+        let doc_state = self.state.lock().unwrap();
         if doc_state.is_in_txn() {
             return Err(LoroError::TransactionError(
                 "Cannot change peer id during transaction"
@@ -272,7 +278,9 @@ impl LoroDoc {
             ));
         }
 
-        doc_state.peer = peer;
+        doc_state
+            .peer
+            .store(peer, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -1484,7 +1492,6 @@ mod test {
         b.get_text("text").insert(0, "hello").unwrap();
         b.commit_then_renew();
         let oplog = b.oplog().lock().unwrap();
-        dbg!(&oplog.arena);
         drop(oplog);
         b.export_from(&Default::default());
     }

@@ -50,7 +50,6 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
                 on_new_container(&d.target.associated_meta_container())
             }
         });
-        tracing::info!("\ndiff {:?}", diff);
 
         InternalDiff::Tree(diff)
     }
@@ -121,7 +120,8 @@ impl TreeDiffCalculator {
                 }
             }
         }
-        tracing::info!("forward ops {:?}", forward_ops);
+
+        // tracing::info!("forward ops {:?}", forward_ops);
         for (lamport, op) in forward_ops {
             let op = MoveLamportAndID {
                 target: op.value.target(),
@@ -178,7 +178,8 @@ impl TreeDiffCalculator {
                 }
             }
         }
-        tracing::info!("retreat ops {:?}", retreat_ops);
+
+        // tracing::info!("retreat ops {:?}", retreat_ops);
         for op in retreat_ops.into_iter().sorted().rev() {
             tree_cache.tree.get_mut(&op.target).unwrap().remove(&op);
             tree_cache.current_vv.shrink_to_exclude(IdSpan::new(

@@ -256,15 +256,18 @@ where
     A::Item: Mergable + HasLength,
 {
     /// push a new element to the end of the array. It may be merged with last element.
-    pub fn push(&mut self, value: A::Item) {
+    ///
+    /// Return whether merged
+    pub fn push(&mut self, value: A::Item) -> bool {
         if let Some(last) = self.vec.last_mut() {
             if last.is_mergable(&value, &()) {
                 last.merge(&value, &());
-                return;
+                return true;
             }
         }
 
         self.vec.push(value);
+        false
     }
 }
 impl<A: Array> RleVec<A>

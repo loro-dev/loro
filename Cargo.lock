@@ -200,6 +200,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
 
 [[package]]
+name = "bytes"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "514de17de45fdb8dc022b1a7975556c53c86f9f0aa5f534b98977b171857c2c9"
+
+[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -560,6 +566,12 @@ name = "either"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a26ae43d7bcc3b814de94796a5e736d4029efb0ee900c12e2d54c993ad1a1e07"
+
+[[package]]
+name = "embedded-io"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
 
 [[package]]
 name = "enum-as-inner"
@@ -1016,6 +1028,7 @@ dependencies = [
  "enum-as-inner 0.6.0",
  "fxhash",
  "js-sys",
+ "leb128",
  "loro-rle 0.16.2",
  "nonmax",
  "serde",
@@ -1079,6 +1092,7 @@ dependencies = [
  "arref",
  "base64",
  "bench-utils",
+ "bytes",
  "criterion 0.5.1",
  "ctor 0.1.26",
  "dev-utils",
@@ -1538,11 +1552,12 @@ dependencies = [
 
 [[package]]
 name = "postcard"
-version = "1.0.2"
+version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c2b180dc0bade59f03fd005cb967d3f1e5f69b13922dad0cd6e047cb8af2363"
+checksum = "a55c51ee6c0db07e68448e336cf8ea4131a620edefebf9893e759b2d793420f8"
 dependencies = [
  "cobs",
+ "embedded-io",
  "heapless 0.7.16",
  "serde",
 ]
@@ -1858,9 +1873,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar"
-version = "0.3.4"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5d54dd7e7a1ec134c842f8a3bdb5a1fc662d002682e0457f976f3046cf9ccf8"
+checksum = "06a86f5f6dc16d8308c37e145dd4c7e60fba1486d84982519388d31ea0ad6703"
 dependencies = [
  "itertools 0.11.0",
  "postcard",

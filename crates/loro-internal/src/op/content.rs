@@ -1,5 +1,5 @@
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerID, LoroValue};
+use loro_common::{ContainerID, ContainerType, LoroValue};
 use rle::{HasLength, Mergable, Sliceable};
 #[cfg(feature = "wasm")]
 use serde::{Deserialize, Serialize};
@@ -64,6 +64,17 @@ impl InnerContent {
     }
 }
 
+impl InnerContent {
+    pub fn estimate_storage_size(&self, kind: ContainerType) -> usize {
+        match self {
+            InnerContent::List(l) => l.estimate_storage_size(kind),
+            InnerContent::Map(m) => m.estimate_storage_size(),
+            InnerContent::Tree(t) => t.estimate_storage_size(),
+            InnerContent::Future(f) => f.estimate_storage_size(),
+        }
+    }
+}
+
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum FutureInnerContent {
     #[cfg(feature = "counter")]
@@ -72,6 +83,15 @@ pub enum FutureInnerContent {
         prop: i32,
         value: OwnedValue,
     },
+}
+impl FutureInnerContent {
+    fn estimate_storage_size(&self) -> usize {
+        match self {
+            #[cfg(feature = "counter")]
+            FutureInnerContent::Counter(_) => 4,
+            FutureInnerContent::Unknown { .. } => 6,
+        }
+    }
 }
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.

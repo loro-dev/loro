@@ -6,8 +6,8 @@ use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
-use loro_common::HasIdSpan;
-use rle::{HasIndex, HasLength, Mergable, RleCollection, Sliceable};
+use loro_common::{HasCounter, HasCounterSpan, HasIdSpan};
+use rle::{HasIndex, HasLength, Mergable, Sliceable};
 
 use super::{AppDag, AppDagNode};
 
@@ -42,6 +42,12 @@ impl HasId for AppDagNode {
             peer: self.peer,
             counter: self.cnt,
         }
+    }
+}
+
+impl HasCounter for AppDagNode {
+    fn ctr_start(&self) -> Counter {
+        self.cnt
     }
 }
 
@@ -91,19 +97,12 @@ impl Dag for AppDag {
     }
 
     fn get(&self, id: ID) -> Option<&Self::Node> {
-        let ID {
-            peer: client_id,
-            counter,
-        } = id;
-        self.map.get(&client_id).and_then(|rle| {
-            rle.get_by_atom_index(counter).and_then(|x| {
-                if x.element.contains_id(id) {
-                    Some(x.element)
-                } else {
-                    None
-                }
-            })
-        })
+        let x = self.map.range(..=id).next_back()?;
+        if x.1.contains_id(id) {
+            Some(x.1)
+        } else {
+            None
+        }
     }
 
     fn vv(&self) -> VersionVector {
@@ -116,13 +115,33 @@ impl AppDag {
     /// get the version vector for a certain op.
     /// It's the version when the op is applied
     pub fn get_vv(&self, id: ID) -> Option<ImVersionVector> {
-        self.map.get(&id.peer).and_then(|rle| {
-            rle.get_by_atom_index(id.counter).map(|x| {
-                let mut vv = x.element.vv.clone();
-                vv.insert(id.peer, id.counter + 1);
-                vv
-            })
+        self.get(id).map(|x| {
+            let mut vv = self.ensure_vv_for(x);
+            vv.insert(id.peer, id.counter + 1);
+            vv
         })
+    }
+
+    fn ensure_vv_for(&self, node: &AppDagNode) -> ImVersionVector {
+        if let Some(vv) = node.vv.get() {
+            return vv.clone();
+        }
+
+        let mut ans_vv = ImVersionVector::default();
+        for id in node.deps.iter() {
+            let node = self.get(*id).expect("deps should be in the dag");
+            let dep_vv = self.ensure_vv_for(node);
+            if ans_vv.is_empty() {
+                ans_vv = dep_vv;
+            } else {
+                ans_vv.extend_to_include_vv(dep_vv.iter());
+            }
+
+            ans_vv.insert(node.peer, node.ctr_last());
+        }
+
+        node.vv.set(ans_vv.clone()).unwrap();
+        ans_vv
     }
 
     /// Compare the causal order of two versions.
@@ -138,15 +157,13 @@ impl AppDag {
     }
 
     pub fn get_lamport(&self, id: &ID) -> Option<Lamport> {
-        self.map.get(&id.peer).and_then(|rle| {
-            rle.get_by_atom_index(id.counter).and_then(|node| {
-                assert!(id.counter >= node.element.cnt);
-                if node.element.cnt + node.element.len as Counter > id.counter {
-                    Some(node.element.lamport + (id.counter - node.element.cnt) as Lamport)
-                } else {
-                    None
-                }
-            })
+        self.get(*id).and_then(|node| {
+            assert!(id.counter >= node.cnt);
+            if node.cnt + node.len as Counter > id.counter {
+                Some(node.lamport + (id.counter - node.cnt) as Lamport)
+            } else {
+                None
+            }
         })
     }
 
@@ -166,9 +183,9 @@ impl AppDag {
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         let mut vv: VersionVector = Default::default();
         for id in frontiers.iter() {
-            let rle = self.map.get(&id.peer)?;
-            let x = rle.get_by_atom_index(id.counter)?;
-            vv.extend_to_include_vv(x.element.vv.iter());
+            let x = self.get(*id)?;
+            let target_vv = self.ensure_vv_for(x);
+            vv.extend_to_include_vv(target_vv.iter());
             vv.extend_to_include_last_id(*id);
         }
 
@@ -182,25 +199,20 @@ impl AppDag {
 
         let mut vv = {
             let id = frontiers[0];
-            let Some(rle) = self.map.get(&id.peer) else {
+            let Some(x) = self.get(id) else {
                 unreachable!()
             };
-            let Some(x) = rle.get_by_atom_index(id.counter) else {
-                unreachable!()
-            };
-            let mut vv = x.element.vv.clone();
+            let mut vv = self.ensure_vv_for(x);
             vv.extend_to_include_last_id(id);
             vv
         };
 
         for id in frontiers[1..].iter() {
-            let Some(rle) = self.map.get(&id.peer) else {
+            let Some(x) = self.get(*id) else {
                 unreachable!()
             };
-            let Some(x) = rle.get_by_atom_index(id.counter) else {
-                unreachable!()
-            };
-            vv.extend_to_include_vv(x.element.vv.iter());
+            let x = self.ensure_vv_for(x);
+            vv.extend_to_include_vv(x.iter());
             vv.extend_to_include_last_id(*id);
         }
 
@@ -219,23 +231,17 @@ impl AppDag {
 
         let mut lamport = {
             let id = frontiers[0];
-            let Some(rle) = self.map.get(&id.peer) else {
+            let Some(x) = self.get(id) else {
                 unreachable!()
             };
-            let Some(x) = rle.get_by_atom_index(id.counter) else {
-                unreachable!("{} not found", id)
-            };
-            (id.counter - x.element.cnt) as Lamport + x.element.lamport + 1
+            (id.counter - x.cnt) as Lamport + x.lamport + 1
         };
 
         for id in frontiers[1..].iter() {
-            let Some(rle) = self.map.get(&id.peer) else {
+            let Some(x) = self.get(*id) else {
                 unreachable!()
             };
-            let Some(x) = rle.get_by_atom_index(id.counter) else {
-                unreachable!()
-            };
-            lamport = lamport.max((id.counter - x.element.cnt) as Lamport + x.element.lamport + 1);
+            lamport = lamport.max((id.counter - x.cnt) as Lamport + x.lamport + 1);
         }
 
         lamport

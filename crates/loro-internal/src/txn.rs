@@ -35,7 +35,7 @@ use super::{
     event::{InternalContainerDiff, InternalDocDiff},
     handler::{ListHandler, MapHandler, TextHandler, TreeHandler},
     oplog::OpLog,
-    state::{DocState, State},
+    state::DocState,
 };
 
 pub type OnCommitFn = Box<dyn FnOnce(&Arc<Mutex<DocState>>) + Sync + Send>;
@@ -247,7 +247,7 @@ impl Transaction {
         state_lock.start_txn(origin, crate::event::EventTriggerKind::Local);
         let arena = state_lock.arena.clone();
         let frontiers = state_lock.frontiers.clone();
-        let peer = state_lock.peer;
+        let peer = state_lock.peer.load(std::sync::atomic::Ordering::Relaxed);
         let next_counter = oplog_lock.next_id(peer).counter;
         let next_lamport = oplog_lock.dag.frontiers_to_next_lamport(&frontiers);
         drop(state_lock);
@@ -316,7 +316,6 @@ impl Transaction {
                 self.timestamp
                     .unwrap_or_else(|| oplog.get_timestamp_for_next_txn()),
             ),
-            has_dependents: false,
         };
 
         let diff = if state.is_recording() {
@@ -374,8 +373,19 @@ impl Transaction {
     ) -> LoroResult<()> {
         if Arc::as_ptr(&self.state) != Weak::as_ptr(state_ref) {
             return Err(LoroError::UnmatchedContext {
-                expected: self.state.lock().unwrap().peer,
-                found: state_ref.upgrade().unwrap().lock().unwrap().peer,
+                expected: self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .peer
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                found: state_ref
+                    .upgrade()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .peer
+                    .load(std::sync::atomic::Ordering::Relaxed),
             });
         }
 
@@ -471,19 +481,6 @@ impl Transaction {
         )
         .into_tree()
         .unwrap()
-    }
-
-    pub fn get_value_by_idx(&self, idx: ContainerIdx) -> LoroValue {
-        self.state.lock().unwrap().get_value_by_idx(idx)
-    }
-
-    #[allow(unused)]
-    pub(crate) fn with_state<F, R>(&self, idx: ContainerIdx, f: F) -> R
-    where
-        F: FnOnce(&State) -> R,
-    {
-        let state = self.state.lock().unwrap();
-        f(state.get_state(idx).unwrap())
     }
 
     pub fn next_id(&self) -> ID {

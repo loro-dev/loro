@@ -105,3 +105,30 @@ impl ContainerState for UnknownState {
         Ok(())
     }
 }
+
+mod snapshot {
+    use loro_common::LoroValue;
+
+    use crate::state::FastStateSnapshot;
+
+    use super::UnknownState;
+
+    impl FastStateSnapshot for UnknownState {
+        fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, _w: W) {}
+
+        fn decode_value(bytes: &[u8]) -> loro_common::LoroResult<(loro_common::LoroValue, &[u8])> {
+            Ok((LoroValue::Null, bytes))
+        }
+
+        fn decode_snapshot_fast(
+            idx: crate::container::idx::ContainerIdx,
+            _v: (loro_common::LoroValue, &[u8]),
+            _ctx: crate::state::ContainerCreationContext,
+        ) -> loro_common::LoroResult<Self>
+        where
+            Self: Sized,
+        {
+            Ok(UnknownState::new(idx))
+        }
+    }
+}

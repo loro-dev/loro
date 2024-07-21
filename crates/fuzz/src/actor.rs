@@ -123,18 +123,20 @@ impl Actor {
         }
     }
 
-    pub fn undo(&mut self, undo_length: u32) {
+    pub fn test_undo(&mut self, undo_length: u32) {
         self.loro.attach();
         let before_undo = self.loro.get_deep_value();
 
         // println!("\n\nstart undo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.undo(&self.loro).unwrap();
+            self.loro.commit();
         }
 
         // println!("\n\nstart redo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.redo(&self.loro).unwrap();
+            self.loro.commit();
         }
 
         let after_undo = self.loro.get_deep_value();
@@ -484,7 +486,7 @@ impl Node {
         for (parent_id, child_ids) in parent_child_map.iter() {
             if let Some(parent_id) = parent_id {
                 if let Some(parent_node) = node_map.get_mut(parent_id) {
-                    for (_, child_id) in child_ids.into_iter().sorted_by_key(|x| x.0) {
+                    for (_, child_id) in child_ids.iter().sorted_by_key(|x| x.0) {
                         if let Some(child_node) = node_map_clone.remove(child_id) {
                             parent_node.children.push(child_node);
                         }

@@ -6,6 +6,7 @@
 
 use crate::{
     dag::DagNode,
+    estimated_size::EstimatedSize,
     id::{Counter, ID},
     op::Op,
     span::{HasId, HasLamport},
@@ -23,7 +24,7 @@ pub type Lamport = u32;
 ///
 /// When undo/redo we should always undo/redo a whole [Change].
 // PERF change slice and getting length is kinda slow I guess
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Change<O = Op> {
     pub(crate) ops: RleVec<[O; 1]>,
     pub(crate) deps: Frontiers,
@@ -34,8 +35,6 @@ pub struct Change<O = Op> {
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
     /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub(crate) timestamp: Timestamp,
-    /// if it has dependents, it cannot merge with new changes
-    pub(crate) has_dependents: bool,
 }
 
 impl<O> Change<O> {
@@ -52,7 +51,6 @@ impl<O> Change<O> {
             id,
             lamport,
             timestamp,
-            has_dependents: false,
         }
     }
 
@@ -92,6 +90,23 @@ impl<O> Change<O> {
     }
 }
 
+impl<O: EstimatedSize> EstimatedSize for Change<O> {
+    /// Estimate the storage size of the change in bytes
+    #[inline]
+    fn estimate_storage_size(&self) -> usize {
+        let id_size = 2;
+        let lamport_size = 1;
+        let timestamp_size = 1;
+        let deps_size = (self.deps.len().max(1) - 1) * 4;
+        let ops_size = self
+            .ops
+            .iter()
+            .map(|op| op.estimate_storage_size())
+            .sum::<usize>();
+        id_size + lamport_size + timestamp_size + ops_size + deps_size
+    }
+}
+
 impl<O: Mergable + HasLength + HasIndex + Debug> HasIndex for Change<O> {
     type Int = Counter;
 
@@ -103,6 +118,12 @@ impl<O: Mergable + HasLength + HasIndex + Debug> HasIndex for Change<O> {
 impl<O> HasId for Change<O> {
     fn id_start(&self) -> ID {
         self.id
+    }
+}
+
+impl<O> HasCounter for Change<O> {
+    fn ctr_start(&self) -> Counter {
+        self.id.counter
     }
 }
 
@@ -190,7 +211,6 @@ impl<O: Mergable + HasLength + HasIndex + Sliceable + HasCounter + Debug> Slicea
             id: self.id.inc(from as Counter),
             lamport: self.lamport + from as Lamport,
             timestamp: self.timestamp,
-            has_dependents: self.has_dependents,
         }
     }
 }

@@ -8017,6 +8017,91 @@ fn unknown_fuzz_err() {
 }
 
 #[test]
+fn unknown_fuzz_err_1() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 21,
+                target: 172,
+                container: 237,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(19)),
+                    bool: false,
+                    key: 4288555552,
+                    pos: 11601534246259907033,
+                    length: 11646767826930344353,
+                    prop: 11601273739628618145,
+                }),
+            },
+            SyncAllUndo {
+                site: 161,
+                op_len: 2711724449,
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 2711724288,
+                    pos: 11646767826930344353,
+                    length: 27553,
+                    prop: 11646767826921955584,
+                }),
+            },
+            SyncAllUndo {
+                site: 161,
+                op_len: 2711724449,
+            },
+            SyncAllUndo {
+                site: 161,
+                op_len: 2711724449,
+            },
+            SyncAllUndo {
+                site: 161,
+                op_len: 2711724449,
+            },
+            SyncAllUndo {
+                site: 161,
+                op_len: 2711724449,
+            },
+            SyncAllUndo {
+                site: 161,
+                op_len: 2711694497,
+            },
+            SyncAllUndo {
+                site: 161,
+                op_len: 2711724449,
+            },
+            SyncAllUndo {
+                site: 161,
+                op_len: 2711724449,
+            },
+            SyncAllUndo {
+                site: 161,
+                op_len: 2711724449,
+            },
+            Handle {
+                site: 61,
+                target: 1,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,

@@ -23,6 +23,7 @@ pub use state::DocState;
 pub use undo::UndoManager;
 pub mod awareness;
 pub mod cursor;
+mod kv_store;
 pub mod loro;
 pub mod obs;
 pub mod oplog;
@@ -52,7 +53,8 @@ pub use loro_delta;
 pub mod event;
 
 pub use error::{LoroError, LoroResult};
-pub(crate) mod group;
+pub mod estimated_size;
+pub(crate) mod history_cache;
 pub(crate) mod macros;
 pub(crate) mod state;
 pub mod undo;
