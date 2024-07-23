@@ -1041,6 +1041,11 @@ impl LoroText {
         self.handler.len_utf16()
     }
 
+    /// Update the current text based on the provided text.
+    pub fn update(&self, text: &str) -> () {
+        self.handler.update(text);
+    }
+
     /// Apply a [delta](https://quilljs.com/docs/delta/) to the text container.
     pub fn apply_delta(&self, delta: &[TextDelta]) -> LoroResult<()> {
         self.handler.apply_delta(delta)
