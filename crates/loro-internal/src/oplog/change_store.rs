@@ -114,7 +114,7 @@ impl ChangeStore {
     }
 
     /// Flush the cached change to kv_store
-    fn flush(&mut self) {
+    pub(crate) fn flush(&mut self) {
         let mut mem = self.mem_parsed_kv.lock().unwrap();
         let mut store = self.external_kv.lock().unwrap();
         for (id, block) in mem.iter_mut() {

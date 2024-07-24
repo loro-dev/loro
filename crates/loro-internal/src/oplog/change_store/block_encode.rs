@@ -67,9 +67,10 @@ use std::borrow::Cow;
 use std::io::Write;
 
 use loro_common::{
-    ContainerID, Counter, HasCounterSpan, HasLamportSpan, InternalString, Lamport,
-    LoroError, LoroResult, PeerID, TreeID, ID,
+    ContainerID, Counter, HasCounterSpan, HasLamportSpan, InternalString, Lamport, LoroError,
+    LoroResult, PeerID, TreeID, ID,
 };
+use once_cell::sync::OnceCell;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, DeltaRleDecoder, Itertools};
@@ -380,6 +381,8 @@ pub(crate) struct ChangesBlockHeader {
     /// This has n elements
     pub lamports: Vec<Lamport>,
     pub deps_groups: Vec<Frontiers>,
+    pub keys: OnceCell<Vec<InternalString>>,
+    pub cids: OnceCell<Vec<ContainerID>>,
 }
 
 pub fn decode_header(m_bytes: &[u8]) -> LoroResult<ChangesBlockHeader> {
@@ -495,6 +498,8 @@ fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, Loro
         counters,
         deps_groups: deps,
         lamports,
+        keys: OnceCell::new(),
+        cids: OnceCell::new(),
     })
 }
 
@@ -571,6 +576,48 @@ pub fn decode_block_range(
     ))
 }
 
+/// Ensure the cids in header are decoded
+pub fn decode_cids(
+    bytes: &[u8],
+    header: Option<ChangesBlockHeader>,
+) -> LoroResult<ChangesBlockHeader> {
+    let doc = postcard::from_bytes(bytes).map_err(|e| {
+        LoroError::DecodeError(format!("Decode block error {}", e).into_boxed_str())
+    })?;
+    let header = if let Some(h) = header {
+        h
+    } else {
+        let doc = postcard::from_bytes(bytes).map_err(|e| {
+            LoroError::DecodeError(format!("Decode block error {}", e).into_boxed_str())
+        })?;
+        decode_header_from_doc(&doc)?
+    };
+
+    if header.cids.get().is_some() {
+        return Ok(header);
+    }
+
+    let EncodedBlock { cids, keys, .. } = doc;
+    let keys = header.keys.get_or_init(|| decode_keys(&keys));
+    let decode_arena = ValueDecodeArena {
+        peers: &header.peers,
+        keys,
+    };
+
+    header
+        .cids
+        .set(
+            ContainerArena::decode(&cids)
+                .unwrap()
+                .iter()
+                .map(|x| x.as_container_id(&decode_arena))
+                .try_collect()
+                .unwrap(),
+        )
+        .unwrap();
+    Ok(header)
+}
+
 // MARK: decode_block
 pub fn decode_block(
     m_bytes: &[u8],
@@ -603,16 +650,19 @@ pub fn decode_block(
     }
     let mut timestamp_decoder: DeltaRleDecoder<i64> = DeltaRleDecoder::new(&timestamps);
     let _commit_msg_len_decoder = AnyRleDecoder::<u32>::new(&commit_msg_lengths);
-    let keys = decode_keys(&keys);
+    let keys = header.keys.get_or_init(|| decode_keys(&keys));
     let decode_arena = ValueDecodeArena {
         peers: &header.peers,
-        keys: &keys,
+        keys,
     };
-    let cids: Vec<ContainerID> = ContainerArena::decode(&cids)
-        .unwrap()
-        .iter()
-        .map(|x| x.as_container_id(&decode_arena))
-        .try_collect()?;
+    let cids: &Vec<ContainerID> = header.cids.get_or_init(|| {
+        ContainerArena::decode(&cids)
+            .unwrap()
+            .iter()
+            .map(|x| x.as_container_id(&decode_arena))
+            .try_collect()
+            .unwrap()
+    });
     let mut value_reader = ValueReader::new(&values);
     let encoded_ops_iters =
         serde_columnar::iter_from_bytes::<EncodedOpsAndDeleteStarts>(&ops).unwrap();
