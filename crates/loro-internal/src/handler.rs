@@ -1384,7 +1384,7 @@ impl TextHandler {
         }
     }
 
-    pub fn iter(&self, mut callback: impl FnMut(&str) -> bool) -> () {
+    pub fn iter(&self, mut callback: impl FnMut(&str) -> bool) {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.try_lock().unwrap();
@@ -1395,7 +1395,7 @@ impl TextHandler {
                 }
             }
             MaybeDetached::Attached(a) => {
-                a.with_state(|state| -> () {
+                a.with_state(|state| {
                     state.as_richtext_state_mut().unwrap().iter(callback);
                 });
             }
@@ -1409,7 +1409,7 @@ impl TextHandler {
     pub fn char_at(&self, pos: usize) -> LoroResult<char> {
         if pos >= self.len_event() {
             return Err(LoroError::OutOfBound {
-                pos: pos,
+                pos,
                 len: self.len_event(),
                 info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
             });
@@ -1429,7 +1429,7 @@ impl TextHandler {
             Ok(c)
         } else {
             Err(LoroError::OutOfBound {
-                pos: pos,
+                pos,
                 len: self.len_event(),
                 info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
             })
@@ -2151,7 +2151,7 @@ impl TextHandler {
         Ok(())
     }
 
-    pub fn update(&self, text: &str) -> () {
+    pub fn update(&self, text: &str) {
         let old_str = self.to_string();
         let new = text.chars().collect::<Vec<char>>();
         myers_diff(
@@ -3375,7 +3375,7 @@ impl MovableListHandler {
                         loro_delta::DeltaItem::Replace {
                             value,
                             delete,
-                            attr,
+                            attr: _,
                         } => {
                             if *delete > 0 {
                                 // skip the deletion if it is already processed by moving
@@ -3939,7 +3939,6 @@ pub mod counter {
 mod test {
 
     use super::{HandlerTrait, TextDelta};
-    use crate::container::richtext::richtext_state::PosType;
     use crate::loro::LoroDoc;
     use crate::version::Frontiers;
     use crate::{fx_map, ToJson};

@@ -81,7 +81,7 @@ impl<D: DiffHandler> OperateProxy<D> {
         }
     }
 
-    pub fn flush_del_ins(&mut self) -> () {
+    pub fn flush_del_ins(&mut self) {
         if let Some((del_old_index, del_old_len)) = self.del.take() {
             if let Some((_, ins_new_index, ins_new_len)) = self.ins.take() {
                 self.handler.replace(
@@ -94,7 +94,7 @@ impl<D: DiffHandler> OperateProxy<D> {
             } else {
                 self.handler
                     .delete((del_old_index as isize + self.offset) as usize, del_old_len);
-                self.offset = self.offset - del_old_len as isize;
+                self.offset -= del_old_len as isize
             }
         } else if let Some((ins_old_index, ins_new_index, ins_new_len)) = self.ins.take() {
             self.handler.insert(
@@ -102,11 +102,11 @@ impl<D: DiffHandler> OperateProxy<D> {
                 ins_new_index,
                 ins_new_len,
             );
-            self.offset = self.offset + ins_new_len as isize;
+            self.offset += ins_new_len as isize
         }
     }
 
-    pub fn delete(&mut self, old_index: usize, old_len: usize) -> () {
+    pub fn delete(&mut self, old_index: usize, old_len: usize) {
         if let Some((del_old_index, del_old_len)) = self.del.take() {
             self.del = Some((del_old_index, del_old_len + old_len));
         } else {
@@ -114,7 +114,7 @@ impl<D: DiffHandler> OperateProxy<D> {
         }
     }
 
-    pub fn insert(&mut self, old_index: usize, new_index: usize, new_len: usize) -> () {
+    pub fn insert(&mut self, old_index: usize, new_index: usize, new_len: usize) {
         self.ins = if let Some((ins_old_index, ins_new_index, ins_new_len)) = self.ins.take() {
             Some((ins_old_index, ins_new_index, new_len + ins_new_len))
         } else {
@@ -123,11 +123,7 @@ impl<D: DiffHandler> OperateProxy<D> {
     }
 }
 
-pub(crate) fn myers_diff<D: DiffHandler>(
-    proxy: &mut OperateProxy<D>,
-    old: &[char],
-    new: &[char],
-) -> () {
+pub(crate) fn myers_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[char], new: &[char]) {
     let max_d = (old.len() + new.len() + 1) / 2 + 1;
     let mut vb = OffsetVec::new(max_d);
     let mut vf = OffsetVec::new(max_d);
@@ -243,7 +239,7 @@ fn conquer<D: DiffHandler>(
     mut new_end: usize,
     vf: &mut OffsetVec,
     vb: &mut OffsetVec,
-) -> () {
+) {
     let common_prefix_len = common_prefix(&old[old_start..old_end], &new[new_start..new_end]);
     if common_prefix_len > 0 {
         proxy.flush_del_ins();
