@@ -156,7 +156,10 @@ impl Actionable for TreeAction {
             || node_num < 2
                 && (matches!(
                     action,
-                    TreeActionInner::Move { .. } | TreeActionInner::Meta { .. }
+                    TreeActionInner::Move { .. }
+                        | TreeActionInner::Meta { .. }
+                        | TreeActionInner::MoveAfter { .. }
+                        | TreeActionInner::MoveBefore { .. }
                 ))
         {
             *action = TreeActionInner::Create { index: 0 };

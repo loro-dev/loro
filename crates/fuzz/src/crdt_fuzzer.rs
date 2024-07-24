@@ -305,7 +305,9 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
     let mut fuzzer = CRDTFuzzer::new(site_num, fuzz_targets);
     let mut applied = Vec::new();
     for action in actions.iter_mut() {
+        info!("{:?}", action);
         fuzzer.pre_process(action);
+        info!("#####");
         info_span!("ApplyAction", ?action).in_scope(|| {
             applied.push(action.clone());
             info!("OptionsTable \n{}", (&applied).table());
