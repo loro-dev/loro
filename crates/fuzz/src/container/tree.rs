@@ -213,9 +213,7 @@ impl Actionable for TreeAction {
                     *v = FuzzValue::I32(0);
                 }
             }
-            TreeActionInner::EmptyTrash => {
-                println!("empty trash")
-            }
+            TreeActionInner::EmptyTrash => {}
         }
     }
 

@@ -10,7 +10,6 @@ use crate::{
     dag::DagUtils,
     delta::{TreeDelta, TreeDeltaItem, TreeInternalDiff},
     event::InternalDiff,
-    parent,
     state::TreeParentId,
     version::Frontiers,
     OpLog, VersionVector,
@@ -202,6 +201,7 @@ impl TreeDiffCalculator {
                 for node in nodes.iter() {
                     tree_cache.tree.get_mut(node).unwrap().remove(&op);
                     let (old_parent, fi, id) = tree_cache.get_parent_with_id(*node);
+                    debug_assert!(fi.is_none());
                     diffs.push(TreeDeltaItem {
                         target: *node,
                         action: TreeInternalDiff::RestoreTrash {
@@ -450,7 +450,13 @@ impl TreeCacheForDiff {
             node.effected = true;
             self.current_vv.set_last(node.id);
             for n in nodes.iter() {
-                self.tree.entry(*n).or_default().insert(node.clone());
+                let entry = self.tree.entry(*n).or_default();
+                if let Some(op) = entry.last() {
+                    if op.is_empty_trash() {
+                        continue;
+                    }
+                }
+                entry.insert(node.clone());
             }
 
             true

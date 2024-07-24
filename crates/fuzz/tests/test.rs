@@ -8017,6 +8017,64 @@ fn unknown_fuzz_err() {
 }
 
 #[test]
+fn debug_child_position() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Tree],
+        &mut [
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(67108864),
+                    bool: false,
+                    key: 5120,
+                    pos: 18374967954648273920,
+                    length: 2244797026329624582,
+                    prop: 18434758041542467359,
+                }),
+            },
+            Undo {
+                site: 95,
+                op_len: 1600085855,
+            },
+            Undo {
+                site: 95,
+                op_len: 1600085855,
+            },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(-788529152),
+                    bool: true,
+                    key: 3520188881,
+                    pos: 15074060126884319697,
+                    length: 6872316419617313233,
+                    prop: 6872316419617283935,
+                }),
+            },
+            Handle {
+                site: 31,
+                target: 126,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 3520188881,
+                    pos: 6872442255478739409,
+                    length: 6872316419617283935,
+                    prop: 6872316419617283935,
+                }),
+            },
+        ],
+    );
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,
