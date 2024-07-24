@@ -177,7 +177,7 @@ impl std::fmt::Debug for OpLog {
     }
 }
 
-pub(crate) struct EnsureChangeDepsAreAtTheEnd;
+pub(crate) struct EnsureDagNodeDepsAreAtTheEnd;
 
 impl OpLog {
     #[inline]
@@ -240,7 +240,7 @@ impl OpLog {
     }
 
     /// This is the **only** place to update the `OpLog.changes`
-    pub(crate) fn insert_new_change(&mut self, change: Change, _: EnsureChangeDepsAreAtTheEnd) {
+    pub(crate) fn insert_new_change(&mut self, change: Change, _: EnsureDagNodeDepsAreAtTheEnd) {
         self.op_groups.insert_by_change(&change);
         self.change_store.insert_change(change.clone());
         self.register_container_and_parent_link(&change);
@@ -291,7 +291,7 @@ impl OpLog {
     pub(crate) fn update_dag_on_new_change(
         &mut self,
         change: &Change,
-    ) -> EnsureChangeDepsAreAtTheEnd {
+    ) -> EnsureDagNodeDepsAreAtTheEnd {
         let len = change.content_len();
         if change.deps_on_self() {
             // don't need to push new element to dag because it only depends on itself
@@ -344,11 +344,19 @@ impl OpLog {
                 let target = self.dag.get_mut(*dep).unwrap();
                 if target.ctr_last() == dep.counter {
                     target.has_succ = true;
+                } else {
+                    // We need to split the target node into two part
+                    // so that we can ensure the new change depends on the
+                    // last id of a dag node.
+                    let new_node =
+                        target.slice(dep.counter as usize - target.cnt as usize, target.len);
+                    target.len -= new_node.len;
+                    self.dag.map.insert(new_node.id_start(), new_node);
                 }
             }
         }
 
-        EnsureChangeDepsAreAtTheEnd
+        EnsureDagNodeDepsAreAtTheEnd
     }
 
     /// Trim the known part of change

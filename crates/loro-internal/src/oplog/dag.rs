@@ -7,6 +7,7 @@ use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use loro_common::{HasCounter, HasCounterSpan, HasIdSpan};
+use once_cell::sync::OnceCell;
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 
 use super::{AppDag, AppDagNode};
@@ -28,8 +29,18 @@ impl Sliceable for AppDagNode {
             peer: self.peer,
             cnt: self.cnt + from as Counter,
             lamport: self.lamport + from as Lamport,
-            deps: Default::default(),
-            vv: Default::default(),
+            deps: if from > 0 {
+                Frontiers::from_id(self.id_start().inc(from as Counter - 1))
+            } else {
+                self.deps.clone()
+            },
+            vv: if let Some(vv) = self.vv.get() {
+                let mut new = vv.clone();
+                new.insert(self.peer, self.cnt + from as Counter);
+                OnceCell::with_value(new)
+            } else {
+                OnceCell::new()
+            },
             has_succ: if to == self.len { self.has_succ } else { true },
             len: to - from,
         }
