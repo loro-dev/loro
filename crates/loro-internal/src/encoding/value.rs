@@ -134,6 +134,7 @@ impl ValueKind {
             13 => ValueKind::TreeMove,
             14 => ValueKind::ListMove,
             15 => ValueKind::ListSet,
+            16 => ValueKind::Future(FutureValueKind::EmptyTreeTrash),
             _ => ValueKind::Future(FutureValueKind::Unknown(kind)),
         }
     }
