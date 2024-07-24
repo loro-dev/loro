@@ -1058,7 +1058,6 @@ mod cursor_cache {
         RichtextTreeTrait,
     };
     use generic_btree::{rle::HasLength, BTree, Cursor, LeafIndex};
-    use loro_common::LoroError;
 
     #[derive(Debug, Clone)]
     struct CursorCacheItem {
@@ -1404,25 +1403,22 @@ impl RichtextState {
         entity_index: usize,
         text: BytesSlice,
         id: IdFull,
-    ) {
+    ) -> Cursor {
         let elem = RichtextStateChunk::try_new(text, id).unwrap();
         self.style_ranges
             .as_mut()
             .map(|x| x.insert(entity_index, elem.rle_len()));
-        let leaf;
-        leaf = {
-            let q = &entity_index;
-            match self.tree.query::<EntityQuery>(q) {
-                Some(result) => {
-                    let p = self
-                        .tree
-                        .prefer_left(result.cursor)
-                        .unwrap_or(result.cursor);
-                    self.tree.insert_by_path(p, elem).0
-                }
-                None => self.tree.push(elem),
+        let q = &entity_index;
+        match self.tree.query::<EntityQuery>(q) {
+            Some(result) => {
+                let p = self
+                    .tree
+                    .prefer_left(result.cursor)
+                    .unwrap_or(result.cursor);
+                self.tree.insert_by_path(p, elem).0
             }
-        };
+            None => self.tree.push(elem),
+        }
     }
 
     /// This is used to accept changes from DiffCalculator.
@@ -1441,13 +1437,11 @@ impl RichtextState {
             &self
         );
 
-        let cursor;
-        let event_index;
         let (c, f) = self
             .tree
             .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&entity_index);
-        cursor = c.map(|x| x.cursor);
-        event_index = f.event_index;
+        let cursor = c.map(|x| x.cursor);
+        let event_index = f.event_index;
 
         match cursor {
             Some(cursor) => {
@@ -1456,7 +1450,7 @@ impl RichtextState {
                     .as_mut()
                     .map(|x| x.insert(entity_index, elem.rle_len()))
                     .unwrap_or(&EMPTY_STYLES);
-                self.tree.insert_by_path(cursor, elem).0;
+                self.tree.insert_by_path(cursor, elem);
                 (event_index, styles)
             }
             None => {
@@ -1887,8 +1881,8 @@ impl RichtextState {
             }
 
             if let RichtextStateChunk::Text(s) = span.elem {
-                match unicode_slice(&s.as_str(), start, end) {
-                    Ok(x) => ans.push_str(&x),
+                match unicode_slice(s.as_str(), start, end) {
+                    Ok(x) => ans.push_str(x),
                     Err(()) => return Err(LoroError::UTF16InUnicodeCodePoint { pos: pos + len }),
                 }
             }
