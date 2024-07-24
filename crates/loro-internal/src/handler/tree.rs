@@ -677,6 +677,18 @@ impl TreeHandler {
         }
     }
 
+    fn deleted_nodes(&self) -> Vec<TreeID> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unreachable!()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.deleted_nodes()
+            }),
+        }
+    }
+
     pub fn get_meta(&self, target: TreeID) -> LoroResult<MapHandler> {
         match &self.inner {
             MaybeDetached::Detached(d) => {
@@ -894,33 +906,43 @@ impl TreeHandler {
 mod tests {
     use loro_common::LoroResult;
 
-    use crate::{HandlerTrait, LoroDoc, ToJson};
+    use crate::{HandlerTrait, LoroDoc};
 
     #[test]
     fn empty_trash() -> LoroResult<()> {
         let doc = LoroDoc::new_auto_commit();
         let tree = doc.get_tree("tree");
         let root = tree.create(None)?;
-        let node1 = tree.create(root)?;
+        tree.create(root)?;
         let node2 = tree.create(root)?;
-        let node3 = tree.create(node2)?;
+        tree.create(node2)?;
         doc.commit_then_renew();
         let before_delete_f = doc.oplog_frontiers();
 
         tree.delete(node2)?;
+        doc.commit_then_renew();
+        let before_trash_f = doc.oplog_frontiers();
         tree.empty_trash()?;
 
         let v = tree.get_value();
-        println!("{}", v.to_json());
+        assert_eq!(v.as_list().unwrap().len(), 2);
+        assert_eq!(tree.deleted_nodes().len(), 0);
 
         doc.checkout(&before_delete_f)?;
         let v2 = tree.get_value();
-        println!("{}", v2.to_json());
+        assert_eq!(v2.as_list().unwrap().len(), 4);
+        assert_eq!(tree.deleted_nodes().len(), 0);
+
+        doc.checkout(&before_trash_f)?;
+        let v3 = tree.get_value();
+        assert_eq!(v3.as_list().unwrap().len(), 2);
+        assert_eq!(tree.deleted_nodes().len(), 2);
 
         doc.checkout(&doc.oplog_frontiers())?;
 
-        let v3 = tree.get_value();
-        println!("{}", v3.to_json());
+        let v4 = tree.get_value();
+        assert_eq!(v4.as_list().unwrap().len(), 2);
+        assert_eq!(tree.deleted_nodes().len(), 0);
 
         Ok(())
     }

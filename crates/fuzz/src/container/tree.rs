@@ -210,7 +210,9 @@ impl Actionable for TreeAction {
                     *v = FuzzValue::I32(0);
                 }
             }
-            TreeActionInner::EmptyTrash => {}
+            TreeActionInner::EmptyTrash => {
+                println!("empty trash")
+            }
         }
     }
 
@@ -337,7 +339,7 @@ impl FromGenericAction for TreeAction {
         let target = (action.pos as u64, 0);
         let parent = (action.length as u64, 0);
         let index = action.prop as usize;
-        let action = match action.prop % 4 {
+        let action = match action.prop % 7 {
             0 => TreeActionInner::Create { index },
             1 => TreeActionInner::Delete,
             2 => TreeActionInner::Move { parent, index },
@@ -352,6 +354,7 @@ impl FromGenericAction for TreeAction {
                 target,
                 after: parent,
             },
+            6 => TreeActionInner::EmptyTrash,
             _ => unreachable!(),
         };
         Self { target, action }
