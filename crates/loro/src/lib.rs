@@ -1446,6 +1446,14 @@ impl LoroTree {
         self.handler.get_deep_value()
     }
 
+    /// When we delete a node, it is moved to a delete node named `TRASH` to represent deletion.
+    /// In the long run, there will be many tombstones of nodes that are no longer used under `TRASH`.
+    /// You can use `empty_trash()` to clean up these tombstones.
+    ///
+    pub fn empty_trash(&self) -> LoroResult<()> {
+        self.handler.empty_trash()
+    }
+
     // This method is used for testing only.
     #[doc(hidden)]
     #[allow(non_snake_case)]

@@ -52,8 +52,10 @@ impl InnerContent {
                 }
             }
             crate::op::InnerContent::Tree(t) => {
-                let id = t.target().associated_meta_container();
-                f(&id);
+                if let Some(target) = t.target() {
+                    let id = target.associated_meta_container();
+                    f(&id);
+                }
             }
             crate::op::InnerContent::Future(f) => match &f {
                 #[cfg(feature = "counter")]

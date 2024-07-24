@@ -46,6 +46,7 @@ pub enum TreeActionInner {
     Meta {
         meta: (String, FuzzValue),
     },
+    EmptyTrash,
 }
 
 impl Debug for TreeActionInner {
@@ -81,6 +82,7 @@ impl Debug for TreeActionInner {
                 "TreeActionInner::Meta{{meta:(\"{}\".into(),{:?})}}",
                 meta.0, meta.1
             ),
+            TreeActionInner::EmptyTrash => write!(f, "TreeActionInner::EmptyTrash",),
         }
     }
 }
@@ -208,6 +210,7 @@ impl Actionable for TreeAction {
                     *v = FuzzValue::I32(0);
                 }
             }
+            TreeActionInner::EmptyTrash => {}
         }
     }
 
@@ -291,6 +294,10 @@ impl Actionable for TreeAction {
                     }
                 }
             }
+            TreeActionInner::EmptyTrash => {
+                tree.empty_trash().unwrap();
+                None
+            }
         }
     }
 
@@ -316,6 +323,7 @@ impl Actionable for TreeAction {
                 after: (ai, ac),
             } => [format!("move {tc}@{ti} after {ac}@{ai}").into(), target],
             TreeActionInner::Meta { meta } => [format!("meta\n {:?}", meta).into(), target],
+            TreeActionInner::EmptyTrash => ["empty trash".to_string().into(), target],
         }
     }
 
@@ -443,6 +451,7 @@ impl ApplyDiff for TreeTracker {
                         self.insert(*index, node);
                     }
                 }
+                TreeExternalDiff::EmptyTrash => {}
             }
         }
     }

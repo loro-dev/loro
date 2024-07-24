@@ -1179,6 +1179,9 @@ impl Handler {
                                 x.delete(target)?;
                             }
                         }
+                        TreeExternalDiff::EmptyTrash => {
+                            // TODO: undo redo EmptyTrash
+                        }
                     }
                 }
             }

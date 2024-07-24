@@ -357,6 +357,9 @@ fn encode_changes(
                         TreeOp::Delete { target } => op::TreeOp::Delete {
                             target: register_tree_id(target, peer_register),
                         },
+                        TreeOp::EmptyTrash(nodes) => op::TreeOp::EmptyTrash {
+                            nodes: nodes.clone(),
+                        },
                     }),
                     _ => unreachable!(),
                 },
@@ -605,6 +608,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                 op::TreeOp::Delete { target } => InnerContent::Tree(TreeOp::Delete {
                     target: convert_tree_id(&target, peers),
                 }),
+                op::TreeOp::EmptyTrash { nodes } => InnerContent::Tree(TreeOp::EmptyTrash(nodes)),
             },
             _ => unreachable!(),
         },
@@ -666,6 +670,8 @@ impl TryFrom<String> for JsonSchema {
 }
 
 pub mod op {
+
+    use std::sync::Arc;
 
     use fractional_index::FractionalIndex;
     use loro_common::{ContainerID, IdLp, Lamport, LoroValue, PeerID, TreeID, ID};
@@ -814,6 +820,10 @@ pub mod op {
         Delete {
             #[serde(with = "self::serde_impl::tree_id")]
             target: TreeID,
+        },
+        EmptyTrash {
+            #[serde(with = "self::serde_impl::vec_tree_id")]
+            nodes: Arc<Vec<TreeID>>,
         },
     }
 
@@ -1103,6 +1113,39 @@ pub mod op {
                     }
                     None => Ok(None),
                 }
+            }
+        }
+
+        pub mod vec_tree_id {
+            use std::sync::Arc;
+
+            use loro_common::TreeID;
+            use serde::{ser::SerializeSeq, Deserialize, Deserializer, Serializer};
+
+            pub fn serialize<S>(id: &[TreeID], s: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                let mut q = s.serialize_seq(Some(id.len()))?;
+                for i in id {
+                    q.serialize_element(&i.to_string())?;
+                }
+                q.end()
+            }
+
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<Arc<Vec<TreeID>>, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let ans: Vec<String> = Deserialize::deserialize(d)?;
+                let ans = ans
+                    .into_iter()
+                    .map(|str| {
+                        let id: TreeID = TreeID::try_from(str.as_str()).unwrap();
+                        id
+                    })
+                    .collect::<Vec<_>>();
+                Ok(Arc::new(ans))
             }
         }
 

@@ -1,7 +1,7 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, sync::Arc};
 
 use fractional_index::FractionalIndex;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
     ContainerID, ContainerType, Counter, IdLp, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
 };
@@ -650,6 +650,33 @@ impl TreeHandler {
         )
     }
 
+    pub fn empty_trash(&self) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unreachable!()
+            }
+            MaybeDetached::Attached(a) => {
+                let nodes_in_trash = a.with_state(|state| {
+                    let a = state.as_tree_state().unwrap();
+                    a.deleted_nodes()
+                });
+
+                a.with_txn(|txn| {
+                    let inner = self.inner.try_attached_state()?;
+                    txn.apply_local_op(
+                        inner.container_idx,
+                        crate::op::RawOpContent::Tree(TreeOp::EmptyTrash(Arc::new(nodes_in_trash))),
+                        EventHint::Tree(smallvec![TreeDiffItem {
+                            target: TreeID::delete_root(),
+                            action: TreeExternalDiff::EmptyTrash,
+                        }]),
+                        &inner.state,
+                    )
+                })
+            }
+        }
+    }
+
     pub fn get_meta(&self, target: TreeID) -> LoroResult<MapHandler> {
         match &self.inner {
             MaybeDetached::Detached(d) => {
@@ -860,5 +887,41 @@ impl TreeHandler {
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| Ok(txn.next_idlp())).unwrap(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use loro_common::LoroResult;
+
+    use crate::{HandlerTrait, LoroDoc, ToJson};
+
+    #[test]
+    fn empty_trash() -> LoroResult<()> {
+        let doc = LoroDoc::new_auto_commit();
+        let tree = doc.get_tree("tree");
+        let root = tree.create(None)?;
+        let node1 = tree.create(root)?;
+        let node2 = tree.create(root)?;
+        let node3 = tree.create(node2)?;
+        doc.commit_then_renew();
+        let before_delete_f = doc.oplog_frontiers();
+
+        tree.delete(node2)?;
+        tree.empty_trash()?;
+
+        let v = tree.get_value();
+        println!("{}", v.to_json());
+
+        doc.checkout(&before_delete_f)?;
+        let v2 = tree.get_value();
+        println!("{}", v2.to_json());
+
+        doc.checkout(&doc.oplog_frontiers())?;
+
+        let v3 = tree.get_value();
+        println!("{}", v3.to_json());
+
+        Ok(())
     }
 }

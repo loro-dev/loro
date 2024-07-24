@@ -85,6 +85,7 @@ impl LoroValueKind {
 
 #[derive(Debug)]
 pub enum FutureValueKind {
+    EmptyTreeTrash,
     Unknown(u8),
 }
 
@@ -108,6 +109,7 @@ impl ValueKind {
             ValueKind::ListMove => 14,
             ValueKind::ListSet => 15,
             ValueKind::Future(future_value_kind) => match future_value_kind {
+                FutureValueKind::EmptyTreeTrash => 16,
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
             },
         }
@@ -170,6 +172,7 @@ pub enum Value<'a> {
 #[derive(Debug)]
 pub enum FutureValue<'a> {
     // The future value cannot depend on the arena for encoding.
+    EmptyTreeTrash(Arc<Vec<TreeID>>),
     Unknown { kind: u8, data: &'a [u8] },
 }
 
@@ -207,6 +210,7 @@ pub enum OwnedValue {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "value_type", content = "value")]
 pub enum OwnedFutureValue {
+    EmptyTreeTrash(Arc<Vec<TreeID>>),
     // The future value cannot depend on the arena for encoding.
     Unknown { kind: u8, data: Arc<Vec<u8>> },
 }
@@ -247,6 +251,10 @@ impl<'a> Value<'a> {
                 value: value.clone(),
             },
             OwnedValue::Future(value) => match value {
+                OwnedFutureValue::EmptyTreeTrash(ids) => {
+                    Value::Future(FutureValue::EmptyTreeTrash(ids.clone()))
+                }
+
                 OwnedFutureValue::Unknown { kind, data } => Value::Future(FutureValue::Unknown {
                     kind: *kind,
                     data: data.as_slice(),
@@ -290,6 +298,10 @@ impl<'a> Value<'a> {
                 value,
             },
             Value::Future(value) => match value {
+                FutureValue::EmptyTreeTrash(ids) => {
+                    OwnedValue::Future(OwnedFutureValue::EmptyTreeTrash(Arc::new(ids.to_vec())))
+                }
+
                 FutureValue::Unknown { kind, data } => {
                     OwnedValue::Future(OwnedFutureValue::Unknown {
                         kind,
@@ -306,6 +318,17 @@ impl<'a> Value<'a> {
     ) -> LoroResult<Self> {
         let bytes = value_reader.read_binary()?;
         let value = match future_kind {
+            FutureValueKind::EmptyTreeTrash => {
+                let mut reader = ValueReader::new(bytes);
+                let n = reader.read_usize()?;
+                let mut ans = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let peer = reader.read_u64()?;
+                    let c = reader.read_i32()?;
+                    ans.push(TreeID::new(peer, c));
+                }
+                Value::Future(FutureValue::EmptyTreeTrash(Arc::new(ans)))
+            }
             FutureValueKind::Unknown(kind) => {
                 Value::Future(FutureValue::Unknown { kind, data: bytes })
             }
@@ -373,6 +396,19 @@ impl<'a> Value<'a> {
         // when decoding, we will use reader.read_binary() to read the binary data.
         // So such as FutureValue::Counter, we should write 0 as the length of binary data first.
         match value {
+            FutureValue::EmptyTreeTrash(nodes) => {
+                let mut writer = ValueWriter::new();
+                writer.write_usize(nodes.len());
+                for n in nodes.iter() {
+                    writer.write_u64(n.peer);
+                    writer.write_i32(n.counter);
+                }
+                (
+                    FutureValueKind::EmptyTreeTrash,
+                    value_writer.write_binary(&writer.finish()),
+                )
+            }
+
             FutureValue::Unknown { kind, data } => (
                 FutureValueKind::Unknown(kind),
                 value_writer.write_binary(data),
@@ -500,8 +536,12 @@ impl EncodedTreeMove {
         Ok(op)
     }
 
-    pub fn from_tree_op<'p, 'a: 'p>(op: &'a TreeOp, registers: &mut EncodedRegisters) -> Self {
+    pub fn from_tree_op<'p, 'a: 'p>(
+        op: &'a TreeOp,
+        registers: &mut EncodedRegisters,
+    ) -> Option<Self> {
         match op {
+            TreeOp::EmptyTrash(_) => None,
             TreeOp::Create {
                 target,
                 parent,
@@ -528,12 +568,12 @@ impl EncodedTreeMove {
                         counter: x.counter,
                     })
                 });
-                EncodedTreeMove {
+                Some(EncodedTreeMove {
                     target_idx,
                     is_parent_null: parent.is_none(),
                     parent_idx: parent_idx.unwrap_or(0),
                     position,
-                }
+                })
             }
             TreeOp::Delete { target } => {
                 let target_idx = registers.tree_id.register(&EncodedTreeID {
@@ -544,12 +584,12 @@ impl EncodedTreeMove {
                     peer_idx: registers.peer.register(&TreeID::delete_root().peer),
                     counter: TreeID::delete_root().counter,
                 });
-                EncodedTreeMove {
+                Some(EncodedTreeMove {
                     target_idx,
                     is_parent_null: false,
                     parent_idx,
                     position: 0,
-                }
+                })
             }
         }
     }

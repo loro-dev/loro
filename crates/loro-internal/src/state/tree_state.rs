@@ -661,12 +661,32 @@ impl TreeState {
         }
     }
 
-    pub fn contains(&self, target: TreeID) -> bool {
-        !self.is_node_deleted(&target)
+    /// Clear the cache of the node, remove it from self.tree and self.children
+    fn clear_nodes(&mut self, nodes: &[TreeID]) {
+        for node in nodes {
+            self.trees.remove(node);
+            self.children.remove(&TreeParentId::Node(*node));
+        }
+        self.children.remove(&TreeParentId::Deleted);
     }
 
-    pub fn contains_internal(&self, target: &TreeID) -> bool {
-        self.trees.contains_key(target)
+    /// Return the nodes that are deleted
+    pub(crate) fn deleted_nodes(&self) -> Vec<TreeID> {
+        let mut q = vec![TreeParentId::Deleted];
+        let mut ans = vec![];
+        while let Some(parent) = q.pop() {
+            if let Some(children) = self.children.get(&parent) {
+                for (_, id) in children.iter() {
+                    q.push(TreeParentId::Node(*id));
+                    ans.push(*id);
+                }
+            }
+        }
+        ans
+    }
+
+    pub fn contains(&self, target: TreeID) -> bool {
+        !self.is_node_deleted(&target)
     }
 
     /// Get the parent of the node, if the node is deleted or does not exist, return None
@@ -919,6 +939,17 @@ impl ContainerState for TreeState {
                         // println!("after {:?}", self.children);
                         continue;
                     }
+                    TreeInternalDiff::EmptyTrash(nodes) => {
+                        self.clear_nodes(nodes);
+                        ans.push(TreeDiffItem {
+                            target,
+                            action: TreeExternalDiff::EmptyTrash,
+                        })
+                    }
+                    TreeInternalDiff::RestoreTrash { parent, position } => {
+                        self.mov(target, *parent, last_move_op, position.clone(), false)
+                            .unwrap();
+                    }
                 };
                 // println!("after {:?}", self.children);
             }
@@ -967,6 +998,13 @@ impl ContainerState for TreeState {
                         }
                         continue;
                     }
+                    TreeInternalDiff::EmptyTrash(nodes) => {
+                        self.clear_nodes(nodes);
+                    }
+                    TreeInternalDiff::RestoreTrash { parent, position } => {
+                        self.mov(target, *parent, last_move_op, position.clone(), false)
+                            .unwrap();
+                    }
                 };
             }
         }
@@ -997,6 +1035,10 @@ impl ContainerState for TreeState {
                 TreeOp::Delete { target } => {
                     let parent = TreeParentId::Deleted;
                     self.mov(*target, parent, raw_op.id_full(), None, true)
+                }
+                TreeOp::EmptyTrash(nodes) => {
+                    self.clear_nodes(nodes);
+                    Ok(())
                 }
             },
             _ => unreachable!(),
@@ -1117,6 +1159,9 @@ impl ContainerState for TreeState {
                     let parent = TreeParentId::Deleted;
                     self.mov(*target, parent, op.id_full(), None, false)
                         .unwrap()
+                }
+                TreeOp::EmptyTrash(nodes) => {
+                    self.clear_nodes(nodes);
                 }
             };
         }

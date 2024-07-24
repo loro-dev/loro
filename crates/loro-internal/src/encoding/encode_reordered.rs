@@ -14,7 +14,10 @@ use tracing::instrument;
 use crate::{
     arena::SharedArena,
     change::{Change, Lamport, Timestamp},
-    container::{idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag},
+    container::{
+        idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag,
+        tree::tree_op::TreeOp,
+    },
     encoding::StateSnapshotDecodeContext,
     op::{FutureInnerContent, Op, OpWithId, SliceRange},
     state::ContainerState,
@@ -1185,6 +1188,7 @@ mod encode {
                     0
                 }
                 TreeOp::Delete { .. } => 0,
+                TreeOp::EmptyTrash(_) => 0,
             },
             crate::op::InnerContent::Future(f) => match f {
                 #[cfg(feature = "counter")]
@@ -1268,7 +1272,12 @@ mod encode {
             }
             crate::op::InnerContent::Tree(t) => {
                 assert_eq!(op.container.get_type(), ContainerType::Tree);
-                Value::TreeMove(EncodedTreeMove::from_tree_op(t, registers))
+
+                if let TreeOp::EmptyTrash(nodes) = t {
+                    Value::Future(FutureValue::EmptyTreeTrash(nodes.clone()))
+                } else {
+                    Value::TreeMove(EncodedTreeMove::from_tree_op(t, registers).unwrap())
+                }
             }
             crate::op::InnerContent::Future(f) => match f {
                 #[cfg(feature = "counter")]
@@ -1397,6 +1406,9 @@ fn decode_op(
                 &arenas.tree_ids.tree_ids,
                 op_id,
             )?),
+            Value::Future(FutureValue::EmptyTreeTrash(nodes)) => {
+                crate::op::InnerContent::Tree(TreeOp::EmptyTrash(nodes))
+            }
             _ => {
                 unreachable!()
             }
