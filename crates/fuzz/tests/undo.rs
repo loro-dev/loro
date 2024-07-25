@@ -3504,570 +3504,84 @@ fn minify() {
         |n, actions| test_multi_sites(n, vec![FuzzTarget::Tree], actions),
         |_, actions| actions.to_vec(),
         vec![
-	    SyncAll,
-	    Handle {
-	        site: 31,
-	        target: 31,
-	        container: 207,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Counter,
-	                ),
-	                bool: true,
-	                key: 3486502863,
-	                pos: 14974415777481871311,
-	                length: 14974415777481871311,
-	                prop: 18446744072901087183,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 213,
-	        target: 163,
-	        container: 255,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Unknown(
-	                        255,
-	                    ),
-	                ),
-	                bool: true,
-	                key: 4294967295,
-	                pos: 67108863,
-	                length: 6599345300442185728,
-	                prop: 3040456637883088859,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    Checkout {
-	        site: 65,
-	        to: 0,
-	    },
-	    SyncAll,
-	    SyncAll,
 	    Handle {
 	        site: 0,
 	        target: 0,
-	        container: 131,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    MovableList,
-	                ),
-	                bool: true,
-	                key: 4294967295,
-	                pos: 18446744073709551615,
-	                length: 2242546323825885183,
-	                prop: 2242545357980376863,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 255,
-	        target: 255,
-	        container: 255,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Text,
-	                ),
-	                bool: true,
-	                key: 4294967049,
-	                pos: 1310719,
-	                length: 18446744073575268352,
-	                prop: 1729382256910270463,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    Undo {
-	        site: 31,
-	        op_len: 2176287547,
-	    },
-	    Handle {
-	        site: 31,
-	        target: 31,
-	        container: 31,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Tree,
-	                ),
-	                bool: true,
-	                key: 792822677,
-	                pos: 9511556229955321855,
-	                length: 18446744069951455023,
-	                prop: 18446744073709551615,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    SyncAll,
-	    Handle {
-	        site: 31,
-	        target: 31,
-	        container: 31,
+	        container: 0,
 	        action: Generic(
 	            GenericAction {
 	                value: I32(
-	                    527965983,
-	                ),
-	                bool: true,
-	                key: 4294967295,
-	                pos: 651062616248025087,
-	                length: 17870283321406127881,
-	                prop: 18446744073709551615,
-	            },
-	        ),
-	    },
-	    Sync {
-	        from: 163,
-	        to: 255,
-	    },
-	    Handle {
-	        site: 31,
-	        target: 120,
-	        container: 31,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Text,
-	                ),
-	                bool: true,
-	                key: 522133279,
-	                pos: 10779248702831402783,
-	                length: 9485706711646962581,
-	                prop: 2305843005721226239,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    Handle {
-	        site: 31,
-	        target: 31,
-	        container: 31,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    522133279,
+	                    67108864,
 	                ),
 	                bool: false,
-	                key: 4294967295,
-	                pos: 18446744073709551615,
-	                length: 18446744073709551615,
-	                prop: 2242545357980376863,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 120,
-	        target: 31,
-	        container: 31,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Counter,
-	                ),
-	                bool: true,
-	                key: 4294967295,
-	                pos: 18446744073709027327,
-	                length: 15355022929519706111,
-	                prop: 18446744073709551523,
+	                key: 5120,
+	                pos: 18374967954648273920,
+	                length: 2244797026329624582,
+	                prop: 18434758041542467359,
 	            },
 	        ),
 	    },
 	    SyncAll,
-	    SyncAll,
 	    Handle {
-	        site: 0,
+	        site: 4,
 	        target: 0,
 	        container: 0,
 	        action: Generic(
 	            GenericAction {
-	                value: Container(
-	                    Unknown(
-	                        255,
-	                    ),
-	                ),
-	                bool: true,
-	                key: 707911478,
-	                pos: 18446744073709551607,
-	                length: 9583660007048690651,
-	                prop: 18446744073564528789,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 0,
-	        target: 0,
-	        container: 0,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Counter,
-	                ),
-	                bool: true,
-	                key: 4294967295,
-	                pos: 18446744073709551615,
-	                length: 2242792614430507007,
-	                prop: 10778762209893752607,
-	            },
-	        ),
-	    },
-	    SyncAllUndo {
-	        site: 65,
-	        op_len: 2751463215,
-	    },
-	    SyncAllUndo {
-	        site: 47,
-	        op_len: 4280287231,
-	    },
-	    Handle {
-	        site: 1,
-	        target: 4,
-	        container: 255,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Unknown(
-	                        255,
-	                    ),
-	                ),
-	                bool: true,
-	                key: 255,
-	                pos: 18446743004262694912,
-	                length: 2387225703656530431,
-	                prop: 18446744035610665249,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    SyncAll,
-	    Handle {
-	        site: 213,
-	        target: 163,
-	        container: 255,
-	        action: Generic(
-	            GenericAction {
 	                value: I32(
-	                    527965983,
-	                ),
-	                bool: true,
-	                key: 4286691203,
-	                pos: 2242545357980376863,
-	                length: 10779248702831402783,
-	                prop: 9485706711646962581,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    Handle {
-	        site: 31,
-	        target: 31,
-	        container: 31,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    -1,
-	                ),
-	                bool: true,
-	                key: 4290772991,
-	                pos: 18444492273895866367,
-	                length: 18446744073709551615,
-	                prop: 18446743677852712959,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    Handle {
-	        site: 0,
-	        target: 0,
-	        container: 0,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Unknown(
-	                        255,
-	                    ),
-	                ),
-	                bool: true,
-	                key: 4146737631,
-	                pos: 15852670688344145919,
-	                length: 10774017683553796411,
-	                prop: 18446744073708985120,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 0,
-	        target: 0,
-	        container: 131,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    MovableList,
-	                ),
-	                bool: true,
-	                key: 654311423,
-	                pos: 18446744073709551615,
-	                length: 2242792614430507007,
-	                prop: 2242545357980376863,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 31,
-	        target: 255,
-	        container: 255,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Text,
-	                ),
-	                bool: true,
-	                key: 4294904073,
-	                pos: 335544319,
-	                length: 18446744039333036032,
-	                prop: 18446744073709551615,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    Handle {
-	        site: 120,
-	        target: 31,
-	        container: 59,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Text,
-	                ),
-	                bool: true,
-	                key: 522133279,
-	                pos: 10778687951896697631,
-	                length: 18386970223563456899,
-	                prop: 18383693675428577237,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    Handle {
-	        site: 31,
-	        target: 31,
-	        container: 31,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    2015305503,
-	                ),
-	                bool: true,
-	                key: 4294967071,
-	                pos: 651333096108457983,
-	                length: 18446744073709488393,
-	                prop: 18446744073709551607,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 213,
-	        target: 163,
-	        container: 255,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    527965983,
-	                ),
-	                bool: true,
-	                key: 4286691203,
-	                pos: 2242545357980376863,
-	                length: 10779248702831402783,
-	                prop: 9485706711646962581,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    Handle {
-	        site: 31,
-	        target: 31,
-	        container: 31,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    -8904929,
-	                ),
-	                bool: true,
-	                key: 4294967295,
-	                pos: 18446744035054845951,
-	                length: 2242792614430507007,
-	                prop: 2242545357980376863,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 31,
-	        target: 255,
-	        container: 255,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Unknown(
-	                        255,
-	                    ),
-	                ),
-	                bool: true,
-	                key: 4160749567,
-	                pos: 18446744073709551615,
-	                length: 18446642734358855679,
-	                prop: 18446744073709551615,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    Handle {
-	        site: 0,
-	        target: 0,
-	        container: 0,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Text,
+	                    0,
 	                ),
 	                bool: false,
-	                key: 889126912,
-	                pos: 18446744073561321951,
-	                length: 71725349863423,
-	                prop: 18444310994424758272,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    Handle {
-	        site: 0,
-	        target: 131,
-	        container: 131,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    -8398026,
-	                ),
-	                bool: true,
-	                key: 4294967295,
-	                pos: 18446744073709551615,
-	                length: 2242545361753210879,
-	                prop: 2242545357980376863,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    SyncAll,
-	    Handle {
-	        site: 9,
-	        target: 9,
-	        container: 255,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Text,
-	                ),
-	                bool: false,
-	                key: 4278190080,
-	                pos: 18446744073709551607,
-	                length: 18420801199931391999,
-	                prop: 2267596630907682815,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    Handle {
-	        site: 31,
-	        target: 31,
-	        container: 31,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Tree,
-	                ),
-	                bool: true,
-	                key: 4281287043,
-	                pos: 3423861436305875967,
-	                length: 18446744073694871551,
-	                prop: 18446744073709551615,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    SyncAll,
-	    Handle {
-	        site: 31,
-	        target: 31,
-	        container: 31,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    522156063,
-	                ),
-	                bool: true,
 	                key: 0,
-	                pos: 2242546323809107968,
-	                length: 10778685111367573279,
-	                prop: 18446744073702577559,
+	                pos: 0,
+	                length: 0,
+	                prop: 18446521976655708160,
 	            },
 	        ),
 	    },
-	    Handle {
-	        site: 31,
-	        target: 31,
-	        container: 31,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    522133279,
-	                ),
-	                bool: true,
-	                key: 4280229752,
-	                pos: 18446744073709551615,
-	                length: 9481649068780656091,
-	                prop: 2242545357995061057,
-	            },
-	        ),
+	    Checkout {
+	        site: 0,
+	        to: 520093727,
 	    },
-	    SyncAll,
-	    SyncAll,
 	    Handle {
-	        site: 9,
-	        target: 9,
-	        container: 255,
+	        site: 126,
+	        target: 0,
+	        container: 0,
 	        action: Generic(
 	            GenericAction {
 	                value: Container(
-	                    Text,
+	                    Counter,
+	                ),
+	                bool: true,
+	                key: 3520188881,
+	                pos: 6872316421537386961,
+	                length: 6872316419617283935,
+	                prop: 6872316419617283935,
+	            },
+	        ),
+	    },
+	    Undo {
+	        site: 95,
+	        op_len: 1600085855,
+	    },
+	    Undo {
+	        site: 95,
+	        op_len: 1600085855,
+	    },
+	    Handle {
+	        site: 0,
+	        target: 0,
+	        container: 0,
+	        action: Generic(
+	            GenericAction {
+	                value: I32(
+	                    262144,
 	                ),
 	                bool: false,
-	                key: 4278190080,
-	                pos: 18446744073709551607,
-	                length: 18420801199931391999,
-	                prop: 2267596630907682815,
+	                key: 20,
+	                pos: 504122782800412436,
+	                length: 2242554153559866112,
+	                prop: 9511555592568334879,
 	            },
 	        ),
 	    },
@@ -4078,191 +3592,46 @@ fn minify() {
 	        container: 0,
 	        action: Generic(
 	            GenericAction {
-	                value: Container(
-	                    Unknown(
-	                        255,
-	                    ),
-	                ),
-	                bool: true,
-	                key: 4294952192,
-	                pos: 231945011199,
-	                length: 72057594037863685,
-	                prop: 6293595036906946614,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 5,
-	        target: 5,
-	        container: 5,
-	        action: Generic(
-	            GenericAction {
 	                value: I32(
-	                    84215045,
+	                    47,
 	                ),
-	                bool: true,
-	                key: 84215045,
-	                pos: 2242545357980391173,
-	                length: 10922800942115921695,
-	                prop: 11817444525671159189,
-	            },
-	        ),
-	    },
-	    SyncAllUndo {
-	        site: 47,
-	        op_len: 4280287231,
-	    },
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    Undo {
-	        site: 87,
-	        op_len: 1465341783,
-	    },
-	    Undo {
-	        site: 5,
-	        op_len: 84215045,
-	    },
-	    Handle {
-	        site: 5,
-	        target: 5,
-	        container: 5,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    84215045,
-	                ),
-	                bool: true,
-	                key: 84215045,
-	                pos: 361700864190383365,
-	                length: 361700864190383365,
-	                prop: 217020505582416945,
+	                bool: false,
+	                key: 0,
+	                pos: 0,
+	                length: 4107282860161892352,
+	                prop: 18390450177879048246,
 	            },
 	        ),
 	    },
 	    Handle {
-	        site: 3,
-	        target: 255,
-	        container: 255,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    771686497,
-	                ),
-	                bool: true,
-	                key: 1633771873,
-	                pos: 3532235001775005793,
-	                length: 3314368269007533876,
-	                prop: 2242545357984719201,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 219,
-	        target: 169,
-	        container: 91,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    -42243,
-	                ),
-	                bool: true,
-	                key: 4278190079,
-	                pos: 651052016268738559,
-	                length: 18377384225446139657,
-	                prop: 18446744073709551615,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 9,
-	        target: 9,
-	        container: 9,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Unknown(
-	                        255,
-	                    ),
-	                ),
-	                bool: true,
-	                key: 3,
-	                pos: 8863084062370168832,
-	                length: 18446499982128185343,
-	                prop: 18446744073709551615,
-	            },
-	        ),
-	    },
-	    Sync {
-	        from: 177,
-	        to: 177,
-	    },
-	    Sync {
-	        from: 173,
-	        to: 173,
-	    },
-	    Sync {
-	        from: 177,
-	        to: 177,
-	    },
-	    Handle {
-	        site: 33,
+	        site: 48,
 	        target: 0,
+	        container: 31,
+	        action: Generic(
+	            GenericAction {
+	                value: I32(
+	                    49,
+	                ),
+	                bool: true,
+	                key: 126,
+	                pos: 74600806609965312,
+	                length: 72340176696836353,
+	                prop: 6872316014307115265,
+	            },
+	        ),
+	    },
+	    Handle {
+	        site: 31,
+	        target: 126,
 	        container: 0,
 	        action: Generic(
 	            GenericAction {
 	                value: Container(
-	                    Unknown(
-	                        95,
-	                    ),
+	                    Counter,
 	                ),
 	                bool: true,
-	                key: 1600085855,
-	                pos: 6872316419617283935,
-	                length: 6872316419617283935,
-	                prop: 6872316419617283935,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    SyncAllUndo {
-	        site: 34,
-	        op_len: 4280481594,
-	    },
-	    SyncAll,
-	    SyncAll,
-	    SyncAllUndo {
-	        site: 219,
-	        op_len: 1004219995,
-	    },
-	    Checkout {
-	        site: 247,
-	        to: 4294901794,
-	    },
-	    SyncAll,
-	    Undo {
-	        site: 87,
-	        op_len: 3683997527,
-	    },
-	    SyncAllUndo {
-	        site: 34,
-	        op_len: 3684040695,
-	    },
-	    Handle {
-	        site: 5,
-	        target: 5,
-	        container: 5,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    1600085855,
-	                ),
-	                bool: true,
-	                key: 1600085855,
-	                pos: 6872316419617283935,
+	                key: 3520188881,
+	                pos: 6872316911163658705,
 	                length: 6872316419617283935,
 	                prop: 6872316419617283935,
 	            },
@@ -4276,247 +3645,55 @@ fn minify() {
 	        site: 95,
 	        op_len: 1600085855,
 	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    SyncAllUndo {
-	        site: 34,
-	        op_len: 4280481594,
-	    },
-	    SyncAll,
-	    SyncAll,
-	    SyncAllUndo {
-	        site: 219,
-	        op_len: 1004219995,
-	    },
-	    Checkout {
-	        site: 247,
-	        to: 4294901794,
-	    },
-	    SyncAll,
-	    Checkout {
-	        site: 219,
-	        to: 3141218360,
-	    },
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    SyncAllUndo {
-	        site: 255,
-	        op_len: 1469749914,
-	    },
-	    Undo {
-	        site: 5,
-	        op_len: 84215045,
-	    },
 	    Handle {
-	        site: 5,
-	        target: 5,
-	        container: 5,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    84215045,
-	                ),
-	                bool: true,
-	                key: 84215045,
-	                pos: 361700864190383365,
-	                length: 361700864190383365,
-	                prop: 217020505582416945,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 3,
-	        target: 255,
-	        container: 255,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    771686497,
-	                ),
-	                bool: true,
-	                key: 1633771873,
-	                pos: 3532235001775005793,
-	                length: 3314368269007533876,
-	                prop: 2242545357984719201,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 219,
-	        target: 169,
-	        container: 91,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    -42243,
-	                ),
-	                bool: true,
-	                key: 4278190079,
-	                pos: 651052016268738559,
-	                length: 18377384225446139657,
-	                prop: 18446744073709551615,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 9,
-	        target: 9,
-	        container: 9,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Unknown(
-	                        255,
-	                    ),
-	                ),
-	                bool: true,
-	                key: 3,
-	                pos: 8863084062370168832,
-	                length: 18446499982128185343,
-	                prop: 18446744073709551615,
-	            },
-	        ),
-	    },
-	    Sync {
-	        from: 177,
-	        to: 177,
-	    },
-	    Sync {
-	        from: 173,
-	        to: 173,
-	    },
-	    Sync {
-	        from: 177,
-	        to: 177,
-	    },
-	    Handle {
-	        site: 33,
+	        site: 0,
 	        target: 0,
 	        container: 0,
 	        action: Generic(
 	            GenericAction {
-	                value: Container(
-	                    Unknown(
-	                        95,
-	                    ),
+	                value: I32(
+	                    67108864,
 	                ),
-	                bool: true,
-	                key: 1600085855,
-	                pos: 6872316419617283935,
-	                length: 6872316419617283935,
-	                prop: 6872316419617283935,
+	                bool: false,
+	                key: 5120,
+	                pos: 18374967954648273920,
+	                length: 2244797026329624582,
+	                prop: 18434758041542467359,
 	            },
 	        ),
 	    },
 	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    SyncAllUndo {
-	        site: 34,
-	        op_len: 4280481594,
-	    },
-	    SyncAll,
-	    SyncAll,
-	    SyncAllUndo {
-	        site: 219,
-	        op_len: 1004219995,
-	    },
-	    Checkout {
-	        site: 247,
-	        to: 4294901794,
-	    },
-	    SyncAll,
-	    Undo {
-	        site: 87,
-	        op_len: 3683997527,
-	    },
-	    SyncAllUndo {
-	        site: 34,
-	        op_len: 3684040695,
-	    },
 	    Handle {
-	        site: 5,
-	        target: 5,
-	        container: 5,
+	        site: 4,
+	        target: 0,
+	        container: 0,
 	        action: Generic(
 	            GenericAction {
 	                value: I32(
-	                    1600085855,
+	                    12032,
 	                ),
-	                bool: true,
-	                key: 1600085855,
-	                pos: 6872316419617283935,
-	                length: 6872316419617283935,
-	                prop: 6872316419617283935,
+	                bool: false,
+	                key: 0,
+	                pos: 0,
+	                length: 0,
+	                prop: 4035506741100688953,
 	            },
 	        ),
 	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    SyncAll,
-	    SyncAll,
 	    Handle {
-	        site: 9,
-	        target: 9,
-	        container: 9,
+	        site: 31,
+	        target: 48,
+	        container: 0,
 	        action: Generic(
 	            GenericAction {
 	                value: I32(
-	                    757926153,
+	                    49,
 	                ),
 	                bool: true,
-	                key: 1463495981,
-	                pos: 6871327012255237381,
-	                length: 6872316419617283935,
-	                prop: 6872316419617283935,
+	                key: 126,
+	                pos: 74600806609965312,
+	                length: 72340176696836353,
+	                prop: 6872316014307115265,
 	            },
 	        ),
 	    },
@@ -4538,49 +3715,76 @@ fn minify() {
 	    },
 	    Undo {
 	        site: 95,
-	        op_len: 1600085855,
+	        op_len: 3514860497,
 	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
+	    Handle {
+	        site: 0,
+	        target: 0,
+	        container: 0,
+	        action: Generic(
+	            GenericAction {
+	                value: I32(
+	                    1802116895,
+	                ),
+	                bool: false,
+	                key: 1364317546,
+	                pos: 18446744070778868049,
+	                length: 5859553999040020479,
+	                prop: 18388060935954121537,
+	            },
+	        ),
 	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 2509594463,
-	    },
-	    Undo {
-	        site: 126,
-	        op_len: 3676700672,
-	    },
-	    SyncAll,
-	    Checkout {
-	        site: 223,
-	        to: 4287993237,
-	    },
-	    SyncAll,
-	    SyncAllUndo {
-	        site: 131,
-	        op_len: 586627618,
-	    },
-	    SyncAll,
-	    SyncAll,
-	    SyncAll,
-	    Undo {
-	        site: 219,
-	        op_len: 4294967099,
+	    Handle {
+	        site: 0,
+	        target: 0,
+	        container: 0,
+	        action: Generic(
+	            GenericAction {
+	                value: I32(
+	                    1,
+	                ),
+	                bool: false,
+	                key: 1310720,
+	                pos: 72057594022461440,
+	                length: 2818972455387793151,
+	                prop: 15378319838935981855,
+	            },
+	        ),
 	    },
 	    SyncAll,
-	    Undo {
-	        site: 255,
-	        op_len: 3080191,
+	    Handle {
+	        site: 0,
+	        target: 4,
+	        container: 0,
+	        action: Generic(
+	            GenericAction {
+	                value: I32(
+	                    0,
+	                ),
+	                bool: false,
+	                key: 0,
+	                pos: 0,
+	                length: 0,
+	                prop: 18390450177879048192,
+	            },
+	        ),
+	    },
+	    Handle {
+	        site: 49,
+	        target: 0,
+	        container: 31,
+	        action: Generic(
+	            GenericAction {
+	                value: I32(
+	                    520093696,
+	                ),
+	                bool: false,
+	                key: 0,
+	                pos: 15119096123158032849,
+	                length: 6904530402834239953,
+	                prop: 15131918136214773599,
+	            },
+	        ),
 	    },
 	],
     )

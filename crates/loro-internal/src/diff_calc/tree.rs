@@ -194,7 +194,7 @@ impl TreeDiffCalculator {
                 }
             }
         }
-        tracing::debug!("cache tree {:?}", tree_cache);
+        // tracing::debug!("cache tree {:?}", tree_cache);
         tracing::info!("retreat ops {:?}", retreat_ops);
         for op in retreat_ops.into_iter().sorted().rev() {
             if let TreeOp::EmptyTrash(nodes) = &op.op {
@@ -454,11 +454,10 @@ impl TreeCacheForDiff {
             for n in nodes.iter() {
                 let entry = self.tree.entry(*n).or_default();
                 if let Some(op) = entry.last() {
-                    if op.is_empty_trash() {
-                        continue;
+                    if let TreeOp::Delete { .. } = &op.op {
+                        entry.insert(node.clone());
                     }
                 }
-                entry.insert(node.clone());
             }
 
             true

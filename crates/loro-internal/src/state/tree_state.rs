@@ -621,6 +621,8 @@ impl TreeState {
 
         let entry = self.children.entry(parent).or_default();
         let node_position = NodePosition::new(position.clone().unwrap_or_default(), id.idlp());
+        tracing::debug!("mov {:?} {:?} {:?}", target, parent, node_position);
+
         debug_assert!(!entry.has_child(&node_position));
         entry.insert_child(node_position, target);
 
