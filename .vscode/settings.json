@@ -43,9 +43,7 @@
     "RUST_BACKTRACE": "full",
     "DEBUG": "*"
   },
-  "rust-analyzer.cargo.features": [
-    "test_utils"
-  ],
+  "rust-analyzer.cargo.features": ["test_utils"],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
   "rust-analyzer.server.extraEnv": {
     "RUSTUP_TOOLCHAIN": "stable"
@@ -72,5 +70,8 @@
   "[typescript]": {
     "editor.defaultFormatter": "denoland.vscode-deno"
   },
-  "vitest.enable": true
+  "vitest.enable": true,
+  "[shellscript]": {
+    "editor.defaultFormatter": "foxundermoon.shell-format"
+  }
 }
