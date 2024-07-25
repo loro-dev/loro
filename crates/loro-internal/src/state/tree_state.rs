@@ -618,7 +618,8 @@ impl TreeState {
             // remove old position
             self.delete_position(&old_parent, target);
         }
-
+        // tracing::info!("trees {:?}", self.trees);
+        // tracing::info!("children {:?}", self.children);
         let entry = self.children.entry(parent).or_default();
         let node_position = NodePosition::new(position.clone().unwrap_or_default(), id.idlp());
         tracing::debug!("mov {:?} {:?} {:?}", target, parent, node_position);
@@ -664,8 +665,12 @@ impl TreeState {
     /// Clear the cache of the node, remove it from self.tree and self.children
     fn clear_nodes(&mut self, nodes: &[TreeID]) {
         for node in nodes {
-            self.trees.remove(node);
-            self.children.remove(&TreeParentId::Node(*node));
+            // Only delete the node that is not deleted
+            // Because concurrent op may bring back the emptied node
+            if self.is_node_deleted(node) {
+                self.trees.remove(node);
+                self.children.remove(&TreeParentId::Node(*node));
+            }
         }
         if let Some(deleted) = self.children.get_mut(&TreeParentId::Deleted) {
             for n in nodes {

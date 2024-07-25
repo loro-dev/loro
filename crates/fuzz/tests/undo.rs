@@ -3587,174 +3587,8 @@ fn minify() {
 	    },
 	    SyncAll,
 	    Handle {
-	        site: 0,
+	        site: 1,
 	        target: 0,
-	        container: 0,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    47,
-	                ),
-	                bool: false,
-	                key: 0,
-	                pos: 0,
-	                length: 4107282860161892352,
-	                prop: 18390450177879048246,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 48,
-	        target: 0,
-	        container: 31,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    49,
-	                ),
-	                bool: true,
-	                key: 126,
-	                pos: 74600806609965312,
-	                length: 72340176696836353,
-	                prop: 6872316014307115265,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 31,
-	        target: 126,
-	        container: 0,
-	        action: Generic(
-	            GenericAction {
-	                value: Container(
-	                    Counter,
-	                ),
-	                bool: true,
-	                key: 3520188881,
-	                pos: 6872316911163658705,
-	                length: 6872316419617283935,
-	                prop: 6872316419617283935,
-	            },
-	        ),
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Handle {
-	        site: 0,
-	        target: 0,
-	        container: 0,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    67108864,
-	                ),
-	                bool: false,
-	                key: 5120,
-	                pos: 18374967954648273920,
-	                length: 2244797026329624582,
-	                prop: 18434758041542467359,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    Handle {
-	        site: 4,
-	        target: 0,
-	        container: 0,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    12032,
-	                ),
-	                bool: false,
-	                key: 0,
-	                pos: 0,
-	                length: 0,
-	                prop: 4035506741100688953,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 31,
-	        target: 48,
-	        container: 0,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    49,
-	                ),
-	                bool: true,
-	                key: 126,
-	                pos: 74600806609965312,
-	                length: 72340176696836353,
-	                prop: 6872316014307115265,
-	            },
-	        ),
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 1600085855,
-	    },
-	    Undo {
-	        site: 95,
-	        op_len: 3514860497,
-	    },
-	    Handle {
-	        site: 0,
-	        target: 0,
-	        container: 0,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    1802116895,
-	                ),
-	                bool: false,
-	                key: 1364317546,
-	                pos: 18446744070778868049,
-	                length: 5859553999040020479,
-	                prop: 18388060935954121537,
-	            },
-	        ),
-	    },
-	    Handle {
-	        site: 0,
-	        target: 0,
-	        container: 0,
-	        action: Generic(
-	            GenericAction {
-	                value: I32(
-	                    1,
-	                ),
-	                bool: false,
-	                key: 1310720,
-	                pos: 72057594022461440,
-	                length: 2818972455387793151,
-	                prop: 15378319838935981855,
-	            },
-	        ),
-	    },
-	    SyncAll,
-	    Handle {
-	        site: 0,
-	        target: 4,
 	        container: 0,
 	        action: Generic(
 	            GenericAction {
@@ -3765,26 +3599,509 @@ fn minify() {
 	                key: 0,
 	                pos: 0,
 	                length: 0,
-	                prop: 18390450177879048192,
+	                prop: 18446743215806611456,
 	            },
 	        ),
 	    },
 	    Handle {
-	        site: 49,
+	        site: 31,
 	        target: 0,
+	        container: 0,
+	        action: Generic(
+	            GenericAction {
+	                value: I32(
+	                    8265472,
+	                ),
+	                bool: false,
+	                key: 4057006080,
+	                pos: 15119047744645878225,
+	                length: 6872442255489225169,
+	                prop: 8319097799910055713,
+	            },
+	        ),
+	    },
+	    Undo {
+	        site: 115,
+	        op_len: 1936946035,
+	    },
+	    Undo {
+	        site: 95,
+	        op_len: 1600085855,
+	    },
+	    Undo {
+	        site: 95,
+	        op_len: 1600085855,
+	    },
+	    Undo {
+	        site: 95,
+	        op_len: 1600085855,
+	    },
+	    Undo {
+	        site: 95,
+	        op_len: 1600085855,
+	    },
+	    Undo {
+	        site: 95,
+	        op_len: 3520159583,
+	    },
+	    Sync {
+	        from: 209,
+	        to: 209,
+	    },
+	    Sync {
+	        from: 95,
+	        to: 69,
+	    },
+	    Undo {
+	        site: 95,
+	        op_len: 1600085855,
+	    },
+	    Handle {
+	        site: 4,
+	        target: 0,
+	        container: 0,
+	        action: Generic(
+	            GenericAction {
+	                value: Container(
+	                    Unknown(
+	                        255,
+	                    ),
+	                ),
+	                bool: true,
+	                key: 4294967295,
+	                pos: 18446744073709551615,
+	                length: 18446744069481824255,
+	                prop: 18446744073709499393,
+	            },
+	        ),
+	    },
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    Checkout {
+	        site: 255,
+	        to: 4294967295,
+	    },
+	    SyncAll,
+	    SyncAll,
+	    Handle {
+	        site: 209,
+	        target: 209,
+	        container: 209,
+	        action: Generic(
+	            GenericAction {
+	                value: Container(
+	                    Unknown(
+	                        255,
+	                    ),
+	                ),
+	                bool: true,
+	                key: 4294967295,
+	                pos: 18446744073709551615,
+	                length: 10778762209893752607,
+	                prop: 10808522557456581119,
+	            },
+	        ),
+	    },
+	    SyncAllUndo {
+	        site: 65,
+	        op_len: 2751463215,
+	    },
+	    SyncAllUndo {
+	        site: 47,
+	        op_len: 4280287231,
+	    },
+	    SyncAll,
+	    SyncAll,
+	    Handle {
+	        site: 31,
+	        target: 31,
+	        container: 219,
+	        action: Generic(
+	            GenericAction {
+	                value: Container(
+	                    Map,
+	                ),
+	                bool: true,
+	                key: 732168191,
+	                pos: 2305842113780110847,
+	                length: 18446744073709551615,
+	                prop: 18446743171766419455,
+	            },
+	        ),
+	    },
+	    SyncAll,
+	    SyncAll,
+	    Handle {
+	        site: 31,
+	        target: 31,
+	        container: 31,
+	        action: Generic(
+	            GenericAction {
+	                value: Container(
+	                    Unknown(
+	                        255,
+	                    ),
+	                ),
+	                bool: true,
+	                key: 522133279,
+	                pos: 13300703743224175391,
+	                length: 18446744069951406467,
+	                prop: 2242545357980376863,
+	            },
+	        ),
+	    },
+	    Handle {
+	        site: 213,
+	        target: 163,
+	        container: 255,
+	        action: Generic(
+	            GenericAction {
+	                value: I32(
+	                    -618717409,
+	                ),
+	                bool: true,
+	                key: 1785227882,
+	                pos: 3144638436317101127,
+	                length: 2305842113780110847,
+	                prop: 18446744073709551615,
+	            },
+	        ),
+	    },
+	    SyncAll,
+	    Handle {
+	        site: 219,
+	        target: 149,
+	        container: 149,
+	        action: Generic(
+	            GenericAction {
+	                value: Container(
+	                    Unknown(
+	                        255,
+	                    ),
+	                ),
+	                bool: true,
+	                key: 522190847,
+	                pos: 2242545504009264927,
+	                length: 17870036066449170207,
+	                prop: 18446744073709551615,
+	            },
+	        ),
+	    },
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    Handle {
+	        site: 31,
+	        target: 219,
+	        container: 149,
+	        action: Generic(
+	            GenericAction {
+	                value: Container(
+	                    Map,
+	                ),
+	                bool: true,
+	                key: 4281050111,
+	                pos: 18383693675428577237,
+	                length: 10199842953363435519,
+	                prop: 10778762209893780877,
+	            },
+	        ),
+	    },
+	    SyncAllUndo {
+	        site: 65,
+	        op_len: 4294909951,
+	    },
+	    Handle {
+	        site: 31,
+	        target: 31,
 	        container: 31,
 	        action: Generic(
 	            GenericAction {
 	                value: I32(
-	                    520093696,
+	                    -719847649,
 	                ),
-	                bool: false,
-	                key: 0,
-	                pos: 15119096123158032849,
-	                length: 6904530402834239953,
-	                prop: 15131918136214773599,
+	                bool: true,
+	                key: 536870911,
+	                pos: 7668059904415833887,
+	                length: 18446515068138383976,
+	                prop: 18388060938407193507,
 	            },
 	        ),
+	    },
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    Handle {
+	        site: 219,
+	        target: 149,
+	        container: 149,
+	        action: Generic(
+	            GenericAction {
+	                value: Container(
+	                    Unknown(
+	                        255,
+	                    ),
+	                ),
+	                bool: true,
+	                key: 522190847,
+	                pos: 2242545504009264927,
+	                length: 17870036066449170207,
+	                prop: 18446744073709551615,
+	            },
+	        ),
+	    },
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    Handle {
+	        site: 31,
+	        target: 219,
+	        container: 149,
+	        action: Generic(
+	            GenericAction {
+	                value: Container(
+	                    Map,
+	                ),
+	                bool: true,
+	                key: 4281050111,
+	                pos: 18383693675428577237,
+	                length: 2242545357995114495,
+	                prop: 1729135000460140319,
+	            },
+	        ),
+	    },
+	    Undo {
+	        site: 87,
+	        op_len: 84215127,
+	    },
+	    Handle {
+	        site: 5,
+	        target: 5,
+	        container: 5,
+	        action: Generic(
+	            GenericAction {
+	                value: I32(
+	                    84215040,
+	                ),
+	                bool: true,
+	                key: 1465341701,
+	                pos: 6293693992959170391,
+	                length: 18376099373672388439,
+	                prop: 15789373037110886399,
+	            },
+	        ),
+	    },
+	    Undo {
+	        site: 71,
+	        op_len: 4281317500,
+	    },
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    Undo {
+	        site: 31,
+	        op_len: 3676249887,
+	    },
+	    Handle {
+	        site: 31,
+	        target: 31,
+	        container: 31,
+	        action: Generic(
+	            GenericAction {
+	                value: I32(
+	                    522133279,
+	                ),
+	                bool: true,
+	                key: 522133368,
+	                pos: 2242545357980376863,
+	                length: 18446743107869875999,
+	                prop: 18446744073709551615,
+	            },
+	        ),
+	    },
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    Handle {
+	        site: 31,
+	        target: 31,
+	        container: 219,
+	        action: Generic(
+	            GenericAction {
+	                value: I32(
+	                    -1778384897,
+	                ),
+	                bool: true,
+	                key: 4288020373,
+	                pos: 3144638436309304215,
+	                length: 2305842113780110847,
+	                prop: 18446744073709551615,
+	            },
+	        ),
+	    },
+	    SyncAll,
+	    Handle {
+	        site: 219,
+	        target: 149,
+	        container: 149,
+	        action: Generic(
+	            GenericAction {
+	                value: Container(
+	                    Unknown(
+	                        255,
+	                    ),
+	                ),
+	                bool: true,
+	                key: 4292214571,
+	                pos: 18446743111636823939,
+	                length: 18446744073709551615,
+	                prop: 18446744073709497855,
+	            },
+	        ),
+	    },
+	    Handle {
+	        site: 255,
+	        target: 255,
+	        container: 31,
+	        action: Generic(
+	            GenericAction {
+	                value: I32(
+	                    522133279,
+	                ),
+	                bool: true,
+	                key: 3575119647,
+	                pos: 2242545361753210787,
+	                length: 13300703743224175391,
+	                prop: 18446744069951406467,
+	            },
+	        ),
+	    },
+	    Handle {
+	        site: 31,
+	        target: 31,
+	        container: 31,
+	        action: Generic(
+	            GenericAction {
+	                value: Container(
+	                    Text,
+	                ),
+	                bool: false,
+	                key: 522133248,
+	                pos: 7667495370906869535,
+	                length: 3144638436317101127,
+	                prop: 2305842113780110847,
+	            },
+	        ),
+	    },
+	    SyncAll,
+	    SyncAll,
+	    Handle {
+	        site: 31,
+	        target: 31,
+	        container: 31,
+	        action: Generic(
+	            GenericAction {
+	                value: Container(
+	                    Unknown(
+	                        255,
+	                    ),
+	                ),
+	                bool: true,
+	                key: 4280287231,
+	                pos: 4692503555269926911,
+	                length: 2267596630907625247,
+	                prop: 18446744073709027103,
+	            },
+	        ),
+	    },
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    SyncAll,
+	    Handle {
+	        site: 31,
+	        target: 31,
+	        container: 31,
+	        action: Generic(
+	            GenericAction {
+	                value: Container(
+	                    Tree,
+	                ),
+	                bool: true,
+	                key: 4294913857,
+	                pos: 18388060938407193507,
+	                length: 2305842665616252927,
+	                prop: 10199964370168810783,
+	            },
+	        ),
+	    },
+	    SyncAllUndo {
+	        site: 13,
+	        op_len: 2374864269,
+	    },
+	    SyncAllUndo {
+	        site: 141,
+	        op_len: 2374864269,
+	    },
+	    SyncAllUndo {
+	        site: 141,
+	        op_len: 2374864269,
+	    },
+	    SyncAllUndo {
+	        site: 141,
+	        op_len: 2374864269,
+	    },
+	    SyncAllUndo {
+	        site: 141,
+	        op_len: 2374864269,
+	    },
+	    SyncAllUndo {
+	        site: 141,
+	        op_len: 522161549,
+	    },
+	    Handle {
+	        site: 31,
+	        target: 31,
+	        container: 255,
+	        action: Generic(
+	            GenericAction {
+	                value: Container(
+	                    Text,
+	                ),
+	                bool: true,
+	                key: 1809522463,
+	                pos: 3438634961667123818,
+	                length: 9511556229955321855,
+	                prop: 8319119876378853167,
+	            },
+	        ),
+	    },
+	    Undo {
+	        site: 95,
+	        op_len: 1600085855,
+	    },
+	    Undo {
+	        site: 95,
+	        op_len: 1600085855,
+	    },
+	    Undo {
+	        site: 95,
+	        op_len: 1600085855,
+	    },
+	    Undo {
+	        site: 95,
+	        op_len: 1600085855,
+	    },
+	    Undo {
+	        site: 95,
+	        op_len: 3520188767,
 	    },
 	],
     )
