@@ -16,7 +16,7 @@ use crate::{
     handler::ValueOrHandler,
     op::{Op, RawOp, RawOpContent},
     txn::Transaction,
-    DocState, InternalString, LoroValue, ToJson,
+    DocState, InternalString, LoroValue,
 };
 
 use super::ContainerState;
@@ -220,10 +220,6 @@ impl MapState {
             }
             (Some(x), false) => {
                 if let Some(_) = x.value {
-                    for key in self.map.iter() {
-                        println!("{} {}", key.0, key.1.value.is_some());
-                    }
-                    println!("{}", x.value.unwrap().to_json().to_string());
                     self.size -= 1;
                 }
             }
