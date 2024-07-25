@@ -194,22 +194,24 @@ impl TreeDiffCalculator {
                 }
             }
         }
+        tracing::debug!("cache tree {:?}", tree_cache);
         tracing::info!("retreat ops {:?}", retreat_ops);
         for op in retreat_ops.into_iter().sorted().rev() {
             if let TreeOp::EmptyTrash(nodes) = &op.op {
                 // TODO: retreat
                 for node in nodes.iter() {
-                    tree_cache.tree.get_mut(node).unwrap().remove(&op);
-                    let (old_parent, fi, id) = tree_cache.get_parent_with_id(*node);
-                    debug_assert!(fi.is_none());
-                    diffs.push(TreeDeltaItem {
-                        target: *node,
-                        action: TreeInternalDiff::RestoreTrash {
-                            parent: old_parent,
-                            position: fi,
-                        },
-                        last_effective_move_op_id: id,
-                    });
+                    if tree_cache.tree.get_mut(node).unwrap().remove(&op) {
+                        // Only the first time the node is removed, we need to restore it.
+                        let (old_parent, fi, id) = tree_cache.get_parent_with_id(*node);
+                        diffs.push(TreeDeltaItem {
+                            target: *node,
+                            action: TreeInternalDiff::RestoreTrash {
+                                parent: old_parent,
+                                position: fi,
+                            },
+                            last_effective_move_op_id: id,
+                        });
+                    }
                 }
                 tree_cache.current_vv.shrink_to_exclude(IdSpan::new(
                     op.id.peer,

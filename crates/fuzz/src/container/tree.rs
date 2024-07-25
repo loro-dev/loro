@@ -269,7 +269,10 @@ impl Actionable for TreeAction {
                     peer: before.0,
                     counter: before.1,
                 };
-                tree.mov_before(target, before).unwrap();
+                if let Err(LoroError::TreeError(e)) = tree.mov_before(target, before) {
+                    // cycle move
+                    tracing::warn!("move error {}", e);
+                }
                 None
             }
             TreeActionInner::MoveAfter { target, after } => {
@@ -281,7 +284,10 @@ impl Actionable for TreeAction {
                     peer: after.0,
                     counter: after.1,
                 };
-                tree.mov_after(target, after).unwrap();
+                if let Err(LoroError::TreeError(e)) = tree.mov_after(target, after) {
+                    // cycle move
+                    tracing::warn!("move error {}", e);
+                }
                 None
             }
             TreeActionInner::Meta { meta: (k, v) } => {

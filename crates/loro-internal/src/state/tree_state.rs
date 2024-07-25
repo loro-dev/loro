@@ -173,9 +173,7 @@ impl NodeChildren {
             NodeChildren::Vec(v) => {
                 v.retain(|(_, id)| id != target);
             }
-            NodeChildren::BTree(v) => {
-                v.delete_child(target);
-            }
+            NodeChildren::BTree(v) => v.delete_child(target),
         }
     }
 
@@ -249,7 +247,7 @@ mod btree {
         rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
         BTree, BTreeTrait, Cursor, FindResult, LeafIndex, LengthFinder, Query, UseLengthFinder,
     };
-    use loro_common::TreeID;
+    use loro_common::{LoroResult, LoroTreeError, TreeID};
 
     use super::NodePosition;
 
@@ -284,7 +282,7 @@ mod btree {
             if let Some(leaf) = self.id_to_leaf_index.remove(id) {
                 self.tree.remove_leaf(Cursor { leaf, offset: 0 });
             } else {
-                panic!("The id is not in the tree");
+                tracing::warn!("delete_child: id not found {:?}", id);
             }
         }
 
@@ -667,7 +665,11 @@ impl TreeState {
             self.trees.remove(node);
             self.children.remove(&TreeParentId::Node(*node));
         }
-        self.children.remove(&TreeParentId::Deleted);
+        if let Some(deleted) = self.children.get_mut(&TreeParentId::Deleted) {
+            for n in nodes {
+                deleted.delete_child(n);
+            }
+        }
     }
 
     /// Return the nodes that are deleted
@@ -875,7 +877,7 @@ impl ContainerState for TreeState {
             // println!("before {:?}", self.children);
             // assert never cause cycle move
             for diff in tree.diff.iter() {
-                // println!("\ndiff {:?}", diff);
+                // tracing!("\ndiff {:?}", diff);
                 let last_move_op = diff.last_effective_move_op_id;
                 let target = diff.target;
                 // create associated metadata container

@@ -8075,6 +8075,119 @@ fn debug_child_position() {
 }
 
 #[test]
+fn child_position_same() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Tree],
+        &mut [
+            Handle {
+                site: 255,
+                target: 255,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 4294967049,
+                    pos: 1310719,
+                    length: 18446744073575268352,
+                    prop: 1729382256910270463,
+                }),
+            },
+            Handle {
+                site: 120,
+                target: 31,
+                container: 31,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 18446744073709027327,
+                    length: 15355022929519706111,
+                    prop: 18446744073709551523,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 707911478,
+                    pos: 18446744073709551607,
+                    length: 9583660007048690651,
+                    prop: 18446744073564528789,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 18446744073709551615,
+                    length: 2242792614430507007,
+                    prop: 10778762209893752607,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: false,
+                    key: 889126912,
+                    pos: 18446744073561321951,
+                    length: 71725349863423,
+                    prop: 18444310994424758272,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 33,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(95)),
+                    bool: true,
+                    key: 1600085855,
+                    pos: 6872316419617283935,
+                    length: 6872316419617283935,
+                    prop: 6872316419617283935,
+                }),
+            },
+            Undo {
+                site: 95,
+                op_len: 1600085855,
+            },
+            Undo {
+                site: 95,
+                op_len: 1600085855,
+            },
+            Undo {
+                site: 95,
+                op_len: 1600085855,
+            },
+            Undo {
+                site: 95,
+                op_len: 1600085855,
+            },
+            Undo {
+                site: 95,
+                op_len: 1600085855,
+            },
+            Undo {
+                site: 95,
+                op_len: 1600085855,
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,
