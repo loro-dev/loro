@@ -3758,17 +3758,16 @@ impl MapHandler {
         self.insert_container(key, child)
     }
 
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.get(key).is_some()
+    }
+
     pub fn len(&self) -> usize {
         match &self.inner {
             MaybeDetached::Detached(m) => m.try_lock().unwrap().value.len(),
-            MaybeDetached::Attached(a) => a.with_state(|state| {
-                state
-                    .as_map_state()
-                    .unwrap()
-                    .iter()
-                    .filter(|&(_, v)| v.value.is_some())
-                    .count()
-            }),
+            MaybeDetached::Attached(a) => {
+                a.with_state(|state| state.as_map_state().unwrap().size())
+            }
         }
     }
 

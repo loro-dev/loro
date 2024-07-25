@@ -16,7 +16,7 @@ use crate::{
     handler::ValueOrHandler,
     op::{Op, RawOp, RawOpContent},
     txn::Transaction,
-    DocState, InternalString, LoroValue,
+    DocState, InternalString, LoroValue, ToJson,
 };
 
 use super::ContainerState;
@@ -25,6 +25,7 @@ use super::ContainerState;
 pub struct MapState {
     idx: ContainerIdx,
     map: FxHashMap<InternalString, MapValue>,
+    size: usize,
 }
 
 impl ContainerState for MapState {
@@ -52,7 +53,7 @@ impl ContainerState for MapState {
         };
         let mut resolved_delta = ResolvedMapDelta::new();
         for (key, value) in delta.updated.into_iter() {
-            self.map.insert(key.clone(), value.clone());
+            self.insert(key.clone(), value.clone());
             resolved_delta = resolved_delta.with_entry(
                 key,
                 ResolvedMapValue {
@@ -183,7 +184,7 @@ impl ContainerState for MapState {
             );
 
             let content = op.op.content.as_map().unwrap();
-            self.map.insert(
+            self.insert(
                 content.key.clone(),
                 MapValue {
                     value: content.value.clone(),
@@ -201,26 +202,48 @@ impl MapState {
         Self {
             idx,
             map: FxHashMap::default(),
+            size: 0,
         }
     }
 
     pub fn insert(&mut self, key: InternalString, value: MapValue) {
-        self.map.insert(key.clone(), value);
+        let value_yes = value.value.is_some();
+        let result = self.map.insert(key.clone(), value);
+        match (result, value_yes) {
+            (Some(x), true) => {
+                if let None = x.value {
+                    self.size += 1;
+                }
+            }
+            (None, true) => {
+                self.size += 1;
+            }
+            (Some(x), false) => {
+                if let Some(_) = x.value {
+                    for key in self.map.iter() {
+                        println!("{} {}", key.0, key.1.value.is_some());
+                    }
+                    println!("{}", x.value.unwrap().to_json().to_string());
+                    self.size -= 1;
+                }
+            }
+            _ => {}
+        };
     }
 
     pub fn iter(&self) -> std::collections::hash_map::Iter<'_, InternalString, MapValue> {
         self.map.iter()
     }
 
-    pub fn len(&self) -> usize {
-        self.map.len()
+    pub fn size(&self) -> usize {
+        self.size
     }
 
     fn to_map(
         &self,
     ) -> std::collections::HashMap<String, LoroValue, std::hash::BuildHasherDefault<fxhash::FxHasher>>
     {
-        let mut ans = FxHashMap::with_capacity_and_hasher(self.len(), Default::default());
+        let mut ans = FxHashMap::with_capacity_and_hasher(self.map.len(), Default::default());
         for (key, value) in self.map.iter() {
             if value.value.is_none() {
                 continue;

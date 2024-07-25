@@ -1250,3 +1250,14 @@ fn test_text_update() {
     text.update("Hello World Bro😊");
     assert_eq!(text.to_string(), "Hello World Bro😊");
 }
+
+#[test]
+fn test_map_contains_key() {
+    let doc = LoroDoc::new_auto_commit();
+    let map = doc.get_map("m");
+    assert_eq!(map.contains_key(    "bro"), false);
+    map.insert("bro", 114514).unwrap();
+    assert_eq!(map.contains_key("bro"), true);
+    map.delete("bro").unwrap();
+    assert_eq!(map.contains_key("bro"), false);
+}
