@@ -1150,7 +1150,11 @@ impl Handler {
                                 // So when we redo the delete operation, we should check if the target is still alive.
                                 // If it's alive, we should move it back instead of creating new one.
                                 x.move_at_with_target_for_apply_diff(parent, position, target)?;
+                            } else if x.contains_even_in_trash(target) {
+                                // can be moved back, we need not create a new node
+                                x.create_at_with_target_for_apply_diff(parent, position, target)?;
                             } else {
+                                // tree is a new tree
                                 let new_target = x.__internal__next_tree_id();
                                 if x.create_at_with_target_for_apply_diff(
                                     parent, position, new_target,
@@ -1180,7 +1184,7 @@ impl Handler {
                             }
                         }
                         TreeExternalDiff::EmptyTrash => {
-                            // TODO: undo redo EmptyTrash
+                            // do nothing
                         }
                     }
                 }

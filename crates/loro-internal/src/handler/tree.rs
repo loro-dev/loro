@@ -343,11 +343,6 @@ impl TreeHandler {
             return Ok(false);
         }
 
-        // println!(
-        //     "create_at_with_target_for_apply_diff: {:?} {:?}",
-        //     target, parent
-        // );
-
         let index = self
             .get_index_by_fractional_index(
                 parent,
@@ -359,8 +354,19 @@ impl TreeHandler {
             // TODO: parent has deleted？
             .unwrap_or(0);
 
-        let children = a.with_txn(|txn| {
+        a.with_txn(|txn| {
             let inner = self.inner.try_attached_state()?;
+
+            let mut q = vec![target];
+            let mut children = vec![(target, parent, index, position.clone())];
+            while let Some(target) = q.pop() {
+                let children_ids = self.children(Some(target)).unwrap_or_default();
+                for (i, child) in children_ids.into_iter().enumerate() {
+                    let position = self.get_position_by_tree_id(&child).unwrap();
+                    q.push(child);
+                    children.push((child, Some(target), i, position));
+                }
+            }
 
             txn.apply_local_op(
                 inner.container_idx,
@@ -369,23 +375,22 @@ impl TreeHandler {
                     parent,
                     position: position.clone(),
                 }),
-                EventHint::Tree(smallvec![TreeDiffItem {
-                    target,
-                    action: TreeExternalDiff::Create {
-                        parent,
-                        index,
-                        position: position.clone(),
-                    },
-                }]),
+                EventHint::Tree(
+                    children
+                        .into_iter()
+                        .map(|(target, parent, index, fi)| TreeDiffItem {
+                            target,
+                            action: TreeExternalDiff::Create {
+                                parent,
+                                index,
+                                position: fi,
+                            },
+                        })
+                        .collect(),
+                ),
                 &inner.state,
-            )?;
-
-            Ok(self.children(Some(target)).unwrap_or_default())
+            )
         })?;
-        for child in children {
-            let position = self.get_position_by_tree_id(&child).unwrap();
-            self.create_at_with_target_for_apply_diff(Some(target), position, child)?;
-        }
         Ok(true)
     }
 
@@ -764,6 +769,18 @@ impl TreeHandler {
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
                 a.contains(target)
+            }),
+        }
+    }
+
+    pub(crate) fn contains_even_in_trash(&self, target: TreeID) -> bool {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unreachable!()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.contains_even_in_trash(target)
             }),
         }
     }

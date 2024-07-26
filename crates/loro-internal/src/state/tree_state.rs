@@ -622,7 +622,6 @@ impl TreeState {
         // tracing::info!("children {:?}", self.children);
         let entry = self.children.entry(parent).or_default();
         let node_position = NodePosition::new(position.clone().unwrap_or_default(), id.idlp());
-        tracing::debug!("mov {:?} {:?} {:?}", target, parent, node_position);
 
         debug_assert!(!entry.has_child(&node_position));
         entry.insert_child(node_position, target);
@@ -696,6 +695,10 @@ impl TreeState {
 
     pub fn contains(&self, target: TreeID) -> bool {
         !self.is_node_deleted(&target)
+    }
+
+    pub(crate) fn contains_even_in_trash(&self, target: TreeID) -> bool {
+        self.trees.contains_key(&target)
     }
 
     /// Get the parent of the node, if the node is deleted or does not exist, return None
