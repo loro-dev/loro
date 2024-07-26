@@ -20,12 +20,13 @@ pub struct CounterActor {
 
 impl CounterActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
+        let mut tracker =
+            MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map).unwrap());
         tracker.insert(
             "counter".to_string(),
             Value::empty_container(
                 ContainerType::Counter,
-                ContainerID::new_root("counter", ContainerType::Counter),
+                ContainerID::new_root("counter", ContainerType::Counter).unwrap(),
             ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
@@ -33,7 +34,7 @@ impl CounterActor {
 
         let peer_id = loro.peer_id();
         loro.subscribe(
-            &ContainerID::new_root("counter", ContainerType::Counter),
+            &ContainerID::new_root("counter", ContainerType::Counter).unwrap(),
             Arc::new(move |event| {
                 let s = debug_span!("Counter event", peer = peer_id);
                 let _g = s.enter();
