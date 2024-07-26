@@ -309,7 +309,7 @@ impl FromGenericAction for TreeAction {
         let target = (action.pos as u64, 0);
         let parent = (action.length as u64, 0);
         let index = action.prop as usize;
-        let action = match action.prop % 4 {
+        let action = match action.prop % 7 {
             0 => TreeActionInner::Create { index },
             1 => TreeActionInner::Delete,
             2 => TreeActionInner::Move { parent, index },
