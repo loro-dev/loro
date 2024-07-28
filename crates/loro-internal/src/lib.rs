@@ -11,6 +11,7 @@ pub mod arena;
 pub mod diff;
 pub mod diff_calc;
 pub mod handler;
+pub mod allocation;
 pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem, ListDiffItem};
 pub use fxhash::FxHashMap;
 pub use handler::{
