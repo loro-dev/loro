@@ -405,6 +405,11 @@ impl TreeHandler {
             unreachable!();
         };
 
+        // maybe empty the trash first and undo `bring back` the deleted node
+        if !self.contains_even_in_trash(target) {
+            return Ok(false);
+        }
+
         // the move node does not exist, create it
         if !self.contains(target) {
             return self.create_at_with_target_for_apply_diff(parent, position, target);

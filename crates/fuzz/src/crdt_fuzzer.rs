@@ -442,7 +442,7 @@ where
     }
     let mut minified = actions.clone();
     let mut current_index = minified.len() as i64 - 1;
-    while current_index > 0 {
+    while current_index >= 0 {
         let a = minified.remove(current_index as usize);
         let f_ref: *const _ = &f;
         let f_ref: usize = f_ref as usize;

@@ -385,7 +385,7 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                         continue;
                     }
 
-                    if !eq(v, a.get(k).unwrap_or(&LoroValue::Double(0.))) {
+                    if !eq(a.get(k).unwrap_or(&LoroValue::Double(0.)), v) {
                         return false;
                     }
                 }

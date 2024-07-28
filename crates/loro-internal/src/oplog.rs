@@ -152,6 +152,10 @@ impl AppDag {
 
         Frontiers::default()
     }
+
+    pub fn mermaid(&self) -> String {
+        DagUtils::mermaid(self)
+    }
 }
 
 impl std::fmt::Debug for OpLog {

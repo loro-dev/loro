@@ -618,10 +618,12 @@ impl TreeState {
             // remove old position
             self.delete_position(&old_parent, target);
         }
+
         // tracing::info!("trees {:?}", self.trees);
         // tracing::info!("children {:?}", self.children);
         let entry = self.children.entry(parent).or_default();
         let node_position = NodePosition::new(position.clone().unwrap_or_default(), id.idlp());
+        // tracing::info!("mov {:?} {:?} {:?}", target, parent, node_position);
 
         debug_assert!(!entry.has_child(&node_position));
         entry.insert_child(node_position, target);

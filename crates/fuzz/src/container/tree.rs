@@ -295,7 +295,7 @@ impl Actionable for TreeAction {
                 [format!("move after {ac}@{ai}").into(), target]
             }
             TreeActionInner::Meta { meta } => [format!("meta\n {:?}", meta).into(), target],
-            TreeActionInner::EmptyTrash => ["empty trash".to_string().into(), target],
+            TreeActionInner::EmptyTrash => ["empty trash".to_string().into(), "".into()],
         }
     }
 

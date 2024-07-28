@@ -417,10 +417,25 @@ impl core::hash::Hash for MoveLamportAndID {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct TreeCacheForDiff {
     tree: FxHashMap<TreeID, BTreeSet<MoveLamportAndID>>,
     current_vv: VersionVector,
+}
+
+impl std::fmt::Debug for TreeCacheForDiff {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TreeCacheForDiff {\n")?;
+        for (k, v) in self.tree.iter() {
+            f.write_fmt(format_args!("    {:?} => {{\n", k))?;
+            for op in v.iter() {
+                f.write_fmt(format_args!("        {:?},\n", op))?;
+            }
+            f.write_str("    }\n")?;
+        }
+        f.write_fmt(format_args!("    current_vv: {:?}\n", self.current_vv))?;
+        f.write_str("}\n")
+    }
 }
 
 impl TreeCacheForDiff {
@@ -459,11 +474,21 @@ impl TreeCacheForDiff {
                     }
                 }
             }
-
             true
         } else {
             let mut effected = true;
             let target = node.op.target().unwrap();
+
+            // TODO: PERF:
+            if self
+                .tree
+                .get(&target)
+                .map(|x| x.iter().any(|op| op.is_empty_trash()))
+                .unwrap_or(false)
+            {
+                effected = false;
+            }
+
             if self.is_ancestor_of(&target, &node.op.parent_id().unwrap()) {
                 effected = false;
             }
