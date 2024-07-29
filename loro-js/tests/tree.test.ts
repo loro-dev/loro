@@ -126,7 +126,9 @@ describe("loro tree", () => {
     loro.commit();
     let ty;
     tree.subscribe((e)=>{
-      ty = e.events[0].diff.type;
+      if(e.events[0].diff.type === "tree"){
+        ty = e.events[0].diff.diff[0].action;
+      }
     });
 
     tree.emptyTrash();
