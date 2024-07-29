@@ -268,9 +268,17 @@ fn js_value_to_container_id(
     }
 
     let s = cid.as_string().unwrap();
-    let cid = ContainerID::try_from(s.as_str())
-        .unwrap_or_else(|_| ContainerID::new_root(s.as_str(), kind));
-    Ok(cid)
+    if let Ok(cid) = ContainerID::try_from(s.as_str()) {
+        Ok(cid)
+    } else {
+        if let Ok(cid) = ContainerID::new_root(s.as_str(), kind) {
+            Ok(cid)
+        } else {
+            Err(JsValue::from_str(
+                "Invalid root container name! Don't include '/' or '\\0'",
+            ))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

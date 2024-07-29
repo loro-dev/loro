@@ -533,7 +533,7 @@ mod test {
             loro_common::ContainerType::List,
         ));
         fn id(name: &str) -> ContainerID {
-            ContainerID::new_root(name, crate::ContainerType::List)
+            ContainerID::new_root(name, crate::ContainerType::List).unwrap()
         }
         list.insert(0, LoroValue::Container(id("abc")), IdFull::new(0, 0, 0));
         list.insert(0, LoroValue::Container(id("x")), IdFull::new(0, 0, 0));

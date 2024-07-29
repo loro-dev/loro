@@ -74,6 +74,8 @@ pub enum LoroError {
     UTF16InUnicodeCodePoint { pos: usize },
     #[error("The end index cannot be less than the start index")]
     EndIndexLessThanStartIndex { start: usize, end: usize },
+    #[error("Invalid root container name! Don't include '/' or '\\0'")]
+    InvalidRootContainerName,
 }
 
 #[derive(Error, Debug)]

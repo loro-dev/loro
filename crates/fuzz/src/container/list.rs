@@ -24,12 +24,13 @@ pub struct ListActor {
 
 impl ListActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
+        let mut tracker =
+            MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map).unwrap());
         tracker.insert(
             "list".to_string(),
             Value::empty_container(
                 ContainerType::List,
-                ContainerID::new_root("list", ContainerType::List),
+                ContainerID::new_root("list", ContainerType::List).unwrap(),
             ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
@@ -37,7 +38,7 @@ impl ListActor {
 
         let peer_id = loro.peer_id();
         loro.subscribe(
-            &ContainerID::new_root("list", ContainerType::List),
+            &ContainerID::new_root("list", ContainerType::List).unwrap(),
             Arc::new(move |event| {
                 let s = debug_span!("List event", peer = peer_id);
                 let _g = s.enter();
