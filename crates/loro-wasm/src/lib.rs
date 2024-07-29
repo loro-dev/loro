@@ -268,9 +268,17 @@ fn js_value_to_container_id(
     }
 
     let s = cid.as_string().unwrap();
-    let cid = ContainerID::try_from(s.as_str())
-        .unwrap_or_else(|_| ContainerID::new_root(s.as_str(), kind));
-    Ok(cid)
+    if let Ok(cid) = ContainerID::try_from(s.as_str()) {
+        Ok(cid)
+    } else {
+        if let Ok(cid) = ContainerID::new_root(s.as_str(), kind) {
+            Ok(cid)
+        } else {
+            Err(JsValue::from_str(
+                "Invalid root container name! Don't include '/' or '\\0'",
+            ))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1511,7 +1519,7 @@ impl LoroText {
     ///
     /// const doc = new Loro();
     /// const text = doc.getText("text");
-    /// text.insert(0, "Hello")
+    /// text.insert(0, "Hello");
     /// text.iter((str) => (console.log(str), true));
     /// ```
     pub fn iter(&self, callback: &js_sys::Function) {
@@ -1520,6 +1528,21 @@ impl LoroText {
             let result = callback.call1(&context, &JsValue::from(c)).unwrap();
             result.as_bool().unwrap()
         })
+    }
+
+    /// Update the current text based on the provided text.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// text.update("Hello World");
+    /// ```
+    pub fn update(&self, text: &str) -> () {
+        self.handler.update(text);
     }
 
     /// Insert some string at index.

@@ -41,6 +41,10 @@ pub struct CompactId {
     pub counter: NonMaxI32,
 }
 
+fn check_root_container_name(name: &str) -> bool {
+    name.char_indices().any(|(_, x)| x == '/' || x == '\0')
+}
+
 impl CompactId {
     pub fn new(peer: PeerID, counter: Counter) -> Self {
         Self {
@@ -348,10 +352,14 @@ mod container {
         }
 
         #[inline]
-        pub fn new_root(name: &str, container_type: ContainerType) -> Self {
-            ContainerID::Root {
-                name: name.into(),
-                container_type,
+        pub fn new_root(name: &str, container_type: ContainerType) -> LoroResult<Self> {
+            if check_root_container_name(name) {
+                Err(LoroError::InvalidRootContainerName)
+            } else {
+                Ok(ContainerID::Root {
+                    name: name.into(),
+                    container_type,
+                })
             }
         }
 
@@ -537,7 +545,7 @@ mod test {
         let id = ContainerID::try_from("cid:root-a:b:c:Tree").unwrap();
         assert_eq!(
             id,
-            ContainerID::new_root("a:b:c", crate::ContainerType::Tree)
+            ContainerID::new_root("a:b:c", crate::ContainerType::Tree).unwrap()
         );
     }
 

@@ -212,13 +212,13 @@ mod test {
         let actual = ContainerID::try_from(s.as_str()).unwrap();
         assert_eq!(actual, container_id);
 
-        let container_id = ContainerID::new_root("123", ContainerType::Map);
+        let container_id = ContainerID::new_root("123", ContainerType::Map).unwrap();
         let s = container_id.to_string();
         assert_eq!(s, "cid:root-123:Map");
         let actual = ContainerID::try_from(s.as_str()).unwrap();
         assert_eq!(actual, container_id);
 
-        let container_id = ContainerID::new_root("kkk", ContainerType::Text);
+        let container_id = ContainerID::new_root("kkk", ContainerType::Text).unwrap();
         let s = container_id.to_string();
         assert_eq!(s, "cid:root-kkk:Text");
         let actual = ContainerID::try_from(s.as_str()).unwrap();

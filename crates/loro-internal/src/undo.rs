@@ -360,7 +360,7 @@ impl Default for Stack {
 
 impl UndoManagerInner {
     fn new(last_counter: Counter) -> Self {
-        UndoManagerInner {
+        Self {
             latest_counter: Some(last_counter),
             undo_stack: Default::default(),
             redo_stack: Default::default(),

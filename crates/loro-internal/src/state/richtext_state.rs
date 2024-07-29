@@ -4,7 +4,7 @@ use std::{
 };
 
 use fxhash::{FxHashMap, FxHashSet};
-use generic_btree::rle::HasLength;
+use generic_btree::{rle::HasLength, Cursor};
 use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
 use loro_delta::DeltaRopeBuilder;
 
@@ -108,7 +108,7 @@ impl RichtextState {
         self.state.get_mut().get_char_by_event_index(pos)
     }
 
-    pub(crate) fn iter(&mut self, mut callback: impl FnMut(&str) -> bool) -> () {
+    pub(crate) fn iter(&mut self, mut callback: impl FnMut(&str) -> bool) {
         for span in self.state.get_mut().iter() {
             if !callback(span.text.as_str()) {
                 return;
@@ -765,12 +765,17 @@ impl RichtextState {
     #[inline]
     pub(crate) fn get_entity_index_for_text_insert(
         &mut self,
-        event_index: usize,
+        index: usize,
         pos_type: PosType,
-    ) -> Result<usize, LoroError> {
+    ) -> Result<(usize, Option<Cursor>), LoroError> {
         self.state
             .get_mut()
-            .get_entity_index_for_text_insert(event_index, pos_type)
+            .get_entity_index_for_text_insert(index, pos_type)
+    }
+
+    #[inline]
+    pub(crate) fn get_event_index_by_cursor(&mut self, cursor: Cursor) -> usize {
+        self.state.get_mut().get_event_index_by_cursor(cursor)
     }
 
     pub(crate) fn get_entity_range_and_styles_at_range(
@@ -795,11 +800,10 @@ impl RichtextState {
         &mut self,
         pos: usize,
         len: usize,
-        pos_type: PosType,
     ) -> LoroResult<Vec<EntityRangeInfo>> {
         self.state
             .get_mut()
-            .get_text_entity_ranges(pos, len, pos_type)
+            .get_text_entity_ranges(pos, len, PosType::Event)
     }
 
     #[inline]
@@ -827,6 +831,10 @@ impl RichtextState {
         self.state
             .get_mut()
             .entity_index_to_event_index(entity_index)
+    }
+
+    pub(crate) fn index_to_event_index(&mut self, index: usize, pos_type: PosType) -> usize {
+        self.state.get_mut().index_to_event_index(index, pos_type)
     }
 
     pub(crate) fn event_index_to_unicode_index(&mut self, event_index: usize) -> usize {

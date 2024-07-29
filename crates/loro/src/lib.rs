@@ -57,9 +57,10 @@ pub use counter::LoroCounter;
 /// `LoroDoc` is the entry for the whole document.
 /// When it's dropped, all the associated [`Handler`]s will be invalidated.
 #[derive(Debug)]
-#[repr(transparent)]
 pub struct LoroDoc {
     doc: InnerLoroDoc,
+    #[cfg(debug_assertions)]
+    _temp: u8,
 }
 
 impl Default for LoroDoc {
@@ -69,12 +70,21 @@ impl Default for LoroDoc {
 }
 
 impl LoroDoc {
+    #[inline(always)]
+    fn _new(doc: InnerLoroDoc) -> Self {
+        Self {
+            doc,
+            #[cfg(debug_assertions)]
+            _temp: 0,
+        }
+    }
+
     /// Create a new `LoroDoc` instance.
     pub fn new() -> Self {
         let doc = InnerLoroDoc::default();
         doc.start_auto_commit();
 
-        LoroDoc { doc }
+        LoroDoc::_new(doc)
     }
 
     /// Duplicate the document with a different PeerID
@@ -82,10 +92,10 @@ impl LoroDoc {
     /// The time complexity and space complexity of this operation are both O(n),
     pub fn fork(&self) -> Self {
         let doc = self.doc.fork();
-        LoroDoc { doc }
+        LoroDoc::_new(doc)
     }
 
-    /// Get the configureations of the document.
+    /// Get the configurations of the document.
     pub fn config(&self) -> &Configure {
         self.doc.config()
     }
@@ -99,7 +109,7 @@ impl LoroDoc {
     ///
     /// If enabled, the Unix timestamp will be recorded for each change automatically.
     ///
-    /// You can set each timestamp manually when commiting a change.
+    /// You can set each timestamp manually when committing a change.
     ///
     /// NOTE: Timestamps are forced to be in ascending order.
     /// If you commit a new change with a timestamp that is less than the existing one,
@@ -112,7 +122,7 @@ impl LoroDoc {
     /// Set the interval of mergeable changes, in milliseconds.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
-    /// The defualt value is 1000 seconds.
+    /// The default value is 1000 seconds.
     #[inline]
     pub fn set_change_merge_interval(&self, interval: i64) {
         self.doc.set_change_merge_interval(interval);
@@ -156,7 +166,7 @@ impl LoroDoc {
     /// > In a detached state, the document is not editable, and any `import` operations will be
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
-    /// You should call `attach` to attach the `DocState` to the lastest version of `OpLog`.
+    /// You should call `attach` to attach the `DocState` to the latest version of `OpLog`.
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
         self.doc.checkout(frontiers)
     }
@@ -1039,6 +1049,11 @@ impl LoroText {
     /// Get the length of the text container in UTF-16.
     pub fn len_utf16(&self) -> usize {
         self.handler.len_utf16()
+    }
+
+    /// Update the current text based on the provided text.
+    pub fn update(&self, text: &str) -> () {
+        self.handler.update(text);
     }
 
     /// Apply a [delta](https://quilljs.com/docs/delta/) to the text container.

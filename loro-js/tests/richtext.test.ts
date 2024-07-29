@@ -342,4 +342,12 @@ describe("richtext", () => {
     });
     expect(text.toString(), "你好");
   });
+
+  it("Text update", () => {
+    const doc = new Loro();
+    const text = doc.getText('t');
+    text.insert(0, "Hello 😊Bro");
+    text.update("Hello World Bro😊");
+    expect(text.toString()).toStrictEqual("Hello World Bro😊");
+  });
 });
