@@ -666,7 +666,7 @@ impl TreeState {
     /// Clear the cache of the node, remove it from self.tree and self.children
     fn clear_nodes(&mut self, nodes: &[TreeID]) {
         for node in nodes {
-            // Only delete the node that is not deleted
+            // Only clear the node that is not cleared but deleted
             // Because concurrent op may bring back the emptied node
             if self.is_node_deleted(node) {
                 self.trees.remove(node);
