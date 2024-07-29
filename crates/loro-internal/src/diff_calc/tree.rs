@@ -176,59 +176,45 @@ impl TreeDiffCalculator {
         tracing::info!("start retreat");
         let mut diffs = vec![];
         let mut retreat_ops = vec![];
-        let mut empty_trash_ops = FxHashSet::default();
-        for (_target, ops) in tree_cache.tree.iter() {
+        for (target, ops) in tree_cache.tree.iter() {
             for op in ops.iter().rev() {
                 if op.lamport < lca_min_lamport {
                     break;
                 }
                 if !lca_vv.includes_id(op.id) {
-                    if op.is_empty_trash() {
-                        if !empty_trash_ops.contains(&op.id) {
-                            retreat_ops.push(op.clone());
-                            empty_trash_ops.insert(op.id);
-                        }
-                    } else {
-                        retreat_ops.push(op.clone());
-                    }
+                    retreat_ops.push((*target, op.clone()));
                 }
             }
         }
-        // tracing::debug!("cache tree {:?}", tree_cache);
+        tracing::debug!("cache tree {:?}", tree_cache);
         tracing::info!("retreat ops {:?}", retreat_ops);
-        for op in retreat_ops.into_iter().sorted().rev() {
-            if let TreeOp::EmptyTrash(nodes) = &op.op {
-                // TODO: retreat
-                for node in nodes.iter() {
-                    if tree_cache.tree.get_mut(node).unwrap().remove(&op) {
-                        // Only the first time the node is removed, we need to restore it.
-                        let (old_parent, fi, id) = tree_cache.get_parent_with_id(*node);
-                        diffs.push(TreeDeltaItem {
-                            target: *node,
-                            action: TreeInternalDiff::RestoreTrash {
-                                parent: old_parent,
-                                position: fi,
-                            },
-                            last_effective_move_op_id: id,
-                        });
-                    }
+        for (target, op) in retreat_ops
+            .into_iter()
+            // rev
+            .sorted_by(|a, b| Ord::cmp(&b.1, &a.1))
+        {
+            tree_cache.current_vv.shrink_to_exclude(IdSpan::new(
+                op.id.peer,
+                op.id.counter,
+                op.id.counter + 1,
+            ));
+            tree_cache.tree.get_mut(&target).unwrap().remove(&op);
+            if let TreeOp::EmptyTrash(_) = &op.op {
+                if op.effected {
+                    // Only the first time the node is removed, we need to restore it.
+                    let (old_parent, fi, id) = tree_cache.get_parent_with_id(target);
+                    diffs.push(TreeDeltaItem {
+                        target,
+                        action: TreeInternalDiff::RestoreTrash {
+                            parent: old_parent,
+                            position: fi,
+                        },
+                        last_effective_move_op_id: id,
+                    });
                 }
-                tree_cache.current_vv.shrink_to_exclude(IdSpan::new(
-                    op.id.peer,
-                    op.id.counter,
-                    op.id.counter + 1,
-                ));
-
-                // TODO: diff
             } else {
                 let target = op.op.target().unwrap();
                 let parent = op.op.parent_id().unwrap();
-                tree_cache.tree.get_mut(&target).unwrap().remove(&op);
-                tree_cache.current_vv.shrink_to_exclude(IdSpan::new(
-                    op.id.peer,
-                    op.id.counter,
-                    op.id.counter + 1,
-                ));
                 let (old_parent, position, last_effective_move_op_id) =
                     tree_cache.get_parent_with_id(target);
                 if op.effected {
@@ -245,13 +231,14 @@ impl TreeDiffCalculator {
                         is_parent_deleted,
                         position,
                     );
-                    tracing::info!(
-                        "target {:?} parent {:?} old parent {:?} diff {:?}",
-                        target,
-                        parent,
-                        old_parent,
-                        this_diff
-                    );
+                    // tracing::info!(
+                    //     "cache {:?} \ntarget {:?} parent {:?} old parent {:?} diff {:?}",
+                    //     tree_cache,
+                    //     target,
+                    //     parent,
+                    //     old_parent,
+                    //     this_diff
+                    // );
                     let is_create = matches!(this_diff.action, TreeInternalDiff::Create { .. });
                     diffs.push(this_diff);
                     if is_create {
@@ -466,13 +453,24 @@ impl TreeCacheForDiff {
         if let TreeOp::EmptyTrash(nodes) = &node.op {
             node.effected = true;
             self.current_vv.set_last(node.id);
+
             for n in nodes.iter() {
-                let entry = self.tree.entry(*n).or_default();
-                if let Some(op) = entry.last() {
-                    if let TreeOp::Delete { .. } = &op.op {
-                        entry.insert(node.clone());
-                    }
+                let Some(last_op) = self.tree.entry(*n).or_default().last() else {
+                    continue;
+                };
+                if !matches!(last_op.op, TreeOp::Delete { .. }) {
+                    continue;
                 }
+                let mut this_node = node.clone();
+                if self
+                    .tree
+                    .get(n)
+                    .map(|x| x.iter().any(|op| op.is_empty_trash()))
+                    .unwrap_or(false)
+                {
+                    this_node.effected = false;
+                }
+                self.tree.get_mut(n).map(|entry| entry.insert(this_node));
             }
             true
         } else {

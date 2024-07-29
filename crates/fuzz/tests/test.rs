@@ -8811,6 +8811,164 @@ fn empty_trash_undo() {
 }
 
 #[test]
+fn empty_trash_unknown() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Tree],
+        &mut [
+            Handle {
+                site: 255,
+                target: 255,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 522133279,
+                    pos: 2242545357980376863,
+                    length: 18446744072702918655,
+                    prop: 18446744073709551615,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(1)),
+                    bool: false,
+                    key: 858981632,
+                    pos: 3689332296308306739,
+                    length: 3689348814741910323,
+                    prop: 3689348814741910323,
+                }),
+            },
+            Handle {
+                site: 35,
+                target: 35,
+                container: 35,
+                action: Generic(GenericAction {
+                    value: I32(589505315),
+                    bool: true,
+                    key: 589505309,
+                    pos: 2531906049332683555,
+                    length: 795741901623075619,
+                    prop: 795788080707209995,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(59)),
+                    bool: true,
+                    key: 4294967071,
+                    pos: 2242792614430507007,
+                    length: 3611639644701007647,
+                    prop: 4122256220804429881,
+                }),
+            },
+            Handle {
+                site: 35,
+                target: 35,
+                container: 35,
+                action: Generic(GenericAction {
+                    value: I32(589505315),
+                    bool: true,
+                    key: 589505315,
+                    pos: 2531906049332683555,
+                    length: 795741870968799523,
+                    prop: 795741901218843403,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(-2305),
+                    bool: true,
+                    key: 4280287035,
+                    pos: 18446744073709551615,
+                    length: 2242545357980376863,
+                    prop: 3616727162733277727,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 185273099,
+                    pos: 795741901218843403,
+                    length: 3689348814741900043,
+                    prop: 337769972052787,
+                }),
+            },
+            Handle {
+                site: 42,
+                target: 42,
+                container: 42,
+                action: Generic(GenericAction {
+                    value: I32(707406378),
+                    bool: false,
+                    key: 808464432,
+                    pos: 3472328296227680304,
+                    length: 3760559797761683760,
+                    prop: 3906926781372969270,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(59)),
+                    bool: true,
+                    key: 4294967071,
+                    pos: 2242792614430507007,
+                    length: 3611639644701007647,
+                    prop: 4122256220804429881,
+                }),
+            },
+            Undo {
+                site: 125,
+                op_len: 2105376125,
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(2105376125),
+                    bool: true,
+                    key: 2105376125,
+                    pos: 9042521604759584125,
+                    length: 2821297642303618429,
+                    prop: 2821266740684990247,
+                }),
+            },
+            Handle {
+                site: 219,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(1)),
+                    bool: false,
+                    key: 1020347137,
+                    pos: 18446744070923349485,
+                    length: 11068046442777149439,
+                    prop: 795741901218843403,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,
