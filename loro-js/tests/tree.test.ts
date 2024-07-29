@@ -116,6 +116,24 @@ describe("loro tree", () => {
     root.data.set("a", 123);
     assertEquals(root.data.get("a"), 123);
   });
+
+  it("empty trash", async ()=>{
+    const root = tree.createNode();
+    const child = tree.createNode(root.id);
+    const child2 = tree.createNode(root.id);
+    tree.delete(child.id);
+    tree.delete(child2.id);
+    loro.commit();
+    let ty;
+    tree.subscribe((e)=>{
+      ty = e.events[0].diff.type;
+    });
+
+    tree.emptyTrash();
+    loro.commit();
+    await one_ms();
+    assertEquals(ty, "emptyTrash");
+  })
 });
 
 describe("loro tree node", ()=>{
