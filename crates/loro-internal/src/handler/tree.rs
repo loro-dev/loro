@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use fractional_index::FractionalIndex;
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::{FxHashMap};
 use loro_common::{
     ContainerID, ContainerType, Counter, IdLp, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
 };

@@ -247,7 +247,7 @@ mod btree {
         rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
         BTree, BTreeTrait, Cursor, FindResult, LeafIndex, LengthFinder, Query, UseLengthFinder,
     };
-    use loro_common::{LoroResult, LoroTreeError, TreeID};
+    use loro_common::{TreeID};
 
     use super::NodePosition;
 

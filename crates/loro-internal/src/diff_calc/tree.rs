@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use fractional_index::FractionalIndex;
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::{FxHashMap};
 use itertools::Itertools;
 use loro_common::{ContainerID, HasId, IdFull, IdSpan, Lamport, TreeID, ID};
 
