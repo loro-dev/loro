@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use fractional_index::FractionalIndex;
-use fxhash::{FxHashMap};
+use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{ContainerID, HasId, IdFull, IdSpan, Lamport, TreeID, ID};
 
@@ -201,6 +201,7 @@ impl TreeDiffCalculator {
             tree_cache.tree.get_mut(&target).unwrap().remove(&op);
             if let TreeOp::EmptyTrash(_) = &op.op {
                 if op.effected {
+                    tree_cache.emptied_nodes.remove(&target);
                     // Only the first time the node is removed, we need to restore it.
                     let (old_parent, fi, id) = tree_cache.get_parent_with_id(target);
                     diffs.push(TreeDeltaItem {
@@ -407,6 +408,7 @@ impl core::hash::Hash for MoveLamportAndID {
 #[derive(Clone, Default)]
 pub(crate) struct TreeCacheForDiff {
     tree: FxHashMap<TreeID, BTreeSet<MoveLamportAndID>>,
+    emptied_nodes: FxHashSet<TreeID>,
     current_vv: VersionVector,
 }
 
@@ -462,13 +464,10 @@ impl TreeCacheForDiff {
                     continue;
                 }
                 let mut this_node = node.clone();
-                if self
-                    .tree
-                    .get(n)
-                    .map(|x| x.iter().any(|op| op.is_empty_trash()))
-                    .unwrap_or(false)
-                {
+                if self.emptied_nodes.contains(n) {
                     this_node.effected = false;
+                } else {
+                    self.emptied_nodes.insert(*n);
                 }
                 self.tree.get_mut(n).map(|entry| entry.insert(this_node));
             }
@@ -477,13 +476,7 @@ impl TreeCacheForDiff {
             let mut effected = true;
             let target = node.op.target().unwrap();
 
-            // TODO: PERF:
-            if self
-                .tree
-                .get(&target)
-                .map(|x| x.iter().any(|op| op.is_empty_trash()))
-                .unwrap_or(false)
-            {
+            if self.emptied_nodes.contains(&target) {
                 effected = false;
             }
 
