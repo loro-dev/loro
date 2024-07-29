@@ -140,19 +140,12 @@ impl TestDag {
         let id = ID::new(client_id, *counter);
         *counter += len as Counter;
         let deps = std::mem::replace(&mut self.frontier, vec![id.inc(len as Counter - 1)]);
-        if deps.len() == 1 && deps[0].peer == client_id {
-            // can merge two op
-            let arr = self.nodes.get_mut(&client_id).unwrap();
-            let last = arr.last_mut().unwrap();
-            last.len += len;
-        } else {
-            self.nodes.entry(client_id).or_default().push(TestNode::new(
-                id,
-                self.next_lamport,
-                deps,
-                len,
-            ));
-        }
+        self.nodes.entry(client_id).or_default().push(TestNode::new(
+            id,
+            self.next_lamport,
+            deps,
+            len,
+        ));
         self.next_lamport += len as u32;
     }
 
@@ -387,9 +380,9 @@ mod iter {
 
 mod mermaid {
 
-    use rand::{rngs::StdRng, SeedableRng};
-
     use super::*;
+    use crate::allocation::calc_critical_version;
+    use rand::{rngs::StdRng, SeedableRng};
 
     #[test]
     fn simple() {
@@ -413,6 +406,35 @@ mod mermaid {
     }
 
     #[test]
+    fn test_alloc_tree() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        let mut c = TestDag::new(2);
+        a.push(10);
+        b.merge(&a);
+        b.push(3);
+        c.merge(&b);
+        c.push(4);
+        a.push(3);
+        a.merge(&c);
+        a.push(2);
+        b.merge(&a);
+        for xx in calc_critical_version::<TestNode, TestDag>(
+            &b,
+            &[ID {
+                peer: 0,
+                counter: 13,
+            }],
+            &[ID {
+                peer: 0,
+                counter: 9,
+            }],
+        ) {
+            print!("{} ", xx);
+        }
+    }
+
+    #[test]
     fn three() {
         let mut a = TestDag::new(0);
         let mut b = TestDag::new(1);
@@ -422,10 +444,11 @@ mod mermaid {
         b.push(3);
         c.merge(&b);
         c.push(4);
+        a.push(3);
         a.merge(&c);
         a.push(2);
         b.merge(&a);
-        println!("{}", b.mermaid());
+        println!("{}", a.mermaid());
     }
 
     #[test]
