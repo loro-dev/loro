@@ -378,32 +378,9 @@ mod iter {
     }
 }
 
-mod mermaid {
-
+mod allocation_tree {
     use super::*;
     use crate::allocation::calc_critical_version;
-    use rand::{rngs::StdRng, SeedableRng};
-
-    #[test]
-    fn simple() {
-        let mut a = TestDag::new(0);
-        let mut b = TestDag::new(1);
-        // 0-0
-        a.push(1);
-        // 1-0
-        b.push(1);
-        a.merge(&b);
-        // 0-1
-        a.push(1);
-        b.merge(&a);
-        // 1-1
-        b.push(1);
-        a.merge(&b);
-        // 0-2
-        a.push(1);
-
-        println!("{}", a.mermaid());
-    }
 
     #[test]
     fn test_alloc_tree() {
@@ -432,6 +409,33 @@ mod mermaid {
         ) {
             print!("{} ", xx);
         }
+    }
+}
+
+mod mermaid {
+
+    use super::*;
+    use rand::{rngs::StdRng, SeedableRng};
+
+    #[test]
+    fn simple() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        // 0-0
+        a.push(1);
+        // 1-0
+        b.push(1);
+        a.merge(&b);
+        // 0-1
+        a.push(1);
+        b.merge(&a);
+        // 1-1
+        b.push(1);
+        a.merge(&b);
+        // 0-2
+        a.push(1);
+
+        println!("{}", a.mermaid());
     }
 
     #[test]
