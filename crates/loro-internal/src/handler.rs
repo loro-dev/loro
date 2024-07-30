@@ -20,8 +20,8 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
 use loro_common::{
-    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, TreeID,
-    ID,
+    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroTreeError,
+    LoroValue, TreeID, ID,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -1188,7 +1188,15 @@ impl Handler {
                                 // However, the concurrent operation has moved the child to another parent. It's still alive.
                                 // So when we redo the delete operation, we should check if the target is still alive.
                                 // If it's alive, we should move it back instead of creating new one.
-                                x.move_at_with_target_for_apply_diff(parent, position, target)?;
+                                let ans =
+                                    x.move_at_with_target_for_apply_diff(parent, position, target);
+                                if let Err(LoroError::TreeError(LoroTreeError::CyclicMoveError)) =
+                                    ans
+                                {
+                                    // do nothing
+                                } else {
+                                    ans?;
+                                }
                             } else if x.contains_even_in_trash(target) {
                                 // can be moved back, we need not create a new node
                                 x.create_at_with_target_for_apply_diff(parent, position, target)?;
@@ -1214,7 +1222,13 @@ impl Handler {
                                 remap_tree_id(p, container_remap)
                             }
                             remap_tree_id(&mut target, container_remap);
-                            x.move_at_with_target_for_apply_diff(parent, position, target)?;
+                            let ans =
+                                x.move_at_with_target_for_apply_diff(parent, position, target);
+                            if let Err(LoroError::TreeError(LoroTreeError::CyclicMoveError)) = ans {
+                                // do nothing
+                            } else {
+                                ans?;
+                            }
                         }
                         TreeExternalDiff::Delete => {
                             remap_tree_id(&mut target, container_remap);
