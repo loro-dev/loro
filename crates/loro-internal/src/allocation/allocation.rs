@@ -139,10 +139,11 @@ impl AllocationTree {
             let u = self.topo[j];
             let ve = self.anti_graph.get(&u);
             if ve.len() != 0 {
-                let mut v = ve[0];
-                for i in 1..ve.len() {
-                    v = self.lca(v, ve[i]);
-                }
+                let v = ve
+                    .iter()
+                    .copied()
+                    .reduce(|acc, x| self.lca(acc, x))
+                    .unwrap();
                 self.tree.insert(u, v);
                 let v_add_one = self.deep.get(&v) + 1;
                 self.deep.set(&u, v_add_one);
@@ -162,9 +163,9 @@ impl AllocationTree {
             let mut ux = u;
             result.insert(ux);
             while !start_id_set.contains(&ux) {
-                let father = self.tree.get(&ux).unwrap();
-                result.insert(*father);
-                ux = *father;
+                let father = self.tree[&ux];
+                result.insert(father);
+                ux = father;
             }
         }
         result.iter().cloned().collect_vec()
