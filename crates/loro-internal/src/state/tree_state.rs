@@ -247,7 +247,7 @@ mod btree {
         rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
         BTree, BTreeTrait, Cursor, FindResult, LeafIndex, LengthFinder, Query, UseLengthFinder,
     };
-    use loro_common::{TreeID};
+    use loro_common::TreeID;
 
     use super::NodePosition;
 
@@ -669,13 +669,12 @@ impl TreeState {
             // Only clear the node that is not cleared but deleted
             // Because concurrent op may bring back the emptied node
             if self.is_node_deleted(node) {
-                self.trees.remove(node);
+                if let Some(parent) = self.trees.remove(node) {
+                    if let Some(entry) = self.children.get_mut(&parent.parent) {
+                        entry.delete_child(node);
+                    }
+                }
                 self.children.remove(&TreeParentId::Node(*node));
-            }
-        }
-        if let Some(deleted) = self.children.get_mut(&TreeParentId::Deleted) {
-            for n in nodes {
-                deleted.delete_child(n);
             }
         }
     }
