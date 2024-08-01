@@ -167,13 +167,13 @@ pub enum Value<'a> {
         lamport: Lamport,
         value: LoroValue,
     },
+    EmptyTreeTrash(Arc<Vec<TreeID>>),
     Future(FutureValue<'a>),
 }
 
 #[derive(Debug)]
 pub enum FutureValue<'a> {
     // The future value cannot depend on the arena for encoding.
-    EmptyTreeTrash(Arc<Vec<TreeID>>),
     Unknown { kind: u8, data: &'a [u8] },
 }
 
@@ -204,6 +204,7 @@ pub enum OwnedValue {
         lamport: Lamport,
         value: LoroValue,
     },
+    EmptyTreeTrash(Arc<Vec<TreeID>>),
     #[serde(untagged)]
     Future(OwnedFutureValue),
 }
@@ -211,7 +212,6 @@ pub enum OwnedValue {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "value_type", content = "value")]
 pub enum OwnedFutureValue {
-    EmptyTreeTrash(Arc<Vec<TreeID>>),
     // The future value cannot depend on the arena for encoding.
     Unknown { kind: u8, data: Arc<Vec<u8>> },
 }
@@ -251,11 +251,8 @@ impl<'a> Value<'a> {
                 lamport: *lamport,
                 value: value.clone(),
             },
+            OwnedValue::EmptyTreeTrash(ids) => Value::EmptyTreeTrash(ids.clone()),
             OwnedValue::Future(value) => match value {
-                OwnedFutureValue::EmptyTreeTrash(ids) => {
-                    Value::Future(FutureValue::EmptyTreeTrash(ids.clone()))
-                }
-
                 OwnedFutureValue::Unknown { kind, data } => Value::Future(FutureValue::Unknown {
                     kind: *kind,
                     data: data.as_slice(),
@@ -298,11 +295,8 @@ impl<'a> Value<'a> {
                 lamport,
                 value,
             },
+            Value::EmptyTreeTrash(ids) => OwnedValue::EmptyTreeTrash(Arc::new(ids.to_vec())),
             Value::Future(value) => match value {
-                FutureValue::EmptyTreeTrash(ids) => {
-                    OwnedValue::Future(OwnedFutureValue::EmptyTreeTrash(Arc::new(ids.to_vec())))
-                }
-
                 FutureValue::Unknown { kind, data } => {
                     OwnedValue::Future(OwnedFutureValue::Unknown {
                         kind,
@@ -371,7 +365,21 @@ impl<'a> Value<'a> {
                     value,
                 }
             }
-            ValueKind::EmptyTreeTrash => {}
+            ValueKind::EmptyTreeTrash => {
+                let len = value_reader.read_usize()?;
+                let mut nodes = Vec::with_capacity(len);
+                for _ in 0..len {
+                    let idx = value_reader.read_usize()?;
+                    let node = arenas
+                        .tree_ids
+                        .tree_ids
+                        .get(idx)
+                        .ok_or(LoroError::DecodeDataCorruptionError)?;
+                    let peer = arenas.peer_ids.peer_ids[node.peer_idx];
+                    nodes.push(TreeID::new(peer, node.counter));
+                }
+                Value::EmptyTreeTrash(Arc::new(nodes))
+            }
             ValueKind::Future(future_kind) => {
                 Self::decode_without_arena(future_kind, value_reader)?
             }
@@ -387,19 +395,6 @@ impl<'a> Value<'a> {
         // when decoding, we will use reader.read_binary() to read the binary data.
         // So such as FutureValue::Counter, we should write 0 as the length of binary data first.
         match value {
-            FutureValue::EmptyTreeTrash(nodes) => {
-                let mut writer = ValueWriter::new();
-                writer.write_usize(nodes.len());
-                for n in nodes.iter() {
-                    writer.write_u64(n.peer);
-                    writer.write_i32(n.counter);
-                }
-                (
-                    FutureValueKind::EmptyTreeTrash,
-                    value_writer.write_binary(&writer.finish()),
-                )
-            }
-
             FutureValue::Unknown { kind, data } => (
                 FutureValueKind::Unknown(kind),
                 value_writer.write_binary(data),
@@ -450,6 +445,18 @@ impl<'a> Value<'a> {
                     + value_writer.write_usize(lamport as usize)
                     + value_writer.write_value_type_and_content(&value, registers),
             ),
+            Value::EmptyTreeTrash(ids) => {
+                let len = ids.len();
+                let mut len = value_writer.write_usize(len);
+                for id in ids.iter() {
+                    let idx = registers.tree_id.register(&EncodedTreeID {
+                        peer_idx: registers.peer.register(&id.peer),
+                        counter: id.counter,
+                    });
+                    len += value_writer.write_usize(idx);
+                }
+                (ValueKind::EmptyTreeTrash, len)
+            }
             Value::Future(value) => {
                 let (k, i) = Self::encode_without_registers(value, value_writer);
                 (ValueKind::Future(k), i)

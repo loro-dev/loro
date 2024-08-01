@@ -1274,7 +1274,7 @@ mod encode {
                 assert_eq!(op.container.get_type(), ContainerType::Tree);
 
                 if let TreeOp::EmptyTrash(nodes) = t {
-                    Value::Future(FutureValue::EmptyTreeTrash(nodes.clone()))
+                    Value::EmptyTreeTrash(nodes.clone())
                 } else {
                     Value::TreeMove(EncodedTreeMove::from_tree_op(t, registers).unwrap())
                 }
@@ -1406,7 +1406,7 @@ fn decode_op(
                 &arenas.tree_ids.tree_ids,
                 op_id,
             )?),
-            Value::Future(FutureValue::EmptyTreeTrash(nodes)) => {
+            Value::EmptyTreeTrash(nodes) => {
                 crate::op::InnerContent::Tree(TreeOp::EmptyTrash(nodes))
             }
             _ => {
