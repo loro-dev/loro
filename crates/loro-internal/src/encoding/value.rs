@@ -18,22 +18,23 @@ use super::arena::{DecodedArenas, EncodedRegisters, EncodedTreeID};
 
 #[derive(Debug)]
 pub enum ValueKind {
-    Null,          // 0
-    True,          // 1
-    False,         // 2
-    I64,           // 3
-    F64,           // 4
-    Str,           // 5
-    Binary,        // 6
-    ContainerType, // 7
-    DeleteOnce,    // 8
-    DeleteSeq,     // 9
-    DeltaInt,      // 10
-    LoroValue,     // 11
-    MarkStart,     // 12
-    TreeMove,      // 13
-    ListMove,      // 14
-    ListSet,       // 15
+    Null,           // 0
+    True,           // 1
+    False,          // 2
+    I64,            // 3
+    F64,            // 4
+    Str,            // 5
+    Binary,         // 6
+    ContainerType,  // 7
+    DeleteOnce,     // 8
+    DeleteSeq,      // 9
+    DeltaInt,       // 10
+    LoroValue,      // 11
+    MarkStart,      // 12
+    TreeMove,       // 13
+    ListMove,       // 14
+    ListSet,        // 15
+    EmptyTreeTrash, // 16
     Future(FutureValueKind),
 }
 
@@ -85,7 +86,6 @@ impl LoroValueKind {
 
 #[derive(Debug)]
 pub enum FutureValueKind {
-    EmptyTreeTrash,
     Unknown(u8),
 }
 
@@ -108,8 +108,8 @@ impl ValueKind {
             ValueKind::TreeMove => 13,
             ValueKind::ListMove => 14,
             ValueKind::ListSet => 15,
+            ValueKind::EmptyTreeTrash => 16,
             ValueKind::Future(future_value_kind) => match future_value_kind {
-                FutureValueKind::EmptyTreeTrash => 16,
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
             },
         }
@@ -134,7 +134,7 @@ impl ValueKind {
             13 => ValueKind::TreeMove,
             14 => ValueKind::ListMove,
             15 => ValueKind::ListSet,
-            16 => ValueKind::Future(FutureValueKind::EmptyTreeTrash),
+            16 => ValueKind::EmptyTreeTrash,
             _ => ValueKind::Future(FutureValueKind::Unknown(kind)),
         }
     }
@@ -319,17 +319,6 @@ impl<'a> Value<'a> {
     ) -> LoroResult<Self> {
         let bytes = value_reader.read_binary()?;
         let value = match future_kind {
-            FutureValueKind::EmptyTreeTrash => {
-                let mut reader = ValueReader::new(bytes);
-                let n = reader.read_usize()?;
-                let mut ans = Vec::with_capacity(n);
-                for _ in 0..n {
-                    let peer = reader.read_u64()?;
-                    let c = reader.read_i32()?;
-                    ans.push(TreeID::new(peer, c));
-                }
-                Value::Future(FutureValue::EmptyTreeTrash(Arc::new(ans)))
-            }
             FutureValueKind::Unknown(kind) => {
                 Value::Future(FutureValue::Unknown { kind, data: bytes })
             }
@@ -382,6 +371,7 @@ impl<'a> Value<'a> {
                     value,
                 }
             }
+            ValueKind::EmptyTreeTrash => {}
             ValueKind::Future(future_kind) => {
                 Self::decode_without_arena(future_kind, value_reader)?
             }
