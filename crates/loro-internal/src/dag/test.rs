@@ -381,9 +381,10 @@ mod iter {
 mod allocation_tree {
     use super::*;
     use crate::allocation::calc_critical_version;
+    use crate::allocation::calc_critical_version_dfs;
 
     #[test]
-    fn test_alloc_tree() {
+    fn test_alloc_tree_basic() {
         let mut a = TestDag::new(0);
         let mut b = TestDag::new(1);
         let mut c = TestDag::new(2);
@@ -396,19 +397,68 @@ mod allocation_tree {
         a.merge(&c);
         a.push(2);
         b.merge(&a);
-        for xx in calc_critical_version::<TestNode, TestDag>(
-            &b,
-            &[ID {
-                peer: 0,
-                counter: 13,
-            }],
-            &[ID {
-                peer: 0,
-                counter: 9,
-            }],
-        ) {
-            print!("{} ", xx);
-        }
+        assert_eq!(
+            calc_critical_version::<TestNode, TestDag>(
+                &b,
+                &[ID {
+                    peer: 0,
+                    counter: 13,
+                }],
+                &[ID {
+                    peer: 0,
+                    counter: 9,
+                }],
+            ),
+            vec![
+                ID {
+                    peer: 0,
+                    counter: 9,
+                },
+                ID {
+                    peer: 0,
+                    counter: 13,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_alloc_tree_basic_dfs() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        let mut c = TestDag::new(2);
+        a.push(10);
+        b.merge(&a);
+        b.push(3);
+        c.merge(&b);
+        c.push(4);
+        a.push(3);
+        a.merge(&c);
+        a.push(2);
+        b.merge(&a);
+        assert_eq!(
+            calc_critical_version_dfs::<TestNode, TestDag>(
+                &b,
+                &[ID {
+                    peer: 0,
+                    counter: 13,
+                }],
+                &[ID {
+                    peer: 0,
+                    counter: 9,
+                }],
+            ),
+            vec![
+                ID {
+                    peer: 0,
+                    counter: 9,
+                },
+                ID {
+                    peer: 0,
+                    counter: 13,
+                },
+            ]
+        );
     }
 }
 
