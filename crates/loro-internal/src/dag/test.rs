@@ -506,7 +506,7 @@ mod mermaid {
     }
 
     #[test]
-    fn gen() {
+    fn gen_graph() {
         let num = 5;
         let mut rng = StdRng::seed_from_u64(100);
         let mut dags = (0..num).map(TestDag::new).collect::<Vec<_>>();
