@@ -423,7 +423,7 @@ mod allocation_tree {
     }
 
     #[test]
-    fn test_alloc_big() {
+    fn test_alloc_tree_big() {
         let num = 5;
         let mut rng = StdRng::seed_from_u64(100);
         let mut dags = (0..num).map(TestDag::new).collect::<Vec<_>>();
@@ -434,7 +434,6 @@ mod allocation_tree {
             let (a, other) = array_mut_ref!(&mut dags, [0, i as usize]);
             a.merge(other);
         }
-        println!("{}", dags[0].mermaid());
         let start = dags[0].frontier();
         let ends = [
             ID {

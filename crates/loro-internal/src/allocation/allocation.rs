@@ -33,6 +33,15 @@ struct AllocationTree {
     virtual_start_point: ID,
 }
 
+fn log2_floor(mut x: usize) -> usize {
+    x |= x >> 1;
+    x |= x >> 2;
+    x |= x >> 4;
+    x |= x >> 8;
+    x |= x >> 16;
+    (x.count_ones() - 1) as usize
+}
+
 impl AllocationTree {
     fn new() -> Self {
         Self {
@@ -135,11 +144,13 @@ impl AllocationTree {
         if self.deep.get(&u) < self.deep.get(&v) {
             swap(&mut u, &mut v);
         }
-        for i in (0..=self.scale).rev() {
-            if self.deep.get(&self.father.get(&u, i)) >= self.deep.get(&v) {
-                u = self.father.get(&u, i);
-            }
+        let mut depx = self.deep.get(&u);
+        let depy = self.deep.get(&v);
+        while depx > depy {
+            u = self.father.get(&u, log2_floor(depx - depy));
+            depx = self.deep.get(&u);
         }
+
         if u == v {
             return u;
         }
@@ -166,7 +177,6 @@ impl AllocationTree {
                     .reduce(|acc, x| self.lca(acc, x))
                     .unwrap();
                 self.tree.insert(u, v);
-                println!("{} {}", v, u);
                 let v_add_one = self.deep.get(&v) + 1;
                 self.deep.set(&u, v_add_one);
                 self.father.set(&u, 0, v);
@@ -187,5 +197,34 @@ impl AllocationTree {
             u = self.tree[&u];
         }
         result
+    }
+}
+
+#[test]
+fn test_fast_log() {
+    let test_cases: Vec<(usize, usize)> = vec![
+        (1, 0),
+        (2, 1),
+        (3, 1),
+        (4, 2),
+        (7, 2),
+        (8, 3),
+        (15, 3),
+        (16, 4),
+        (31, 4),
+        (32, 5),
+        (1023, 9),
+        (1024, 10),
+        (1025, 10),
+    ];
+
+    for (input, expected) in test_cases {
+        assert_eq!(
+            log2_floor(input),
+            expected,
+            "fast_floor_log({}) should be {}",
+            input,
+            expected
+        );
     }
 }
