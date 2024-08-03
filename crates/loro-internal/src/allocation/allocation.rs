@@ -154,7 +154,7 @@ impl AllocationTree {
         if u == v {
             return u;
         }
-        for i in (0..=self.scale).rev() {
+        for i in (0..=log2_floor(depx)).rev() {
             let tu = self.father.get(&u, i);
             let tv = self.father.get(&v, i);
             if tu != tv {
@@ -217,7 +217,6 @@ fn test_fast_log() {
         (1024, 10),
         (1025, 10),
     ];
-
     for (input, expected) in test_cases {
         assert_eq!(
             log2_floor(input),

@@ -286,7 +286,7 @@ struct Interaction {
 }
 
 impl Interaction {
-    fn gen(rng: &mut impl rand::Rng, num: usize) -> Self {
+    fn generate(rng: &mut impl rand::Rng, num: usize) -> Self {
         if rng.gen_bool(0.5) {
             let dag_idx = rng.gen_range(0..num);
             let merge_with = (rng.gen_range(1..num - 1) + dag_idx) % num;
@@ -384,7 +384,7 @@ mod allocation_tree {
     use rand::{rngs::StdRng, SeedableRng};
 
     #[test]
-    fn test_alloc_tree_basic() {
+    fn test_alloc_tree_small() {
         let mut a = TestDag::new(0);
         let mut b = TestDag::new(1);
         let mut c = TestDag::new(2);
@@ -428,7 +428,7 @@ mod allocation_tree {
         let mut rng = StdRng::seed_from_u64(100);
         let mut dags = (0..num).map(TestDag::new).collect::<Vec<_>>();
         for _ in 0..100 {
-            Interaction::gen(&mut rng, num as usize).apply(&mut dags);
+            Interaction::generate(&mut rng, num as usize).apply(&mut dags);
         }
         for i in 1..num {
             let (a, other) = array_mut_ref!(&mut dags, [0, i as usize]);
@@ -498,7 +498,7 @@ mod mermaid {
         let mut rng = StdRng::seed_from_u64(100);
         let mut dags = (0..num).map(TestDag::new).collect::<Vec<_>>();
         for _ in 0..100 {
-            Interaction::gen(&mut rng, num as usize).apply(&mut dags);
+            Interaction::generate(&mut rng, num as usize).apply(&mut dags);
         }
         for i in 1..num {
             let (a, other) = array_mut_ref!(&mut dags, [0, i as usize]);
