@@ -1,3 +1,4 @@
+use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 
 use crate::{
@@ -5,11 +6,7 @@ use crate::{
     id::ID,
 };
 
-use std::{
-    collections::{HashMap, HashSet},
-    mem::swap,
-    vec,
-};
+use std::{mem::swap, vec};
 
 use super::types::{AntiGraph, DeepOrInd, Father};
 
@@ -28,7 +25,7 @@ struct AllocationTree {
     deep: DeepOrInd,
     anti_graph: AntiGraph,
     father: Father,
-    tree: HashMap<ID, ID>,
+    tree: FxHashMap<ID, ID>,
     virtual_end_point: ID,
     virtual_start_point: ID,
 }
@@ -53,7 +50,7 @@ impl AllocationTree {
             deep: DeepOrInd::new(),
             anti_graph: AntiGraph::new(),
             father: Father::new(),
-            tree: HashMap::new(),
+            tree: FxHashMap::default(),
             virtual_start_point: ID {
                 peer: 0,
                 counter: -1,
@@ -73,12 +70,12 @@ impl AllocationTree {
     ) -> Vec<ID> {
         {
             let mut ind = DeepOrInd::new();
-            let end_id_set: HashSet<ID> = end_id_list.iter().cloned().collect();
-            let mut vis: HashSet<ID> = HashSet::new();
+            let end_id_set: FxHashSet<ID> = end_id_list.iter().cloned().collect();
+            let mut vis: FxHashSet<ID> = FxHashSet::default();
             for &to in start_id_list {
                 self.calc_ind::<T, D>(graph, to, &end_id_set, &mut vis, &mut ind);
             }
-            self.scale = ((vis.len() as f64).log2() as usize + 2) + 1;
+            self.scale = log2_floor(vis.len() + 2) + 1;
             vis.insert(self.virtual_start_point);
             vis.insert(self.virtual_end_point);
             for id in vis {
@@ -96,8 +93,8 @@ impl AllocationTree {
         &mut self,
         graph: &D,
         start_id: ID,
-        end_id_set: &HashSet<ID>,
-        vis: &mut HashSet<ID>,
+        end_id_set: &FxHashSet<ID>,
+        vis: &mut FxHashSet<ID>,
         ind: &mut DeepOrInd,
     ) {
         vis.insert(start_id);
@@ -116,7 +113,7 @@ impl AllocationTree {
         &mut self,
         graph: &D,
         start_id_list: &[ID],
-        end_id_set: &HashSet<ID>,
+        end_id_set: &FxHashSet<ID>,
         ind: &mut DeepOrInd,
     ) {
         let mut stack: Vec<ID> = start_id_list.iter().cloned().collect_vec();
@@ -150,7 +147,6 @@ impl AllocationTree {
             u = self.father.get(&u, log2_floor(depx - depy));
             depx = self.deep.get(&u);
         }
-
         if u == v {
             return u;
         }
@@ -202,7 +198,7 @@ impl AllocationTree {
 
 #[test]
 fn test_fast_log() {
-    let test_cases: Vec<(usize, usize)> = vec![
+    let test_cases = [
         (1, 0),
         (2, 1),
         (3, 1),

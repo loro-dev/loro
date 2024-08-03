@@ -1,12 +1,12 @@
 use crate::id::ID;
 
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
-pub struct AntiGraph(HashMap<ID, Vec<ID>>);
+pub struct AntiGraph(FxHashMap<ID, Vec<ID>>);
 
 impl AntiGraph {
     pub fn new() -> Self {
-        Self(HashMap::new())
+        Self(FxHashMap::default())
     }
 
     pub fn init(&mut self, id: &ID) {
@@ -24,11 +24,11 @@ impl AntiGraph {
     }
 }
 
-pub struct DeepOrInd(HashMap<ID, usize>);
+pub struct DeepOrInd(FxHashMap<ID, usize>);
 
 impl DeepOrInd {
     pub fn new() -> Self {
-        Self(HashMap::new())
+        Self(FxHashMap::default())
     }
 
     pub fn init(&mut self, id: &ID) {
@@ -63,11 +63,11 @@ impl DeepOrInd {
     }
 }
 
-pub struct Father(HashMap<ID, Vec<ID>>);
+pub struct Father(FxHashMap<ID, Vec<ID>>);
 
 impl Father {
     pub fn new() -> Self {
-        Self(HashMap::new())
+        Self(FxHashMap::default())
     }
 
     pub fn init(&mut self, id: &ID, scale: &usize) {
