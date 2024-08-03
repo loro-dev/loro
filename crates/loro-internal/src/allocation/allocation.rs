@@ -29,17 +29,30 @@ struct AllocationTree {
     anti_graph: AntiGraph,
     father: Father,
     tree: HashMap<ID, ID>,
+    virtual_end_point: ID,
+    virtual_start_point: ID,
 }
 
 impl AllocationTree {
     fn new() -> Self {
         Self {
             scale: 0,
-            topo: vec![],
+            topo: vec![ID {
+                peer: 0,
+                counter: -1,
+            }],
             deep: DeepOrInd::new(),
             anti_graph: AntiGraph::new(),
             father: Father::new(),
             tree: HashMap::new(),
+            virtual_start_point: ID {
+                peer: 0,
+                counter: -1,
+            },
+            virtual_end_point: ID {
+                peer: 0,
+                counter: -2,
+            },
         }
     }
 
@@ -56,7 +69,9 @@ impl AllocationTree {
             for &to in start_id_list {
                 self.calc_ind::<T, D>(graph, to, &end_id_set, &mut vis, &mut ind);
             }
-            self.scale = ((vis.len() as f64).log2() as usize) + 1;
+            self.scale = ((vis.len() as f64).log2() as usize + 2) + 1;
+            vis.insert(self.virtual_start_point);
+            vis.insert(self.virtual_end_point);
             for id in vis {
                 self.anti_graph.init(&id);
                 self.deep.init(&id);
@@ -65,8 +80,7 @@ impl AllocationTree {
             self.topo_sort(graph, start_id_list, &end_id_set, &mut ind);
         }
         self.calc::<T, D>();
-        let start_id_set = start_id_list.iter().cloned().collect();
-        self.resolve(&end_id_list, &start_id_set)
+        self.resolve()
     }
 
     fn calc_ind<T: DagNode, D: Dag<Node = T>>(
@@ -108,6 +122,13 @@ impl AllocationTree {
                 }
             }
         }
+        self.topo.push(self.virtual_end_point);
+        for end in end_id_set {
+            self.anti_graph.add(&self.virtual_end_point, end);
+        }
+        for start in start_id_list {
+            self.anti_graph.add(start, &self.virtual_start_point);
+        }
     }
 
     fn lca(&self, mut u: ID, mut v: ID) -> ID {
@@ -145,6 +166,7 @@ impl AllocationTree {
                     .reduce(|acc, x| self.lca(acc, x))
                     .unwrap();
                 self.tree.insert(u, v);
+                println!("{} {}", v, u);
                 let v_add_one = self.deep.get(&v) + 1;
                 self.deep.set(&u, v_add_one);
                 self.father.set(&u, 0, v);
@@ -157,17 +179,13 @@ impl AllocationTree {
         }
     }
 
-    fn resolve(&self, end_id_list: &[ID], start_id_set: &HashSet<ID>) -> Vec<ID> {
-        let mut result: HashSet<ID> = HashSet::new();
-        for &u in end_id_list {
-            let mut ux = u;
-            result.insert(ux);
-            while !start_id_set.contains(&ux) {
-                let father = self.tree[&ux];
-                result.insert(father);
-                ux = father;
-            }
+    fn resolve(&self) -> Vec<ID> {
+        let mut result: Vec<ID> = vec![];
+        let mut u = self.tree[&self.virtual_end_point];
+        while u != self.virtual_start_point {
+            result.push(u);
+            u = self.tree[&u];
         }
-        result.iter().cloned().collect_vec()
+        result
     }
 }

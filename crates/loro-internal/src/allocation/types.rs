@@ -76,7 +76,7 @@ impl Father {
             vec![
                 ID {
                     peer: 0,
-                    counter: 0
+                    counter: -1
                 };
                 scale + 1
             ],

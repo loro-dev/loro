@@ -380,8 +380,8 @@ mod iter {
 
 mod allocation_tree {
     use super::*;
-    use crate::allocation::calc_critical_version;
-    use crate::allocation::calc_critical_version_dfs;
+    use crate::{allocation::calc_critical_version, delta::DeltaValue};
+    use rand::{rngs::StdRng, SeedableRng};
 
     #[test]
     fn test_alloc_tree_basic() {
@@ -423,42 +423,30 @@ mod allocation_tree {
     }
 
     #[test]
-    fn test_alloc_tree_basic_dfs() {
-        let mut a = TestDag::new(0);
-        let mut b = TestDag::new(1);
-        let mut c = TestDag::new(2);
-        a.push(10);
-        b.merge(&a);
-        b.push(3);
-        c.merge(&b);
-        c.push(4);
-        a.push(3);
-        a.merge(&c);
-        a.push(2);
-        b.merge(&a);
-        assert_eq!(
-            calc_critical_version_dfs::<TestNode, TestDag>(
-                &b,
-                &[ID {
-                    peer: 0,
-                    counter: 13,
-                }],
-                &[ID {
-                    peer: 0,
-                    counter: 9,
-                }],
-            ),
-            vec![
-                ID {
-                    peer: 0,
-                    counter: 9,
-                },
-                ID {
-                    peer: 0,
-                    counter: 13,
-                },
-            ]
-        );
+    fn test_alloc_big() {
+        let num = 5;
+        let mut rng = StdRng::seed_from_u64(100);
+        let mut dags = (0..num).map(TestDag::new).collect::<Vec<_>>();
+        for _ in 0..100 {
+            Interaction::gen(&mut rng, num as usize).apply(&mut dags);
+        }
+        for i in 1..num {
+            let (a, other) = array_mut_ref!(&mut dags, [0, i as usize]);
+            a.merge(other);
+        }
+        println!("{}", dags[0].mermaid());
+        let start = dags[0].frontier();
+        let ends = [
+            ID {
+                peer: 3,
+                counter: 7,
+            },
+            ID {
+                peer: 4,
+                counter: 6,
+            },
+        ];
+        assert_eq!(calc_critical_version(&dags[0], start, &ends).length(), 0);
     }
 }
 
