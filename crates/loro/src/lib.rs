@@ -45,7 +45,7 @@ pub use loro_internal::ApplyDiff;
 pub use loro_internal::JsonSchema;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
-pub use loro_internal::{Counter, Lamport, PeerID, TreeID, ID};
+pub use loro_internal::{Counter, IdSpan, Lamport, PeerID, TreeID, ID};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
 
 #[cfg(feature = "counter")]
@@ -205,14 +205,14 @@ impl LoroDoc {
     /// In this mode, when you importing new updates, the [loro_internal::DocState] will not be changed.
     ///
     /// Learn more at https://loro.dev/docs/advanced/doc_state_and_oplog#attacheddetached-status
-    pub fn detach(&mut self) {
+    pub fn detach(&self) {
         self.doc.detach()
     }
 
     /// Import a batch of updates/snapshot.
     ///
     /// The data can be in arbitrary order. The import result will be the same.
-    pub fn import_batch(&mut self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
         self.doc.import_batch(bytes)
     }
 
@@ -623,10 +623,12 @@ impl LoroList {
 
     /// Get the value at the given position.
     #[inline]
-    pub fn get(&self, index: usize) -> Option<Either<LoroValue, Container>> {
+    pub fn get(&self, index: usize) -> Option<ValueOrContainer> {
         match self.handler.get_(index) {
-            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => {
+                Some(ValueOrContainer::Container(Container::from_handler(c)))
+            }
+            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
             None => None,
         }
     }

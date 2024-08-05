@@ -65,7 +65,7 @@ pub(crate) use loro_common::InternalString;
 pub use container::ContainerType;
 pub use encoding::json_schema::op::*;
 pub use loro_common::{loro_value, to_value};
-pub use loro_common::{Counter, Lamport, PeerID, TreeID, ID};
+pub use loro_common::{Counter, IdSpan, Lamport, PeerID, TreeID, ID};
 #[cfg(feature = "wasm")]
 pub use value::wasm;
 pub use value::{ApplyDiff, LoroValue, ToJson};

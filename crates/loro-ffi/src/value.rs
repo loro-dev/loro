@@ -2,6 +2,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use loro::{Counter, PeerID};
 
+pub trait LoroValueLike: Sync + Send {
+    fn as_loro_value(&self) -> crate::LoroValue;
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum ContainerType {
     Text,
@@ -26,6 +30,7 @@ pub enum ContainerID {
     },
 }
 
+#[derive(Debug, Clone)]
 pub enum LoroValue {
     Null,
     Bool { value: bool },
@@ -37,6 +42,18 @@ pub enum LoroValue {
     Map { value: HashMap<String, LoroValue> },
     Container { value: ContainerID },
 }
+
+// impl LoroValueLike for LoroValue {
+//     fn as_loro_value(&self) -> crate::LoroValue {
+//         self.clone()
+//     }
+// }
+
+// impl<T: LoroValueLike> LoroValueLike for Arc<T> {
+//     fn as_loro_value(&self) -> crate::LoroValue {
+//         self.as_ref().as_loro_value()
+//     }
+// }
 
 impl From<LoroValue> for loro::LoroValue {
     fn from(value: LoroValue) -> loro::LoroValue {

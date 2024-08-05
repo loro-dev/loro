@@ -1,3 +1,6 @@
+#[derive(Debug, Clone)]
 pub struct LoroUnknown {
-    unknown: loro::LoroUnknown,
+    pub(crate) unknown: loro::LoroUnknown,
 }
+
+impl LoroUnknown {}
