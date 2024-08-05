@@ -11,12 +11,13 @@ members = [
     "crates/fractional_index",
     "crates/dev-utils",
     "crates/delta",
+    "crates/loro-ffi",
 ]
 resolver = "2"
 
 [workspace.dependencies]
 enum_dispatch = "0.3.11"
-enum-as-inner = "0.5.1"
+enum-as-inner = "0.6.0"
 fxhash = "0.2.1"
 tracing = { version = "0.1", features = [
     "max_level_debug",
@@ -27,3 +28,4 @@ serde_json = "1.0"
 serde_columnar = { version = "0.3.4" }
 itertools = "0.12.1"
 smallvec = { version = "1.8.0", features = ["serde"] }
+either = "1.13.0"

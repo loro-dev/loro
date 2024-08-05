@@ -557,9 +557,9 @@ dependencies = [
 
 [[package]]
 name = "either"
-version = "1.9.0"
+version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a26ae43d7bcc3b814de94796a5e736d4029efb0ee900c12e2d54c993ad1a1e07"
+checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
 
 [[package]]
 name = "enum-as-inner"
@@ -656,7 +656,7 @@ dependencies = [
  "color-backtrace",
  "ctor 0.2.6",
  "dev-utils",
- "enum-as-inner 0.5.1",
+ "enum-as-inner 0.6.0",
  "enum_dispatch",
  "fxhash",
  "itertools 0.12.1",
@@ -1070,6 +1070,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-ffi"
+version = "0.1.0"
+dependencies = [
+ "either",
+ "loro 0.16.2",
+]
+
+[[package]]
 name = "loro-internal"
 version = "0.16.2"
 dependencies = [
@@ -1084,7 +1092,7 @@ dependencies = [
  "dev-utils",
  "dhat",
  "either",
- "enum-as-inner 0.5.1",
+ "enum-as-inner 0.6.0",
  "enum_dispatch",
  "fxhash",
  "generic-btree",

@@ -3,7 +3,6 @@
 #![warn(missing_debug_implementations)]
 use either::Either;
 use event::{DiffEvent, Subscriber};
-use loro_internal::container::IntoContainerId;
 use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
 use loro_internal::cursor::PosQueryResult;
@@ -32,12 +31,11 @@ pub use loro_internal::awareness;
 pub use loro_internal::configure::Configure;
 pub use loro_internal::configure::StyleConfigMap;
 pub use loro_internal::container::richtext::ExpandType;
-pub use loro_internal::container::{ContainerID, ContainerType};
+pub use loro_internal::container::{ContainerID, ContainerType, IntoContainerId};
 pub use loro_internal::cursor;
 pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
 pub use loro_internal::event::Index;
 pub use loro_internal::handler::TextDelta;
-pub use loro_internal::id::{PeerID, TreeID, ID};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::obs::SubID;
 pub use loro_internal::oplog::FrontiersNotIncluded;
@@ -47,6 +45,7 @@ pub use loro_internal::ApplyDiff;
 pub use loro_internal::JsonSchema;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
+pub use loro_internal::{Counter, Lamport, PeerID, TreeID, ID};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
 
 #[cfg(feature = "counter")]
@@ -674,11 +673,13 @@ impl LoroList {
     }
 
     /// Iterate over the elements of the list.
-    pub fn for_each<I>(&self, f: I)
+    pub fn for_each<I>(&self, mut f: I)
     where
-        I: FnMut((usize, ValueOrHandler)),
+        I: FnMut((usize, ValueOrContainer)),
     {
-        self.handler.for_each(f)
+        self.handler.for_each(&mut |(index, v)| {
+            f((index, ValueOrContainer::from(v)));
+        })
     }
 
     /// Get the length of the list.

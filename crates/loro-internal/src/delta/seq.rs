@@ -239,18 +239,6 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
             _ => unreachable!(),
         }
     }
-
-    pub fn is_retain(&self) -> bool {
-        matches!(self, Self::Retain { .. })
-    }
-
-    pub fn is_insert(&self) -> bool {
-        matches!(self, Self::Insert { .. })
-    }
-
-    pub fn is_delete(&self) -> bool {
-        matches!(self, Self::Delete { .. })
-    }
 }
 
 #[derive(Debug)]
