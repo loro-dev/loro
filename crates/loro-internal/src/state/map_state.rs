@@ -19,7 +19,7 @@ use crate::{
     DocState, InternalString, LoroValue,
 };
 
-use super::ContainerState;
+use super::{ContainerState, DiffApplyContext};
 
 #[derive(Debug, Clone)]
 pub struct MapState {
@@ -43,9 +43,12 @@ impl ContainerState for MapState {
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        DiffApplyContext {
+            arena,
+            txn,
+            state,
+            mode,
+        }: DiffApplyContext,
     ) -> Diff {
         let InternalDiff::Map(delta) = diff else {
             unreachable!()
@@ -67,14 +70,8 @@ impl ContainerState for MapState {
         Diff::Map(resolved_delta)
     }
 
-    fn apply_diff(
-        &mut self,
-        diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) {
-        let _ = self.apply_diff_and_convert(diff, arena, txn, state);
+    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) {
+        let _ = self.apply_diff_and_convert(diff, ctx);
     }
 
     fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<()> {

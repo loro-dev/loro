@@ -20,7 +20,7 @@ use crate::{
     container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
     cursor::Cursor,
     delta::TreeExternalDiff,
-    diff_calc::DiffCalculator,
+    diff_calc::{DiffCalculator, DiffMode},
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
     fx_map,
@@ -102,6 +102,13 @@ pub(crate) struct ContainerCreationContext<'a> {
     peer: PeerID,
 }
 
+pub(crate) struct DiffApplyContext<'a> {
+    pub mode: DiffMode,
+    pub arena: &'a SharedArena,
+    pub txn: &'a Weak<Mutex<Option<Transaction>>>,
+    pub state: &'a Weak<Mutex<DocState>>,
+}
+
 pub(crate) trait FastStateSnapshot {
     fn encode_snapshot_fast<W: Write>(&mut self, w: W);
     fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])>;
@@ -122,21 +129,9 @@ pub(crate) trait ContainerState: Clone {
     fn is_state_empty(&self) -> bool;
 
     #[must_use]
-    fn apply_diff_and_convert(
-        &mut self,
-        diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) -> Diff;
+    fn apply_diff_and_convert(&mut self, diff: InternalDiff, ctx: DiffApplyContext) -> Diff;
 
-    fn apply_diff(
-        &mut self,
-        diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    );
+    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext);
 
     fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()>;
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
@@ -204,25 +199,12 @@ impl<T: ContainerState> ContainerState for Box<T> {
         self.as_ref().is_state_empty()
     }
 
-    fn apply_diff_and_convert(
-        &mut self,
-        diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) -> Diff {
-        self.as_mut()
-            .apply_diff_and_convert(diff, arena, txn, state)
+    fn apply_diff_and_convert(&mut self, diff: InternalDiff, ctx: DiffApplyContext) -> Diff {
+        self.as_mut().apply_diff_and_convert(diff, ctx)
     }
 
-    fn apply_diff(
-        &mut self,
-        diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) {
-        self.as_mut().apply_diff(diff, arena, txn, state)
+    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) {
+        self.as_mut().apply_diff(diff, ctx)
     }
 
     fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
@@ -584,6 +566,7 @@ impl DocState {
                         bring_back: true,
                         is_container_deleted: false,
                         diff: external_diff.into(),
+                        diff_mode: DiffMode::Checkout,
                     });
                 }
 
@@ -619,17 +602,23 @@ impl DocState {
                             if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
                                 state.apply_diff(
                                     internal_diff.into_internal().unwrap(),
-                                    &self.arena,
-                                    &self.global_txn,
-                                    &self.weak_state,
+                                    DiffApplyContext {
+                                        mode: diff.diff_mode,
+                                        arena: &self.arena,
+                                        txn: &self.global_txn,
+                                        state: &self.weak_state,
+                                    },
                                 );
                                 state.to_diff(&self.arena, &self.global_txn, &self.weak_state)
                             } else {
                                 state.apply_diff_and_convert(
                                     internal_diff.into_internal().unwrap(),
-                                    &self.arena,
-                                    &self.global_txn,
-                                    &self.weak_state,
+                                    DiffApplyContext {
+                                        mode: diff.diff_mode,
+                                        arena: &self.arena,
+                                        txn: &self.global_txn,
+                                        state: &self.weak_state,
+                                    },
                                 )
                             };
                         trigger_on_new_container(
@@ -643,9 +632,12 @@ impl DocState {
                     } else {
                         state.apply_diff(
                             internal_diff.into_internal().unwrap(),
-                            &self.arena,
-                            &self.global_txn,
-                            &self.weak_state,
+                            DiffApplyContext {
+                                mode: diff.diff_mode,
+                                arena: &self.arena,
+                                txn: &self.global_txn,
+                                state: &self.weak_state,
+                            },
                         );
                     }
                 }
@@ -682,6 +674,7 @@ impl DocState {
                         bring_back: true,
                         is_container_deleted: false,
                         diff: external_diff.into(),
+                        diff_mode: DiffMode::Checkout,
                     });
                 }
             }
@@ -809,6 +802,7 @@ impl DocState {
                         )
                         .to_diff(&self.arena, &self.global_txn, &self.weak_state)
                         .into(),
+                    diff_mode: DiffMode::Checkout,
                 })
                 .collect();
 

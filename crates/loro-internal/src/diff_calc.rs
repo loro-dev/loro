@@ -55,6 +55,34 @@ pub struct DiffCalculator {
     has_all: bool,
 }
 
+/// This mode defines how the diff is calculated and how it should be applied on the state.
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub enum DiffMode {
+    /// This is the most general mode of diff calculation.
+    ///
+    /// When applying `Checkout` diff, we already know the current state of the affected registers.
+    /// So there is no need to compare the lamport values.
+    ///
+    /// It can be used whenever a user want to switch to a different version.
+    /// But it is also the slowest mode. It relies on the `ContainerHistoryCache`, which is expensive to build and maintain in memory.
+    Checkout,
+    /// This mode is used when the user imports new updates.
+    ///
+    /// When applying `Import` diff, we may need to know the the current state.
+    /// For example, we may need to compare the current register's lamport with the update's lamport to decide
+    /// what's the new value.
+    ///
+    /// It is faster than the checkout mode, but it is still slower than the linear mode.
+    ///
+    /// - The difference between the import mode and the checkout mode: in import mode, target version > current version.
+    ///   So when calculating the `DiffCalculator` doesn't need to rely on `ContainerHistoryCache`, except for the Tree container.
+    /// - The difference between the import mode and the linear mode: in linear mode, all the imported updates are ordered, no concurrent update exists.
+    ///   So there is no need to build CRDTs for the calculation
+    Import,
+    /// This mode is used when we don't need to build CRDTs to calculate the difference. It is the fastest mode.
+    Linear,
+}
+
 impl DiffCalculator {
     pub fn new() -> Self {
         Self {
@@ -252,7 +280,7 @@ impl DiffCalculator {
                 let id = oplog.arena.idx_to_id(container_idx).unwrap();
                 let bring_back = new_containers.remove(&id);
 
-                let diff = calc.calculate_diff(oplog, before, after, |c| {
+                let (diff, diff_mode) = calc.calculate_diff(oplog, before, after, |c| {
                     new_containers.insert(c.clone());
                     container_id_to_depth.insert(c.clone(), depth.and_then(|d| d.checked_add(1)));
                     oplog.arena.register_container(c);
@@ -267,6 +295,7 @@ impl DiffCalculator {
                                 bring_back,
                                 is_container_deleted: false,
                                 diff: diff.into(),
+                                diff_mode,
                             },
                         ),
                     );
@@ -293,6 +322,7 @@ impl DiffCalculator {
                             bring_back: true,
                             is_container_deleted: false,
                             diff: DiffVariant::None,
+                            diff_mode: DiffMode::Checkout,
                         },
                     ),
                 );
@@ -367,7 +397,7 @@ pub(crate) trait DiffCalculatorTrait {
         from: &crate::VersionVector,
         to: &crate::VersionVector,
         on_new_container: impl FnMut(&ContainerID),
-    ) -> InternalDiff;
+    ) -> (InternalDiff, DiffMode);
 }
 
 #[enum_dispatch(DiffCalculatorTrait)]
@@ -419,7 +449,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         from: &crate::VersionVector,
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
-    ) -> InternalDiff {
+    ) -> (InternalDiff, DiffMode) {
         let mut changed = Vec::new();
         let group = oplog
             .op_groups
@@ -465,7 +495,8 @@ impl DiffCalculatorTrait for MapDiffCalculator {
 
             updated.insert(key, value);
         }
-        InternalDiff::Map(MapDelta { updated })
+
+        (InternalDiff::Map(MapDelta { updated }), DiffMode::Checkout)
     }
 }
 
@@ -551,7 +582,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         from: &crate::VersionVector,
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
-    ) -> InternalDiff {
+    ) -> (InternalDiff, DiffMode) {
         let mut delta = Delta::new();
         for item in self.tracker.diff(from, to) {
             match item {
@@ -638,7 +669,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             delta
         }
 
-        InternalDiff::ListRaw(delta)
+        (InternalDiff::ListRaw(delta), DiffMode::Checkout)
     }
 }
 
@@ -777,7 +808,8 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         from: &crate::VersionVector,
         to: &crate::VersionVector,
         _: impl FnMut(&ContainerID),
-    ) -> InternalDiff {
+    ) -> (InternalDiff, DiffMode) {
+        // TODO: PERF: It can be linearized in certain cases
         tracing::debug!("CalcDiff {:?} {:?}", from, to);
         let mut delta = Delta::new();
         for item in self.tracker.diff(from, to) {
@@ -844,7 +876,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             }
         }
 
-        InternalDiff::RichtextRaw(delta)
+        (InternalDiff::RichtextRaw(delta), DiffMode::Checkout)
     }
 }
 
@@ -972,12 +1004,14 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         from: &crate::VersionVector,
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
-    ) -> InternalDiff {
-        let InternalDiff::ListRaw(list_diff) = self.list.calculate_diff(oplog, from, to, |_| {})
+    ) -> (InternalDiff, DiffMode) {
+        let (InternalDiff::ListRaw(list_diff), diff_mode) =
+            self.list.calculate_diff(oplog, from, to, |_| {})
         else {
             unreachable!()
         };
 
+        assert_eq!(diff_mode, DiffMode::Checkout);
         let group = oplog
             .op_groups
             .get_movable_list(&self.container_idx)
@@ -1071,7 +1105,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             elements: element_changes,
         };
 
-        InternalDiff::MovableList(diff)
+        (InternalDiff::MovableList(diff), DiffMode::Checkout)
     }
 }
 

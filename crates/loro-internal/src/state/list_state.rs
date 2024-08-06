@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use super::{ContainerState, FastStateSnapshot};
+use super::{ContainerState, DiffApplyContext, FastStateSnapshot};
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, list::list_op::ListOp, ContainerID},
@@ -364,9 +364,9 @@ impl ContainerState for ListState {
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        DiffApplyContext {
+            arena, txn, state, ..
+        }: DiffApplyContext,
     ) -> Diff {
         let InternalDiff::ListRaw(delta) = diff else {
             unreachable!()
@@ -407,13 +407,7 @@ impl ContainerState for ListState {
         Diff::List(ans)
     }
 
-    fn apply_diff(
-        &mut self,
-        diff: InternalDiff,
-        arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
-    ) {
+    fn apply_diff(&mut self, diff: InternalDiff, DiffApplyContext { arena, .. }: DiffApplyContext) {
         match diff {
             InternalDiff::ListRaw(delta) => {
                 let mut index = 0;

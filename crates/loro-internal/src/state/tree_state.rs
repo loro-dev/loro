@@ -30,7 +30,7 @@ use crate::{
     op::RawOp,
 };
 
-use super::ContainerState;
+use super::{ContainerState, DiffApplyContext};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner, Serialize)]
 pub enum TreeParentId {
@@ -854,9 +854,7 @@ impl ContainerState for TreeState {
     fn apply_diff_and_convert(
         &mut self,
         diff: crate::event::InternalDiff,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
+        _ctx: DiffApplyContext,
     ) -> Diff {
         let mut ans = vec![];
         if let InternalDiff::Tree(tree) = &diff {
@@ -935,13 +933,7 @@ impl ContainerState for TreeState {
         Diff::Tree(TreeDiff { diff: ans })
     }
 
-    fn apply_diff(
-        &mut self,
-        diff: InternalDiff,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
-    ) {
+    fn apply_diff(&mut self, diff: InternalDiff, _ctx: DiffApplyContext) {
         if let InternalDiff::Tree(tree) = &diff {
             // assert never cause cycle move
             for diff in tree.diff.iter() {

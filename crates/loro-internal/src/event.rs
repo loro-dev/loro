@@ -11,6 +11,7 @@ use crate::{
         Delta, MapDelta, Meta, MovableListInnerDelta, ResolvedMapDelta, StyleMeta, TreeDelta,
         TreeDiff,
     },
+    diff_calc::DiffMode,
     handler::ValueOrHandler,
     op::SliceRanges,
     utils::string_slice::StringSlice,
@@ -113,6 +114,8 @@ pub(crate) struct InternalContainerDiff {
     pub(crate) bring_back: bool,
     pub(crate) is_container_deleted: bool,
     pub(crate) diff: DiffVariant,
+    /// This mode decides how should we apply the diff.
+    pub(crate) diff_mode: DiffMode,
 }
 
 #[derive(Default, Debug, Clone, EnumAsInner)]

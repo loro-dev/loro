@@ -15,7 +15,7 @@ use crate::{
     OpLog, VersionVector,
 };
 
-use super::DiffCalculatorTrait;
+use super::{DiffCalculatorTrait, DiffMode};
 
 #[derive(Debug)]
 pub(crate) struct TreeDiffCalculator {
@@ -41,7 +41,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         from: &crate::VersionVector,
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
-    ) -> InternalDiff {
+    ) -> (InternalDiff, DiffMode) {
         let diff = self.diff(oplog, from, to);
         diff.diff.iter().for_each(|d| {
             // the metadata could be modified before, so (re)create a node need emit the map container diffs
@@ -51,7 +51,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             }
         });
 
-        InternalDiff::Tree(diff)
+        (InternalDiff::Tree(diff), DiffMode::Checkout)
     }
 }
 

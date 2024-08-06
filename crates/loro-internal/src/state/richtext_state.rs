@@ -31,7 +31,7 @@ use crate::{
     DocState,
 };
 
-use super::ContainerState;
+use super::{ContainerState, DiffApplyContext};
 
 #[derive(Debug)]
 pub struct RichtextState {
@@ -276,13 +276,7 @@ impl ContainerState for RichtextState {
     }
 
     // TODO: refactor
-    fn apply_diff_and_convert(
-        &mut self,
-        diff: InternalDiff,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
-    ) -> Diff {
+    fn apply_diff_and_convert(&mut self, diff: InternalDiff, _ctx: DiffApplyContext) -> Diff {
         self.update_version();
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
@@ -458,13 +452,7 @@ impl ContainerState for RichtextState {
         Diff::Text(ans)
     }
 
-    fn apply_diff(
-        &mut self,
-        diff: InternalDiff,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
-    ) {
+    fn apply_diff(&mut self, diff: InternalDiff, _ctx: DiffApplyContext) {
         self.update_version();
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()

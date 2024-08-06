@@ -349,6 +349,7 @@ impl Transaction {
                             bring_back: false,
                             is_container_deleted: false,
                             diff: (x.diff.into()),
+                            diff_mode: crate::diff_calc::DiffMode::Linear,
                         })
                         .collect(),
                 ),

@@ -26,7 +26,7 @@ use self::{
     list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
 };
 
-use super::ContainerState;
+use super::{ContainerState, DiffApplyContext};
 
 #[derive(Debug, Clone)]
 pub struct MovableListState {
@@ -963,9 +963,12 @@ impl ContainerState for MovableListState {
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        DiffApplyContext {
+            arena,
+            txn,
+            state,
+            mode,
+        }: DiffApplyContext,
     ) -> Diff {
         let InternalDiff::MovableList(diff) = diff else {
             unreachable!()
@@ -1211,14 +1214,8 @@ impl ContainerState for MovableListState {
         Diff::List(event)
     }
 
-    fn apply_diff(
-        &mut self,
-        diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) {
-        let _ = self.apply_diff_and_convert(diff, arena, txn, state);
+    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) {
+        let _ = self.apply_diff_and_convert(diff, ctx);
     }
 
     #[instrument(skip_all)]
