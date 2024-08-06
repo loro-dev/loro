@@ -1059,7 +1059,6 @@ impl ContainerState for MovableListState {
             for (elem_id, delta_item) in diff.elements.into_iter() {
                 let crate::delta::ElementDelta {
                     pos,
-                    pos_updated: _,
                     value,
                     value_updated,
                     value_id,
@@ -1072,7 +1071,8 @@ impl ContainerState for MovableListState {
                         // Update value if needed
                         if elem.value != value {
                             maybe_moved.remove(&elem_id);
-                            self.inner.update_value(elem_id, value.clone(), value_id);
+                            self.inner
+                                .update_value(elem_id, value.clone(), value_id.unwrap());
                             let index = self.get_index_of_elem(elem_id);
                             if let Some(index) = index {
                                 event.compose(
@@ -1091,9 +1091,9 @@ impl ContainerState for MovableListState {
                         }
 
                         // Update pos if needed
-                        if elem.pos != pos {
+                        if elem.pos != pos.unwrap() {
                             // don't need to update old list item, because it's handled by list diff already
-                            let result = self.inner.update_pos(elem_id, pos, false);
+                            let result = self.inner.update_pos(elem_id, pos.unwrap(), false);
                             let result = self.inner.convert_update_to_event_pos(result);
                             if let Some(new_index) = result.insert {
                                 let new_value =
@@ -1135,7 +1135,12 @@ impl ContainerState for MovableListState {
                     }
                     None => {
                         // Need to create new element
-                        let result = self.create_new_elem(elem_id, pos, value.clone(), value_id);
+                        let result = self.create_new_elem(
+                            elem_id,
+                            pos.unwrap(),
+                            value.clone(),
+                            value_id.unwrap(),
+                        );
                         // Composing events
                         let result = self.inner.convert_update_to_event_pos(result);
                         // Create event for pos change and value change

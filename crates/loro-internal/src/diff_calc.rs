@@ -1048,20 +1048,18 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     on_new_container(c);
                 }
                 *change = ElementDelta {
-                    pos: pos.idlp(),
+                    pos: Some(pos.idlp()),
                     value: value.value.clone(),
-                    value_id: IdLp::new(value.peer, value.lamport),
-                    pos_updated: true,
+                    value_id: Some(IdLp::new(value.peer, value.lamport)),
                     value_updated: true,
                 };
             } else {
                 // TODO: PERF: can be filtered based on the list_diff and whether the pos/value are updated
                 *change = ElementDelta {
-                    pos: pos.idlp(),
-                    pos_updated: old_pos.unwrap().idlp() != pos.idlp(),
+                    pos: Some(pos.idlp()),
                     value: value.value.clone(),
                     value_updated: old_value.unwrap().value != value.value,
-                    value_id: IdLp::new(value.peer, value.lamport),
+                    value_id: Some(IdLp::new(value.peer, value.lamport)),
                 };
             }
 
