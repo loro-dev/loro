@@ -46,7 +46,7 @@ pub use loro_internal::JsonSchema;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{Counter, IdSpan, Lamport, PeerID, TreeID, ID};
-pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
+pub use loro_internal::{LoroError, LoroResult, LoroTreeError, LoroValue, ToJson};
 
 #[cfg(feature = "counter")]
 mod counter;
@@ -875,11 +875,13 @@ impl LoroMap {
     }
 
     /// Get the value of the map with the given key.
-    pub fn get(&self, key: &str) -> Option<Either<LoroValue, Container>> {
+    pub fn get(&self, key: &str) -> Option<ValueOrContainer> {
         match self.handler.get_(key) {
             None => None,
-            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => {
+                Some(ValueOrContainer::Container(Container::from_handler(c)))
+            }
+            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
         }
     }
 
@@ -995,7 +997,7 @@ impl LoroText {
     ///
     /// The callback function will be called for each character in the text.
     /// If the callback returns `false`, the iteration will stop.
-    pub fn iter(&self, callback: impl FnMut(&str) -> bool) -> () {
+    pub fn iter(&self, callback: impl FnMut(&str) -> bool) {
         self.handler.iter(callback);
     }
 
@@ -1055,7 +1057,7 @@ impl LoroText {
     }
 
     /// Update the current text based on the provided text.
-    pub fn update(&self, text: &str) -> () {
+    pub fn update(&self, text: &str) {
         self.handler.update(text);
     }
 
@@ -1413,8 +1415,8 @@ impl LoroTree {
     ///
     /// - If the target node does not exist, return `None`.
     /// - If the target node is a root node, return `Some(None)`.
-    pub fn parent(&self, target: &TreeID) -> Option<Option<TreeID>> {
-        self.handler.get_node_parent(target)
+    pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
+        self.handler.get_node_parent(&target)
     }
 
     /// Return whether target node exists.
@@ -1557,10 +1559,12 @@ impl LoroMovableList {
     }
 
     /// Get the value at the given position.
-    pub fn get(&self, index: usize) -> Option<Either<LoroValue, Container>> {
+    pub fn get(&self, index: usize) -> Option<ValueOrContainer> {
         match self.handler.get_(index) {
-            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => {
+                Some(ValueOrContainer::Container(Container::from_handler(c)))
+            }
+            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
             None => None,
         }
     }
@@ -1591,10 +1595,12 @@ impl LoroMovableList {
     }
 
     /// Pop the last element of the list.
-    pub fn pop(&self) -> LoroResult<Option<Either<LoroValue, Container>>> {
+    pub fn pop(&self) -> LoroResult<Option<ValueOrContainer>> {
         Ok(match self.handler.pop_()? {
-            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => {
+                Some(ValueOrContainer::Container(Container::from_handler(c)))
+            }
+            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
             None => None,
         })
     }
