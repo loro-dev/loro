@@ -1700,6 +1700,13 @@ pub struct LoroUnknown {
     handler: InnerUnknownHandler,
 }
 
+impl LoroUnknown {
+    /// Get the container id.
+    pub fn id(&self) -> ContainerID {
+        self.handler.id().clone()
+    }
+}
+
 impl SealedTrait for LoroUnknown {}
 impl ContainerTrait for LoroUnknown {
     type Handler = InnerUnknownHandler;
