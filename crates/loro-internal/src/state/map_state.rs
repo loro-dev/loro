@@ -11,6 +11,7 @@ use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, map::MapSet},
     delta::{MapValue, ResolvedMapDelta, ResolvedMapValue},
+    diff_calc::DiffMode,
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     handler::ValueOrHandler,
@@ -53,18 +54,34 @@ impl ContainerState for MapState {
         let InternalDiff::Map(delta) = diff else {
             unreachable!()
         };
+        let force = matches!(mode, DiffMode::Checkout | DiffMode::Linear);
         let mut resolved_delta = ResolvedMapDelta::new();
         for (key, value) in delta.updated.into_iter() {
-            self.map.insert(key.clone(), value.clone());
-            resolved_delta = resolved_delta.with_entry(
-                key,
-                ResolvedMapValue {
-                    idlp: IdLp::new(value.peer, value.lamp),
-                    value: value
-                        .value
-                        .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
-                },
-            )
+            let mut changed = false;
+            if force {
+                self.map.insert(key.clone(), value.clone());
+                changed = true;
+            } else {
+                match self.map.get(&key) {
+                    Some(old_value) if old_value > &value => {}
+                    _ => {
+                        self.map.insert(key.clone(), value.clone());
+                        changed = true;
+                    }
+                }
+            }
+
+            if changed {
+                resolved_delta = resolved_delta.with_entry(
+                    key,
+                    ResolvedMapValue {
+                        idlp: IdLp::new(value.peer, value.lamp),
+                        value: value
+                            .value
+                            .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+                    },
+                )
+            }
         }
 
         Diff::Map(resolved_delta)

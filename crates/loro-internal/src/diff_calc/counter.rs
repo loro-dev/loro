@@ -22,7 +22,7 @@ impl CounterDiffCalculator {
 }
 
 impl DiffCalculatorTrait for CounterDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
+    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector, mode: DiffMode) {}
 
     fn apply_change(
         &mut self,
@@ -37,7 +37,7 @@ impl DiffCalculatorTrait for CounterDiffCalculator {
         );
     }
 
-    fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
+    fn finish_this_round(&mut self) {}
 
     fn calculate_diff(
         &mut self,

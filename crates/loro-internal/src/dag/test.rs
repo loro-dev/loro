@@ -279,6 +279,7 @@ fn test_dag() {
     // println!("{}", b.mermaid());
     assert_eq!(
         b.find_common_ancestor(&[ID::new(0, 2)], &[ID::new(1, 1)])
+            .0
             .first()
             .copied(),
         None,
@@ -687,9 +688,14 @@ mod find_common_ancestors {
         a.push(5);
         let actual = a
             .find_common_ancestor(&[ID::new(0, 2)], &[ID::new(0, 4)])
+            .0
             .first()
             .copied();
         assert_eq!(actual, Some(ID::new(0, 2)));
+        assert_eq!(
+            a.find_common_ancestor(&[ID::new(0, 2)], &[ID::new(0, 4)]).1,
+            DiffMode::Linear
+        );
     }
 
     #[test]
@@ -701,6 +707,7 @@ mod find_common_ancestors {
         a.merge(&b);
         let actual = a
             .find_common_ancestor(&[ID::new(0, 0)], &[ID::new(1, 0)])
+            .0
             .first()
             .copied();
         assert_eq!(actual, None);
@@ -715,9 +722,14 @@ mod find_common_ancestors {
         // should no exist any common ancestor between a and b
         let actual = a
             .find_common_ancestor(&[ID::new(0, 0)], &[ID::new(1, 0)])
+            .0
             .first()
             .copied();
         assert_eq!(actual, None);
+        assert_eq!(
+            a.find_common_ancestor(&[ID::new(0, 0)], &[ID::new(1, 0)]).1,
+            DiffMode::Checkout
+        )
     }
 
     #[test]
@@ -733,11 +745,13 @@ mod find_common_ancestors {
         println!("{}", a.mermaid());
         let actual = a
             .find_common_ancestor(&[ID::new(0, 4)], &[ID::new(0, 1), ID::new(1, 1)])
+            .0
             .first()
             .copied();
         assert_eq!(actual, None);
         let actual = a
             .find_common_ancestor(&[ID::new(0, 4)], &[ID::new(1, 1)])
+            .0
             .first()
             .copied();
         assert_eq!(actual, None);
@@ -755,6 +769,7 @@ mod find_common_ancestors {
         println!("{}", b.mermaid());
         assert_eq!(
             b.find_common_ancestor(&[ID::new(0, 3)], &[ID::new(1, 8)])
+                .0
                 .first()
                 .copied(),
             Some(ID::new(0, 2))
@@ -785,12 +800,14 @@ mod find_common_ancestors {
         println!("{}", a1.mermaid());
         assert_eq!(
             a1.find_common_ancestor(&[ID::new(0, 3)], &[ID::new(1, 4)])
+                .0
                 .first()
                 .copied(),
             Some(ID::new(0, 2))
         );
         assert_eq!(
             a1.find_common_ancestor(&[ID::new(2, 3)], &[ID::new(1, 3)])
+                .0
                 .iter()
                 .copied()
                 .collect::<Vec<_>>(),
@@ -953,7 +970,7 @@ mod find_common_ancestors_proptest {
         let a = dags[0].nodes.get(&0).unwrap().last().unwrap().id_last();
         let b = dags[1].nodes.get(&1).unwrap().last().unwrap().id_last();
         let actual = dags[0].find_common_ancestor(&[a], &[b]);
-        prop_assert_eq!(&**actual, &[expected]);
+        prop_assert_eq!(&**actual.0, &[expected]);
         Ok(())
     }
 
@@ -1101,7 +1118,7 @@ mod find_common_ancestors_proptest {
         dag_a.merge(dag_b);
         let a = dag_a.get_last_node().id;
         let b = dag_b.get_last_node().id;
-        let mut actual = dag_a.find_common_ancestor(&[a], &[b]);
+        let mut actual = dag_a.find_common_ancestor(&[a], &[b]).0;
         actual.sort();
         let actual = actual.iter().copied().collect::<Vec<_>>();
         if actual != expected {

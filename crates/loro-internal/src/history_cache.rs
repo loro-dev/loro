@@ -201,6 +201,10 @@ impl MapOpGroup {
                 .find(|op| vv.get(&op.peer).copied().unwrap_or(0) > op.counter)
         })
     }
+
+    pub(crate) fn keys(&self) -> impl Iterator<Item = &InternalString> {
+        self.ops.keys()
+    }
 }
 
 impl OpGroupTrait for MapOpGroup {

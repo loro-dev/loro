@@ -14,6 +14,7 @@ use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;
 use crate::container::list::list_op;
 use crate::dag::{Dag, DagUtils};
+use crate::diff_calc::DiffMode;
 use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::history_cache::ContainerHistoryCache;
@@ -529,6 +530,7 @@ impl OpLog {
         to_frontiers: Option<&Frontiers>,
     ) -> (
         VersionVector,
+        DiffMode,
         impl Iterator<Item = (BlockChangeRef, Counter, Rc<RefCell<VersionVector>>)> + '_,
     ) {
         let mut merged_vv = from.clone();
@@ -552,7 +554,8 @@ impl OpLog {
             }
         };
 
-        let common_ancestors = self.dag.find_common_ancestor(from_frontiers, to_frontiers);
+        let (common_ancestors, diff_mode) =
+            self.dag.find_common_ancestor(from_frontiers, to_frontiers);
         let common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors).unwrap();
         // go from lca to merged_vv
         let diff = common_ancestors_vv.diff(&merged_vv).right;
@@ -562,6 +565,7 @@ impl OpLog {
         let vv = Rc::new(RefCell::new(VersionVector::default()));
         (
             common_ancestors_vv.clone(),
+            diff_mode,
             std::iter::from_fn(move || {
                 if let Some(inner) = &node {
                     let mut inner_vv = vv.borrow_mut();

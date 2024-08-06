@@ -19,7 +19,6 @@ enum_dispatch = "0.3.11"
 enum-as-inner = "0.5.1"
 fxhash = "0.2.1"
 tracing = { version = "0.1", features = [
-    "max_level_debug",
     "release_max_level_warn",
 ] }
 serde_columnar = { version = "0.3.5" }

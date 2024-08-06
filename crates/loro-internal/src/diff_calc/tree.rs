@@ -23,7 +23,7 @@ pub(crate) struct TreeDiffCalculator {
 }
 
 impl DiffCalculatorTrait for TreeDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
+    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector, mode: DiffMode) {}
 
     fn apply_change(
         &mut self,
@@ -33,7 +33,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
     ) {
     }
 
-    fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
+    fn finish_this_round(&mut self) {}
 
     fn calculate_diff(
         &mut self,
@@ -148,7 +148,7 @@ impl TreeDiffCalculator {
         let _e = s.enter();
         let to_frontiers = to.to_frontiers(&oplog.dag);
         let from_frontiers = from.to_frontiers(&oplog.dag);
-        let common_ancestors = oplog
+        let (common_ancestors, _mode) = oplog
             .dag
             .find_common_ancestor(&from_frontiers, &to_frontiers);
         let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();

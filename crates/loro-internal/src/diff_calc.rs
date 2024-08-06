@@ -15,7 +15,7 @@ use loro_common::{
     PeerID, ID,
 };
 use smallvec::SmallVec;
-use tracing::instrument;
+use tracing::{instrument, trace, warn};
 
 use crate::{
     container::{
@@ -142,7 +142,7 @@ impl DiffCalculator {
                 self.has_all = true;
                 self.last_vv = Default::default();
             }
-            let (lca, iter) =
+            let (lca, diff_mode, iter) =
                 oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
             tracing::info!("LCA: {:?}", &lca);
             let mut started_set = FxHashSet::default();
@@ -156,6 +156,7 @@ impl DiffCalculator {
                     );
                 }
 
+                let end_counter = merged.get(&change.id.peer).unwrap();
                 if self.has_all {
                     self.last_vv.extend_to_include_end_id(change.id_end());
                 }
@@ -166,6 +167,10 @@ impl DiffCalculator {
                     .unwrap_or_else(|e| e);
                 let mut visited = FxHashSet::default();
                 for mut op in &change.ops.vec()[iter_start..] {
+                    if op.counter >= *end_counter {
+                        break;
+                    }
+
                     let idx = op.container;
                     if let Some(filter) = container_filter {
                         if !filter(idx) {
@@ -174,14 +179,17 @@ impl DiffCalculator {
                     }
 
                     // slice the op if needed
+                    // PERF: we can skip the slice by using the RichOp::new_slice
                     let stack_sliced_op;
-                    if op.counter < start_counter {
-                        if op.ctr_last() < start_counter {
-                            continue;
-                        }
+                    if op.ctr_last() < start_counter {
+                        continue;
+                    }
 
-                        stack_sliced_op =
-                            Some(op.slice((start_counter - op.counter) as usize, op.atom_len()));
+                    if op.counter < start_counter || op.ctr_end() > *end_counter {
+                        stack_sliced_op = Some(op.slice(
+                            ((start_counter as usize).saturating_sub(op.counter as usize)),
+                            op.atom_len().min((end_counter - op.counter) as usize),
+                        ));
                         op = stack_sliced_op.as_ref().unwrap();
                     }
                     let vv = &mut vv.borrow_mut();
@@ -197,7 +205,7 @@ impl DiffCalculator {
 
                     if !started_set.contains(&op.container) {
                         started_set.insert(container);
-                        calculator.start_tracking(oplog, &lca);
+                        calculator.start_tracking(oplog, &lca, diff_mode);
                     }
 
                     if visited.contains(&op.container) {
@@ -212,9 +220,6 @@ impl DiffCalculator {
                         visited.insert(container);
                     }
                 }
-            }
-            for (_, (_, calculator)) in self.calculators.iter_mut() {
-                calculator.stop_tracking(oplog, after);
             }
 
             Some(started_set)
@@ -274,6 +279,7 @@ impl DiffCalculator {
                     if d != *depth {
                         *depth = d;
                         all.push((*depth, container_idx));
+                        calc.finish_this_round();
                         continue;
                     }
                 }
@@ -285,6 +291,7 @@ impl DiffCalculator {
                     container_id_to_depth.insert(c.clone(), depth.and_then(|d| d.checked_add(1)));
                     oplog.arena.register_container(c);
                 });
+                calc.finish_this_round();
                 if !diff.is_empty() || bring_back {
                     ans.insert(
                         container_idx,
@@ -383,14 +390,13 @@ impl DiffCalculator {
 ///
 #[enum_dispatch]
 pub(crate) trait DiffCalculatorTrait {
-    fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector);
+    fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode);
     fn apply_change(
         &mut self,
         oplog: &OpLog,
         op: crate::op::RichOp,
         vv: Option<&crate::VersionVector>,
     );
-    fn stop_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector);
     fn calculate_diff(
         &mut self,
         oplog: &OpLog,
@@ -398,6 +404,8 @@ pub(crate) trait DiffCalculatorTrait {
         to: &crate::VersionVector,
         on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode);
+    /// This round of diff calc is finished, we can clear the cache
+    fn finish_this_round(&mut self);
 }
 
 #[enum_dispatch(DiffCalculatorTrait)]
@@ -416,20 +424,30 @@ pub(crate) enum ContainerDiffCalculator {
 #[derive(Debug)]
 pub(crate) struct MapDiffCalculator {
     container_idx: ContainerIdx,
-    changed_key: FxHashSet<InternalString>,
+    changed: FxHashMap<InternalString, MapValue>,
+    current_mode: DiffMode,
 }
 
 impl MapDiffCalculator {
     pub(crate) fn new(container_idx: ContainerIdx) -> Self {
         Self {
             container_idx,
-            changed_key: Default::default(),
+            changed: Default::default(),
+            current_mode: DiffMode::Checkout,
         }
     }
 }
 
 impl DiffCalculatorTrait for MapDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &crate::OpLog, _vv: &crate::VersionVector) {}
+    fn start_tracking(
+        &mut self,
+        _oplog: &crate::OpLog,
+        _vv: &crate::VersionVector,
+        mode: DiffMode,
+    ) {
+        self.changed.clear();
+        self.current_mode = mode;
+    }
 
     fn apply_change(
         &mut self,
@@ -437,11 +455,29 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         op: crate::op::RichOp,
         _vv: Option<&crate::VersionVector>,
     ) {
+        if matches!(self.current_mode, DiffMode::Checkout) {
+            // We need to use history cache anyway
+            return;
+        }
+
         let map = op.raw_op().content.as_map().unwrap();
-        self.changed_key.insert(map.key.clone());
+        let new_value = MapValue {
+            value: map.value.clone(),
+            peer: op.peer,
+            lamp: op.lamport(),
+        };
+        match self.changed.get(&map.key) {
+            Some(old_value) if old_value > &new_value => {}
+            _ => {
+                self.changed.insert(map.key.clone(), new_value);
+            }
+        }
     }
 
-    fn stop_tracking(&mut self, _oplog: &super::oplog::OpLog, _vv: &crate::VersionVector) {}
+    fn finish_this_round(&mut self) {
+        self.changed.clear();
+        self.current_mode = DiffMode::Checkout;
+    }
 
     fn calculate_diff(
         &mut self,
@@ -450,53 +486,66 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
-        let mut changed = Vec::new();
-        let group = oplog
-            .op_groups
-            .get(&self.container_idx)
-            .unwrap()
-            .as_map()
-            .unwrap();
-        for k in self.changed_key.iter() {
-            let peek_from = group.last_op(k, from);
-            let peek_to = group.last_op(k, to);
-            match (peek_from, peek_to) {
-                (None, None) => {}
-                (None, Some(_)) => changed.push((k.clone(), peek_to)),
-                (Some(_), None) => changed.push((k.clone(), peek_to)),
-                (Some(a), Some(b)) => {
-                    if a != b {
-                        changed.push((k.clone(), peek_to))
+        match self.current_mode {
+            DiffMode::Checkout => {
+                let mut changed = Vec::new();
+                let group = oplog
+                    .op_groups
+                    .get(&self.container_idx)
+                    .unwrap()
+                    .as_map()
+                    .unwrap();
+                for k in group.keys() {
+                    let peek_from = group.last_op(k, from);
+                    let peek_to = group.last_op(k, to);
+                    match (peek_from, peek_to) {
+                        (None, None) => {}
+                        (None, Some(_)) => changed.push((k.clone(), peek_to)),
+                        (Some(_), None) => changed.push((k.clone(), peek_to)),
+                        (Some(a), Some(b)) => {
+                            if a != b {
+                                changed.push((k.clone(), peek_to))
+                            }
+                        }
                     }
                 }
+
+                let mut updated =
+                    FxHashMap::with_capacity_and_hasher(changed.len(), Default::default());
+                for (key, value) in changed {
+                    let value = value
+                        .map(|v| {
+                            let value = v.value.clone();
+                            if let Some(LoroValue::Container(c)) = &value {
+                                on_new_container(c);
+                            }
+
+                            MapValue {
+                                value,
+                                lamp: v.lamport,
+                                peer: v.peer,
+                            }
+                        })
+                        .unwrap_or_else(|| MapValue {
+                            value: None,
+                            lamp: 0,
+                            peer: 0,
+                        });
+
+                    updated.insert(key, value);
+                }
+
+                (InternalDiff::Map(MapDelta { updated }), DiffMode::Checkout)
+            }
+            DiffMode::Import | DiffMode::Linear => {
+                let changed = std::mem::take(&mut self.changed);
+                let mode = self.current_mode;
+                // Reset this field to avoid we use `has_all` to cache the diff calc and use it next round
+                // (In the next round we need to use the checkout mode)
+                self.current_mode = DiffMode::Checkout;
+                (InternalDiff::Map(MapDelta { updated: changed }), mode)
             }
         }
-
-        let mut updated = FxHashMap::with_capacity_and_hasher(changed.len(), Default::default());
-        for (key, value) in changed {
-            let value = value
-                .map(|v| {
-                    let value = v.value.clone();
-                    if let Some(LoroValue::Container(c)) = &value {
-                        on_new_container(c);
-                    }
-
-                    MapValue {
-                        value,
-                        lamp: v.lamport,
-                        peer: v.peer,
-                    }
-                })
-                .unwrap_or_else(|| MapValue {
-                    value: None,
-                    lamp: 0,
-                    peer: 0,
-                });
-
-            updated.insert(key, value);
-        }
-
-        (InternalDiff::Map(MapDelta { updated }), DiffMode::Checkout)
     }
 }
 
@@ -531,7 +580,7 @@ impl std::fmt::Debug for ListDiffCalculator {
 }
 
 impl DiffCalculatorTrait for ListDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector) {
+    fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode) {
         if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
             self.tracker = Box::new(RichtextTracker::new_with_unknown());
             self.start_vv = vv.clone();
@@ -574,7 +623,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         }
     }
 
-    fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
+    fn finish_this_round(&mut self) {}
 
     fn calculate_diff(
         &mut self,
@@ -690,7 +739,12 @@ impl RichtextDiffCalculator {
 }
 
 impl DiffCalculatorTrait for RichtextDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &super::oplog::OpLog, vv: &crate::VersionVector) {
+    fn start_tracking(
+        &mut self,
+        _oplog: &super::oplog::OpLog,
+        vv: &crate::VersionVector,
+        mode: DiffMode,
+    ) {
         if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
             self.tracker = Box::new(RichtextTracker::new_with_unknown());
             self.styles.clear();
@@ -800,7 +854,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         }
     }
 
-    fn stop_tracking(&mut self, _oplog: &super::oplog::OpLog, _vv: &crate::VersionVector) {}
+    fn finish_this_round(&mut self) {}
 
     fn calculate_diff(
         &mut self,
@@ -888,7 +942,7 @@ pub(crate) struct MovableListDiffCalculator {
 }
 
 impl DiffCalculatorTrait for MovableListDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector) {
+    fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode) {
         if !vv.includes_vv(&self.list.start_vv) || !self.list.tracker.all_vv().includes_vv(vv) {
             self.list.tracker = Box::new(RichtextTracker::new_with_unknown());
             self.list.start_vv = vv.clone();
@@ -993,8 +1047,8 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         };
     }
 
-    fn stop_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector) {
-        self.list.stop_tracking(oplog, vv)
+    fn finish_this_round(&mut self) {
+        self.list.finish_this_round()
     }
 
     #[instrument(skip(self, oplog, on_new_container))]
