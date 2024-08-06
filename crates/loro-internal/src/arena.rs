@@ -363,7 +363,7 @@ impl SharedArena {
                 } => Op {
                     counter,
                     container,
-                    content: InnerContent::List(InnerListOp::Move { from, to, from_id }),
+                    content: InnerContent::List(InnerListOp::Move { from, to, elem_id: from_id }),
                 },
                 ListOp::Set { elem_id, value } => Op {
                     counter,

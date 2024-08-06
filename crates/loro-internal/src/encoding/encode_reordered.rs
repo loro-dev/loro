@@ -1220,7 +1220,7 @@ mod encode {
                 crate::container::list::list_op::InnerListOp::StyleEnd => Value::Null,
                 crate::container::list::list_op::InnerListOp::Move {
                     from,
-                    from_id,
+                    elem_id: from_id,
                     to: _,
                 } => Value::ListMove {
                     from: *from as usize,
@@ -1435,7 +1435,7 @@ pub(crate) fn decode_op(
                 } => crate::op::InnerContent::List(
                     crate::container::list::list_op::InnerListOp::Move {
                         from: from as u32,
-                        from_id: IdLp::new(arenas.peers()[from_idx], lamport as Lamport),
+                        elem_id: IdLp::new(arenas.peers()[from_idx], lamport as Lamport),
                         to: prop as u32,
                     },
                 ),

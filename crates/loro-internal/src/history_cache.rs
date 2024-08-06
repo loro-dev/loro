@@ -379,7 +379,9 @@ impl OpGroupTrait for MovableListOpGroup {
                         }
                     }
                 }
-                crate::container::list::list_op::InnerListOp::Move { from_id, .. } => {
+                crate::container::list::list_op::InnerListOp::Move {
+                    elem_id: from_id, ..
+                } => {
                     let full_id = op.id_full();
                     let mapping = self
                         .elem_mappings

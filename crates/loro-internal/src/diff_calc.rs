@@ -975,7 +975,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             InnerListOp::Delete(_) => {}
             InnerListOp::Move {
                 from: _,
-                from_id,
+                elem_id: from_id,
                 to: _,
             } => {
                 self.changed_elements.insert(*from_id);
@@ -1016,7 +1016,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                             del.is_reversed(),
                         );
                     }
-                    InnerListOp::Move { from, from_id, to } => {
+                    InnerListOp::Move { from, elem_id: from_id, to } => {
                         // TODO: PERF: this lookup can be optimized
                         let list = oplog
                             .op_groups

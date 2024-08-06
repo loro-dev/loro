@@ -250,7 +250,7 @@ fn encode_changes(
                             len: *signed_len,
                             start_id: register_id(id_start, peer_register),
                         },
-                        InnerListOp::Move { from, from_id, to } => op::MovableListOp::Move {
+                        InnerListOp::Move { from, elem_id: from_id, to } => op::MovableListOp::Move {
                             from: *from,
                             to: *to,
                             elem_id: register_idlp(from_id, peer_register),
@@ -560,7 +560,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                     to,
                 } => {
                     let from_id = convert_idlp(&from_id, peers);
-                    InnerContent::List(InnerListOp::Move { from, from_id, to })
+                    InnerContent::List(InnerListOp::Move { from, elem_id: from_id, to })
                 }
                 op::MovableListOp::Set { elem_id, mut value } => {
                     let elem_id = convert_idlp(&elem_id, peers);

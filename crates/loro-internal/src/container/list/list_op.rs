@@ -60,7 +60,7 @@ pub enum InnerListOp {
     Move {
         from: u32,
         /// Element id
-        from_id: IdLp,
+        elem_id: IdLp,
         to: u32,
     },
     Set {

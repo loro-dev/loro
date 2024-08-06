@@ -800,13 +800,15 @@ pub(crate) fn local_op_to_remote(
             list_op::InnerListOp::StyleEnd => {
                 contents.push(RawOpContent::List(list_op::ListOp::StyleEnd))
             }
-            list_op::InnerListOp::Move { from, from_id, to } => {
-                contents.push(RawOpContent::List(list_op::ListOp::Move {
-                    from: *from,
-                    elem_id: *from_id,
-                    to: *to,
-                }))
-            }
+            list_op::InnerListOp::Move {
+                from,
+                elem_id: from_id,
+                to,
+            } => contents.push(RawOpContent::List(list_op::ListOp::Move {
+                from: *from,
+                elem_id: *from_id,
+                to: *to,
+            })),
             list_op::InnerListOp::Set { elem_id, value } => {
                 contents.push(RawOpContent::List(list_op::ListOp::Set {
                     elem_id: *elem_id,
