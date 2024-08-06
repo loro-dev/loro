@@ -1,6 +1,6 @@
 [package]
 name = "loro-ffi"
-version = "0.1.0"
+version = "0.16.2"
 edition = "2021"
 license = "MIT"
 publish = false
@@ -9,4 +9,3 @@ publish = false
 
 [dependencies]
 loro = { path = "../loro", features = ["counter"] }
-either = { workspace = true }

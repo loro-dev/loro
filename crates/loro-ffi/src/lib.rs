@@ -5,13 +5,18 @@ mod doc;
 pub use doc::LoroDoc;
 mod container;
 pub use container::{
-    Cursor, LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree, LoroUnknown,
+    ContainerIdLike, Cursor, LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree,
+    LoroUnknown,
 };
 mod event;
+pub use event::{
+    ContainerDiff, Diff, DiffEvent, Index, ListDiffItem, MapDelta, PathItem, Subscriber, TextDelta,
+    TreeDiff, TreeDiffItem, TreeExternalDiff,
+};
 mod version;
 pub use loro::{
-    cursor::Side, Counter, Frontiers, IdSpan, Lamport, LoroError, PeerID, SubID, TreeID,
-    VersionVector, ID,
+    cursor::Side, Counter, EventTriggerKind, Frontiers, IdSpan, Lamport, LoroError, PeerID, SubID,
+    TreeID, VersionVector, ID,
 };
 
 // https://github.com/mozilla/uniffi-rs/issues/1372

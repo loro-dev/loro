@@ -2,14 +2,14 @@ use std::{cmp::Ordering, ops::Deref, sync::Arc};
 
 use loro::{
     cursor::{CannotFindRelativePosition, Cursor, PosQueryResult},
-    event::{DiffEvent, Subscriber},
-    CommitOptions, Frontiers, FrontiersNotIncluded, Index, IntoContainerId, JsonSchema,
-    LoroDoc as InnerLoroDoc, LoroError, SubID, VersionVector,
+    CommitOptions, Frontiers, FrontiersNotIncluded, JsonSchema, LoroDoc as InnerLoroDoc, LoroError,
+    SubID, VersionVector,
 };
 
 use crate::{
-    ContainerID, LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree, LoroValue,
-    ValueOrContainer,
+    event::{DiffEvent, Subscriber},
+    ContainerID, ContainerIdLike, Index, LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText,
+    LoroTree, LoroValue, ValueOrContainer,
 };
 
 pub struct LoroDoc {
@@ -36,39 +36,51 @@ impl LoroDoc {
         self.doc.cmp_frontiers(a, b)
     }
 
-    pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> Arc<LoroMovableList> {
+    pub fn get_movable_list(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroMovableList> {
         Arc::new(LoroMovableList {
-            list: self.doc.get_movable_list(id),
+            list: self.doc.get_movable_list(loro::ContainerID::from(
+                id.as_container_id(crate::ContainerType::MovableList),
+            )),
         })
     }
 
-    pub fn get_list<I: IntoContainerId>(&self, id: I) -> Arc<LoroList> {
+    pub fn get_list(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroList> {
         Arc::new(LoroList {
-            list: self.doc.get_list(id),
+            list: self.doc.get_list(loro::ContainerID::from(
+                id.as_container_id(crate::ContainerType::List),
+            )),
         })
     }
 
-    pub fn get_map<I: IntoContainerId>(&self, id: I) -> Arc<LoroMap> {
+    pub fn get_map(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroMap> {
         Arc::new(LoroMap {
-            map: self.doc.get_map(id),
+            map: self.doc.get_map(loro::ContainerID::from(
+                id.as_container_id(crate::ContainerType::Map),
+            )),
         })
     }
 
-    pub fn get_text<I: IntoContainerId>(&self, id: I) -> Arc<LoroText> {
+    pub fn get_text(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroText> {
         Arc::new(LoroText {
-            text: self.doc.get_text(id),
+            text: self.doc.get_text(loro::ContainerID::from(
+                id.as_container_id(crate::ContainerType::Text),
+            )),
         })
     }
 
-    pub fn get_tree<I: IntoContainerId>(&self, id: I) -> Arc<LoroTree> {
+    pub fn get_tree(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroTree> {
         Arc::new(LoroTree {
-            tree: self.doc.get_tree(id),
+            tree: self.doc.get_tree(loro::ContainerID::from(
+                id.as_container_id(crate::ContainerType::Tree),
+            )),
         })
     }
 
-    pub fn get_counter<I: IntoContainerId>(&self, id: I) -> Arc<LoroCounter> {
+    pub fn get_counter(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroCounter> {
         Arc::new(LoroCounter {
-            counter: self.doc.get_counter(id),
+            counter: self.doc.get_counter(loro::ContainerID::from(
+                id.as_container_id(crate::ContainerType::Counter),
+            )),
         })
     }
 
@@ -107,24 +119,25 @@ impl LoroDoc {
     pub fn state_frontiers(&self) -> Arc<Frontiers> {
         Arc::new(self.doc.state_frontiers())
     }
-    pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> SubID {
+    pub fn subscribe(&self, container_id: &ContainerID, subscriber: Arc<dyn Subscriber>) -> SubID {
         self.doc.subscribe(
             &(container_id.into()),
             Arc::new(move |e| {
-                callback(DiffEvent::from(e));
+                subscriber.on_diff(DiffEvent::from(e));
             }),
         )
     }
 
-    pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
+    pub fn subscribe_root(&self, subscriber: Arc<dyn Subscriber>) -> SubID {
         // self.doc.subscribe_root(callback)
         self.doc.subscribe_root(Arc::new(move |e| {
-            callback(DiffEvent::from(e));
+            subscriber.on_diff(DiffEvent::from(e));
         }))
     }
     pub fn get_by_path(&self, path: &[Index]) -> Option<Arc<dyn ValueOrContainer>> {
-        // self.doc.get_by_path(path)
-        todo!()
+        self.doc
+            .get_by_path(&path.iter().map(|v| v.clone().into()).collect::<Vec<_>>())
+            .map(|x| Arc::new(x) as Arc<dyn ValueOrContainer>)
     }
 
     pub fn get_by_str_path(&self, path: &str) -> Option<Arc<dyn ValueOrContainer>> {
@@ -146,6 +159,12 @@ impl LoroDoc {
 
     pub fn len_changes(&self) -> u64 {
         self.doc.len_changes() as u64
+    }
+}
+
+impl Default for LoroDoc {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -18,7 +18,6 @@ loro-internal = { path = "../loro-internal", version = "0.16.2" }
 delta = { path = "../delta", package = "loro-delta", version = "0.16.2" }
 generic-btree = { version = "^0.10.5" }
 enum-as-inner = { workspace = true }
-either = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

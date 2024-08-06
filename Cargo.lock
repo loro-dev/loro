@@ -986,7 +986,6 @@ dependencies = [
  "anyhow",
  "ctor 0.2.6",
  "dev-utils",
- "either",
  "enum-as-inner 0.6.0",
  "generic-btree",
  "loro-delta 0.16.2",
@@ -1071,9 +1070,8 @@ dependencies = [
 
 [[package]]
 name = "loro-ffi"
-version = "0.1.0"
+version = "0.16.2"
 dependencies = [
- "either",
  "loro 0.16.2",
 ]
 

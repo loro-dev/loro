@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
-use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
@@ -33,8 +32,8 @@ pub use loro_internal::configure::StyleConfigMap;
 pub use loro_internal::container::richtext::ExpandType;
 pub use loro_internal::container::{ContainerID, ContainerType, IntoContainerId};
 pub use loro_internal::cursor;
-pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
-pub use loro_internal::event::Index;
+pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExternalDiff};
+pub use loro_internal::event::{EventTriggerKind, Index};
 pub use loro_internal::handler::TextDelta;
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::obs::SubID;
