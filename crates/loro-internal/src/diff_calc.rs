@@ -2,6 +2,7 @@ use std::{num::NonZeroU16, sync::Arc};
 
 #[cfg(feature = "counter")]
 mod counter;
+use bytes::Bytes;
 #[cfg(feature = "counter")]
 pub(crate) use counter::CounterDiffCalculator;
 pub(super) mod tree;
@@ -1016,7 +1017,11 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                             del.is_reversed(),
                         );
                     }
-                    InnerListOp::Move { from, elem_id: from_id, to } => {
+                    InnerListOp::Move {
+                        from,
+                        elem_id: from_id,
+                        to,
+                    } => {
                         // TODO: PERF: this lookup can be optimized
                         let list = oplog
                             .op_groups
@@ -1093,11 +1098,15 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         let mut new_insert = SmallVec::with_capacity(len);
                         for i in 0..len {
                             let id = id.inc(i as i32);
+                            let op = oplog.get_op(id.id()).unwrap();
+                            let elem_id = match op.content.as_list().unwrap() {
+                                InnerListOp::Insert { .. } => id.idlp().compact(),
+                                InnerListOp::Move { elem_id, .. } => elem_id.compact(),
+                                _ => unreachable!(),
+                            };
+
                             // add the related element id
-                            element_changes.insert(
-                                group.get_elem_from_pos(id.idlp()).compact(),
-                                ElementDelta::placeholder(),
-                            );
+                            element_changes.insert(elem_id, ElementDelta::placeholder());
                             new_insert.push(id);
                         }
 
@@ -1114,12 +1123,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                 .collect(),
         };
 
-        let group = oplog
-            .op_groups
-            .get(&self.container_idx)
-            .unwrap()
-            .as_movable_list()
-            .unwrap();
         element_changes.retain(|id, change| {
             let id = id.to_id();
             // It can be None if the target does not exist before the `to` version

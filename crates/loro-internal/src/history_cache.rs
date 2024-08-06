@@ -133,7 +133,6 @@ impl HistoryCache {
             HistoryCache::MovableList(m) => HistoryCache::MovableList(MovableListOpGroup {
                 arena: a.clone(),
                 elem_mappings: m.elem_mappings.clone(),
-                pos_to_elem: m.pos_to_elem.clone(),
             }),
         }
     }
@@ -279,8 +278,6 @@ pub(crate) struct MovableListOpGroup {
     arena: SharedArena,
     /// mappings from elem_id to a set of target poses & values
     elem_mappings: FxHashMap<IdLp, MovableListTarget>,
-    /// mappings from pos to elem_id
-    pos_to_elem: FxHashMap<IdLp, IdLp>,
 }
 
 #[derive(Debug, Clone)]
@@ -399,7 +396,6 @@ impl OpGroupTrait for MovableListOpGroup {
                         lamport: full_id.lamport,
                         peer: full_id.peer,
                     });
-                    self.pos_to_elem.insert(full_id.idlp(), *from_id);
                 }
                 // Don't mark deletions for now, but the cost is the state now may contain invalid elements
                 // that are deleted but not removed from the state.
@@ -421,7 +417,6 @@ impl MovableListOpGroup {
     fn new(arena: SharedArena) -> Self {
         Self {
             arena,
-            pos_to_elem: Default::default(),
             elem_mappings: Default::default(),
         }
     }
@@ -476,10 +471,6 @@ impl MovableListOpGroup {
                 .find(|op| vv.get(&op.peer).copied().unwrap_or(0) > op.counter)
                 .cloned(),
         })
-    }
-
-    pub(crate) fn get_elem_from_pos(&self, pos: IdLp) -> IdLp {
-        self.pos_to_elem.get(&pos).cloned().unwrap_or(pos)
     }
 }
 
