@@ -234,7 +234,7 @@ impl DiffVariant {
 pub(crate) enum InternalDiff {
     ListRaw(Delta<SliceRanges>),
     /// This always uses entity indexes.
-    RichtextRaw(Delta<RichtextStateChunk>),
+    RichtextRaw(DeltaRope<RichtextStateChunk, ()>),
     Map(MapDelta),
     Tree(TreeDelta),
     MovableList(MovableListInnerDelta),
@@ -356,7 +356,9 @@ impl InternalDiff {
                 Ok(InternalDiff::ListRaw(a.compose(b)))
             }
             (InternalDiff::RichtextRaw(a), InternalDiff::RichtextRaw(b)) => {
-                Ok(InternalDiff::RichtextRaw(a.compose(b)))
+                let mut ans = a.clone();
+                ans.compose(&b);
+                Ok(InternalDiff::RichtextRaw(ans))
             }
             (InternalDiff::Map(a), InternalDiff::Map(b)) => Ok(InternalDiff::Map(a.compose(b))),
             (InternalDiff::Tree(a), InternalDiff::Tree(b)) => Ok(InternalDiff::Tree(a.compose(b))),

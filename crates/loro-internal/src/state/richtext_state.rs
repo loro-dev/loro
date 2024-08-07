@@ -7,6 +7,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::HasLength;
 use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
 use loro_delta::DeltaRopeBuilder;
+use tracing::trace;
 
 use crate::{
     arena::SharedArena,
@@ -282,6 +283,7 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
+        trace!("diff = {:#?}, mode = {:?}", richtext, _ctx.mode);
         // tracing::info!("Self state = {:#?}", &self);
         // PERF: compose delta
         let mut ans: TextDiff = TextDiff::new();
@@ -290,156 +292,167 @@ impl ContainerState for RichtextState {
         let mut entity_index = 0;
         let mut event_index = 0;
         let mut new_style_deltas: Vec<TextDiff> = Vec::new();
-        for span in richtext.vec.iter() {
+        for span in richtext.iter() {
             match span {
-                crate::delta::DeltaItem::Retain { retain: len, .. } => {
+                loro_delta::DeltaItem::Retain { len, .. } => {
                     entity_index += len;
                 }
-                crate::delta::DeltaItem::Insert { insert: value, .. } => {
-                    match value {
-                        RichtextStateChunk::Text(s) => {
-                            let (pos, styles) = self.state.get_mut().insert_elem_at_entity_index(
-                                entity_index,
-                                RichtextStateChunk::Text(s.clone()),
-                            );
-                            let insert_styles = styles.clone().into();
+                loro_delta::DeltaItem::Replace { value, delete, .. } => {
+                    if *delete > 0 {
+                        // Deletions
+                        let mut deleted_style_keys: FxHashSet<InternalString> =
+                            FxHashSet::default();
+                        let DrainInfo {
+                            start_event_index: start,
+                            end_event_index: end,
+                            affected_style_range,
+                        } = self.state.get_mut().drain_by_entity_index(
+                            entity_index,
+                            *delete,
+                            Some(&mut |c| match c {
+                                RichtextStateChunk::Style {
+                                    style,
+                                    anchor_type: AnchorType::Start,
+                                } => {
+                                    deleted_style_keys.insert(style.key.clone());
+                                }
+                                RichtextStateChunk::Style {
+                                    style,
+                                    anchor_type: AnchorType::End,
+                                } => {
+                                    deleted_style_keys.insert(style.key.clone());
+                                }
+                                _ => {}
+                            }),
+                        );
 
-                            if pos > event_index {
-                                ans.push_retain(pos - event_index, Default::default());
-                            }
-                            event_index = pos + s.event_len() as usize;
-                            ans.push_insert(StringSlice::from(s.bytes().clone()), insert_styles);
+                        if start > event_index {
+                            ans.push_retain(start - event_index, Default::default());
+                            event_index = start;
                         }
-                        RichtextStateChunk::Style { anchor_type, style } => {
-                            let (new_event_index, _) =
-                                self.state.get_mut().insert_elem_at_entity_index(
-                                    entity_index,
-                                    RichtextStateChunk::Style {
-                                        style: style.clone(),
-                                        anchor_type: *anchor_type,
-                                    },
-                                );
 
-                            if new_event_index > event_index {
-                                ans.push_retain(new_event_index - event_index, Default::default());
-                                // inserting style anchor will not affect event_index's positions
-                                event_index = new_event_index;
+                        if let Some((entity_range, event_range)) = affected_style_range {
+                            let mut delta: TextDiff = DeltaRopeBuilder::new()
+                                .retain(event_range.start, Default::default())
+                                .build();
+                            let mut entity_len_sum = 0;
+                            let expected_sum = entity_range.len();
+
+                            for IterRangeItem {
+                                event_len,
+                                chunk,
+                                styles,
+                                entity_len,
+                                ..
+                            } in self.state.get_mut().iter_range(entity_range)
+                            {
+                                entity_len_sum += entity_len;
+                                match chunk {
+                                    RichtextStateChunk::Text(_) => {
+                                        let mut style_meta: StyleMeta = styles.into();
+                                        for key in deleted_style_keys.iter() {
+                                            if !style_meta.contains_key(key) {
+                                                style_meta.insert(
+                                                    key.clone(),
+                                                    StyleMetaItem {
+                                                        lamport: 0,
+                                                        peer: 0,
+                                                        value: LoroValue::Null,
+                                                    },
+                                                )
+                                            }
+                                        }
+                                        delta.push_retain(event_len, style_meta);
+                                    }
+                                    RichtextStateChunk::Style { .. } => {}
+                                }
                             }
 
-                            match anchor_type {
-                                AnchorType::Start => {
-                                    style_starts.insert(
-                                        style.clone(),
-                                        Pos {
-                                            entity_index,
-                                            event_index: new_event_index,
+                            debug_assert_eq!(entity_len_sum, expected_sum);
+                            delta.chop();
+                            style_delta.compose(&delta);
+                        }
+
+                        ans.push_delete(end - start);
+                    }
+
+                    if value.rle_len() > 0 {
+                        // Insertions
+                        match value {
+                            RichtextStateChunk::Text(s) => {
+                                let (pos, styles) =
+                                    self.state.get_mut().insert_elem_at_entity_index(
+                                        entity_index,
+                                        RichtextStateChunk::Text(s.clone()),
+                                    );
+                                let insert_styles = styles.clone().into();
+
+                                if pos > event_index {
+                                    ans.push_retain(pos - event_index, Default::default());
+                                }
+                                event_index = pos + s.event_len() as usize;
+                                ans.push_insert(
+                                    StringSlice::from(s.bytes().clone()),
+                                    insert_styles,
+                                );
+                            }
+                            RichtextStateChunk::Style { anchor_type, style } => {
+                                let (new_event_index, _) =
+                                    self.state.get_mut().insert_elem_at_entity_index(
+                                        entity_index,
+                                        RichtextStateChunk::Style {
+                                            style: style.clone(),
+                                            anchor_type: *anchor_type,
                                         },
                                     );
+
+                                if new_event_index > event_index {
+                                    ans.push_retain(
+                                        new_event_index - event_index,
+                                        Default::default(),
+                                    );
+                                    // inserting style anchor will not affect event_index's positions
+                                    event_index = new_event_index;
                                 }
-                                AnchorType::End => {
-                                    // get the pair of style anchor. now we can annotate the range
-                                    let Pos {
-                                        entity_index: start_entity_index,
-                                        event_index: start_event_index,
-                                    } = self.get_style_start(&mut style_starts, style);
-                                    let mut delta: TextDiff = DeltaRopeBuilder::new()
-                                        .retain(start_event_index, Default::default())
-                                        .build();
-                                    // we need to + 1 because we also need to annotate the end anchor
-                                    let event =
-                                        self.state.get_mut().annotate_style_range_with_event(
-                                            start_entity_index..entity_index + 1,
+
+                                match anchor_type {
+                                    AnchorType::Start => {
+                                        style_starts.insert(
                                             style.clone(),
+                                            Pos {
+                                                entity_index,
+                                                event_index: new_event_index,
+                                            },
                                         );
-                                    for (s, l) in event {
-                                        delta.push_retain(l, s);
                                     }
-
-                                    delta.chop();
-                                    new_style_deltas.push(delta);
-                                }
-                            }
-                        }
-                    }
-                    entity_index += value.rle_len();
-                }
-                crate::delta::DeltaItem::Delete {
-                    delete: len,
-                    attributes: _,
-                } => {
-                    let mut deleted_style_keys: FxHashSet<InternalString> = FxHashSet::default();
-                    let DrainInfo {
-                        start_event_index: start,
-                        end_event_index: end,
-                        affected_style_range,
-                    } = self.state.get_mut().drain_by_entity_index(
-                        entity_index,
-                        *len,
-                        Some(&mut |c| match c {
-                            RichtextStateChunk::Style {
-                                style,
-                                anchor_type: AnchorType::Start,
-                            } => {
-                                deleted_style_keys.insert(style.key.clone());
-                            }
-                            RichtextStateChunk::Style {
-                                style,
-                                anchor_type: AnchorType::End,
-                            } => {
-                                deleted_style_keys.insert(style.key.clone());
-                            }
-                            _ => {}
-                        }),
-                    );
-
-                    if start > event_index {
-                        ans.push_retain(start - event_index, Default::default());
-                        event_index = start;
-                    }
-
-                    if let Some((entity_range, event_range)) = affected_style_range {
-                        let mut delta: TextDiff = DeltaRopeBuilder::new()
-                            .retain(event_range.start, Default::default())
-                            .build();
-                        let mut entity_len_sum = 0;
-                        let expected_sum = entity_range.len();
-
-                        for IterRangeItem {
-                            event_len,
-                            chunk,
-                            styles,
-                            entity_len,
-                            ..
-                        } in self.state.get_mut().iter_range(entity_range)
-                        {
-                            entity_len_sum += entity_len;
-                            match chunk {
-                                RichtextStateChunk::Text(_) => {
-                                    let mut style_meta: StyleMeta = styles.into();
-                                    for key in deleted_style_keys.iter() {
-                                        if !style_meta.contains_key(key) {
-                                            style_meta.insert(
-                                                key.clone(),
-                                                StyleMetaItem {
-                                                    lamport: 0,
-                                                    peer: 0,
-                                                    value: LoroValue::Null,
-                                                },
-                                            )
+                                    AnchorType::End => {
+                                        // get the pair of style anchor. now we can annotate the range
+                                        let Pos {
+                                            entity_index: start_entity_index,
+                                            event_index: start_event_index,
+                                        } = self.get_style_start(&mut style_starts, style);
+                                        let mut delta: TextDiff = DeltaRopeBuilder::new()
+                                            .retain(start_event_index, Default::default())
+                                            .build();
+                                        // we need to + 1 because we also need to annotate the end anchor
+                                        let event =
+                                            self.state.get_mut().annotate_style_range_with_event(
+                                                start_entity_index..entity_index + 1,
+                                                style.clone(),
+                                            );
+                                        for (s, l) in event {
+                                            delta.push_retain(l, s);
                                         }
+
+                                        delta.chop();
+                                        new_style_deltas.push(delta);
                                     }
-                                    delta.push_retain(event_len, style_meta);
                                 }
-                                RichtextStateChunk::Style { .. } => {}
                             }
                         }
 
-                        debug_assert_eq!(entity_len_sum, expected_sum);
-                        delta.chop();
-                        style_delta.compose(&delta);
+                        entity_index += value.rle_len();
                     }
-
-                    ans.push_delete(end - start);
                 }
             }
         }
@@ -458,80 +471,81 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
+        trace!("diff = {:#?}", richtext);
         let mut style_starts: FxHashMap<Arc<StyleOp>, usize> = FxHashMap::default();
         let mut entity_index = 0;
-        for span in richtext.vec.iter() {
+        for span in richtext.iter() {
             match span {
-                crate::delta::DeltaItem::Retain {
-                    retain: len,
-                    attributes: _,
-                } => {
+                loro_delta::DeltaItem::Retain { len, .. } => {
                     entity_index += len;
                 }
-                crate::delta::DeltaItem::Insert {
-                    insert: value,
-                    attributes: _,
+                loro_delta::DeltaItem::Replace {
+                    value,
+                    attr,
+                    delete,
                 } => {
-                    match value {
-                        RichtextStateChunk::Text(s) => {
-                            self.state.get_mut().insert_elem_at_entity_index(
-                                entity_index,
-                                RichtextStateChunk::Text(s.clone()),
-                            );
-                        }
-                        RichtextStateChunk::Style { style, anchor_type } => {
-                            self.state.get_mut().insert_elem_at_entity_index(
-                                entity_index,
-                                RichtextStateChunk::Style {
-                                    style: style.clone(),
-                                    anchor_type: *anchor_type,
-                                },
-                            );
-
-                            if *anchor_type == AnchorType::Start {
-                                style_starts.insert(style.clone(), entity_index);
-                            } else {
-                                let start_pos = match style_starts.get(style) {
-                                    Some(x) => *x,
-                                    None => {
-                                        // This should be rare, so it should be fine to scan
-                                        let mut start_entity_index = 0;
-                                        for c in self.state.get_mut().iter_chunk() {
-                                            match c {
-                                                RichtextStateChunk::Style {
-                                                    style: s,
-                                                    anchor_type: AnchorType::Start,
-                                                } if style == s => {
-                                                    break;
-                                                }
-                                                RichtextStateChunk::Text(t) => {
-                                                    start_entity_index += t.unicode_len() as usize;
-                                                }
-                                                RichtextStateChunk::Style { .. } => {
-                                                    start_entity_index += 1;
-                                                }
-                                            }
-                                        }
-                                        start_entity_index
-                                    }
-                                };
-                                // we need to + 1 because we also need to annotate the end anchor
-                                self.state.get_mut().annotate_style_range(
-                                    start_pos..entity_index + 1,
-                                    style.clone(),
+                    if *delete > 0 {
+                        // Deletions
+                        self.state
+                            .get_mut()
+                            .drain_by_entity_index(entity_index, *delete, None);
+                    }
+                    if value.rle_len() > 0 {
+                        // Insertions
+                        match value {
+                            RichtextStateChunk::Text(s) => {
+                                self.state.get_mut().insert_elem_at_entity_index(
+                                    entity_index,
+                                    RichtextStateChunk::Text(s.clone()),
                                 );
                             }
+                            RichtextStateChunk::Style { style, anchor_type } => {
+                                self.state.get_mut().insert_elem_at_entity_index(
+                                    entity_index,
+                                    RichtextStateChunk::Style {
+                                        style: style.clone(),
+                                        anchor_type: *anchor_type,
+                                    },
+                                );
+
+                                if *anchor_type == AnchorType::Start {
+                                    style_starts.insert(style.clone(), entity_index);
+                                } else {
+                                    let start_pos = match style_starts.get(style) {
+                                        Some(x) => *x,
+                                        None => {
+                                            // This should be rare, so it should be fine to scan
+                                            let mut start_entity_index = 0;
+                                            for c in self.state.get_mut().iter_chunk() {
+                                                match c {
+                                                    RichtextStateChunk::Style {
+                                                        style: s,
+                                                        anchor_type: AnchorType::Start,
+                                                    } if style == s => {
+                                                        break;
+                                                    }
+                                                    RichtextStateChunk::Text(t) => {
+                                                        start_entity_index +=
+                                                            t.unicode_len() as usize;
+                                                    }
+                                                    RichtextStateChunk::Style { .. } => {
+                                                        start_entity_index += 1;
+                                                    }
+                                                }
+                                            }
+                                            start_entity_index
+                                        }
+                                    };
+                                    // we need to + 1 because we also need to annotate the end anchor
+                                    self.state.get_mut().annotate_style_range(
+                                        start_pos..entity_index + 1,
+                                        style.clone(),
+                                    );
+                                }
+                            }
                         }
+                        entity_index += value.rle_len();
                     }
-                    entity_index += value.rle_len();
-                }
-                crate::delta::DeltaItem::Delete {
-                    delete: len,
-                    attributes: _,
-                } => {
-                    self.state
-                        .get_mut()
-                        .drain_by_entity_index(entity_index, *len, None);
                 }
             }
         }

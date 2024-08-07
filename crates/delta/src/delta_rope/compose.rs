@@ -59,6 +59,17 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         // trace!("Composed {:#?}", &self);
     }
 
+    pub fn delete(&mut self, mut index: usize, len: usize) {
+        self._compose_replace(
+            DeltaReplace {
+                value: &Default::default(),
+                attr: &Default::default(),
+                delete: len,
+            },
+            &mut index,
+        );
+    }
+
     fn _compose_replace(
         &mut self,
         delta_replace_item @ DeltaReplace {
@@ -70,8 +81,11 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     ) {
         let mut should_insert = this_value.rle_len() > 0;
         let mut left_del_len = delete;
-        if delete > 0 {
-            assert!(*index < self.len());
+        if *index > self.len() {
+            self.push_retain(*index - self.len(), Attr::default());
+        }
+
+        if delete > 0 && *index != self.len() {
             let range = *index..(*index + left_del_len).min(self.len());
             let from = self.tree.query::<LengthFinder>(&range.start).unwrap();
             let to = self.tree.query::<LengthFinder>(&range.end).unwrap();

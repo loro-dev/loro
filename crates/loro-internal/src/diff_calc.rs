@@ -15,6 +15,7 @@ use loro_common::{
     CompactIdLp, ContainerID, Counter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan, LoroValue,
     PeerID, ID,
 };
+use loro_delta::DeltaRope;
 use smallvec::SmallVec;
 use tracing::{instrument, trace, warn};
 
@@ -161,6 +162,7 @@ impl DiffCalculator {
 
                 if *has_all {
                     use_persisted_shortcut = true;
+                    trace!("use persisted shortcut");
                 }
             }
         }
@@ -184,6 +186,7 @@ impl DiffCalculator {
             tracing::debug!("LCA: {:?} mode={:?}", &lca, diff_mode);
             let mut started_set = FxHashSet::default();
             for (change, start_counter, vv) in iter {
+                let end_counter = *merged.get(&change.id.peer).unwrap();
                 if let DiffCalculatorRetainMode::Persist { has_all, last_vv } =
                     &mut self.retain_mode
                 {
@@ -197,7 +200,7 @@ impl DiffCalculator {
                             );
                         }
 
-                        last_vv.extend_to_include_end_id(change.id_end());
+                        last_vv.extend_to_include_end_id(ID::new(change.id.peer, end_counter));
                     }
                 }
 
@@ -206,9 +209,8 @@ impl DiffCalculator {
                     .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
                     .unwrap_or_else(|e| e);
                 let mut visited = FxHashSet::default();
-                let end_counter = merged.get(&change.id.peer).unwrap();
                 for mut op in &change.ops.vec()[iter_start..] {
-                    if op.counter >= *end_counter {
+                    if op.counter >= end_counter {
                         break;
                     }
 
@@ -226,7 +228,7 @@ impl DiffCalculator {
                         continue;
                     }
 
-                    if op.counter < start_counter || op.ctr_end() > *end_counter {
+                    if op.counter < start_counter || op.ctr_end() > end_counter {
                         stack_sliced_op = Some(op.slice(
                             (start_counter as usize).saturating_sub(op.counter as usize),
                             op.atom_len().min((end_counter - op.counter) as usize),
@@ -391,7 +393,7 @@ impl DiffCalculator {
             .or_insert_with(|| match idx.get_type() {
                 crate::ContainerType::Text => (
                     depth,
-                    ContainerDiffCalculator::Richtext(RichtextDiffCalculator::default()),
+                    ContainerDiffCalculator::Richtext(RichtextDiffCalculator::new()),
                 ),
                 crate::ContainerType::Map => (
                     depth,
@@ -764,19 +766,45 @@ impl DiffCalculatorTrait for ListDiffCalculator {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct RichtextDiffCalculator {
-    start_vv: VersionVector,
-    tracker: Box<RichtextTracker>,
-    styles: Vec<StyleOp>,
+    mode: Box<RichtextCalcMode>,
+}
+
+#[derive(Debug)]
+enum RichtextCalcMode {
+    Crdt {
+        tracker: Box<RichtextTracker>,
+        styles: Vec<StyleOp>,
+        start_vv: VersionVector,
+    },
+    Linear {
+        diff: DeltaRope<RichtextStateChunk, ()>,
+        last_style_start: Option<(Arc<StyleOp>, u32)>,
+    },
 }
 
 impl RichtextDiffCalculator {
+    pub fn new() -> Self {
+        Self {
+            mode: Box::new(RichtextCalcMode::Crdt {
+                tracker: Box::new(RichtextTracker::new_with_unknown()),
+                styles: Vec::new(),
+                start_vv: VersionVector::new(),
+            }),
+        }
+    }
+
     /// This should be called after calc_diff
     ///
     /// TODO: Refactor, this can be simplified
     pub fn get_id_latest_pos(&self, id: ID) -> Option<AbsolutePosition> {
-        self.tracker.get_target_id_latest_index_at_new_version(id)
+        match &*self.mode {
+            RichtextCalcMode::Crdt { tracker, .. } => {
+                tracker.get_target_id_latest_index_at_new_version(id)
+            }
+            RichtextCalcMode::Linear { .. } => unreachable!(),
+        }
     }
 }
 
@@ -787,13 +815,42 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         vv: &crate::VersionVector,
         mode: DiffMode,
     ) {
-        if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
-            self.tracker = Box::new(RichtextTracker::new_with_unknown());
-            self.styles.clear();
-            self.start_vv = vv.clone();
+        match mode {
+            DiffMode::Linear => {
+                self.mode = Box::new(RichtextCalcMode::Linear {
+                    diff: DeltaRope::new(),
+                    last_style_start: None,
+                });
+            }
+            _ => {
+                if !matches!(&*self.mode, RichtextCalcMode::Crdt { .. }) {
+                    self.mode = Box::new(RichtextCalcMode::Crdt {
+                        tracker: Box::new(RichtextTracker::new_with_unknown()),
+                        styles: Vec::new(),
+                        start_vv: vv.clone(),
+                    });
+
+                    return;
+                }
+            }
         }
 
-        self.tracker.checkout(vv);
+        match &mut *self.mode {
+            RichtextCalcMode::Crdt {
+                tracker,
+                styles,
+                start_vv,
+            } => {
+                if !vv.includes_vv(start_vv) || tracker.all_vv().includes_vv(vv) {
+                    *tracker = Box::new(RichtextTracker::new_with_unknown());
+                    styles.clear();
+                    *start_vv = vv.clone();
+                }
+
+                tracker.checkout(vv);
+            }
+            RichtextCalcMode::Linear { .. } => {}
+        }
     }
 
     fn apply_change(
@@ -802,101 +859,177 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         op: crate::op::RichOp,
         vv: Option<&crate::VersionVector>,
     ) {
-        if let Some(vv) = vv {
-            self.tracker.checkout(vv);
-        }
-        match &op.raw_op().content {
-            crate::op::InnerContent::List(l) => match l {
-                InnerListOp::Insert { .. } | InnerListOp::Move { .. } | InnerListOp::Set { .. } => {
-                    unreachable!()
-                }
-                crate::container::list::list_op::InnerListOp::InsertText {
-                    slice: _,
-                    unicode_start,
-                    unicode_len: len,
-                    pos,
-                } => {
-                    self.tracker.insert(
-                        op.id_full(),
-                        *pos as usize,
-                        RichtextChunk::new_text(*unicode_start..*unicode_start + *len),
-                    );
-                }
-                crate::container::list::list_op::InnerListOp::Delete(del) => {
-                    self.tracker.delete(
-                        op.id_start(),
-                        del.id_start,
-                        del.start() as usize,
-                        del.atom_len(),
-                        del.is_reversed(),
-                    );
-                }
-                crate::container::list::list_op::InnerListOp::StyleStart {
-                    start,
-                    end,
-                    key,
-                    info,
-                    value,
-                } => {
-                    debug_assert!(start < end, "start: {}, end: {}", start, end);
-                    let style_id = self.styles.len();
-                    self.styles.push(StyleOp {
-                        lamport: op.lamport(),
-                        peer: op.peer,
-                        cnt: op.id_start().counter,
-                        key: key.clone(),
-                        value: value.clone(),
-                        info: *info,
-                    });
-                    self.tracker.insert(
-                        op.id_full(),
-                        *start as usize,
-                        RichtextChunk::new_style_anchor(style_id as u32, AnchorType::Start),
-                    );
-                }
-                crate::container::list::list_op::InnerListOp::StyleEnd => {
-                    let id = op.id();
-                    // PERF: this can be sped up by caching the last style op
-                    let start_op = oplog.get_op(op.id().inc(-1)).unwrap();
-                    let InnerListOp::StyleStart {
-                        start: _,
+        trace!("apply_change: {:?}", op.id());
+        match &mut *self.mode {
+            RichtextCalcMode::Linear {
+                diff,
+                last_style_start,
+            } => match &op.raw_op().content {
+                crate::op::InnerContent::List(l) => match l {
+                    InnerListOp::Insert { .. }
+                    | InnerListOp::Move { .. }
+                    | InnerListOp::Set { .. } => {
+                        unreachable!()
+                    }
+                    crate::container::list::list_op::InnerListOp::InsertText {
+                        slice: _,
+                        unicode_start,
+                        unicode_len: len,
+                        pos,
+                    } => {
+                        let s = oplog.arena.slice_by_unicode(
+                            *unicode_start as usize..(*unicode_start + *len) as usize,
+                        );
+                        diff.insert_value(
+                            *pos as usize,
+                            RichtextStateChunk::new_text(s, op.id_full()),
+                            (),
+                        );
+                    }
+                    crate::container::list::list_op::InnerListOp::Delete(del) => {
+                        diff.delete(del.start() as usize, del.atom_len());
+                    }
+                    crate::container::list::list_op::InnerListOp::StyleStart {
+                        start,
                         end,
                         key,
-                        value,
                         info,
-                    } = start_op.content.as_list().unwrap()
-                    else {
-                        unreachable!()
-                    };
-                    let style_id = match self.styles.last() {
-                        Some(last) if last.peer == id.peer && last.cnt == id.counter - 1 => {
-                            self.styles.len() - 1
+                        value,
+                    } => {
+                        debug_assert!(start < end, "start: {}, end: {}", start, end);
+                        let style_op = Arc::new(StyleOp {
+                            lamport: op.lamport(),
+                            peer: op.peer,
+                            cnt: op.id_start().counter,
+                            key: key.clone(),
+                            value: value.clone(),
+                            info: *info,
+                        });
+
+                        *last_style_start = Some((style_op.clone(), *end));
+                        diff.insert_value(
+                            *start as usize,
+                            RichtextStateChunk::new_style(style_op, AnchorType::Start),
+                            (),
+                        );
+                    }
+                    crate::container::list::list_op::InnerListOp::StyleEnd => {
+                        let (style_op, pos) = last_style_start.take().unwrap();
+                        assert_eq!(style_op.peer, op.peer);
+                        assert_eq!(style_op.cnt, op.id_start().counter - 1);
+                        diff.insert_value(
+                            pos as usize + 1,
+                            RichtextStateChunk::new_style(style_op, AnchorType::End),
+                            (),
+                        );
+                    }
+                },
+                _ => unreachable!(),
+            },
+            RichtextCalcMode::Crdt {
+                tracker,
+                styles,
+                start_vv,
+            } => {
+                if let Some(vv) = vv {
+                    tracker.checkout(vv);
+                }
+                match &op.raw_op().content {
+                    crate::op::InnerContent::List(l) => match l {
+                        InnerListOp::Insert { .. }
+                        | InnerListOp::Move { .. }
+                        | InnerListOp::Set { .. } => {
+                            unreachable!()
                         }
-                        _ => {
-                            self.styles.push(StyleOp {
-                                lamport: op.lamport() - 1,
-                                peer: id.peer,
-                                cnt: id.counter - 1,
+                        crate::container::list::list_op::InnerListOp::InsertText {
+                            slice: _,
+                            unicode_start,
+                            unicode_len: len,
+                            pos,
+                        } => {
+                            tracker.insert(
+                                op.id_full(),
+                                *pos as usize,
+                                RichtextChunk::new_text(*unicode_start..*unicode_start + *len),
+                            );
+                        }
+                        crate::container::list::list_op::InnerListOp::Delete(del) => {
+                            tracker.delete(
+                                op.id_start(),
+                                del.id_start,
+                                del.start() as usize,
+                                del.atom_len(),
+                                del.is_reversed(),
+                            );
+                        }
+                        crate::container::list::list_op::InnerListOp::StyleStart {
+                            start,
+                            end,
+                            key,
+                            info,
+                            value,
+                        } => {
+                            debug_assert!(start < end, "start: {}, end: {}", start, end);
+                            let style_id = styles.len();
+                            styles.push(StyleOp {
+                                lamport: op.lamport(),
+                                peer: op.peer,
+                                cnt: op.id_start().counter,
                                 key: key.clone(),
                                 value: value.clone(),
                                 info: *info,
                             });
-                            self.styles.len() - 1
+                            tracker.insert(
+                                op.id_full(),
+                                *start as usize,
+                                RichtextChunk::new_style_anchor(style_id as u32, AnchorType::Start),
+                            );
                         }
-                    };
-                    self.tracker.insert(
-                        op.id_full(),
-                        // need to shift 1 because we insert the start style anchor before this pos
-                        *end as usize + 1,
-                        RichtextChunk::new_style_anchor(style_id as u32, AnchorType::End),
-                    );
+                        crate::container::list::list_op::InnerListOp::StyleEnd => {
+                            let id = op.id();
+                            // PERF: this can be sped up by caching the last style op
+                            let start_op = oplog.get_op(op.id().inc(-1)).unwrap();
+                            let InnerListOp::StyleStart {
+                                start: _,
+                                end,
+                                key,
+                                value,
+                                info,
+                            } = start_op.content.as_list().unwrap()
+                            else {
+                                unreachable!()
+                            };
+                            let style_id = match styles.last() {
+                                Some(last)
+                                    if last.peer == id.peer && last.cnt == id.counter - 1 =>
+                                {
+                                    styles.len() - 1
+                                }
+                                _ => {
+                                    styles.push(StyleOp {
+                                        lamport: op.lamport() - 1,
+                                        peer: id.peer,
+                                        cnt: id.counter - 1,
+                                        key: key.clone(),
+                                        value: value.clone(),
+                                        info: *info,
+                                    });
+                                    styles.len() - 1
+                                }
+                            };
+                            tracker.insert(
+                                op.id_full(),
+                                // need to shift 1 because we insert the start style anchor before this pos
+                                *end as usize + 1,
+                                RichtextChunk::new_style_anchor(style_id as u32, AnchorType::End),
+                            );
+                        }
+                    },
+                    _ => unreachable!(),
                 }
-            },
-            _ => unreachable!(),
+            }
         }
     }
-
-    fn finish_this_round(&mut self) {}
 
     fn calculate_diff(
         &mut self,
@@ -905,81 +1038,117 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         to: &crate::VersionVector,
         _: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
-        // TODO: PERF: It can be linearized in certain cases
-        tracing::debug!("CalcDiff {:?} {:?}", from, to);
-        let mut delta = Delta::new();
-        for item in self.tracker.diff(from, to) {
-            match item {
-                CrdtRopeDelta::Retain(len) => {
-                    delta = delta.retain(len);
-                }
-                CrdtRopeDelta::Insert {
-                    chunk: value,
-                    id,
-                    lamport,
-                } => match value.value() {
-                    RichtextChunkValue::Text(text) => {
-                        delta = delta.insert(RichtextStateChunk::Text(
-                            // PERF: can be speedup by acquiring lock on arena
-                            TextChunk::new(
-                                oplog
-                                    .arena
-                                    .slice_by_unicode(text.start as usize..text.end as usize),
-                                IdFull::new(id.peer, id.counter, lamport.unwrap()),
-                            ),
-                        ));
-                    }
-                    RichtextChunkValue::StyleAnchor { id, anchor_type } => {
-                        delta = delta.insert(RichtextStateChunk::Style {
-                            style: Arc::new(self.styles[id as usize].clone()),
-                            anchor_type,
-                        });
-                    }
-                    RichtextChunkValue::Unknown(len) => {
-                        // assert not unknown id
-                        assert_ne!(id.peer, PeerID::MAX);
-                        let mut acc_len = 0;
-                        for rich_op in oplog.iter_ops(IdSpan::new(
-                            id.peer,
-                            id.counter,
-                            id.counter + len as Counter,
-                        )) {
-                            acc_len += rich_op.content_len();
-                            let op = rich_op.op();
-                            let lamport = rich_op.lamport();
-                            let content = op.content.as_list().unwrap();
-                            match content {
+        match &mut *self.mode {
+            RichtextCalcMode::Linear { diff, .. } => {
+                trace!("end with linear mode");
+                (
+                    InternalDiff::RichtextRaw(std::mem::take(diff)),
+                    DiffMode::Linear,
+                )
+            }
+            RichtextCalcMode::Crdt {
+                tracker, styles, ..
+            } => {
+                trace!("end with crdt mode");
+                tracing::debug!("CalcDiff {:?} {:?}", from, to);
+                trace!("tracker version vector = {:?}", tracker.all_vv());
+                let mut delta = DeltaRope::new();
+                for item in tracker.diff(from, to) {
+                    match item {
+                        CrdtRopeDelta::Retain(len) => {
+                            delta.push_retain(len, ());
+                        }
+                        CrdtRopeDelta::Insert {
+                            chunk: value,
+                            id,
+                            lamport,
+                        } => match value.value() {
+                            RichtextChunkValue::Text(text) => {
+                                delta.push_insert(
+                                    RichtextStateChunk::Text(
+                                        // PERF: can be speedup by acquiring lock on arena
+                                        TextChunk::new(
+                                            oplog.arena.slice_by_unicode(
+                                                text.start as usize..text.end as usize,
+                                            ),
+                                            IdFull::new(id.peer, id.counter, lamport.unwrap()),
+                                        ),
+                                    ),
+                                    (),
+                                );
+                            }
+                            RichtextChunkValue::StyleAnchor { id, anchor_type } => {
+                                delta.push_insert(
+                                    RichtextStateChunk::Style {
+                                        style: Arc::new(styles[id as usize].clone()),
+                                        anchor_type,
+                                    },
+                                    (),
+                                );
+                            }
+                            RichtextChunkValue::Unknown(len) => {
+                                // assert not unknown id
+                                assert_ne!(id.peer, PeerID::MAX);
+                                let mut acc_len = 0;
+                                for rich_op in oplog.iter_ops(IdSpan::new(
+                                    id.peer,
+                                    id.counter,
+                                    id.counter + len as Counter,
+                                )) {
+                                    acc_len += rich_op.content_len();
+                                    let op = rich_op.op();
+                                    let lamport = rich_op.lamport();
+                                    let content = op.content.as_list().unwrap();
+                                    match content {
                                 crate::container::list::list_op::InnerListOp::InsertText {
                                     slice,
                                     ..
                                 } => {
-                                    delta = delta.insert(RichtextStateChunk::Text(TextChunk::new(
-                                        slice.clone(),
-                                        IdFull::new(id.peer, op.counter, lamport),
-                                    )));
+                                    delta.push_insert(
+                                        RichtextStateChunk::Text(TextChunk::new(
+                                            slice.clone(),
+                                            IdFull::new(id.peer, op.counter, lamport),
+                                        )),
+                                        (),
+                                    );
                                 }
                                 _ => unreachable!("{:?}", content),
                             }
-                        }
+                                }
 
-                        debug_assert_eq!(acc_len, len as usize);
+                                debug_assert_eq!(acc_len, len as usize);
+                            }
+                            RichtextChunkValue::MoveAnchor => unreachable!(),
+                        },
+                        CrdtRopeDelta::Delete(len) => {
+                            delta.push_delete(len);
+                        }
                     }
-                    RichtextChunkValue::MoveAnchor => unreachable!(),
-                },
-                CrdtRopeDelta::Delete(len) => {
-                    delta = delta.delete(len);
                 }
+
+                (InternalDiff::RichtextRaw(delta), DiffMode::Checkout)
             }
         }
+    }
 
-        (InternalDiff::RichtextRaw(delta), DiffMode::Checkout)
+    fn finish_this_round(&mut self) {
+        match &mut *self.mode {
+            RichtextCalcMode::Crdt { .. } => {}
+            RichtextCalcMode::Linear {
+                diff,
+                last_style_start,
+            } => {
+                *diff = DeltaRope::new();
+                last_style_start.take();
+            }
+        }
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct MovableListDiffCalculator {
     container_idx: ContainerIdx,
-    list: ListDiffCalculator,
+    list: Box<ListDiffCalculator>,
     changed_elements: FxHashMap<CompactIdLp, ElementDelta>,
     current_mode: DiffMode,
 }
@@ -1283,4 +1452,20 @@ impl MovableListDiffCalculator {
             current_mode: DiffMode::Checkout,
         }
     }
+}
+
+#[test]
+fn test_size() {
+    let text = RichtextDiffCalculator::new();
+    let size = std::mem::size_of_val(&text);
+    assert!(size < 50, "RichtextDiffCalculator size: {}", size);
+    let list = MovableListDiffCalculator::new(ContainerIdx::from_index_and_type(
+        0,
+        loro_common::ContainerType::MovableList,
+    ));
+    let size = std::mem::size_of_val(&list);
+    assert!(size < 50, "MovableListDiffCalculator size: {}", size);
+    let calc = ContainerDiffCalculator::Richtext(text);
+    let size = std::mem::size_of_val(&calc);
+    assert!(size < 50, "ContainerDiffCalculator size: {}", size);
 }

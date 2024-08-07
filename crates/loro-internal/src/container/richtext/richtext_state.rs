@@ -397,9 +397,19 @@ pub(crate) enum RichtextStateChunk {
     },
 }
 
+impl Default for RichtextStateChunk {
+    fn default() -> Self {
+        Self::new_empty()
+    }
+}
+
 impl RichtextStateChunk {
     pub fn new_text(s: BytesSlice, id: IdFull) -> Self {
         Self::Text(TextChunk::new(s, id))
+    }
+
+    pub fn new_empty() -> Self {
+        Self::Text(TextChunk::new_empty())
     }
 
     pub fn new_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
@@ -449,6 +459,8 @@ impl RichtextStateChunk {
         }
     }
 }
+
+impl loro_delta::delta_trait::DeltaValue for RichtextStateChunk {}
 
 impl DeltaValue for RichtextStateChunk {
     fn value_extend(&mut self, other: Self) -> Result<(), Self> {
@@ -1065,7 +1077,6 @@ mod cursor_cache {
         RichtextTreeTrait,
     };
     use generic_btree::{rle::HasLength, BTree, Cursor, LeafIndex};
-    
 
     #[derive(Debug, Clone)]
     struct CursorCacheItem {
