@@ -1,6 +1,6 @@
 use loro::LoroResult;
 
-use crate::{ContainerID, LoroValue};
+use crate::ContainerID;
 
 #[derive(Debug, Clone)]
 pub struct LoroCounter {

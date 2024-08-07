@@ -1,5 +1,5 @@
 use loro_internal::{
-    container::ContainerID, handler::counter::CounterHandler, HandlerTrait, LoroResult, LoroValue,
+    container::ContainerID, handler::counter::CounterHandler, HandlerTrait, LoroResult,
 };
 
 use crate::{Container, ContainerTrait, SealedTrait};
