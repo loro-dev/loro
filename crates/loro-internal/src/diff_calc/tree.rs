@@ -66,7 +66,7 @@ impl TreeDiffCalculator {
     }
 
     fn checkout(&mut self, to: &VersionVector, oplog: &OpLog) {
-        let tree_ops = oplog.op_groups.get_tree(&self.container).unwrap();
+        let tree_ops = oplog.history_cache.get_tree(&self.container).unwrap();
         let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
         let s = format!("checkout current {:?} to {:?}", &tree_cache.current_vv, &to);
         let s = tracing::span!(tracing::Level::INFO, "checkout", s = s);
@@ -106,7 +106,7 @@ impl TreeDiffCalculator {
         let max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
         let mut forward_ops = vec![];
         let group = oplog
-            .op_groups
+            .history_cache
             .get(&self.container)
             .unwrap()
             .as_tree()
@@ -141,7 +141,7 @@ impl TreeDiffCalculator {
         to: &VersionVector,
         oplog: &OpLog,
     ) -> TreeDelta {
-        let tree_ops = oplog.op_groups.get_tree(&self.container).unwrap();
+        let tree_ops = oplog.history_cache.get_tree(&self.container).unwrap();
         let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
 
         let s = tracing::span!(tracing::Level::INFO, "checkout_diff");
@@ -227,7 +227,7 @@ impl TreeDiffCalculator {
         // forward
         tracing::info!("forward");
         let group = oplog
-            .op_groups
+            .history_cache
             .get(&self.container)
             .unwrap()
             .as_tree()

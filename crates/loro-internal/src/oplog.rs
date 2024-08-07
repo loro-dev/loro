@@ -46,7 +46,7 @@ pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
     change_store: ChangeStore,
-    pub(crate) op_groups: ContainerHistoryCache,
+    pub(crate) history_cache: ContainerHistoryCache,
     /// **lamport starts from 0**
     pub(crate) next_lamport: Lamport,
     pub(crate) latest_timestamp: Timestamp,
@@ -90,7 +90,7 @@ impl OpLog {
                 .fork(arena.clone(), configure.merge_interval.clone()),
             dag: self.dag.clone(),
             arena: self.arena.clone(),
-            op_groups: self.op_groups.fork(arena.clone()),
+            history_cache: self.history_cache.fork(arena.clone()),
             next_lamport: self.next_lamport,
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
@@ -188,7 +188,7 @@ impl OpLog {
         Self {
             change_store: ChangeStore::new_mem(&arena, cfg.merge_interval.clone()),
             dag: AppDag::default(),
-            op_groups: ContainerHistoryCache::new(arena.clone()),
+            history_cache: ContainerHistoryCache::new(arena.clone()),
             arena,
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
@@ -242,7 +242,7 @@ impl OpLog {
 
     /// This is the **only** place to update the `OpLog.changes`
     pub(crate) fn insert_new_change(&mut self, change: Change, _: EnsureDagNodeDepsAreAtTheEnd) {
-        self.op_groups.insert_by_change(&change);
+        self.history_cache.insert_by_change(&change);
         self.change_store.insert_change(change.clone());
         self.register_container_and_parent_link(&change);
     }
