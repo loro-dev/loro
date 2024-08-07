@@ -63,6 +63,26 @@ impl From<LoroValue> for loro::LoroValue {
     }
 }
 
+impl<'a> From<&'a LoroValue> for loro::LoroValue {
+    fn from(value: &LoroValue) -> loro::LoroValue {
+        match value {
+            LoroValue::Null => loro::LoroValue::Null,
+            LoroValue::Bool { value } => loro::LoroValue::Bool(*value),
+            LoroValue::Double { value } => loro::LoroValue::Double(*value),
+            LoroValue::I64 { value } => loro::LoroValue::I64(*value),
+            LoroValue::Binary { value } => loro::LoroValue::Binary(Arc::new(value.clone())),
+            LoroValue::String { value } => loro::LoroValue::String(Arc::new(value.clone())),
+            LoroValue::List { value } => {
+                loro::LoroValue::List(Arc::new(value.into_iter().map(Into::into).collect()))
+            }
+            LoroValue::Map { value } => loro::LoroValue::Map(Arc::new(
+                value.iter().map(|(k, v)| (k.clone(), v.into())).collect(),
+            )),
+            LoroValue::Container { value } => loro::LoroValue::Container(value.into()),
+        }
+    }
+}
+
 impl From<loro::LoroValue> for LoroValue {
     fn from(value: loro::LoroValue) -> LoroValue {
         match value {

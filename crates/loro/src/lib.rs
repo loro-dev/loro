@@ -44,7 +44,7 @@ pub use loro_internal::ApplyDiff;
 pub use loro_internal::JsonSchema;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
-pub use loro_internal::{Counter, IdSpan, Lamport, PeerID, TreeID, ID};
+pub use loro_internal::{Counter, CounterSpan, IdSpan, Lamport, PeerID, TreeID, ID};
 pub use loro_internal::{LoroError, LoroResult, LoroTreeError, LoroValue, ToJson};
 
 #[cfg(feature = "counter")]

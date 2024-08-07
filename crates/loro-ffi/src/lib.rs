@@ -13,10 +13,12 @@ pub use event::{
     ContainerDiff, Diff, DiffEvent, Index, ListDiffItem, MapDelta, PathItem, Subscriber, TextDelta,
     TreeDiff, TreeDiffItem, TreeExternalDiff,
 };
+mod undo;
+pub use undo::{AbsolutePosition, CursorWithPos, OnPop, OnPush, UndoItemMeta, UndoManager};
 mod version;
 pub use loro::{
-    cursor::Side, Counter, EventTriggerKind, Frontiers, IdSpan, Lamport, LoroError, PeerID, SubID,
-    TreeID, VersionVector, ID,
+    cursor::Side, undo::UndoOrRedo, Counter, CounterSpan, EventTriggerKind, Frontiers, IdSpan,
+    Lamport, LoroError, PeerID, SubID, TreeID, VersionVector, ID,
 };
 
 // https://github.com/mozilla/uniffi-rs/issues/1372

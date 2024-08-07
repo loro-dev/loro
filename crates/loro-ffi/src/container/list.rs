@@ -184,6 +184,7 @@ impl Default for LoroList {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Cursor(loro::cursor::Cursor);
 
 impl Cursor {
@@ -208,5 +209,11 @@ impl Deref for Cursor {
 impl From<loro::cursor::Cursor> for Cursor {
     fn from(c: loro::cursor::Cursor) -> Self {
         Self(c)
+    }
+}
+
+impl From<Cursor> for loro::cursor::Cursor {
+    fn from(c: Cursor) -> Self {
+        c.0
     }
 }
