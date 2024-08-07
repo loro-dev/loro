@@ -767,7 +767,7 @@ impl DocState {
         }
 
         if !unknown_containers.is_empty() {
-            let mut diff_calc = DiffCalculator::new();
+            let mut diff_calc = DiffCalculator::new(false);
             let unknown_diffs = diff_calc.calc_diff_internal(
                 oplog,
                 &Default::default(),

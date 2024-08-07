@@ -46,19 +46,29 @@ use super::{event::InternalContainerDiff, oplog::OpLog};
 /// and [AppState][super::state::AppState].
 ///
 /// TODO: persist diffCalculator and skip processed version
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DiffCalculator {
     /// ContainerIdx -> (depth, calculator)
     ///
     /// if depth is None, we need to calculate it again
     calculators: FxHashMap<ContainerIdx, (Option<NonZeroU16>, ContainerDiffCalculator)>,
-    last_vv: VersionVector,
-    has_all: bool,
+    retain_mode: DiffCalculatorRetainMode,
+}
+
+#[derive(Debug)]
+enum DiffCalculatorRetainMode {
+    /// The diff calculator can only be used once.
+    Once { used: bool },
+    /// The diff calculator will be persisted and can be reused after the diff calc is done.
+    Persist {
+        has_all: bool,
+        last_vv: VersionVector,
+    },
 }
 
 /// This mode defines how the diff is calculated and how it should be applied on the state.
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
-pub enum DiffMode {
+pub(crate) enum DiffMode {
     /// This is the most general mode of diff calculation.
     ///
     /// When applying `Checkout` diff, we already know the current state of the affected registers.
@@ -85,11 +95,22 @@ pub enum DiffMode {
 }
 
 impl DiffCalculator {
-    pub fn new() -> Self {
+    /// Create a new diff calculator.
+    ///
+    /// If `persist` is true, the diff calculator will be persisted after the diff calc is done.
+    /// This is useful when we need to cache the diff calculator for future use. But it is slower
+    /// for importing updates and requires more memory.
+    pub fn new(persist: bool) -> Self {
         Self {
             calculators: Default::default(),
-            last_vv: Default::default(),
-            has_all: false,
+            retain_mode: if persist {
+                DiffCalculatorRetainMode::Persist {
+                    has_all: false,
+                    last_vv: Default::default(),
+                }
+            } else {
+                DiffCalculatorRetainMode::Once { used: false }
+            },
         }
     }
 
@@ -121,45 +142,63 @@ impl DiffCalculator {
         let s = tracing::span!(tracing::Level::INFO, "DiffCalc");
         let _e = s.enter();
 
-        if self.has_all {
-            let include_before = self.last_vv.includes_vv(before);
-            let include_after = self.last_vv.includes_vv(after);
-            if !include_after || !include_before {
-                self.has_all = false;
-                self.last_vv = Default::default();
+        let mut use_persisted_shortcut = false;
+        match &mut self.retain_mode {
+            DiffCalculatorRetainMode::Once { used } => {
+                if *used {
+                    panic!("DiffCalculator with retain_mode Once can only be used once");
+                }
+            }
+            DiffCalculatorRetainMode::Persist { has_all, last_vv } => {
+                if *has_all {
+                    let include_before = last_vv.includes_vv(before);
+                    let include_after = last_vv.includes_vv(after);
+                    if !include_after || !include_before {
+                        *has_all = false;
+                        *last_vv = Default::default();
+                    }
+                }
+
+                if *has_all {
+                    use_persisted_shortcut = true;
+                }
             }
         }
-        tracing::info!(
-            "Before: {:?} After: {:?} has_all {}",
-            &before,
-            &after,
-            self.has_all
-        );
-        let affected_set = if !self.has_all {
+
+        let affected_set = if !use_persisted_shortcut {
             // if we don't have all the ops, we need to calculate the diff by tracing back
             let mut merged = before.clone();
             merged.merge(after);
-            if before.is_empty() {
-                self.has_all = true;
-                self.last_vv = Default::default();
-            }
-            let (lca, diff_mode, iter) =
+
+            let (lca, mut diff_mode, iter) =
                 oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
-            tracing::info!("LCA: {:?}", &lca);
+
+            if let DiffCalculatorRetainMode::Persist { has_all, last_vv } = &mut self.retain_mode {
+                if before.is_empty() {
+                    *has_all = true;
+                    *last_vv = Default::default();
+                }
+                diff_mode = DiffMode::Checkout;
+            }
+
+            tracing::debug!("LCA: {:?} mode={:?}", &lca, diff_mode);
             let mut started_set = FxHashSet::default();
             for (change, start_counter, vv) in iter {
-                if change.id.counter > 0 && self.has_all {
-                    assert!(
-                        self.last_vv.includes_id(change.id.inc(-1)),
-                        "{:?} {}",
-                        &self.last_vv,
-                        change.id
-                    );
-                }
+                if let DiffCalculatorRetainMode::Persist { has_all, last_vv } =
+                    &mut self.retain_mode
+                {
+                    if *has_all {
+                        if change.id.counter > 0 {
+                            debug_assert!(
+                                last_vv.includes_id(change.id.inc(-1)),
+                                "{:?} {}",
+                                &last_vv,
+                                change.id
+                            );
+                        }
 
-                let end_counter = merged.get(&change.id.peer).unwrap();
-                if self.has_all {
-                    self.last_vv.extend_to_include_end_id(change.id_end());
+                        last_vv.extend_to_include_end_id(change.id_end());
+                    }
                 }
 
                 let iter_start = change
@@ -167,6 +206,7 @@ impl DiffCalculator {
                     .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
                     .unwrap_or_else(|e| e);
                 let mut visited = FxHashSet::default();
+                let end_counter = merged.get(&change.id.peer).unwrap();
                 for mut op in &change.ops.vec()[iter_start..] {
                     if op.counter >= *end_counter {
                         break;
@@ -188,7 +228,7 @@ impl DiffCalculator {
 
                     if op.counter < start_counter || op.ctr_end() > *end_counter {
                         stack_sliced_op = Some(op.slice(
-                            ((start_counter as usize).saturating_sub(op.counter as usize)),
+                            (start_counter as usize).saturating_sub(op.counter as usize),
                             op.atom_len().min((end_counter - op.counter) as usize),
                         ));
                         op = stack_sliced_op.as_ref().unwrap();
@@ -658,6 +698,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                     }
                     RichtextChunkValue::StyleAnchor { .. } => unreachable!(),
                     RichtextChunkValue::Unknown(len) => {
+                        trace!("unknown id={:?}", id);
                         delta = handle_unknown(id, oplog, len, &mut on_new_container, delta);
                     }
                     RichtextChunkValue::MoveAnchor => {
@@ -938,8 +979,9 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 #[derive(Debug)]
 pub(crate) struct MovableListDiffCalculator {
     container_idx: ContainerIdx,
-    changed_elements: FxHashSet<IdLp>,
     list: ListDiffCalculator,
+    changed_elements: FxHashMap<CompactIdLp, ElementDelta>,
+    current_mode: DiffMode,
 }
 
 impl DiffCalculatorTrait for MovableListDiffCalculator {
@@ -950,7 +992,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         }
 
         self.list.tracker.checkout(vv);
-        // TODO: when can we clear the elements info?
+        self.current_mode = mode;
     }
 
     fn apply_change(
@@ -964,25 +1006,72 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         };
 
         // collect the elements that are moved, updated, or inserted
+
+        // If it's checkout mode, we don't need to track the changes
+        // we only need the element ids
         match l {
             InnerListOp::Insert { slice, pos: _ } => {
                 let op_id = op.id_full().idlp();
                 for i in 0..slice.atom_len() {
                     let id = op_id.inc(i as Counter);
+                    let value = oplog.arena.get_value(slice.0.start as usize + i).unwrap();
 
-                    self.changed_elements.insert(id);
+                    self.changed_elements.insert(
+                        id.compact(),
+                        ElementDelta {
+                            pos: Some(id),
+                            value: value.clone(),
+                            value_updated: true,
+                            value_id: Some(id),
+                        },
+                    );
                 }
             }
             InnerListOp::Delete(_) => {}
-            InnerListOp::Move {
-                from: _,
-                elem_id: from_id,
-                to: _,
-            } => {
-                self.changed_elements.insert(*from_id);
+            InnerListOp::Move { elem_id, .. } => {
+                let idlp = IdLp::new(op.peer, op.lamport());
+                match self.changed_elements.get_mut(&elem_id.compact()) {
+                    Some(change) => {
+                        if change.pos.is_some() && change.pos.as_ref().unwrap() > &idlp {
+                        } else {
+                            change.pos = Some(idlp);
+                        }
+                    }
+                    None => {
+                        self.changed_elements.insert(
+                            elem_id.compact(),
+                            ElementDelta {
+                                pos: Some(idlp),
+                                value: LoroValue::Null,
+                                value_updated: false,
+                                value_id: None,
+                            },
+                        );
+                    }
+                }
             }
-            InnerListOp::Set { elem_id, value: _ } => {
-                self.changed_elements.insert(*elem_id);
+            InnerListOp::Set { elem_id, value } => {
+                let idlp = IdLp::new(op.peer, op.lamport());
+                match self.changed_elements.get_mut(&elem_id.compact()) {
+                    Some(change) => {
+                        if change.value_id.is_some() && change.value_id.as_ref().unwrap() > &idlp {
+                        } else {
+                            change.value_id = Some(idlp);
+                            change.value = value.clone();
+                        }
+                    }
+                    None => {
+                        self.changed_elements.insert(
+                            elem_id.compact(),
+                            ElementDelta {
+                                pos: None,
+                                value: value.clone(),
+                                value_updated: true,
+                                value_id: Some(idlp),
+                            },
+                        );
+                    }
+                }
             }
 
             InnerListOp::StyleStart { .. } => unreachable!(),
@@ -990,9 +1079,10 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             InnerListOp::InsertText { .. } => unreachable!(),
         }
 
+        let is_checkout = matches!(self.current_mode, DiffMode::Checkout);
+
         {
             // Apply change on the list items
-            // TODO: it needs to ignore Set & Move op internally
             let this = &mut self.list;
             if let Some(vv) = vv {
                 this.tracker.checkout(vv);
@@ -1017,22 +1107,32 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                             del.is_reversed(),
                         );
                     }
-                    InnerListOp::Move {
-                        from,
-                        elem_id: from_id,
-                        to,
-                    } => {
-                        // TODO: PERF: this lookup can be optimized
-                        let list = oplog
-                            .op_groups
-                            .get(&real_op.container)
-                            .unwrap()
-                            .as_movable_list()
-                            .unwrap();
-                        let last_pos = list
-                            .last_pos(from_id, this.tracker.current_vv())
-                            .unwrap()
-                            .id();
+                    InnerListOp::Move { from, elem_id, to } => {
+                        let last_pos = if is_checkout {
+                            // TODO: PERF: this lookup can be optimized
+                            let list = oplog
+                                .op_groups
+                                .get(&real_op.container)
+                                .unwrap()
+                                .as_movable_list()
+                                .unwrap();
+                            list.last_pos(elem_id, this.tracker.current_vv())
+                                .unwrap()
+                                .id()
+                        } else {
+                            // When it's import or linear mode, we need to use a fake id
+                            // because we want to avoid using the history cache
+                            //
+                            // This ID will not be used. Because it will only be used when
+                            // we switch to an older version. And we know it's for importing and
+                            // to version is always after from version (!is_checkout), so that
+                            // we don't need to checkout to the version before from.
+                            const FAKE_ID: ID = ID {
+                                peer: PeerID::MAX - 2,
+                                counter: 0,
+                            };
+                            FAKE_ID
+                        };
                         this.tracker.move_item(
                             op.id_full(),
                             last_pos,
@@ -1053,7 +1153,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
     }
 
     fn finish_this_round(&mut self) {
-        self.list.finish_this_round()
+        self.list.finish_this_round();
     }
 
     #[instrument(skip(self, oplog, on_new_container))]
@@ -1071,19 +1171,19 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         };
 
         assert_eq!(diff_mode, DiffMode::Checkout);
-        let group = oplog
-            .op_groups
-            .get_movable_list(&self.container_idx)
-            .unwrap();
+        let is_checkout = matches!(self.current_mode, DiffMode::Checkout);
+        let mut element_changes: FxHashMap<CompactIdLp, ElementDelta> = if is_checkout {
+            FxHashMap::default()
+        } else {
+            std::mem::take(&mut self.changed_elements)
+        };
 
-        let mut element_changes: FxHashMap<CompactIdLp, ElementDelta> =
-            FxHashMap::with_capacity_and_hasher(
-                self.changed_elements.len() + list_diff.insert_len(),
-                Default::default(),
-            );
-        for id in self.changed_elements.iter() {
-            element_changes.insert(id.compact(), ElementDelta::placeholder());
+        if is_checkout {
+            for id in self.changed_elements.keys() {
+                element_changes.insert(*id, ElementDelta::placeholder());
+            }
         }
+
         let list_diff: Delta<SmallVec<[IdFull; 1]>, ()> = Delta {
             vec: list_diff
                 .iter()
@@ -1105,8 +1205,10 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                                 _ => unreachable!(),
                             };
 
-                            // add the related element id
-                            element_changes.insert(elem_id, ElementDelta::placeholder());
+                            if is_checkout {
+                                // add the related element id
+                                element_changes.insert(elem_id, ElementDelta::placeholder());
+                            }
                             new_insert.push(id);
                         }
 
@@ -1123,46 +1225,52 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                 .collect(),
         };
 
-        element_changes.retain(|id, change| {
-            let id = id.to_id();
-            // It can be None if the target does not exist before the `to` version
-            // But we don't need to calc from, because the deletion is handled by the diff from list items
-            let Some(pos) = group.last_pos(&id, to) else {
-                return false;
-            };
+        if is_checkout {
+            let group = oplog
+                .op_groups
+                .get_movable_list(&self.container_idx)
+                .unwrap();
+            element_changes.retain(|id, change| {
+                let id = id.to_id();
+                // It can be None if the target does not exist before the `to` version
+                // But we don't need to calc from, because the deletion is handled by the diff from list items
+                let Some(pos) = group.last_pos(&id, to) else {
+                    return false;
+                };
 
-            let value = group.last_value(&id, to).unwrap();
-            let old_pos = group.last_pos(&id, from);
-            let old_value = group.last_value(&id, from);
-            if old_pos.is_none() && old_value.is_none() {
-                if let LoroValue::Container(c) = &value.value {
-                    on_new_container(c);
+                let value = group.last_value(&id, to).unwrap();
+                let old_pos = group.last_pos(&id, from);
+                let old_value = group.last_value(&id, from);
+                if old_pos.is_none() && old_value.is_none() {
+                    if let LoroValue::Container(c) = &value.value {
+                        on_new_container(c);
+                    }
+                    *change = ElementDelta {
+                        pos: Some(pos.idlp()),
+                        value: value.value.clone(),
+                        value_id: Some(IdLp::new(value.peer, value.lamport)),
+                        value_updated: true,
+                    };
+                } else {
+                    // TODO: PERF: can be filtered based on the list_diff and whether the pos/value are updated
+                    *change = ElementDelta {
+                        pos: Some(pos.idlp()),
+                        value: value.value.clone(),
+                        value_updated: old_value.unwrap().value != value.value,
+                        value_id: Some(IdLp::new(value.peer, value.lamport)),
+                    };
                 }
-                *change = ElementDelta {
-                    pos: Some(pos.idlp()),
-                    value: value.value.clone(),
-                    value_id: Some(IdLp::new(value.peer, value.lamport)),
-                    value_updated: true,
-                };
-            } else {
-                // TODO: PERF: can be filtered based on the list_diff and whether the pos/value are updated
-                *change = ElementDelta {
-                    pos: Some(pos.idlp()),
-                    value: value.value.clone(),
-                    value_updated: old_value.unwrap().value != value.value,
-                    value_id: Some(IdLp::new(value.peer, value.lamport)),
-                };
-            }
 
-            true
-        });
+                true
+            });
+        }
 
         let diff = MovableListInnerDelta {
             list: list_diff,
             elements: element_changes,
         };
 
-        (InternalDiff::MovableList(diff), DiffMode::Checkout)
+        (InternalDiff::MovableList(diff), self.current_mode)
     }
 }
 
@@ -1172,6 +1280,7 @@ impl MovableListDiffCalculator {
             container_idx: container,
             changed_elements: Default::default(),
             list: Default::default(),
+            current_mode: DiffMode::Checkout,
         }
     }
 }

@@ -325,7 +325,11 @@ impl<'a> RichOp<'a> {
     }
 
     pub(crate) fn id_full(&self) -> IdFull {
-        IdFull::new(self.peer, self.op.counter, self.lamport)
+        IdFull::new(
+            self.peer,
+            self.op.counter + self.start as Counter,
+            self.lamport + self.start as Lamport,
+        )
     }
 }
 

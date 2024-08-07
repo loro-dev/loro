@@ -15,7 +15,7 @@ use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
 use rle::HasLength;
-use tracing::{info_span, instrument};
+use tracing::{info, info_span, instrument};
 
 use crate::{
     arena::SharedArena,
@@ -112,7 +112,7 @@ impl LoroDoc {
             detached: AtomicBool::new(false),
             auto_commit: AtomicBool::new(false),
             observer: Arc::new(Observer::new(arena.clone())),
-            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
+            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn: global_txn,
             arena,
         }
@@ -139,7 +139,7 @@ impl LoroDoc {
             arena,
             config,
             observer: Arc::new(Observer::new(self.arena.clone())),
-            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
+            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn,
             auto_commit: AtomicBool::new(false),
             detached: AtomicBool::new(self.detached.load(std::sync::atomic::Ordering::Relaxed)),
@@ -235,7 +235,7 @@ impl LoroDoc {
             auto_commit: AtomicBool::new(false),
             oplog: Arc::new(Mutex::new(oplog)),
             state: Arc::new(Mutex::new(state)),
-            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
+            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn: Arc::new(Mutex::new(None)),
             detached: AtomicBool::new(false),
         }
@@ -529,7 +529,7 @@ impl LoroDoc {
         let old_frontiers = oplog.frontiers().clone();
         f(&mut oplog)?;
         if !self.detached.load(Acquire) {
-            let mut diff = DiffCalculator::default();
+            let mut diff = DiffCalculator::new(false);
             let diff = diff.calc_diff_internal(
                 &oplog,
                 &old_vv,
@@ -565,7 +565,7 @@ impl LoroDoc {
             body,
         });
         if ans.is_ok() && !self.detached.load(Acquire) {
-            let mut diff = DiffCalculator::default();
+            let mut diff = DiffCalculator::new(false);
             let diff = diff.calc_diff_internal(
                 &oplog,
                 &old_vv,
@@ -1074,6 +1074,11 @@ impl LoroDoc {
 
     #[instrument(level = "info", skip(self))]
     fn checkout_without_emitting(&self, frontiers: &Frontiers) -> Result<(), LoroError> {
+        info!(
+            "checkout from={:?} to={:?}",
+            self.state_frontiers(),
+            frontiers
+        );
         self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
         let mut state = self.state.lock().unwrap();
@@ -1225,7 +1230,7 @@ impl LoroDoc {
                     .ok_or(CannotFindRelativePosition::ContainerDeleted)?;
                 // We know where the target id is when we trace back to the delete_op_id.
                 let delete_op_id = find_last_delete_op(&oplog, id, idx).unwrap();
-                let mut diff_calc = DiffCalculator::new();
+                let mut diff_calc = DiffCalculator::new(false);
                 let before_frontiers: Frontiers = oplog.dag.find_deps_of_id(delete_op_id);
                 let before = &oplog.dag.frontiers_to_vv(&before_frontiers).unwrap();
                 // TODO: PERF: it doesn't need to calc the effects here

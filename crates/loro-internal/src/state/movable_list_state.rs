@@ -2,7 +2,7 @@ use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 use serde_columnar::columnar;
 use std::sync::{Arc, Mutex, Weak};
-use tracing::{instrument, warn};
+use tracing::{instrument, trace, warn};
 
 use fxhash::FxHashMap;
 use generic_btree::BTree;
@@ -12,6 +12,7 @@ use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, list::list_op::ListOp},
     delta::DeltaItem,
+    diff_calc::DiffMode,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff, ListDeltaMeta},
     handler::ValueOrHandler,
@@ -970,7 +971,7 @@ impl ContainerState for MovableListState {
             mode,
         }: DiffApplyContext,
     ) -> Diff {
-        let InternalDiff::MovableList(diff) = diff else {
+        let InternalDiff::MovableList(mut diff) = diff else {
             unreachable!()
         };
 
@@ -984,8 +985,11 @@ impl ContainerState for MovableListState {
             None
         };
 
+        trace!("diff = {:#?}", diff);
+        trace!("list = {:#?}", &self);
         let mut event: ListDiff = DeltaRope::new();
         let mut maybe_moved: FxHashMap<CompactIdLp, (usize, LoroValue)> = FxHashMap::default();
+        let need_compare = matches!(mode, DiffMode::Import);
 
         {
             // apply deletions and calculate `maybe_moved`
@@ -1015,10 +1019,25 @@ impl ContainerState for MovableListState {
                                 .delete(user_index_end - user_index)
                                 .build(),
                         );
-                        self.inner.list_drain(index..index + delete, |id, elem| {
-                            maybe_moved.insert(id, (user_index, elem.value.clone()));
-                            user_index += 1;
-                        });
+                        self.inner
+                            .list_drain(index..index + delete, |elem_id, elem| {
+                                maybe_moved.insert(elem_id, (user_index, elem.value.clone()));
+                                if !matches!(mode, DiffMode::Checkout) {
+                                    if let Some(new_elem) = diff.elements.get_mut(&elem_id) {
+                                        if new_elem.value_id.is_none() {
+                                            new_elem.value = elem.value.clone();
+                                            new_elem.value_id = Some(elem.value_id);
+                                            new_elem.value_updated = false;
+                                        }
+
+                                        if new_elem.pos.is_none() {
+                                            new_elem.pos = Some(elem.pos);
+                                        }
+                                    }
+                                }
+
+                                user_index += 1;
+                            });
                         assert_eq!(user_index, user_index_end);
                     }
                 }
@@ -1059,7 +1078,13 @@ impl ContainerState for MovableListState {
             //
             // It doesn't need to worry about the deletion of the list item, because it's handled by the list diff.
 
+            trace!("movable list apply mode={:?}", mode);
             for (elem_id, delta_item) in diff.elements.into_iter() {
+                trace!(
+                    "movable list apply elem_id={:?} elem={:?}",
+                    elem_id,
+                    delta_item
+                );
                 let crate::delta::ElementDelta {
                     pos,
                     value,
@@ -1072,7 +1097,9 @@ impl ContainerState for MovableListState {
                 match self.inner.elements().get(&elem_id).cloned() {
                     Some(elem) => {
                         // Update value if needed
-                        if elem.value != value {
+                        if elem.value != value
+                            && (!need_compare || elem.value_id < value_id.unwrap())
+                        {
                             maybe_moved.remove(&elem_id);
                             self.inner
                                 .update_value(elem_id, value.clone(), value_id.unwrap());
@@ -1094,7 +1121,10 @@ impl ContainerState for MovableListState {
                         }
 
                         // Update pos if needed
-                        if elem.pos != pos.unwrap() {
+                        if pos.is_some()
+                            && elem.pos != pos.unwrap()
+                            && (!need_compare || elem.pos < pos.unwrap())
+                        {
                             // don't need to update old list item, because it's handled by list diff already
                             let result = self.inner.update_pos(elem_id, pos.unwrap(), false);
                             let result = self.inner.convert_update_to_event_pos(result);

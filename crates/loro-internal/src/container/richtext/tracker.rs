@@ -598,7 +598,7 @@ impl Tracker {
         self._checkout(from, false);
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();
-        tracing::trace!("Trace::diff {:#?}, ", &self);
+        // tracing::trace!("Trace::diff {:#?}, ", &self);
 
         self.rope.get_diff()
     }
