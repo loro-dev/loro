@@ -700,7 +700,6 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                     }
                     RichtextChunkValue::StyleAnchor { .. } => unreachable!(),
                     RichtextChunkValue::Unknown(len) => {
-                        trace!("unknown id={:?}", id);
                         delta = handle_unknown(id, oplog, len, &mut on_new_container, delta);
                     }
                     RichtextChunkValue::MoveAnchor => {
@@ -824,13 +823,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             }
             _ => {
                 if !matches!(&*self.mode, RichtextCalcMode::Crdt { .. }) {
-                    self.mode = Box::new(RichtextCalcMode::Crdt {
-                        tracker: Box::new(RichtextTracker::new_with_unknown()),
-                        styles: Vec::new(),
-                        start_vv: vv.clone(),
-                    });
-
-                    return;
+                    unreachable!();
                 }
             }
         }
@@ -841,7 +834,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 styles,
                 start_vv,
             } => {
-                if !vv.includes_vv(start_vv) || tracker.all_vv().includes_vv(vv) {
+                if !vv.includes_vv(start_vv) || !tracker.all_vv().includes_vv(vv) {
                     *tracker = Box::new(RichtextTracker::new_with_unknown());
                     styles.clear();
                     *start_vv = vv.clone();
@@ -859,7 +852,6 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         op: crate::op::RichOp,
         vv: Option<&crate::VersionVector>,
     ) {
-        trace!("apply_change: {:?}", op.id());
         match &mut *self.mode {
             RichtextCalcMode::Linear {
                 diff,
@@ -1051,7 +1043,6 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             } => {
                 trace!("end with crdt mode");
                 tracing::debug!("CalcDiff {:?} {:?}", from, to);
-                trace!("tracker version vector = {:?}", tracker.all_vv());
                 let mut delta = DeltaRope::new();
                 for item in tracker.diff(from, to) {
                     match item {

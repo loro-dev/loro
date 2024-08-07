@@ -6,7 +6,7 @@ use generic_btree::{
 };
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength as _;
-use tracing::instrument;
+use tracing::{instrument, trace};
 
 use crate::{cursor::AbsolutePosition, VersionVector};
 
@@ -598,7 +598,7 @@ impl Tracker {
         self._checkout(from, false);
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();
-        tracing::trace!("Trace::diff {:#?}, ", &self);
+        // tracing::trace!("Trace::diff {:#?}, ", &self);
 
         self.rope.get_diff()
     }

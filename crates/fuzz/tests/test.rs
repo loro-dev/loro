@@ -8102,6 +8102,95 @@ fn unknown_fuzz_err_1() {
 }
 
 #[test]
+fn text_fuzz_err_1() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 143,
+                target: 29,
+                container: 98,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 3149642750,
+                    pos: 18097429212317875131,
+                    length: 64871186039035,
+                    prop: 17565089386645696778,
+                }),
+            },
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            Checkout {
+                site: 55,
+                to: 4294916923,
+            },
+            Handle {
+                site: 251,
+                target: 0,
+                container: 239,
+                action: Generic(GenericAction {
+                    value: I32(657457152),
+                    bool: true,
+                    key: 656877351,
+                    pos: 2821266740684990247,
+                    length: 2826896240219203367,
+                    prop: 17521015924422327227,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(426766319),
+                    bool: true,
+                    key: 3146720292,
+                    pos: 18694838926267,
+                    length: 10314409433236454331,
+                    prop: 18391499916132989883,
+                }),
+            },
+            SyncAll,
+            Undo {
+                site: 111,
+                op_len: 1869573999,
+            },
+            Undo {
+                site: 111,
+                op_len: 1869573999,
+            },
+            Undo {
+                site: 111,
+                op_len: 1869573999,
+            },
+            Undo {
+                site: 111,
+                op_len: 4294966971,
+            },
+            Sync { from: 59, to: 255 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,
