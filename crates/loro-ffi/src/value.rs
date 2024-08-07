@@ -43,18 +43,6 @@ pub enum LoroValue {
     Container { value: ContainerID },
 }
 
-// impl LoroValueLike for LoroValue {
-//     fn as_loro_value(&self) -> crate::LoroValue {
-//         self.clone()
-//     }
-// }
-
-// impl<T: LoroValueLike> LoroValueLike for Arc<T> {
-//     fn as_loro_value(&self) -> crate::LoroValue {
-//         self.as_ref().as_loro_value()
-//     }
-// }
-
 impl From<LoroValue> for loro::LoroValue {
     fn from(value: LoroValue) -> loro::LoroValue {
         match value {
