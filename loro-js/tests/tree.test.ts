@@ -131,7 +131,7 @@ describe("loro tree", () => {
       }
     });
 
-    tree.emptyTrash();
+    tree.emptyTrash(Number.MAX_SAFE_INTEGER);
     loro.commit();
     await one_ms();
     assertEquals(ty, "emptyTrash");
