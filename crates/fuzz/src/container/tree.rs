@@ -358,7 +358,7 @@ pub struct TreeTracker {
 
 impl TreeTracker {
     pub(crate) fn find_node_by_id(&self, id: TreeID) -> Option<&TreeNode> {
-        let mut s = VecDeque::from_iter(self.iter());
+        let mut s = VecDeque::from_iter(self.tree.iter());
         while let Some(node) = s.pop_front() {
             if node.id == id {
                 return Some(node);
@@ -370,7 +370,7 @@ impl TreeTracker {
     }
 
     pub(crate) fn find_node_by_id_mut(&mut self, id: TreeID) -> Option<&mut TreeNode> {
-        let mut s = VecDeque::from_iter(self.iter_mut());
+        let mut s = VecDeque::from_iter(self.tree.iter_mut());
         while let Some(node) = s.pop_front() {
             if node.id == id {
                 return Some(node);
@@ -406,7 +406,11 @@ impl ApplyDiff for TreeTracker {
                         let parent = self.find_node_by_id_mut(*parent).unwrap();
                         parent.children.insert(*index, node);
                     } else {
-                        self.insert(*index, node);
+                        if self.find_node_by_id_mut(target).is_some() {
+                            panic!("{:?} node already exists", target);
+                        }
+
+                        self.tree.insert(*index, node);
                     };
                 }
                 TreeExternalDiff::Delete { .. } => {
@@ -415,7 +419,7 @@ impl ApplyDiff for TreeTracker {
                         let parent = self.find_node_by_id_mut(parent).unwrap();
                         parent.children.retain(|n| n.id != target);
                     } else {
-                        let index = self.iter().position(|n| n.id == target).unwrap();
+                        let index = self.tree.iter().position(|n| n.id == target).unwrap();
                         self.tree.remove(index);
                     };
                 }
@@ -431,7 +435,7 @@ impl ApplyDiff for TreeTracker {
                         let index = parent.children.iter().position(|n| n.id == target).unwrap();
                         parent.children.remove(index)
                     } else {
-                        let index = self.iter().position(|n| n.id == target).unwrap();
+                        let index = self.tree.iter().position(|n| n.id == target).unwrap();
                         self.tree.remove(index)
                     };
                     node.parent = *parent;
@@ -440,7 +444,11 @@ impl ApplyDiff for TreeTracker {
                         let parent = self.find_node_by_id_mut(*parent).unwrap();
                         parent.children.insert(*index, node);
                     } else {
-                        self.insert(*index, node);
+                        if self.find_node_by_id_mut(target).is_some() {
+                            panic!("{:?} node already exists", target);
+                        }
+
+                        self.tree.insert(*index, node);
                     }
                 }
             }
@@ -450,7 +458,8 @@ impl ApplyDiff for TreeTracker {
     fn to_value(&self) -> LoroValue {
         let mut list: Vec<FxHashMap<_, _>> = Vec::new();
         let mut q = VecDeque::from_iter(
-            self.iter()
+            self.tree
+                .iter()
                 .sorted_unstable_by_key(|x| &x.position)
                 .enumerate(),
         );
@@ -461,18 +470,6 @@ impl ApplyDiff for TreeTracker {
         }
 
         list.into()
-    }
-}
-
-impl Deref for TreeTracker {
-    type Target = Vec<TreeNode>;
-    fn deref(&self) -> &Self::Target {
-        &self.tree
-    }
-}
-impl DerefMut for TreeTracker {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.tree
     }
 }
 

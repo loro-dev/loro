@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use crate::container::idx::ContainerIdx;
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
+use crate::diff_calc::DiffMode;
 use crate::encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder};
 use crate::event::InternalDiff;
 use crate::op::Op;
@@ -854,8 +855,9 @@ impl ContainerState for TreeState {
     fn apply_diff_and_convert(
         &mut self,
         diff: crate::event::InternalDiff,
-        _ctx: DiffApplyContext,
+        ctx: DiffApplyContext,
     ) -> Diff {
+        let need_check = !matches!(ctx.mode, DiffMode::Checkout | DiffMode::Linear);
         let mut ans = vec![];
         if let InternalDiff::Tree(tree) = &diff {
             // println!("before {:?}", self.children);
@@ -880,17 +882,26 @@ impl ContainerState for TreeState {
                         });
                     }
                     TreeInternalDiff::Move { parent, position } => {
-                        self.mov(target, *parent, last_move_op, Some(position.clone()), false)
-                            .unwrap();
-                        let index = self.get_index_by_tree_id(&target).unwrap();
-                        ans.push(TreeDiffItem {
-                            target,
-                            action: TreeExternalDiff::Move {
-                                parent: parent.into_node().ok(),
-                                index,
-                                position: position.clone(),
-                            },
-                        });
+                        let ok = if need_check {
+                            self.mov(target, *parent, last_move_op, Some(position.clone()), true)
+                                .is_ok()
+                        } else {
+                            self.mov(target, *parent, last_move_op, Some(position.clone()), false)
+                                .unwrap();
+                            true
+                        };
+
+                        if ok {
+                            let index = self.get_index_by_tree_id(&target).unwrap();
+                            ans.push(TreeDiffItem {
+                                target,
+                                action: TreeExternalDiff::Move {
+                                    parent: parent.into_node().ok(),
+                                    index,
+                                    position: position.clone(),
+                                },
+                            });
+                        }
                     }
                     TreeInternalDiff::Delete { parent, position } => {
                         self.mov(target, *parent, last_move_op, position.clone(), false)
@@ -933,8 +944,9 @@ impl ContainerState for TreeState {
         Diff::Tree(TreeDiff { diff: ans })
     }
 
-    fn apply_diff(&mut self, diff: InternalDiff, _ctx: DiffApplyContext) {
+    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) {
         if let InternalDiff::Tree(tree) = &diff {
+            let need_check = !matches!(ctx.mode, DiffMode::Checkout | DiffMode::Linear);
             // assert never cause cycle move
             for diff in tree.diff.iter() {
                 let last_move_op = diff.last_effective_move_op_id;
@@ -943,8 +955,13 @@ impl ContainerState for TreeState {
                 match &diff.action {
                     TreeInternalDiff::Create { parent, position }
                     | TreeInternalDiff::Move { parent, position } => {
-                        self.mov(target, *parent, last_move_op, Some(position.clone()), false)
-                            .unwrap();
+                        if need_check {
+                            self.mov(target, *parent, last_move_op, Some(position.clone()), true)
+                                .unwrap_or_default();
+                        } else {
+                            self.mov(target, *parent, last_move_op, Some(position.clone()), false)
+                                .unwrap();
+                        }
                     }
                     TreeInternalDiff::Delete { parent, position } => {
                         self.mov(target, *parent, last_move_op, position.clone(), false)

@@ -4,6 +4,7 @@ use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, HasId, IdFull, IdSpan, Lamport, TreeID, ID};
+use tracing::trace;
 
 use crate::{
     container::idx::ContainerIdx,
@@ -25,16 +26,26 @@ pub(crate) struct TreeDiffCalculator {
 
 #[derive(Debug)]
 enum TreeDiffCalculatorMode {
-    UndoRedo,
+    Crdt,
     Linear(TreeDelta),
+    ImportGreaterUpdates(TreeDelta),
 }
 
 impl DiffCalculatorTrait for TreeDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector, mode: DiffMode) {
-        if mode == DiffMode::Linear {
-            self.mode = TreeDiffCalculatorMode::Linear(TreeDelta::default());
-        } else {
-            self.mode = TreeDiffCalculatorMode::UndoRedo;
+        match mode {
+            DiffMode::Checkout => {
+                self.mode = TreeDiffCalculatorMode::Crdt;
+            }
+            DiffMode::Import => {
+                self.mode = TreeDiffCalculatorMode::Crdt;
+            }
+            DiffMode::ImportGreaterUpdates => {
+                self.mode = TreeDiffCalculatorMode::ImportGreaterUpdates(TreeDelta::default());
+            }
+            DiffMode::Linear => {
+                self.mode = TreeDiffCalculatorMode::Linear(TreeDelta::default());
+            }
         }
     }
 
@@ -44,9 +55,10 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         op: crate::op::RichOp,
         _vv: Option<&crate::VersionVector>,
     ) {
-        match self.mode {
-            TreeDiffCalculatorMode::UndoRedo => {}
-            TreeDiffCalculatorMode::Linear(ref mut delta) => {
+        match &mut self.mode {
+            TreeDiffCalculatorMode::Crdt => {}
+            TreeDiffCalculatorMode::Linear(ref mut delta)
+            | TreeDiffCalculatorMode::ImportGreaterUpdates(ref mut delta) => {
                 let id_full = op.id_full();
                 let op = op.op();
                 let content = op.content.as_tree().unwrap();
@@ -92,7 +104,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
     }
 
     fn finish_this_round(&mut self) {
-        self.mode = TreeDiffCalculatorMode::UndoRedo;
+        self.mode = TreeDiffCalculatorMode::Crdt;
     }
 
     fn calculate_diff(
@@ -103,7 +115,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         match &mut self.mode {
-            TreeDiffCalculatorMode::UndoRedo => {
+            TreeDiffCalculatorMode::Crdt => {
                 let diff = self.diff(oplog, from, to);
                 diff.diff.iter().for_each(|d| {
                     // the metadata could be modified before, so (re)create a node need emit the map container diffs
@@ -118,6 +130,20 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             TreeDiffCalculatorMode::Linear(ans) => {
                 (InternalDiff::Tree(std::mem::take(ans)), DiffMode::Linear)
             }
+            TreeDiffCalculatorMode::ImportGreaterUpdates(ans) => {
+                let mut ans = std::mem::take(ans);
+                ans.diff.sort_unstable_by(|a, b| {
+                    a.last_effective_move_op_id
+                        .lamport
+                        .cmp(&b.last_effective_move_op_id.lamport)
+                        .then_with(|| {
+                            a.last_effective_move_op_id
+                                .peer
+                                .cmp(&b.last_effective_move_op_id.peer)
+                        })
+                });
+                (InternalDiff::Tree(ans), DiffMode::ImportGreaterUpdates)
+            }
         }
     }
 }
@@ -126,7 +152,7 @@ impl TreeDiffCalculator {
     pub(crate) fn new(container: ContainerIdx) -> Self {
         Self {
             container,
-            mode: TreeDiffCalculatorMode::UndoRedo,
+            mode: TreeDiffCalculatorMode::Crdt,
         }
     }
 

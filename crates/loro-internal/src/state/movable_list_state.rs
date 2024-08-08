@@ -985,8 +985,6 @@ impl ContainerState for MovableListState {
             None
         };
 
-        trace!("diff = {:#?}", diff);
-        trace!("list = {:#?}", &self);
         let mut event: ListDiff = DeltaRope::new();
         let mut maybe_moved: FxHashMap<CompactIdLp, (usize, LoroValue)> = FxHashMap::default();
         let need_compare = matches!(mode, DiffMode::Import);
@@ -1078,13 +1076,7 @@ impl ContainerState for MovableListState {
             //
             // It doesn't need to worry about the deletion of the list item, because it's handled by the list diff.
 
-            trace!("movable list apply mode={:?}", mode);
             for (elem_id, delta_item) in diff.elements.into_iter() {
-                trace!(
-                    "movable list apply elem_id={:?} elem={:?}",
-                    elem_id,
-                    delta_item
-                );
                 let crate::delta::ElementDelta {
                     pos,
                     value,

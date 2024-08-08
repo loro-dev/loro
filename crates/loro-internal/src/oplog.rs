@@ -531,7 +531,13 @@ impl OpLog {
     ) -> (
         VersionVector,
         DiffMode,
-        impl Iterator<Item = (BlockChangeRef, Counter, Rc<RefCell<VersionVector>>)> + '_,
+        impl Iterator<
+                Item = (
+                    BlockChangeRef,
+                    (Counter, Counter),
+                    Rc<RefCell<VersionVector>>,
+                ),
+            > + '_,
     ) {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
@@ -582,11 +588,11 @@ impl OpLog {
                         .cnt
                         .max(cur_cnt)
                         .max(common_ancestors_vv.get(&peer).copied().unwrap_or(0));
-                    let end = (inner.data.cnt + inner.data.len as Counter)
+                    let dag_node_end = (inner.data.cnt + inner.data.len as Counter)
                         .min(merged_vv.get(&peer).copied().unwrap_or(0));
                     let change = self.change_store.get_change(ID::new(peer, cnt)).unwrap();
 
-                    if change.ctr_end() < end {
+                    if change.ctr_end() < dag_node_end {
                         cur_cnt = change.ctr_end();
                     } else {
                         node = iter.next();
@@ -595,7 +601,7 @@ impl OpLog {
 
                     inner_vv.extend_to_include_end_id(change.id);
 
-                    Some((change, cnt, vv.clone()))
+                    Some((change, (cnt, dag_node_end), vv.clone()))
                 } else {
                     None
                 }

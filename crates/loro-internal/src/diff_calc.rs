@@ -191,8 +191,8 @@ impl DiffCalculator {
 
             tracing::debug!("LCA: {:?} mode={:?}", &lca, diff_mode);
             let mut started_set = FxHashSet::default();
-            for (change, start_counter, vv) in iter {
-                let end_counter = *merged.get(&change.id.peer).unwrap();
+            for (change, (start_counter, end_counter), vv) in iter {
+                trace!("change = {:#?}", change);
                 if let DiffCalculatorRetainMode::Persist { has_all, last_vv } =
                     &mut self.retain_mode
                 {
@@ -241,6 +241,8 @@ impl DiffCalculator {
                         ));
                         op = stack_sliced_op.as_ref().unwrap();
                     }
+
+                    trace!("opid = {}@{}", op.counter, change.id.peer);
                     let vv = &mut vv.borrow_mut();
                     vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
                     let container = op.container;

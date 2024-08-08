@@ -12,7 +12,7 @@ use loro::{
     Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, UndoManager, ID,
 };
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use tracing::info_span;
+use tracing::{info_span, trace};
 
 use crate::{
     container::{CounterActor, ListActor, MovableListActor, TextActor, TreeActor},
@@ -505,8 +505,8 @@ impl Node {
 }
 
 pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
-    // println!("\n\na = {:#?}", a);
-    // println!("b = {:#?}", b);
+    // trace!("a = {:#?}", a);
+    // trace!("b = {:#?}", b);
     let a_tree = Node::from_loro_value(a);
     let b_tree = Node::from_loro_value(b);
     let mut a_q = VecDeque::from_iter([a_tree]);
@@ -521,7 +521,7 @@ pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
                 let mut meta = x
                     .meta
                     .into_iter()
-                    .sorted_by_key(|(k, _)| k.clone())
+                    .sorted_by_cached_key(|(k, _)| k.clone())
                     .map(|(mut k, v)| {
                         k.push_str(v.as_string().map_or("", |f| f.as_str()));
                         k
@@ -538,7 +538,7 @@ pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
                 let mut meta = x
                     .meta
                     .into_iter()
-                    .sorted_by_key(|(k, _)| k.clone())
+                    .sorted_by_cached_key(|(k, _)| k.clone())
                     .map(|(mut k, v)| {
                         k.push_str(v.as_string().map_or("", |f| f.as_str()));
                         k
