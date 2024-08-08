@@ -45,7 +45,7 @@ fn to_str(output: Output) -> String {
                 id_span.counter.start,
                 id_span.peer,
                 id_span.counter.start,
-                id_span.counter.end
+                id_span.counter.end,
             )
             .as_str();
         }

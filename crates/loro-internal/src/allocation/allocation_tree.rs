@@ -1,16 +1,15 @@
-use fxhash::{FxHashMap, FxHashSet};
-use itertools::Itertools;
-
 use crate::{
     dag::{Dag, DagNode},
     id::ID,
 };
+use fxhash::{FxHashMap, FxHashSet};
+use itertools::Itertools;
 
 use std::{mem::swap, vec};
 
-use super::types::{AntiGraph, DeepOrInd, Father};
+use super::allocation_tree_types::{AntiGraph, DeepOrInd, Father};
 
-pub(crate) fn calc_critical_version<T: DagNode, D: Dag<Node = T>>(
+pub(crate) fn calc_critical_version_allocation_tree<T: DagNode, D: Dag<Node = T>>(
     graph: &D,
     start_id_list: &[ID],
     end_id_list: &[ID],
