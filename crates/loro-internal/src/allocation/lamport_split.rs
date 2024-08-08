@@ -5,7 +5,7 @@ use crate::{
     id::ID,
 };
 use fxhash::{FxHashMap, FxHashSet};
-use itertools::{min, Itertools};
+use itertools::Itertools;
 
 pub(crate) fn calc_critical_version_lamport_split<T: DagNode, D: Dag<Node = T>>(
     graph: &D,
