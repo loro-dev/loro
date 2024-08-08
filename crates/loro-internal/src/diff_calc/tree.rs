@@ -162,73 +162,75 @@ impl TreeDiffCalculator {
     }
 
     fn checkout(&mut self, to: &VersionVector, oplog: &OpLog) {
-        let tree_ops = oplog.history_cache.get_tree(&self.container).unwrap();
-        let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
-        let s = format!("checkout current {:?} to {:?}", &tree_cache.current_vv, &to);
-        let s = tracing::span!(tracing::Level::INFO, "checkout", s = s);
-        let _e = s.enter();
-        if to == &tree_cache.current_vv {
-            tracing::info!("checkout: to == current_vv");
-            return;
-        }
-        let to_frontiers = to.to_frontiers(&oplog.dag);
-        let min_lamport = self.get_min_lamport_by_frontiers(&to_frontiers, oplog);
-        // retreat
-        let mut retreat_ops = vec![];
-        for (_target, ops) in tree_cache.tree.iter() {
-            for op in ops.iter().rev() {
-                if op.lamport < min_lamport {
-                    break;
-                }
-                if !to.includes_id(op.id) {
-                    retreat_ops.push(op.clone());
+        oplog.with_history_cache(|h| {
+            h.ensure_importing_caches_exist();
+            let tree_ops = h.get_tree_unsafe(&self.container).unwrap();
+            let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
+            let s = format!("checkout current {:?} to {:?}", &tree_cache.current_vv, &to);
+            let s = tracing::span!(tracing::Level::INFO, "checkout", s = s);
+            let _e = s.enter();
+            if to == &tree_cache.current_vv {
+                tracing::info!("checkout: to == current_vv");
+                return;
+            }
+            let to_frontiers = to.to_frontiers(&oplog.dag);
+            let min_lamport = self.get_min_lamport_by_frontiers(&to_frontiers, oplog);
+            // retreat
+            let mut retreat_ops = vec![];
+            for (_target, ops) in tree_cache.tree.iter() {
+                for op in ops.iter().rev() {
+                    if op.lamport < min_lamport {
+                        break;
+                    }
+                    if !to.includes_id(op.id) {
+                        retreat_ops.push(op.clone());
+                    }
                 }
             }
-        }
-        tracing::info!(msg="retreat ops", retreat_ops=?retreat_ops);
-        for op in retreat_ops {
-            tree_cache.tree.get_mut(&op.target).unwrap().remove(&op);
-            tree_cache.current_vv.shrink_to_exclude(IdSpan::new(
-                op.id.peer,
-                op.id.counter,
-                op.id.counter + 1,
-            ));
-        }
-        // forward and apply
-        let current_frontiers = tree_cache.current_vv.to_frontiers(&oplog.dag);
-        let forward_min_lamport = self
-            .get_min_lamport_by_frontiers(&current_frontiers, oplog)
-            .min(min_lamport);
-        let max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
-        let mut forward_ops = vec![];
-        let group = oplog
-            .history_cache
-            .get_importing_cache(&self.container)
-            .unwrap()
-            .as_tree()
-            .unwrap();
-        for (lamport, ops) in group.ops.range(forward_min_lamport..=max_lamport) {
-            for op in ops {
-                if !tree_cache.current_vv.includes_id(op.id_start())
-                    && to.includes_id(op.id_start())
-                {
-                    forward_ops.push((*lamport, op));
+            tracing::info!(msg="retreat ops", retreat_ops=?retreat_ops);
+            for op in retreat_ops {
+                tree_cache.tree.get_mut(&op.target).unwrap().remove(&op);
+                tree_cache.current_vv.shrink_to_exclude(IdSpan::new(
+                    op.id.peer,
+                    op.id.counter,
+                    op.id.counter + 1,
+                ));
+            }
+            // forward and apply
+            let current_frontiers = tree_cache.current_vv.to_frontiers(&oplog.dag);
+            let forward_min_lamport = self
+                .get_min_lamport_by_frontiers(&current_frontiers, oplog)
+                .min(min_lamport);
+            let max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
+            let mut forward_ops = vec![];
+            let group = h
+                .get_importing_cache_unsafe(&self.container)
+                .unwrap()
+                .as_tree()
+                .unwrap();
+            for (lamport, ops) in group.ops.range(forward_min_lamport..=max_lamport) {
+                for op in ops {
+                    if !tree_cache.current_vv.includes_id(op.id_start())
+                        && to.includes_id(op.id_start())
+                    {
+                        forward_ops.push((*lamport, op));
+                    }
                 }
             }
-        }
 
-        // tracing::info!("forward ops {:?}", forward_ops);
-        for (lamport, op) in forward_ops {
-            let op = MoveLamportAndID {
-                target: op.value.target(),
-                parent: op.value.parent_id(),
-                position: op.value.fractional_index(),
-                id: op.id_start(),
-                lamport,
-                effected: false,
-            };
-            tree_cache.apply(op);
-        }
+            // tracing::info!("forward ops {:?}", forward_ops);
+            for (lamport, op) in forward_ops {
+                let op = MoveLamportAndID {
+                    target: op.value.target(),
+                    parent: op.value.parent_id(),
+                    position: op.value.fractional_index(),
+                    id: op.id_start(),
+                    lamport,
+                    effected: false,
+                };
+                tree_cache.apply(op);
+            }
+        });
     }
 
     fn checkout_diff(
@@ -237,150 +239,153 @@ impl TreeDiffCalculator {
         to: &VersionVector,
         oplog: &OpLog,
     ) -> TreeDelta {
-        let tree_ops = oplog.history_cache.get_tree(&self.container).unwrap();
-        let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
+        oplog.with_history_cache(|h| {
+            h.ensure_importing_caches_exist();
+            let tree_ops = h.get_tree_unsafe(&self.container).unwrap();
+            let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
 
-        let s = tracing::span!(tracing::Level::INFO, "checkout_diff");
-        let _e = s.enter();
-        let to_frontiers = to.to_frontiers(&oplog.dag);
-        let from_frontiers = from.to_frontiers(&oplog.dag);
-        let (common_ancestors, _mode) = oplog
-            .dag
-            .find_common_ancestor(&from_frontiers, &to_frontiers);
-        let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
-        let lca_frontiers = lca_vv.to_frontiers(&oplog.dag);
-        tracing::info!(
-            "from vv {:?} to vv {:?} current vv {:?} lca vv {:?}",
-            from,
-            to,
-            tree_cache.current_vv,
-            lca_vv
-        );
+            let s = tracing::span!(tracing::Level::INFO, "checkout_diff");
+            let _e = s.enter();
+            let to_frontiers = to.to_frontiers(&oplog.dag);
+            let from_frontiers = from.to_frontiers(&oplog.dag);
+            let (common_ancestors, _mode) = oplog
+                .dag
+                .find_common_ancestor(&from_frontiers, &to_frontiers);
+            let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
+            let lca_frontiers = lca_vv.to_frontiers(&oplog.dag);
+            tracing::info!(
+                "from vv {:?} to vv {:?} current vv {:?} lca vv {:?}",
+                from,
+                to,
+                tree_cache.current_vv,
+                lca_vv
+            );
 
-        let to_max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
-        let lca_min_lamport = self.get_min_lamport_by_frontiers(&lca_frontiers, oplog);
+            let to_max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
+            let lca_min_lamport = self.get_min_lamport_by_frontiers(&lca_frontiers, oplog);
 
-        // retreat for diff
-        tracing::info!("start retreat");
-        let mut diffs = vec![];
-        let mut retreat_ops = vec![];
-        for (_target, ops) in tree_cache.tree.iter() {
-            for op in ops.iter().rev() {
-                if op.lamport < lca_min_lamport {
-                    break;
-                }
-                if !lca_vv.includes_id(op.id) {
-                    retreat_ops.push(op.clone());
-                }
-            }
-        }
-
-        // tracing::info!("retreat ops {:?}", retreat_ops);
-        for op in retreat_ops.into_iter().sorted().rev() {
-            tree_cache.tree.get_mut(&op.target).unwrap().remove(&op);
-            tree_cache.current_vv.shrink_to_exclude(IdSpan::new(
-                op.id.peer,
-                op.id.counter,
-                op.id.counter + 1,
-            ));
-            let (old_parent, position, last_effective_move_op_id) =
-                tree_cache.get_parent_with_id(op.target);
-            if op.effected {
-                // we need to know whether old_parent is deleted
-                let is_parent_deleted = tree_cache.is_parent_deleted(op.parent);
-                let is_old_parent_deleted = tree_cache.is_parent_deleted(old_parent);
-                let this_diff = TreeDeltaItem::new(
-                    op.target,
-                    old_parent,
-                    op.parent,
-                    last_effective_move_op_id,
-                    is_old_parent_deleted,
-                    is_parent_deleted,
-                    position,
-                );
-                let is_create = matches!(this_diff.action, TreeInternalDiff::Create { .. });
-                diffs.push(this_diff);
-                if is_create {
-                    let mut s = vec![op.target];
-                    while let Some(t) = s.pop() {
-                        let children = tree_cache.get_children_with_id(TreeParentId::Node(t));
-                        children.iter().for_each(|c| {
-                            diffs.push(TreeDeltaItem {
-                                target: c.0,
-                                action: TreeInternalDiff::Create {
-                                    parent: TreeParentId::Node(t),
-                                    position: c.1.clone().unwrap(),
-                                },
-                                last_effective_move_op_id: c.2,
-                            })
-                        });
-                        s.extend(children.iter().map(|c| c.0));
+            // retreat for diff
+            tracing::info!("start retreat");
+            let mut diffs = vec![];
+            let mut retreat_ops = vec![];
+            for (_target, ops) in tree_cache.tree.iter() {
+                for op in ops.iter().rev() {
+                    if op.lamport < lca_min_lamport {
+                        break;
+                    }
+                    if !lca_vv.includes_id(op.id) {
+                        retreat_ops.push(op.clone());
                     }
                 }
             }
-        }
 
-        // forward
-        tracing::info!("forward");
-        let group = oplog
-            .history_cache
-            .get_importing_cache(&self.container)
-            .unwrap()
-            .as_tree()
-            .unwrap();
-        for (lamport, ops) in group.ops.range(lca_min_lamport..=to_max_lamport) {
-            for op in ops {
-                if !tree_cache.current_vv.includes_id(op.id_start())
-                    && to.includes_id(op.id_start())
-                {
-                    let op = MoveLamportAndID {
-                        target: op.value.target(),
-                        parent: op.value.parent_id(),
-                        position: op.value.fractional_index(),
-                        id: op.id_start(),
-                        lamport: *lamport,
-                        effected: false,
-                    };
-                    let (old_parent, _position, _id) = tree_cache.get_parent_with_id(op.target);
+            // tracing::info!("retreat ops {:?}", retreat_ops);
+            for op in retreat_ops.into_iter().sorted().rev() {
+                tree_cache.tree.get_mut(&op.target).unwrap().remove(&op);
+                tree_cache.current_vv.shrink_to_exclude(IdSpan::new(
+                    op.id.peer,
+                    op.id.counter,
+                    op.id.counter + 1,
+                ));
+                let (old_parent, position, last_effective_move_op_id) =
+                    tree_cache.get_parent_with_id(op.target);
+                if op.effected {
+                    // we need to know whether old_parent is deleted
                     let is_parent_deleted = tree_cache.is_parent_deleted(op.parent);
                     let is_old_parent_deleted = tree_cache.is_parent_deleted(old_parent);
-                    let effected = tree_cache.apply(op.clone());
-                    if effected {
-                        let this_diff = TreeDeltaItem::new(
-                            op.target,
-                            op.parent,
-                            old_parent,
-                            op.id_full(),
-                            is_parent_deleted,
-                            is_old_parent_deleted,
-                            op.position,
-                        );
-                        let is_create = matches!(this_diff.action, TreeInternalDiff::Create { .. });
-                        diffs.push(this_diff);
-                        if is_create {
-                            // TODO: per
-                            let mut s = vec![op.target];
-                            while let Some(t) = s.pop() {
-                                let children =
-                                    tree_cache.get_children_with_id(TreeParentId::Node(t));
-                                children.iter().for_each(|c| {
-                                    diffs.push(TreeDeltaItem {
-                                        target: c.0,
-                                        action: TreeInternalDiff::Create {
-                                            parent: TreeParentId::Node(t),
-                                            position: c.1.clone().unwrap(),
-                                        },
-                                        last_effective_move_op_id: c.2,
-                                    })
-                                });
-                                s.extend(children.iter().map(|x| x.0));
+                    let this_diff = TreeDeltaItem::new(
+                        op.target,
+                        old_parent,
+                        op.parent,
+                        last_effective_move_op_id,
+                        is_old_parent_deleted,
+                        is_parent_deleted,
+                        position,
+                    );
+                    let is_create = matches!(this_diff.action, TreeInternalDiff::Create { .. });
+                    diffs.push(this_diff);
+                    if is_create {
+                        let mut s = vec![op.target];
+                        while let Some(t) = s.pop() {
+                            let children = tree_cache.get_children_with_id(TreeParentId::Node(t));
+                            children.iter().for_each(|c| {
+                                diffs.push(TreeDeltaItem {
+                                    target: c.0,
+                                    action: TreeInternalDiff::Create {
+                                        parent: TreeParentId::Node(t),
+                                        position: c.1.clone().unwrap(),
+                                    },
+                                    last_effective_move_op_id: c.2,
+                                })
+                            });
+                            s.extend(children.iter().map(|c| c.0));
+                        }
+                    }
+                }
+            }
+
+            // forward
+            tracing::info!("forward");
+            let group = h
+                .get_importing_cache_unsafe(&self.container)
+                .unwrap()
+                .as_tree()
+                .unwrap();
+            for (lamport, ops) in group.ops.range(lca_min_lamport..=to_max_lamport) {
+                for op in ops {
+                    if !tree_cache.current_vv.includes_id(op.id_start())
+                        && to.includes_id(op.id_start())
+                    {
+                        let op = MoveLamportAndID {
+                            target: op.value.target(),
+                            parent: op.value.parent_id(),
+                            position: op.value.fractional_index(),
+                            id: op.id_start(),
+                            lamport: *lamport,
+                            effected: false,
+                        };
+                        let (old_parent, _position, _id) = tree_cache.get_parent_with_id(op.target);
+                        let is_parent_deleted = tree_cache.is_parent_deleted(op.parent);
+                        let is_old_parent_deleted = tree_cache.is_parent_deleted(old_parent);
+                        let effected = tree_cache.apply(op.clone());
+                        if effected {
+                            let this_diff = TreeDeltaItem::new(
+                                op.target,
+                                op.parent,
+                                old_parent,
+                                op.id_full(),
+                                is_parent_deleted,
+                                is_old_parent_deleted,
+                                op.position,
+                            );
+                            let is_create =
+                                matches!(this_diff.action, TreeInternalDiff::Create { .. });
+                            diffs.push(this_diff);
+                            if is_create {
+                                // TODO: per
+                                let mut s = vec![op.target];
+                                while let Some(t) = s.pop() {
+                                    let children =
+                                        tree_cache.get_children_with_id(TreeParentId::Node(t));
+                                    children.iter().for_each(|c| {
+                                        diffs.push(TreeDeltaItem {
+                                            target: c.0,
+                                            action: TreeInternalDiff::Create {
+                                                parent: TreeParentId::Node(t),
+                                                position: c.1.clone().unwrap(),
+                                            },
+                                            last_effective_move_op_id: c.2,
+                                        })
+                                    });
+                                    s.extend(children.iter().map(|x| x.0));
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-        TreeDelta { diff: diffs }
+            TreeDelta { diff: diffs }
+        })
     }
 
     fn get_min_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {

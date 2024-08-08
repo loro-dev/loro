@@ -537,14 +537,14 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         match self.current_mode {
-            DiffMode::Checkout | DiffMode::Import => {
-                let mut changed = Vec::new();
-                let group = oplog
-                    .history_cache
+            DiffMode::Checkout | DiffMode::Import => oplog.with_history_cache(|h| {
+                let group = h
                     .get_checkout_cache(&self.container_idx)
                     .unwrap()
                     .as_map()
                     .unwrap();
+                let mut changed = Vec::new();
+
                 for k in group.keys() {
                     let peek_from = group.last_op(k, from);
                     let peek_to = group.last_op(k, to);
@@ -586,7 +586,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
                 }
 
                 (InternalDiff::Map(MapDelta { updated }), DiffMode::Checkout)
-            }
+            }),
             DiffMode::ImportGreaterUpdates | DiffMode::Linear => {
                 let changed = std::mem::take(&mut self.changed);
                 let mode = self.current_mode;
@@ -1277,15 +1277,16 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     InnerListOp::Move { from, elem_id, to } => {
                         let last_pos = if is_checkout {
                             // TODO: PERF: this lookup can be optimized
-                            let list = oplog
-                                .history_cache
-                                .get_checkout_cache(&real_op.container)
-                                .unwrap()
-                                .as_movable_list()
-                                .unwrap();
-                            list.last_pos(elem_id, this.tracker.current_vv())
-                                .unwrap()
-                                .id()
+                            oplog.with_history_cache(|h| {
+                                let list = h
+                                    .get_checkout_cache(&real_op.container)
+                                    .unwrap()
+                                    .as_movable_list()
+                                    .unwrap();
+                                list.last_pos(elem_id, this.tracker.current_vv())
+                                    .unwrap()
+                                    .id()
+                            })
                         } else {
                             // When it's import or linear mode, we need to use a fake id
                             // because we want to avoid using the history cache
@@ -1393,42 +1394,41 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         };
 
         if is_checkout {
-            let group = oplog
-                .history_cache
-                .get_movable_list(&self.container_idx)
-                .unwrap();
-            element_changes.retain(|id, change| {
-                let id = id.to_id();
-                // It can be None if the target does not exist before the `to` version
-                // But we don't need to calc from, because the deletion is handled by the diff from list items
-                let Some(pos) = group.last_pos(&id, to) else {
-                    return false;
-                };
+            oplog.with_history_cache(|history_cache| {
+                let group = history_cache.get_movable_list(&self.container_idx).unwrap();
+                element_changes.retain(|id, change| {
+                    let id = id.to_id();
+                    // It can be None if the target does not exist before the `to` version
+                    // But we don't need to calc from, because the deletion is handled by the diff from list items
+                    let Some(pos) = group.last_pos(&id, to) else {
+                        return false;
+                    };
 
-                let value = group.last_value(&id, to).unwrap();
-                let old_pos = group.last_pos(&id, from);
-                let old_value = group.last_value(&id, from);
-                if old_pos.is_none() && old_value.is_none() {
-                    if let LoroValue::Container(c) = &value.value {
-                        on_new_container(c);
+                    let value = group.last_value(&id, to).unwrap();
+                    let old_pos = group.last_pos(&id, from);
+                    let old_value = group.last_value(&id, from);
+                    if old_pos.is_none() && old_value.is_none() {
+                        if let LoroValue::Container(c) = &value.value {
+                            on_new_container(c);
+                        }
+                        *change = ElementDelta {
+                            pos: Some(pos.idlp()),
+                            value: value.value.clone(),
+                            value_id: Some(IdLp::new(value.peer, value.lamport)),
+                            value_updated: true,
+                        };
+                    } else {
+                        // TODO: PERF: can be filtered based on the list_diff and whether the pos/value are updated
+                        *change = ElementDelta {
+                            pos: Some(pos.idlp()),
+                            value: value.value.clone(),
+                            value_updated: old_value.unwrap().value != value.value,
+                            value_id: Some(IdLp::new(value.peer, value.lamport)),
+                        };
                     }
-                    *change = ElementDelta {
-                        pos: Some(pos.idlp()),
-                        value: value.value.clone(),
-                        value_id: Some(IdLp::new(value.peer, value.lamport)),
-                        value_updated: true,
-                    };
-                } else {
-                    // TODO: PERF: can be filtered based on the list_diff and whether the pos/value are updated
-                    *change = ElementDelta {
-                        pos: Some(pos.idlp()),
-                        value: value.value.clone(),
-                        value_updated: old_value.unwrap().value != value.value,
-                        value_id: Some(IdLp::new(value.peer, value.lamport)),
-                    };
-                }
 
-                true
+                    true
+                });
             });
         }
 

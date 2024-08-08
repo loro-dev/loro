@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::Mutex;
 
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;
@@ -46,7 +47,7 @@ pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
     change_store: ChangeStore,
-    pub(crate) history_cache: ContainerHistoryCache,
+    history_cache: Mutex<ContainerHistoryCache>,
     /// **lamport starts from 0**
     pub(crate) next_lamport: Lamport,
     pub(crate) latest_timestamp: Timestamp,
@@ -84,13 +85,19 @@ pub struct AppDagNode {
 
 impl OpLog {
     pub(crate) fn fork(&self, arena: SharedArena, configure: Configure) -> Self {
+        let change_store = self
+            .change_store
+            .fork(arena.clone(), configure.merge_interval.clone());
         Self {
-            change_store: self
-                .change_store
-                .fork(arena.clone(), configure.merge_interval.clone()),
+            change_store: change_store.clone(),
             dag: self.dag.clone(),
             arena: self.arena.clone(),
-            history_cache: self.history_cache.fork(arena.clone()),
+            history_cache: Mutex::new(
+                self.history_cache
+                    .lock()
+                    .unwrap()
+                    .fork(arena.clone(), change_store),
+            ),
             next_lamport: self.next_lamport,
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
@@ -185,10 +192,14 @@ impl OpLog {
     pub(crate) fn new() -> Self {
         let arena = SharedArena::new();
         let cfg = Configure::default();
+        let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval.clone());
         Self {
-            change_store: ChangeStore::new_mem(&arena, cfg.merge_interval.clone()),
+            history_cache: Mutex::new(ContainerHistoryCache::new(
+                arena.clone(),
+                change_store.clone(),
+            )),
+            change_store,
             dag: AppDag::default(),
-            history_cache: ContainerHistoryCache::new(arena.clone()),
             arena,
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
@@ -242,9 +253,21 @@ impl OpLog {
 
     /// This is the **only** place to update the `OpLog.changes`
     pub(crate) fn insert_new_change(&mut self, change: Change, _: EnsureDagNodeDepsAreAtTheEnd) {
-        self.history_cache.insert_by_change(&change);
+        self.history_cache
+            .lock()
+            .unwrap()
+            .insert_by_new_change(&change, true, true);
         self.change_store.insert_change(change.clone());
         self.register_container_and_parent_link(&change);
+    }
+
+    #[inline(always)]
+    pub(crate) fn with_history_cache<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut ContainerHistoryCache) -> R,
+    {
+        let mut history_cache = self.history_cache.lock().unwrap();
+        f(&mut *history_cache)
     }
 
     /// Import a change.
