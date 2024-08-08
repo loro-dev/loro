@@ -1,9 +1,11 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use fractional_index::FractionalIndex;
-use fxhash::{FxHashMap};
+use fxhash::FxHashMap;
+use itertools::max;
 use loro_common::{
-    ContainerID, ContainerType, Counter, IdLp, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
+    ContainerID, ContainerType, Counter, IdLp, Lamport, LoroResult, LoroTreeError, LoroValue,
+    PeerID, TreeID,
 };
 use smallvec::smallvec;
 
@@ -660,7 +662,7 @@ impl TreeHandler {
         )
     }
 
-    pub fn empty_trash(&self) -> LoroResult<()> {
+    pub fn empty_trash(&self, max_lamport: Lamport) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(_) => {
                 unreachable!()
@@ -668,7 +670,7 @@ impl TreeHandler {
             MaybeDetached::Attached(a) => {
                 let nodes_in_trash = a.with_state(|state| {
                     let a = state.as_tree_state().unwrap();
-                    a.deleted_nodes()
+                    a.deleted_nodes(max_lamport)
                 });
 
                 a.with_txn(|txn| {
@@ -687,14 +689,14 @@ impl TreeHandler {
         }
     }
 
-    fn deleted_nodes(&self) -> Vec<TreeID> {
+    fn deleted_nodes(&self, max_lamport: Lamport) -> Vec<TreeID> {
         match &self.inner {
             MaybeDetached::Detached(_) => {
                 unreachable!()
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
-                a.deleted_nodes()
+                a.deleted_nodes(max_lamport)
             }),
         }
     }
@@ -926,7 +928,7 @@ impl TreeHandler {
 
 #[cfg(test)]
 mod tests {
-    use loro_common::LoroResult;
+    use loro_common::{Lamport, LoroResult};
 
     use crate::{HandlerTrait, LoroDoc};
 
@@ -944,27 +946,27 @@ mod tests {
         tree.delete(node2)?;
         doc.commit_then_renew();
         let before_trash_f = doc.oplog_frontiers();
-        tree.empty_trash()?;
+        tree.empty_trash(Lamport::MAX)?;
 
         let v = tree.get_value();
         assert_eq!(v.as_list().unwrap().len(), 2);
-        assert_eq!(tree.deleted_nodes().len(), 0);
+        assert_eq!(tree.deleted_nodes(Lamport::MAX).len(), 0);
 
         doc.checkout(&before_delete_f)?;
         let v2 = tree.get_value();
         assert_eq!(v2.as_list().unwrap().len(), 4);
-        assert_eq!(tree.deleted_nodes().len(), 0);
+        assert_eq!(tree.deleted_nodes(Lamport::MAX).len(), 0);
 
         doc.checkout(&before_trash_f)?;
         let v3 = tree.get_value();
         assert_eq!(v3.as_list().unwrap().len(), 2);
-        assert_eq!(tree.deleted_nodes().len(), 2);
+        assert_eq!(tree.deleted_nodes(Lamport::MAX).len(), 2);
 
         doc.checkout(&doc.oplog_frontiers())?;
 
         let v4 = tree.get_value();
         assert_eq!(v4.as_list().unwrap().len(), 2);
-        assert_eq!(tree.deleted_nodes().len(), 0);
+        assert_eq!(tree.deleted_nodes(Lamport::MAX).len(), 0);
 
         Ok(())
     }

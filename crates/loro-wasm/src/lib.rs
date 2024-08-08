@@ -3283,6 +3283,8 @@ impl LoroTree {
     /// You can use `empty_trash()` to clean up these tombstones in `State`.
     /// We still keep the relevant information in the Op history, checkout to the any version will still work.
     ///
+    /// - `max_lamport`: Only nodes that are less than or equal to `max_lamport` will be emptied.
+    ///
     /// ## Some Notes:
     /// We recommend that you use this method with caution and only when you think you have enough historical operations.
     /// Because if you empty the trash, and there are some concurrent operations that moving the deleted nodes back
@@ -3291,8 +3293,8 @@ impl LoroTree {
     /// To avoid unnecessary memory and storage usage for this Operation, you need to ensure that it is
     /// only called once in potentially concurrent operations.
     #[wasm_bindgen(js_name = "emptyTrash")]
-    pub fn empty_trash(&self) -> JsResult<()> {
-        self.handler.empty_trash()?;
+    pub fn empty_trash(&self, max_lamport: Lamport) -> JsResult<()> {
+        self.handler.empty_trash(max_lamport)?;
         Ok(())
     }
 
@@ -4428,6 +4430,9 @@ export type TreeOp = {
 }|{
   type: "delete",
   target: TreeID
+}|{
+  type: "empty_trash",
+  nodes: TreeID[]
 };
 
 export type UnknownOp = {

@@ -358,7 +358,12 @@ fn encode_changes(
                             target: register_tree_id(target, peer_register),
                         },
                         TreeOp::EmptyTrash(nodes) => op::TreeOp::EmptyTrash {
-                            nodes: nodes.clone(),
+                            nodes: Arc::new(
+                                nodes
+                                    .iter()
+                                    .map(|id| register_tree_id(id, peer_register))
+                                    .collect(),
+                            ),
                         },
                     }),
                     _ => unreachable!(),
@@ -608,7 +613,9 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                 op::TreeOp::Delete { target } => InnerContent::Tree(TreeOp::Delete {
                     target: convert_tree_id(&target, peers),
                 }),
-                op::TreeOp::EmptyTrash { nodes } => InnerContent::Tree(TreeOp::EmptyTrash(nodes)),
+                op::TreeOp::EmptyTrash { nodes } => InnerContent::Tree(TreeOp::EmptyTrash(
+                    Arc::new(nodes.iter().map(|id| convert_tree_id(id, peers)).collect()),
+                )),
             },
             _ => unreachable!(),
         },

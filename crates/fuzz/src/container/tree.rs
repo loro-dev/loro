@@ -270,7 +270,7 @@ impl Actionable for TreeAction {
                 }
             }
             TreeActionInner::EmptyTrash => {
-                tree.empty_trash().unwrap();
+                tree.empty_trash(u32::MAX).unwrap();
                 None
             }
         }

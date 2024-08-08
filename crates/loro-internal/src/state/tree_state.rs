@@ -4,7 +4,8 @@ use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
+    ContainerID, IdFull, IdLp, Lamport, LoroError, LoroResult, LoroTreeError, LoroValue, PeerID,
+    TreeID,
 };
 use rand::SeedableRng;
 use rle::HasLength;
@@ -680,14 +681,16 @@ impl TreeState {
     }
 
     /// Return the nodes that are deleted
-    pub(crate) fn deleted_nodes(&self) -> Vec<TreeID> {
+    pub(crate) fn deleted_nodes(&self, max_lamport: Lamport) -> Vec<TreeID> {
         let mut q = vec![TreeParentId::Deleted];
         let mut ans = vec![];
         while let Some(parent) = q.pop() {
             if let Some(children) = self.children.get(&parent) {
-                for (_, id) in children.iter() {
+                for (p, id) in children.iter() {
                     q.push(TreeParentId::Node(*id));
-                    ans.push(*id);
+                    if p.idlp.lamport <= max_lamport {
+                        ans.push(*id);
+                    }
                 }
             }
         }
