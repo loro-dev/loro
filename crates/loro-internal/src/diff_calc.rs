@@ -12,8 +12,7 @@ use itertools::Itertools;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
-    CompactIdLp, ContainerID, Counter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan, LoroValue,
-    PeerID, ID,
+    CompactIdLp, ContainerID, Counter, HasCounterSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
 };
 use loro_delta::DeltaRope;
 use smallvec::SmallVec;
@@ -84,14 +83,21 @@ pub(crate) enum DiffMode {
     /// For example, we may need to compare the current register's lamport with the update's lamport to decide
     /// what's the new value.
     ///
-    /// It is faster than the checkout mode, but it is still slower than the linear mode.
+    /// It has stricter requirements than `Checkout`:
     ///
-    /// - The difference between the import mode and the checkout mode: in import mode, target version > current version.
-    ///   So when calculating the `DiffCalculator` doesn't need to rely on `ContainerHistoryCache`, except for the Tree container.
-    /// - The difference between the import mode and the linear mode: in linear mode, all the imported updates are ordered, no concurrent update exists.
-    ///   So there is no need to build CRDTs for the calculation
+    /// - The target version vector must be greater than the current version vector.
     Import,
+    /// This mode is used when the user imports new updates and all the updates are guaranteed to greater than the current version.
+    ///
+    /// It has stricter requirements than `Import`.
+    /// - All the updates are greater than the current version. No update is concurrent to the current version.
+    /// - So LCA is always the `from` version
+    ImportGreaterUpdates,
     /// This mode is used when we don't need to build CRDTs to calculate the difference. It is the fastest mode.
+    ///
+    /// It has stricter requirements than `ImportGreaterUpdates`.
+    /// - In `ImportGreaterUpdates`, all the updates are guaranteed to be greater than the current version.
+    /// - In `Linear`, all the updates are ordered, no concurrent update exists.
     Linear,
 }
 
@@ -322,7 +328,6 @@ impl DiffCalculator {
                     if d != *depth {
                         *depth = d;
                         all.push((*depth, container_idx));
-                        calc.finish_this_round();
                         continue;
                     }
                 }
@@ -530,7 +535,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         match self.current_mode {
-            DiffMode::Checkout => {
+            DiffMode::Checkout | DiffMode::Import => {
                 let mut changed = Vec::new();
                 let group = oplog
                     .history_cache
@@ -580,7 +585,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
 
                 (InternalDiff::Map(MapDelta { updated }), DiffMode::Checkout)
             }
-            DiffMode::Import | DiffMode::Linear => {
+            DiffMode::ImportGreaterUpdates | DiffMode::Linear => {
                 let changed = std::mem::take(&mut self.changed);
                 let mode = self.current_mode;
                 // Reset this field to avoid we use `has_all` to cache the diff calc and use it next round
@@ -1331,7 +1336,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         };
 
         assert_eq!(diff_mode, DiffMode::Checkout);
-        let is_checkout = matches!(self.current_mode, DiffMode::Checkout);
+        let is_checkout = matches!(self.current_mode, DiffMode::Checkout | DiffMode::Import);
         let mut element_changes: FxHashMap<CompactIdLp, ElementDelta> = if is_checkout {
             FxHashMap::default()
         } else {

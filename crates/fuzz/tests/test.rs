@@ -8102,7 +8102,7 @@ fn unknown_fuzz_err_1() {
 }
 
 #[test]
-fn text_fuzz_err_1() {
+fn diff_calc_fuzz_err_1() {
     test_multi_sites(
         5,
         vec![FuzzTarget::All],
@@ -8184,6 +8184,56 @@ fn text_fuzz_err_1() {
                     pos: 0,
                     length: 0,
                     prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn diff_calc_fuzz_err_2() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 4,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(-2105409536),
+                    bool: false,
+                    key: 4294967295,
+                    pos: 137975431167,
+                    length: 458752,
+                    prop: 360287970189639680,
+                }),
+            },
+            Handle {
+                site: 255,
+                target: 255,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: false,
+                    key: 0,
+                    pos: 12948890936913428480,
+                    length: 12948890938015724467,
+                    prop: 12948890938015724467,
+                }),
+            },
+            Sync { from: 179, to: 179 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(825307392),
+                    bool: true,
+                    key: 825307441,
+                    pos: 17361641481138352433,
+                    length: 18302628885800892209,
+                    prop: 65534,
                 }),
             },
         ],

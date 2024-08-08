@@ -313,10 +313,6 @@ where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
 {
-    if a_id.is_empty() {
-        return (Default::default(), DiffMode::Import);
-    }
-
     if b_id.is_empty() {
         return (Default::default(), DiffMode::Checkout);
     }
@@ -486,6 +482,27 @@ where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
 {
+    if right.is_empty() {
+        return (Default::default(), DiffMode::Checkout);
+    }
+
+    if left.is_empty() {
+        if right.len() == 1 {
+            let mut node_id = right[0];
+            let mut node = get(node_id).unwrap();
+            while node.deps().len() == 1 {
+                node_id = node.deps()[0];
+                node = get(node_id).unwrap();
+            }
+
+            if node.deps().is_empty() {
+                return (Default::default(), DiffMode::Linear);
+            }
+        }
+
+        return (Default::default(), DiffMode::ImportGreaterUpdates);
+    }
+
     if left.len() == 1 && right.len() == 1 {
         let left = left[0];
         let right = right[0];
@@ -510,7 +527,7 @@ where
         }
     }
 
-    let mut is_linear = left.len() == 1 && right.len() == 1;
+    let mut is_linear = left.len() <= 1 && right.len() == 1;
     let mut is_right_greater = true;
     let mut ans: Frontiers = Default::default();
     let mut queue: BinaryHeap<(SmallVec<[OrdIdSpan; 1]>, NodeType)> = BinaryHeap::new();
@@ -609,7 +626,7 @@ where
             debug_assert!(ans.len() <= 1);
             DiffMode::Linear
         } else {
-            DiffMode::Import
+            DiffMode::ImportGreaterUpdates
         }
     } else {
         DiffMode::Checkout

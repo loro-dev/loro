@@ -1097,7 +1097,8 @@ impl ContainerState for MovableListState {
                 match self.inner.elements().get(&elem_id).cloned() {
                     Some(elem) => {
                         // Update value if needed
-                        if elem.value != value
+                        if value_id.is_some()
+                            && elem.value != value
                             && (!need_compare || elem.value_id < value_id.unwrap())
                         {
                             maybe_moved.remove(&elem_id);

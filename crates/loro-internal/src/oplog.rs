@@ -554,8 +554,12 @@ impl OpLog {
             }
         };
 
-        let (common_ancestors, diff_mode) =
+        let (common_ancestors, mut diff_mode) =
             self.dag.find_common_ancestor(from_frontiers, to_frontiers);
+        if diff_mode == DiffMode::Checkout && to > from {
+            diff_mode = DiffMode::Import;
+        }
+
         let common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors).unwrap();
         // go from lca to merged_vv
         let diff = common_ancestors_vv.diff(&merged_vv).right;

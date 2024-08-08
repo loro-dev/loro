@@ -32,7 +32,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, trace};
 
 mod tree;
 pub use tree::TreeHandler;
@@ -1066,6 +1066,7 @@ impl Handler {
         diff: Diff,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
     ) -> LoroResult<()> {
+        trace!("apply_diff: {:?}", &diff);
         let on_container_remap = &mut |old_id, new_id| {
             container_remap.insert(old_id, new_id);
         };
@@ -1689,10 +1690,10 @@ impl TextHandler {
             }
             PosType::Bytes => {
                 if pos + len > self.len_utf8() {
-                    error!("pos={} len={} len_event={}", pos, len, self.len_event());
+                    error!("pos={} len={} len_bytes={}", pos, len, self.len_utf8());
                     return Err(LoroError::OutOfBound {
                         pos: pos + len,
-                        len: self.len_event(),
+                        len: self.len_utf8(),
                         info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                     });
                 }
@@ -3793,7 +3794,7 @@ pub mod counter {
 mod test {
 
     use super::{HandlerTrait, TextDelta};
-    
+
     use crate::loro::LoroDoc;
     use crate::version::Frontiers;
     use crate::{fx_map, ToJson};
