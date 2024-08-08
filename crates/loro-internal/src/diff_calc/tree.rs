@@ -20,20 +20,80 @@ use super::{DiffCalculatorTrait, DiffMode};
 #[derive(Debug)]
 pub(crate) struct TreeDiffCalculator {
     container: ContainerIdx,
+    mode: TreeDiffCalculatorMode,
+}
+
+#[derive(Debug)]
+enum TreeDiffCalculatorMode {
+    UndoRedo,
+    Linear(TreeDelta),
 }
 
 impl DiffCalculatorTrait for TreeDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector, mode: DiffMode) {}
+    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector, mode: DiffMode) {
+        if mode == DiffMode::Linear {
+            self.mode = TreeDiffCalculatorMode::Linear(TreeDelta::default());
+        } else {
+            self.mode = TreeDiffCalculatorMode::UndoRedo;
+        }
+    }
 
     fn apply_change(
         &mut self,
         _oplog: &OpLog,
-        _op: crate::op::RichOp,
+        op: crate::op::RichOp,
         _vv: Option<&crate::VersionVector>,
     ) {
+        match self.mode {
+            TreeDiffCalculatorMode::UndoRedo => {}
+            TreeDiffCalculatorMode::Linear(ref mut delta) => {
+                let id_full = op.id_full();
+                let op = op.op();
+                let content = op.content.as_tree().unwrap();
+
+                let item: TreeDeltaItem = match content {
+                    crate::container::tree::tree_op::TreeOp::Create {
+                        target,
+                        parent,
+                        position,
+                    } => TreeDeltaItem {
+                        target: *target,
+                        action: TreeInternalDiff::Create {
+                            parent: (*parent).into(),
+                            position: position.clone(),
+                        },
+                        last_effective_move_op_id: id_full,
+                    },
+                    crate::container::tree::tree_op::TreeOp::Move {
+                        target,
+                        parent,
+                        position,
+                    } => TreeDeltaItem {
+                        target: *target,
+                        action: TreeInternalDiff::Move {
+                            parent: (*parent).into(),
+                            position: position.clone(),
+                        },
+                        last_effective_move_op_id: id_full,
+                    },
+                    crate::container::tree::tree_op::TreeOp::Delete { target } => TreeDeltaItem {
+                        target: *target,
+                        action: TreeInternalDiff::Delete {
+                            parent: TreeParentId::Deleted,
+                            position: None,
+                        },
+                        last_effective_move_op_id: id_full,
+                    },
+                };
+
+                delta.diff.push(item);
+            }
+        }
     }
 
-    fn finish_this_round(&mut self) {}
+    fn finish_this_round(&mut self) {
+        self.mode = TreeDiffCalculatorMode::UndoRedo;
+    }
 
     fn calculate_diff(
         &mut self,
@@ -42,22 +102,32 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
-        let diff = self.diff(oplog, from, to);
-        diff.diff.iter().for_each(|d| {
-            // the metadata could be modified before, so (re)create a node need emit the map container diffs
-            // `Create` here is because maybe in a diff calc uncreate and then create back
-            if matches!(d.action, TreeInternalDiff::Create { .. }) {
-                on_new_container(&d.target.associated_meta_container())
-            }
-        });
+        match &mut self.mode {
+            TreeDiffCalculatorMode::UndoRedo => {
+                let diff = self.diff(oplog, from, to);
+                diff.diff.iter().for_each(|d| {
+                    // the metadata could be modified before, so (re)create a node need emit the map container diffs
+                    // `Create` here is because maybe in a diff calc uncreate and then create back
+                    if matches!(d.action, TreeInternalDiff::Create { .. }) {
+                        on_new_container(&d.target.associated_meta_container())
+                    }
+                });
 
-        (InternalDiff::Tree(diff), DiffMode::Checkout)
+                (InternalDiff::Tree(diff), DiffMode::Checkout)
+            }
+            TreeDiffCalculatorMode::Linear(ans) => {
+                (InternalDiff::Tree(std::mem::take(ans)), DiffMode::Linear)
+            }
+        }
     }
 }
 
 impl TreeDiffCalculator {
     pub(crate) fn new(container: ContainerIdx) -> Self {
-        Self { container }
+        Self {
+            container,
+            mode: TreeDiffCalculatorMode::UndoRedo,
+        }
     }
 
     fn diff(&mut self, oplog: &OpLog, from: &VersionVector, to: &VersionVector) -> TreeDelta {
