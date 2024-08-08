@@ -852,6 +852,8 @@ impl ContainerState for TreeState {
         self.nodes().is_empty()
     }
 
+    // How we apply the diff is coupled with the [DiffMode] we used to calculate the diff.
+    // So be careful when you modify this function.
     fn apply_diff_and_convert(
         &mut self,
         diff: crate::event::InternalDiff,
@@ -972,6 +974,8 @@ impl ContainerState for TreeState {
         Diff::Tree(TreeDiff { diff: ans })
     }
 
+    // How we apply the diff is coupled with the [DiffMode] we used to calculate the diff.
+    // So be careful when you modify this function.
     fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) {
         if let InternalDiff::Tree(tree) = &diff {
             let need_check = !matches!(ctx.mode, DiffMode::Checkout | DiffMode::Linear);

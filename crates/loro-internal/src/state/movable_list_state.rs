@@ -960,6 +960,8 @@ impl ContainerState for MovableListState {
         self.list().is_empty() && self.elements().is_empty()
     }
 
+    // How we apply the diff is coupled with the [DiffMode] we used to calculate the diff.
+    // So be careful when you modify this function.
     #[instrument(skip_all)]
     fn apply_diff_and_convert(
         &mut self,
@@ -1237,6 +1239,8 @@ impl ContainerState for MovableListState {
         Diff::List(event)
     }
 
+    // How we apply the diff is coupled with the [DiffMode] we used to calculate the diff.
+    // So be careful when you modify this function.
     fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) {
         let _ = self.apply_diff_and_convert(diff, ctx);
     }
