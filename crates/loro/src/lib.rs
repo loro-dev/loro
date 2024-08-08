@@ -275,8 +275,13 @@ impl LoroDoc {
     /// Commit the cumulative auto commit transaction.
     ///
     /// There is a transaction behind every operation.
-    /// It will automatically commit when users invoke export or import.
-    /// The event will be sent after a transaction is committed
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     pub fn commit(&self) {
         self.doc.commit_then_renew()
     }
@@ -403,8 +408,15 @@ impl LoroDoc {
 
     /// Subscribe the events of a container.
     ///
-    /// The callback will be invoked when the container is changed.
+    /// The callback will be invoked after a transaction that change the container.
     /// Returns a subscription id that can be used to unsubscribe.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     ///
     /// # Example
     ///
@@ -449,6 +461,13 @@ impl LoroDoc {
     ///
     /// The callback will be invoked when any part of the [loro_internal::DocState] is changed.
     /// Returns a subscription id that can be used to unsubscribe.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
         // self.doc.subscribe_root(callback)
         self.doc.subscribe_root(Arc::new(move |e| {
@@ -456,7 +475,7 @@ impl LoroDoc {
         }))
     }
 
-    /// Remove a subscription.
+    /// Remove a subscription by subscription id.
     pub fn unsubscribe(&self, id: SubID) {
         self.doc.unsubscribe(id)
     }
