@@ -203,7 +203,7 @@ impl TreeDiffCalculator {
         let mut forward_ops = vec![];
         let group = oplog
             .history_cache
-            .get(&self.container)
+            .get_importing_cache(&self.container)
             .unwrap()
             .as_tree()
             .unwrap();
@@ -324,7 +324,7 @@ impl TreeDiffCalculator {
         tracing::info!("forward");
         let group = oplog
             .history_cache
-            .get(&self.container)
+            .get_importing_cache(&self.container)
             .unwrap()
             .as_tree()
             .unwrap();

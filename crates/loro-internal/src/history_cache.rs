@@ -27,88 +27,118 @@ use crate::{
 #[derive(Debug)]
 pub(crate) struct ContainerHistoryCache {
     arena: SharedArena,
-    groups: FxHashMap<ContainerIdx, HistoryCache>,
+    for_checkout: FxHashMap<ContainerIdx, HistoryCacheForCheckout>,
+    for_importing: FxHashMap<ContainerIdx, HistoryCacheForImporting>,
 }
 
 impl ContainerHistoryCache {
     pub(crate) fn fork(&self, arena: SharedArena) -> Self {
-        let mut groups = FxHashMap::with_capacity_and_hasher(self.groups.len(), Default::default());
-        for (container_idx, group) in self.groups.iter() {
-            groups.insert(*container_idx, group.fork(&arena));
+        let mut for_checkout =
+            FxHashMap::with_capacity_and_hasher(self.for_checkout.len(), Default::default());
+        for (container_idx, group) in self.for_checkout.iter() {
+            for_checkout.insert(*container_idx, group.fork(&arena));
         }
 
-        Self { arena, groups }
+        let mut for_importing =
+            FxHashMap::with_capacity_and_hasher(self.for_importing.len(), Default::default());
+        for (container_idx, group) in self.for_importing.iter() {
+            for_importing.insert(*container_idx, group.fork(&arena));
+        }
+
+        Self {
+            arena,
+            for_checkout,
+            for_importing,
+        }
     }
 
     pub(crate) fn new(arena: SharedArena) -> Self {
         Self {
             arena,
-            groups: Default::default(),
+            for_checkout: Default::default(),
+            for_importing: Default::default(),
         }
     }
 
     pub(crate) fn insert_by_change(&mut self, change: &Change) {
         for op in change.ops.iter() {
-            if matches!(
-                op.container.get_type(),
-                ContainerType::Text | ContainerType::List | ContainerType::Unknown(_)
-            ) {
-                continue;
+            match op.container.get_type() {
+                ContainerType::Map | ContainerType::MovableList => {
+                    let container_idx = op.container;
+                    let rich_op = RichOp::new_by_change(change, op);
+                    let manager =
+                        self.for_checkout.entry(container_idx).or_insert_with(|| {
+                            match op.container.get_type() {
+                                ContainerType::Map => {
+                                    HistoryCacheForCheckout::Map(MapOpGroup::default())
+                                }
+                                ContainerType::MovableList => HistoryCacheForCheckout::MovableList(
+                                    MovableListOpGroup::new(self.arena.clone()),
+                                ),
+                                _ => unreachable!(),
+                            }
+                        });
+                    manager.insert(&rich_op)
+                }
+                ContainerType::Tree => {
+                    let container_idx = op.container;
+                    let rich_op = RichOp::new_by_change(change, op);
+                    let manager =
+                        self.for_importing.entry(container_idx).or_insert_with(|| {
+                            match op.container.get_type() {
+                                ContainerType::Tree => {
+                                    HistoryCacheForImporting::Tree(TreeOpGroup::default())
+                                }
+                                _ => unreachable!(),
+                            }
+                        });
+                    manager.insert(&rich_op)
+                }
+                _ => continue,
             }
-
-            #[cfg(feature = "counter")]
-            if matches!(op.container.get_type(), ContainerType::Counter) {
-                continue;
-            }
-
-            let container_idx = op.container;
-            let rich_op = RichOp::new_by_change(change, op);
-            let manager =
-                self.groups
-                    .entry(container_idx)
-                    .or_insert_with(|| match op.container.get_type() {
-                        ContainerType::Map => HistoryCache::Map(MapOpGroup::default()),
-                        ContainerType::MovableList => {
-                            HistoryCache::MovableList(MovableListOpGroup::new(self.arena.clone()))
-                        }
-                        ContainerType::Tree => HistoryCache::Tree(TreeOpGroup::default()),
-                        _ => unreachable!(),
-                    });
-            manager.insert(&rich_op)
         }
     }
 
-    pub(crate) fn get(&self, container_idx: &ContainerIdx) -> Option<&HistoryCache> {
-        self.groups.get(container_idx)
+    pub(crate) fn get_checkout_cache(
+        &self,
+        container_idx: &ContainerIdx,
+    ) -> Option<&HistoryCacheForCheckout> {
+        self.for_checkout.get(container_idx)
+    }
+
+    pub(crate) fn get_importing_cache(
+        &self,
+        container_idx: &ContainerIdx,
+    ) -> Option<&HistoryCacheForImporting> {
+        self.for_importing.get(container_idx)
     }
 
     pub(crate) fn get_movable_list(
         &self,
         container_idx: &ContainerIdx,
     ) -> Option<&MovableListOpGroup> {
-        self.groups
+        self.for_checkout
             .get(container_idx)
             .and_then(|group| match group {
-                HistoryCache::MovableList(movable_list) => Some(movable_list),
+                HistoryCacheForCheckout::MovableList(movable_list) => Some(movable_list),
                 _ => None,
             })
     }
 
     pub(crate) fn get_tree(&self, container_idx: &ContainerIdx) -> Option<&TreeOpGroup> {
-        self.groups
+        self.for_importing
             .get(container_idx)
-            .and_then(|group| match group {
-                HistoryCache::Tree(tree) => Some(tree),
-                _ => None,
+            .map(|group| match group {
+                HistoryCacheForImporting::Tree(tree) => tree,
             })
     }
 
     #[allow(unused)]
     pub(crate) fn get_map(&self, container_idx: &ContainerIdx) -> Option<&MapOpGroup> {
-        self.groups
+        self.for_checkout
             .get(container_idx)
             .and_then(|group| match group {
-                HistoryCache::Map(map) => Some(map),
+                HistoryCacheForCheckout::Map(map) => Some(map),
                 _ => None,
             })
     }
@@ -116,23 +146,37 @@ impl ContainerHistoryCache {
 
 #[enum_dispatch(OpGroupTrait)]
 #[derive(Debug, Clone, EnumAsInner)]
-pub(crate) enum HistoryCache {
+pub(crate) enum HistoryCacheForCheckout {
     Map(MapOpGroup),
-    Tree(TreeOpGroup),
     MovableList(MovableListOpGroup),
 }
 
-impl HistoryCache {
+#[enum_dispatch(OpGroupTrait)]
+#[derive(Debug, Clone, EnumAsInner)]
+pub(crate) enum HistoryCacheForImporting {
+    Tree(TreeOpGroup),
+}
+
+impl HistoryCacheForCheckout {
     fn fork(&self, a: &SharedArena) -> Self {
         match self {
-            HistoryCache::Map(m) => HistoryCache::Map(m.clone()),
-            HistoryCache::Tree(t) => HistoryCache::Tree(TreeOpGroup {
+            HistoryCacheForCheckout::Map(m) => HistoryCacheForCheckout::Map(m.clone()),
+            HistoryCacheForCheckout::MovableList(m) => {
+                HistoryCacheForCheckout::MovableList(MovableListOpGroup {
+                    arena: a.clone(),
+                    elem_mappings: m.elem_mappings.clone(),
+                })
+            }
+        }
+    }
+}
+
+impl HistoryCacheForImporting {
+    fn fork(&self, a: &SharedArena) -> Self {
+        match self {
+            HistoryCacheForImporting::Tree(t) => HistoryCacheForImporting::Tree(TreeOpGroup {
                 ops: t.ops.clone(),
                 tree_for_diff: Arc::new(Mutex::new(Default::default())),
-            }),
-            HistoryCache::MovableList(m) => HistoryCache::MovableList(MovableListOpGroup {
-                arena: a.clone(),
-                elem_mappings: m.elem_mappings.clone(),
             }),
         }
     }

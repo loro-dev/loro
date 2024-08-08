@@ -541,7 +541,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
                 let mut changed = Vec::new();
                 let group = oplog
                     .history_cache
-                    .get(&self.container_idx)
+                    .get_checkout_cache(&self.container_idx)
                     .unwrap()
                     .as_map()
                     .unwrap();
@@ -1279,7 +1279,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                             // TODO: PERF: this lookup can be optimized
                             let list = oplog
                                 .history_cache
-                                .get(&real_op.container)
+                                .get_checkout_cache(&real_op.container)
                                 .unwrap()
                                 .as_movable_list()
                                 .unwrap();
