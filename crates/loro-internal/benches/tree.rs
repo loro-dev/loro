@@ -56,6 +56,7 @@ mod tree {
 
         group.bench_function("1000 node checkout 10^3", |b| {
             let loro = LoroDoc::default();
+            loro.start_auto_commit();
             let tree = loro.get_tree("tree");
             let mut ids = vec![];
             let mut versions = vec![];
@@ -85,6 +86,7 @@ mod tree {
         group.bench_function("300 deep node random checkout 10^3", |b| {
             let depth = 300;
             let loro = LoroDoc::default();
+            loro.start_auto_commit();
             let tree = loro.get_tree("tree");
             let mut ids = vec![];
             let mut versions = vec![];
@@ -109,6 +111,8 @@ mod tree {
         group.bench_function("realtime tree move", |b| {
             let doc_a = LoroDoc::default();
             let doc_b = LoroDoc::default();
+            doc_a.start_auto_commit();
+            doc_b.start_auto_commit();
             let tree_a = doc_a.get_tree("tree");
             let tree_b = doc_b.get_tree("tree");
             let mut ids = vec![];

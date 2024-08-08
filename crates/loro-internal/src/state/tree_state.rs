@@ -882,16 +882,37 @@ impl ContainerState for TreeState {
                         });
                     }
                     TreeInternalDiff::Move { parent, position } => {
-                        let ok = if need_check {
-                            self.mov(target, *parent, last_move_op, Some(position.clone()), true)
+                        if need_check {
+                            let was_alive = !self.is_node_deleted(&target);
+                            if self
+                                .mov(target, *parent, last_move_op, Some(position.clone()), true)
                                 .is_ok()
+                            {
+                                if self.is_node_deleted(&target) {
+                                    if was_alive {
+                                        // delete event
+                                        ans.push(TreeDiffItem {
+                                            target,
+                                            action: TreeExternalDiff::Delete,
+                                        });
+                                    }
+                                    // Otherwise, it's a normal move inside deleted nodes, no event is needed
+                                } else {
+                                    // normal move
+                                    ans.push(TreeDiffItem {
+                                        target,
+                                        action: TreeExternalDiff::Move {
+                                            parent: parent.into_node().ok(),
+                                            index: self.get_index_by_tree_id(&target).unwrap(),
+                                            position: position.clone(),
+                                        },
+                                    });
+                                }
+                            }
                         } else {
                             self.mov(target, *parent, last_move_op, Some(position.clone()), false)
                                 .unwrap();
-                            true
-                        };
 
-                        if ok {
                             let index = self.get_index_by_tree_id(&target).unwrap();
                             ans.push(TreeDiffItem {
                                 target,
@@ -901,15 +922,22 @@ impl ContainerState for TreeState {
                                     position: position.clone(),
                                 },
                             });
-                        }
+                        };
                     }
                     TreeInternalDiff::Delete { parent, position } => {
+                        let mut send_event = true;
+                        if need_check && self.is_node_deleted(&target) {
+                            send_event = false;
+                        }
+
                         self.mov(target, *parent, last_move_op, position.clone(), false)
                             .unwrap();
-                        ans.push(TreeDiffItem {
-                            target,
-                            action: TreeExternalDiff::Delete,
-                        });
+                        if send_event {
+                            ans.push(TreeDiffItem {
+                                target,
+                                action: TreeExternalDiff::Delete,
+                            });
+                        }
                     }
                     TreeInternalDiff::MoveInDelete { parent, position } => {
                         self.mov(target, *parent, last_move_op, position.clone(), false)
