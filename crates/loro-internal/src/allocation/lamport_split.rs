@@ -4,8 +4,8 @@ use crate::{
     dag::{Dag, DagNode},
     id::ID,
 };
-use fxhash::FxHashSet;
-use itertools::Itertools;
+use fxhash::{FxHashMap, FxHashSet};
+use itertools::{min, Itertools};
 
 pub(crate) fn calc_critical_version_lamport_split<T: DagNode, D: Dag<Node = T>>(
     graph: &D,
@@ -17,6 +17,7 @@ pub(crate) fn calc_critical_version_lamport_split<T: DagNode, D: Dag<Node = T>>(
 }
 
 struct LamportSplit {
+    lamport: FxHashMap<ID, u32>,
     counter: FxHashSet<u32>,
     blacklist: FxHashSet<u32>,
 }
@@ -24,6 +25,7 @@ struct LamportSplit {
 impl LamportSplit {
     fn new() -> Self {
         Self {
+            lamport: FxHashMap::default(),
             counter: FxHashSet::default(),
             blacklist: FxHashSet::default(),
         }
@@ -36,20 +38,45 @@ impl LamportSplit {
         end_id_list: &[ID],
     ) -> Vec<ID> {
         let end_id_set: FxHashSet<ID> = end_id_list.iter().cloned().collect();
+        for start in start_id_list {
+            self.calc_lamport(graph, start);
+        }
         let mut vis: FxHashSet<ID> = FxHashSet::default();
         for start in start_id_list {
             self.search(graph, start, &mut vis, &end_id_set);
         }
         let mut minway: Vec<ID> = Vec::new();
         self.minway(graph, &start_id_list[0], &mut minway, &end_id_set);
-        for a in &vis {
-            println!("bbb {} {}", a, graph.get(*a).unwrap().lamport());
-        }
         minway
             .iter()
-            .filter(|x| self.counter.contains(&graph.get(**x).unwrap().lamport()))
+            .skip(1)
+            .filter(|x| self.counter.contains(self.lamport.get(*x).unwrap()))
             .copied()
             .collect_vec()
+    }
+
+    fn calc_lamport<T: DagNode, D: Dag<Node = T>>(&mut self, graph: &D, current: &ID) {
+        let node = graph.get(*current).unwrap();
+        if node.deps().is_empty() {
+            self.lamport.insert(*current, 0);
+        } else {
+            let mut min_lamport: u32 = 0;
+            for to_id in node.deps() {
+                let to_yes = self.lamport.get(to_id);
+                if let Some(x) = to_yes {
+                    if min_lamport < *x {
+                        min_lamport = *x;
+                    }
+                } else {
+                    self.calc_lamport(graph, to_id);
+                    let x = self.lamport.get(to_id).unwrap();
+                    if min_lamport < *x {
+                        min_lamport = *x;
+                    }
+                }
+                self.lamport.insert(*current, min_lamport + 1);
+            }
+        }
     }
 
     fn minway<T: DagNode, D: Dag<Node = T>>(
@@ -72,7 +99,7 @@ impl LamportSplit {
                 id = to_id;
             }
         }
-        if id.counter != -1 && !end_id_set.contains(current) {
+        if id.counter != -1 && !end_id_set.contains(&id) {
             self.minway(graph, &id, result, end_id_set);
         }
     }
@@ -85,24 +112,17 @@ impl LamportSplit {
         end_id_set: &FxHashSet<ID>,
     ) {
         vis.insert(*current);
-        let node = graph.get(*current).unwrap();
-        let lamport = node.lamport();
-        if self.counter.contains(&lamport) {
-            self.blacklist.insert(lamport);
-            self.counter.remove(&lamport);
-            println!(
-                "{} {} {}",
-                current,
-                lamport,
-                self.counter.contains(&lamport)
-            );
+        let lamport = self.lamport.get(current).unwrap();
+        if self.counter.contains(lamport) {
+            self.blacklist.insert(*lamport);
+            self.counter.remove(lamport);
         } else {
-            if !self.blacklist.contains(&lamport) {
-                self.counter.insert(lamport);
+            if !self.blacklist.contains(lamport) {
+                self.counter.insert(*lamport);
             }
         }
         if !end_id_set.contains(current) {
-            for to_id in node.deps() {
+            for to_id in graph.get(*current).unwrap().deps() {
                 if !vis.contains(to_id) {
                     self.search(graph, to_id, vis, end_id_set);
                 }

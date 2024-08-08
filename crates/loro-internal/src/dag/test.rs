@@ -482,17 +482,9 @@ mod lamport_split {
                     peer: 0,
                     counter: 9,
                 }],
-            ),
-            vec![
-                ID {
-                    peer: 0,
-                    counter: 13,
-                },
-                ID {
-                    peer: 0,
-                    counter: 9,
-                },
-            ]
+            )
+            .length(),
+            0
         );
     }
 
@@ -519,10 +511,6 @@ mod lamport_split {
                 counter: 6,
             },
         ];
-        println!("{}", dags[0].mermaid());
-        for x in calc_critical_version_lamport_split(&dags[0], start, &ends) {
-            println!("aa {}", x);
-        }
         assert_eq!(
             calc_critical_version_lamport_split(&dags[0], start, &ends).length(),
             0
