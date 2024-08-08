@@ -597,6 +597,13 @@ impl Loro {
     ///
     /// You can specify the `origin` and `timestamp` of the commit.
     ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
+    ///
     /// NOTE: Timestamps are forced to be in ascending order.
     /// If you commit a new change with a timestamp that is less than the existing one,
     /// the largest existing timestamp will be used instead.
@@ -1059,6 +1066,13 @@ impl Loro {
     /// transaction is committed or updates from remote are imported.
     ///
     /// Returns a subscription ID, which can be used to unsubscribe.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     ///
     /// @example
     /// ```ts
@@ -1770,6 +1784,13 @@ impl LoroText {
 
     /// Subscribe to the changes of the text.
     ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
+    ///
     /// returns a subscription id, which can be used to unsubscribe.
     pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
@@ -2115,7 +2136,14 @@ impl LoroMap {
 
     /// Subscribe to the changes of the map.
     ///
-    /// returns a subscription id, which can be used to unsubscribe.
+    /// Returns a subscription id, which can be used to unsubscribe.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     ///
     /// @param {Listener} f - Event listener
     ///
@@ -2405,6 +2433,13 @@ impl LoroList {
     /// Subscribe to the changes of the list.
     ///
     /// Returns a subscription id, which can be used to unsubscribe.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     ///
     /// @example
     /// ```ts
@@ -2732,6 +2767,13 @@ impl LoroMovableList {
     /// Subscribe to the changes of the list.
     ///
     /// Returns a subscription id, which can be used to unsubscribe.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     ///
     /// @example
     /// ```ts
@@ -3385,6 +3427,13 @@ impl LoroTree {
     ///
     /// If a tree container is subscribed, the event of metadata changes will also be received as a MapDiff.
     /// And event's `path` will end with `TreeID`.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     ///
     /// @example
     /// ```ts
