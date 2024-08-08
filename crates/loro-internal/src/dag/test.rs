@@ -518,6 +518,72 @@ mod lamport_split {
     }
 }
 
+mod dfs {
+    use super::*;
+    use crate::{allocation::calc_critical_version_dfs, delta::DeltaValue};
+    use rand::{rngs::StdRng, SeedableRng};
+
+    #[test]
+    fn test_dfs_small() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        let mut c = TestDag::new(2);
+        a.push(10);
+        b.merge(&a);
+        b.push(3);
+        c.merge(&b);
+        c.push(4);
+        a.push(3);
+        a.merge(&c);
+        a.push(2);
+        b.merge(&a);
+        assert_eq!(
+            calc_critical_version_dfs::<TestNode, TestDag>(
+                &b,
+                &[ID {
+                    peer: 0,
+                    counter: 13,
+                }],
+                &[ID {
+                    peer: 0,
+                    counter: 9,
+                }],
+            )
+            .length(),
+            0
+        );
+    }
+
+    #[test]
+    fn test_dfs_big() {
+        let num = 5;
+        let mut rng = StdRng::seed_from_u64(100);
+        let mut dags = (0..num).map(TestDag::new).collect::<Vec<_>>();
+        for _ in 0..100 {
+            Interaction::generate(&mut rng, num as usize).apply(&mut dags);
+        }
+        for i in 1..num {
+            let (a, other) = array_mut_ref!(&mut dags, [0, i as usize]);
+            a.merge(other);
+        }
+        let start = dags[0].frontier();
+        let ends = [
+            ID {
+                peer: 3,
+                counter: 7,
+            },
+            ID {
+                peer: 4,
+                counter: 6,
+            },
+        ];
+        assert_eq!(
+            calc_critical_version_dfs(&dags[0], start, &ends).length(),
+            0
+        );
+    }
+}
+
 mod mermaid {
 
     use super::*;
