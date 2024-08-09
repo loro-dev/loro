@@ -271,6 +271,14 @@ impl ContainerHistoryCache {
                 _ => None,
             })
     }
+
+    pub(crate) fn has_cache(&self) -> bool {
+        self.for_checkout.is_some()
+    }
+
+    pub(crate) fn free(&mut self) {
+        self.for_checkout = None;
+    }
 }
 
 #[enum_dispatch(OpGroupTrait)]

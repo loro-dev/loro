@@ -267,7 +267,16 @@ impl OpLog {
         F: FnOnce(&mut ContainerHistoryCache) -> R,
     {
         let mut history_cache = self.history_cache.lock().unwrap();
-        f(&mut *history_cache)
+        f(&mut history_cache)
+    }
+
+    pub fn has_history_cache(&self) -> bool {
+        self.history_cache.lock().unwrap().has_cache()
+    }
+
+    pub fn free_history_cache(&self) {
+        let mut history_cache = self.history_cache.lock().unwrap();
+        history_cache.free();
     }
 
     /// Import a change.

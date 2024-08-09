@@ -1346,6 +1346,14 @@ impl LoroDoc {
             }
         }
     }
+
+    /// Free the history cache that is used for making checkout faster.
+    ///
+    /// If you use checkout that switching to an old/concurrent version, the history cache will be built.
+    /// You can free it by calling this method.
+    pub fn free_history_cache(&self) {
+        self.oplog.lock().unwrap().free_history_cache();
+    }
 }
 
 fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
