@@ -18,7 +18,6 @@ use rle::{HasLength, Sliceable};
 use smallvec::{smallvec, SmallVec};
 mod iter;
 mod mermaid;
-#[cfg(test)]
 mod test;
 
 use crate::{
@@ -32,6 +31,8 @@ use self::{
     iter::{iter_dag, iter_dag_with_vv, DagCausalIter, DagIterator, DagIteratorVV},
     mermaid::dag_to_mermaid,
 };
+
+pub use test::{test_alloc, Interaction};
 
 pub(crate) trait DagNode: HasLamport + HasId + HasLength + Debug + Sliceable {
     fn deps(&self) -> &[ID];

@@ -150,7 +150,7 @@ impl FractionalIndex {
         upper: Option<&FractionalIndex>,
         n: usize,
     ) -> Option<Vec<Self>> {
-        fn gen(
+        fn generate(
             lower: Option<&FractionalIndex>,
             upper: Option<&FractionalIndex>,
             n: usize,
@@ -167,12 +167,12 @@ impl FractionalIndex {
                 return;
             }
 
-            gen(lower, Some(&mid_ans), mid, push);
+            generate(lower, Some(&mid_ans), mid, push);
             push(mid_ans.clone());
             if n - mid - 1 == 0 {
                 return;
             }
-            gen(Some(&mid_ans), upper, n - mid - 1, push);
+            generate(Some(&mid_ans), upper, n - mid - 1, push);
         }
 
         if n == 0 {
@@ -185,7 +185,7 @@ impl FractionalIndex {
         }
 
         let mut ans = Vec::with_capacity(n);
-        gen(lower, upper, n, &mut |v| ans.push(v));
+        generate(lower, upper, n, &mut |v| ans.push(v));
         Some(ans)
     }
 }
