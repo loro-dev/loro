@@ -1,3 +1,4 @@
+use std::fmt::{Debug, Display};
 use std::path::Path;
 
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -40,5 +41,64 @@ pub fn setup_test_log() {
                 .with(chrome_layer),
         )
         .unwrap();
+    }
+}
+
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+
+struct Counter;
+
+static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
+
+unsafe impl GlobalAlloc for Counter {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let ret = System.alloc(layout);
+        if !ret.is_null() {
+            ALLOCATED.fetch_add(layout.size(), Relaxed);
+        }
+        ret
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        System.dealloc(ptr, layout);
+        ALLOCATED.fetch_sub(layout.size(), Relaxed);
+    }
+}
+
+#[global_allocator]
+static A: Counter = Counter;
+
+pub struct MemorySize {
+    pub bytes: usize,
+}
+
+impl Debug for MemorySize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (size, unit) = match self.bytes {
+            bytes if bytes < 1024 => (bytes as f64, "B"),
+            bytes if bytes < 1024 * 1024 => (bytes as f64 / 1024.0, "KB"),
+            bytes if bytes < 1024 * 1024 * 1024 => (bytes as f64 / (1024.0 * 1024.0), "MB"),
+            bytes => (bytes as f64 / (1024.0 * 1024.0 * 1024.0), "GB"),
+        };
+        write!(f, "{:.2} {}", size, unit)
+    }
+}
+
+impl Display for MemorySize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (size, unit) = match self.bytes {
+            bytes if bytes < 1024 => (bytes as f64, "B"),
+            bytes if bytes < 1024 * 1024 => (bytes as f64 / 1024.0, "KB"),
+            bytes if bytes < 1024 * 1024 * 1024 => (bytes as f64 / (1024.0 * 1024.0), "MB"),
+            bytes => (bytes as f64 / (1024.0 * 1024.0 * 1024.0), "GB"),
+        };
+        write!(f, "{:.2} {}", size, unit)
+    }
+}
+
+pub fn get_allocated_bytes() -> MemorySize {
+    MemorySize {
+        bytes: ALLOCATED.load(Relaxed),
     }
 }

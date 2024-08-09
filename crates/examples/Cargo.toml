@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 bench-utils = { path = "../bench-utils" }
+dev-utils = { path = "../dev-utils" }
 loro = { path = "../loro" }
 tabled = "0.15.0"
 arbitrary = { version = "1.3.0", features = ["derive"] }

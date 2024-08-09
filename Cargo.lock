@@ -618,6 +618,7 @@ dependencies = [
  "color-backtrace",
  "criterion 0.4.0",
  "ctor 0.2.6",
+ "dev-utils",
  "flate2",
  "loro 0.16.2",
  "serde_json",
