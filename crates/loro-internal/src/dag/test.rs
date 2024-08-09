@@ -1,6 +1,7 @@
 use arbitrary::Arbitrary;
 use im::HashSet;
 use loro_common::HasCounter;
+use rand::thread_rng;
 // use proptest::prelude::*;
 use std::cmp::Ordering;
 
@@ -708,6 +709,45 @@ pub fn test_alloc(dag_num: i32, mut interactions: Vec<Interaction>) {
             .into_iter()
             .collect();
     assert!(critical_version_L.eq(&critical_version));
+}
+
+#[test]
+pub fn test_alloc_fuzz() {
+    for x in 1..100 {
+        let num = 4;
+        let mut rng = thread_rng();
+        let mut dags = (0..num).map(TestDag::new).collect::<Vec<_>>();
+        for _ in 0..20 {
+            Interaction::generate(&mut rng, num as usize).apply(&mut dags);
+        }
+        for i in 1..num {
+            let (a, other) = array_mut_ref!(&mut dags, [0, i as usize]);
+            a.merge(other);
+        }
+        let a = &dags[0];
+        let start = a.frontier();
+        let end = crate::allocation::get_end_list(a, start);
+        let critical_version_L: HashSet<ID> =
+            crate::allocation::calc_critical_version_lamport_split(a, start, &end)
+                .into_iter()
+                .collect();
+        let critical_version: HashSet<ID> =
+            crate::allocation::calc_critical_version_dfs(a, start, &end)
+                .into_iter()
+                .collect();
+        if critical_version_L.eq(&critical_version) {
+            continue;
+        } else {
+            println!("{}", a.mermaid());
+            for xx in critical_version {
+                println!("xxx {}", xx);
+            }
+            for xxx in critical_version_L {
+                println!("aaa {}", xxx);
+            }
+            break;
+        }
+    }
 }
 
 // #[cfg(test)]

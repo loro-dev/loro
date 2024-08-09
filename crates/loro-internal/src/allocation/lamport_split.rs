@@ -5,7 +5,7 @@ use crate::{
     id::ID,
 };
 use fxhash::{FxHashMap, FxHashSet};
-use itertools::Itertools;
+use itertools::{min, Itertools};
 
 pub(crate) fn calc_critical_version_lamport_split<T: DagNode, D: Dag<Node = T>>(
     graph: &D,
@@ -37,20 +37,39 @@ impl LamportSplit {
         start_id_list: &[ID],
         end_id_list: &[ID],
     ) -> Vec<ID> {
+        println!("--------------------------------------");
+        let start_id_set: FxHashSet<ID> = start_id_list.iter().cloned().collect();
         let end_id_set: FxHashSet<ID> = end_id_list.iter().cloned().collect();
         for start in start_id_list {
             self.calc_lamport(graph, start);
         }
         let mut vis: FxHashSet<ID> = FxHashSet::default();
+        let mut id = ID {
+            peer: 0,
+            counter: -1,
+        };
+        let mut min_lamport: u32 = u32::MAX;
         for start in start_id_list {
             self.search(graph, start, &mut vis, &end_id_set);
+            let lamport = self.lamport.get(start).unwrap();
+            if min_lamport > *lamport {
+                min_lamport = *lamport;
+                id = *start;
+            }
         }
         let mut minway: Vec<ID> = Vec::new();
-        self.minway(graph, &start_id_list[0], &mut minway, &end_id_set);
+        self.minway(graph, &id, &mut minway, &end_id_set);
+        for xxx in &minway {
+            println!("saass {}", xxx);
+        }
         minway
             .iter()
             .skip(1)
-            .filter(|x| self.counter.contains(self.lamport.get(*x).unwrap()))
+            .filter(|x| {
+                self.counter.contains(self.lamport.get(*x).unwrap())
+                    && !start_id_set.contains(x)
+                    && !end_id_set.contains(x)
+            })
             .copied()
             .collect_vec()
     }
@@ -74,8 +93,9 @@ impl LamportSplit {
                         min_lamport = *x;
                     }
                 }
-                self.lamport.insert(*current, min_lamport + 1);
             }
+            self.lamport.insert(*current, min_lamport + 1);
+            println!("{} {}", current, min_lamport + 1)
         }
     }
 
@@ -99,7 +119,7 @@ impl LamportSplit {
                 id = to_id;
             }
         }
-        if id.counter != -1 && !end_id_set.contains(&id) {
+        if id.counter != -1 && end_id_set.contains(&id) {
             self.minway(graph, &id, result, end_id_set);
         }
     }
