@@ -6,7 +6,10 @@ pub fn init_large_sheet() -> LoroDoc {
     let cols = doc.get_list("cols");
     let rows = doc.get_list("rows");
     for _ in 0..bench_utils::sheet::SheetAction::MAX_ROW {
-        rows.push_container(LoroMap::new()).unwrap();
+        let map = rows.push_container(LoroMap::new()).unwrap();
+        for i in 0..10 {
+            map.insert(&i.to_string(), i).unwrap();
+        }
     }
 
     for i in 0..bench_utils::sheet::SheetAction::MAX_COL {

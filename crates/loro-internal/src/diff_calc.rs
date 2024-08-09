@@ -192,7 +192,6 @@ impl DiffCalculator {
             tracing::debug!("LCA: {:?} mode={:?}", &lca, diff_mode);
             let mut started_set = FxHashSet::default();
             for (change, (start_counter, end_counter), vv) in iter {
-                trace!("change = {:#?}", change);
                 if let DiffCalculatorRetainMode::Persist { has_all, last_vv } =
                     &mut self.retain_mode
                 {

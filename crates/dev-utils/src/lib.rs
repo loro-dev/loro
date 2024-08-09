@@ -1,4 +1,5 @@
 use std::fmt::{Debug, Display};
+use std::ops::{Add, Sub};
 use std::path::Path;
 
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -69,6 +70,7 @@ unsafe impl GlobalAlloc for Counter {
 #[global_allocator]
 static A: Counter = Counter;
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MemorySize {
     pub bytes: usize,
 }
@@ -94,6 +96,26 @@ impl Display for MemorySize {
             bytes => (bytes as f64 / (1024.0 * 1024.0 * 1024.0), "GB"),
         };
         write!(f, "{:.2} {}", size, unit)
+    }
+}
+
+impl Add for MemorySize {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        MemorySize {
+            bytes: self.bytes + rhs.bytes,
+        }
+    }
+}
+
+impl Sub for MemorySize {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        MemorySize {
+            bytes: self.bytes - rhs.bytes,
+        }
     }
 }
 

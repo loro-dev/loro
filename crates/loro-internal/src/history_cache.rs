@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex},
 };
 
 use enum_as_inner::EnumAsInner;
@@ -17,7 +17,7 @@ use crate::{
     diff_calc::tree::TreeCacheForDiff,
     op::{InnerContent, RichOp},
     oplog::ChangeStore,
-    OpLog, VersionVector,
+    VersionVector,
 };
 
 /// A cache for the history of a container.

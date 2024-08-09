@@ -501,6 +501,19 @@ impl LoroDoc {
     pub fn inner(&self) -> &InnerLoroDoc {
         &self.doc
     }
+
+    /// Whether the history cache is built.
+    pub fn has_history_cache(&self) -> bool {
+        self.doc.has_history_cache()
+    }
+
+    /// Free the history cache that is used for making checkout faster.
+    ///
+    /// If you use checkout that switching to an old/concurrent version, the history cache will be built.
+    /// You can free it by calling this method.
+    pub fn free_history_cache(&self) {
+        self.doc.free_history_cache()
+    }
 }
 
 /// It's used to prevent the user from implementing the trait directly.

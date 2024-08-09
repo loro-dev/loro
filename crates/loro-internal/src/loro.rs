@@ -1354,6 +1354,12 @@ impl LoroDoc {
     pub fn free_history_cache(&self) {
         self.oplog.lock().unwrap().free_history_cache();
     }
+
+    /// If you use checkout that switching to an old/concurrent version, the history cache will be built.
+    /// You can free it by calling `free_history_cache`.
+    pub fn has_history_cache(&self) -> bool {
+        self.oplog.lock().unwrap().has_history_cache()
+    }
 }
 
 fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
