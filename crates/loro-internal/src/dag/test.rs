@@ -691,6 +691,12 @@ pub fn test_alloc(dag_num: i32, mut interactions: Vec<Interaction>) {
     }
 
     let a = &dags[0];
+
+    let mut nodes = Vec::new();
+    for (node, vv) in a.iter_with_vv() {
+        nodes.push((node, vv));
+    }
+
     let start = a.frontier();
     let end = crate::allocation::get_end_list(a, start);
     let critical_version_L: HashSet<ID> =
