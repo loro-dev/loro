@@ -68,12 +68,13 @@ impl DocState {
                 }
             }
             RawOpContent::Tree(tree) => {
-                let target = tree.target();
-                // create associated metadata container
-                // TODO: maybe we could create map container only when setting metadata
-                let container_id = target.associated_meta_container();
-                let child_idx = self.arena.register_container(&container_id);
-                self.arena.set_parent(child_idx, Some(container));
+                if let Some(target) = tree.target() {
+                    // create associated metadata container
+                    // TODO: maybe we could create map container only when setting metadata
+                    let container_id = target.associated_meta_container();
+                    let child_idx = self.arena.register_container(&container_id);
+                    self.arena.set_parent(child_idx, Some(container));
+                }
             }
             #[cfg(feature = "counter")]
             RawOpContent::Counter(_) => {}

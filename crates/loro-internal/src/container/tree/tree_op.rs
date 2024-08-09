@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use fractional_index::FractionalIndex;
 use loro_common::TreeID;
 use rle::{HasLength, Mergable};
@@ -13,7 +15,7 @@ use crate::state::TreeParentId;
 /// - **Delete**: move target tree node to [`loro_common::DELETED_TREE_ROOT`].
 ///
 ///
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TreeOp {
     Create {
         target: TreeID,
@@ -28,21 +30,25 @@ pub enum TreeOp {
     Delete {
         target: TreeID,
     },
+    EmptyTrash(Arc<Vec<TreeID>>),
 }
 
 impl TreeOp {
-    pub(crate) fn target(&self) -> TreeID {
+    pub(crate) fn target(&self) -> Option<TreeID> {
         match self {
-            TreeOp::Create { target, .. } => *target,
-            TreeOp::Move { target, .. } => *target,
-            TreeOp::Delete { target, .. } => *target,
+            TreeOp::Create { target, .. }
+            | TreeOp::Move { target, .. }
+            | TreeOp::Delete { target, .. } => Some(*target),
+            TreeOp::EmptyTrash(_) => None,
         }
     }
-    pub(crate) fn parent_id(&self) -> TreeParentId {
+    pub(crate) fn parent_id(&self) -> Option<TreeParentId> {
         match self {
-            TreeOp::Create { parent, .. } => TreeParentId::from(*parent),
-            TreeOp::Move { parent, .. } => TreeParentId::from(*parent),
-            TreeOp::Delete { .. } => TreeParentId::Deleted,
+            TreeOp::Create { parent, .. } | TreeOp::Move { parent, .. } => {
+                Some(TreeParentId::from(*parent))
+            }
+            TreeOp::Delete { .. } => Some(TreeParentId::Deleted),
+            TreeOp::EmptyTrash(_) => None,
         }
     }
     pub(crate) fn fractional_index(&self) -> Option<FractionalIndex> {
@@ -50,7 +56,7 @@ impl TreeOp {
             TreeOp::Create { position, .. } | TreeOp::Move { position, .. } => {
                 Some(position.clone())
             }
-            TreeOp::Delete { .. } => None,
+            TreeOp::Delete { .. } | TreeOp::EmptyTrash(_) => None,
         }
     }
 }

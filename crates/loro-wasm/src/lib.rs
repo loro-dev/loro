@@ -3320,6 +3320,26 @@ impl LoroTree {
         self.handler.contains(target.try_into().unwrap())
     }
 
+    /// When we delete a node, it is moved to a delete node named `TRASH` to represent deletion.
+    /// In the long run, there will be many tombstones of nodes that are no longer used under `TRASH`.
+    /// You can use `empty_trash()` to clean up these tombstones in `State`.
+    /// We still keep the relevant information in the Op history, checkout to the any version will still work.
+    ///
+    /// - `max_lamport`: Only nodes that are less than or equal to `max_lamport` will be emptied.
+    ///
+    /// ## Some Notes:
+    /// We recommend that you use this method with caution and only when you think you have enough historical operations.
+    /// Because if you empty the trash, and there are some concurrent operations that moving the deleted nodes back
+    /// to the tree. These operations may not have an effect as they have been completely removed from the State.
+    ///
+    /// To avoid unnecessary memory and storage usage for this Operation, you need to ensure that it is
+    /// only called once in potentially concurrent operations.
+    #[wasm_bindgen(js_name = "emptyTrash")]
+    pub fn empty_trash(&self, max_lamport: Lamport) -> JsResult<()> {
+        self.handler.empty_trash(max_lamport)?;
+        Ok(())
+    }
+
     /// Get the flat array of the forest.
     ///
     /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
@@ -4459,6 +4479,9 @@ export type TreeOp = {
 }|{
   type: "delete",
   target: TreeID
+}|{
+  type: "empty_trash",
+  nodes: TreeID[]
 };
 
 export type UnknownOp = {

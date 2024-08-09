@@ -1,9 +1,11 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, sync::Arc};
 
 use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
+use itertools::max;
 use loro_common::{
-    ContainerID, ContainerType, Counter, IdLp, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
+    ContainerID, ContainerType, Counter, IdLp, Lamport, LoroResult, LoroTreeError, LoroValue,
+    PeerID, TreeID,
 };
 use smallvec::smallvec;
 
@@ -343,11 +345,6 @@ impl TreeHandler {
             return Ok(false);
         }
 
-        // println!(
-        //     "create_at_with_target_for_apply_diff: {:?} {:?}",
-        //     target, parent
-        // );
-
         let index = self
             .get_index_by_fractional_index(
                 parent,
@@ -359,8 +356,19 @@ impl TreeHandler {
             // TODO: parent has deleted？
             .unwrap_or(0);
 
-        let children = a.with_txn(|txn| {
+        a.with_txn(|txn| {
             let inner = self.inner.try_attached_state()?;
+
+            let mut q = vec![target];
+            let mut children = vec![(target, parent, index, position.clone())];
+            while let Some(target) = q.pop() {
+                let children_ids = self.children(Some(target)).unwrap_or_default();
+                for (i, child) in children_ids.into_iter().enumerate() {
+                    let position = self.get_position_by_tree_id(&child).unwrap();
+                    q.push(child);
+                    children.push((child, Some(target), i, position));
+                }
+            }
 
             txn.apply_local_op(
                 inner.container_idx,
@@ -369,23 +377,22 @@ impl TreeHandler {
                     parent,
                     position: position.clone(),
                 }),
-                EventHint::Tree(smallvec![TreeDiffItem {
-                    target,
-                    action: TreeExternalDiff::Create {
-                        parent,
-                        index,
-                        position: position.clone(),
-                    },
-                }]),
+                EventHint::Tree(
+                    children
+                        .into_iter()
+                        .map(|(target, parent, index, fi)| TreeDiffItem {
+                            target,
+                            action: TreeExternalDiff::Create {
+                                parent,
+                                index,
+                                position: fi,
+                            },
+                        })
+                        .collect(),
+                ),
                 &inner.state,
-            )?;
-
-            Ok(self.children(Some(target)).unwrap_or_default())
+            )
         })?;
-        for child in children {
-            let position = self.get_position_by_tree_id(&child).unwrap();
-            self.create_at_with_target_for_apply_diff(Some(target), position, child)?;
-        }
         Ok(true)
     }
 
@@ -399,6 +406,11 @@ impl TreeHandler {
         let MaybeDetached::Attached(a) = &self.inner else {
             unreachable!();
         };
+
+        // maybe empty the trash first and undo `bring back` the deleted node
+        if !self.contains_even_in_trash(target) {
+            return Ok(false);
+        }
 
         // the move node does not exist, create it
         if !self.contains(target) {
@@ -650,6 +662,45 @@ impl TreeHandler {
         )
     }
 
+    pub fn empty_trash(&self, max_lamport: Lamport) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unreachable!()
+            }
+            MaybeDetached::Attached(a) => {
+                let nodes_in_trash = a.with_state(|state| {
+                    let a = state.as_tree_state().unwrap();
+                    a.deleted_nodes(max_lamport)
+                });
+
+                a.with_txn(|txn| {
+                    let inner = self.inner.try_attached_state()?;
+                    txn.apply_local_op(
+                        inner.container_idx,
+                        crate::op::RawOpContent::Tree(TreeOp::EmptyTrash(Arc::new(nodes_in_trash))),
+                        EventHint::Tree(smallvec![TreeDiffItem {
+                            target: TreeID::delete_root(),
+                            action: TreeExternalDiff::EmptyTrash,
+                        }]),
+                        &inner.state,
+                    )
+                })
+            }
+        }
+    }
+
+    fn deleted_nodes(&self, max_lamport: Lamport) -> Vec<TreeID> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unreachable!()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.deleted_nodes(max_lamport)
+            }),
+        }
+    }
+
     pub fn get_meta(&self, target: TreeID) -> LoroResult<MapHandler> {
         match &self.inner {
             MaybeDetached::Detached(d) => {
@@ -725,6 +776,18 @@ impl TreeHandler {
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
                 a.contains(target)
+            }),
+        }
+    }
+
+    pub(crate) fn contains_even_in_trash(&self, target: TreeID) -> bool {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unreachable!()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.contains_even_in_trash(target)
             }),
         }
     }
@@ -860,5 +923,51 @@ impl TreeHandler {
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| Ok(txn.next_idlp())).unwrap(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use loro_common::{Lamport, LoroResult};
+
+    use crate::{HandlerTrait, LoroDoc};
+
+    #[test]
+    fn empty_trash() -> LoroResult<()> {
+        let doc = LoroDoc::new_auto_commit();
+        let tree = doc.get_tree("tree");
+        let root = tree.create(None)?;
+        tree.create(root)?;
+        let node2 = tree.create(root)?;
+        tree.create(node2)?;
+        doc.commit_then_renew();
+        let before_delete_f = doc.oplog_frontiers();
+
+        tree.delete(node2)?;
+        doc.commit_then_renew();
+        let before_trash_f = doc.oplog_frontiers();
+        tree.empty_trash(Lamport::MAX)?;
+
+        let v = tree.get_value();
+        assert_eq!(v.as_list().unwrap().len(), 2);
+        assert_eq!(tree.deleted_nodes(Lamport::MAX).len(), 0);
+
+        doc.checkout(&before_delete_f)?;
+        let v2 = tree.get_value();
+        assert_eq!(v2.as_list().unwrap().len(), 4);
+        assert_eq!(tree.deleted_nodes(Lamport::MAX).len(), 0);
+
+        doc.checkout(&before_trash_f)?;
+        let v3 = tree.get_value();
+        assert_eq!(v3.as_list().unwrap().len(), 2);
+        assert_eq!(tree.deleted_nodes(Lamport::MAX).len(), 2);
+
+        doc.checkout(&doc.oplog_frontiers())?;
+
+        let v4 = tree.get_value();
+        assert_eq!(v4.as_list().unwrap().len(), 2);
+        assert_eq!(tree.deleted_nodes(Lamport::MAX).len(), 0);
+
+        Ok(())
     }
 }

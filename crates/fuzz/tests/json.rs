@@ -2,7 +2,7 @@ use fuzz::{
     actions::{ActionWrapper::*, GenericAction},
     crdt_fuzzer::{test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
 };
-use loro::ContainerType::*;
+use loro::{ContainerType::*, LoroResult};
 
 #[ctor::ctor]
 fn init() {
@@ -89,4 +89,34 @@ fn sub_container() {
             },
         ],
     )
+}
+
+#[test]
+fn tree_empty_trash_in_json_schema() -> LoroResult<()> {
+    let old_doc = loro_without_counter::LoroDoc::new();
+
+    let tree = old_doc.get_tree("tree");
+    let root = tree.create(None).unwrap();
+    let child1 = tree.create(root).unwrap();
+    tree.create(root).unwrap();
+    tree.delete(child1).unwrap();
+    old_doc.commit();
+    let schema = old_doc.export_json_updates(&Default::default(), &old_doc.oplog_vv());
+
+    let new_doc = loro::LoroDoc::new();
+    new_doc
+        .import_json_updates(serde_json::to_string(&schema).unwrap())
+        .unwrap();
+
+    let new_tree = new_doc.get_tree("tree");
+    new_tree.empty_trash(u32::MAX)?;
+    new_doc.commit();
+
+    let new_schema = new_doc.export_json_updates(&Default::default(), &new_doc.oplog_vv());
+    let empty = new_schema.changes.last().unwrap().ops.last().unwrap();
+    assert_eq!(
+        serde_json::to_string(&empty.content).unwrap(),
+        r#"{"type":"empty_trash","nodes":["1@0"]}"#
+    );
+    Ok(())
 }

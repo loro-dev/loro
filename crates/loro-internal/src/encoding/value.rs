@@ -18,22 +18,23 @@ use super::arena::{DecodedArenas, EncodedRegisters, EncodedTreeID};
 
 #[derive(Debug)]
 pub enum ValueKind {
-    Null,          // 0
-    True,          // 1
-    False,         // 2
-    I64,           // 3
-    F64,           // 4
-    Str,           // 5
-    Binary,        // 6
-    ContainerType, // 7
-    DeleteOnce,    // 8
-    DeleteSeq,     // 9
-    DeltaInt,      // 10
-    LoroValue,     // 11
-    MarkStart,     // 12
-    TreeMove,      // 13
-    ListMove,      // 14
-    ListSet,       // 15
+    Null,           // 0
+    True,           // 1
+    False,          // 2
+    I64,            // 3
+    F64,            // 4
+    Str,            // 5
+    Binary,         // 6
+    ContainerType,  // 7
+    DeleteOnce,     // 8
+    DeleteSeq,      // 9
+    DeltaInt,       // 10
+    LoroValue,      // 11
+    MarkStart,      // 12
+    TreeMove,       // 13
+    ListMove,       // 14
+    ListSet,        // 15
+    EmptyTreeTrash, // 16
     Future(FutureValueKind),
 }
 
@@ -107,6 +108,7 @@ impl ValueKind {
             ValueKind::TreeMove => 13,
             ValueKind::ListMove => 14,
             ValueKind::ListSet => 15,
+            ValueKind::EmptyTreeTrash => 16,
             ValueKind::Future(future_value_kind) => match future_value_kind {
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
             },
@@ -132,6 +134,7 @@ impl ValueKind {
             13 => ValueKind::TreeMove,
             14 => ValueKind::ListMove,
             15 => ValueKind::ListSet,
+            16 => ValueKind::EmptyTreeTrash,
             _ => ValueKind::Future(FutureValueKind::Unknown(kind)),
         }
     }
@@ -164,6 +167,7 @@ pub enum Value<'a> {
         lamport: Lamport,
         value: LoroValue,
     },
+    EmptyTreeTrash(Arc<Vec<TreeID>>),
     Future(FutureValue<'a>),
 }
 
@@ -200,6 +204,7 @@ pub enum OwnedValue {
         lamport: Lamport,
         value: LoroValue,
     },
+    EmptyTreeTrash(Arc<Vec<TreeID>>),
     #[serde(untagged)]
     Future(OwnedFutureValue),
 }
@@ -246,6 +251,7 @@ impl<'a> Value<'a> {
                 lamport: *lamport,
                 value: value.clone(),
             },
+            OwnedValue::EmptyTreeTrash(ids) => Value::EmptyTreeTrash(ids.clone()),
             OwnedValue::Future(value) => match value {
                 OwnedFutureValue::Unknown { kind, data } => Value::Future(FutureValue::Unknown {
                     kind: *kind,
@@ -289,6 +295,7 @@ impl<'a> Value<'a> {
                 lamport,
                 value,
             },
+            Value::EmptyTreeTrash(ids) => OwnedValue::EmptyTreeTrash(Arc::new(ids.to_vec())),
             Value::Future(value) => match value {
                 FutureValue::Unknown { kind, data } => {
                     OwnedValue::Future(OwnedFutureValue::Unknown {
@@ -358,6 +365,21 @@ impl<'a> Value<'a> {
                     value,
                 }
             }
+            ValueKind::EmptyTreeTrash => {
+                let len = value_reader.read_usize()?;
+                let mut nodes = Vec::with_capacity(len);
+                for _ in 0..len {
+                    let idx = value_reader.read_usize()?;
+                    let node = arenas
+                        .tree_ids
+                        .tree_ids
+                        .get(idx)
+                        .ok_or(LoroError::DecodeDataCorruptionError)?;
+                    let peer = arenas.peer_ids.peer_ids[node.peer_idx];
+                    nodes.push(TreeID::new(peer, node.counter));
+                }
+                Value::EmptyTreeTrash(Arc::new(nodes))
+            }
             ValueKind::Future(future_kind) => {
                 Self::decode_without_arena(future_kind, value_reader)?
             }
@@ -423,6 +445,18 @@ impl<'a> Value<'a> {
                     + value_writer.write_usize(lamport as usize)
                     + value_writer.write_value_type_and_content(&value, registers),
             ),
+            Value::EmptyTreeTrash(ids) => {
+                let len = ids.len();
+                let mut len = value_writer.write_usize(len);
+                for id in ids.iter() {
+                    let idx = registers.tree_id.register(&EncodedTreeID {
+                        peer_idx: registers.peer.register(&id.peer),
+                        counter: id.counter,
+                    });
+                    len += value_writer.write_usize(idx);
+                }
+                (ValueKind::EmptyTreeTrash, len)
+            }
             Value::Future(value) => {
                 let (k, i) = Self::encode_without_registers(value, value_writer);
                 (ValueKind::Future(k), i)
@@ -500,8 +534,12 @@ impl EncodedTreeMove {
         Ok(op)
     }
 
-    pub fn from_tree_op<'p, 'a: 'p>(op: &'a TreeOp, registers: &mut EncodedRegisters) -> Self {
+    pub fn from_tree_op<'p, 'a: 'p>(
+        op: &'a TreeOp,
+        registers: &mut EncodedRegisters,
+    ) -> Option<Self> {
         match op {
+            TreeOp::EmptyTrash(_) => None,
             TreeOp::Create {
                 target,
                 parent,
@@ -528,12 +566,12 @@ impl EncodedTreeMove {
                         counter: x.counter,
                     })
                 });
-                EncodedTreeMove {
+                Some(EncodedTreeMove {
                     target_idx,
                     is_parent_null: parent.is_none(),
                     parent_idx: parent_idx.unwrap_or(0),
                     position,
-                }
+                })
             }
             TreeOp::Delete { target } => {
                 let target_idx = registers.tree_id.register(&EncodedTreeID {
@@ -544,12 +582,12 @@ impl EncodedTreeMove {
                     peer_idx: registers.peer.register(&TreeID::delete_root().peer),
                     counter: TreeID::delete_root().counter,
                 });
-                EncodedTreeMove {
+                Some(EncodedTreeMove {
                     target_idx,
                     is_parent_null: false,
                     parent_idx,
                     position: 0,
-                }
+                })
             }
         }
     }

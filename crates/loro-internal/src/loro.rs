@@ -831,9 +831,8 @@ impl LoroDoc {
             before_diff,
         );
 
-        // println!("\nundo_internal: diff: {:?}", diff);
+        // println!("\n  undo_internal: diff: {:?}", diff);
         // println!("container remap: {:?}", container_remap);
-
         self.checkout_without_emitting(&latest_frontiers)?;
         self.detached.store(false, Release);
         if was_recording {

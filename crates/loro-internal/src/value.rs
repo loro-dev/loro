@@ -588,6 +588,9 @@ pub mod wasm {
                         )
                         .unwrap();
                     }
+                    TreeExternalDiff::EmptyTrash => {
+                        js_sys::Reflect::set(&obj, &"action".into(), &"emptyTrash".into()).unwrap();
+                    }
                 }
                 array.push(&obj);
             }

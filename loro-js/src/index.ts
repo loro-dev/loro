@@ -97,6 +97,10 @@ export type TreeDiffItem =
       parent: TreeID | undefined;
       index: number;
       position: string;
+    }
+    |{
+      target: TreeID;
+      action: "emptyTrash";
     };
 
 export type TreeDiff = {

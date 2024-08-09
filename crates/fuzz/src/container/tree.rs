@@ -27,25 +27,13 @@ pub struct TreeAction {
 
 #[derive(Clone)]
 pub enum TreeActionInner {
-    Create {
-        index: usize,
-    },
+    Create { index: usize },
     Delete,
-    Move {
-        parent: (u64, i32),
-        index: usize,
-    },
-    MoveBefore {
-        target: (u64, i32),
-        before: (u64, i32),
-    },
-    MoveAfter {
-        target: (u64, i32),
-        after: (u64, i32),
-    },
-    Meta {
-        meta: (String, FuzzValue),
-    },
+    Move { parent: (u64, i32), index: usize },
+    MoveBefore { before: (u64, i32) },
+    MoveAfter { after: (u64, i32) },
+    Meta { meta: (String, FuzzValue) },
+    EmptyTrash,
 }
 
 impl Debug for TreeActionInner {
@@ -62,25 +50,18 @@ impl Debug for TreeActionInner {
                     parent, index
                 )
             }
-            TreeActionInner::MoveBefore { target, before } => {
-                write!(
-                    f,
-                    "TreeActionInner::MoveBefore{{target:{:?}, before:{:?}}}",
-                    target, before
-                )
+            TreeActionInner::MoveBefore { before } => {
+                write!(f, "TreeActionInner::MoveBefore{{ before:{:?}}}", before)
             }
-            TreeActionInner::MoveAfter { target, after } => {
-                write!(
-                    f,
-                    "TreeActionInner::MoveAfter{{target:{:?}, after:{:?}}}",
-                    target, after
-                )
+            TreeActionInner::MoveAfter { after } => {
+                write!(f, "TreeActionInner::MoveAfter{{ after:{:?}}}", after)
             }
             TreeActionInner::Meta { meta } => write!(
                 f,
                 "TreeActionInner::Meta{{meta:(\"{}\".into(),{:?})}}",
                 meta.0, meta.1
             ),
+            TreeActionInner::EmptyTrash => write!(f, "TreeActionInner::EmptyTrash",),
         }
     }
 }
@@ -155,7 +136,10 @@ impl Actionable for TreeAction {
             || node_num < 2
                 && (matches!(
                     action,
-                    TreeActionInner::Move { .. } | TreeActionInner::Meta { .. }
+                    TreeActionInner::Move { .. }
+                        | TreeActionInner::Meta { .. }
+                        | TreeActionInner::MoveAfter { .. }
+                        | TreeActionInner::MoveBefore { .. }
                 ))
         {
             *action = TreeActionInner::Create { index: 0 };
@@ -185,14 +169,8 @@ impl Actionable for TreeAction {
                     .unwrap_or(0)
                     + 1;
             }
-            TreeActionInner::MoveBefore {
-                target,
-                before: (p, c),
-            }
-            | TreeActionInner::MoveAfter {
-                target,
-                after: (p, c),
-            } => {
+            TreeActionInner::MoveBefore { before: (p, c) }
+            | TreeActionInner::MoveAfter { after: (p, c) } => {
                 let target_index = target.0 as usize % node_num;
                 *target = (nodes[target_index].peer, nodes[target_index].counter);
                 let mut other_idx = *p as usize % node_num;
@@ -209,6 +187,7 @@ impl Actionable for TreeAction {
                     *v = FuzzValue::I32(0);
                 }
             }
+            TreeActionInner::EmptyTrash => {}
         }
     }
 
@@ -255,28 +234,26 @@ impl Actionable for TreeAction {
                 }
                 None
             }
-            TreeActionInner::MoveBefore { target, before } => {
-                let target = TreeID {
-                    peer: target.0,
-                    counter: target.1,
-                };
+            TreeActionInner::MoveBefore { before } => {
                 let before = TreeID {
                     peer: before.0,
                     counter: before.1,
                 };
-                tree.mov_before(target, before).unwrap();
+                if let Err(LoroError::TreeError(e)) = tree.mov_before(target, before) {
+                    // cycle move
+                    tracing::warn!("move error {}", e);
+                }
                 None
             }
-            TreeActionInner::MoveAfter { target, after } => {
-                let target = TreeID {
-                    peer: target.0,
-                    counter: target.1,
-                };
+            TreeActionInner::MoveAfter { after } => {
                 let after = TreeID {
                     peer: after.0,
                     counter: after.1,
                 };
-                tree.mov_after(target, after).unwrap();
+                if let Err(LoroError::TreeError(e)) = tree.mov_after(target, after) {
+                    // cycle move
+                    tracing::warn!("move error {}", e);
+                }
                 None
             }
             TreeActionInner::Meta { meta: (k, v) } => {
@@ -291,6 +268,10 @@ impl Actionable for TreeAction {
                         Some(container)
                     }
                 }
+            }
+            TreeActionInner::EmptyTrash => {
+                tree.empty_trash(u32::MAX).unwrap();
+                None
             }
         }
     }
@@ -308,15 +289,14 @@ impl Actionable for TreeAction {
                 parent: (pi, pc),
                 index,
             } => [format!("move to {pc}@{pi} at {index}").into(), target],
-            TreeActionInner::MoveBefore {
-                target: (ti, tc),
-                before: (bi, bc),
-            } => [format!("move {tc}@{ti} before {bc}@{bi}").into(), target],
-            TreeActionInner::MoveAfter {
-                target: (ti, tc),
-                after: (ai, ac),
-            } => [format!("move {tc}@{ti} after {ac}@{ai}").into(), target],
+            TreeActionInner::MoveBefore { before: (bi, bc) } => {
+                [format!("move before {bc}@{bi}").into(), target]
+            }
+            TreeActionInner::MoveAfter { after: (ai, ac) } => {
+                [format!("move after {ac}@{ai}").into(), target]
+            }
             TreeActionInner::Meta { meta } => [format!("meta\n {:?}", meta).into(), target],
+            TreeActionInner::EmptyTrash => ["empty trash".to_string().into(), "".into()],
         }
     }
 
@@ -330,21 +310,16 @@ impl FromGenericAction for TreeAction {
         let target = (action.pos as u64, 0);
         let parent = (action.length as u64, 0);
         let index = action.prop as usize;
-        let action = match action.prop % 4 {
+        let action = match action.prop % 7 {
             0 => TreeActionInner::Create { index },
             1 => TreeActionInner::Delete,
             2 => TreeActionInner::Move { parent, index },
             3 => TreeActionInner::Meta {
                 meta: (action.key.to_string(), action.value),
             },
-            4 => TreeActionInner::MoveBefore {
-                target,
-                before: parent,
-            },
-            5 => TreeActionInner::MoveAfter {
-                target,
-                after: parent,
-            },
+            4 => TreeActionInner::MoveBefore { before: parent },
+            5 => TreeActionInner::MoveAfter { after: parent },
+            6 => TreeActionInner::EmptyTrash,
             _ => unreachable!(),
         };
         Self { target, action }
@@ -444,6 +419,7 @@ impl ApplyDiff for TreeTracker {
                         self.insert(*index, node);
                     }
                 }
+                TreeExternalDiff::EmptyTrash => {}
             }
         }
     }

@@ -451,6 +451,7 @@ impl DocState {
         let mut to_revive_in_this_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
         let mut last_depth = 0;
         let len = diffs.len();
+
         for mut diff in std::mem::replace(&mut diffs, Vec::with_capacity(len)) {
             let this_depth = self.arena.get_depth(diff.idx).unwrap().get();
             while this_depth > last_depth {

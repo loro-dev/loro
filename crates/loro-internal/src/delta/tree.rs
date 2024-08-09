@@ -4,6 +4,7 @@ use itertools::Itertools;
 use loro_common::{IdFull, TreeID};
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 
 use crate::state::TreeParentId;
 
@@ -31,6 +32,7 @@ pub enum TreeExternalDiff {
         position: FractionalIndex,
     },
     Delete,
+    EmptyTrash,
 }
 
 impl TreeDiff {
@@ -128,6 +130,11 @@ pub enum TreeInternalDiff {
     },
     /// old parent is deleted, new parent is deleted too
     MoveInDelete {
+        parent: TreeParentId,
+        position: Option<FractionalIndex>,
+    },
+    EmptyTrash(Arc<Vec<TreeID>>),
+    RestoreTrash {
         parent: TreeParentId,
         position: Option<FractionalIndex>,
     },

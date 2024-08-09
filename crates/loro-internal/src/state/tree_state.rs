@@ -4,7 +4,8 @@ use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
+    ContainerID, IdFull, IdLp, Lamport, LoroError, LoroResult, LoroTreeError, LoroValue, PeerID,
+    TreeID,
 };
 use rand::SeedableRng;
 use rle::HasLength;
@@ -173,9 +174,7 @@ impl NodeChildren {
             NodeChildren::Vec(v) => {
                 v.retain(|(_, id)| id != target);
             }
-            NodeChildren::BTree(v) => {
-                v.delete_child(target);
-            }
+            NodeChildren::BTree(v) => v.delete_child(target),
         }
     }
 
@@ -284,7 +283,7 @@ mod btree {
             if let Some(leaf) = self.id_to_leaf_index.remove(id) {
                 self.tree.remove_leaf(Cursor { leaf, offset: 0 });
             } else {
-                panic!("The id is not in the tree");
+                tracing::warn!("delete_child: id not found {:?}", id);
             }
         }
 
@@ -621,8 +620,12 @@ impl TreeState {
             self.delete_position(&old_parent, target);
         }
 
+        // tracing::info!("trees {:?}", self.trees);
+        // tracing::info!("children {:?}", self.children);
         let entry = self.children.entry(parent).or_default();
         let node_position = NodePosition::new(position.clone().unwrap_or_default(), id.idlp());
+        // tracing::info!("mov {:?} {:?} {:?}", target, parent, node_position);
+
         debug_assert!(!entry.has_child(&node_position));
         entry.insert_child(node_position, target);
 
@@ -661,12 +664,45 @@ impl TreeState {
         }
     }
 
+    /// Clear the cache of the node, remove it from self.tree and self.children
+    fn clear_nodes(&mut self, nodes: &[TreeID]) {
+        for node in nodes {
+            // Only clear the node that is not cleared but deleted
+            // Because concurrent op may bring back the emptied node
+            if self.is_node_deleted(node) {
+                if let Some(parent) = self.trees.remove(node) {
+                    if let Some(entry) = self.children.get_mut(&parent.parent) {
+                        entry.delete_child(node);
+                    }
+                }
+                self.children.remove(&TreeParentId::Node(*node));
+            }
+        }
+    }
+
+    /// Return the nodes that are deleted
+    pub(crate) fn deleted_nodes(&self, max_lamport: Lamport) -> Vec<TreeID> {
+        let mut q = vec![TreeParentId::Deleted];
+        let mut ans = vec![];
+        while let Some(parent) = q.pop() {
+            if let Some(children) = self.children.get(&parent) {
+                for (p, id) in children.iter() {
+                    q.push(TreeParentId::Node(*id));
+                    if p.idlp.lamport <= max_lamport {
+                        ans.push(*id);
+                    }
+                }
+            }
+        }
+        ans
+    }
+
     pub fn contains(&self, target: TreeID) -> bool {
         !self.is_node_deleted(&target)
     }
 
-    pub fn contains_internal(&self, target: &TreeID) -> bool {
-        self.trees.contains_key(target)
+    pub(crate) fn contains_even_in_trash(&self, target: TreeID) -> bool {
+        self.trees.contains_key(&target)
     }
 
     /// Get the parent of the node, if the node is deleted or does not exist, return None
@@ -855,7 +891,7 @@ impl ContainerState for TreeState {
             // println!("before {:?}", self.children);
             // assert never cause cycle move
             for diff in tree.diff.iter() {
-                // println!("\ndiff {:?}", diff);
+                // tracing!("\ndiff {:?}", diff);
                 let last_move_op = diff.last_effective_move_op_id;
                 let target = diff.target;
                 // create associated metadata container
@@ -919,6 +955,17 @@ impl ContainerState for TreeState {
                         // println!("after {:?}", self.children);
                         continue;
                     }
+                    TreeInternalDiff::EmptyTrash(nodes) => {
+                        self.clear_nodes(nodes);
+                        ans.push(TreeDiffItem {
+                            target,
+                            action: TreeExternalDiff::EmptyTrash,
+                        })
+                    }
+                    TreeInternalDiff::RestoreTrash { parent, position } => {
+                        self.mov(target, *parent, last_move_op, position.clone(), false)
+                            .unwrap();
+                    }
                 };
                 // println!("after {:?}", self.children);
             }
@@ -967,6 +1014,13 @@ impl ContainerState for TreeState {
                         }
                         continue;
                     }
+                    TreeInternalDiff::EmptyTrash(nodes) => {
+                        self.clear_nodes(nodes);
+                    }
+                    TreeInternalDiff::RestoreTrash { parent, position } => {
+                        self.mov(target, *parent, last_move_op, position.clone(), false)
+                            .unwrap();
+                    }
                 };
             }
         }
@@ -997,6 +1051,10 @@ impl ContainerState for TreeState {
                 TreeOp::Delete { target } => {
                     let parent = TreeParentId::Deleted;
                     self.mov(*target, parent, raw_op.id_full(), None, true)
+                }
+                TreeOp::EmptyTrash(nodes) => {
+                    self.clear_nodes(nodes);
+                    Ok(())
                 }
             },
             _ => unreachable!(),
@@ -1117,6 +1175,9 @@ impl ContainerState for TreeState {
                     let parent = TreeParentId::Deleted;
                     self.mov(*target, parent, op.id_full(), None, false)
                         .unwrap()
+                }
+                TreeOp::EmptyTrash(nodes) => {
+                    self.clear_nodes(nodes);
                 }
             };
         }

@@ -293,7 +293,7 @@ type TextMarkEndOp = {
 ### Tree
 
 ```ts
-type TreeOp = TreeCreateOp | TreeMoveOp | TreeDeleteOp;
+type TreeOp = TreeCreateOp | TreeMoveOp | TreeDeleteOp | TreeEmptyTrashOp;
 ```
 
 #### Create
@@ -345,6 +345,20 @@ type TreeID = `${number}@${PeerID}`
 
 - `type`: `delete`.
 - `target`: the string format of target `TreeID` deleted.
+
+#### EmptyTrash
+
+```ts
+type TreeEmptyTrashOp = {
+    "type": "empty_trash",
+    "nodes": TreeID[]
+}
+
+type TreeID = `${number}@${PeerID}`
+```
+
+- `type`: `empty_trash`.
+- `nodes`: the nodes has been emptied.
 
 ### Unknown
 

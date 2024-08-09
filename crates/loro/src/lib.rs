@@ -3,6 +3,7 @@
 #![warn(missing_debug_implementations)]
 use either::Either;
 use event::{DiffEvent, Subscriber};
+use loro_internal::change::Lamport;
 use loro_internal::container::IntoContainerId;
 use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
@@ -1478,6 +1479,24 @@ impl LoroTree {
     /// Return the flat array of the forest, each node is with metadata.
     pub fn get_value_with_meta(&self) -> LoroValue {
         self.handler.get_deep_value()
+    }
+
+    /// When we delete a node, it is moved to a delete node named `TRASH` to represent deletion.
+    /// In the long run, there will be many tombstones of nodes that are no longer used under `TRASH`.
+    /// You can use `empty_trash()` to clean up these tombstones in `State`.
+    /// We still keep the relevant information in the Op history, checkout to the any version will still work.
+    ///
+    /// - `max_lamport`: Only nodes that are less than or equal to `max_lamport` will be emptied.
+    ///
+    /// ## Some Notes:
+    /// We recommend that you use this method with caution and only when you think you have enough historical operations.
+    /// Because if you empty the trash, and there are some concurrent operations that moving the deleted nodes back
+    /// to the tree. These operations may not have an effect as they have been completely removed from the State.
+    ///
+    /// To avoid unnecessary memory and storage usage for this Operation, you need to ensure that it is
+    /// only called once in potentially concurrent operations.
+    pub fn empty_trash(&self, max_lamport: Lamport) -> LoroResult<()> {
+        self.handler.empty_trash(max_lamport)
     }
 
     // This method is used for testing only.
