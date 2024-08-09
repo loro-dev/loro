@@ -71,13 +71,11 @@ unsafe impl GlobalAlloc for Counter {
 static A: Counter = Counter;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct MemorySize {
-    pub bytes: usize,
-}
+pub struct ByteSize(usize);
 
-impl Debug for MemorySize {
+impl Debug for ByteSize {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (size, unit) = match self.bytes {
+        let (size, unit) = match self.0 {
             bytes if bytes < 1024 => (bytes as f64, "B"),
             bytes if bytes < 1024 * 1024 => (bytes as f64 / 1024.0, "KB"),
             bytes if bytes < 1024 * 1024 * 1024 => (bytes as f64 / (1024.0 * 1024.0), "MB"),
@@ -87,9 +85,9 @@ impl Debug for MemorySize {
     }
 }
 
-impl Display for MemorySize {
+impl Display for ByteSize {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (size, unit) = match self.bytes {
+        let (size, unit) = match self.0 {
             bytes if bytes < 1024 => (bytes as f64, "B"),
             bytes if bytes < 1024 * 1024 => (bytes as f64 / 1024.0, "KB"),
             bytes if bytes < 1024 * 1024 * 1024 => (bytes as f64 / (1024.0 * 1024.0), "MB"),
@@ -99,28 +97,22 @@ impl Display for MemorySize {
     }
 }
 
-impl Add for MemorySize {
+impl Add for ByteSize {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        MemorySize {
-            bytes: self.bytes + rhs.bytes,
-        }
+        ByteSize(self.0 + rhs.0)
     }
 }
 
-impl Sub for MemorySize {
+impl Sub for ByteSize {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        MemorySize {
-            bytes: self.bytes - rhs.bytes,
-        }
+        ByteSize(self.0 - rhs.0)
     }
 }
 
-pub fn get_allocated_bytes() -> MemorySize {
-    MemorySize {
-        bytes: ALLOCATED.load(Relaxed),
-    }
+pub fn get_mem_usage() -> ByteSize {
+    ByteSize(ALLOCATED.load(Relaxed))
 }

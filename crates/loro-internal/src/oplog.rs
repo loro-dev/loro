@@ -746,6 +746,11 @@ impl OpLog {
 
         ans
     }
+
+    #[inline]
+    pub fn compact_change_store(&mut self) {
+        self.change_store.flush_and_compact();
+    }
 }
 
 #[derive(Debug)]

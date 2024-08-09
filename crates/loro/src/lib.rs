@@ -70,6 +70,7 @@ impl Default for LoroDoc {
 
 impl LoroDoc {
     /// Create a new `LoroDoc` instance.
+    #[inline]
     pub fn new() -> Self {
         let doc = InnerLoroDoc::default();
         doc.start_auto_commit();
@@ -80,17 +81,20 @@ impl LoroDoc {
     /// Duplicate the document with a different PeerID
     ///
     /// The time complexity and space complexity of this operation are both O(n),
+    #[inline]
     pub fn fork(&self) -> Self {
         let doc = self.doc.fork();
         LoroDoc { doc }
     }
 
     /// Get the configureations of the document.
+    #[inline]
     pub fn config(&self) -> &Configure {
         self.doc.config()
     }
 
     /// Decodes the metadata for an imported blob from the provided bytes.
+    #[inline]
     pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
         InnerLoroDoc::decode_import_blob_meta(bytes)
     }
@@ -135,6 +139,7 @@ impl LoroDoc {
     ///
     /// Expand is used to specify the behavior of expanding when new text is inserted at the
     /// beginning or end of the style.
+    #[inline]
     pub fn config_text_style(&self, text_style: StyleConfigMap) {
         self.doc.config_text_style(text_style)
     }
@@ -145,6 +150,7 @@ impl LoroDoc {
     /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
     /// > In a detached state, the document is not editable, and any `import` operations will be
     /// > recorded in the `OpLog` without being applied to the `DocState`.
+    #[inline]
     pub fn attach(&self) {
         self.doc.attach()
     }
@@ -157,6 +163,7 @@ impl LoroDoc {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// You should call `attach` to attach the `DocState` to the lastest version of `OpLog`.
+    #[inline]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
         self.doc.checkout(frontiers)
     }
@@ -169,6 +176,7 @@ impl LoroDoc {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// This has the same effect as `attach`.
+    #[inline]
     pub fn checkout_to_latest(&self) {
         self.doc.checkout_to_latest()
     }
@@ -176,6 +184,7 @@ impl LoroDoc {
     /// Compare the frontiers with the current OpLog's version.
     ///
     /// If `other` contains any version that's not contained in the current OpLog, return [Ordering::Less].
+    #[inline]
     pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
         self.doc.cmp_with_frontiers(other)
     }
@@ -183,6 +192,7 @@ impl LoroDoc {
     /// Compare two frontiers.
     ///
     /// If the frontiers are not included in the document, return [`FrontiersNotIncluded`].
+    #[inline]
     pub fn cmp_frontiers(
         &self,
         a: &Frontiers,
@@ -196,6 +206,7 @@ impl LoroDoc {
     /// In this mode, when you importing new updates, the [loro_internal::DocState] will not be changed.
     ///
     /// Learn more at https://loro.dev/docs/advanced/doc_state_and_oplog#attacheddetached-status
+    #[inline]
     pub fn detach(&mut self) {
         self.doc.detach()
     }
@@ -203,6 +214,7 @@ impl LoroDoc {
     /// Import a batch of updates/snapshot.
     ///
     /// The data can be in arbitrary order. The import result will be the same.
+    #[inline]
     pub fn import_batch(&mut self, bytes: &[Vec<u8>]) -> LoroResult<()> {
         self.doc.import_batch(bytes)
     }
@@ -210,6 +222,7 @@ impl LoroDoc {
     /// Get a [LoroMovableList] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    #[inline]
     pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> LoroMovableList {
         LoroMovableList {
             handler: self.doc.get_movable_list(id),
@@ -219,6 +232,7 @@ impl LoroDoc {
     /// Get a [LoroList] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> LoroList {
         LoroList {
             handler: self.doc.get_list(id),
@@ -228,6 +242,7 @@ impl LoroDoc {
     /// Get a [LoroMap] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> LoroMap {
         LoroMap {
             handler: self.doc.get_map(id),
@@ -237,6 +252,7 @@ impl LoroDoc {
     /// Get a [LoroText] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> LoroText {
         LoroText {
             handler: self.doc.get_text(id),
@@ -246,6 +262,7 @@ impl LoroDoc {
     /// Get a [LoroTree] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> LoroTree {
         LoroTree {
             handler: self.doc.get_tree(id),
@@ -256,6 +273,7 @@ impl LoroDoc {
     /// Get a [LoroCounter] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    #[inline]
     pub fn get_counter<I: IntoContainerId>(&self, id: I) -> LoroCounter {
         LoroCounter {
             handler: self.doc.get_counter(id),
@@ -267,6 +285,7 @@ impl LoroDoc {
     /// There is a transaction behind every operation.
     /// It will automatically commit when users invoke export or import.
     /// The event will be sent after a transaction is committed
+    #[inline]
     pub fn commit(&self) {
         self.doc.commit_then_renew()
     }
@@ -276,17 +295,20 @@ impl LoroDoc {
     /// There is a transaction behind every operation.
     /// It will automatically commit when users invoke export or import.
     /// The event will be sent after a transaction is committed
+    #[inline]
     pub fn commit_with(&self, options: CommitOptions) {
         self.doc.commit_with(options)
     }
 
     /// Whether the document is in detached mode, where the [loro_internal::DocState] is not
     /// synchronized with the latest version of the [loro_internal::OpLog].
+    #[inline]
     pub fn is_detached(&self) -> bool {
         self.doc.is_detached()
     }
 
     /// Import updates/snapshot exported by [`LoroDoc::export_snapshot`] or [`LoroDoc::export_from`].
+    #[inline]
     pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
         self.doc.import_with(bytes, "".into())
     }
@@ -295,6 +317,7 @@ impl LoroDoc {
     ///
     /// It marks the import with a custom `origin` string. It can be used to track the import source
     /// in the generated events.
+    #[inline]
     pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<(), LoroError> {
         self.doc.import_with(bytes, origin.into())
     }
@@ -302,11 +325,13 @@ impl LoroDoc {
     /// Import the json schema updates.
     ///
     /// only supports backward compatibility but not forward compatibility.
+    #[inline]
     pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> Result<(), LoroError> {
         self.doc.import_json_updates(json)
     }
 
     /// Export the current state with json-string format of the document.
+    #[inline]
     pub fn export_json_updates(
         &self,
         start_vv: &VersionVector,
@@ -316,57 +341,68 @@ impl LoroDoc {
     }
 
     /// Export all the ops not included in the given `VersionVector`
+    #[inline]
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
         self.doc.export_from(vv)
     }
 
     /// Export the current state and history of the document.
+    #[inline]
     pub fn export_snapshot(&self) -> Vec<u8> {
         self.doc.export_snapshot()
     }
 
     /// Convert `Frontiers` into `VersionVector`
+    #[inline]
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         self.doc.frontiers_to_vv(frontiers)
     }
 
     /// Convert `VersionVector` into `Frontiers`
+    #[inline]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
         self.doc.vv_to_frontiers(vv)
     }
 
     /// Access the `OpLog`.
+    #[inline]
     pub fn with_oplog<R>(&self, f: impl FnOnce(&OpLog) -> R) -> R {
         let oplog = self.doc.oplog().lock().unwrap();
         f(&oplog)
     }
 
     /// Get the `VersionVector` version of `OpLog`
+    #[inline]
     pub fn oplog_vv(&self) -> VersionVector {
         self.doc.oplog_vv()
     }
 
     /// Get the `VersionVector` version of `OpLog`
+    #[inline]
     pub fn state_vv(&self) -> VersionVector {
         self.doc.state_vv()
     }
 
     /// Get the total number of operations in the `OpLog`
+    #[inline]
     pub fn len_ops(&self) -> usize {
         self.doc.len_ops()
     }
 
     /// Get the total number of changes in the `OpLog`
+    #[inline]
     pub fn len_changes(&self) -> usize {
         self.doc.len_changes()
     }
 
     /// Get the current state of the document.
+    #[inline]
     pub fn get_deep_value(&self) -> LoroValue {
         self.doc.get_deep_value()
     }
 
     /// Get the `Frontiers` version of `OpLog`
+    #[inline]
     pub fn oplog_frontiers(&self) -> Frontiers {
         self.doc.oplog_frontiers()
     }
@@ -374,11 +410,13 @@ impl LoroDoc {
     /// Get the `Frontiers` version of `DocState`
     ///
     /// [Learn more about `Frontiers`]()
+    #[inline]
     pub fn state_frontiers(&self) -> Frontiers {
         self.doc.state_frontiers()
     }
 
     /// Get the PeerID
+    #[inline]
     pub fn peer_id(&self) -> PeerID {
         self.doc.peer_id()
     }
@@ -387,6 +425,7 @@ impl LoroDoc {
     ///
     /// NOTE: You need ot make sure there is no chance two peer have the same PeerID.
     /// If it happens, the document will be corrupted.
+    #[inline]
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
         self.doc.set_peer_id(peer)
     }
@@ -426,6 +465,7 @@ impl LoroDoc {
     /// doc.commit();
     /// assert!(ran.load(std::sync::atomic::Ordering::Relaxed));
     /// ```
+    #[inline]
     pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> SubID {
         self.doc.subscribe(
             container_id,
@@ -439,6 +479,7 @@ impl LoroDoc {
     ///
     /// The callback will be invoked when any part of the [loro_internal::DocState] is changed.
     /// Returns a subscription id that can be used to unsubscribe.
+    #[inline]
     pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
         // self.doc.subscribe_root(callback)
         self.doc.subscribe_root(Arc::new(move |e| {
@@ -447,27 +488,32 @@ impl LoroDoc {
     }
 
     /// Remove a subscription.
+    #[inline]
     pub fn unsubscribe(&self, id: SubID) {
         self.doc.unsubscribe(id)
     }
 
     /// Estimate the size of the document states in memory.
+    #[inline]
     pub fn log_estimate_size(&self) {
         self.doc.log_estimated_size();
     }
 
     /// Check the correctness of the document state by comparing it with the state
     /// calculated by applying all the history.
+    #[inline]
     pub fn check_state_correctness_slow(&self) {
         self.doc.check_state_diff_calc_consistency_slow()
     }
 
     /// Get the handler by the path.
+    #[inline]
     pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrContainer> {
         self.doc.get_by_path(path).map(ValueOrContainer::from)
     }
 
     /// Get the handler by the string path.
+    #[inline]
     pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrContainer> {
         self.doc.get_by_str_path(path).map(ValueOrContainer::from)
     }
@@ -490,6 +536,7 @@ impl LoroDoc {
     /// text.insert(0, "01234").unwrap();
     /// assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 5);
     /// ```
+    #[inline]
     pub fn get_cursor_pos(
         &self,
         cursor: &Cursor,
@@ -498,11 +545,13 @@ impl LoroDoc {
     }
 
     /// Get the inner LoroDoc ref.
+    #[inline]
     pub fn inner(&self) -> &InnerLoroDoc {
         &self.doc
     }
 
     /// Whether the history cache is built.
+    #[inline]
     pub fn has_history_cache(&self) -> bool {
         self.doc.has_history_cache()
     }
@@ -511,8 +560,23 @@ impl LoroDoc {
     ///
     /// If you use checkout that switching to an old/concurrent version, the history cache will be built.
     /// You can free it by calling this method.
+    #[inline]
     pub fn free_history_cache(&self) {
         self.doc.free_history_cache()
+    }
+
+    /// Free the cached diff calculator that is used for checkout.
+    #[inline]
+    pub fn free_diff_calculator(&self) {
+        self.doc.free_diff_calculator()
+    }
+
+    /// Encoded all ops and history cache to bytes and store them in the kv store.
+    ///
+    /// The parsed ops will be dropped
+    #[inline]
+    pub fn compact_change_store(&self) {
+        self.doc.compact_change_store()
     }
 }
 

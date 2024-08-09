@@ -1,11 +1,12 @@
-use dev_utils::get_allocated_bytes;
+use dev_utils::get_mem_usage;
 use examples::sheet::init_large_sheet;
 use loro::ID;
 
 pub fn main() {
-    let doc = init_large_sheet();
+    let doc = init_large_sheet(10_000_000);
+    // let doc = init_large_sheet(10_000);
     doc.commit();
-    let allocated = get_allocated_bytes();
+    let allocated = get_mem_usage();
     println!("Allocated bytes for 10M cells spreadsheet: {}", allocated);
     println!("Has history cache: {}", doc.has_history_cache());
 
@@ -16,22 +17,46 @@ pub fn main() {
     );
 
     doc.checkout_to_latest();
-    let allocated_after_checkout = get_allocated_bytes();
+    let after_checkout = get_mem_usage();
+    println!("Allocated bytes after checkout: {}", after_checkout);
+
+    doc.free_diff_calculator();
+    let after_free_diff_calculator = get_mem_usage();
     println!(
-        "Allocated bytes after checkout: {}",
-        allocated_after_checkout
+        "Allocated bytes after freeing diff calculator: {}",
+        after_free_diff_calculator
     );
 
-    let diff = allocated_after_checkout - allocated;
-    println!("Checkout history cache size: {}", diff);
+    println!(
+        "Diff calculator size: {}",
+        after_checkout - after_free_diff_calculator
+    );
 
     doc.free_history_cache();
-    let allocated_after_free = get_allocated_bytes();
+    let after_free_history_cache = get_mem_usage();
     println!(
         "Allocated bytes after free history cache: {}",
-        allocated_after_free
+        after_free_history_cache
     );
 
-    let diff = allocated_after_checkout - allocated_after_free;
-    println!("Freed history cache size: {}", diff);
+    println!(
+        "History cache size: {}",
+        after_free_diff_calculator - after_free_history_cache
+    );
+
+    doc.compact_change_store();
+    let after_compact_change_store = get_mem_usage();
+    println!(
+        "Allocated bytes after compact change store: {}",
+        after_compact_change_store
+    );
+    println!(
+        "Shrink change store size: {}",
+        after_free_history_cache - after_compact_change_store
+    );
+
+    // Checkout after compact change store
+    doc.checkout(&ID::new(doc.peer_id(), 100).into()).unwrap();
+    let after_checkout = get_mem_usage();
+    println!("Allocated bytes after checkout: {}", after_checkout);
 }

@@ -245,7 +245,6 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     //      │          │          │       │                                │
     //      └──────────┴──────────┴───────┴────────────────────────────────┘
 
-    println!("ops num {}", encoded_ops.len());
     let ops_bytes = serde_columnar::to_vec(&EncodedOpsAndDeleteStarts {
         ops: encoded_ops,
         delete_start_ids: del_starts,

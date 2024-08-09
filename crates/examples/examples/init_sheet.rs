@@ -3,7 +3,7 @@ use std::time::Instant;
 
 pub fn main() {
     let start = Instant::now();
-    let doc = init_large_sheet();
+    let doc = init_large_sheet(1_000_000);
     let init_duration = start.elapsed().as_secs_f64() * 1000.;
     println!("init_duration {}", init_duration);
 

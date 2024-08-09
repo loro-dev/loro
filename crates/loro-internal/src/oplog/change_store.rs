@@ -114,14 +114,14 @@ impl ChangeStore {
     }
 
     /// Flush the cached change to kv_store
-    pub(crate) fn flush(&mut self) {
+    pub(crate) fn flush_and_compact(&mut self) {
         let mut mem = self.mem_parsed_kv.lock().unwrap();
         let mut store = self.external_kv.lock().unwrap();
         for (id, block) in mem.iter_mut() {
             if !block.flushed {
-                let bytes = block.bytes(&self.arena);
-                Arc::make_mut(block).flushed = true;
+                let bytes = block.to_bytes(&self.arena);
                 store.set(&id.to_bytes(), bytes.bytes);
+                Arc::make_mut(block).flushed = true;
             }
         }
 
@@ -140,7 +140,7 @@ impl ChangeStore {
     }
 
     pub(crate) fn encode_all(&mut self) -> Bytes {
-        self.flush();
+        self.flush_and_compact();
         self.external_kv.lock().unwrap().export_all()
     }
 
@@ -551,15 +551,19 @@ impl ChangesBlock {
         Ok(())
     }
 
-    pub fn bytes<'a>(self: &'a mut Arc<Self>, a: &SharedArena) -> ChangesBlockBytes {
+    pub fn to_bytes<'a>(self: &'a mut Arc<Self>, a: &SharedArena) -> ChangesBlockBytes {
         match &self.content {
             ChangesBlockContent::Bytes(bytes) => bytes.clone(),
-            ChangesBlockContent::Both(_, bytes) => bytes.clone(),
+            ChangesBlockContent::Both(_, bytes) => {
+                let bytes = bytes.clone();
+                let this = Arc::make_mut(self);
+                this.content = ChangesBlockContent::Bytes(bytes.clone());
+                bytes
+            }
             ChangesBlockContent::Changes(changes) => {
                 let bytes = ChangesBlockBytes::serialize(changes, a);
-                let c = Arc::clone(changes);
                 let this = Arc::make_mut(self);
-                this.content = ChangesBlockContent::Both(c, bytes.clone());
+                this.content = ChangesBlockContent::Bytes(bytes.clone());
                 bytes
             }
         }

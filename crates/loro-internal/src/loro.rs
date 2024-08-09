@@ -1355,10 +1355,23 @@ impl LoroDoc {
         self.oplog.lock().unwrap().free_history_cache();
     }
 
+    /// Free the cached diff calculator that is used for checkout.
+    pub fn free_diff_calculator(&self) {
+        *self.diff_calculator.lock().unwrap() = DiffCalculator::new(true);
+    }
+
     /// If you use checkout that switching to an old/concurrent version, the history cache will be built.
     /// You can free it by calling `free_history_cache`.
     pub fn has_history_cache(&self) -> bool {
         self.oplog.lock().unwrap().has_history_cache()
+    }
+
+    /// Encoded all ops and history cache to bytes and store them in the kv store.
+    ///
+    /// The parsed ops will be dropped
+    #[inline]
+    pub fn compact_change_store(&self) {
+        self.oplog.lock().unwrap().compact_change_store();
     }
 }
 
