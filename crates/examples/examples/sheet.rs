@@ -56,7 +56,7 @@ pub fn main() {
     );
 
     // Checkout after compact change store
-    doc.checkout(&ID::new(doc.peer_id(), 100).into()).unwrap();
+    doc.check_state_correctness_slow();
     let after_checkout = get_mem_usage();
     println!("Allocated bytes after checkout: {}", after_checkout);
 }

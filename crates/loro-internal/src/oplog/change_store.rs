@@ -6,7 +6,7 @@ use loro_common::{
     PeerID, ID,
 };
 use once_cell::sync::OnceCell;
-use rle::{HasLength, Mergable};
+use rle::{HasLength, Mergable, RleVec, Sliceable};
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, VecDeque},
@@ -72,6 +72,12 @@ impl ChangeStore {
     }
 
     pub fn insert_change(&mut self, mut change: Change) {
+        let estimated_size = change.estimate_storage_size();
+        if estimated_size > MAX_BLOCK_SIZE {
+            self.split_change_then_insert(change);
+            return;
+        }
+
         let id = change.id;
         let mut kv = self.mem_parsed_kv.lock().unwrap();
         if let Some(old) = self.vv.get_mut(&change.id.peer) {
@@ -85,6 +91,11 @@ impl ChangeStore {
                 );
             }
         } else {
+            // TODO: make this work and remove the assert
+            assert_eq!(
+                change.id.counter, 0,
+                "inserting a new change with counter != 0 and not in vv"
+            );
             self.vv.insert(
                 change.id.peer,
                 change.id.counter + change.atom_len() as Counter,
@@ -99,6 +110,7 @@ impl ChangeStore {
 
                 match block.push_change(
                     change,
+                    estimated_size,
                     self.merge_interval
                         .load(std::sync::atomic::Ordering::Acquire),
                 ) {
@@ -111,6 +123,48 @@ impl ChangeStore {
         }
 
         kv.insert(id, Arc::new(ChangesBlock::new(change, &self.arena)));
+    }
+
+    fn split_change_then_insert(&mut self, change: Change) {
+        let original_len = change.atom_len();
+        let mut new_change = Change {
+            ops: RleVec::new(),
+            deps: change.deps,
+            id: change.id,
+            lamport: change.lamport,
+            timestamp: change.timestamp,
+        };
+
+        let mut total_len = 0;
+        let mut estimated_size = 16;
+        for op in change.ops.into_iter() {
+            estimated_size += op.estimate_storage_size();
+            if estimated_size > MAX_BLOCK_SIZE && !new_change.ops.is_empty() {
+                let ctr_end = new_change.id.counter + new_change.atom_len() as Counter;
+                let next_lamport = new_change.lamport + new_change.atom_len() as Lamport;
+                total_len += new_change.atom_len();
+                self.insert_change(new_change);
+                new_change = Change {
+                    ops: RleVec::new(),
+                    deps: ID::new(change.id.peer, ctr_end - 1).into(),
+                    id: ID::new(change.id.peer, ctr_end),
+                    lamport: next_lamport,
+                    timestamp: change.timestamp,
+                };
+
+                estimated_size = 16;
+                new_change.ops.push(op);
+            } else {
+                new_change.ops.push(op);
+            }
+        }
+
+        if !new_change.ops.is_empty() {
+            total_len += new_change.atom_len();
+            self.insert_change(new_change);
+        }
+
+        debug_assert_eq!(total_len, original_len);
     }
 
     /// Flush the cached change to kv_store
@@ -507,6 +561,7 @@ impl ChangesBlock {
     pub fn push_change(
         self: &mut Arc<Self>,
         change: Change,
+        new_change_size: usize,
         merge_interval: i64,
     ) -> Result<(), Change> {
         if self.counter_range.1 != change.id.counter {
@@ -517,7 +572,7 @@ impl ChangesBlock {
         let next_lamport = change.lamport + atom_len as Lamport;
         let next_counter = change.id.counter + atom_len as Counter;
 
-        let is_full = self.is_full();
+        let is_full = new_change_size + self.estimated_size > MAX_BLOCK_SIZE;
         let this = Arc::make_mut(self);
         let changes = this.content.changes_mut().unwrap();
         let changes = Arc::make_mut(changes);
@@ -540,7 +595,7 @@ impl ChangesBlock {
                 if is_full {
                     return Err(change);
                 } else {
-                    this.estimated_size += change.estimate_storage_size();
+                    this.estimated_size += new_change_size;
                     changes.push(change);
                 }
             }

@@ -10,11 +10,6 @@ pub struct MapSet {
     // the key is deleted if value is None
     pub(crate) value: Option<LoroValue>,
 }
-impl MapSet {
-    pub(crate) fn estimate_storage_size(&self) -> usize {
-        self.key.len() + 3
-    }
-}
 
 impl Mergable for MapSet {}
 impl Sliceable for MapSet {

@@ -1874,9 +1874,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar"
-version = "0.3.6"
+version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7947238638e841d935a1dadff54b74575ae60d51b977be75dab16e7638ea6e7d"
+checksum = "3748cbf2b43a15ee9627881cabd7820d50508781cdebd3bb54cea49215d367a1"
 dependencies = [
  "itertools 0.11.0",
  "postcard",

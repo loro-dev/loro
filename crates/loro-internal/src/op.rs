@@ -29,12 +29,9 @@ pub struct Op {
 
 impl EstimatedSize for Op {
     fn estimate_storage_size(&self) -> usize {
-        let counter_size = 4;
-        let container_size = 2;
-        let content_size = self
-            .content
-            .estimate_storage_size(self.container.get_type());
-        counter_size + container_size + content_size
+        // TODO: use benchmark to get the optimal estimated size for each container type
+        self.content
+            .estimate_storage_size(self.container.get_type())
     }
 }
 

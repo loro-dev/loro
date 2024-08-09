@@ -68,8 +68,8 @@ impl InnerContent {
     pub fn estimate_storage_size(&self, kind: ContainerType) -> usize {
         match self {
             InnerContent::List(l) => l.estimate_storage_size(kind),
-            InnerContent::Map(m) => m.estimate_storage_size(),
-            InnerContent::Tree(t) => t.estimate_storage_size(),
+            InnerContent::Map(_) => 3,
+            InnerContent::Tree(_) => 8,
             InnerContent::Future(f) => f.estimate_storage_size(),
         }
     }
