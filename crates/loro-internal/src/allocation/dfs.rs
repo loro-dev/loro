@@ -12,6 +12,24 @@ fn get_all_points<T: DagNode, D: Dag<Node = T>>(graph: &D, points: &mut HashSet<
     }
 }
 
+pub fn get_end_list<T: DagNode, D: Dag<Node = T>>(graph: &D, start_list: &[ID]) -> Vec<ID> {
+    let mut end_set: HashSet<ID> = HashSet::new();
+    for start_id in start_list {
+        end_dfs(graph, start_id, &mut end_set);
+    }
+    end_set.into_iter().collect()
+}
+
+fn end_dfs<T: DagNode, D: Dag<Node = T>>(graph: &D, current: &ID, end_set: &mut HashSet<ID>) {
+    let deps = graph.get(*current).unwrap().deps();
+    if deps.is_empty() {
+        end_set.insert(*current);
+    }
+    for to_id in deps {
+        end_dfs(graph, to_id, end_set);
+    }
+}
+
 pub fn calc_critical_version_dfs<T: DagNode, D: Dag<Node = T>>(
     graph: &D,
     start_list: &[ID],
@@ -38,9 +56,6 @@ pub fn calc_critical_version_dfs<T: DagNode, D: Dag<Node = T>>(
         if !end_list_set.contains(&escape) && !start_list_set.contains(&escape) {
             result.push(escape);
         }
-    }
-    for x in &result {
-        println!("{}", x);
     }
     result
 }
