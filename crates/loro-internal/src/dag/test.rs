@@ -727,49 +727,14 @@ mod get_version_vector {
     }
 }
 
-pub fn test_alloc(dag_num: i32, mut interactions: Vec<Interaction>) {
-    preprocess(&mut interactions, dag_num);
-    let mut dags = Vec::new();
-    for i in 0..dag_num {
-        dags.push(TestDag::new(i as PeerID));
-    }
-
-    for interaction in interactions.iter_mut() {
-        interaction.apply(&mut dags);
-    }
-
-    for i in 1..dag_num {
-        let (a, b) = array_mut_ref!(&mut dags, [0, i as usize]);
-        a.merge(b);
-    }
-
-    let a = &dags[0];
-
-    let mut nodes = Vec::new();
-    for (node, vv) in a.iter_with_vv() {
-        nodes.push((node, vv));
-    }
-
-    let start = a.frontier();
-    let end = crate::allocation::get_end_list(a, start);
-    let critical_version_L: HashSet<ID> =
-        crate::allocation::calc_critical_version_lamport_split(a, start, &end)
-            .into_iter()
-            .collect();
-    let critical_version: HashSet<ID> =
-        crate::allocation::calc_critical_version_dfs(a, start, &end)
-            .into_iter()
-            .collect();
-    assert!(critical_version_L.eq(&critical_version));
-}
-
 #[test]
-pub fn test_alloc_fuzz() {
-    for x in 1..100 {
-        let num = 4;
-        let mut rng = thread_rng();
+pub fn test_alloc() {
+    for x in 1..10000 {
+        let num = 4; // <--- peer of the dag
+        let mut rng = thread_rng(); // <--- this is the only difference
         let mut dags = (0..num).map(TestDag::new).collect::<Vec<_>>();
         for _ in 0..20 {
+            // <--- size of the dag
             Interaction::generate(&mut rng, num as usize).apply(&mut dags);
         }
         for i in 1..num {
@@ -787,18 +752,7 @@ pub fn test_alloc_fuzz() {
             crate::allocation::calc_critical_version_dfs(a, start, &end)
                 .into_iter()
                 .collect();
-        if critical_version_L.eq(&critical_version) {
-            continue;
-        } else {
-            println!("{}", a.mermaid());
-            for xx in critical_version {
-                println!("xxx {}", xx);
-            }
-            for xxx in critical_version_L {
-                println!("aaa {}", xxx);
-            }
-            break;
-        }
+        assert!(critical_version_L.eq(&critical_version));
     }
 }
 

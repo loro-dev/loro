@@ -35,15 +35,15 @@ pub fn calc_critical_version_dfs<T: DagNode, D: Dag<Node = T>>(
     start_list: &[ID],
     end_list: &[ID],
 ) -> Vec<ID> {
-    println!("---------------------------");
-    println!("start_list");
-    for s in start_list {
-        println!("start {}", s);
-    }
-    println!("end_list");
-    for e in end_list {
-        println!("end {}", e);
-    }
+    // println!("---------------------------");
+    // println!("start_list");
+    // for s in start_list {
+    //     println!("start {}", s);
+    // }
+    // println!("end_list");
+    // for e in end_list {
+    //     println!("end {}", e);
+    // }
     let mut result: Vec<ID> = vec![];
     let mut points: HashSet<ID> = HashSet::new();
     let start_list_set: HashSet<ID> = HashSet::from_iter(start_list.iter().cloned());
@@ -56,10 +56,10 @@ pub fn calc_critical_version_dfs<T: DagNode, D: Dag<Node = T>>(
         for start_id in start_list {
             if dfs(graph, start_id, &escape, &end_list_set) {
                 flag = true;
-                println!("escape {} start {} true", escape, start_id);
+                //println!("escape {} start {} true", escape, start_id);
                 break;
             }
-            println!("escape {} start {} false", escape, start_id);
+            //println!("escape {} start {} false", escape, start_id);
         }
         if flag {
             continue;
@@ -77,20 +77,20 @@ fn dfs<T: DagNode, D: Dag<Node = T>>(
     escape: &ID,
     end_list_set: &HashSet<ID>,
 ) -> bool {
-    println!("current {} escape {}", current, escape);
+    //      println!("current {} escape {}", current, escape);
     if current == escape {
         return false;
     }
     if end_list_set.contains(current) {
         return true;
     }
-    println!(
-        "I am {},and My deps are {:?}",
-        current,
-        graph.get(*current).unwrap().deps()
-    );
+    //println!(
+    //    "I am {},and My deps are {:?}",
+    //    current,
+    //    graph.get(*current).unwrap().deps()
+    //);
     for to_id in graph.get(*current).unwrap().deps() {
-        println!("I am {},and I am going to {}", current, to_id);
+        //println!("I am {},and I am going to {}", current, to_id);
         if dfs(graph, to_id, escape, end_list_set) {
             return true;
         }

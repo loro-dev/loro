@@ -64,10 +64,3 @@ name = "map"
 path = "fuzz_targets/map.rs"
 test = false
 doc = false
-
-[[bin]]
-name = "dag"
-path = "fuzz_targets/dag.rs"
-test = false
-doc = false
-bench = false
