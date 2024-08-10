@@ -38,6 +38,9 @@
 //! ┌────────────────────┬─────────────────────────────────────────┐
 //! │  Key Strings Size  │               Key Strings               │
 //! └────────────────────┴─────────────────────────────────────────┘
+//! ┌────────────────────┬─────────────────────────────────────────┐
+//! │  Position Size     │               Position                  │
+//! └────────────────────┴─────────────────────────────────────────┘
 //! ┌────────┬──────────┬──────────┬───────┬───────────────────────┐
 //! │        │          │          │       │                       │
 //! │        │          │          │       │                       │
@@ -64,8 +67,11 @@
 //!
 
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::io::Write;
 
+use fractional_index::FractionalIndex;
+use fxhash::FxHashSet;
 use loro_common::{
     ContainerID, Counter, HasCounterSpan, HasLamportSpan, InternalString, Lamport, LoroError,
     LoroResult, PeerID, TreeID, ID,
@@ -79,7 +85,7 @@ use super::delta_rle_encode::{UnsignedDeltaDecoder, UnsignedDeltaEncoder};
 use crate::arena::SharedArena;
 use crate::change::{Change, Timestamp};
 use crate::container::tree::tree_op;
-use crate::encoding::arena::ContainerArena;
+use crate::encoding::arena::{ContainerArena, PositionArena};
 use crate::encoding::value_register::ValueRegister;
 use crate::encoding::{
     self, decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
@@ -123,6 +129,8 @@ struct EncodedBlock<'a> {
     cids: Cow<'a, [u8]>,
     #[serde(borrow)]
     keys: Cow<'a, [u8]>,
+    #[serde(borrow)]
+    positions: Cow<'a, [u8]>,
     #[serde(borrow)]
     ops: Cow<'a, [u8]>,
     #[serde(borrow)]
@@ -183,7 +191,32 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
         peer_register,
         key_register: ValueRegister::new(),
         cid_register,
+        position_register: ValueRegister::new(),
     };
+
+    {
+        // Init position register, making it ordered by fractional index
+        let mut position_set = BTreeSet::default();
+        for c in block {
+            for op in c.ops().iter() {
+                if let crate::op::InnerContent::Tree(tree_op) = &op.content {
+                    match tree_op {
+                        tree_op::TreeOp::Create { position, .. } => {
+                            position_set.insert(position.clone());
+                        }
+                        tree_op::TreeOp::Move { position, .. } => {
+                            position_set.insert(position.clone());
+                        }
+                        tree_op::TreeOp::Delete { .. } => {}
+                    }
+                }
+            }
+        }
+
+        for position in position_set {
+            registers.position_register.register(&position);
+        }
+    }
 
     let mut del_starts: Vec<_> = Vec::new();
     let mut value_writer = ValueWriter::new();
@@ -233,6 +266,13 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     let keys = registers.key_register.unwrap_vec();
     let keys_bytes = encode_keys(keys);
 
+    //      ┌────────────────────┬─────────────────────────────────────────┐
+    //      │  Position Size     │               Position                  │
+    //      └────────────────────┴─────────────────────────────────────────┘
+    let position_vec = registers.position_register.unwrap_vec();
+    let positions = PositionArena::from_positions(position_vec.iter().map(|p| p.as_bytes()));
+    let position_bytes = positions.encode();
+
     //      ┌──────────┬──────────┬───────┬────────────────────────────────┐
     //      │          │          │       │                                │
     //      │          │          │       │                                │
@@ -275,6 +315,7 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
         commit_msgs: Cow::Owned(vec![]),
         cids: container_arena.encode().into(),
         keys: keys_bytes.into(),
+        positions: position_bytes.into(),
         ops: ops_bytes.into(),
         values: value_bytes.into(),
     };
@@ -307,6 +348,7 @@ struct Registers {
     peer_register: ValueRegister<PeerID>,
     key_register: ValueRegister<loro_common::InternalString>,
     cid_register: ValueRegister<ContainerID>,
+    position_register: ValueRegister<FractionalIndex>,
 }
 
 use crate::encoding::value::{
@@ -335,8 +377,7 @@ impl ValueEncodeRegister for Registers {
                 is_parent_null: parent.is_none(),
                 parent_peer_idx: parent.map_or(0, |p| self.peer_register.register(&p.peer)),
                 parent_cnt: parent.map_or(0, |p| p.counter),
-                // PERF: maybe we can use Bytes for position
-                fractional_index: position.as_bytes().into(),
+                position_idx: self.position_register.register(position),
             }),
             tree_op::TreeOp::Move {
                 target,
@@ -348,8 +389,7 @@ impl ValueEncodeRegister for Registers {
                 is_parent_null: parent.is_none(),
                 parent_peer_idx: parent.map_or(0, |p| self.peer_register.register(&p.peer)),
                 parent_cnt: parent.map_or(0, |p| p.counter),
-                // PERF: maybe we can use Bytes for position
-                fractional_index: position.as_bytes().into(),
+                position_idx: self.position_register.register(position),
             }),
             tree_op::TreeOp::Delete { target } => {
                 let parent = TreeID::delete_root();
@@ -359,7 +399,7 @@ impl ValueEncodeRegister for Registers {
                     is_parent_null: false,
                     parent_peer_idx: self.peer_register.register(&parent.peer),
                     parent_cnt: parent.counter,
-                    fractional_index: Vec::new(),
+                    position_idx: 0,
                 })
             }
         }
@@ -641,6 +681,7 @@ pub fn decode_block(
         keys,
         ops,
         values,
+        positions,
         ..
     } = doc;
     let mut changes = Vec::with_capacity(n_changes as usize);
@@ -654,6 +695,8 @@ pub fn decode_block(
         peers: &header.peers,
         keys,
     };
+    let positions = PositionArena::decode(&positions)?;
+    let positions = positions.parse_to_positions();
     let cids: &Vec<ContainerID> = header.cids.get_or_init(|| {
         ContainerArena::decode(&cids)
             .unwrap()
@@ -701,7 +744,7 @@ pub fn decode_block(
             &mut del_iter,
             shared_arena,
             &decode_arena,
-            &[],
+            &positions,
             prop,
             ID::new(peer, counter),
         )?;

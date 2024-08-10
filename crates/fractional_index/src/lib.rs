@@ -10,7 +10,7 @@ mod jitter;
 
 const TERMINATOR: u8 = 128;
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FractionalIndex(Arc<Vec<u8>>);
 

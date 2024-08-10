@@ -621,6 +621,7 @@ dependencies = [
  "dev-utils",
  "flate2",
  "loro 0.16.2",
+ "rand",
  "serde_json",
  "tabled 0.15.0",
  "tracing",

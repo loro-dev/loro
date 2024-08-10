@@ -1380,7 +1380,7 @@ pub(crate) fn decode_op(
                     Some(parent_id)
                 };
 
-                let fi = FractionalIndex::from_bytes(op.fractional_index);
+                let fi = FractionalIndex::from_bytes(positions[op.position_idx].clone());
                 let is_create = subject.id() == op_id;
                 let ans = if is_create {
                     TreeOp::Create {

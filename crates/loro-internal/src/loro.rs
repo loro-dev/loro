@@ -1157,7 +1157,7 @@ impl LoroDoc {
     ///
     /// Panic when it's not consistent
     pub fn check_state_diff_calc_consistency_slow(&self) {
-        #[cfg(any(test, debug_assertions))]
+        // #[cfg(any(test, debug_assertions))]
         {
             static IS_CHECKING: AtomicBool = AtomicBool::new(false);
             if IS_CHECKING.load(std::sync::atomic::Ordering::Acquire) {

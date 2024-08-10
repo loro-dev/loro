@@ -1,4 +1,4 @@
-use dev_utils::get_mem_usage;
+use dev_utils::{get_mem_usage, ByteSize};
 use examples::sheet::init_large_sheet;
 use loro::ID;
 
@@ -59,4 +59,7 @@ pub fn main() {
     doc.check_state_correctness_slow();
     let after_checkout = get_mem_usage();
     println!("Allocated bytes after checkout: {}", after_checkout);
+
+    let snapshot = doc.export_snapshot();
+    println!("Snapshot size: {}", ByteSize(snapshot.len()));
 }
