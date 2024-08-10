@@ -1,5 +1,7 @@
 mod value;
 
+use std::sync::Arc;
+
 use loro::Container;
 pub use value::{ContainerID, ContainerType, LoroValue, LoroValueLike};
 mod doc;
@@ -28,12 +30,12 @@ pub trait ValueOrContainer: Send + Sync {
     fn is_container(&self) -> bool;
     fn as_value(&self) -> Option<LoroValue>;
     fn as_container(&self) -> Option<ContainerID>;
-    fn as_loro_list(&self) -> Option<LoroList>;
-    fn as_loro_text(&self) -> Option<LoroText>;
-    fn as_loro_map(&self) -> Option<LoroMap>;
-    fn as_loro_movable_list(&self) -> Option<LoroMovableList>;
-    fn as_loro_tree(&self) -> Option<LoroTree>;
-    fn as_loro_counter(&self) -> Option<LoroCounter>;
+    fn as_loro_list(&self) -> Option<Arc<LoroList>>;
+    fn as_loro_text(&self) -> Option<Arc<LoroText>>;
+    fn as_loro_map(&self) -> Option<Arc<LoroMap>>;
+    fn as_loro_movable_list(&self) -> Option<Arc<LoroMovableList>>;
+    fn as_loro_tree(&self) -> Option<Arc<LoroTree>>;
+    fn as_loro_counter(&self) -> Option<Arc<LoroCounter>>;
 }
 
 impl ValueOrContainer for loro::ValueOrContainer {
@@ -55,55 +57,55 @@ impl ValueOrContainer for loro::ValueOrContainer {
         loro::ValueOrContainer::as_container(self).map(|c| c.id().into())
     }
 
-    fn as_loro_list(&self) -> Option<LoroList> {
+    fn as_loro_list(&self) -> Option<Arc<LoroList>> {
         match self {
             loro::ValueOrContainer::Container(Container::List(list)) => {
-                Some(LoroList { list: list.clone() })
+                Some(Arc::new(LoroList { list: list.clone() }))
             }
             _ => None,
         }
     }
 
-    fn as_loro_text(&self) -> Option<LoroText> {
+    fn as_loro_text(&self) -> Option<Arc<LoroText>> {
         match self {
             loro::ValueOrContainer::Container(Container::Text(c)) => {
-                Some(LoroText { text: c.clone() })
+                Some(Arc::new(LoroText { text: c.clone() }))
             }
             _ => None,
         }
     }
 
-    fn as_loro_map(&self) -> Option<LoroMap> {
+    fn as_loro_map(&self) -> Option<Arc<LoroMap>> {
         match self {
             loro::ValueOrContainer::Container(Container::Map(c)) => {
-                Some(LoroMap { map: c.clone() })
+                Some(Arc::new(LoroMap { map: c.clone() }))
             }
             _ => None,
         }
     }
 
-    fn as_loro_movable_list(&self) -> Option<LoroMovableList> {
+    fn as_loro_movable_list(&self) -> Option<Arc<LoroMovableList>> {
         match self {
             loro::ValueOrContainer::Container(Container::MovableList(c)) => {
-                Some(LoroMovableList { list: c.clone() })
+                Some(Arc::new(LoroMovableList { list: c.clone() }))
             }
             _ => None,
         }
     }
 
-    fn as_loro_tree(&self) -> Option<LoroTree> {
+    fn as_loro_tree(&self) -> Option<Arc<LoroTree>> {
         match self {
             loro::ValueOrContainer::Container(Container::Tree(c)) => {
-                Some(LoroTree { tree: c.clone() })
+                Some(Arc::new(LoroTree { tree: c.clone() }))
             }
             _ => None,
         }
     }
 
-    fn as_loro_counter(&self) -> Option<LoroCounter> {
+    fn as_loro_counter(&self) -> Option<Arc<LoroCounter>> {
         match self {
             loro::ValueOrContainer::Container(Container::Counter(c)) => {
-                Some(LoroCounter { counter: c.clone() })
+                Some(Arc::new(LoroCounter { counter: c.clone() }))
             }
             _ => None,
         }
