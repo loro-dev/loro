@@ -15,6 +15,7 @@ arbitrary = { version = "1.3.0", features = ["derive"] }
 serde_json = { workspace = true }
 tracing = "0.1.40"
 criterion = "0.4.0"
+rand = "0.8.5"
 
 [dev-dependencies]
 flate2 = "1.0"
