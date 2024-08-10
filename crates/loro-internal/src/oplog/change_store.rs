@@ -435,6 +435,15 @@ impl ChangeStore {
             merge_interval,
         }
     }
+
+    pub fn kv_size(&self) -> usize {
+        self.external_kv
+            .lock()
+            .unwrap()
+            .scan(Bound::Unbounded, Bound::Unbounded)
+            .map(|(k, v)| k.len() + v.len())
+            .sum()
+    }
 }
 
 #[derive(Clone, Debug)]

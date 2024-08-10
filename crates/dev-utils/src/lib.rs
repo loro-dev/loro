@@ -71,7 +71,7 @@ unsafe impl GlobalAlloc for Counter {
 static A: Counter = Counter;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ByteSize(usize);
+pub struct ByteSize(pub usize);
 
 impl Debug for ByteSize {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

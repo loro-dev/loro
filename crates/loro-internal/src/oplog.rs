@@ -751,6 +751,11 @@ impl OpLog {
     pub fn compact_change_store(&mut self) {
         self.change_store.flush_and_compact();
     }
+
+    #[inline]
+    pub fn change_store_kv_size(&self) -> usize {
+        self.change_store.kv_size()
+    }
 }
 
 #[derive(Debug)]

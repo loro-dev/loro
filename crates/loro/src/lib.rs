@@ -1247,6 +1247,8 @@ impl Default for LoroText {
 /// LoroTree container. It's used to model movable trees.
 ///
 /// You may use it to model directories, outline or other movable hierarchical data.
+///
+/// Learn more at https://loro.dev/docs/tutorial/tree
 #[derive(Clone, Debug)]
 pub struct LoroTree {
     handler: InnerTreeHandler,
@@ -1321,6 +1323,11 @@ impl LoroTree {
         let parent = parent.into();
         let index = self.children_num(parent).unwrap_or(0);
         self.handler.create_at(parent, index)
+    }
+
+    /// Get the root nodes of the forest.
+    pub fn roots(&self) -> Vec<TreeID> {
+        self.handler.roots()
     }
 
     /// Create a new tree node at the given index and return the [`TreeID`].
@@ -1472,8 +1479,8 @@ impl LoroTree {
     ///
     /// - If the target node does not exist, return `None`.
     /// - If the target node is a root node, return `Some(None)`.
-    pub fn parent(&self, target: &TreeID) -> Option<Option<TreeID>> {
-        self.handler.get_node_parent(target)
+    pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
+        self.handler.get_node_parent(&target)
     }
 
     /// Return whether target node exists.
@@ -1504,9 +1511,9 @@ impl LoroTree {
     }
 
     /// Return the fractional index of the target node with hex format.
-    pub fn fractional_index(&self, target: &TreeID) -> Option<String> {
+    pub fn fractional_index(&self, target: TreeID) -> Option<String> {
         self.handler
-            .get_position_by_tree_id(target)
+            .get_position_by_tree_id(&target)
             .map(|x| x.to_string())
     }
 
