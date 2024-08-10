@@ -343,6 +343,8 @@ fn preprocess(interactions: &mut [Interaction], num: i32) {
                 *merge_with = (*merge_with + 1) % num as usize;
             }
         }
+
+        interaction.len = (interaction.len % 128).max(1);
     }
 }
 
@@ -728,7 +730,7 @@ mod get_version_vector {
 }
 
 #[test]
-pub fn test_alloc() {
+fn test_alloc() {
     for x in 1..10000 {
         let num = 4; // <--- peer of the dag
         let mut rng = thread_rng(); // <--- this is the only difference
@@ -744,7 +746,7 @@ pub fn test_alloc() {
         let a = &dags[0];
         let start = a.frontier();
         let end = crate::allocation::get_end_list(a, start);
-        let critical_version_L: HashSet<ID> =
+        let critical_version_actual: HashSet<ID> =
             crate::allocation::calc_critical_version_bfs(a, start)
                 .into_iter()
                 .collect();
@@ -752,8 +754,44 @@ pub fn test_alloc() {
             crate::allocation::calc_critical_version_dfs(a, start, &end)
                 .into_iter()
                 .collect();
-        assert!(critical_version_L.eq(&critical_version));
+        assert!(critical_version_actual.eq(&critical_version));
     }
+}
+
+pub fn fuzz_alloc_tree(num: usize, mut actions: Vec<Interaction>) {
+    preprocess(&mut actions, num as i32);
+    let mut dags = (0..num as u64).map(TestDag::new).collect::<Vec<_>>();
+    for action in actions {
+        action.apply(&mut dags);
+    }
+
+    for i in 1..num {
+        let (a, other) = array_mut_ref!(&mut dags, [0, i]);
+        a.merge(other);
+    }
+
+    let a = &dags[0];
+    let start = a.frontier();
+    let end = crate::allocation::get_end_list(a, start);
+    let actual: HashSet<ID> = crate::allocation::calc_critical_version_bfs(a, start)
+        .into_iter()
+        .collect();
+    let expected: HashSet<ID> = crate::allocation::calc_critical_version_dfs(a, start, &end)
+        .into_iter()
+        .collect();
+    assert!(actual.eq(&expected));
+}
+
+#[test]
+fn failed_fuzz() {
+    fuzz_alloc_tree(
+        10,
+        vec![Interaction {
+            dag_idx: 14685055086129564619,
+            merge_with: Some(10),
+            len: 777939436809428736,
+        }],
+    )
 }
 
 // #[cfg(test)]

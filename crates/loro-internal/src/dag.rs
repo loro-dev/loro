@@ -32,7 +32,7 @@ use self::{
     mermaid::dag_to_mermaid,
 };
 
-pub use test::{test_alloc, Interaction};
+pub use test::{fuzz_alloc_tree, Interaction};
 
 pub(crate) trait DagNode: HasLamport + HasId + HasLength + Debug + Sliceable {
     fn deps(&self) -> &[ID];

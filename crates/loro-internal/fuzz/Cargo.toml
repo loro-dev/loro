@@ -64,3 +64,9 @@ name = "map"
 path = "fuzz_targets/map.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "alloc_tree"
+path = "fuzz_targets/alloc_tree.rs"
+test = false
+doc = false
