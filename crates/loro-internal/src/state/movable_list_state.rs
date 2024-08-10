@@ -584,10 +584,15 @@ mod inner {
             };
             if let Some(leaf) = self.id_to_list_leaf.get(&new_pos) {
                 ans.new_list_item_leaf = Some(*leaf);
-                self.list.update_leaf(*leaf, |elem| {
-                    ans.activate_new_list_item = elem.pointed_by.is_none();
-                    debug_assert!(ans.activate_new_list_item);
-                    elem.pointed_by = Some(elem_id);
+                self.list.update_leaf(*leaf, |list_item| {
+                    debug_assert!(
+                        list_item.pointed_by.is_none(),
+                        "list_item was pointed by {:?} but need to be changed to {:?}",
+                        list_item.pointed_by,
+                        elem_id
+                    );
+                    ans.activate_new_list_item = list_item.pointed_by.is_none();
+                    list_item.pointed_by = Some(elem_id);
                     (true, None, None)
                 });
             } else {

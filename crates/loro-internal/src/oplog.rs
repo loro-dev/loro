@@ -715,7 +715,8 @@ impl OpLog {
         loro_common::IdLp { peer, lamport }
     }
 
-    pub(crate) fn get_op(&self, id: ID) -> Option<BlockOpRef> {
+    /// NOTE: This may return a op that includes the given id, not necessarily start with the given id
+    pub(crate) fn get_op_that_includes(&self, id: ID) -> Option<BlockOpRef> {
         let change = self.get_change_at(id)?;
         change.get_op_with_counter(id.counter)
     }

@@ -271,8 +271,13 @@ impl ChangeStore {
     pub fn get_change_by_idlp(&self, idlp: IdLp) -> Option<BlockChangeRef> {
         let mut kv = self.mem_parsed_kv.lock().unwrap();
         let mut iter = kv.range_mut(ID::new(idlp.peer, 0)..ID::new(idlp.peer, i32::MAX));
+        // FIX: PERF: this is super slow
         while let Some((_id, block)) = iter.next_back() {
             if block.lamport_range.0 <= idlp.lamport {
+                if block.lamport_range.1 < idlp.lamport {
+                    break;
+                }
+
                 block
                     .ensure_changes(&self.arena)
                     .expect("Parse block error");
@@ -489,6 +494,14 @@ impl Deref for BlockOpRef {
     }
 }
 
+impl BlockOpRef {
+    pub fn lamport(&self) -> Lamport {
+        let change = &self.block.content.try_changes().unwrap()[self.change_index];
+        let op = &change.ops[self.op_index];
+        (op.counter - change.id.counter) as Lamport + change.lamport
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ChangesBlock {
     peer: PeerID,
@@ -683,6 +696,8 @@ impl ChangesBlock {
                 if not_found == 0 {
                     None
                 } else {
+                    // NOTE: we somehow need to return it even if we cannot find the perfect match
+                    // need to check which part relies on this behavior
                     Some(not_found - 1)
                 }
             }

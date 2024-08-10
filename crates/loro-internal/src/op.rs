@@ -313,6 +313,10 @@ impl<'a> RichOp<'a> {
         self.end
     }
 
+    pub fn counter(&self) -> Counter {
+        self.op.counter + self.start as Counter
+    }
+
     #[allow(unused)]
     pub(crate) fn id(&self) -> ID {
         ID {

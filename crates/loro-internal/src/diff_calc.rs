@@ -19,6 +19,7 @@ use smallvec::SmallVec;
 use tracing::{instrument, trace, warn};
 
 use crate::{
+    change::Lamport,
     container::{
         idx::ContainerIdx,
         list::list_op::InnerListOp,
@@ -537,26 +538,35 @@ impl DiffCalculatorTrait for MapDiffCalculator {
     ) -> (InternalDiff, DiffMode) {
         match self.current_mode {
             DiffMode::Checkout | DiffMode::Import => oplog.with_history_cache(|h| {
-                let group = h
-                    .get_checkout_cache(&self.container_idx)
-                    .unwrap()
-                    .as_map()
-                    .unwrap();
+                let checkout_index = &h.get_checkout_index().map;
                 let mut changed = Vec::new();
+                let from_map = checkout_index.get_container_latest_op_at_vv(
+                    self.container_idx,
+                    from,
+                    Lamport::MAX,
+                    oplog,
+                );
+                let mut to_map = checkout_index.get_container_latest_op_at_vv(
+                    self.container_idx,
+                    to,
+                    Lamport::MAX,
+                    oplog,
+                );
 
-                for k in group.keys() {
-                    let peek_from = group.last_op(k, from);
-                    let peek_to = group.last_op(k, to);
-                    match (peek_from, peek_to) {
-                        (None, None) => {}
-                        (None, Some(_)) => changed.push((k.clone(), peek_to)),
-                        (Some(_), None) => changed.push((k.clone(), peek_to)),
-                        (Some(a), Some(b)) => {
-                            if a != b {
-                                changed.push((k.clone(), peek_to))
+                for (k, peek_from) in from_map.iter() {
+                    let peek_to = to_map.remove(k);
+                    match peek_to {
+                        None => changed.push((k.clone(), None)),
+                        Some(b) => {
+                            if peek_from.value != b.value {
+                                changed.push((k.clone(), Some(b)))
                             }
                         }
                     }
+                }
+
+                for (k, peek_to) in to_map.into_iter() {
+                    changed.push((k, Some(peek_to)));
                 }
 
                 let mut updated =
@@ -566,7 +576,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
                         .map(|v| {
                             let value = v.value.clone();
                             if let Some(LoroValue::Container(c)) = &value {
-                                on_new_container(c);
+                                on_new_container(&c);
                             }
 
                             MapValue {
@@ -986,7 +996,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         crate::container::list::list_op::InnerListOp::StyleEnd => {
                             let id = op.id();
                             // PERF: this can be sped up by caching the last style op
-                            let start_op = oplog.get_op(op.id().inc(-1)).unwrap();
+                            let start_op = oplog.get_op_that_includes(op.id().inc(-1)).unwrap();
                             let InnerListOp::StyleStart {
                                 start: _,
                                 end,
@@ -1277,14 +1287,16 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         let last_pos = if is_checkout {
                             // TODO: PERF: this lookup can be optimized
                             oplog.with_history_cache(|h| {
-                                let list = h
-                                    .get_checkout_cache(&real_op.container)
-                                    .unwrap()
-                                    .as_movable_list()
-                                    .unwrap();
-                                list.last_pos(elem_id, this.tracker.current_vv())
-                                    .unwrap()
-                                    .id()
+                                let list = &h.get_checkout_index().movable_list;
+                                list.last_pos(
+                                    *elem_id,
+                                    this.tracker.current_vv(),
+                                    // TODO: PERF: Provide the lamport of to version
+                                    Lamport::MAX,
+                                    oplog,
+                                )
+                                .unwrap()
+                                .id()
                             })
                         } else {
                             // When it's import or linear mode, we need to use a fake id
@@ -1365,7 +1377,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         let mut new_insert = SmallVec::with_capacity(len);
                         for i in 0..len {
                             let id = id.inc(i as i32);
-                            let op = oplog.get_op(id.id()).unwrap();
+                            let op = oplog.get_op_that_includes(id.id()).unwrap();
                             let elem_id = match op.content.as_list().unwrap() {
                                 InnerListOp::Insert { .. } => id.idlp().compact(),
                                 InnerListOp::Move { elem_id, .. } => elem_id.compact(),
@@ -1394,18 +1406,24 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
 
         if is_checkout {
             oplog.with_history_cache(|history_cache| {
-                let group = history_cache.get_movable_list(&self.container_idx).unwrap();
+                let checkout_index = &history_cache.get_checkout_index().movable_list;
                 element_changes.retain(|id, change| {
                     let id = id.to_id();
                     // It can be None if the target does not exist before the `to` version
                     // But we don't need to calc from, because the deletion is handled by the diff from list items
-                    let Some(pos) = group.last_pos(&id, to) else {
+
+                    // TODO: PERF: Provide the lamport of to version
+                    let Some(pos) = checkout_index.last_pos(id, to, Lamport::MAX, oplog) else {
                         return false;
                     };
-
-                    let value = group.last_value(&id, to).unwrap();
-                    let old_pos = group.last_pos(&id, from);
-                    let old_value = group.last_value(&id, from);
+                    // TODO: PERF: Provide the lamport of to version
+                    let value = checkout_index
+                        .last_value(id, to, Lamport::MAX, oplog)
+                        .unwrap();
+                    // TODO: PERF: Provide the lamport of to version
+                    let old_pos = checkout_index.last_pos(id, from, Lamport::MAX, oplog);
+                    // TODO: PERF: Provide the lamport of to version
+                    let old_value = checkout_index.last_value(id, from, Lamport::MAX, oplog);
                     if old_pos.is_none() && old_value.is_none() {
                         if let LoroValue::Container(c) = &value.value {
                             on_new_container(c);

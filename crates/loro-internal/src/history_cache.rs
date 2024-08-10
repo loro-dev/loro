@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ops::Bound,
     sync::{Arc, Mutex},
 };
 
@@ -7,17 +8,20 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerType, Counter, HasId, HasLamport, IdLp, InternalString, LoroValue, PeerID, ID,
+    ContainerType, Counter, HasId, HasLamport, IdFull, IdLp, InternalString, LoroValue, PeerID, ID,
 };
+use rle::HasLength;
 
 use crate::{
     arena::SharedArena,
     change::{Change, Lamport},
-    container::{idx::ContainerIdx, tree::tree_op::TreeOp},
+    container::{idx::ContainerIdx, list::list_op::InnerListOp, tree::tree_op::TreeOp},
+    delta::MovableListInnerDelta,
     diff_calc::tree::TreeCacheForDiff,
+    encoding::value_register::ValueRegister,
     op::{InnerContent, RichOp},
     oplog::ChangeStore,
-    VersionVector,
+    OpLog, VersionVector,
 };
 
 /// A cache for the history of a container.
@@ -29,40 +33,34 @@ use crate::{
 pub(crate) struct ContainerHistoryCache {
     arena: SharedArena,
     change_store: ChangeStore,
-    for_checkout: Option<FxHashMap<ContainerIdx, HistoryCacheForCheckout>>,
+    for_checkout: Option<ForCheckout>,
     for_importing: Option<FxHashMap<ContainerIdx, HistoryCacheForImporting>>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ForCheckout {
+    pub(crate) map: MapHistoryCache,
+    pub(crate) movable_list: MovableListHistoryCache,
+}
+
+impl HistoryCacheTrait for ForCheckout {
+    fn insert(&mut self, op: &RichOp) {
+        match op.raw_op().container.get_type() {
+            ContainerType::Map => self.map.insert(op),
+            ContainerType::MovableList => self.movable_list.insert(op),
+            _ => {}
+        }
+    }
 }
 
 impl ContainerHistoryCache {
     pub(crate) fn fork(&self, arena: SharedArena, change_store: ChangeStore) -> Self {
-        let mut ans = Self {
+        Self {
             arena,
             change_store,
             for_checkout: None,
             for_importing: None,
-        };
-
-        if let Some(old_for_checkout) = &self.for_checkout {
-            let mut for_checkout =
-                FxHashMap::with_capacity_and_hasher(old_for_checkout.len(), Default::default());
-            for (container_idx, group) in old_for_checkout.iter() {
-                for_checkout.insert(*container_idx, group.fork(&ans.arena));
-            }
-
-            ans.for_checkout = Some(for_checkout);
         }
-
-        if let Some(old_for_importing) = &self.for_importing {
-            let mut for_importing =
-                FxHashMap::with_capacity_and_hasher(old_for_importing.len(), Default::default());
-            for (container_idx, group) in old_for_importing.iter() {
-                for_importing.insert(*container_idx, group.fork(&ans.arena));
-            }
-
-            ans.for_importing = Some(for_importing);
-        }
-
-        ans
     }
 
     pub(crate) fn new(arena: SharedArena, change_store: ChangeStore) -> Self {
@@ -89,23 +87,8 @@ impl ContainerHistoryCache {
                 ContainerType::Map | ContainerType::MovableList
                     if self.for_checkout.is_some() && for_checkout =>
                 {
-                    let container_idx = op.container;
                     let rich_op = RichOp::new_by_change(change, op);
-                    let manager = self
-                        .for_checkout
-                        .as_mut()
-                        .unwrap()
-                        .entry(container_idx)
-                        .or_insert_with(|| match op.container.get_type() {
-                            ContainerType::Map => {
-                                HistoryCacheForCheckout::Map(MapOpGroup::default())
-                            }
-                            ContainerType::MovableList => HistoryCacheForCheckout::MovableList(
-                                MovableListOpGroup::new(self.arena.clone()),
-                            ),
-                            _ => unreachable!(),
-                        });
-                    manager.insert(&rich_op)
+                    self.for_checkout.as_mut().unwrap().insert(&rich_op)
                 }
                 ContainerType::Tree if self.for_importing.is_some() && for_importing => {
                     let container_idx = op.container;
@@ -128,11 +111,16 @@ impl ContainerHistoryCache {
         }
     }
 
+    pub(crate) fn get_checkout_index(&mut self) -> &ForCheckout {
+        self.ensure_all_caches_exist();
+        self.for_checkout.as_ref().unwrap()
+    }
+
     pub(crate) fn ensure_all_caches_exist(&mut self) {
         let mut record_for_checkout = false;
         let mut record_for_importing = false;
         if self.for_checkout.is_none() {
-            self.for_checkout = Some(FxHashMap::default());
+            self.for_checkout = Some(ForCheckout::default());
             record_for_checkout = true;
         }
 
@@ -168,23 +156,8 @@ impl ContainerHistoryCache {
                     ContainerType::Map | ContainerType::MovableList
                         if self.for_checkout.is_some() && for_checkout =>
                     {
-                        let container_idx = op.container;
                         let rich_op = RichOp::new_by_change(c, op);
-                        let manager = self
-                            .for_checkout
-                            .as_mut()
-                            .unwrap()
-                            .entry(container_idx)
-                            .or_insert_with(|| match op.container.get_type() {
-                                ContainerType::Map => {
-                                    HistoryCacheForCheckout::Map(MapOpGroup::default())
-                                }
-                                ContainerType::MovableList => HistoryCacheForCheckout::MovableList(
-                                    MovableListOpGroup::new(self.arena.clone()),
-                                ),
-                                _ => unreachable!(),
-                            });
-                        manager.insert(&rich_op)
+                        self.for_checkout.as_mut().unwrap().insert(&rich_op)
                     }
                     ContainerType::Tree if self.for_importing.is_some() && for_importing => {
                         let container_idx = op.container;
@@ -208,34 +181,11 @@ impl ContainerHistoryCache {
         });
     }
 
-    pub(crate) fn get_checkout_cache(
-        &mut self,
-        container_idx: &ContainerIdx,
-    ) -> Option<&HistoryCacheForCheckout> {
-        self.ensure_all_caches_exist();
-        self.for_checkout.as_ref().unwrap().get(container_idx)
-    }
-
     pub(crate) fn get_importing_cache_unsafe(
         &self,
         container_idx: &ContainerIdx,
     ) -> Option<&HistoryCacheForImporting> {
         self.for_importing.as_ref().unwrap().get(container_idx)
-    }
-
-    pub(crate) fn get_movable_list(
-        &mut self,
-        container_idx: &ContainerIdx,
-    ) -> Option<&MovableListOpGroup> {
-        self.ensure_all_caches_exist();
-        self.for_checkout
-            .as_ref()
-            .unwrap()
-            .get(container_idx)
-            .and_then(|group| match group {
-                HistoryCacheForCheckout::MovableList(movable_list) => Some(movable_list),
-                _ => None,
-            })
     }
 
     pub(crate) fn get_tree(&mut self, container_idx: &ContainerIdx) -> Option<&TreeOpGroup> {
@@ -256,19 +206,6 @@ impl ContainerHistoryCache {
             .get(container_idx)
             .map(|group| match group {
                 HistoryCacheForImporting::Tree(tree) => tree,
-            })
-    }
-
-    #[allow(unused)]
-    pub(crate) fn get_map(&mut self, container_idx: &ContainerIdx) -> Option<&MapOpGroup> {
-        self.ensure_all_caches_exist();
-        self.for_checkout
-            .as_ref()
-            .unwrap()
-            .get(container_idx)
-            .and_then(|group| match group {
-                HistoryCacheForCheckout::Map(map) => Some(map),
-                _ => None,
             })
     }
 
@@ -309,18 +246,15 @@ impl HistoryCacheForCheckout {
 }
 
 impl HistoryCacheForImporting {
-    fn fork(&self, a: &SharedArena) -> Self {
+    fn insert(&mut self, op: &RichOp) {
         match self {
-            HistoryCacheForImporting::Tree(t) => HistoryCacheForImporting::Tree(TreeOpGroup {
-                ops: t.ops.clone(),
-                tree_for_diff: Arc::new(Mutex::new(Default::default())),
-            }),
+            HistoryCacheForImporting::Tree(t) => t.insert(op),
         }
     }
 }
 
 #[enum_dispatch]
-trait OpGroupTrait {
+trait HistoryCacheTrait {
     fn insert(&mut self, op: &RichOp);
 }
 
@@ -364,6 +298,101 @@ impl<T> Ord for GroupedMapOpInfo<T> {
     }
 }
 
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone)]
+struct MapHistoryCacheEntry {
+    container: ContainerIdx,
+    key: u32,
+    lamport: Lamport,
+    peer: PeerID,
+    counter: Counter,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct MapHistoryCache {
+    keys: ValueRegister<InternalString>,
+    map: BTreeSet<MapHistoryCacheEntry>,
+}
+
+impl HistoryCacheTrait for MapHistoryCache {
+    fn insert(&mut self, op: &RichOp) {
+        let container = op.raw_op().container;
+        let key = match &op.raw_op().content {
+            InnerContent::Map(map) => map.key.clone(),
+            _ => unreachable!(),
+        };
+
+        let key_idx = self.keys.register(&key);
+        self.map.insert(MapHistoryCacheEntry {
+            container,
+            key: key_idx as u32,
+            lamport: op.lamport(),
+            peer: op.peer,
+            counter: op.counter(),
+        });
+    }
+}
+
+impl MapHistoryCache {
+    pub fn get_container_latest_op_at_vv(
+        &self,
+        container: ContainerIdx,
+        vv: &VersionVector,
+        // PERF: utilize this lamport
+        _max_lamport: Lamport,
+        oplog: &OpLog,
+    ) -> FxHashMap<InternalString, GroupedMapOpInfo> {
+        let mut ans = FxHashMap::default();
+        let mut last_key = u32::MAX;
+
+        'outer: loop {
+            let range = (
+                Bound::Included(MapHistoryCacheEntry {
+                    container,
+                    key: 0,
+                    lamport: 0,
+                    peer: 0,
+                    counter: 0,
+                }),
+                Bound::Excluded(MapHistoryCacheEntry {
+                    container,
+                    key: last_key,
+                    lamport: 0,
+                    peer: 0,
+                    counter: 0,
+                }),
+            );
+
+            for entry in self.map.range(range).rev() {
+                if vv.get(&entry.peer).copied().unwrap_or(0) > entry.counter {
+                    let id = ID::new(entry.peer, entry.counter);
+                    let op = oplog.get_op_that_includes(id).unwrap();
+                    debug_assert_eq!(op.atom_len(), 1);
+                    match &op.content {
+                        InnerContent::Map(map) => {
+                            ans.insert(
+                                self.keys.get_value(entry.key as usize).unwrap().clone(),
+                                GroupedMapOpInfo {
+                                    value: map.value.clone(),
+                                    counter: id.counter,
+                                    lamport: entry.lamport,
+                                    peer: entry.peer,
+                                },
+                            );
+                        }
+                        _ => unreachable!(),
+                    }
+                    last_key = entry.key;
+                    continue 'outer;
+                }
+            }
+
+            break;
+        }
+
+        ans
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub(crate) struct MapOpGroup {
     ops: FxHashMap<InternalString, SmallSet<GroupedMapOpInfo>>,
@@ -387,7 +416,7 @@ impl MapOpGroup {
     }
 }
 
-impl OpGroupTrait for MapOpGroup {
+impl HistoryCacheTrait for MapOpGroup {
     fn insert(&mut self, op: &RichOp) {
         let key = match &op.raw_op().content {
             InnerContent::Map(map) => map.key.clone(),
@@ -442,7 +471,7 @@ pub(crate) struct TreeOpGroup {
     pub(crate) tree_for_diff: Arc<Mutex<TreeCacheForDiff>>,
 }
 
-impl OpGroupTrait for TreeOpGroup {
+impl HistoryCacheTrait for TreeOpGroup {
     fn insert(&mut self, op: &RichOp) {
         let tree_op = op.raw_op().content.as_tree().unwrap();
         let entry = self.ops.entry(op.lamport()).or_default();
@@ -451,6 +480,171 @@ impl OpGroupTrait for TreeOpGroup {
             counter: op.raw_op().counter,
             peer: op.peer,
         });
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct MovableListHistoryCache {
+    pub(crate) move_set: BTreeSet<MovableListInnerDeltaEntry>,
+    pub(crate) set_set: BTreeSet<MovableListInnerDeltaEntry>,
+}
+
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone)]
+struct MovableListInnerDeltaEntry {
+    element_lamport: Lamport,
+    element_peer: PeerID,
+    lamport: Lamport,
+    peer: PeerID,
+    counter: Counter,
+}
+
+impl HistoryCacheTrait for MovableListHistoryCache {
+    fn insert(&mut self, op: &RichOp) {
+        let cur_id = op.id_full();
+        match &op.op().content {
+            InnerContent::List(l) => match l {
+                crate::container::list::list_op::InnerListOp::Move { from, elem_id, to } => {
+                    self.move_set.insert(MovableListInnerDeltaEntry {
+                        element_lamport: elem_id.lamport,
+                        element_peer: elem_id.peer,
+                        lamport: cur_id.lamport,
+                        peer: cur_id.peer,
+                        counter: cur_id.counter,
+                    });
+                }
+                crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
+                    self.set_set.insert(MovableListInnerDeltaEntry {
+                        element_lamport: elem_id.lamport,
+                        element_peer: elem_id.peer,
+                        lamport: cur_id.lamport,
+                        peer: cur_id.peer,
+                        counter: cur_id.counter,
+                    });
+                }
+                _ => {}
+            },
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl MovableListHistoryCache {
+    pub(crate) fn last_value(
+        &self,
+        key: IdLp,
+        vv: &VersionVector,
+        max_lamport: Lamport,
+        oplog: &OpLog,
+    ) -> Option<GroupedMapOpInfo<LoroValue>> {
+        self.set_set
+            .range((
+                Bound::Included(MovableListInnerDeltaEntry {
+                    element_lamport: key.lamport,
+                    element_peer: key.peer,
+                    lamport: 0,
+                    peer: 0,
+                    counter: 0,
+                }),
+                Bound::Excluded(MovableListInnerDeltaEntry {
+                    element_lamport: key.lamport,
+                    element_peer: key.peer,
+                    lamport: max_lamport,
+                    peer: PeerID::MAX,
+                    counter: Counter::MAX,
+                }),
+            ))
+            .rev()
+            .find(|e| vv.get(&e.peer).copied().unwrap_or(0) > e.counter)
+            .map_or_else(
+                || {
+                    let id = oplog.idlp_to_id(key).unwrap();
+                    if vv.get(&id.peer).copied().unwrap_or(0) <= id.counter {
+                        return None;
+                    }
+
+                    let op = oplog.get_op_that_includes(id).unwrap();
+                    let offset = id.counter - op.counter;
+                    match &op.content {
+                        InnerContent::List(InnerListOp::Insert { slice, .. }) => {
+                            let value = oplog
+                                .arena
+                                .get_value(slice.0.start as usize + offset as usize)
+                                .unwrap();
+                            Some(GroupedMapOpInfo {
+                                value,
+                                counter: id.counter,
+                                lamport: key.lamport,
+                                peer: id.peer,
+                            })
+                        }
+                        _ => {
+                            unreachable!()
+                        }
+                    }
+                },
+                |e| {
+                    let id = ID::new(e.peer, e.counter);
+                    let op = oplog.get_op_that_includes(id).unwrap();
+                    debug_assert_eq!(op.atom_len(), 1);
+                    let lamport = op.lamport();
+                    match &op.content {
+                        InnerContent::List(InnerListOp::Set { value, .. }) => {
+                            Some(GroupedMapOpInfo {
+                                value: value.clone(),
+                                counter: id.counter,
+                                lamport,
+                                peer: id.peer,
+                            })
+                        }
+                        _ => {
+                            unreachable!()
+                        }
+                    }
+                },
+            )
+    }
+
+    pub(crate) fn last_pos(
+        &self,
+        key: IdLp,
+        vv: &VersionVector,
+        max_lamport: Lamport,
+        oplog: &OpLog,
+    ) -> Option<IdFull> {
+        self.move_set
+            .range((
+                Bound::Included(MovableListInnerDeltaEntry {
+                    element_lamport: key.lamport,
+                    element_peer: key.peer,
+                    lamport: 0,
+                    peer: 0,
+                    counter: 0,
+                }),
+                Bound::Excluded(MovableListInnerDeltaEntry {
+                    element_lamport: key.lamport,
+                    element_peer: key.peer,
+                    lamport: max_lamport,
+                    peer: PeerID::MAX,
+                    counter: Counter::MAX,
+                }),
+            ))
+            .rev()
+            .find(|e| vv.get(&e.peer).copied().unwrap_or(0) > e.counter)
+            .map_or_else(
+                || {
+                    let id = oplog.idlp_to_id(key).unwrap();
+                    if vv.get(&id.peer).copied().unwrap_or(0) > id.counter {
+                        Some(IdFull::new(id.peer, id.counter, key.lamport))
+                    } else {
+                        None
+                    }
+                },
+                |e| {
+                    let id = ID::new(e.peer, e.counter);
+                    let lamport = oplog.get_lamport_at(id).unwrap();
+                    Some(IdFull::new(e.peer, e.counter, lamport))
+                },
+            )
     }
 }
 
@@ -504,7 +698,7 @@ impl MovableListTarget {
     }
 }
 
-impl OpGroupTrait for MovableListOpGroup {
+impl HistoryCacheTrait for MovableListOpGroup {
     fn insert(&mut self, op: &RichOp) {
         let start_id = op.id_full().idlp();
         match &op.op().content {
