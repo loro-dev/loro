@@ -55,11 +55,6 @@ pub fn main() {
         after_free_history_cache - after_compact_change_store
     );
 
-    // Checkout after compact change store
-    doc.check_state_correctness_slow();
-    let after_checkout = get_mem_usage();
-    println!("Allocated bytes after checkout: {}", after_checkout);
-
     let snapshot = doc.export_snapshot();
     println!("Snapshot size: {}", ByteSize(snapshot.len()));
 }
