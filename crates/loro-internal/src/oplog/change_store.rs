@@ -71,9 +71,9 @@ impl ChangeStore {
         }
     }
 
-    pub fn insert_change(&mut self, mut change: Change) {
+    pub fn insert_change(&mut self, mut change: Change, split_when_exceeds: bool) {
         let estimated_size = change.estimate_storage_size();
-        if estimated_size > MAX_BLOCK_SIZE {
+        if estimated_size > MAX_BLOCK_SIZE && split_when_exceeds {
             self.split_change_then_insert(change);
             return;
         }
@@ -136,23 +136,33 @@ impl ChangeStore {
         };
 
         let mut total_len = 0;
-        let mut estimated_size = 16;
-        for op in change.ops.into_iter() {
+        let mut estimated_size = new_change.estimate_storage_size();
+        'outer: for mut op in change.ops.into_iter() {
+            if op.estimate_storage_size() >= MAX_BLOCK_SIZE - estimated_size {
+                new_change =
+                    self._insert_splitted_change(new_change, &mut total_len, &mut estimated_size);
+            }
+
+            while let Some(end) =
+                op.check_whether_slice_content_to_fit_in_size(MAX_BLOCK_SIZE - estimated_size)
+            {
+                // The new op can take the rest of the room
+                let new = op.slice(0, end);
+                new_change.ops.push(new);
+                new_change =
+                    self._insert_splitted_change(new_change, &mut total_len, &mut estimated_size);
+
+                if end < op.atom_len() {
+                    op = op.slice(end, op.atom_len());
+                } else {
+                    continue 'outer;
+                }
+            }
+
             estimated_size += op.estimate_storage_size();
             if estimated_size > MAX_BLOCK_SIZE && !new_change.ops.is_empty() {
-                let ctr_end = new_change.id.counter + new_change.atom_len() as Counter;
-                let next_lamport = new_change.lamport + new_change.atom_len() as Lamport;
-                total_len += new_change.atom_len();
-                self.insert_change(new_change);
-                new_change = Change {
-                    ops: RleVec::new(),
-                    deps: ID::new(change.id.peer, ctr_end - 1).into(),
-                    id: ID::new(change.id.peer, ctr_end),
-                    lamport: next_lamport,
-                    timestamp: change.timestamp,
-                };
-
-                estimated_size = 16;
+                new_change =
+                    self._insert_splitted_change(new_change, &mut total_len, &mut estimated_size);
                 new_change.ops.push(op);
             } else {
                 new_change.ops.push(op);
@@ -161,10 +171,36 @@ impl ChangeStore {
 
         if !new_change.ops.is_empty() {
             total_len += new_change.atom_len();
-            self.insert_change(new_change);
+            self.insert_change(new_change, false);
         }
 
         debug_assert_eq!(total_len, original_len);
+    }
+
+    fn _insert_splitted_change(
+        &mut self,
+        new_change: Change,
+        total_len: &mut usize,
+        estimated_size: &mut usize,
+    ) -> Change {
+        if new_change.atom_len() == 0 {
+            return new_change;
+        }
+
+        let ctr_end = new_change.id.counter + new_change.atom_len() as Counter;
+        let next_lamport = new_change.lamport + new_change.atom_len() as Lamport;
+        *total_len += new_change.atom_len();
+        let ans = Change {
+            ops: RleVec::new(),
+            deps: ID::new(new_change.id.peer, ctr_end - 1).into(),
+            id: ID::new(new_change.id.peer, ctr_end),
+            lamport: next_lamport,
+            timestamp: new_change.timestamp,
+        };
+
+        self.insert_change(new_change, false);
+        *estimated_size = ans.estimate_storage_size();
+        ans
     }
 
     /// Flush the cached change to kv_store

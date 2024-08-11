@@ -258,7 +258,7 @@ impl OpLog {
             .unwrap()
             .insert_by_new_change(&change, true, true);
         self.register_container_and_parent_link(&change);
-        self.change_store.insert_change(change);
+        self.change_store.insert_change(change, true);
     }
 
     #[inline(always)]
@@ -695,6 +695,7 @@ impl OpLog {
         }
     }
 
+    #[inline(never)]
     pub(crate) fn idlp_to_id(&self, id: loro_common::IdLp) -> Option<ID> {
         let change = self.change_store.get_change_by_idlp(id)?;
         if change.lamport > id.lamport || change.lamport_end() <= id.lamport {

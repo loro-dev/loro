@@ -108,11 +108,11 @@ impl InnerListOp {
     pub(crate) fn estimate_storage_size(&self, container_type: ContainerType) -> usize {
         match self {
             InnerListOp::Insert { slice, .. } => match container_type {
-                ContainerType::MovableList | ContainerType::List => 4 * slice.atom_len() + 3,
-                ContainerType::Text => slice.atom_len() + 3,
+                ContainerType::MovableList | ContainerType::List => 4 * slice.atom_len(),
+                ContainerType::Text => slice.atom_len(),
                 _ => unreachable!(),
             },
-            InnerListOp::InsertText { slice, .. } => slice.len() + 3,
+            InnerListOp::InsertText { slice, .. } => slice.len(),
             InnerListOp::Delete(..) => 8,
             InnerListOp::Move { .. } => 8,
             InnerListOp::Set { .. } => 7,

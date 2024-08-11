@@ -1,8 +1,7 @@
-use std::{num::NonZeroU16, sync::Arc};
+use std::{num::NonZeroU16, sync::Arc, time::Instant};
 
 #[cfg(feature = "counter")]
 mod counter;
-use bytes::Bytes;
 #[cfg(feature = "counter")]
 pub(crate) use counter::CounterDiffCalculator;
 pub(super) mod tree;
@@ -174,6 +173,8 @@ impl DiffCalculator {
             }
         }
 
+        println!("diff_calc > start apply changes");
+        let start = Instant::now();
         let affected_set = if !use_persisted_shortcut {
             // if we don't have all the ops, we need to calculate the diff by tracing back
             let mut merged = before.clone();
@@ -297,6 +298,8 @@ impl DiffCalculator {
                 None
             }
         };
+
+        println!("end apply changes, used {:?}", start.elapsed());
 
         // Because we need to get correct `bring_back` value that indicates container is created during this round of diff calc,
         // we need to iterate from parents to children. i.e. from smaller depth to larger depth.
@@ -1284,40 +1287,42 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         );
                     }
                     InnerListOp::Move { from, elem_id, to } => {
-                        let last_pos = if is_checkout {
-                            // TODO: PERF: this lookup can be optimized
-                            oplog.with_history_cache(|h| {
-                                let list = &h.get_checkout_index().movable_list;
-                                list.last_pos(
-                                    *elem_id,
-                                    this.tracker.current_vv(),
-                                    // TODO: PERF: Provide the lamport of to version
-                                    Lamport::MAX,
-                                    oplog,
-                                )
-                                .unwrap()
-                                .id()
-                            })
-                        } else {
-                            // When it's import or linear mode, we need to use a fake id
-                            // because we want to avoid using the history cache
-                            //
-                            // This ID will not be used. Because it will only be used when
-                            // we switch to an older version. And we know it's for importing and
-                            // to version is always after from version (!is_checkout), so that
-                            // we don't need to checkout to the version before from.
-                            const FAKE_ID: ID = ID {
-                                peer: PeerID::MAX - 2,
-                                counter: 0,
+                        if !this.tracker.current_vv().includes_id(op.id()) {
+                            let last_pos = if is_checkout {
+                                // TODO: PERF: this lookup can be optimized
+                                oplog.with_history_cache(|h| {
+                                    let list = &h.get_checkout_index().movable_list;
+                                    list.last_pos(
+                                        *elem_id,
+                                        this.tracker.current_vv(),
+                                        // TODO: PERF: Provide the lamport of to version
+                                        Lamport::MAX,
+                                        oplog,
+                                    )
+                                    .unwrap()
+                                    .id()
+                                })
+                            } else {
+                                // When it's import or linear mode, we need to use a fake id
+                                // because we want to avoid using the history cache
+                                //
+                                // This ID will not be used. Because it will only be used when
+                                // we switch to an older version. And we know it's for importing and
+                                // to version is always after from version (!is_checkout), so that
+                                // we don't need to checkout to the version before from.
+                                const FAKE_ID: ID = ID {
+                                    peer: PeerID::MAX - 2,
+                                    counter: 0,
+                                };
+                                FAKE_ID
                             };
-                            FAKE_ID
-                        };
-                        this.tracker.move_item(
-                            op.id_full(),
-                            last_pos,
-                            *from as usize,
-                            *to as usize,
-                        );
+                            this.tracker.move_item(
+                                op.id_full(),
+                                last_pos,
+                                *from as usize,
+                                *to as usize,
+                            );
+                        }
                     }
                     InnerListOp::Set { .. } => {
                         // don't need to update tracker here
@@ -1349,6 +1354,8 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             unreachable!()
         };
 
+        println!("Start diff calc");
+        let diff_calc_start = Instant::now();
         assert_eq!(diff_mode, DiffMode::Checkout);
         let is_checkout = matches!(self.current_mode, DiffMode::Checkout | DiffMode::Import);
         let mut element_changes: FxHashMap<CompactIdLp, ElementDelta> = if is_checkout {
@@ -1363,6 +1370,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             }
         }
 
+        println!("Start list diff calc");
         let list_diff: Delta<SmallVec<[IdFull; 1]>, ()> = Delta {
             vec: list_diff
                 .iter()
@@ -1404,7 +1412,9 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                 .collect(),
         };
 
+        println!("Start element diff calc");
         if is_checkout {
+            let start = Instant::now();
             oplog.with_history_cache(|history_cache| {
                 let checkout_index = &history_cache.get_checkout_index().movable_list;
                 element_changes.retain(|id, change| {
@@ -1447,6 +1457,8 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     true
                 });
             });
+
+            println!("History cache lookup time cost {:?}", start.elapsed());
         }
 
         let diff = MovableListInnerDelta {
@@ -1454,6 +1466,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             elements: element_changes,
         };
 
+        println!("Diff calc time cost {:?}", diff_calc_start.elapsed());
         (InternalDiff::MovableList(diff), self.current_mode)
     }
 }

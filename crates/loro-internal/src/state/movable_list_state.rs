@@ -1,7 +1,10 @@
 use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 use serde_columnar::columnar;
-use std::sync::{Arc, Mutex, Weak};
+use std::{
+    sync::{Arc, Mutex, Weak},
+    time::Instant,
+};
 use tracing::{instrument, trace, warn};
 
 use fxhash::FxHashMap;
@@ -982,6 +985,7 @@ impl ContainerState for MovableListState {
             unreachable!()
         };
 
+        let start = Instant::now();
         if cfg!(debug_assertions) {
             self.inner.check_consistency();
         }
@@ -1241,6 +1245,7 @@ impl ContainerState for MovableListState {
             );
         }
 
+        println!("End apply diff, time cost {:?}", start.elapsed());
         Diff::List(event)
     }
 
@@ -1255,21 +1260,7 @@ impl ContainerState for MovableListState {
         match op.content.as_list().unwrap() {
             ListOp::Insert { slice, pos } => match slice {
                 ListSlice::RawData(list) => {
-                    let mut a;
-                    let mut b;
-                    let v: &mut dyn Iterator<Item = &LoroValue>;
-                    match list {
-                        std::borrow::Cow::Borrowed(list) => {
-                            a = Some(list.iter());
-                            v = a.as_mut().unwrap();
-                        }
-                        std::borrow::Cow::Owned(list) => {
-                            b = Some(list.iter());
-                            v = b.as_mut().unwrap();
-                        }
-                    }
-
-                    for (i, x) in v.enumerate() {
+                    for (i, x) in list.as_ref().iter().enumerate() {
                         let elem_id = op.idlp().inc(i as i32).try_into().unwrap();
                         let pos_id = op.id_full().inc(i as i32);
                         self.inner.insert_list_item(*pos + i, pos_id);

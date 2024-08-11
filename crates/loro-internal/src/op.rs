@@ -8,7 +8,7 @@ use crate::{
 };
 use crate::{delta::DeltaValue, LoroValue};
 use enum_as_inner::EnumAsInner;
-use loro_common::{CounterSpan, IdFull, IdLp, IdSpan};
+use loro_common::{ContainerType, CounterSpan, IdFull, IdLp, IdSpan};
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -115,6 +115,30 @@ impl Op {
             counter: id.counter,
             content,
             container,
+        }
+    }
+
+    /// If the estimated storage size of the content is greater than the given size,
+    /// return the length of the content that makes the estimated storage size equal to the given size.
+    /// Otherwise, return None.
+    pub(crate) fn check_whether_slice_content_to_fit_in_size(&self, size: usize) -> Option<usize> {
+        if self.estimate_storage_size() <= size {
+            return None;
+        }
+
+        match &self.content {
+            InnerContent::List(l) => match l {
+                crate::container::list::list_op::InnerListOp::Insert { .. } => {
+                    if matches!(self.container.get_type(), ContainerType::Text) {
+                        Some(size)
+                    } else {
+                        Some(size / 4)
+                    }
+                }
+                crate::container::list::list_op::InnerListOp::InsertText { .. } => Some(size),
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
         }
     }
 }
