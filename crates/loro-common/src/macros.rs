@@ -223,11 +223,11 @@ macro_rules! value_internal {
     };
 
     ([]) => {
-        $crate::LoroValue::List(std::sync::Arc::new(json_internal_vec![]))
+        $crate::LoroValue::List(std::sync::Arc::new((json_internal_vec![], once_cell::sync::OnceCell::new())))
     };
 
     ([ $($tt:tt)+ ]) => {
-        $crate::LoroValue::List(std::sync::Arc::new(value_internal!(@array [] $($tt)+)))
+        $crate::LoroValue::List(std::sync::Arc::new((value_internal!(@array [] $($tt)+), once_cell::sync::OnceCell::new())))
     };
 
     ({}) => {
@@ -238,7 +238,7 @@ macro_rules! value_internal {
         ({
             let mut object = $crate::FxHashMap::default();
             value_internal!(@object object () ($($tt)+) ($($tt)+));
-            $crate::LoroValue::Map(std::sync::Arc::new(object))
+            $crate::LoroValue::Map(std::sync::Arc::new((object, once_cell::sync::OnceCell::new())))
         })
     };
 
@@ -271,7 +271,7 @@ mod test {
     #[test]
     fn test_value_macro() {
         let v = loro_value!([1, 2, 3]);
-        let list = v.into_list().unwrap();
+        let list = &v.into_list().unwrap().0;
         assert_eq!(&*list, &[1.into(), 2.into(), 3.into()]);
 
         let map = loro_value!({
@@ -287,30 +287,29 @@ mod test {
             "binary": b"123",
         });
 
-        let map = map.into_map().unwrap();
+        let map = &map.into_map().unwrap().0;
         assert_eq!(map.len(), 8);
         assert!(*map.get("hi").unwrap().as_bool().unwrap());
         assert!(!(*map.get("false").unwrap().as_bool().unwrap()));
         assert!(map.get("null").unwrap().is_null());
-        assert_eq!(map.get("list").unwrap().as_list().unwrap().len(), 0);
+        assert_eq!(map.get("list").unwrap().as_list().unwrap().0.len(), 0);
         assert_eq!(*map.get("integer").unwrap().as_i64().unwrap(), 123);
         assert_eq!(*map.get("float").unwrap().as_double().unwrap(), 123.123);
-        assert_eq!(map.get("map").unwrap().as_map().unwrap().len(), 1);
+        assert_eq!(map.get("map").unwrap().as_map().unwrap().0.len(), 1);
         assert_eq!(
-            &**map
-                .get("map")
+            map.get("map")
                 .unwrap()
                 .as_map()
                 .unwrap()
+                .0
                 .get("a")
                 .unwrap()
                 .as_string()
-                .unwrap(),
+                .unwrap()
+                .0,
             "1"
         );
-        assert_eq!(
-            &**map.get("binary").unwrap().as_binary().unwrap(),
-            &b"123".to_vec()
-        );
+        let x = &map.get("binary").unwrap().as_binary().unwrap().0 as &[u8];
+        assert_eq!(x, &b"123".to_vec());
     }
 }

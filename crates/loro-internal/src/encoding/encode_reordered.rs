@@ -1364,7 +1364,8 @@ fn decode_op(
             let pos = prop as usize;
             match value {
                 Value::LoroValue(arr) => {
-                    let range = shared_arena.alloc_values(arr.into_list().unwrap().iter().cloned());
+                    let range =
+                        shared_arena.alloc_values(arr.into_list().unwrap().0.iter().cloned());
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
                             slice: SliceRange::new(range.start as u32..range.end as u32),
@@ -1405,7 +1406,8 @@ fn decode_op(
             let pos = prop as usize;
             match value {
                 Value::LoroValue(arr) => {
-                    let range = shared_arena.alloc_values(arr.into_list().unwrap().iter().cloned());
+                    let range =
+                        shared_arena.alloc_values(arr.into_list().unwrap().0.iter().cloned());
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
                             slice: SliceRange::new(range.start as u32..range.end as u32),

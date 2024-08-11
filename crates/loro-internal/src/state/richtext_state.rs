@@ -632,7 +632,10 @@ impl ContainerState for RichtextState {
 
     // value is a list
     fn get_value(&mut self) -> LoroValue {
-        LoroValue::String(Arc::new(self.state.get_mut().to_string()))
+        LoroValue::String(Arc::new((
+            self.state.get_mut().to_string(),
+            once_cell::sync::OnceCell::new(),
+        )))
     }
 
     #[doc = r" Get the index of the child container"]

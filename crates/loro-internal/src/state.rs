@@ -824,7 +824,7 @@ impl DocState {
             }
         }
 
-        LoroValue::Map(Arc::new(ans))
+        LoroValue::Map(Arc::new((ans, once_cell::sync::OnceCell::new())))
     }
 
     pub fn get_deep_value_with_id(&mut self) -> LoroValue {
@@ -845,7 +845,7 @@ impl DocState {
             }
         }
 
-        LoroValue::Map(Arc::new(ans))
+        LoroValue::Map(Arc::new((ans, once_cell::sync::OnceCell::new())))
     }
 
     pub(crate) fn get_container_deep_value_with_id(
@@ -858,12 +858,14 @@ impl DocState {
             return container.get_type().default_value();
         };
         let value = state.get_value();
-        let cid_str =
-            LoroValue::String(Arc::new(format!("idx:{}, id:{}", container.to_index(), id)));
+        let cid_str = LoroValue::String(Arc::new((
+            format!("idx:{}, id:{}", container.to_index(), id),
+            once_cell::sync::OnceCell::new(),
+        )));
         match value {
             LoroValue::Container(_) => unreachable!(),
             LoroValue::List(mut list) => {
-                if list.iter().all(|x| !x.is_container()) {
+                if list.0.iter().all(|x| !x.is_container()) {
                     return LoroValue::Map(Arc::new(fx_map!(
                         "cid".into() => cid_str,
                         "value".into() => LoroValue::List(list)
@@ -871,7 +873,7 @@ impl DocState {
                 }
 
                 let list_mut = Arc::make_mut(&mut list);
-                for item in list_mut.iter_mut() {
+                for item in list_mut.0.iter_mut() {
                     if item.is_container() {
                         let container = item.as_container().unwrap();
                         let container_idx = self.arena.register_container(container);
@@ -890,7 +892,7 @@ impl DocState {
             }
             LoroValue::Map(mut map) => {
                 let map_mut = Arc::make_mut(&mut map);
-                for (_key, value) in map_mut.iter_mut() {
+                for (_key, value) in map_mut.0.iter_mut() {
                     if value.is_container() {
                         let container = value.as_container().unwrap();
                         let container_idx = self.arena.register_container(container);
@@ -927,14 +929,15 @@ impl DocState {
                     // the metadata of this node. When the user get the deep value,
                     // we need to add a field named `meta` to the tree node,
                     // whose value is deep value of map container.
-                    get_meta_value(Arc::make_mut(&mut list), self);
+                    let list_mut = Arc::make_mut(&mut list);
+                    get_meta_value(&mut list_mut.0, self);
                 } else {
-                    if list.iter().all(|x| !x.is_container()) {
+                    if list.0.iter().all(|x| !x.is_container()) {
                         return LoroValue::List(list);
                     }
 
                     let list_mut = Arc::make_mut(&mut list);
-                    for item in list_mut.iter_mut() {
+                    for item in list_mut.0.iter_mut() {
                         if item.is_container() {
                             let container = item.as_container().unwrap();
                             let container_idx = self.arena.register_container(container);
@@ -946,12 +949,12 @@ impl DocState {
                 LoroValue::List(list)
             }
             LoroValue::Map(mut map) => {
-                if map.iter().all(|x| !x.1.is_container()) {
+                if map.0.iter().all(|x| !x.1.is_container()) {
                     return LoroValue::Map(map);
                 }
 
                 let map_mut = Arc::make_mut(&mut map);
-                for (_key, value) in map_mut.iter_mut() {
+                for (_key, value) in map_mut.0.iter_mut() {
                     if value.is_container() {
                         let container = value.as_container().unwrap();
                         let container_idx = self.arena.register_container(container);
@@ -1125,8 +1128,8 @@ impl DocState {
                 _ => state.get_value(),
             };
             if match &value {
-                LoroValue::List(l) => l.is_empty(),
-                LoroValue::Map(m) => m.is_empty(),
+                LoroValue::List(l) => l.0.is_empty(),
+                LoroValue::Map(m) => m.0.is_empty(),
                 _ => false,
             } {
                 return None;

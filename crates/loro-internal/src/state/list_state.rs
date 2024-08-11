@@ -473,7 +473,7 @@ impl ContainerState for ListState {
 
     fn get_value(&mut self) -> LoroValue {
         let ans = self.to_vec();
-        LoroValue::List(Arc::new(ans))
+        LoroValue::List(Arc::new((ans, once_cell::sync::OnceCell::new())))
     }
 
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {

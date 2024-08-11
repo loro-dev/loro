@@ -2168,11 +2168,12 @@ impl RichtextState {
                 if &attributes == last {
                     let hash_map = ans.last_mut().unwrap().as_map_mut().unwrap();
                     let s = Arc::make_mut(hash_map)
+                        .0
                         .get_mut("insert")
                         .unwrap()
                         .as_string_mut()
                         .unwrap();
-                    Arc::make_mut(s).push_str(span.text.as_str());
+                    Arc::make_mut(s).0.push_str(span.text.as_str());
                     continue;
                 }
             }
@@ -2180,18 +2181,24 @@ impl RichtextState {
             let mut value = FxHashMap::default();
             value.insert(
                 "insert".into(),
-                LoroValue::String(Arc::new(span.text.as_str().into())),
+                LoroValue::String(Arc::new((
+                    span.text.as_str().into(),
+                    once_cell::sync::OnceCell::new(),
+                ))),
             );
 
-            if !attributes.as_map().unwrap().is_empty() {
+            if !attributes.as_map().unwrap().0.is_empty() {
                 value.insert("attributes".into(), attributes.clone());
             }
 
-            ans.push(LoroValue::Map(Arc::new(value)));
+            ans.push(LoroValue::Map(Arc::new((
+                value,
+                once_cell::sync::OnceCell::new(),
+            ))));
             last_attributes = Some(attributes);
         }
 
-        LoroValue::List(Arc::new(ans))
+        LoroValue::List(Arc::new((ans, once_cell::sync::OnceCell::new())))
     }
 
     #[allow(unused)]

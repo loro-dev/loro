@@ -16,7 +16,7 @@ macro_rules! fx_map {
             $(
                 m.insert($key, $value);
             )*
-            m
+            (m, once_cell::sync::OnceCell::new())
         }
     };
 }

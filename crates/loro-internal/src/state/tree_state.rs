@@ -1129,7 +1129,7 @@ impl ContainerState for TreeState {
 pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
     for node in nodes.iter_mut() {
         let map = Arc::make_mut(node.as_map_mut().unwrap());
-        let meta = map.get_mut("meta").unwrap();
+        let meta = map.0.get_mut("meta").unwrap();
         let id = meta.as_container().unwrap();
         *meta = state.get_container_deep_value(state.arena.register_container(id));
     }

@@ -1276,8 +1276,8 @@ impl ContainerState for MovableListState {
     }
 
     fn get_value(&mut self) -> LoroValue {
-        let list = self.get_value_inner();
-        LoroValue::List(Arc::new(list))
+        let list: Vec<LoroValue> = self.get_value_inner();
+        LoroValue::List(Arc::new((list, once_cell::sync::OnceCell::new())))
     }
 
     /// Get the index of the child container
