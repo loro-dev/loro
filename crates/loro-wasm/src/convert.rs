@@ -272,10 +272,9 @@ pub fn convert(value: LoroValue) -> JsValue {
         }
         LoroValue::Container(container_id) => JsValue::from(&container_id),
         LoroValue::Binary(binary) => {
-            let binary = Arc::try_unwrap(binary).unwrap_or_else(|m| (*m).clone());
-            let arr = Uint8Array::new_with_length(binary.0.len() as u32);
-            for (i, v) in binary.0.into_iter().enumerate() {
-                arr.set_index(i as u32, *v);
+            let arr = Uint8Array::new_with_length(binary.0 .0.len() as u32);
+            for (i, v) in binary.0 .0.iter().copied().enumerate() {
+                arr.set_index(i as u32, v);
             }
             arr.into_js_result().unwrap()
         }

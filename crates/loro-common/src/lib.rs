@@ -18,7 +18,7 @@ pub use error::{LoroError, LoroResult, LoroTreeError};
 pub use fxhash::FxHashMap;
 pub use internal_string::InternalString;
 pub use span::*;
-pub use value::{to_value, LoroValue};
+pub use value::{to_value, LoroValue, LoroValueBinary};
 
 /// Unique id for each peer. It's a random u64 by default.
 pub type PeerID = u64;

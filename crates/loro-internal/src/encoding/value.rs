@@ -4,8 +4,8 @@ use enum_as_inner::EnumAsInner;
 use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue, TreeID,
-    ID,
+    ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue,
+    LoroValueBinary, TreeID, ID,
 };
 use serde::{Deserialize, Serialize};
 
@@ -621,10 +621,9 @@ impl<'a> ValueReader<'a> {
                 }
                 ans.into()
             }
-            LoroValueKind::Binary => LoroValue::Binary(Arc::new((
-                Box::from(self.read_binary()?),
-                once_cell::sync::OnceCell::new(),
-            ))),
+            LoroValueKind::Binary => {
+                LoroValue::Binary(LoroValueBinary::new(Box::from(self.read_binary()?)))
+            }
             LoroValueKind::ContainerType => {
                 let u8 = self.read_u8()?;
                 let container_id = ContainerID::new_normal(
@@ -737,10 +736,9 @@ impl<'a> ValueReader<'a> {
                         });
                         continue;
                     }
-                    LoroValueKind::Binary => LoroValue::Binary(Arc::new((
-                        Box::from(self.read_binary()?),
-                        once_cell::sync::OnceCell::new(),
-                    ))),
+                    LoroValueKind::Binary => {
+                        LoroValue::Binary(LoroValueBinary::new(Box::from(self.read_binary()?)))
+                    }
                     LoroValueKind::ContainerType => {
                         let u8 = self.read_u8()?;
                         let container_id = ContainerID::new_normal(
@@ -974,9 +972,7 @@ impl ValueWriter {
                 }
                 (LoroValueKind::Map, len)
             }
-            LoroValue::Binary(value) => {
-                (LoroValueKind::Binary, self.write_binary(value.0.as_ref()))
-            }
+            LoroValue::Binary(value) => (LoroValueKind::Binary, self.write_binary(&value)),
             LoroValue::Container(c) => (
                 LoroValueKind::ContainerType,
                 self.write_u8(c.container_type().to_u8()),

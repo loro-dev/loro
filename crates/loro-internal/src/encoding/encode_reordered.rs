@@ -1625,7 +1625,7 @@ struct EncodedStateInfo {
 mod test {
     use std::sync::Arc;
 
-    use loro_common::LoroValue;
+    use loro_common::{LoroValue, LoroValueBinary};
 
     use crate::fx_map;
 
@@ -1667,10 +1667,9 @@ mod test {
         test_loro_value_read_write(1.23, None);
         test_loro_value_read_write(LoroValue::Null, None);
         test_loro_value_read_write(
-            LoroValue::Binary(Arc::new((
-                Box::from(vec![123, 223, 255, 0, 1, 2, 3]),
-                once_cell::sync::OnceCell::new(),
-            ))),
+            LoroValue::Binary(LoroValueBinary::new(Box::from(vec![
+                123, 223, 255, 0, 1, 2, 3,
+            ]))),
             None,
         );
         test_loro_value_read_write("sldk;ajfas;dlkfas测试", None);

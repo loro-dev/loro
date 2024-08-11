@@ -309,7 +309,7 @@ mod test {
                 .0,
             "1"
         );
-        let x = &map.get("binary").unwrap().as_binary().unwrap().0 as &[u8];
+        let x = &map.get("binary").unwrap().as_binary().unwrap() as &[u8];
         assert_eq!(x, &b"123".to_vec());
     }
 }

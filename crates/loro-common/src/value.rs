@@ -2,7 +2,12 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use once_cell::sync::OnceCell;
 use serde::{de::VariantAccess, Deserialize, Serialize};
-use std::{collections::HashMap, hash::Hash, ops::Index, sync::Arc};
+use std::{
+    collections::HashMap,
+    hash::Hash,
+    ops::{Deref, Index},
+    sync::Arc,
+};
 
 use crate::ContainerID;
 
@@ -16,13 +21,44 @@ pub enum LoroValue {
     Bool(bool),
     Double(f64),
     I64(i64),
-    // i64?
-    Binary(Arc<(Box<[u8]>, OnceCell<u64>)>),
+    Binary(LoroValueBinary),
     String(Arc<(String, OnceCell<u64>)>),
     List(Arc<(Vec<LoroValue>, OnceCell<u64>)>),
     // PERF We can use InternalString as key
     Map(Arc<(FxHashMap<String, LoroValue>, OnceCell<u64>)>),
     Container(ContainerID),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoroValueBinary(pub Arc<(Box<[u8]>, OnceCell<u64>)>);
+impl Deref for LoroValueBinary {
+    type Target = Box<[u8]>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0 .0
+    }
+}
+
+impl Hash for LoroValueBinary {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let hash = self.0 .1.get_or_init(|| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            self.0 .0.hash(&mut hasher);
+            std::hash::Hasher::finish(&hasher)
+        });
+
+        state.write_u64(*hash);
+    }
+}
+
+impl LoroValueBinary {
+    pub fn new(data: Box<[u8]>) -> Self {
+        Self(Arc::new((data, OnceCell::new())))
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.0 .0
+    }
 }
 
 const MAX_DEPTH: usize = 128;
@@ -33,7 +69,7 @@ impl<'a> arbitrary::Arbitrary<'a> for LoroValue {
             1 => LoroValue::Bool(u.arbitrary()?),
             2 => LoroValue::Double(u.arbitrary()?),
             3 => LoroValue::I64(u.arbitrary()?),
-            4 => LoroValue::Binary(Arc::new((u.arbitrary()?, OnceCell::new()))),
+            4 => LoroValue::Binary(LoroValueBinary::new(u.arbitrary()?)),
             5 => LoroValue::String(Arc::new((u.arbitrary()?, OnceCell::new()))),
             6 => LoroValue::List(Arc::new((u.arbitrary()?, OnceCell::new()))),
             7 => LoroValue::Map(Arc::new((u.arbitrary()?, OnceCell::new()))),
@@ -162,7 +198,7 @@ impl TryFrom<LoroValue> for Arc<Vec<u8>> {
 
     fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
         match value {
-            LoroValue::Binary(v) => Ok(Arc::new(v.0.to_vec())),
+            LoroValue::Binary(v) => Ok(Arc::new(v.to_vec())),
             _ => Err("not a binary"),
         }
     }
@@ -226,16 +262,9 @@ impl Hash for LoroValue {
             LoroValue::I64(v) => {
                 state.write_i64(*v);
             }
-            LoroValue::Binary(v) => match v.1.get() {
-                Some(v) => state.write_u64(*v),
-                None => {
-                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    v.0.hash(&mut hasher);
-                    let hash = std::hash::Hasher::finish(&hasher);
-                    v.1.set(hash).unwrap();
-                    state.write_u64(hash);
-                }
-            },
+            LoroValue::Binary(v) => {
+                v.hash(state);
+            }
             LoroValue::String(v) => match v.1.get() {
                 Some(v) => state.write_u64(*v),
                 None => {
@@ -292,19 +321,19 @@ impl<S: Into<String>, M> From<HashMap<S, LoroValue, M>> for LoroValue {
 
 impl From<Vec<u8>> for LoroValue {
     fn from(vec: Vec<u8>) -> Self {
-        LoroValue::Binary(Arc::new((Box::from(vec), OnceCell::new())))
+        LoroValue::Binary(LoroValueBinary(Arc::new((Box::from(vec), OnceCell::new()))))
     }
 }
 
 impl From<&'_ [u8]> for LoroValue {
     fn from(vec: &[u8]) -> Self {
-        LoroValue::Binary(Arc::new((Box::from(vec), OnceCell::new())))
+        LoroValue::Binary(LoroValueBinary::new(Box::from(vec)))
     }
 }
 
 impl<const N: usize> From<&'_ [u8; N]> for LoroValue {
     fn from(vec: &[u8; N]) -> Self {
-        LoroValue::Binary(Arc::new((Box::from(*vec), OnceCell::new())))
+        LoroValue::Binary(LoroValueBinary::new(Box::from(*vec)))
     }
 }
 
@@ -392,6 +421,8 @@ pub mod wasm {
 
     use crate::{ContainerID, LoroError, LoroValue};
 
+    use super::LoroValueBinary;
+
     pub fn convert(value: LoroValue) -> JsValue {
         match value {
             LoroValue::Null => JsValue::NULL,
@@ -400,7 +431,7 @@ pub mod wasm {
             LoroValue::I64(i) => JsValue::from_f64(i as f64),
             LoroValue::String(s) => JsValue::from_str(&s.0),
             LoroValue::Binary(binary) => {
-                let binary = Arc::try_unwrap(binary).unwrap_or_else(|m| (*m).clone());
+                let binary = Arc::try_unwrap(binary.0).unwrap_or_else(|m| (*m).clone());
                 let arr = Uint8Array::new_with_length(binary.0.len() as u32);
                 for (i, v) in binary.0.into_iter().enumerate() {
                     arr.set_index(i as u32, *v);
@@ -465,7 +496,7 @@ pub mod wasm {
                     binary.push(array.get_index(i));
                 }
 
-                LoroValue::Binary(Arc::new((Box::from(binary), OnceCell::new())))
+                LoroValue::Binary(LoroValueBinary::new(Box::from(binary)))
             } else if js_value.is_object() {
                 let object = js_value.unchecked_into::<Object>();
                 let mut map = FxHashMap::default();
@@ -525,7 +556,7 @@ impl Serialize for LoroValue {
                 LoroValue::Double(d) => serializer.serialize_f64(*d),
                 LoroValue::I64(i) => serializer.serialize_i64(*i),
                 LoroValue::String(s) => serializer.serialize_str(&s.0),
-                LoroValue::Binary(b) => serializer.collect_seq(b.0.iter()),
+                LoroValue::Binary(b) => serializer.collect_seq(b.iter()),
                 LoroValue::List(l) => serializer.collect_seq(l.0.iter()),
                 LoroValue::Map(m) => serializer.collect_map(m.0.iter()),
                 LoroValue::Container(id) => {
@@ -557,7 +588,7 @@ impl Serialize for LoroValue {
                     serializer.serialize_newtype_variant("LoroValue", 7, "Container", id)
                 }
                 LoroValue::Binary(b) => {
-                    serializer.serialize_newtype_variant("LoroValue", 8, "Binary", &b.0)
+                    serializer.serialize_newtype_variant("LoroValue", 8, "Binary", &b.0 .0)
                 }
             }
         }
@@ -667,10 +698,7 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
         E: serde::de::Error,
     {
         let binary = Vec::from_iter(v.iter().copied());
-        Ok(LoroValue::Binary(Arc::new((
-            Box::from(binary),
-            OnceCell::new(),
-        ))))
+        Ok(LoroValue::Binary(LoroValueBinary::new(Box::from(binary))))
     }
 
     fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
@@ -678,10 +706,7 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
         E: serde::de::Error,
     {
         let binary = Vec::from_iter(v.iter().copied());
-        Ok(LoroValue::Binary(Arc::new((
-            Box::from(binary),
-            OnceCell::new(),
-        ))))
+        Ok(LoroValue::Binary(LoroValueBinary::new(Box::from(binary))))
     }
 
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -752,7 +777,7 @@ impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
             (LoroValueFields::Container, v) => v.newtype_variant().map(|x| LoroValue::Container(x)),
             (LoroValueFields::Binary, v) => v
                 .newtype_variant()
-                .map(|x: Vec<u8>| LoroValue::Binary(Arc::new((Box::from(x), OnceCell::new())))),
+                .map(|x: Vec<u8>| LoroValue::Binary(LoroValueBinary::new(Box::from(x)))),
         }
     }
 }
