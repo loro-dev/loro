@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use loro::{cursor::Side, LoroResult};
+use loro::{cursor::Side, ContainerTrait, LoroResult};
 
 use crate::{ContainerID, LoroValue, LoroValueLike, ValueOrContainer};
 
@@ -16,6 +16,10 @@ impl LoroMovableList {
         Self {
             list: loro::LoroMovableList::new(),
         }
+    }
+
+    pub fn is_attached(&self) -> bool {
+        self.list.is_attached()
     }
 
     /// Get the container id.
