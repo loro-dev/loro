@@ -55,6 +55,8 @@ pub fn main() {
         after_free_history_cache - after_compact_change_store
     );
 
-    let snapshot = doc.export_snapshot();
-    println!("Snapshot size: {}", ByteSize(snapshot.len()));
+    println!(
+        "ChangeStore size: {}",
+        ByteSize(doc.with_oplog(|log| log.change_store_kv_size()))
+    );
 }
