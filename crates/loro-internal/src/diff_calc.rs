@@ -173,8 +173,6 @@ impl DiffCalculator {
             }
         }
 
-        println!("diff_calc > start apply changes");
-        let start = Instant::now();
         let affected_set = if !use_persisted_shortcut {
             // if we don't have all the ops, we need to calculate the diff by tracing back
             let mut merged = before.clone();
@@ -298,8 +296,6 @@ impl DiffCalculator {
                 None
             }
         };
-
-        println!("end apply changes, used {:?}", start.elapsed());
 
         // Because we need to get correct `bring_back` value that indicates container is created during this round of diff calc,
         // we need to iterate from parents to children. i.e. from smaller depth to larger depth.
@@ -1354,7 +1350,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             unreachable!()
         };
 
-        println!("Start diff calc");
         let diff_calc_start = Instant::now();
         assert_eq!(diff_mode, DiffMode::Checkout);
         let is_checkout = matches!(self.current_mode, DiffMode::Checkout | DiffMode::Import);
@@ -1370,7 +1365,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             }
         }
 
-        println!("Start list diff calc");
         let list_diff: Delta<SmallVec<[IdFull; 1]>, ()> = Delta {
             vec: list_diff
                 .iter()
@@ -1412,7 +1406,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                 .collect(),
         };
 
-        println!("Start element diff calc");
         if is_checkout {
             let start = Instant::now();
             oplog.with_history_cache(|history_cache| {
@@ -1457,8 +1450,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     true
                 });
             });
-
-            println!("History cache lookup time cost {:?}", start.elapsed());
         }
 
         let diff = MovableListInnerDelta {
@@ -1466,7 +1457,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             elements: element_changes,
         };
 
-        println!("Diff calc time cost {:?}", diff_calc_start.elapsed());
         (InternalDiff::MovableList(diff), self.current_mode)
     }
 }

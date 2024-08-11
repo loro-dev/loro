@@ -13,7 +13,10 @@ use self::insert_set::InsertSet;
 // If we make this too large, we may have too many cursors inside a fragment
 // and trigger the worst case
 const MAX_FRAGMENT_LEN: usize = 256;
-const MAX_SET_SIZE_IN_INSERT: usize = 256;
+#[cfg(not(test))]
+const SMALL_SET_MAX_LEN: usize = 32;
+#[cfg(test)]
+const SMALL_SET_MAX_LEN: usize = 4;
 
 /// This struct maintains the mapping of Op `ID` to
 ///
@@ -50,7 +53,7 @@ impl IdToCursor {
 
         if let Cursor::Insert(InsertSet::Small(set)) = cursor {
             if set.len > MAX_FRAGMENT_LEN as u32 {
-                assert!(set.len == 1);
+                assert!(set.set.len() == 1);
                 let insert = set.set[0];
                 let mut counter = id.counter;
                 for start in (0..set.len).step_by(MAX_FRAGMENT_LEN) {
@@ -323,10 +326,12 @@ pub(super) enum Cursor {
 }
 
 mod insert_set {
+    use std::{cell::RefCell, rc::Rc};
+
     use super::*;
     use generic_btree::{
         rle::{CanRemove, TryInsert},
-        BTree, BTreeTrait,
+        BTree, BTreeTrait, LengthFinder, UseLengthFinder,
     };
     use smallvec::SmallVec;
 
@@ -348,6 +353,7 @@ mod insert_set {
         }
 
         pub(crate) fn update(&mut self, from: usize, to: usize, new_leaf: LeafIndex) {
+            self.upgrade_if_needed();
             match self {
                 Self::Small(set) => {
                     set.update(from, to, new_leaf);
@@ -404,26 +410,44 @@ mod insert_set {
                         ans
                     }))
                 }
-                InsertSet::Large(_) => todo!(),
+                InsertSet::Large(set) => {
+                    let mut offset = 0;
+                    Box::new(set.tree.iter().map(move |elem| {
+                        let ans = IterCursor::Insert {
+                            leaf: elem.leaf,
+                            id_span: IdSpan::new(
+                                peer,
+                                counter + offset as Counter,
+                                counter + offset as Counter + elem.len as Counter,
+                            ),
+                        };
+
+                        offset += elem.len;
+                        ans
+                    }))
+                }
             }
         }
 
+        /// Iterate the given target span range, the start id of the InsertSet is cur_id
         pub(crate) fn iter_range(
             &self,
-            id: ID,
-            start: i32,
-            end: i32,
+            cur_id: ID,
+            target_start_counter: i32,
+            target_end_counter: i32,
         ) -> Box<dyn Iterator<Item = IterCursor> + '_> {
             match self {
                 InsertSet::Small(set) => {
                     let mut offset = 0;
                     Box::new(set.set.iter().filter_map(move |elem| {
                         let id_span = IdSpan::new(
-                            id.peer,
-                            (id.counter + offset as Counter).max(start).min(end),
-                            (id.counter + offset as Counter + elem.len as Counter)
-                                .max(start)
-                                .min(end),
+                            cur_id.peer,
+                            (cur_id.counter + offset as Counter)
+                                .max(target_start_counter)
+                                .min(target_end_counter),
+                            (cur_id.counter + offset as Counter + elem.len as Counter)
+                                .max(target_start_counter)
+                                .min(target_end_counter),
                         );
 
                         offset += elem.len;
@@ -439,7 +463,90 @@ mod insert_set {
                         Some(ans)
                     }))
                 }
-                InsertSet::Large(_) => todo!(),
+                InsertSet::Large(set) => {
+                    // let mut offset = 0;
+                    // Box::new(set.tree.iter().filter_map(move |elem| {
+                    //     let id_span = IdSpan::new(
+                    //         cur_id.peer,
+                    //         (cur_id.counter + offset as Counter)
+                    //             .max(target_start_counter)
+                    //             .min(target_end_counter),
+                    //         (cur_id.counter + offset as Counter + elem.len as Counter)
+                    //             .max(target_start_counter)
+                    //             .min(target_end_counter),
+                    //     );
+
+                    //     offset += elem.len;
+                    //     if id_span.atom_len() == 0 {
+                    //         return None;
+                    //     }
+
+                    //     let ans = IterCursor::Insert {
+                    //         leaf: elem.leaf,
+                    //         id_span,
+                    //     };
+
+                    //     Some(ans)
+                    // }));
+                    let offset = (target_start_counter - cur_id.counter).max(0);
+                    let (start, mut start_counter) = if offset > 0 {
+                        match set.tree.query::<LengthFinder>(&(offset as usize)) {
+                            Some(start) => (
+                                std::ops::Bound::Included(start.cursor),
+                                // NOTE: Can this be wrong?
+                                target_start_counter - start.cursor.offset as Counter,
+                            ),
+                            _ => (std::ops::Bound::Unbounded, cur_id.counter),
+                        }
+                    } else {
+                        (std::ops::Bound::Unbounded, cur_id.counter)
+                    };
+
+                    Box::new(
+                        set.tree
+                            .iter_range((start, std::ops::Bound::Unbounded))
+                            .map(move |b| {
+                                let id_span = IdSpan::new(
+                                    cur_id.peer,
+                                    (start_counter)
+                                        .max(target_start_counter)
+                                        .min(target_end_counter),
+                                    (start_counter + b.elem.rle_len() as Counter)
+                                        .max(target_start_counter)
+                                        .min(target_end_counter),
+                                );
+
+                                start_counter += b.elem.rle_len() as Counter;
+                                if id_span.atom_len() == 0 {
+                                    return None;
+                                }
+
+                                let ans = IterCursor::Insert {
+                                    leaf: b.elem.leaf,
+                                    id_span,
+                                };
+
+                                Some(ans)
+                            })
+                            .take_while(|x| x.is_some())
+                            .map(|x| x.unwrap()),
+                    )
+                }
+            }
+        }
+
+        fn upgrade_if_needed(&mut self) {
+            match self {
+                InsertSet::Small(set) => {
+                    if set.set.len() < SMALL_SET_MAX_LEN {
+                        return;
+                    }
+
+                    let set = std::mem::take(&mut set.set);
+                    let tree_set = LargeInsertSet::init_from_small(set);
+                    *self = InsertSet::Large(tree_set);
+                }
+                InsertSet::Large(_) => {}
             }
         }
     }
@@ -449,9 +556,9 @@ mod insert_set {
         pub set: SmallVec<[Insert; 1]>,
         pub len: u32,
     }
+
     impl SmallInsertSet {
         fn update(&mut self, from: usize, to: usize, new_leaf: LeafIndex) {
-            // TODO: PERF can be speed up
             let mut cur_scan_index: usize = 0;
             let mut new_set = SmallVec::new();
             let mut new_leaf_inserted = false;
@@ -604,6 +711,12 @@ mod insert_set {
         }
     }
 
+    impl UseLengthFinder<InsertSetBTreeTrait> for InsertSetBTreeTrait {
+        fn get_len(cache: &i32) -> usize {
+            *cache as usize
+        }
+    }
+
     #[derive(Debug)]
     pub(super) struct LargeInsertSet {
         tree: Box<BTree<InsertSetBTreeTrait>>,
@@ -617,11 +730,31 @@ mod insert_set {
         }
 
         fn update(&mut self, from: usize, to: usize, new_leaf: LeafIndex) {
-            todo!()
+            let Some(from) = self.tree.query::<LengthFinder>(&from) else {
+                return;
+            };
+            let Some(to) = self.tree.query::<LengthFinder>(&to) else {
+                return;
+            };
+
+            self.tree.update(from.cursor..to.cursor, &mut |x| {
+                x.leaf = new_leaf;
+                None
+            });
         }
 
         fn get_insert(&self, pos: usize) -> Option<LeafIndex> {
-            todo!()
+            let c = self.tree.query::<LengthFinder>(&pos)?.cursor;
+            Some(self.tree.get_elem(c.leaf)?.leaf)
+        }
+
+        fn init_from_small(set: SmallVec<[Insert; 1]>) -> LargeInsertSet {
+            let mut tree_set = LargeInsertSet::new();
+            for item in set.into_iter() {
+                tree_set.tree.push(item);
+            }
+
+            tree_set
         }
     }
 }

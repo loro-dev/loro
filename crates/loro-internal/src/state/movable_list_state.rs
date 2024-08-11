@@ -1245,7 +1245,6 @@ impl ContainerState for MovableListState {
             );
         }
 
-        println!("End apply diff, time cost {:?}", start.elapsed());
         Diff::List(event)
     }
 
