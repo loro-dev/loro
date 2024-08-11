@@ -6,7 +6,7 @@ use generic_btree::{
 };
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength as _;
-use tracing::{instrument, trace};
+use tracing::instrument;
 
 use crate::{cursor::AbsolutePosition, VersionVector};
 
@@ -54,7 +54,7 @@ impl Tracker {
             origin_left: None,
             origin_right: None,
         });
-        this.id_to_cursor.insert(
+        this.id_to_cursor.insert_without_split(
             ID::new(UNKNOWN_PEER_ID, 0),
             id_to_cursor::Cursor::new_insert(result.leaf, u32::MAX as usize / 4),
         );
@@ -594,10 +594,11 @@ impl Tracker {
         from: &VersionVector,
         to: &VersionVector,
     ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
+        println!("Tracker.diff");
         // tracing::info!("Init: {:#?}, ", &self);
         self._checkout(from, false);
         self._checkout(to, true);
-        // self.id_to_cursor.diagnose();
+        self.id_to_cursor.diagnose();
         // tracing::trace!("Trace::diff {:#?}, ", &self);
 
         self.rope.get_diff()
