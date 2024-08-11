@@ -1,12 +1,9 @@
-pub mod allocation_tree;
-mod allocation_tree_types;
 mod bfs;
+pub(crate) use bfs::calc_critical_version_bfs as calc_critical_version;
+
+// Only for testing
 mod dfs;
-mod lamport_split;
 mod view;
-pub(crate) use allocation_tree::calc_critical_version_allocation_tree;
-pub(crate) use bfs::calc_critical_version_bfs;
 pub(crate) use dfs::calc_critical_version_dfs;
 pub(crate) use dfs::get_end_list;
-pub(crate) use lamport_split::calc_critical_version_lamport_split;
-pub(crate) use view::mermaid_pro_ultimate_galaxy_brain_edition_9000;
+pub(crate) use view::allocation_mermaid;

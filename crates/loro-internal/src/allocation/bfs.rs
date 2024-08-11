@@ -3,7 +3,7 @@ use crate::{
     id::ID,
 };
 
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashSet;
 use std::collections::BinaryHeap;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -54,7 +54,7 @@ impl BfsBody {
             });
         }
         let mut result: Vec<ID> = Vec::new();
-        while let Some(SortBase { id, lamport: l }) = self.queue.pop() {
+        while let Some(SortBase { id, lamport: _ }) = self.queue.pop() {
             if self.queue.is_empty() {
                 result.push(id);
             }

@@ -15,7 +15,7 @@ pub fn get_all_points<T: DagNode, D: Dag<Node = T>>(
     }
 }
 
-pub(crate) fn mermaid_pro_ultimate_galaxy_brain_edition_9000<T: DagNode, D: Dag<Node = T>>(
+pub(crate) fn allocation_mermaid<T: DagNode, D: Dag<Node = T>>(
     graph: &D,
     start_id_list: &[ID],
     end_id_list: &[ID],
@@ -30,7 +30,7 @@ pub(crate) fn mermaid_pro_ultimate_galaxy_brain_edition_9000<T: DagNode, D: Dag<
     let mut counter_map: FxHashMap<ID, u32> = FxHashMap::default();
     for x in points {
         counter_map.insert(x, counter);
-        counter += 1;   
+        counter += 1;
     }
     for start in start_id_list {
         s.push_str(&format!(

@@ -383,146 +383,6 @@ mod iter {
     }
 }
 
-mod allocation_tree {
-    use super::*;
-    use crate::{allocation::calc_critical_version_allocation_tree, delta::DeltaValue};
-    use rand::{rngs::StdRng, SeedableRng};
-
-    #[test]
-    fn test_alloc_tree_small() {
-        let mut a = TestDag::new(0);
-        let mut b = TestDag::new(1);
-        let mut c = TestDag::new(2);
-        a.push(10);
-        b.merge(&a);
-        b.push(3);
-        c.merge(&b);
-        c.push(4);
-        a.push(3);
-        a.merge(&c);
-        a.push(2);
-        b.merge(&a);
-        assert_eq!(
-            calc_critical_version_allocation_tree::<TestNode, TestDag>(
-                &b,
-                &[ID {
-                    peer: 0,
-                    counter: 13,
-                }],
-                &[ID {
-                    peer: 0,
-                    counter: 9,
-                }],
-            ),
-            vec![
-                ID {
-                    peer: 0,
-                    counter: 9,
-                },
-                ID {
-                    peer: 0,
-                    counter: 13,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn test_alloc_tree_big() {
-        let num = 5;
-        let mut rng = StdRng::seed_from_u64(100);
-        let mut dags = (0..num).map(TestDag::new).collect::<Vec<_>>();
-        for _ in 0..100 {
-            Interaction::generate(&mut rng, num as usize).apply(&mut dags);
-        }
-        for i in 1..num {
-            let (a, other) = array_mut_ref!(&mut dags, [0, i as usize]);
-            a.merge(other);
-        }
-        let start = dags[0].frontier();
-        let ends = [
-            ID {
-                peer: 3,
-                counter: 7,
-            },
-            ID {
-                peer: 4,
-                counter: 6,
-            },
-        ];
-        assert_eq!(
-            calc_critical_version_allocation_tree(&dags[0], start, &ends).length(),
-            0
-        );
-    }
-}
-
-mod lamport_split {
-    use super::*;
-    use crate::{allocation::calc_critical_version_lamport_split, delta::DeltaValue};
-    use rand::{rngs::StdRng, SeedableRng};
-
-    #[test]
-    fn test_lamport_split_small() {
-        let mut a = TestDag::new(0);
-        let mut b = TestDag::new(1);
-        let mut c = TestDag::new(2);
-        a.push(10);
-        b.merge(&a);
-        b.push(3);
-        c.merge(&b);
-        c.push(4);
-        a.push(3);
-        a.merge(&c);
-        a.push(2);
-        b.merge(&a);
-        assert_eq!(
-            calc_critical_version_lamport_split::<TestNode, TestDag>(
-                &b,
-                &[ID {
-                    peer: 0,
-                    counter: 13,
-                }],
-                &[ID {
-                    peer: 0,
-                    counter: 9,
-                }],
-            )
-            .length(),
-            0
-        );
-    }
-
-    #[test]
-    fn test_lamport_split_big() {
-        let num = 5;
-        let mut rng = StdRng::seed_from_u64(100);
-        let mut dags = (0..num).map(TestDag::new).collect::<Vec<_>>();
-        for _ in 0..100 {
-            Interaction::generate(&mut rng, num as usize).apply(&mut dags);
-        }
-        for i in 1..num {
-            let (a, other) = array_mut_ref!(&mut dags, [0, i as usize]);
-            a.merge(other);
-        }
-        let start = dags[0].frontier();
-        let ends = [
-            ID {
-                peer: 3,
-                counter: 7,
-            },
-            ID {
-                peer: 4,
-                counter: 6,
-            },
-        ];
-        assert_eq!(
-            calc_critical_version_lamport_split(&dags[0], start, &ends).length(),
-            0
-        );
-    }
-}
-
 mod dfs {
     use super::*;
     use crate::{allocation::calc_critical_version_dfs, delta::DeltaValue};
@@ -591,7 +451,7 @@ mod dfs {
 
 mod bfs {
     use super::*;
-    use crate::{allocation::calc_critical_version_bfs, delta::DeltaValue};
+    use crate::{allocation::calc_critical_version, delta::DeltaValue};
     use rand::{rngs::StdRng, SeedableRng};
 
     #[test]
@@ -609,7 +469,7 @@ mod bfs {
         a.push(2);
         b.merge(&a);
         assert_eq!(
-            calc_critical_version_bfs::<TestNode, TestDag>(
+            calc_critical_version::<TestNode, TestDag>(
                 &b,
                 &[ID {
                     peer: 0,
@@ -638,7 +498,7 @@ mod bfs {
             peer: 3,
             counter: 7,
         }];
-        assert_eq!(calc_critical_version_bfs(&dags[0], start).length(), 0);
+        assert_eq!(calc_critical_version(&dags[0], start).length(), 0);
     }
 }
 
@@ -732,11 +592,10 @@ mod get_version_vector {
 #[test]
 fn test_alloc() {
     for x in 1..10000 {
-        let num = 4; // <--- peer of the dag
-        let mut rng = thread_rng(); // <--- this is the only difference
+        let num = 4;
+        let mut rng = thread_rng();
         let mut dags = (0..num).map(TestDag::new).collect::<Vec<_>>();
         for _ in 0..20 {
-            // <--- size of the dag
             Interaction::generate(&mut rng, num as usize).apply(&mut dags);
         }
         for i in 1..num {
@@ -747,7 +606,7 @@ fn test_alloc() {
         let start = a.frontier();
         let end = crate::allocation::get_end_list(a, start);
         let critical_version_actual: HashSet<ID> =
-            crate::allocation::calc_critical_version_bfs(a, start)
+            crate::allocation::calc_critical_version(a, start)
                 .into_iter()
                 .collect();
         let critical_version: HashSet<ID> =
@@ -773,7 +632,7 @@ pub fn fuzz_alloc_tree(num: usize, mut actions: Vec<Interaction>) {
     let a = &dags[0];
     let start = a.frontier();
     let end = crate::allocation::get_end_list(a, start);
-    let actual: HashSet<ID> = crate::allocation::calc_critical_version_bfs(a, start)
+    let actual: HashSet<ID> = crate::allocation::calc_critical_version(a, start)
         .into_iter()
         .collect();
     let expected: HashSet<ID> = crate::allocation::calc_critical_version_dfs(a, start, &end)
