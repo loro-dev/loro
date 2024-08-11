@@ -511,22 +511,22 @@ fn test_text_checkout() {
     {
         doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 0)].as_slice()))
             .unwrap();
-        assert_eq!(text.get_value().as_string().unwrap().as_str(), "你");
+        assert_eq!(text.get_value().as_string().unwrap().0.as_str(), "你");
     }
     {
         doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 1)].as_slice()))
             .unwrap();
-        assert_eq!(text.get_value().as_string().unwrap().as_str(), "你界");
+        assert_eq!(text.get_value().as_string().unwrap().0.as_str(), "你界");
     }
     {
         doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 2)].as_slice()))
             .unwrap();
-        assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好界");
+        assert_eq!(text.get_value().as_string().unwrap().0.as_str(), "你好界");
     }
     {
         doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()))
             .unwrap();
-        assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世界");
+        assert_eq!(text.get_value().as_string().unwrap().0.as_str(), "你好世界");
     }
     assert_eq!(text.len_unicode(), 4);
     assert_eq!(text.len_utf8(), 12);
@@ -534,37 +534,37 @@ fn test_text_checkout() {
 
     doc.checkout_to_latest();
     doc.with_txn(|txn| text.delete_with_txn(txn, 3, 1)).unwrap();
-    assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世");
+    assert_eq!(text.get_value().as_string().unwrap().0.as_str(), "你好世");
     doc.with_txn(|txn| text.delete_with_txn(txn, 2, 1)).unwrap();
-    assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好");
+    assert_eq!(text.get_value().as_string().unwrap().0.as_str(), "你好");
     doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()))
         .unwrap();
-    assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世界");
+    assert_eq!(text.get_value().as_string().unwrap().0.as_str(), "你好世界");
     doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 4)].as_slice()))
         .unwrap();
-    assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世");
+    assert_eq!(text.get_value().as_string().unwrap().0.as_str(), "你好世");
     doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 5)].as_slice()))
         .unwrap();
-    assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好");
+    assert_eq!(text.get_value().as_string().unwrap().0.as_str(), "你好");
     {
         doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 0)].as_slice()))
             .unwrap();
-        assert_eq!(text.get_value().as_string().unwrap().as_str(), "你");
+        assert_eq!(text.get_value().as_string().unwrap().0.as_str(), "你");
     }
     {
         doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 1)].as_slice()))
             .unwrap();
-        assert_eq!(text.get_value().as_string().unwrap().as_str(), "你界");
+        assert_eq!(text.get_value().as_string().unwrap().0.as_str(), "你界");
     }
     {
         doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 2)].as_slice()))
             .unwrap();
-        assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好界");
+        assert_eq!(text.get_value().as_string().unwrap().0.as_str(), "你好界");
     }
     {
         doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()))
             .unwrap();
-        assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世界");
+        assert_eq!(text.get_value().as_string().unwrap().0.as_str(), "你好世界");
     }
 }
 
@@ -936,11 +936,20 @@ fn tree_attach() {
     doc.get_list("list").insert_container(0, tree).unwrap();
     let v = doc.get_deep_value();
     assert_eq!(
-        v.as_map().unwrap().get("list").unwrap().as_list().unwrap()[0]
+        v.as_map()
+            .unwrap()
+            .0
+            .get("list")
+            .unwrap()
             .as_list()
-            .unwrap()[0]
+            .unwrap()
+            .0[0]
+            .as_list()
+            .unwrap()
+            .0[0]
             .as_map()
             .unwrap()
+            .0
             .get("meta")
             .unwrap()
             .to_json_value(),

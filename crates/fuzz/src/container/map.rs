@@ -67,7 +67,10 @@ impl ActorTrait for MapActor {
         let map = self.loro.get_map("map");
         let value_a = map.get_deep_value();
         let value_b = self.tracker.lock().unwrap().to_value();
-        assert_eq!(&value_a, value_b.into_map().unwrap().get("map").unwrap());
+        assert_eq!(
+            &value_a,
+            value_b.into_map().unwrap().0.  get("map").unwrap()
+        );
     }
 
     fn container_len(&self) -> u8 {

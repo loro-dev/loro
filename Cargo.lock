@@ -608,6 +608,7 @@ dependencies = [
  "ctor 0.2.6",
  "flate2",
  "loro 0.16.2",
+ "once_cell",
  "serde_json",
  "tabled 0.15.0",
  "tracing",

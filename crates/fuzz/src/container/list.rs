@@ -75,7 +75,7 @@ impl ActorTrait for ListActor {
         let list = self.loro.get_list("list");
         let value = list.get_deep_value();
         let tracker = self.tracker.lock().unwrap().to_value();
-        assert_eq!(&value, tracker.into_map().unwrap().get("list").unwrap());
+        assert_eq!(&value, tracker.into_map().unwrap().0.get("list").unwrap());
     }
 
     fn add_new_container(&mut self, container: Container) {

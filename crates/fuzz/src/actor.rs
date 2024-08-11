@@ -351,34 +351,34 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
     fn eq(a: &LoroValue, b: &LoroValue) -> bool {
         match (a, b) {
             (LoroValue::Map(a), LoroValue::Map(b)) => {
-                for (k, v) in a.iter() {
+                for (k, v) in a.0.iter() {
                     let is_empty = match v {
-                        LoroValue::String(s) => s.is_empty(),
-                        LoroValue::List(l) => l.is_empty(),
-                        LoroValue::Map(m) => m.is_empty(),
+                        LoroValue::String(s) => s.0.is_empty(),
+                        LoroValue::List(l) => l.0.is_empty(),
+                        LoroValue::Map(m) => m.0.is_empty(),
                         _ => false,
                     };
                     if is_empty {
                         continue;
                     }
 
-                    if !eq(v, b.get(k).unwrap_or(&LoroValue::Double(0.))) {
+                    if !eq(v, b.0.get(k).unwrap_or(&LoroValue::Double(0.))) {
                         return false;
                     }
                 }
 
-                for (k, v) in b.iter() {
+                for (k, v) in b.0.iter() {
                     let is_empty = match v {
-                        LoroValue::String(s) => s.is_empty(),
-                        LoroValue::List(l) => l.is_empty(),
-                        LoroValue::Map(m) => m.is_empty(),
+                        LoroValue::String(s) => s.0.is_empty(),
+                        LoroValue::List(l) => l.0.is_empty(),
+                        LoroValue::Map(m) => m.0.is_empty(),
                         _ => false,
                     };
                     if is_empty {
                         continue;
                     }
 
-                    if !eq(v, a.get(k).unwrap_or(&LoroValue::Double(0.))) {
+                    if !eq(v, a.0.get(k).unwrap_or(&LoroValue::Double(0.))) {
                         return false;
                     }
                 }
@@ -386,11 +386,11 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                 true
             }
             (LoroValue::List(a_list), LoroValue::List(b_list)) => {
-                if is_tree_values(a_list.as_ref()) {
-                    assert_tree_value_eq(a_list, b_list);
+                if is_tree_values(a_list.0.as_ref()) {
+                    assert_tree_value_eq(a_list.0.as_ref(), b_list.0.as_ref());
                     true
                 } else {
-                    a_list.iter().zip(b_list.iter()).all(|(a, b)| eq(a, b))
+                    a_list.0.iter().zip(b_list.0.iter()).all(|(a, b)| eq(a, b))
                 }
             }
             (a, b) => a == b,
@@ -406,7 +406,7 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
 
 pub fn is_tree_values(value: &[LoroValue]) -> bool {
     if let Some(LoroValue::Map(map)) = value.first() {
-        let map_keys = map.as_ref().keys().cloned().collect::<FxHashSet<_>>();
+        let map_keys = map.0.keys().cloned().collect::<FxHashSet<_>>();
         return map_keys.contains("id")
             && map_keys.contains("parent")
             && map_keys.contains("meta")
@@ -431,21 +431,22 @@ struct FlatNode {
 
 impl FlatNode {
     fn from_loro_value(value: &LoroValue) -> Self {
-        let map = value.as_map().unwrap();
-        let id = map.get("id").unwrap().as_string().unwrap().to_string();
+        let map = &value.as_map().unwrap().0;
+        let id = map.get("id").unwrap().as_string().unwrap().0.to_string();
         let parent = map
             .get("parent")
             .unwrap()
             .as_string()
-            .map(|x| x.to_string());
+            .map(|x| x.0.to_string());
 
-        let meta = map.get("meta").unwrap().as_map().unwrap().as_ref().clone();
+        let meta = map.get("meta").unwrap().as_map().unwrap().0.clone();
         let index = *map.get("index").unwrap().as_i64().unwrap() as usize;
         let position = map
             .get("fractional_index")
             .unwrap()
             .as_string()
             .unwrap()
+            .0
             .to_string();
         FlatNode {
             id,
@@ -521,7 +522,7 @@ pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
                     .into_iter()
                     .sorted_by_key(|(k, _)| k.clone())
                     .map(|(mut k, v)| {
-                        k.push_str(v.as_string().map_or("", |f| f.as_str()));
+                        k.push_str(v.as_string().map_or("", |f| f.0.as_str()));
                         k
                     })
                     .collect::<String>();
@@ -538,7 +539,7 @@ pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
                     .into_iter()
                     .sorted_by_key(|(k, _)| k.clone())
                     .map(|(mut k, v)| {
-                        k.push_str(v.as_string().map_or("", |f| f.as_str()));
+                        k.push_str(v.as_string().map_or("", |f| f.0.as_str()));
                         k
                     })
                     .collect::<String>();

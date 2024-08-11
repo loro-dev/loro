@@ -61,12 +61,12 @@ fn normalize_value(value: &mut LoroValue) {
             }
         }
         LoroValue::List(l) => {
-            for v in Arc::make_mut(l).iter_mut() {
+            for v in Arc::make_mut(l).0.iter_mut() {
                 normalize_value(v);
             }
         }
         LoroValue::Map(m) => {
-            for (_, v) in Arc::make_mut(m).iter_mut() {
+            for (_, v) in Arc::make_mut(m).0.iter_mut() {
                 normalize_value(v);
             }
         }

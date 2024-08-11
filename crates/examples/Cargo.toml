@@ -7,6 +7,7 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+once_cell = "1.19.0"
 bench-utils = { path = "../bench-utils" }
 loro = { path = "../loro" }
 tabled = "0.15.0"

@@ -866,9 +866,12 @@ impl DocState {
             LoroValue::Container(_) => unreachable!(),
             LoroValue::List(mut list) => {
                 if list.0.iter().all(|x| !x.is_container()) {
-                    return LoroValue::Map(Arc::new(fx_map!(
-                        "cid".into() => cid_str,
-                        "value".into() => LoroValue::List(list)
+                    return LoroValue::Map(Arc::new((
+                        fx_map!(
+                            "cid".into() => cid_str,
+                            "value".into() => LoroValue::List(list)
+                        ),
+                        once_cell::sync::OnceCell::new(),
                     )));
                 }
 
@@ -885,9 +888,12 @@ impl DocState {
                     }
                 }
 
-                LoroValue::Map(Arc::new(fx_map!(
-                    "cid".into() => cid_str,
-                    "value".into() => LoroValue::List(list)
+                LoroValue::Map(Arc::new((
+                    fx_map!(
+                        "cid".into() => cid_str,
+                        "value".into() => LoroValue::List(list)
+                    ),
+                    once_cell::sync::OnceCell::new(),
                 )))
             }
             LoroValue::Map(mut map) => {
@@ -904,14 +910,20 @@ impl DocState {
                     }
                 }
 
-                LoroValue::Map(Arc::new(fx_map!(
-                    "cid".into() => cid_str,
-                    "value".into() => LoroValue::Map(map)
+                LoroValue::Map(Arc::new((
+                    fx_map!(
+                        "cid".into() => cid_str,
+                        "value".into() => LoroValue::Map(map)
+                    ),
+                    once_cell::sync::OnceCell::new(),
                 )))
             }
-            _ => LoroValue::Map(Arc::new(fx_map!(
-                "cid".into() => cid_str,
-                "value".into() => value
+            _ => LoroValue::Map(Arc::new((
+                fx_map!(
+                    "cid".into() => cid_str,
+                    "value".into() => value
+                ),
+                once_cell::sync::OnceCell::new(),
             ))),
         }
     }

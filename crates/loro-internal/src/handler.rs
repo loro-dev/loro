@@ -3970,15 +3970,15 @@ mod test {
         loro2.import(&exported).unwrap();
         let mut txn = loro2.txn().unwrap();
         let text = txn.get_text("hello");
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello");
         text.insert_with_txn(&mut txn, 5, " world").unwrap();
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello world");
         txn.commit().unwrap();
         loro.import(&loro2.export_from(&Default::default()))
             .unwrap();
         let txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello world");
     }
 
     #[test]
@@ -3997,21 +3997,21 @@ mod test {
         loro2.import(&exported).unwrap();
         let mut txn = loro2.txn().unwrap();
         let text = txn.get_text("hello");
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello");
         text.insert_with_txn(&mut txn, 5, " world").unwrap();
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello world");
         txn.commit().unwrap();
 
         loro.import(&loro2.export_from(&Default::default()))
             .unwrap();
         let txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello world");
         txn.commit().unwrap();
 
         // test checkout
         loro.checkout(&Frontiers::from_id(ID::new(2, 1))).unwrap();
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello w");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello w");
     }
 
     #[test]
@@ -4051,7 +4051,7 @@ mod test {
         // assert has bold
         let value = handler.get_richtext_value();
         assert_eq!(value[0]["insert"], "hello".into());
-        let meta = value[0]["attributes"].as_map().unwrap();
+        let meta = &value[0]["attributes"].as_map().unwrap().0;
         assert_eq!(meta.len(), 1);
         meta.get("bold").unwrap();
 
@@ -4060,12 +4060,12 @@ mod test {
             .import(&loro.export_from(&Default::default()))
             .unwrap();
         let handler2 = loro2.get_text("richtext");
-        assert_eq!(&**handler2.get_value().as_string().unwrap(), "hello world");
+        assert_eq!(handler2.get_value().as_string().unwrap().0, "hello world");
 
         // assert has bold
         let value = handler2.get_richtext_value();
         assert_eq!(value[0]["insert"], "hello".into());
-        let meta = value[0]["attributes"].as_map().unwrap();
+        let meta = &value[0]["attributes"].as_map().unwrap().0;
         assert_eq!(meta.len(), 1);
         meta.get("bold").unwrap();
 

@@ -1667,7 +1667,10 @@ mod test {
         test_loro_value_read_write(1.23, None);
         test_loro_value_read_write(LoroValue::Null, None);
         test_loro_value_read_write(
-            LoroValue::Binary(Arc::new(vec![123, 223, 255, 0, 1, 2, 3])),
+            LoroValue::Binary(Arc::new((
+                Box::from(vec![123, 223, 255, 0, 1, 2, 3]),
+                once_cell::sync::OnceCell::new(),
+            ))),
             None,
         );
         test_loro_value_read_write("sldk;ajfas;dlkfas测试", None);
@@ -1688,11 +1691,14 @@ mod test {
         );
         test_loro_value_read_write(vec![1i32, 2, 3], None);
         test_loro_value_read_write(
-            LoroValue::Map(Arc::new(fx_map![
-                "1".into() => 123.into(),
-                "2".into() => "123".into(),
-                "3".into() => vec![true].into()
-            ])),
+            LoroValue::Map(Arc::new((
+                fx_map![
+                    "1".into() => 123.into(),
+                    "2".into() => "123".into(),
+                    "3".into() => vec![true].into()
+                ],
+                once_cell::sync::OnceCell::new(),
+            ))),
             None,
         );
     }
