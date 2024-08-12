@@ -73,7 +73,7 @@ impl<'a> From<&'a LoroValue> for loro::LoroValue {
             LoroValue::Binary { value } => loro::LoroValue::Binary(Arc::new(value.clone())),
             LoroValue::String { value } => loro::LoroValue::String(Arc::new(value.clone())),
             LoroValue::List { value } => {
-                loro::LoroValue::List(Arc::new(value.into_iter().map(Into::into).collect()))
+                loro::LoroValue::List(Arc::new(value.iter().map(Into::into).collect()))
             }
             LoroValue::Map { value } => loro::LoroValue::Map(Arc::new(
                 value.iter().map(|(k, v)| (k.clone(), v.into())).collect(),

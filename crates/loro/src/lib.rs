@@ -1547,6 +1547,14 @@ impl LoroMovableList {
         self.handler.id().clone()
     }
 
+    /// Whether the container is attached to a document
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
     /// Insert a value at the given position.
     pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
         self.handler.insert(pos, v)
