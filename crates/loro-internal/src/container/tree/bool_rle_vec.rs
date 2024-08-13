@@ -52,6 +52,57 @@ impl BoolRleVec {
         Some(is_last_run_true)
     }
 
+    pub fn drop_last_n(&mut self, n: usize) {
+        if n > self.len {
+            panic!("Attempted to drop more elements than exist in the vector");
+        }
+
+        let mut remaining = n;
+        while remaining > 0 {
+            if let Some(last) = self.rle_vec.last_mut() {
+                if *last <= remaining as u32 {
+                    remaining -= *last as usize;
+                    self.rle_vec.pop();
+                } else {
+                    *last -= remaining as u32;
+                    remaining = 0;
+                }
+            } else {
+                break;
+            }
+        }
+
+        self.len -= n;
+
+        // Remove any trailing zero-length runs
+        while self.rle_vec.last().map_or(false, |&x| x == 0) {
+            self.rle_vec.pop();
+        }
+    }
+
+    pub fn merge(&mut self, other: &BoolRleVec) {
+        if self.is_empty() {
+            self.rle_vec = other.rle_vec.clone();
+            self.len = other.len;
+            return;
+        }
+
+        if other.is_empty() {
+            return;
+        }
+
+        // Align the end of self with the start of other
+        let self_last_run_true = self.rle_vec.len() % 2 == 0;
+        if self_last_run_true {
+            self.rle_vec.extend_from_slice(&other.rle_vec);
+        } else {
+            *self.rle_vec.last_mut().unwrap() += other.rle_vec[0];
+            self.rle_vec.extend_from_slice(&other.rle_vec[1..]);
+        }
+
+        self.len += other.len;
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
@@ -280,5 +331,110 @@ mod test {
 
         let iter = long_rle_vec.iter().skip(999);
         assert_eq!(iter.collect::<Vec<_>>(), vec![true, false, true]);
+    }
+
+    #[test]
+    fn test_bool_rle_vec_merge() {
+        // Test merging two empty vectors
+        let mut vec1 = BoolRleVec::new();
+        let vec2 = BoolRleVec::new();
+        vec1.merge(&vec2);
+        assert!(vec1.is_empty());
+
+        // Test merging an empty vector with a non-empty one
+        let mut vec1 = BoolRleVec::new();
+        let mut vec2 = BoolRleVec::new();
+        vec2.push(true);
+        vec2.push(false);
+        vec1.merge(&vec2);
+        assert_eq!(vec1.iter().collect::<Vec<_>>(), vec![true, false]);
+
+        // Test merging two non-empty vectors
+        let mut vec1 = BoolRleVec::new();
+        let mut vec2 = BoolRleVec::new();
+        vec1.push(true);
+        vec1.push(true);
+        vec2.push(false);
+        vec2.push(true);
+        vec1.merge(&vec2);
+        assert_eq!(
+            vec1.iter().collect::<Vec<_>>(),
+            vec![true, true, false, true]
+        );
+
+        // Test merging with alignment (last run of vec1 matches first run of vec2)
+        let mut vec1 = BoolRleVec::new();
+        let mut vec2 = BoolRleVec::new();
+        vec1.push(true);
+        vec1.push(false);
+        vec2.push(false);
+        vec2.push(true);
+        vec1.merge(&vec2);
+        assert_eq!(
+            vec1.iter().collect::<Vec<_>>(),
+            vec![true, false, false, true]
+        );
+
+        // Test merging with long runs
+        let mut vec1 = BoolRleVec::new();
+        let mut vec2 = BoolRleVec::new();
+        for _ in 0..100 {
+            vec1.push(true);
+        }
+        for _ in 0..100 {
+            vec2.push(false);
+        }
+        vec1.merge(&vec2);
+        assert_eq!(vec1.len(), 200);
+        assert_eq!(vec1.rle_vec.len(), 3);
+        assert_eq!(vec1.iter().take(100).filter(|&x| x).count(), 100);
+        assert_eq!(vec1.iter().skip(100).filter(|&x| !x).count(), 100);
+    }
+
+    #[test]
+    fn test_drop_last_n() {
+        // Test dropping from a single run
+        let mut vec = BoolRleVec::new();
+        for _ in 0..5 {
+            vec.push(true);
+        }
+        vec.drop_last_n(3);
+        assert_eq!(vec.iter().collect::<Vec<_>>(), vec![true, true]);
+
+        // Test dropping across multiple runs
+        let mut vec = BoolRleVec::new();
+        vec.push(true);
+        vec.push(true);
+        vec.push(false);
+        vec.push(false);
+        vec.push(true);
+        vec.drop_last_n(3);
+        assert_eq!(vec.iter().collect::<Vec<_>>(), vec![true, true]);
+
+        // Test dropping entire vector
+        let mut vec = BoolRleVec::new();
+        vec.push(true);
+        vec.push(false);
+        vec.drop_last_n(2);
+        assert!(vec.is_empty());
+
+        // Test dropping from long runs
+        let mut vec = BoolRleVec::new();
+        for _ in 0..100 {
+            vec.push(true);
+        }
+        for _ in 0..100 {
+            vec.push(false);
+        }
+        vec.drop_last_n(150);
+        assert_eq!(vec.len(), 50);
+        assert!(vec.iter().all(|x| x));
+
+        // Test dropping zero elements
+        let mut vec = BoolRleVec::new();
+        vec.push(true);
+        vec.push(false);
+        vec.drop_last_n(0);
+        assert_eq!(vec.iter().collect::<Vec<_>>(), vec![true, false]);
     }
 }
