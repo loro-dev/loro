@@ -1334,6 +1334,7 @@ mod snapshot {
         #[columnar(class = "vec", iter = "EncodedTreeNode")]
         nodes: Vec<EncodedTreeNode>,
         alive_len: u32,
+        reserved_has_effect_bool_rle: Vec<u8>,
     }
 
     fn encode(
@@ -1367,6 +1368,7 @@ mod snapshot {
             EncodedTree {
                 nodes,
                 alive_len: alive_len as u32,
+                reserved_has_effect_bool_rle: vec![],
             },
         )
     }
