@@ -103,7 +103,15 @@ impl ContainerStore {
     }
 
     pub fn get_value(&mut self, idx: ContainerIdx) -> Option<LoroValue> {
-        self.store.get_mut(&idx).map(|c| c.get_value())
+        self.store.get_mut(&idx).map(|c| {
+            c.get_value(
+                idx,
+                ContainerCreationContext {
+                    configure: &self.conf,
+                    peer: self.peer.load(std::sync::atomic::Ordering::Relaxed),
+                },
+            )
+        })
     }
 
     pub fn encode(&mut self) -> Bytes {
@@ -284,12 +292,12 @@ impl ContainerWrapper {
         self.state.as_mut().unwrap()
     }
 
-    pub fn get_value(&mut self) -> LoroValue {
+    pub fn get_value(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> LoroValue {
         if let Some(v) = self.value.as_ref() {
             return v.clone();
         }
 
-        self.decode_value().unwrap();
+        self.decode_value(idx, ctx).unwrap();
         if self.value.is_none() {
             return self.state.as_mut().unwrap().get_value();
         }
@@ -337,19 +345,19 @@ impl ContainerWrapper {
         }
     }
 
-    pub fn ensure_value(&mut self) -> &LoroValue {
+    pub fn ensure_value(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> &LoroValue {
         if self.value.is_some() {
         } else if self.state.is_some() {
             let value = self.state.as_mut().unwrap().get_value();
             self.value = Some(value);
         } else {
-            self.decode_value().unwrap();
+            self.decode_value(idx, ctx).unwrap();
         }
 
         self.value.as_ref().unwrap()
     }
 
-    fn decode_value(&mut self) -> LoroResult<()> {
+    fn decode_value(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> LoroResult<()> {
         let Some(b) = self.bytes.as_ref() else {
             return Ok(());
         };
@@ -359,7 +367,13 @@ impl ContainerWrapper {
             ContainerType::Map => MapState::decode_value(b)?,
             ContainerType::List => ListState::decode_value(b)?,
             ContainerType::MovableList => MovableListState::decode_value(b)?,
-            ContainerType::Tree => TreeState::decode_value(b)?,
+            ContainerType::Tree => {
+                assert!(self.state.is_none());
+                let mut state = TreeState::decode_snapshot_fast(idx, (LoroValue::Null, b), ctx)?;
+                self.value = Some(state.get_value());
+                self.state = Some(State::TreeState(Box::new(state)));
+                return Ok(());
+            }
             #[cfg(feature = "counter")]
             ContainerType::Counter => CounterState::decode_value(b)?,
             ContainerType::Unknown(_) => UnknownState::decode_value(b)?,
@@ -378,7 +392,7 @@ impl ContainerWrapper {
         }
 
         if self.value.is_none() {
-            self.decode_value()?;
+            self.decode_value(idx, ctx)?;
         }
 
         let b = self.bytes.as_ref().unwrap();

@@ -97,6 +97,7 @@ impl std::fmt::Debug for DocState {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct ContainerCreationContext<'a> {
     configure: &'a Configure,
     peer: PeerID,
