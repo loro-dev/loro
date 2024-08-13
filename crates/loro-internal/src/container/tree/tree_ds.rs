@@ -14,7 +14,7 @@ pub(crate) struct TreeLinearHistory {
 
 struct TreeOpWrap {
     op: TreeOp,
-    last_update_on_target: Option<usize>,
+    last_effective_update_on_target: Option<usize>,
 }
 
 pub(crate) struct TreeOp {
@@ -47,11 +47,19 @@ impl TreeLinearHistory {
     }
 
     pub fn push(&mut self, op: TreeOp, has_effect: bool) {
-        let last = self.target_to_op_idx.insert(op.target, self.ops.len());
-        self.ops.push(TreeOpWrap {
-            op,
-            last_update_on_target: last,
-        });
+        if has_effect {
+            let last = self.target_to_op_idx.insert(op.target, self.ops.len());
+            self.ops.push(TreeOpWrap {
+                op,
+                last_effective_update_on_target: last,
+            });
+        } else {
+            self.ops.push(TreeOpWrap {
+                op,
+                last_effective_update_on_target: None,
+            });
+        }
+
         self.has_effect.push(has_effect);
     }
 
@@ -94,10 +102,12 @@ impl TreeLinearHistory {
         self.ops.last().map(|op| op.op.id.idlp())
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.ops.len()
     }
 
+    #[inline]
     pub fn get_bool_rle_vec(&self) -> &BoolRleVec {
         &self.has_effect
     }

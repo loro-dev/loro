@@ -3,8 +3,7 @@ use std::collections::BTreeSet;
 use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{ContainerID, HasId, IdFull, IdLp, IdSpan, Lamport, PeerID, TreeID, ID};
-use tracing::trace;
+use loro_common::{ContainerID, IdFull, IdLp, IdSpan, Lamport, PeerID, TreeID, ID};
 
 use crate::{
     container::idx::ContainerIdx,
@@ -451,16 +450,6 @@ impl Ord for MoveLamportAndID {
         self.lamport
             .cmp(&other.lamport)
             .then_with(|| self.id.cmp(&other.id))
-    }
-}
-
-impl core::hash::Hash for MoveLamportAndID {
-    fn hash<H: core::hash::Hasher>(&self, ra_expand_state: &mut H) {
-        let MoveLamportAndID { lamport, id, .. } = self;
-        {
-            lamport.hash(ra_expand_state);
-            id.hash(ra_expand_state);
-        }
     }
 }
 
