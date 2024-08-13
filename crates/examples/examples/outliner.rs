@@ -86,6 +86,11 @@ pub fn main() {
         "Memory usage after freeing diff calculator: {}",
         get_mem_usage()
     );
+    doc.free_history_cache();
+    println!(
+        "Memory usage after freeing history cache: {}",
+        get_mem_usage()
+    );
 
     println!(
         "Updates size: {}",
