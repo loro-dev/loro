@@ -11,6 +11,7 @@ members = [
     "crates/fractional_index",
     "crates/dev-utils",
     "crates/delta",
+    "crates/loro-ffi",
 ]
 resolver = "2"
 

@@ -4,8 +4,8 @@ extern "C" {
 };
 
 int main(void) {
-  LoroCore* loro = loro_new();
-  Text* text = loro_get_text(loro, "text");
+  LoroDoc* loro = loro_new();
+  TextHandler* text = loro_get_text(loro, "text");
   text_insert(text, loro, 0, "abc");
   char* str = text_value(text);
   printf("%s", str);

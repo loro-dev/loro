@@ -2,7 +2,7 @@
 
 use std::ffi::{c_char, CStr, CString};
 
-use loro_internal::{LoroDoc, TextHandler};
+use loro_internal::{HandlerTrait, LoroDoc, TextHandler};
 
 /// create Loro with a random unique client id
 #[no_mangle]
