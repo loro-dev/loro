@@ -356,6 +356,13 @@ impl<'a> RichOp<'a> {
             self.lamport + self.start as Lamport,
         )
     }
+
+    pub fn idlp(&self) -> IdLp {
+        IdLp {
+            lamport: self.lamport + self.start as Lamport,
+            peer: self.peer,
+        }
+    }
 }
 
 pub(crate) struct RichOpBlockIter {

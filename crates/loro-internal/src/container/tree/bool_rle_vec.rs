@@ -303,7 +303,7 @@ mod test {
         rle_vec.push(false);
 
         // Test skipping zero elements
-        let iter = rle_vec.iter().skip(0);
+        let iter = rle_vec.iter();
         assert_eq!(
             iter.collect::<Vec<_>>(),
             vec![true, true, false, false, true, false]

@@ -374,52 +374,26 @@ impl MapHistoryCache {
 
 #[derive(Debug, Clone)]
 pub(crate) struct GroupedTreeOpInfo {
-    pub(crate) peer: PeerID,
     pub(crate) counter: Counter,
     pub(crate) value: TreeOp,
 }
 
-impl HasId for GroupedTreeOpInfo {
-    fn id_start(&self) -> loro_common::ID {
-        ID::new(self.peer, self.counter)
-    }
-}
-
-impl PartialEq for GroupedTreeOpInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.peer == other.peer && self.counter == other.counter
-    }
-}
-
-impl Eq for GroupedTreeOpInfo {}
-
-impl PartialOrd for GroupedTreeOpInfo {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for GroupedTreeOpInfo {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.peer.cmp(&other.peer)
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TreeOpGroup {
-    pub(crate) ops: BTreeMap<Lamport, BTreeSet<GroupedTreeOpInfo>>,
+    pub(crate) ops: BTreeMap<IdLp, GroupedTreeOpInfo>,
     pub(crate) tree_for_diff: Arc<Mutex<TreeCacheForDiff>>,
 }
 
 impl HistoryCacheTrait for TreeOpGroup {
     fn insert(&mut self, op: &RichOp) {
         let tree_op = op.raw_op().content.as_tree().unwrap();
-        let entry = self.ops.entry(op.lamport()).or_default();
-        entry.insert(GroupedTreeOpInfo {
-            value: tree_op.clone(),
-            counter: op.raw_op().counter,
-            peer: op.peer,
-        });
+        self.ops.insert(
+            op.idlp(),
+            GroupedTreeOpInfo {
+                value: tree_op.clone(),
+                counter: op.raw_op().counter,
+            },
+        );
     }
 }
 

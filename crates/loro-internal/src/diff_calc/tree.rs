@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{ContainerID, HasId, IdFull, IdSpan, Lamport, TreeID, ID};
+use loro_common::{ContainerID, HasId, IdFull, IdLp, IdSpan, Lamport, PeerID, TreeID, ID};
 use tracing::trace;
 
 use crate::{
@@ -208,24 +208,32 @@ impl TreeDiffCalculator {
                 .unwrap()
                 .as_tree()
                 .unwrap();
-            for (lamport, ops) in group.ops.range(forward_min_lamport..=max_lamport) {
-                for op in ops {
-                    if !tree_cache.current_vv.includes_id(op.id_start())
-                        && to.includes_id(op.id_start())
-                    {
-                        forward_ops.push((*lamport, op));
-                    }
+            for (idlp, op) in group.ops.range(
+                IdLp {
+                    lamport: forward_min_lamport,
+                    peer: 0,
+                }..=IdLp {
+                    lamport: max_lamport,
+                    peer: PeerID::MAX,
+                },
+            ) {
+                if !tree_cache
+                    .current_vv
+                    .includes_id(ID::new(idlp.peer, op.counter))
+                    && to.includes_id(ID::new(idlp.peer, op.counter))
+                {
+                    forward_ops.push((IdFull::new(idlp.peer, op.counter, idlp.lamport), op));
                 }
             }
 
             // tracing::info!("forward ops {:?}", forward_ops);
-            for (lamport, op) in forward_ops {
+            for (id, op) in forward_ops {
                 let op = MoveLamportAndID {
                     target: op.value.target(),
                     parent: op.value.parent_id(),
                     position: op.value.fractional_index(),
-                    id: op.id_start(),
-                    lamport,
+                    id: id.id(),
+                    lamport: id.lamport,
                     effected: false,
                 };
                 tree_cache.apply(op);
@@ -331,54 +339,58 @@ impl TreeDiffCalculator {
                 .unwrap()
                 .as_tree()
                 .unwrap();
-            for (lamport, ops) in group.ops.range(lca_min_lamport..=to_max_lamport) {
-                for op in ops {
-                    if !tree_cache.current_vv.includes_id(op.id_start())
-                        && to.includes_id(op.id_start())
-                    {
-                        let op = MoveLamportAndID {
-                            target: op.value.target(),
-                            parent: op.value.parent_id(),
-                            position: op.value.fractional_index(),
-                            id: op.id_start(),
-                            lamport: *lamport,
-                            effected: false,
-                        };
-                        let (old_parent, _position, _id) = tree_cache.get_parent_with_id(op.target);
-                        let is_parent_deleted = tree_cache.is_parent_deleted(op.parent);
-                        let is_old_parent_deleted = tree_cache.is_parent_deleted(old_parent);
-                        let effected = tree_cache.apply(op.clone());
-                        if effected {
-                            let this_diff = TreeDeltaItem::new(
-                                op.target,
-                                op.parent,
-                                old_parent,
-                                op.id_full(),
-                                is_parent_deleted,
-                                is_old_parent_deleted,
-                                op.position,
-                            );
-                            let is_create =
-                                matches!(this_diff.action, TreeInternalDiff::Create { .. });
-                            diffs.push(this_diff);
-                            if is_create {
-                                // TODO: per
-                                let mut s = vec![op.target];
-                                while let Some(t) = s.pop() {
-                                    let children =
-                                        tree_cache.get_children_with_id(TreeParentId::Node(t));
-                                    children.iter().for_each(|c| {
-                                        diffs.push(TreeDeltaItem {
-                                            target: c.0,
-                                            action: TreeInternalDiff::Create {
-                                                parent: TreeParentId::Node(t),
-                                                position: c.1.clone().unwrap(),
-                                            },
-                                            last_effective_move_op_id: c.2,
-                                        })
-                                    });
-                                    s.extend(children.iter().map(|x| x.0));
-                                }
+            for (idlp, op) in group.ops.range(
+                IdLp {
+                    lamport: lca_min_lamport,
+                    peer: 0,
+                }..=IdLp {
+                    lamport: to_max_lamport,
+                    peer: PeerID::MAX,
+                },
+            ) {
+                let id = ID::new(idlp.peer, op.counter);
+                if !tree_cache.current_vv.includes_id(id) && to.includes_id(id) {
+                    let op = MoveLamportAndID {
+                        target: op.value.target(),
+                        parent: op.value.parent_id(),
+                        position: op.value.fractional_index(),
+                        id,
+                        lamport: idlp.lamport,
+                        effected: false,
+                    };
+                    let (old_parent, _position, _id) = tree_cache.get_parent_with_id(op.target);
+                    let is_parent_deleted = tree_cache.is_parent_deleted(op.parent);
+                    let is_old_parent_deleted = tree_cache.is_parent_deleted(old_parent);
+                    let effected = tree_cache.apply(op.clone());
+                    if effected {
+                        let this_diff = TreeDeltaItem::new(
+                            op.target,
+                            op.parent,
+                            old_parent,
+                            op.id_full(),
+                            is_parent_deleted,
+                            is_old_parent_deleted,
+                            op.position,
+                        );
+                        let is_create = matches!(this_diff.action, TreeInternalDiff::Create { .. });
+                        diffs.push(this_diff);
+                        if is_create {
+                            // TODO: per
+                            let mut s = vec![op.target];
+                            while let Some(t) = s.pop() {
+                                let children =
+                                    tree_cache.get_children_with_id(TreeParentId::Node(t));
+                                children.iter().for_each(|c| {
+                                    diffs.push(TreeDeltaItem {
+                                        target: c.0,
+                                        action: TreeInternalDiff::Create {
+                                            parent: TreeParentId::Node(t),
+                                            position: c.1.clone().unwrap(),
+                                        },
+                                        last_effective_move_op_id: c.2,
+                                    })
+                                });
+                                s.extend(children.iter().map(|x| x.0));
                             }
                         }
                     }
