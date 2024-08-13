@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use dev_utils::{get_mem_usage, ByteSize};
 use loro::LoroDoc;
 
@@ -50,6 +52,7 @@ pub fn main() {
         );
     });
 
+    let start = Instant::now();
     // Move nodes around
     for _ in (0..n * k).step_by(avg_peer_edits) {
         let new_doc = doc.fork();
@@ -71,6 +74,7 @@ pub fn main() {
         doc.import(&new_doc.export_from(&doc.oplog_vv())).unwrap();
     }
 
+    println!("Time taken to move {} nodes: {:?}", n * k, start.elapsed());
     let mem = get_mem_usage();
     println!("Memory usage after moving {} nodes: {}", n, mem);
 

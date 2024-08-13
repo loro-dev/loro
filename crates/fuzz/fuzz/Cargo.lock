@@ -528,6 +528,7 @@ dependencies = [
  "loro-rle 0.16.2",
  "loro_fractional_index 0.16.2",
  "md5",
+ "nonmax",
  "num",
  "num-derive",
  "num-traits",
