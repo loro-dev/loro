@@ -1115,6 +1115,7 @@ dependencies = [
  "loro_fractional_index 0.16.2",
  "md5",
  "miniz_oxide 0.7.1",
+ "nonmax",
  "num",
  "num-derive",
  "num-traits",
