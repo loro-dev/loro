@@ -1023,7 +1023,7 @@ impl ContainerState for TreeState {
 
     fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
         match &raw_op.content {
-            crate::op::RawOpContent::Tree(tree) => match tree {
+            crate::op::RawOpContent::Tree(tree) => match &**tree {
                 TreeOp::Create {
                     target,
                     parent,
@@ -1147,7 +1147,7 @@ impl ContainerState for TreeState {
         for op in ctx.ops {
             assert_eq!(op.op.atom_len(), 1);
             let content = op.op.content.as_tree().unwrap();
-            match content {
+            match &**content {
                 TreeOp::Create {
                     target,
                     parent,

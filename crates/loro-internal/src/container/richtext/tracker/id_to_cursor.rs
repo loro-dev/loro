@@ -6,7 +6,6 @@ use generic_btree::{
 use loro_common::{Counter, IdSpan, PeerID, ID};
 use rle::{HasLength as RHasLength, Mergable as RMergeable, Sliceable};
 use smallvec::smallvec;
-use smallvec::SmallVec;
 
 use self::insert_set::InsertSet;
 
@@ -326,7 +325,6 @@ pub(super) enum Cursor {
 }
 
 mod insert_set {
-    use std::{cell::RefCell, rc::Rc};
 
     use super::*;
     use generic_btree::{

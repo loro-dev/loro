@@ -1,4 +1,4 @@
-use std::{sync::Arc};
+use std::sync::Arc;
 
 use either::Either;
 use loro_common::{ContainerID, ContainerType, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID};
@@ -250,7 +250,11 @@ fn encode_changes(
                             len: *signed_len,
                             start_id: register_id(id_start, peer_register),
                         },
-                        InnerListOp::Move { from, elem_id: from_id, to } => op::MovableListOp::Move {
+                        InnerListOp::Move {
+                            from,
+                            elem_id: from_id,
+                            to,
+                        } => op::MovableListOp::Move {
                             from: *from,
                             to: *to,
                             elem_id: register_idlp(from_id, peer_register),
@@ -344,7 +348,7 @@ fn encode_changes(
                 },
 
                 ContainerType::Tree => match content {
-                    InnerContent::Tree(op) => JsonOpContent::Tree(match op {
+                    InnerContent::Tree(op) => JsonOpContent::Tree(match &**op {
                         TreeOp::Create {
                             target,
                             parent,
@@ -560,7 +564,11 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                     to,
                 } => {
                     let from_id = convert_idlp(&from_id, peers);
-                    InnerContent::List(InnerListOp::Move { from, elem_id: from_id, to })
+                    InnerContent::List(InnerListOp::Move {
+                        from,
+                        elem_id: from_id,
+                        to,
+                    })
                 }
                 op::MovableListOp::Set { elem_id, mut value } => {
                     let elem_id = convert_idlp(&elem_id, peers);
@@ -596,23 +604,23 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                     target,
                     parent,
                     fractional_index,
-                } => InnerContent::Tree(TreeOp::Create {
+                } => InnerContent::Tree(Arc::new(TreeOp::Create {
                     target: convert_tree_id(&target, peers),
                     parent: parent.map(|p| convert_tree_id(&p, peers)),
                     position: fractional_index,
-                }),
+                })),
                 op::TreeOp::Move {
                     target,
                     parent,
                     fractional_index,
-                } => InnerContent::Tree(TreeOp::Move {
+                } => InnerContent::Tree(Arc::new(TreeOp::Move {
                     target: convert_tree_id(&target, peers),
                     parent: parent.map(|p| convert_tree_id(&p, peers)),
                     position: fractional_index,
-                }),
-                op::TreeOp::Delete { target } => InnerContent::Tree(TreeOp::Delete {
+                })),
+                op::TreeOp::Delete { target } => InnerContent::Tree(Arc::new(TreeOp::Delete {
                     target: convert_tree_id(&target, peers),
-                }),
+                })),
             },
             _ => unreachable!(),
         },

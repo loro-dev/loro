@@ -363,7 +363,11 @@ impl SharedArena {
                 } => Op {
                     counter,
                     container,
-                    content: InnerContent::List(InnerListOp::Move { from, to, elem_id: from_id }),
+                    content: InnerContent::List(InnerListOp::Move {
+                        from,
+                        to,
+                        elem_id: from_id,
+                    }),
                 },
                 ListOp::Set { elem_id, value } => Op {
                     counter,
@@ -374,7 +378,7 @@ impl SharedArena {
             crate::op::RawOpContent::Tree(tree) => Op {
                 counter,
                 container,
-                content: crate::op::InnerContent::Tree(tree),
+                content: crate::op::InnerContent::Tree(tree.clone()),
             },
             #[cfg(feature = "counter")]
             crate::op::RawOpContent::Counter(c) => Op {

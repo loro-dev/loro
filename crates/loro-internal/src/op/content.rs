@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use enum_as_inner::EnumAsInner;
 use loro_common::{ContainerID, ContainerType, LoroValue};
 use rle::{HasLength, Mergable, Sliceable};
@@ -18,7 +20,7 @@ use crate::{
 pub enum InnerContent {
     List(InnerListOp),
     Map(MapSet),
-    Tree(TreeOp),
+    Tree(Arc<TreeOp>),
     // The future content should not use any encoded arena context.
     Future(FutureInnerContent),
 }
@@ -100,7 +102,7 @@ impl FutureInnerContent {
 pub enum RawOpContent<'a> {
     Map(MapSet),
     List(ListOp<'a>),
-    Tree(TreeOp),
+    Tree(Arc<TreeOp>),
     #[cfg(feature = "counter")]
     Counter(f64),
     Unknown {

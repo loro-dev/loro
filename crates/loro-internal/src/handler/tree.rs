@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, sync::Arc};
 
 use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
@@ -288,7 +288,7 @@ impl TreeHandler {
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
             inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp::Delete { target }),
+            crate::op::RawOpContent::Tree(Arc::new(TreeOp::Delete { target })),
             EventHint::Tree(smallvec![TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Delete,
@@ -364,11 +364,11 @@ impl TreeHandler {
 
             txn.apply_local_op(
                 inner.container_idx,
-                crate::op::RawOpContent::Tree(TreeOp::Create {
+                crate::op::RawOpContent::Tree(Arc::new(TreeOp::Create {
                     target,
                     parent,
                     position: position.clone(),
-                }),
+                })),
                 EventHint::Tree(smallvec![TreeDiffItem {
                     target,
                     action: TreeExternalDiff::Create {
@@ -435,11 +435,11 @@ impl TreeHandler {
             let inner = self.inner.try_attached_state()?;
             txn.apply_local_op(
                 inner.container_idx,
-                crate::op::RawOpContent::Tree(TreeOp::Move {
+                crate::op::RawOpContent::Tree(Arc::new(TreeOp::Move {
                     target,
                     parent,
                     position: position.clone(),
-                }),
+                })),
                 EventHint::Tree(smallvec![TreeDiffItem {
                     target,
                     action: TreeExternalDiff::Move {
@@ -603,11 +603,11 @@ impl TreeHandler {
     ) -> LoroResult<TreeID> {
         txn.apply_local_op(
             inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp::Create {
+            crate::op::RawOpContent::Tree(Arc::new(TreeOp::Create {
                 target: tree_id,
                 parent,
                 position: position.clone(),
-            }),
+            })),
             EventHint::Tree(smallvec![TreeDiffItem {
                 target: tree_id,
                 action: TreeExternalDiff::Create {
@@ -633,11 +633,11 @@ impl TreeHandler {
     ) -> LoroResult<()> {
         txn.apply_local_op(
             inner.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp::Move {
+            crate::op::RawOpContent::Tree(Arc::new(TreeOp::Move {
                 target,
                 parent,
                 position: position.clone(),
-            }),
+            })),
             EventHint::Tree(smallvec![TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Move {

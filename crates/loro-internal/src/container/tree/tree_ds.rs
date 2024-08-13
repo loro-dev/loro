@@ -1,5 +1,4 @@
-use either::Either;
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use loro_common::{IdFull, IdLp, TreeID, ID};
 
 use crate::VersionVector;

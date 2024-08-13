@@ -200,7 +200,7 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
         for c in block {
             for op in c.ops().iter() {
                 if let crate::op::InnerContent::Tree(tree_op) = &op.content {
-                    match tree_op {
+                    match &**tree_op {
                         tree_op::TreeOp::Create { position, .. } => {
                             position_set.insert(position.clone());
                         }

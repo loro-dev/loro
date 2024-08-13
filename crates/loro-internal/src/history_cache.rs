@@ -375,7 +375,7 @@ impl MapHistoryCache {
 #[derive(Debug, Clone)]
 pub(crate) struct GroupedTreeOpInfo {
     pub(crate) counter: Counter,
-    pub(crate) value: TreeOp,
+    pub(crate) value: Arc<TreeOp>,
 }
 
 #[derive(Debug, Clone, Default)]

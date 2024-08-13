@@ -62,7 +62,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
                 let op = op.op();
                 let content = op.content.as_tree().unwrap();
 
-                let item: TreeDeltaItem = match content {
+                let item: TreeDeltaItem = match &**content {
                     crate::container::tree::tree_op::TreeOp::Create {
                         target,
                         parent,

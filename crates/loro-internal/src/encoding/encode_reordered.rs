@@ -1,5 +1,3 @@
-use std::{borrow::Cow, cell::RefCell, cmp::Ordering, rc::Rc};
-
 use either::Either;
 pub(crate) use encode::{encode_op, get_op_prop};
 use fractional_index::FractionalIndex;
@@ -12,6 +10,8 @@ use loro_common::{
 };
 use rle::HasLength;
 use serde_columnar::{columnar, ColumnarError};
+use std::sync::Arc;
+use std::{borrow::Cow, cell::RefCell, cmp::Ordering, rc::Rc};
 use tracing::instrument;
 
 use crate::{
@@ -1145,7 +1145,7 @@ mod encode {
                 let key = registers.key.register(&map.key);
                 key as i32
             }
-            crate::op::InnerContent::Tree(op) => match op {
+            crate::op::InnerContent::Tree(op) => match &**op {
                 TreeOp::Create { position, .. } | TreeOp::Move { position, .. } => {
                     let either::Either::Left(position_register) = &mut registers.position else {
                         unreachable!()
@@ -1358,9 +1358,9 @@ pub(crate) fn decode_op(
             }
         }
         ContainerType::Tree => match value {
-            Value::TreeMove(op) => {
-                crate::op::InnerContent::Tree(arenas.decode_tree_op(positions, op, op_id)?)
-            }
+            Value::TreeMove(op) => crate::op::InnerContent::Tree(Arc::new(
+                arenas.decode_tree_op(positions, op, op_id)?,
+            )),
             Value::RawTreeMove(op) => {
                 let subject = TreeID::new(
                     arenas.peers()[op.subject_peer_idx],
@@ -1372,9 +1372,9 @@ pub(crate) fn decode_op(
                     let parent_id =
                         TreeID::new(arenas.peers()[op.parent_peer_idx], op.parent_cnt as Counter);
                     if parent_id.is_deleted_root() {
-                        return Ok(crate::op::InnerContent::Tree(TreeOp::Delete {
+                        return Ok(crate::op::InnerContent::Tree(Arc::new(TreeOp::Delete {
                             target: subject,
-                        }));
+                        })));
                     }
 
                     Some(parent_id)
@@ -1395,7 +1395,7 @@ pub(crate) fn decode_op(
                         position: fi,
                     }
                 };
-                crate::op::InnerContent::Tree(ans)
+                crate::op::InnerContent::Tree(Arc::new(ans))
             }
             _ => {
                 unreachable!()
