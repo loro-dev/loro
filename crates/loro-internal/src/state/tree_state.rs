@@ -16,6 +16,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
+use super::{ContainerState, DiffApplyContext};
 use crate::container::idx::ContainerIdx;
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::DiffMode;
@@ -32,7 +33,33 @@ use crate::{
     op::RawOp,
 };
 
-use super::{ContainerState, DiffApplyContext};
+/// The state of movable tree.
+///
+/// using flat representation
+#[derive(Debug, Clone)]
+pub struct TreeState {
+    idx: ContainerIdx,
+    trees: FxHashMap<TreeID, TreeStateNode>,
+    children: TreeChildrenCache,
+    rng: Option<rand::rngs::StdRng>,
+    jitter: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TreeStateNode {
+    pub parent: TreeParentId,
+    pub position: Option<FractionalIndex>,
+    pub last_move_op: IdFull,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct NodePosition {
+    pub(crate) position: FractionalIndex,
+    // different nodes created by a peer may have the same position
+    // when we merge updates that cause cycles.
+    // for example [::fuzz::test::test_tree::same_peer_have_same_position()]
+    pub(crate) idlp: IdLp,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner, Serialize)]
 pub enum TreeParentId {
@@ -563,38 +590,10 @@ impl DerefMut for TreeChildrenCache {
     }
 }
 
-/// The state of movable tree.
-///
-/// using flat representation
-#[derive(Debug, Clone)]
-pub struct TreeState {
-    idx: ContainerIdx,
-    trees: FxHashMap<TreeID, TreeStateNode>,
-    children: TreeChildrenCache,
-    rng: Option<rand::rngs::StdRng>,
-    jitter: u8,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct NodePosition {
-    pub(crate) position: FractionalIndex,
-    // different nodes created by a peer may have the same position
-    // when we merge updates that cause cycles.
-    // for example [::fuzz::test::test_tree::same_peer_have_same_position()]
-    pub(crate) idlp: IdLp,
-}
-
 impl NodePosition {
     fn new(position: FractionalIndex, idlp: IdLp) -> Self {
         Self { position, idlp }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TreeStateNode {
-    pub parent: TreeParentId,
-    pub position: Option<FractionalIndex>,
-    pub last_move_op: IdFull,
 }
 
 impl TreeState {
