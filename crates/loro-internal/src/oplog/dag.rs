@@ -108,6 +108,7 @@ impl Dag for AppDag {
     }
 
     fn get(&self, id: ID) -> Option<&Self::Node> {
+        self.lazy_load_node(id);
         let x = self.map.range(..=id).next_back()?;
         if x.1.contains_id(id) {
             Some(x.1)
@@ -168,6 +169,7 @@ impl AppDag {
     }
 
     pub fn get_lamport(&self, id: &ID) -> Option<Lamport> {
+        self.lazy_load_node(id);
         self.get(*id).and_then(|node| {
             assert!(id.counter >= node.cnt);
             if node.cnt + node.len as Counter > id.counter {

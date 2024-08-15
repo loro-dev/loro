@@ -64,11 +64,14 @@ pub struct OpLog {
 
 /// [AppDag] maintains the causal graph of the app.
 /// It's faster to answer the question like what's the LCA version
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AppDag {
+    change_store: ChangeStore,
     pub(crate) map: BTreeMap<ID, AppDagNode>,
     pub(crate) frontiers: Frontiers,
     pub(crate) vv: VersionVector,
+    /// Ops included in the version vector but not parsed yet
+    pub(crate) unparsed_vv: VersionVector,
 }
 
 #[derive(Debug, Clone)]
@@ -84,32 +87,9 @@ pub struct AppDagNode {
     pub(crate) len: usize,
 }
 
-impl OpLog {
-    pub(crate) fn fork(&self, arena: SharedArena, configure: Configure) -> Self {
-        let change_store = self
-            .change_store
-            .fork(arena.clone(), configure.merge_interval.clone());
-        Self {
-            change_store: change_store.clone(),
-            dag: self.dag.clone(),
-            arena: self.arena.clone(),
-            history_cache: Mutex::new(
-                self.history_cache
-                    .lock()
-                    .unwrap()
-                    .fork(arena.clone(), change_store),
-            ),
-            next_lamport: self.next_lamport,
-            latest_timestamp: self.latest_timestamp,
-            pending_changes: Default::default(),
-            batch_importing: false,
-            configure,
-        }
-    }
-}
-
 impl AppDag {
     pub fn get_mut(&mut self, id: ID) -> Option<&mut AppDagNode> {
+        self.lazy_load_node(id);
         let x = self.map.range_mut(..=id).next_back()?;
         if x.1.contains_id(id) {
             Some(x.1)
@@ -132,6 +112,7 @@ impl AppDag {
     }
 
     pub(crate) fn find_deps_of_id(&self, id: ID) -> Frontiers {
+        self.lazy_load_node(id);
         let Some(node) = self.get(id) else {
             return Frontiers::default();
         };
@@ -144,14 +125,8 @@ impl AppDag {
         }
     }
 
-    pub(crate) fn get_last_of_peer(&self, peer: PeerID) -> Option<&AppDagNode> {
-        self.map
-            .range(..=ID::new(peer, Counter::MAX))
-            .next_back()
-            .map(|(_, v)| v)
-    }
-
     pub(crate) fn get_last_mut_of_peer(&mut self, peer: PeerID) -> Option<&mut AppDagNode> {
+        self.lazy_load_last_of_peer(peer);
         self.map
             .range_mut(..=ID::new(peer, Counter::MAX))
             .next_back()
@@ -159,14 +134,19 @@ impl AppDag {
     }
 
     fn update_frontiers(&mut self, id: ID, deps: &Frontiers) {
-        trace!(
-            "Update frontiers: id={:?} deps={:?} current={:?}",
-            id,
-            deps,
-            &self.frontiers
-        );
         self.frontiers.update_frontiers_on_new_change(id, deps);
-        trace!("Updated frontiers: {:?}", &self.frontiers);
+    }
+
+    fn lazy_load_last_of_peer(&mut self, peer: u64) {
+        todo!()
+    }
+
+    fn lazy_load_node(&mut self, id: ID) {
+        if !self.unparsed_vv.includes_id(id) {
+            return;
+        }
+
+        todo!("load dag node from kv store, from id -> unparsed_vv.get(peer)")
     }
 }
 
@@ -194,14 +174,42 @@ impl OpLog {
                 arena.clone(),
                 change_store.clone(),
             )),
+            dag: AppDag {
+                change_store: change_store.clone(),
+                map: BTreeMap::new(),
+                frontiers: Frontiers::default(),
+                vv: VersionVector::default(),
+                unparsed_vv: VersionVector::default(),
+            },
             change_store,
-            dag: AppDag::default(),
             arena,
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
             batch_importing: false,
             configure: cfg,
+        }
+    }
+
+    pub(crate) fn fork(&self, arena: SharedArena, configure: Configure) -> Self {
+        let change_store = self
+            .change_store
+            .fork(arena.clone(), configure.merge_interval.clone());
+        Self {
+            change_store: change_store.clone(),
+            dag: self.dag.clone(),
+            arena: self.arena.clone(),
+            history_cache: Mutex::new(
+                self.history_cache
+                    .lock()
+                    .unwrap()
+                    .fork(arena.clone(), change_store),
+            ),
+            next_lamport: self.next_lamport,
+            latest_timestamp: self.latest_timestamp,
+            pending_changes: Default::default(),
+            batch_importing: false,
+            configure,
         }
     }
 
@@ -747,7 +755,8 @@ impl OpLog {
 
     #[inline]
     pub fn compact_change_store(&mut self) {
-        self.change_store.flush_and_compact();
+        self.change_store
+            .flush_and_compact(&self.dag.vv, &self.dag.frontiers);
     }
 
     #[inline]
