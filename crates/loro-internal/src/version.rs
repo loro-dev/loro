@@ -203,6 +203,58 @@ impl Frontiers {
     pub(crate) fn with_capacity(cap: usize) -> Frontiers {
         Self(SmallVec::with_capacity(cap))
     }
+
+    pub(crate) fn merge_frontiers(&mut self, new_frontiers: &Frontiers) {
+        if self.len() <= 1 {
+            if self == new_frontiers {
+                return;
+            }
+
+            if new_frontiers.len() == 0 {
+                return;
+            }
+
+            if self.len() == 0 {
+                *self = new_frontiers.clone();
+                return;
+            }
+
+            if new_frontiers.len() == 1 {
+                let new_id = new_frontiers[0];
+                if self[0].peer == new_id.peer {
+                    if self[0].counter < new_id.counter {
+                        self[0].counter = new_id.counter;
+                    } else {
+                        return;
+                    }
+                } else {
+                    self.push(new_id);
+                    return;
+                }
+            }
+        }
+
+        let mut map = self
+            .0
+            .iter()
+            .map(|id| (id.peer, id.counter))
+            .collect::<FxHashMap<_, _>>();
+
+        for id in new_frontiers.0.iter() {
+            if let Some(counter) = map.get_mut(&id.peer) {
+                if *counter < id.counter {
+                    *counter = id.counter;
+                }
+            } else {
+                self.0.push(*id);
+            }
+        }
+
+        self.0 = map
+            .into_iter()
+            .map(|(peer, counter)| ID::new(peer, counter))
+            .collect();
+    }
 }
 
 impl Deref for Frontiers {

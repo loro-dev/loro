@@ -56,6 +56,9 @@ struct ChangeStoreInner {
     mem_parsed_kv: BTreeMap<ID, Arc<ChangesBlock>>,
 }
 
+pub const VV_KEY: &[u8] = b"vv";
+pub const FRONTIERS_KEY: &[u8] = b"fr";
+
 impl ChangeStore {
     pub fn new_mem(a: &SharedArena, merge_interval: Arc<AtomicI64>) -> Self {
         Self {
@@ -229,14 +232,26 @@ impl ChangeStore {
         }
 
         loop {
-            let old_vv_bytes = store.get(b"vv");
+            let old_vv_bytes = store.get(VV_KEY);
             let new_vv = old_vv_bytes
                 .as_ref()
                 .map(|bytes| VersionVector::decode(bytes).unwrap())
                 .unwrap_or_default();
             inner.vv.merge_vv(&new_vv);
             let vv_bytes = inner.vv.encode();
-            if store.compare_and_swap(b"vv", old_vv_bytes, vv_bytes.into()) {
+            if store.compare_and_swap(VV_KEY, old_vv_bytes, vv_bytes.into()) {
+            } else {
+                continue;
+            }
+
+            let old_frontiers_bytes = store.get(FRONTIERS_KEY);
+            let new_frontiers = old_frontiers_bytes
+                .as_ref()
+                .map(|bytes| Frontiers::decode(bytes).unwrap())
+                .unwrap_or_default();
+            inner.frontiers.merge_frontiers(&new_frontiers);
+            let frontiers_bytes = inner.frontiers.encode();
+            if store.compare_and_swap(FRONTIERS_KEY, old_frontiers_bytes, frontiers_bytes.into()) {
                 break;
             }
         }
