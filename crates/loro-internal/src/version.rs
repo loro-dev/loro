@@ -34,16 +34,24 @@ pub struct VersionVector(FxHashMap<PeerID, Counter>);
 /// It's more memory efficient than [VersionVector] when the version vector
 /// can be created from cloning and modifying other similar version vectors.
 #[repr(transparent)]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImVersionVector(im::HashMap<PeerID, Counter, fxhash::FxBuildHasher>);
 
 impl ImVersionVector {
+    pub fn new() -> Self {
+        Self(Default::default())
+    }
+
     pub fn clear(&mut self) {
         self.0.clear()
     }
 
     pub fn get(&self, key: &PeerID) -> Option<&Counter> {
         self.0.get(key)
+    }
+
+    pub fn get_mut(&mut self, key: &PeerID) -> Option<&mut Counter> {
+        self.0.get_mut(key)
     }
 
     pub fn insert(&mut self, k: PeerID, v: Counter) {
@@ -87,6 +95,63 @@ impl ImVersionVector {
             .collect();
 
         shrink_frontiers(last_ids, dag)
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        postcard::to_allocvec(self).unwrap()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, LoroError> {
+        let vv = VersionVector::decode(bytes)?;
+        Ok(Self::from_vv(&vv))
+    }
+
+    pub fn to_vv(&self) -> VersionVector {
+        VersionVector(self.0.iter().map(|(&k, &v)| (k, v)).collect())
+    }
+
+    pub fn from_vv(vv: &VersionVector) -> Self {
+        ImVersionVector(vv.0.iter().map(|(&k, &v)| (k, v)).collect())
+    }
+
+    pub fn extend_to_include_vv<'a>(
+        &mut self,
+        vv: impl Iterator<Item = (&'a PeerID, &'a Counter)>,
+    ) {
+        for (&client_id, &counter) in vv {
+            if let Some(my_counter) = self.0.get_mut(&client_id) {
+                if *my_counter < counter {
+                    *my_counter = counter;
+                }
+            } else {
+                self.0.insert(client_id, counter);
+            }
+        }
+    }
+
+    #[inline]
+    pub fn merge(&mut self, other: &Self) {
+        self.extend_to_include_vv(other.0.iter());
+    }
+
+    #[inline]
+    pub fn merge_vv(&mut self, other: &VersionVector) {
+        self.extend_to_include_vv(other.0.iter());
+    }
+
+    #[inline]
+    pub fn set_last(&mut self, id: ID) {
+        self.0.insert(id.peer, id.counter + 1);
+    }
+
+    pub fn extend_to_include_last_id(&mut self, id: ID) {
+        if let Some(counter) = self.0.get_mut(&id.peer) {
+            if *counter <= id.counter {
+                *counter = id.counter + 1;
+            }
+        } else {
+            self.set_last(id)
+        }
     }
 }
 
@@ -764,37 +829,13 @@ impl VersionVector {
         }
         ans
     }
-}
 
-impl ImVersionVector {
-    pub fn extend_to_include_vv<'a>(
-        &mut self,
-        vv: impl Iterator<Item = (&'a PeerID, &'a Counter)>,
-    ) {
-        for (&client_id, &counter) in vv {
-            if let Some(my_counter) = self.0.get_mut(&client_id) {
-                if *my_counter < counter {
-                    *my_counter = counter;
-                }
-            } else {
-                self.0.insert(client_id, counter);
-            }
-        }
+    pub fn to_im_vv(&self) -> ImVersionVector {
+        ImVersionVector(self.0.iter().map(|(&k, &v)| (k, v)).collect())
     }
 
-    #[inline]
-    pub fn set_last(&mut self, id: ID) {
-        self.0.insert(id.peer, id.counter + 1);
-    }
-
-    pub fn extend_to_include_last_id(&mut self, id: ID) {
-        if let Some(counter) = self.0.get_mut(&id.peer) {
-            if *counter <= id.counter {
-                *counter = id.counter + 1;
-            }
-        } else {
-            self.set_last(id)
-        }
+    pub fn from_im_vv(im_vv: &ImVersionVector) -> Self {
+        VersionVector(im_vv.0.iter().map(|(&k, &v)| (k, v)).collect())
     }
 }
 
@@ -963,5 +1004,37 @@ mod tests {
         };
         let buf = vec![0, 1];
         assert_eq!(postcard::from_bytes::<TotalOrderStamp>(&buf).unwrap(), tos);
+    }
+
+    #[test]
+    fn test_encode_decode_im_version_vector() {
+        let vv = VersionVector::from_iter([(1, 1), (2, 2), (3, 3)]);
+        let im_vv = vv.to_im_vv();
+        let decoded_vv = VersionVector::from_im_vv(&im_vv);
+        assert_eq!(vv, decoded_vv);
+    }
+
+    #[test]
+    fn test_version_vector_encoding_decoding() {
+        let mut vv = VersionVector::new();
+        vv.insert(1, 10);
+        vv.insert(2, 20);
+        vv.insert(3, 30);
+
+        // Encode VersionVector
+        let encoded = vv.encode();
+
+        // Decode to ImVersionVector
+        let decoded_im_vv = ImVersionVector::decode(&encoded).unwrap();
+
+        // Convert VersionVector to ImVersionVector for comparison
+        let im_vv = vv.to_im_vv();
+
+        // Compare the original ImVersionVector with the decoded one
+        assert_eq!(im_vv, decoded_im_vv);
+
+        // Convert back to VersionVector and compare
+        let decoded_vv = VersionVector::from_im_vv(&decoded_im_vv);
+        assert_eq!(vv, decoded_vv);
     }
 }

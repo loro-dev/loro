@@ -16,8 +16,13 @@ use std::{
 mod block_encode;
 mod delta_rle_encode;
 use crate::{
-    arena::SharedArena, change::Change, estimated_size::EstimatedSize, kv_store::KvStore, op::Op,
-    version::Frontiers, VersionVector,
+    arena::SharedArena,
+    change::Change,
+    estimated_size::EstimatedSize,
+    kv_store::KvStore,
+    op::Op,
+    version::{Frontiers, ImVersionVector},
+    VersionVector,
 };
 
 use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
@@ -31,47 +36,53 @@ const MAX_BLOCK_SIZE: usize = 1024 * 4;
 /// - However, the first block of a peer can have counter > 0 so that we can trim the history.
 #[derive(Debug, Clone)]
 pub struct ChangeStore {
+    inner: Arc<Mutex<ChangeStoreInner>>,
     arena: SharedArena,
+    external_kv: Arc<Mutex<dyn KvStore>>,
+    merge_interval: Arc<AtomicI64>,
+}
+
+#[derive(Debug, Clone)]
+struct ChangeStoreInner {
     /// max known version vector
-    vv: VersionVector,
+    vv: ImVersionVector,
+    frontiers: Frontiers,
     /// The start version vector of the first block for each peer.
     /// It allows us to trim the history
-    start_vv: VersionVector,
+    start_vv: ImVersionVector,
     /// The last version of the trimmed history.
     start_frontiers: Frontiers,
     /// It's more like a parsed cache for binary_kv.
-    mem_parsed_kv: Arc<Mutex<BTreeMap<ID, Arc<ChangesBlock>>>>,
-    external_kv: Arc<Mutex<dyn KvStore>>,
-    merge_interval: Arc<AtomicI64>,
+    mem_parsed_kv: BTreeMap<ID, Arc<ChangesBlock>>,
 }
 
 impl ChangeStore {
     pub fn new_mem(a: &SharedArena, merge_interval: Arc<AtomicI64>) -> Self {
         Self {
-            merge_interval,
-            vv: VersionVector::new(),
+            inner: Arc::new(Mutex::new(ChangeStoreInner {
+                vv: ImVersionVector::new(),
+                frontiers: Frontiers::default(),
+                start_vv: ImVersionVector::new(),
+                start_frontiers: Frontiers::default(),
+                mem_parsed_kv: BTreeMap::new(),
+            })),
             arena: a.clone(),
-            start_vv: VersionVector::new(),
-            start_frontiers: Frontiers::default(),
-            mem_parsed_kv: Arc::new(Mutex::new(BTreeMap::new())),
             external_kv: Arc::new(Mutex::new(BTreeMap::new())),
+            merge_interval,
         }
     }
 
     #[cfg(test)]
     fn new_for_test() -> Self {
-        Self {
-            merge_interval: Arc::new(AtomicI64::new(0)),
-            vv: VersionVector::new(),
-            arena: SharedArena::new(),
-            start_vv: VersionVector::new(),
-            start_frontiers: Frontiers::default(),
-            mem_parsed_kv: Arc::new(Mutex::new(BTreeMap::new())),
-            external_kv: Arc::new(Mutex::new(BTreeMap::new())),
-        }
+        Self::new_mem(&SharedArena::new(), Arc::new(AtomicI64::new(0)))
     }
 
-    pub fn insert_change(&mut self, mut change: Change, split_when_exceeds: bool) {
+    pub fn vv(&self) -> ImVersionVector {
+        let inner = self.inner.lock().unwrap();
+        inner.vv.clone()
+    }
+
+    pub fn insert_change(&self, mut change: Change, split_when_exceeds: bool) {
         let estimated_size = change.estimate_storage_size();
         if estimated_size > MAX_BLOCK_SIZE && split_when_exceeds {
             self.split_change_then_insert(change);
@@ -79,8 +90,8 @@ impl ChangeStore {
         }
 
         let id = change.id;
-        let mut kv = self.mem_parsed_kv.lock().unwrap();
-        if let Some(old) = self.vv.get_mut(&change.id.peer) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(old) = inner.vv.get_mut(&change.id.peer) {
             if *old == change.id.counter {
                 *old = change.id.counter + change.atom_len() as Counter;
             } else {
@@ -96,13 +107,13 @@ impl ChangeStore {
                 change.id.counter, 0,
                 "inserting a new change with counter != 0 and not in vv"
             );
-            self.vv.insert(
+            inner.vv.insert(
                 change.id.peer,
                 change.id.counter + change.atom_len() as Counter,
             );
         }
 
-        if let Some((_id, block)) = kv.range_mut(..id).next_back() {
+        if let Some((_id, block)) = inner.mem_parsed_kv.range_mut(..id).next_back() {
             if block.peer == change.id.peer {
                 if block.counter_range.1 != change.id.counter {
                     panic!("counter should be continuous")
@@ -122,10 +133,12 @@ impl ChangeStore {
             }
         }
 
-        kv.insert(id, Arc::new(ChangesBlock::new(change, &self.arena)));
+        inner
+            .mem_parsed_kv
+            .insert(id, Arc::new(ChangesBlock::new(change, &self.arena)));
     }
 
-    fn split_change_then_insert(&mut self, change: Change) {
+    fn split_change_then_insert(&self, change: Change) {
         let original_len = change.atom_len();
         let mut new_change = Change {
             ops: RleVec::new(),
@@ -178,7 +191,7 @@ impl ChangeStore {
     }
 
     fn _insert_splitted_change(
-        &mut self,
+        &self,
         new_change: Change,
         total_len: &mut usize,
         estimated_size: &mut usize,
@@ -205,9 +218,9 @@ impl ChangeStore {
 
     /// Flush the cached change to kv_store
     pub(crate) fn flush_and_compact(&mut self) {
-        let mut mem = self.mem_parsed_kv.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap();
         let mut store = self.external_kv.lock().unwrap();
-        for (id, block) in mem.iter_mut() {
+        for (id, block) in inner.mem_parsed_kv.iter_mut() {
             if !block.flushed {
                 let bytes = block.to_bytes(&self.arena);
                 store.set(&id.to_bytes(), bytes.bytes);
@@ -221,8 +234,8 @@ impl ChangeStore {
                 .as_ref()
                 .map(|bytes| VersionVector::decode(bytes).unwrap())
                 .unwrap_or_default();
-            self.vv.merge(&new_vv);
-            let vv_bytes = self.vv.encode();
+            inner.vv.merge_vv(&new_vv);
+            let vv_bytes = inner.vv.encode();
             if store.compare_and_swap(b"vv", old_vv_bytes, vv_bytes.into()) {
                 break;
             }
@@ -241,7 +254,8 @@ impl ChangeStore {
             .map_err(|e| LoroError::DecodeError(e.into_boxed_str()))?;
         let vv_bytes = kv_store.get(b"vv").unwrap_or_default();
         let vv = VersionVector::decode(&vv_bytes).unwrap();
-        self.vv = vv;
+        let mut inner = self.inner.lock().unwrap();
+        inner.vv.merge_vv(&vv);
         Ok(())
 
         // todo!("replace with kv store");
@@ -259,8 +273,8 @@ impl ChangeStore {
     }
 
     fn get_parsed_block(&self, id: ID) -> Option<Arc<ChangesBlock>> {
-        let mut kv = self.mem_parsed_kv.lock().unwrap();
-        let (_id, block) = kv.range_mut(..=id).next_back()?;
+        let mut inner = self.inner.lock().unwrap();
+        let (_id, block) = inner.mem_parsed_kv.range_mut(..=id).next_back()?;
         if block.peer == id.peer && block.counter_range.1 > id.counter {
             block
                 .ensure_changes(&self.arena)
@@ -286,7 +300,7 @@ impl ChangeStore {
             arc_block
                 .ensure_changes(&self.arena)
                 .expect("Parse block error");
-            kv.insert(block_id, arc_block.clone());
+            inner.mem_parsed_kv.insert(block_id, arc_block.clone());
             return Some(arc_block);
         }
 
@@ -305,8 +319,10 @@ impl ChangeStore {
     ///
     /// If not found, return the change with the greatest lamport that is smaller than the given lamport.
     pub fn get_change_by_idlp(&self, idlp: IdLp) -> Option<BlockChangeRef> {
-        let mut kv = self.mem_parsed_kv.lock().unwrap();
-        let mut iter = kv.range_mut(ID::new(idlp.peer, 0)..ID::new(idlp.peer, i32::MAX));
+        let mut inner = self.inner.lock().unwrap();
+        let mut iter = inner
+            .mem_parsed_kv
+            .range_mut(ID::new(idlp.peer, 0)..ID::new(idlp.peer, i32::MAX));
         // FIX: PERF: this is super slow
         while let Some((_id, block)) = iter.next_back() {
             if block.lamport_range.0 <= idlp.lamport {
@@ -346,7 +362,7 @@ impl ChangeStore {
         block
             .ensure_changes(&self.arena)
             .expect("Parse block error");
-        kv.insert(block_id, block.clone());
+        inner.mem_parsed_kv.insert(block_id, block.clone());
         let index = block.get_change_index_by_lamport(idlp.lamport)?;
         Some(BlockChangeRef {
             change_index: index,
@@ -356,8 +372,8 @@ impl ChangeStore {
 
     pub fn visit_all_changes(&self, f: &mut dyn FnMut(&Change)) {
         self.ensure_block_parsed_in_range(Bound::Unbounded, Bound::Unbounded);
-        let mut mem_kv = self.mem_parsed_kv.lock().unwrap();
-        for (_, block) in mem_kv.iter_mut() {
+        let mut inner = self.inner.lock().unwrap();
+        for (_, block) in inner.mem_parsed_kv.iter_mut() {
             block
                 .ensure_changes(&self.arena)
                 .expect("Parse block error");
@@ -369,15 +385,15 @@ impl ChangeStore {
 
     fn ensure_block_parsed_in_range(&self, start: Bound<&[u8]>, end: Bound<&[u8]>) {
         let kv = self.external_kv.lock().unwrap();
-        let mut mem_kv = self.mem_parsed_kv.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap();
         for (id, bytes) in kv.scan(start, end).filter(|(id, _)| id.len() == 12) {
             let id = ID::from_bytes(&id);
-            if mem_kv.contains_key(&id) {
+            if inner.mem_parsed_kv.contains_key(&id) {
                 continue;
             }
 
             let block = ChangesBlock::from_bytes(bytes.clone(), true).unwrap();
-            mem_kv.insert(id, Arc::new(block));
+            inner.mem_parsed_kv.insert(id, Arc::new(block));
         }
     }
 
@@ -386,13 +402,15 @@ impl ChangeStore {
             Bound::Included(&id_span.id_start().to_bytes()),
             Bound::Excluded(&id_span.id_end().to_bytes()),
         );
-        let mut kv = self.mem_parsed_kv.lock().unwrap();
-        let start_counter = kv
+        let mut inner = self.inner.lock().unwrap();
+        let start_counter = inner
+            .mem_parsed_kv
             .range(..=id_span.id_start())
             .next_back()
             .map(|(id, _)| id.counter)
             .unwrap_or(0);
-        let iter = kv
+        let iter = inner
+            .mem_parsed_kv
             .range_mut(
                 ID::new(id_span.peer, start_counter)..ID::new(id_span.peer, id_span.counter.end),
             )
@@ -435,13 +453,15 @@ impl ChangeStore {
     }
 
     pub(crate) fn get_blocks_in_range(&self, id_span: IdSpan) -> VecDeque<Arc<ChangesBlock>> {
-        let mut kv = self.mem_parsed_kv.lock().unwrap();
-        let start_counter = kv
+        let mut inner = self.inner.lock().unwrap();
+        let start_counter = inner
+            .mem_parsed_kv
             .range(..=id_span.id_start())
             .next_back()
             .map(|(id, _)| id.counter)
             .unwrap_or(0);
-        let vec = kv
+        let vec = inner
+            .mem_parsed_kv
             .range_mut(
                 ID::new(id_span.peer, start_counter)..ID::new(id_span.peer, id_span.counter.end),
             )
@@ -461,17 +481,25 @@ impl ChangeStore {
     }
 
     pub fn change_num(&self) -> usize {
-        let mut kv = self.mem_parsed_kv.lock().unwrap();
-        kv.iter_mut().map(|(_, block)| block.change_num()).sum()
+        let mut inner = self.inner.lock().unwrap();
+        inner
+            .mem_parsed_kv
+            .iter_mut()
+            .map(|(_, block)| block.change_num())
+            .sum()
     }
 
     pub fn fork(&self, arena: SharedArena, merge_interval: Arc<AtomicI64>) -> Self {
+        let inner = self.inner.lock().unwrap();
         Self {
+            inner: Arc::new(Mutex::new(ChangeStoreInner {
+                vv: inner.vv.clone(),
+                frontiers: inner.frontiers.clone(),
+                start_vv: inner.start_vv.clone(),
+                start_frontiers: inner.start_frontiers.clone(),
+                mem_parsed_kv: BTreeMap::new(),
+            })),
             arena,
-            vv: self.vv.clone(),
-            start_vv: self.start_vv.clone(),
-            start_frontiers: self.start_frontiers.clone(),
-            mem_parsed_kv: Arc::new(Mutex::new(BTreeMap::new())),
             external_kv: self.external_kv.lock().unwrap().clone_store(),
             merge_interval,
         }
@@ -908,7 +936,8 @@ mod test {
         let bytes = oplog.change_store.encode_all();
         let mut store = ChangeStore::new_for_test();
         store.decode_all(bytes.clone()).unwrap();
-        assert_eq!(&store.vv, &oplog.change_store.vv);
+        let inner = store.inner.lock().unwrap();
+        assert_eq!(inner.vv, oplog.change_store.vv());
         assert_eq!(store.external_kv.lock().unwrap().export_all(), bytes);
         let mut changes_parsed = Vec::new();
         let a = store.arena.clone();
