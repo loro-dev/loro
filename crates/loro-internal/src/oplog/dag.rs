@@ -108,10 +108,13 @@ impl Dag for AppDag {
     }
 
     fn get(&self, id: ID) -> Option<&Self::Node> {
-        self.lazy_load_node(id);
-        let x = self.map.range(..=id).next_back()?;
+        self.ensure_lazy_load_node(id);
+        let binding = self.map.lock().unwrap();
+        let x = binding.range(..=id).next_back()?;
         if x.1.contains_id(id) {
-            Some(x.1)
+            let app_node: &AppDagNode = x.1;
+            // SAFETY: the nodes on app_dag will not be dropped util itself is dropped
+            Some(unsafe { std::mem::transmute::<&AppDagNode, &AppDagNode>(app_node) })
         } else {
             None
         }
@@ -169,7 +172,7 @@ impl AppDag {
     }
 
     pub fn get_lamport(&self, id: &ID) -> Option<Lamport> {
-        self.lazy_load_node(id);
+        self.ensure_lazy_load_node(*id);
         self.get(*id).and_then(|node| {
             assert!(id.counter >= node.cnt);
             if node.cnt + node.len as Counter > id.counter {

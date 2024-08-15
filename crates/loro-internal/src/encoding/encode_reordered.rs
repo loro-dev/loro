@@ -246,10 +246,6 @@ pub(crate) fn import_changes_to_oplog(
         let mark = oplog.update_dag_on_new_change(&change);
         oplog.next_lamport = oplog.next_lamport.max(change.lamport_end());
         oplog.latest_timestamp = oplog.latest_timestamp.max(change.timestamp);
-        oplog.dag.vv.extend_to_include_end_id(ID {
-            peer: change.id.peer,
-            counter: change.id.counter + change.atom_len() as Counter,
-        });
         oplog.insert_new_change(change, mark);
     }
 
