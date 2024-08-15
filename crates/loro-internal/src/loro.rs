@@ -1021,7 +1021,6 @@ impl LoroDoc {
 
         let mut oplog = self.oplog.lock().unwrap();
         oplog.batch_importing = false;
-        oplog.dag.refresh_frontiers();
         drop(oplog);
 
         if !is_detached {

@@ -156,10 +156,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
     } = arenas;
     let changes = decode_changes(iter.changes, iter.start_counters, &peer_ids, deps, ops_map)?;
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
-    if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
-        oplog.dag.refresh_frontiers();
-    }
-
+    oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
     Ok(())
 }
@@ -254,9 +251,6 @@ pub(crate) fn import_changes_to_oplog(
             counter: change.id.counter + change.atom_len() as Counter,
         });
         oplog.insert_new_change(change, mark);
-    }
-    if !oplog.batch_importing {
-        oplog.dag.refresh_frontiers();
     }
 
     Ok((latest_ids, pending_changes))
@@ -695,10 +689,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         // TODO: Fix this origin value
         doc.update_oplog_and_apply_delta_to_state_if_needed(
             |oplog| {
-                if oplog.try_apply_pending(new_ids).should_update && !oplog.batch_importing {
-                    oplog.dag.refresh_frontiers();
-                }
-
+                oplog.try_apply_pending(new_ids);
                 Ok(())
             },
             "".into(),

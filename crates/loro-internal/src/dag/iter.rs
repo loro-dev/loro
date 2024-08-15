@@ -2,6 +2,7 @@ use super::DagUtils;
 use crate::version::Frontiers;
 use num::Zero;
 use std::{collections::BTreeMap, ops::Range};
+use tracing::trace;
 
 use super::*;
 
@@ -242,6 +243,7 @@ impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
             }
         }
 
+        trace!("out_degrees={:?}", &out_degrees);
         out_degrees.retain(|k, v| {
             if v.is_zero() {
                 stack.push(*k);

@@ -64,9 +64,7 @@ pub(crate) fn export_json<'a, 'c: 'a>(
 pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<()> {
     let changes = decode_changes(json, &oplog.arena)?;
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
-    if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
-        oplog.dag.refresh_frontiers();
-    }
+    oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
     Ok(())
 }

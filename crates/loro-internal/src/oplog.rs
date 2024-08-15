@@ -10,6 +10,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Mutex;
+use tracing::{debug, trace};
 
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;
@@ -117,22 +118,6 @@ impl AppDag {
         }
     }
 
-    pub(crate) fn refresh_frontiers(&mut self) {
-        let vv_iter = self.vv.iter();
-        // PERF:
-        self.frontiers = vv_iter
-            .filter_map(|(peer, _)| {
-                let node = self.get_last_of_peer(*peer)?;
-                if node.has_succ {
-                    return None;
-                }
-
-                Some(ID::new(*peer, node.ctr_last()))
-            })
-            .collect();
-        // dbg!(&self);
-    }
-
     /// If the lamport of change can be calculated, return Ok, otherwise, Err
     pub(crate) fn calc_unknown_lamport_change(&self, change: &mut Change) -> Result<(), ()> {
         for dep in change.deps.iter() {
@@ -171,6 +156,17 @@ impl AppDag {
             .range_mut(..=ID::new(peer, Counter::MAX))
             .next_back()
             .map(|(_, v)| v)
+    }
+
+    fn update_frontiers(&mut self, id: ID, deps: &Frontiers) {
+        trace!(
+            "Update frontiers: id={:?} deps={:?} current={:?}",
+            id,
+            deps,
+            &self.frontiers
+        );
+        self.frontiers.update_frontiers_on_new_change(id, deps);
+        trace!("Updated frontiers: {:?}", &self.frontiers);
     }
 }
 
@@ -312,9 +308,6 @@ impl OpLog {
         self.next_lamport = self.next_lamport.max(change.lamport_end());
         self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
         self.dag.vv.extend_to_include_last_id(change.id_last());
-        self.dag.frontiers.retain_non_included(&change.deps);
-        self.dag.frontiers.filter_peer(change.id.peer);
-        self.dag.frontiers.push(change.id_last());
         let mark = self.update_dag_on_new_change(&change);
         self.insert_new_change(change, mark);
         Ok(())
@@ -326,6 +319,7 @@ impl OpLog {
         change: &Change,
     ) -> EnsureDagNodeDepsAreAtTheEnd {
         let len = change.content_len();
+        self.dag.update_frontiers(change.id_last(), &change.deps);
         if change.deps_on_self() {
             // don't need to push new element to dag because it only depends on itself
             let last = self.dag.get_last_mut_of_peer(change.id.peer).unwrap();
@@ -592,6 +586,8 @@ impl OpLog {
             }
         };
 
+        debug!("from_frontiers={:?} vv={:?}", &from_frontiers, from);
+        debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
         let (common_ancestors, mut diff_mode) =
             self.dag.find_common_ancestor(from_frontiers, to_frontiers);
         if diff_mode == DiffMode::Checkout && to > from {

@@ -2,6 +2,7 @@ use loro_common::{HasCounter, HasCounterSpan, IdSpanVector};
 use smallvec::smallvec;
 use std::{
     cmp::Ordering,
+    iter,
     ops::{Deref, DerefMut},
 };
 
@@ -193,6 +194,32 @@ impl Frontiers {
 
     pub fn retain_non_included(&mut self, other: &Frontiers) {
         self.retain(|id| !other.contains(id));
+    }
+
+    pub fn update_frontiers_on_new_change(&mut self, id: ID, deps: &Frontiers) {
+        self.retain(|existing_id| {
+            if existing_id.peer == id.peer {
+                assert!(id.counter > existing_id.counter);
+                return false;
+            }
+
+            let any_same = deps.iter().any(|dep| {
+                if dep.peer == existing_id.peer {
+                    assert!(
+                        dep.counter <= existing_id.counter,
+                        "Causal dependency violated"
+                    );
+
+                    dep.counter == existing_id.counter
+                } else {
+                    false
+                }
+            });
+
+            !any_same
+        });
+
+        self.push(id);
     }
 
     pub fn filter_peer(&mut self, peer: PeerID) {

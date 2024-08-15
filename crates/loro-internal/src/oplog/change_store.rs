@@ -951,9 +951,11 @@ mod test {
         let bytes = oplog.change_store.encode_all();
         let mut store = ChangeStore::new_for_test();
         store.decode_all(bytes.clone()).unwrap();
-        let inner = store.inner.lock().unwrap();
-        assert_eq!(inner.vv, oplog.change_store.vv());
-        assert_eq!(store.external_kv.lock().unwrap().export_all(), bytes);
+        {
+            let inner = store.inner.lock().unwrap();
+            assert_eq!(inner.vv, oplog.change_store.vv());
+            assert_eq!(store.external_kv.lock().unwrap().export_all(), bytes);
+        }
         let mut changes_parsed = Vec::new();
         let a = store.arena.clone();
         store.visit_all_changes(&mut |c| {
@@ -1022,7 +1024,7 @@ mod test {
             let node_id = tree.create(None)?;
             tree.get_meta(node_id)?.insert("key", "value")?;
             let node_b = tree.create(None)?;
-            tree.move_to(node_b, None, 0);
+            tree.move_to(node_b, None, 0).unwrap();
 
             let movable_list = map
                 .insert_container("movable", MovableListHandler::new_detached())
