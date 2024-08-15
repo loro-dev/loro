@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tracing::debug;
 
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
@@ -67,7 +67,7 @@ pub struct OpLog {
 #[derive(Debug)]
 pub struct AppDag {
     change_store: ChangeStore,
-    pub(crate) map: Mutex<BTreeMap<ID, Arc<AppDagNode>>>,
+    pub(crate) map: Mutex<BTreeMap<ID, AppDagNode>>,
     pub(crate) frontiers: Frontiers,
     pub(crate) vv: VersionVector,
     /// Ops included in the version vector but not parsed yet
@@ -98,7 +98,7 @@ impl AppDag {
         let x = map.range_mut(..=id).next_back();
         if let Some((_, node)) = x {
             if node.contains_id(id) {
-                f(Some(Arc::make_mut(node)))
+                f(Some(node))
             } else {
                 f(None)
             }
@@ -144,7 +144,7 @@ impl AppDag {
         let last = binding
             .range_mut(..=ID::new(peer, Counter::MAX))
             .next_back()
-            .map(|(_, v)| Arc::make_mut(v));
+            .map(|(_, v)| v);
         f(last)
     }
 
@@ -406,11 +406,7 @@ impl OpLog {
             });
 
             if !pushed {
-                self.dag
-                    .map
-                    .lock()
-                    .unwrap()
-                    .insert(node.id_start(), Arc::new(node));
+                self.dag.map.lock().unwrap().insert(node.id_start(), node);
             }
 
             for dep in change.deps.iter() {
@@ -434,7 +430,7 @@ impl OpLog {
                         .map
                         .lock()
                         .unwrap()
-                        .insert(new_node.id_start(), Arc::new(new_node));
+                        .insert(new_node.id_start(), new_node);
                 }
             }
         }

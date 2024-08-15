@@ -1,6 +1,6 @@
 use loro_common::HasCounter;
 use proptest::prelude::*;
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::Arc};
 
 use super::*;
 use crate::{
@@ -15,7 +15,7 @@ struct TestNode {
     id: ID,
     lamport: Lamport,
     len: usize,
-    deps: Vec<ID>,
+    deps: Arc<Vec<ID>>,
 }
 
 impl TestNode {
@@ -23,7 +23,7 @@ impl TestNode {
         Self {
             id,
             lamport,
-            deps,
+            deps: Arc::new(deps),
             len,
         }
     }
@@ -42,7 +42,7 @@ impl Sliceable for TestNode {
             lamport: self.lamport + from as Lamport,
             len: to - from,
             deps: if from > 0 {
-                vec![self.id.inc(from as Counter - 1)]
+                Arc::new(vec![self.id.inc(from as Counter - 1)])
             } else {
                 self.deps.clone()
             },
@@ -92,7 +92,7 @@ impl TestDag {
 impl Dag for TestDag {
     type Node = TestNode;
 
-    fn get(&self, id: ID) -> Option<&Self::Node> {
+    fn get(&self, id: ID) -> Option<Self::Node> {
         let arr = self.nodes.get(&id.peer)?;
         arr.binary_search_by(|node| {
             if node.id.counter > id.counter {
@@ -103,7 +103,7 @@ impl Dag for TestDag {
                 Ordering::Equal
             }
         })
-        .map_or(None, |x| Some(&arr[x]))
+        .map_or(None, |x| Some(arr[x].clone()))
     }
 
     fn frontier(&self) -> &[ID] {

@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::fmt::Display;
+use std::sync::Arc;
 
 use crate::change::Lamport;
 use crate::dag::{Dag, DagNode};
@@ -107,14 +108,14 @@ impl Dag for AppDag {
         &self.frontiers
     }
 
-    fn get(&self, id: ID) -> Option<&Self::Node> {
+    fn get(&self, id: ID) -> Option<Self::Node> {
         self.ensure_lazy_load_node(id);
         let binding = self.map.lock().unwrap();
         let x = binding.range(..=id).next_back()?;
         if x.1.contains_id(id) {
-            let app_node: &AppDagNode = x.1;
-            // SAFETY: the nodes on app_dag will not be dropped util itself is dropped
-            Some(unsafe { std::mem::transmute::<&AppDagNode, &AppDagNode>(app_node) })
+            // PERF: do we need to optimize clone like this?
+            // by adding another layer of Arc?
+            Some(x.1.clone())
         } else {
             None
         }
@@ -131,7 +132,7 @@ impl AppDag {
     /// It's the version when the op is applied
     pub fn get_vv(&self, id: ID) -> Option<ImVersionVector> {
         self.get(id).map(|x| {
-            let mut vv = self.ensure_vv_for(x);
+            let mut vv = self.ensure_vv_for(&x);
             vv.insert(id.peer, id.counter + 1);
             vv
         })
@@ -145,7 +146,7 @@ impl AppDag {
         let mut ans_vv = ImVersionVector::default();
         for id in node.deps.iter() {
             let node = self.get(*id).expect("deps should be in the dag");
-            let dep_vv = self.ensure_vv_for(node);
+            let dep_vv = self.ensure_vv_for(&node);
             if ans_vv.is_empty() {
                 ans_vv = dep_vv;
             } else {
@@ -200,7 +201,7 @@ impl AppDag {
         let mut vv: VersionVector = Default::default();
         for id in frontiers.iter() {
             let x = self.get(*id)?;
-            let target_vv = self.ensure_vv_for(x);
+            let target_vv = self.ensure_vv_for(&x);
             vv.extend_to_include_vv(target_vv.iter());
             vv.extend_to_include_last_id(*id);
         }
@@ -218,7 +219,7 @@ impl AppDag {
             let Some(x) = self.get(id) else {
                 unreachable!()
             };
-            let mut vv = self.ensure_vv_for(x);
+            let mut vv = self.ensure_vv_for(&x);
             vv.extend_to_include_last_id(id);
             vv
         };
@@ -227,7 +228,7 @@ impl AppDag {
             let Some(x) = self.get(*id) else {
                 unreachable!()
             };
-            let x = self.ensure_vv_for(x);
+            let x = self.ensure_vv_for(&x);
             vv.extend_to_include_vv(x.iter());
             vv.extend_to_include_last_id(*id);
         }

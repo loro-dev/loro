@@ -52,7 +52,7 @@ pub struct DagIterator<'a, T> {
 
 /// Should only use it on debug, because it's slow and likely to use lots of mem
 impl<'a, T: DagNode> Iterator for DagIterator<'a, T> {
-    type Item = &'a T;
+    type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.visited.is_empty() {
@@ -106,7 +106,7 @@ pub(crate) struct DagIteratorVV<'a, T> {
 
 /// Should only use it on debug, because it's slow and likely to use lots of mem
 impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
-    type Item = (&'a T, VersionVector);
+    type Item = (T, VersionVector);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.vv_map.is_empty() {
@@ -188,13 +188,13 @@ pub(crate) struct DagCausalIter<'a, Dag> {
 }
 
 #[derive(Debug)]
-pub(crate) struct IterReturn<'a, T> {
+pub(crate) struct IterReturn<T> {
     #[allow(unused)]
     pub retreat: IdSpanVector,
     #[allow(unused)]
     pub forward: IdSpanVector,
     /// data is a reference, it need to be sliced by the counter_range to get the underlying data
-    pub data: &'a T,
+    pub data: T,
     /// data[slice] is the data we want to return
     #[allow(unused)]
     pub slice: Range<i32>,
@@ -263,8 +263,8 @@ impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
     }
 }
 
-impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
-    type Item = IterReturn<'a, T>;
+impl<'a, T: DagNode, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
+    type Item = IterReturn<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.stack.is_empty() {
