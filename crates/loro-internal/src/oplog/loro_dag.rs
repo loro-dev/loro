@@ -33,11 +33,11 @@ pub struct AppDag {
     /// # Invariants
     ///
     /// - `vv` >= `unparsed_vv`
-    unparsed_vv: VersionVector,
+    unparsed_vv: Mutex<VersionVector>,
     /// It's a set of points which are deps of some parsed ops.
     /// But the ops in this set are not parsed yet. When they are parsed,
     /// we need to make sure it breaks at the given point.
-    unhandled_dep_points: BTreeSet<ID>,
+    unhandled_dep_points: Mutex<BTreeSet<ID>>,
 }
 
 pub(crate) struct EnsureDagNodeDepsAreAtTheEnd {
@@ -51,8 +51,9 @@ pub struct AppDagNode {
     pub(crate) lamport: Lamport,
     pub(crate) deps: Frontiers,
     pub(crate) vv: OnceCell<ImVersionVector>,
-    /// A flag indicating whether any other nodes depend on this node.
-    /// The calculation of frontiers is based on this value.
+    /// A flag indicating whether any other nodes from a different peer depend on this node.
+    /// The calculation of frontiers is based on the property that a node does not depend
+    /// on the middle of other nodes.
     pub(crate) has_succ: bool,
     pub(crate) len: usize,
 }
@@ -64,8 +65,8 @@ impl AppDag {
             map: Mutex::new(BTreeMap::new()),
             frontiers: Frontiers::default(),
             vv: VersionVector::default(),
-            unparsed_vv: VersionVector::default(),
-            unhandled_dep_points: BTreeSet::new(),
+            unparsed_vv: Mutex::new(VersionVector::default()),
+            unhandled_dep_points: Mutex::new(BTreeSet::new()),
         }
     }
 
@@ -132,13 +133,19 @@ impl AppDag {
                 }
             });
 
+            let mut map = self.map.lock().unwrap();
             if !pushed {
-                self.insert(node.id_start(), node);
+                map.insert(node.id_start(), node);
             }
 
             for dep in change.deps.iter() {
+                if dep.peer == change.id.peer {
+                    continue;
+                }
+
                 let ans = self.with_node_mut(*dep, |target| {
-                    let target = target.unwrap();
+                    // We don't need to break
+                    let target = target?;
                     if target.ctr_last() == dep.counter {
                         target.has_succ = true;
                         None
@@ -152,8 +159,11 @@ impl AppDag {
                         Some(new_node)
                     }
                 });
+
                 if let Some(new_node) = ans {
-                    self.insert(new_node.id_start(), new_node);
+                    map.insert(new_node.id_start(), new_node);
+                } else {
+                    self.unhandled_dep_points.lock().unwrap().insert(*dep);
                 }
             }
         }
@@ -163,15 +173,7 @@ impl AppDag {
         }
     }
 
-    fn insert(&self, id: ID, node: AppDagNode) {
-        self.map.lock().unwrap().insert(id, node);
-    }
-
-    pub(crate) fn with_node_mut<R>(
-        &self,
-        id: ID,
-        f: impl FnOnce(Option<&mut AppDagNode>) -> R,
-    ) -> R {
+    fn with_node_mut<R>(&self, id: ID, f: impl FnOnce(Option<&mut AppDagNode>) -> R) -> R {
         self.ensure_lazy_load_node(id);
         let mut map = self.map.lock().unwrap();
         let x = map.range_mut(..=id).next_back();
@@ -233,19 +235,112 @@ impl AppDag {
     }
 
     pub(super) fn lazy_load_last_of_peer(&mut self, peer: u64) {
-        if !self.unparsed_vv.contains_key(&peer) {
+        let unparsed_vv = self.unparsed_vv.lock().unwrap();
+        if !unparsed_vv.contains_key(&peer) || self.vv[&peer] >= unparsed_vv[&peer] {
             return;
         }
 
-        todo!()
+        let Some(nodes) = self.change_store.get_last_dag_nodes_for_peer(peer) else {
+            panic!("unparsed vv don't match with change store. Peer:{peer} is not in change store")
+        };
+
+        self.lazy_load_nodes_internal(nodes, peer);
+    }
+
+    fn lazy_load_nodes_internal(&self, nodes: Vec<AppDagNode>, peer: u64) {
+        assert!(!nodes.is_empty());
+        let mut map = self.map.try_lock().unwrap();
+        let new_dag_start_counter_for_the_peer = nodes[0].cnt;
+        let mut unparsed_vv = self.unparsed_vv.lock().unwrap();
+        let end_counter = unparsed_vv[&peer];
+        let mut deps_on_others = vec![];
+        for mut node in nodes {
+            if node.cnt >= end_counter {
+                // skip already parsed nodes
+                break;
+            }
+
+            if node.cnt + node.len as Counter > end_counter {
+                node = node.slice(0, (end_counter - node.cnt) as usize);
+                // This is unlikely to happen
+            }
+
+            for dep in node.deps.iter() {
+                if dep.peer != peer {
+                    deps_on_others.push(*dep);
+                }
+            }
+
+            // PERF: we can try to merge the node with the previous node
+            let break_points: Vec<_> = self
+                .unhandled_dep_points
+                .lock()
+                .unwrap()
+                .range(node.id_start()..node.id_end())
+                .map(|id| (id.counter - node.cnt) as usize)
+                .collect();
+            if break_points.is_empty() {
+                map.insert(node.id_start(), node);
+            } else {
+                let mut slice_start = 0;
+                for slice_end in break_points.into_iter().chain(std::iter::once(node.len)) {
+                    let slice_node = node.slice(slice_start, slice_end);
+                    map.insert(slice_node.id_start(), slice_node);
+                    slice_start = slice_end;
+                }
+
+                todo!("we want to test this part well")
+            }
+        }
+
+        unparsed_vv.insert(peer, new_dag_start_counter_for_the_peer);
+        drop(map);
+        drop(unparsed_vv);
+        self.handle_deps_break_points(&deps_on_others, peer);
+    }
+
+    fn handle_deps_break_points(&self, ids: &[ID], skip_peer: PeerID) {
+        let mut map = self.map.lock().unwrap();
+        for &id in ids.iter() {
+            if id.peer == skip_peer {
+                continue;
+            }
+
+            let ans = self.with_node_mut(id, |target| {
+                // We don't need to break the dag node if it's not loaded yet
+                let target = target?;
+                if target.ctr_last() == id.counter {
+                    target.has_succ = true;
+                    None
+                } else {
+                    // We need to split the target node into two part
+                    // so that we can ensure the new change depends on the
+                    // last id of a dag node.
+                    let new_node =
+                        target.slice(id.counter as usize - target.cnt as usize, target.len);
+                    target.len -= new_node.len;
+                    Some(new_node)
+                }
+            });
+
+            if let Some(new_node) = ans {
+                map.insert(new_node.id_start(), new_node);
+            } else {
+                self.unhandled_dep_points.lock().unwrap().insert(id);
+            }
+        }
     }
 
     pub(super) fn ensure_lazy_load_node(&self, id: ID) {
-        if !self.unparsed_vv.includes_id(id) {
+        if !self.unparsed_vv.lock().unwrap().includes_id(id) {
             return;
         }
 
-        todo!("load dag node from kv store, from id -> unparsed_vv.get(peer)")
+        let Some(nodes) = self.change_store.get_dag_nodes_that_contains(id) else {
+            panic!("unparsed vv don't match with change store. Id:{id} is not in change store")
+        };
+
+        self.lazy_load_nodes_internal(nodes, id.peer);
     }
 
     pub(super) fn fork(&self, change_store: ChangeStore) -> AppDag {
@@ -254,8 +349,8 @@ impl AppDag {
             map: Mutex::new(self.map.lock().unwrap().clone()),
             frontiers: self.frontiers.clone(),
             vv: self.vv.clone(),
-            unparsed_vv: self.unparsed_vv.clone(),
-            unhandled_dep_points: self.unhandled_dep_points.clone(),
+            unparsed_vv: Mutex::new(self.unparsed_vv.lock().unwrap().clone()),
+            unhandled_dep_points: Mutex::new(self.unhandled_dep_points.lock().unwrap().clone()),
         }
     }
 
@@ -325,18 +420,25 @@ impl HasLength for AppDagNode {
 }
 
 impl Mergable for AppDagNode {
-    fn is_mergable(&self, _other: &Self, _conf: &()) -> bool
+    fn is_mergable(&self, other: &Self, _conf: &()) -> bool
     where
         Self: Sized,
     {
-        false
+        !self.has_succ
+            && self.peer == other.peer
+            && self.cnt + self.len as Counter == other.cnt
+            && other.deps.len() == 1
+            && self.lamport + self.len as Lamport == other.lamport
+            && other.deps[0].peer == self.peer
     }
 
-    fn merge(&mut self, _other: &Self, _conf: &())
+    fn merge(&mut self, other: &Self, _conf: &())
     where
         Self: Sized,
     {
-        unreachable!()
+        assert_eq!(other.deps[0].counter, self.cnt + self.len as Counter - 1);
+        self.len += other.len;
+        self.has_succ = other.has_succ;
     }
 }
 

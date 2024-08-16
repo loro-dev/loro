@@ -6,7 +6,7 @@ use loro_common::{
     PeerID, ID,
 };
 use once_cell::sync::OnceCell;
-use rle::{HasLength, Mergable, RleVec, Sliceable};
+use rle::{HasLength, Mergable, RlePush, RleVec, Sliceable};
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, VecDeque},
@@ -26,6 +26,8 @@ use crate::{
 };
 
 use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
+
+use super::AppDagNode;
 
 const MAX_BLOCK_SIZE: usize = 1024 * 4;
 
@@ -51,6 +53,31 @@ struct ChangeStoreInner {
     start_frontiers: Frontiers,
     /// It's more like a parsed cache for binary_kv.
     mem_parsed_kv: BTreeMap<ID, Arc<ChangesBlock>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChangesBlock {
+    peer: PeerID,
+    counter_range: (Counter, Counter),
+    lamport_range: (Lamport, Lamport),
+    /// Estimated size of the block in bytes
+    estimated_size: usize,
+    flushed: bool,
+    content: ChangesBlockContent,
+}
+
+#[derive(Clone)]
+pub(crate) enum ChangesBlockContent {
+    Changes(Arc<Vec<Change>>),
+    Bytes(ChangesBlockBytes),
+    Both(Arc<Vec<Change>>, ChangesBlockBytes),
+}
+
+/// It's cheap to clone this struct because it's cheap to clone the bytes
+#[derive(Clone)]
+pub(crate) struct ChangesBlockBytes {
+    bytes: Bytes,
+    header: OnceCell<Arc<ChangesBlockHeader>>,
 }
 
 pub const VV_KEY: &[u8] = b"vv";
@@ -278,6 +305,16 @@ impl ChangeStore {
         None
     }
 
+    pub fn get_dag_nodes_that_contains(&self, id: ID) -> Option<Vec<AppDagNode>> {
+        let block = self.get_block_that_contains(id)?;
+        Some(block.content.iter_dag_nodes())
+    }
+
+    pub fn get_last_dag_nodes_for_peer(&self, peer: PeerID) -> Option<Vec<AppDagNode>> {
+        let block = self.get_the_last_block_of_peer(peer)?;
+        Some(block.content.iter_dag_nodes())
+    }
+
     pub fn get_change(&self, id: ID) -> Option<BlockChangeRef> {
         let block = self.get_parsed_block(id)?;
         Some(BlockChangeRef {
@@ -354,7 +391,7 @@ impl ChangeStore {
     }
 
     pub fn visit_all_changes(&self, f: &mut dyn FnMut(&Change)) {
-        self.ensure_block_parsed_in_range(Bound::Unbounded, Bound::Unbounded);
+        self.ensure_block_loaded_in_range(Bound::Unbounded, Bound::Unbounded);
         let mut inner = self.inner.lock().unwrap();
         for (_, block) in inner.mem_parsed_kv.iter_mut() {
             block
@@ -366,24 +403,71 @@ impl ChangeStore {
         }
     }
 
-    fn ensure_block_parsed_in_range(&self, start: Bound<&[u8]>, end: Bound<&[u8]>) {
+    /// Load all the blocks that have overlapped with the given ID range into `inner_mem_parsed_kv`
+    ///
+    /// This is fast because we don't actually parse the content.
+    // TODO: PERF: This method feels slow.
+    fn ensure_block_loaded_in_range(&self, start: Bound<ID>, end: Bound<ID>) {
+        let mut whether_need_scan_backward = match start {
+            Bound::Included(id) => Some(id),
+            Bound::Excluded(id) => Some(id.inc(1)),
+            Bound::Unbounded => None,
+        };
+
+        {
+            let start = start.map(|id| id.to_bytes());
+            let end = end.map(|id| id.to_bytes());
+            let kv = self.external_kv.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap();
+            for (id, bytes) in kv
+                .scan(
+                    start.as_ref().map(|x| x.as_slice()),
+                    end.as_ref().map(|x| x.as_slice()),
+                )
+                .filter(|(id, _)| id.len() == 12)
+            {
+                let id = ID::from_bytes(&id);
+                if let Some(expected_start_id) = whether_need_scan_backward {
+                    if id == expected_start_id {
+                        whether_need_scan_backward = None;
+                    }
+                }
+
+                if inner.mem_parsed_kv.contains_key(&id) {
+                    continue;
+                }
+
+                let block = ChangesBlock::from_bytes(bytes.clone(), true).unwrap();
+                inner.mem_parsed_kv.insert(id, Arc::new(block));
+            }
+        }
+
+        if let Some(start_id) = whether_need_scan_backward {
+            self.ensure_id_lte(start_id);
+        }
+    }
+
+    fn ensure_id_lte(&self, id: ID) {
         let kv = self.external_kv.lock().unwrap();
         let mut inner = self.inner.lock().unwrap();
-        for (id, bytes) in kv.scan(start, end).filter(|(id, _)| id.len() == 12) {
-            let id = ID::from_bytes(&id);
-            if inner.mem_parsed_kv.contains_key(&id) {
-                continue;
-            }
+        let Some((next_back_id, next_back_bytes)) = kv
+            .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
+            .next_back()
+        else {
+            return;
+        };
 
-            let block = ChangesBlock::from_bytes(bytes.clone(), true).unwrap();
-            inner.mem_parsed_kv.insert(id, Arc::new(block));
+        let next_back_id = ID::from_bytes(&next_back_id);
+        if next_back_id.peer == id.peer {
+            let block = ChangesBlock::from_bytes(next_back_bytes, true).unwrap();
+            inner.mem_parsed_kv.insert(next_back_id, Arc::new(block));
         }
     }
 
     pub fn iter_changes(&self, id_span: IdSpan) -> impl Iterator<Item = BlockChangeRef> + '_ {
-        self.ensure_block_parsed_in_range(
-            Bound::Included(&id_span.id_start().to_bytes()),
-            Bound::Excluded(&id_span.id_end().to_bytes()),
+        self.ensure_block_loaded_in_range(
+            Bound::Included(id_span.id_start()),
+            Bound::Excluded(id_span.id_end()),
         );
         let mut inner = self.inner.lock().unwrap();
         let start_counter = inner
@@ -461,6 +545,37 @@ impl ChangeStore {
             // TODO: PERF avoid alloc
             .collect();
         vec
+    }
+
+    pub(crate) fn get_block_that_contains(&self, id: ID) -> Option<Arc<ChangesBlock>> {
+        self.ensure_block_loaded_in_range(Bound::Included(id), Bound::Included(id));
+        let inner = self.inner.lock().unwrap();
+        let block = inner
+            .mem_parsed_kv
+            .range(..=id)
+            .next_back()
+            .filter(|(_, block)| {
+                block.peer == id.peer
+                    && block.counter_range.0 <= id.counter
+                    && id.counter < block.counter_range.1
+            })
+            .map(|(_, block)| block.clone());
+
+        block
+    }
+
+    pub(crate) fn get_the_last_block_of_peer(&self, peer: PeerID) -> Option<Arc<ChangesBlock>> {
+        let end_id = ID::new(peer, Counter::MAX);
+        self.ensure_id_lte(end_id);
+        let inner = self.inner.lock().unwrap();
+        let block = inner
+            .mem_parsed_kv
+            .range(..=end_id)
+            .next_back()
+            .filter(|(_, block)| block.peer == peer)
+            .map(|(_, block)| block.clone());
+
+        block
     }
 
     pub fn change_num(&self) -> usize {
@@ -545,17 +660,6 @@ impl BlockOpRef {
         let op = &change.ops[self.op_index];
         (op.counter - change.id.counter) as Lamport + change.lamport
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct ChangesBlock {
-    peer: PeerID,
-    counter_range: (Counter, Counter),
-    lamport_range: (Lamport, Lamport),
-    /// Estimated size of the block in bytes
-    estimated_size: usize,
-    flushed: bool,
-    content: ChangesBlockContent,
 }
 
 impl ChangesBlock {
@@ -764,14 +868,49 @@ impl ChangesBlock {
     }
 }
 
-#[derive(Clone)]
-pub(crate) enum ChangesBlockContent {
-    Changes(Arc<Vec<Change>>),
-    Bytes(ChangesBlockBytes),
-    Both(Arc<Vec<Change>>, ChangesBlockBytes),
-}
-
 impl ChangesBlockContent {
+    // TODO: PERF: We can use Iter to replace Vec
+    pub fn iter_dag_nodes(&self) -> Vec<AppDagNode> {
+        let mut dag_nodes = Vec::new();
+        match self {
+            ChangesBlockContent::Changes(c) | ChangesBlockContent::Both(c, _) => {
+                for change in c.iter() {
+                    let new_node = AppDagNode {
+                        peer: change.id.peer,
+                        cnt: change.id.counter,
+                        lamport: change.lamport,
+                        deps: change.deps.clone(),
+                        vv: OnceCell::new(),
+                        has_succ: false,
+                        len: change.atom_len(),
+                    };
+
+                    dag_nodes.push_rle_element(new_node);
+                }
+            }
+            ChangesBlockContent::Bytes(b) => {
+                b.ensure_header().unwrap();
+                let header = b.header.get().unwrap();
+                let n = header.n_changes;
+                for i in 0..n {
+                    let new_node = AppDagNode {
+                        peer: header.peer,
+                        cnt: header.counters[i],
+                        lamport: header.lamports[i],
+                        deps: header.deps_groups[i].clone(),
+                        vv: OnceCell::new(),
+                        has_succ: false,
+                        len: (header.counters[i + 1] - header.counters[i]) as usize,
+                    };
+
+                    dag_nodes.push_rle_element(new_node);
+                }
+            }
+        }
+
+        dag_nodes
+    }
+
     pub fn changes(&mut self) -> LoroResult<&Vec<Change>> {
         match self {
             ChangesBlockContent::Changes(changes) => Ok(changes),
@@ -833,13 +972,6 @@ impl std::fmt::Debug for ChangesBlockContent {
                 .finish(),
         }
     }
-}
-
-/// It's cheap to clone this struct because it's cheap to clone the bytes
-#[derive(Clone)]
-pub(crate) struct ChangesBlockBytes {
-    bytes: Bytes,
-    header: OnceCell<Arc<ChangesBlockHeader>>,
 }
 
 impl ChangesBlockBytes {
