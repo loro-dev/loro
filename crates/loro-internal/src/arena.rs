@@ -391,7 +391,7 @@ impl SharedArena {
                 container,
                 content: crate::op::InnerContent::Future(crate::op::FutureInnerContent::Unknown {
                     prop,
-                    value,
+                    value: Box::new(value),
                 }),
             },
         }

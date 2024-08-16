@@ -933,7 +933,7 @@ pub(crate) fn local_op_to_remote(
             FutureInnerContent::Unknown { prop, value } => {
                 contents.push(crate::op::RawOpContent::Unknown {
                     prop: *prop,
-                    value: value.clone(),
+                    value: (**value).clone(),
                 })
             }
         },

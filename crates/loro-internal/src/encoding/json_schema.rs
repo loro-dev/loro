@@ -378,7 +378,7 @@ fn encode_changes(
                     };
                     JsonOpContent::Future(op::FutureOpWrapper {
                         prop: *prop,
-                        value: op::FutureOp::Unknown(value.clone()),
+                        value: op::FutureOp::Unknown((**value).clone()),
                     })
                 }
                 #[cfg(feature = "counter")]
@@ -626,7 +626,10 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
             JsonOpContent::Future(op::FutureOpWrapper {
                 prop,
                 value: op::FutureOp::Unknown(value),
-            }) => InnerContent::Future(FutureInnerContent::Unknown { prop, value }),
+            }) => InnerContent::Future(FutureInnerContent::Unknown {
+                prop,
+                value: Box::new(value),
+            }),
             _ => unreachable!(),
         },
         #[cfg(feature = "counter")]

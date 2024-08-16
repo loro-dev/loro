@@ -1448,7 +1448,7 @@ pub(crate) fn decode_op(
         // NOTE: The future container type need also try to parse the unknown type
         ContainerType::Unknown(_) => crate::op::InnerContent::Future(FutureInnerContent::Unknown {
             prop,
-            value: value.into_owned(),
+            value: Box::new(value.into_owned()),
         }),
     };
 

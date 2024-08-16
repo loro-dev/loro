@@ -83,7 +83,7 @@ pub enum FutureInnerContent {
     Counter(f64),
     Unknown {
         prop: i32,
-        value: OwnedValue,
+        value: Box<OwnedValue>,
     },
 }
 impl FutureInnerContent {
