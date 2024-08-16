@@ -35,7 +35,7 @@ use crate::{
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     op::InnerContent,
-    oplog::dag::FrontiersNotIncluded,
+    oplog::loro_dag::FrontiersNotIncluded,
     undo::DiffBatch,
     version::Frontiers,
     HandlerTrait, InternalString, LoroError, VersionVector,
