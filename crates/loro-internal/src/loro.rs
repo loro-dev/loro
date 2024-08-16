@@ -1237,8 +1237,8 @@ impl LoroDoc {
                     &oplog,
                     before,
                     Some(&before_frontiers),
-                    &oplog.dag.vv,
-                    Some(&oplog.dag.frontiers),
+                    oplog.vv(),
+                    Some(oplog.frontiers()),
                     Some(&|target| idx == target),
                 );
                 // TODO: remove depth info
@@ -1376,7 +1376,7 @@ impl LoroDoc {
 
 fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
     let start_vv = oplog.dag.frontiers_to_vv(&id.into()).unwrap();
-    for change in oplog.iter_changes_causally_rev(&start_vv, &oplog.dag.vv) {
+    for change in oplog.iter_changes_causally_rev(&start_vv, oplog.vv()) {
         for op in change.ops.iter().rev() {
             if op.container != idx {
                 continue;

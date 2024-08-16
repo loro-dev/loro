@@ -70,7 +70,7 @@ impl OpLog {
     ///
     /// `new_ids` are the ID of the op that is just applied.
     pub(crate) fn try_apply_pending(&mut self, mut new_ids: Vec<ID>) -> ShouldUpdateDagFrontiers {
-        let mut latest_vv = self.dag.vv.clone();
+        let mut latest_vv = self.dag.vv().clone();
         let mut updated = false;
         while let Some(id) = new_ids.pop() {
             let Some(tree) = self.pending_changes.changes.get_mut(&id.peer) else {
@@ -135,7 +135,6 @@ impl OpLog {
             return;
         };
         self.next_lamport = self.next_lamport.max(change.lamport_end());
-        self.dag.vv.extend_to_include_last_id(change.id_last());
         self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
         let mark = self.update_dag_on_new_change(&change);
         self.insert_new_change(change, mark);

@@ -17,12 +17,22 @@ use super::ChangeStore;
 /// It's faster to answer the question like what's the LCA version
 #[derive(Debug)]
 pub struct AppDag {
-    pub(super) change_store: ChangeStore,
-    pub(crate) map: Mutex<BTreeMap<ID, AppDagNode>>,
-    pub(crate) frontiers: Frontiers,
-    pub(crate) vv: VersionVector,
+    change_store: ChangeStore,
+    /// It only contains nodes that are already parsed.
+    ///
+    /// - All the unparsed op ids must be included in `unparsed_vv`.
+    /// - All the parsed and unparsed op ids must be included in `vv`.
+    map: Mutex<BTreeMap<ID, AppDagNode>>,
+    /// The latest known frontiers
+    frontiers: Frontiers,
+    /// The latest known version vector
+    vv: VersionVector,
     /// Ops included in the version vector but not parsed yet
-    pub(crate) unparsed_vv: VersionVector,
+    ///
+    /// # Invariants
+    ///
+    /// - `vv` >= `unparsed_vv`
+    unparsed_vv: VersionVector,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +49,32 @@ pub struct AppDagNode {
 }
 
 impl AppDag {
+    pub(super) fn new(change_store: ChangeStore) -> Self {
+        Self {
+            change_store,
+            map: Mutex::new(BTreeMap::new()),
+            frontiers: Frontiers::default(),
+            vv: VersionVector::default(),
+            unparsed_vv: VersionVector::default(),
+        }
+    }
+
+    pub fn frontiers(&self) -> &Frontiers {
+        &self.frontiers
+    }
+
+    pub fn vv(&self) -> &VersionVector {
+        &self.vv
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.vv.is_empty()
+    }
+
+    pub fn insert(&self, id: ID, node: AppDagNode) {
+        self.map.lock().unwrap().insert(id, node);
+    }
+
     pub(crate) fn with_node_mut<R>(
         &self,
         id: ID,
@@ -128,6 +164,10 @@ impl AppDag {
             vv: self.vv.clone(),
             unparsed_vv: self.unparsed_vv.clone(),
         }
+    }
+
+    pub fn total_parsed_dag_node(&self) -> usize {
+        self.map.lock().unwrap().len()
     }
 }
 

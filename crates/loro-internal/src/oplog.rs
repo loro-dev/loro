@@ -7,7 +7,6 @@ use once_cell::sync::OnceCell;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Mutex;
 use tracing::debug;
@@ -86,13 +85,7 @@ impl OpLog {
                 arena.clone(),
                 change_store.clone(),
             )),
-            dag: AppDag {
-                change_store: change_store.clone(),
-                map: Mutex::new(BTreeMap::new()),
-                frontiers: Frontiers::default(),
-                vv: VersionVector::default(),
-                unparsed_vv: VersionVector::default(),
-            },
+            dag: AppDag::new(change_store.clone()),
             change_store,
             arena,
             next_lamport: 0,
@@ -164,7 +157,7 @@ impl OpLog {
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.dag.map.lock().unwrap().is_empty() && self.arena.can_import_snapshot()
+        self.dag.is_empty() && self.arena.can_import_snapshot()
     }
 
     /// This is the **only** place to update the `OpLog.changes`
@@ -287,7 +280,7 @@ impl OpLog {
             });
 
             if !pushed {
-                self.dag.map.lock().unwrap().insert(node.id_start(), node);
+                self.dag.insert(node.id_start(), node);
             }
 
             for dep in change.deps.iter() {
@@ -307,11 +300,7 @@ impl OpLog {
                     }
                 });
                 if let Some(new_node) = ans {
-                    self.dag
-                        .map
-                        .lock()
-                        .unwrap()
-                        .insert(new_node.id_start(), new_node);
+                    self.dag.insert(new_node.id_start(), new_node);
                 }
             }
         }
@@ -321,7 +310,7 @@ impl OpLog {
 
     /// Trim the known part of change
     pub(crate) fn trim_the_known_part_of_change(&self, change: Change) -> Option<Change> {
-        let Some(&end) = self.dag.vv.get(&change.id.peer) else {
+        let Some(&end) = self.dag.vv().get(&change.id.peer) else {
             return Some(change);
         };
 
@@ -338,7 +327,7 @@ impl OpLog {
     }
 
     fn check_id_is_not_duplicated(&self, id: ID) -> Result<(), LoroError> {
-        let cur_end = self.dag.vv.get(&id.peer).cloned().unwrap_or(0);
+        let cur_end = self.dag.vv().get(&id.peer).cloned().unwrap_or(0);
         if cur_end > id.counter {
             return Err(LoroError::UsedOpID { id });
         }
@@ -348,7 +337,7 @@ impl OpLog {
 
     fn check_deps(&self, deps: &Frontiers) -> Result<(), ID> {
         for dep in deps.iter() {
-            if !self.dag.vv.includes_id(*dep) {
+            if !self.dag.vv().includes_id(*dep) {
                 return Err(*dep);
             }
         }
@@ -357,16 +346,16 @@ impl OpLog {
     }
 
     pub(crate) fn next_id(&self, peer: PeerID) -> ID {
-        let cnt = self.dag.vv.get(&peer).copied().unwrap_or(0);
+        let cnt = self.dag.vv().get(&peer).copied().unwrap_or(0);
         ID::new(peer, cnt)
     }
 
     pub(crate) fn vv(&self) -> &VersionVector {
-        &self.dag.vv
+        self.dag.vv()
     }
 
     pub(crate) fn frontiers(&self) -> &Frontiers {
-        &self.dag.frontiers
+        &self.dag.frontiers()
     }
 
     /// - Ordering::Less means self is less than target or parallel
@@ -434,7 +423,7 @@ impl OpLog {
         &mut self,
         remote_changes: Vec<Change>,
     ) -> Result<(), LoroError> {
-        let latest_vv = self.dag.vv.clone();
+        let latest_vv = self.dag.vv().clone();
         self.extend_pending_changes_with_unknown_lamport(remote_changes, &latest_vv);
         Ok(())
     }
@@ -578,7 +567,7 @@ impl OpLog {
         let mut total_changes = 0;
         let mut total_ops = 0;
         let mut total_atom_ops = 0;
-        let total_dag_node = self.dag.map.lock().unwrap().len();
+        let total_dag_node = self.dag.total_parsed_dag_node();
         self.change_store.visit_all_changes(&mut |change| {
             total_changes += 1;
             total_ops += change.ops.len();
@@ -681,7 +670,7 @@ impl OpLog {
     #[inline]
     pub fn compact_change_store(&mut self) {
         self.change_store
-            .flush_and_compact(&self.dag.vv, &self.dag.frontiers);
+            .flush_and_compact(self.dag.vv(), self.dag.frontiers());
     }
 
     #[inline]
