@@ -7,8 +7,9 @@ use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, PeerID};
 use once_cell::sync::OnceCell;
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
+use std::marker::PhantomData;
 use std::sync::Mutex;
 
 use super::ChangeStore;
@@ -33,6 +34,14 @@ pub struct AppDag {
     ///
     /// - `vv` >= `unparsed_vv`
     unparsed_vv: VersionVector,
+    /// It's a set of points which are deps of some parsed ops.
+    /// But the ops in this set are not parsed yet. When they are parsed,
+    /// we need to make sure it breaks at the given point.
+    unhandled_dep_points: BTreeSet<ID>,
+}
+
+pub(crate) struct EnsureDagNodeDepsAreAtTheEnd {
+    _private: PhantomData<()>,
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +65,7 @@ impl AppDag {
             frontiers: Frontiers::default(),
             vv: VersionVector::default(),
             unparsed_vv: VersionVector::default(),
+            unhandled_dep_points: BTreeSet::new(),
         }
     }
 
@@ -71,7 +81,89 @@ impl AppDag {
         self.vv.is_empty()
     }
 
-    pub fn insert(&self, id: ID, node: AppDagNode) {
+    pub(super) fn handle_new_change(&mut self, change: &Change) -> EnsureDagNodeDepsAreAtTheEnd {
+        let len = change.content_len();
+        self.update_frontiers(change.id_last(), &change.deps);
+        if change.deps_on_self() {
+            // don't need to push new element to dag because it only depends on itself
+            self.with_last_mut_of_peer(change.id.peer, |last| {
+                let last = last.unwrap();
+                assert_eq!(last.peer, change.id.peer, "peer id is not the same");
+                assert_eq!(
+                    last.cnt + last.len as Counter,
+                    change.id.counter,
+                    "counter is not continuous"
+                );
+                assert_eq!(
+                    last.lamport + last.len as Lamport,
+                    change.lamport,
+                    "lamport is not continuous"
+                );
+                last.len = (change.id.counter - last.cnt) as usize + len;
+                last.has_succ = false;
+            });
+        } else {
+            let vv = self.frontiers_to_im_vv(&change.deps);
+            let mut pushed = false;
+            let node = AppDagNode {
+                vv: OnceCell::from(vv),
+                peer: change.id.peer,
+                cnt: change.id.counter,
+                lamport: change.lamport,
+                deps: change.deps.clone(),
+                has_succ: false,
+                len,
+            };
+
+            self.with_last_mut_of_peer(change.id.peer, |last| {
+                if let Some(last) = last {
+                    if change.id.counter > 0 {
+                        assert_eq!(
+                            last.ctr_end(),
+                            change.id.counter,
+                            "counter is not continuous"
+                        );
+                    }
+
+                    if last.is_mergable(&node, &()) {
+                        pushed = true;
+                        last.merge(&node, &());
+                    }
+                }
+            });
+
+            if !pushed {
+                self.insert(node.id_start(), node);
+            }
+
+            for dep in change.deps.iter() {
+                let ans = self.with_node_mut(*dep, |target| {
+                    let target = target.unwrap();
+                    if target.ctr_last() == dep.counter {
+                        target.has_succ = true;
+                        None
+                    } else {
+                        // We need to split the target node into two part
+                        // so that we can ensure the new change depends on the
+                        // last id of a dag node.
+                        let new_node =
+                            target.slice(dep.counter as usize - target.cnt as usize, target.len);
+                        target.len -= new_node.len;
+                        Some(new_node)
+                    }
+                });
+                if let Some(new_node) = ans {
+                    self.insert(new_node.id_start(), new_node);
+                }
+            }
+        }
+
+        EnsureDagNodeDepsAreAtTheEnd {
+            _private: PhantomData,
+        }
+    }
+
+    fn insert(&self, id: ID, node: AppDagNode) {
         self.map.lock().unwrap().insert(id, node);
     }
 
@@ -163,6 +255,7 @@ impl AppDag {
             frontiers: self.frontiers.clone(),
             vv: self.vv.clone(),
             unparsed_vv: self.unparsed_vv.clone(),
+            unhandled_dep_points: self.unhandled_dep_points.clone(),
         }
     }
 

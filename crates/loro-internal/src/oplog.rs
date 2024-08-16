@@ -31,6 +31,7 @@ use rle::{HasLength, Mergable, RleVec, Sliceable};
 use smallvec::SmallVec;
 
 use self::iter::MergedChangeIter;
+use self::loro_dag::EnsureDagNodeDepsAreAtTheEnd;
 pub use self::loro_dag::{AppDag, AppDagNode, FrontiersNotIncluded};
 use self::pending_changes::PendingChanges;
 
@@ -71,8 +72,6 @@ impl std::fmt::Debug for OpLog {
             .finish()
     }
 }
-
-pub(crate) struct EnsureDagNodeDepsAreAtTheEnd;
 
 impl OpLog {
     #[inline]
@@ -230,82 +229,7 @@ impl OpLog {
         &mut self,
         change: &Change,
     ) -> EnsureDagNodeDepsAreAtTheEnd {
-        let len = change.content_len();
-        self.dag.update_frontiers(change.id_last(), &change.deps);
-        if change.deps_on_self() {
-            // don't need to push new element to dag because it only depends on itself
-            self.dag.with_last_mut_of_peer(change.id.peer, |last| {
-                let last = last.unwrap();
-                assert_eq!(last.peer, change.id.peer, "peer id is not the same");
-                assert_eq!(
-                    last.cnt + last.len as Counter,
-                    change.id.counter,
-                    "counter is not continuous"
-                );
-                assert_eq!(
-                    last.lamport + last.len as Lamport,
-                    change.lamport,
-                    "lamport is not continuous"
-                );
-                last.len = (change.id.counter - last.cnt) as usize + len;
-                last.has_succ = false;
-            });
-        } else {
-            let vv = self.dag.frontiers_to_im_vv(&change.deps);
-            let mut pushed = false;
-            let node = AppDagNode {
-                vv: OnceCell::from(vv),
-                peer: change.id.peer,
-                cnt: change.id.counter,
-                lamport: change.lamport,
-                deps: change.deps.clone(),
-                has_succ: false,
-                len,
-            };
-            self.dag.with_last_mut_of_peer(change.id.peer, |last| {
-                if let Some(last) = last {
-                    if change.id.counter > 0 {
-                        assert_eq!(
-                            last.ctr_end(),
-                            change.id.counter,
-                            "counter is not continuous"
-                        );
-                    }
-
-                    if last.is_mergable(&node, &()) {
-                        pushed = true;
-                        last.merge(&node, &());
-                    }
-                }
-            });
-
-            if !pushed {
-                self.dag.insert(node.id_start(), node);
-            }
-
-            for dep in change.deps.iter() {
-                let ans = self.dag.with_node_mut(*dep, |target| {
-                    let target = target.unwrap();
-                    if target.ctr_last() == dep.counter {
-                        target.has_succ = true;
-                        None
-                    } else {
-                        // We need to split the target node into two part
-                        // so that we can ensure the new change depends on the
-                        // last id of a dag node.
-                        let new_node =
-                            target.slice(dep.counter as usize - target.cnt as usize, target.len);
-                        target.len -= new_node.len;
-                        Some(new_node)
-                    }
-                });
-                if let Some(new_node) = ans {
-                    self.dag.insert(new_node.id_start(), new_node);
-                }
-            }
-        }
-
-        EnsureDagNodeDepsAreAtTheEnd
+        self.dag.handle_new_change(change)
     }
 
     /// Trim the known part of change
