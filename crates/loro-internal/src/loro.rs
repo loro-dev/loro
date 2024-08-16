@@ -1229,7 +1229,8 @@ impl LoroDoc {
                     .ok_or(CannotFindRelativePosition::ContainerDeleted)?;
                 // We know where the target id is when we trace back to the delete_op_id.
                 let delete_op_id = find_last_delete_op(&oplog, id, idx).unwrap();
-                let mut diff_calc = DiffCalculator::new(false);
+                // Should use persist mode so that it will force all the diff calculators to use the `checkout` mode
+                let mut diff_calc = DiffCalculator::new(true);
                 let before_frontiers: Frontiers = oplog.dag.find_deps_of_id(delete_op_id);
                 let before = &oplog.dag.frontiers_to_vv(&before_frontiers).unwrap();
                 // TODO: PERF: it doesn't need to calc the effects here

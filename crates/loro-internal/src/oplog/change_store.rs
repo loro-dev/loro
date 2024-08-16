@@ -289,44 +289,56 @@ impl ChangeStore {
     /// Get the change with the given peer and lamport.
     ///
     /// If not found, return the change with the greatest lamport that is smaller than the given lamport.
-    pub fn get_change_by_idlp(&self, idlp: IdLp) -> Option<BlockChangeRef> {
+    pub fn get_change_by_lamport_lte(&self, idlp: IdLp) -> Option<BlockChangeRef> {
         let mut inner = self.inner.lock().unwrap();
         let mut iter = inner
             .mem_parsed_kv
             .range_mut(ID::new(idlp.peer, 0)..ID::new(idlp.peer, i32::MAX));
         // FIX: PERF: this is super slow
-        while let Some((_id, block)) = iter.next_back() {
+        let mut last_counter = None;
+        while let Some((id, block)) = iter.next_back() {
             if block.lamport_range.0 <= idlp.lamport {
-                if block.lamport_range.1 < idlp.lamport {
-                    break;
+                if let Some(last_counter) = last_counter {
+                    if block.counter_range.1 != last_counter {
+                        // There is a hole between two blocks
+                        break;
+                    }
                 }
 
                 block
                     .ensure_changes(&self.arena)
                     .expect("Parse block error");
-                let index = block.get_change_index_by_lamport(idlp.lamport)?;
+                let index = block.get_change_index_by_lamport_lte(idlp.lamport)?;
                 return Some(BlockChangeRef {
                     change_index: index,
                     block: block.clone(),
                 });
             }
+
+            last_counter = Some(id.counter);
         }
 
-        let (id, bytes) = self.external_kv.lock().unwrap().binary_search_by(
-            Bound::Included(&ID::new(idlp.peer, 0).to_bytes()),
-            Bound::Excluded(&ID::new(idlp.peer, Counter::MAX).to_bytes()),
-            &mut |_k, v| {
-                let mut b = ChangesBlockBytes::new(v.clone());
-                let range = b.lamport_range();
-                if range.0 <= idlp.lamport && range.1 > idlp.lamport {
-                    Ordering::Equal
-                } else if range.1 <= idlp.lamport {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
+        let counter_end = last_counter.unwrap_or(Counter::MAX);
+        let scan_end = ID::new(idlp.peer, counter_end).to_bytes();
+        let (id, bytes) = 'block_scan: {
+            let kv_store = &self.external_kv.lock().unwrap();
+            let iter = kv_store
+                .scan(
+                    Bound::Included(&ID::new(idlp.peer, 0).to_bytes()),
+                    Bound::Excluded(&scan_end),
+                )
+                .rev();
+
+            for (id, bytes) in iter {
+                let mut block = ChangesBlockBytes::new(bytes.clone());
+                let (lamport_start, _lamport_end) = block.lamport_range();
+                if lamport_start <= idlp.lamport {
+                    break 'block_scan (id, bytes);
                 }
-            },
-        )?;
+            }
+
+            return None;
+        };
 
         let block_id = ID::from_bytes(&id);
         let mut block = Arc::new(ChangesBlock::from_bytes(bytes, true).unwrap());
@@ -334,7 +346,7 @@ impl ChangeStore {
             .ensure_changes(&self.arena)
             .expect("Parse block error");
         inner.mem_parsed_kv.insert(block_id, block.clone());
-        let index = block.get_change_index_by_lamport(idlp.lamport)?;
+        let index = block.get_change_index_by_lamport_lte(idlp.lamport)?;
         Some(BlockChangeRef {
             change_index: index,
             block,
@@ -711,7 +723,7 @@ impl ChangesBlock {
         }
     }
 
-    fn get_change_index_by_lamport(&self, lamport: Lamport) -> Option<usize> {
+    fn get_change_index_by_lamport_lte(&self, lamport: Lamport) -> Option<usize> {
         let changes = self.content.try_changes().unwrap();
         let r = changes.binary_search_by(|c| {
             if c.lamport > lamport {
@@ -725,13 +737,11 @@ impl ChangesBlock {
 
         match r {
             Ok(found) => Some(found),
-            Err(not_found) => {
-                if not_found == 0 {
+            Err(idx) => {
+                if idx == 0 {
                     None
                 } else {
-                    // NOTE: we somehow need to return it even if we cannot find the perfect match
-                    // need to check which part relies on this behavior
-                    Some(not_found - 1)
+                    Some(idx - 1)
                 }
             }
         }

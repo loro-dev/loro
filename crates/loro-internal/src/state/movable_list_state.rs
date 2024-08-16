@@ -985,7 +985,6 @@ impl ContainerState for MovableListState {
             unreachable!()
         };
 
-        let start = Instant::now();
         if cfg!(debug_assertions) {
             self.inner.check_consistency();
         }

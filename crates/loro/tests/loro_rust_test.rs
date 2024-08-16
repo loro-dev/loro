@@ -230,16 +230,16 @@ fn get_change_at_lamport() {
     doc1.get_text("text").insert(0, "0123").unwrap();
     doc1.commit();
     doc1.with_oplog(|oplog| {
-        let change = oplog.get_change_with_lamport(1, 2).unwrap();
+        let change = oplog.get_change_with_lamport_lte(1, 2).unwrap();
         assert_eq!(change.lamport(), 0);
         assert_eq!(change.peer(), 1);
-        let change = oplog.get_change_with_lamport(1, 7).unwrap();
+        let change = oplog.get_change_with_lamport_lte(1, 7).unwrap();
         assert_eq!(change.lamport(), 0);
         assert_eq!(change.peer(), 1);
-        let change = oplog.get_change_with_lamport(1, 13).unwrap();
+        let change = oplog.get_change_with_lamport_lte(1, 13).unwrap();
         assert_eq!(change.lamport(), 10);
         assert_eq!(change.peer(), 1);
-        let change = oplog.get_change_with_lamport(1, 14).unwrap();
+        let change = oplog.get_change_with_lamport_lte(1, 14).unwrap();
         assert_eq!(change.lamport(), 10);
     })
 }

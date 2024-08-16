@@ -1196,7 +1196,8 @@ impl Loro {
     ) -> JsResult<JsChangeOrUndefined> {
         let borrow_mut = &self.0;
         let oplog = borrow_mut.oplog().lock().unwrap();
-        let Some(change) = oplog.get_change_with_lamport(peer_id.parse().unwrap_throw(), lamport)
+        let Some(change) =
+            oplog.get_change_with_lamport_lte(peer_id.parse().unwrap_throw(), lamport)
         else {
             return Ok(JsValue::UNDEFINED.into());
         };

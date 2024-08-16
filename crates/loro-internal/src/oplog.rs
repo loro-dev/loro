@@ -135,13 +135,13 @@ impl OpLog {
     /// Get the change with the given peer and lamport.
     ///
     /// If not found, return the change with the greatest lamport that is smaller than the given lamport.
-    pub fn get_change_with_lamport(
+    pub fn get_change_with_lamport_lte(
         &self,
         peer: PeerID,
         lamport: Lamport,
     ) -> Option<BlockChangeRef> {
         self.change_store
-            .get_change_by_idlp(IdLp::new(peer, lamport))
+            .get_change_by_lamport_lte(IdLp::new(peer, lamport))
     }
 
     pub fn get_timestamp_of_version(&self, f: &Frontiers) -> Timestamp {
@@ -615,7 +615,7 @@ impl OpLog {
 
     #[inline(never)]
     pub(crate) fn idlp_to_id(&self, id: loro_common::IdLp) -> Option<ID> {
-        let change = self.change_store.get_change_by_idlp(id)?;
+        let change = self.change_store.get_change_by_lamport_lte(id)?;
         if change.lamport > id.lamport || change.lamport_end() <= id.lamport {
             return None;
         }

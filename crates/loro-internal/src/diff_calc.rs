@@ -1350,7 +1350,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             unreachable!()
         };
 
-        let diff_calc_start = Instant::now();
         assert_eq!(diff_mode, DiffMode::Checkout);
         let is_checkout = matches!(self.current_mode, DiffMode::Checkout | DiffMode::Import);
         let mut element_changes: FxHashMap<CompactIdLp, ElementDelta> = if is_checkout {
@@ -1407,7 +1406,6 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         };
 
         if is_checkout {
-            let start = Instant::now();
             oplog.with_history_cache(|history_cache| {
                 let checkout_index = &history_cache.get_checkout_index().movable_list;
                 element_changes.retain(|id, change| {
