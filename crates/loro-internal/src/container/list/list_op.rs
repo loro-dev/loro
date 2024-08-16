@@ -44,12 +44,13 @@ pub enum ListOp<'a> {
 
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum InnerListOp {
-    // Note: len may not equal to slice.len() because for text len is unicode len while the slice
-    // is utf8 bytes.
+    // TODO: this is only used for list now? We should rename it to InsertList
     Insert {
         slice: SliceRange,
         pos: usize,
     },
+    // Note: len may not equal to slice.len() because for text len is unicode len while the slice
+    // is utf8 bytes.
     InsertText {
         slice: BytesSlice,
         unicode_start: u32,
