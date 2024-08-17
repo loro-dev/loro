@@ -475,8 +475,8 @@ impl LoroDoc {
 
     fn _import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
         let parsed = parse_header_and_body(bytes)?;
-        match parsed.mode.is_snapshot() {
-            false => {
+        match parsed.mode {
+            EncodeMode::Rle => {
                 if self.state.lock().unwrap().is_in_txn() {
                     return Err(LoroError::ImportWhenInTxn);
                 }
@@ -492,26 +492,30 @@ impl LoroDoc {
                     origin,
                 )?;
             }
-            true => {
+            EncodeMode::Snapshot => {
                 if self.can_reset_with_snapshot() {
                     tracing::info!("Init by snapshot {}", self.peer_id());
                     decode_snapshot(self, parsed.mode, parsed.body)?;
-                } else if parsed.mode == EncodeMode::Snapshot {
+                } else {
                     self.update_oplog_and_apply_delta_to_state_if_needed(
                         |oplog| oplog.decode(parsed),
                         origin,
                     )?;
-                } else {
-                    tracing::info!("Import from new doc");
-                    let app = LoroDoc::new();
-                    decode_snapshot(&app, parsed.mode, parsed.body)?;
-                    let oplog = self.oplog.lock().unwrap();
-                    // TODO: PERF: the ser and de can be optimized out
-                    let updates = app.export_from(oplog.vv());
-                    drop(oplog);
-
-                    return self.import_with(&updates, origin);
                 }
+            }
+            EncodeMode::FastSnapshot => {
+                if self.can_reset_with_snapshot() {
+                    tracing::info!("Init by fast snapshot {}", self.peer_id());
+                    decode_snapshot(self, parsed.mode, parsed.body)?;
+                } else {
+                    self.update_oplog_and_apply_delta_to_state_if_needed(
+                        |oplog| oplog.decode(parsed),
+                        origin,
+                    )?;
+                }
+            }
+            EncodeMode::Auto => {
+                unreachable!()
             }
         };
 

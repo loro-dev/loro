@@ -2512,7 +2512,7 @@ impl LoroList {
     #[wasm_bindgen(skip_typescript)]
     pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
         let v: JsValue = value.into();
-        self.handler.push(v.into())?;
+        self.handler.push(v)?;
         Ok(())
     }
 

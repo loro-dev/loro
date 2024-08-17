@@ -5,6 +5,7 @@ pub(crate) mod value_register;
 pub(crate) use encode_reordered::{
     decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
 };
+mod fast_snapshot;
 pub(crate) mod json_schema;
 
 use crate::op::OpWithId;
@@ -24,20 +25,19 @@ pub(crate) enum EncodeMode {
     Auto = 255,
     Rle = 1,
     Snapshot = 2,
+    FastSnapshot = 3,
 }
 
 impl num_traits::FromPrimitive for EncodeMode {
     #[allow(trivial_numeric_casts)]
     #[inline]
     fn from_i64(n: i64) -> Option<Self> {
-        if n == EncodeMode::Auto as i64 {
-            Some(EncodeMode::Auto)
-        } else if n == EncodeMode::Rle as i64 {
-            Some(EncodeMode::Rle)
-        } else if n == EncodeMode::Snapshot as i64 {
-            Some(EncodeMode::Snapshot)
-        } else {
-            None
+        match n {
+            n if n == EncodeMode::Auto as i64 => Some(EncodeMode::Auto),
+            n if n == EncodeMode::Rle as i64 => Some(EncodeMode::Rle),
+            n if n == EncodeMode::Snapshot as i64 => Some(EncodeMode::Snapshot),
+            n if n == EncodeMode::FastSnapshot as i64 => Some(EncodeMode::FastSnapshot),
+            _ => None,
         }
     }
     #[inline]
@@ -54,6 +54,7 @@ impl num_traits::ToPrimitive for EncodeMode {
             EncodeMode::Auto => EncodeMode::Auto as i64,
             EncodeMode::Rle => EncodeMode::Rle as i64,
             EncodeMode::Snapshot => EncodeMode::Snapshot as i64,
+            EncodeMode::FastSnapshot => EncodeMode::FastSnapshot as i64,
         })
     }
     #[inline]
@@ -163,6 +164,7 @@ pub(crate) fn decode_oplog(
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     match mode {
         EncodeMode::Rle | EncodeMode::Snapshot => encode_reordered::decode_updates(oplog, body),
+        EncodeMode::FastSnapshot => unimplemented!("decode fast snapshot"),
         EncodeMode::Auto => unreachable!(),
     }
 }
@@ -244,6 +246,7 @@ pub(crate) fn decode_snapshot(
 ) -> Result<(), LoroError> {
     match mode {
         EncodeMode::Snapshot => encode_reordered::decode_snapshot(doc, body),
+        EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot(doc, body),
         _ => unreachable!(),
     }
 }

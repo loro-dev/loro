@@ -1106,7 +1106,7 @@ mod test {
             let list = map
                 .insert_container("list", ListHandler::new_detached())
                 .unwrap();
-            list.push("world".into())?;
+            list.push("world")?;
         }
 
         {

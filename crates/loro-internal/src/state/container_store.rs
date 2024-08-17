@@ -68,6 +68,15 @@ impl std::fmt::Debug for ContainerStore {
     }
 }
 
+macro_rules! ctx {
+    ($self:expr) => {
+        ContainerCreationContext {
+            configure: &$self.conf,
+            peer: $self.peer.load(std::sync::atomic::Ordering::Relaxed),
+        }
+    };
+}
+
 impl ContainerStore {
     pub fn new(arena: SharedArena, conf: Configure, peer: Arc<AtomicU64>) -> Self {
         ContainerStore {
@@ -118,7 +127,15 @@ impl ContainerStore {
         let mut id_bytes_pairs = Vec::with_capacity(self.store.len());
         for (idx, container) in self.store.iter_mut() {
             let id = self.arena.get_container_id(*idx).unwrap();
-            id_bytes_pairs.push((id, container.encode()))
+            let encoded = container.encode();
+            #[cfg(debug_assertions)]
+            {
+                let mut new = ContainerWrapper::new_from_bytes(encoded.clone());
+                let value = new.get_value(*idx, ctx!(self));
+                assert_eq!(value, container.get_value(*idx, ctx!(self)));
+            }
+
+            id_bytes_pairs.push((id, encoded))
         }
         id_bytes_pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
 
@@ -130,7 +147,9 @@ impl ContainerStore {
         }
 
         let mut bytes = Vec::with_capacity(self.store.len() * 4 + 4);
+        // prepend 4 zeros
         bytes.resize(4, 0);
+        // append the encoded cids
         id_encoder.to_io(&mut bytes);
         // set the first 4 bytes of bytes to the length of itself
         let len = bytes.len() as u32;
@@ -138,7 +157,7 @@ impl ContainerStore {
         bytes[1] = ((len >> 8) & 0xff) as u8;
         bytes[2] = ((len >> 16) & 0xff) as u8;
         bytes[3] = ((len >> 24) & 0xff) as u8;
-        for (_, b) in id_bytes_pairs.iter() {
+        for (id, b) in id_bytes_pairs.iter() {
             bytes.extend_from_slice(b);
         }
 
@@ -149,11 +168,22 @@ impl ContainerStore {
         let offset = u32::from_le_bytes((&bytes[..4]).try_into().unwrap()) as usize;
         let cids = &bytes[4..offset];
         let cids = decode_cids(cids)?;
-
         let container_bytes = bytes.slice(offset..);
-        for (cid, offset) in cids {
-            let container = ContainerWrapper::new_from_bytes(container_bytes.slice(offset..));
-            let idx = self.arena.register_container(&cid);
+        for (i, (cid, offset_start)) in cids.iter().enumerate() {
+            let offset_end = if i < cids.len() - 1 {
+                cids[i + 1].1
+            } else {
+                container_bytes.len()
+            };
+            let bytes = container_bytes.slice(*offset_start..offset_end);
+            let container =
+                ContainerWrapper::new_from_bytes(container_bytes.slice(*offset_start..offset_end));
+            let idx = self.arena.register_container(cid);
+            let p = container
+                .parent
+                .as_ref()
+                .map(|p| self.arena.register_container(p));
+            self.arena.set_parent(idx, p);
             self.store.insert(idx, container);
         }
 
@@ -232,6 +262,50 @@ impl ContainerStore {
             peer,
         }
     }
+
+    fn check_eq_after_parsing(&mut self, other: &mut ContainerStore) {
+        if self.store.len() != other.store.len() {
+            panic!("store len mismatch");
+        }
+
+        for (idx, container) in self.store.iter_mut() {
+            let id = self.arena.get_container_id(*idx).unwrap();
+            let other_idx = other.arena.register_container(&id);
+            let other_container = other
+                .store
+                .get_mut(&other_idx)
+                .expect("container not found on other store");
+            let other_id = other.arena.get_container_id(other_idx).unwrap();
+            assert_eq!(
+                id, other_id,
+                "container id mismatch {:?} {:?}",
+                id, other_id
+            );
+            assert_eq!(
+                container.get_value(*idx, ctx!(self)),
+                other_container.get_value(other_idx, ctx!(other)),
+                "value mismatch"
+            );
+
+            if container.encode() != other_container.encode() {
+                panic!(
+                    "container mismatch Origin: {:#?}, New: {:#?}",
+                    &container, &other_container
+                );
+            }
+
+            other_container
+                .decode_state(other_idx, ctx!(other))
+                .unwrap();
+            other_container.bytes = None;
+            if container.encode() != other_container.encode() {
+                panic!(
+                    "container mismatch Origin: {:#?}, New: {:#?}",
+                    &container, &other_container
+                );
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -247,6 +321,7 @@ pub(crate) struct ContainerWrapper {
     /// 4. state
     bytes: Option<Bytes>,
     value: Option<LoroValue>,
+    bytes_offset_for_value: Option<usize>,
     bytes_offset_for_state: Option<usize>,
     state: Option<State>,
 }
@@ -266,6 +341,7 @@ impl ContainerWrapper {
             bytes: None,
             value: None,
             bytes_offset_for_state: None,
+            bytes_offset_for_value: None,
         }
     }
 
@@ -340,7 +416,8 @@ impl ContainerWrapper {
             parent,
             state: None,
             value: None,
-            bytes: Some(b.slice(size as usize..)),
+            bytes: Some(b.clone()),
+            bytes_offset_for_value: Some(size as usize),
             bytes_offset_for_state: None,
         }
     }
@@ -362,6 +439,9 @@ impl ContainerWrapper {
             return Ok(());
         };
 
+        let value_offset = self.bytes_offset_for_value.unwrap();
+        let b = &b[value_offset..];
+
         let (v, rest) = match self.kind {
             ContainerType::Text => RichtextState::decode_value(b)?,
             ContainerType::Map => MapState::decode_value(b)?,
@@ -382,7 +462,7 @@ impl ContainerWrapper {
         self.value = Some(v);
         // SAFETY: rest is a slice of b
         let offset = unsafe { rest.as_ptr().offset_from(b.as_ptr()) };
-        self.bytes_offset_for_state = Some(offset as usize);
+        self.bytes_offset_for_state = Some(offset as usize + value_offset);
         Ok(())
     }
 
@@ -644,5 +724,66 @@ mod encode {
             let cids = decode_cids(&bytes).unwrap();
             assert_eq!(&cids, &input)
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{ListHandler, LoroDoc, MapHandler, MovableListHandler, TextHandler};
+
+    fn decode_container_store(bytes: Bytes) -> ContainerStore {
+        let mut new_store = ContainerStore::new(
+            SharedArena::new(),
+            Configure::default(),
+            Arc::new(AtomicU64::new(233)),
+        );
+
+        new_store.decode(bytes).unwrap();
+        new_store
+    }
+
+    fn init_doc() -> LoroDoc {
+        let doc = LoroDoc::new();
+        doc.start_auto_commit();
+        let text = doc.get_text("text");
+        text.insert(0, "hello").unwrap();
+        let map = doc.get_map("map");
+        map.insert("key", "value").unwrap();
+
+        let list = doc.get_list("list");
+        list.push("item1").unwrap();
+
+        let tree = doc.get_tree("tree");
+        let root = tree.create(None).unwrap();
+        tree.create_at(Some(root), 0).unwrap();
+
+        let movable_list = doc.get_movable_list("movable_list");
+        movable_list.insert(0, "movable_item").unwrap();
+
+        // Create child containers
+        let child_map = map
+            .insert_container("child_map", MapHandler::new_detached())
+            .unwrap();
+        child_map.insert("child_key", "child_value").unwrap();
+
+        let child_list = list
+            .insert_container(0, ListHandler::new_detached())
+            .unwrap();
+        child_list.push("child_item").unwrap();
+        let child_movable_list = movable_list
+            .insert_container(0, MovableListHandler::new_detached())
+            .unwrap();
+        child_movable_list.insert(0, "child_movable_item").unwrap();
+        doc
+    }
+
+    #[test]
+    fn test_container_store_exports_imports() {
+        let doc = init_doc();
+        let mut s = doc.app_state().lock().unwrap();
+        let bytes = s.store.encode();
+        let mut new_store = decode_container_store(bytes);
+        s.store.check_eq_after_parsing(&mut new_store);
     }
 }

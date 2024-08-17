@@ -2182,14 +2182,14 @@ impl ListHandler {
         )
     }
 
-    pub fn push(&self, v: LoroValue) -> LoroResult<()> {
+    pub fn push(&self, v: impl Into<LoroValue>) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let mut list = l.try_lock().unwrap();
-                list.value.push(ValueOrHandler::Value(v.clone()));
+                list.value.push(ValueOrHandler::Value(v.into()));
                 Ok(())
             }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| self.push_with_txn(txn, v)),
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.push_with_txn(txn, v.into())),
         }
     }
 

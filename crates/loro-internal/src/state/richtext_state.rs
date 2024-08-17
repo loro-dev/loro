@@ -1010,8 +1010,6 @@ mod snapshot {
                 w.write_all(&peer.to_le_bytes()).unwrap();
             }
 
-            dbg!(&spans);
-            dbg!(&marks);
             let bytes = serde_columnar::to_vec(&EncodedText { spans, marks }).unwrap();
             w.write_all(&bytes).unwrap();
         }
