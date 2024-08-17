@@ -4,6 +4,7 @@ use dev_utils::{get_mem_usage, ByteSize};
 use loro::LoroDoc;
 
 pub fn main() {
+    dev_utils::setup_test_log();
     // Number of nodes
     let n = 100_000;
     // Number of moves per node
@@ -109,4 +110,6 @@ pub fn main() {
             ByteSize(oplog.change_store_kv_size())
         );
     });
+
+    examples::utils::bench_fast_snapshot(&doc);
 }

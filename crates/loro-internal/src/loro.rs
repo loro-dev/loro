@@ -28,8 +28,8 @@ use crate::{
     cursor::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
     dag::DagUtils,
     encoding::{
-        decode_snapshot, export_snapshot, json_schema::op::JsonSchema, parse_header_and_body,
-        EncodeMode, ParsedHeaderAndBody,
+        decode_snapshot, export_fast_snapshot, export_snapshot, json_schema::op::JsonSchema,
+        parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
     event::{str_to_path, EventTriggerKind, Index},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
@@ -614,6 +614,14 @@ impl LoroDoc {
     pub fn export_snapshot(&self) -> Vec<u8> {
         self.commit_then_stop();
         let ans = export_snapshot(self);
+        self.renew_txn_if_auto_commit();
+        ans
+    }
+
+    #[instrument(skip_all)]
+    pub fn export_fast_snapshot(&self) -> Vec<u8> {
+        self.commit_then_stop();
+        let ans = export_fast_snapshot(self);
         self.renew_txn_if_auto_commit();
         ans
     }

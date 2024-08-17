@@ -452,6 +452,7 @@ impl ContainerWrapper {
                 let mut state = TreeState::decode_snapshot_fast(idx, (LoroValue::Null, b), ctx)?;
                 self.value = Some(state.get_value());
                 self.state = Some(State::TreeState(Box::new(state)));
+                self.bytes_offset_for_state = Some(value_offset);
                 return Ok(());
             }
             #[cfg(feature = "counter")]

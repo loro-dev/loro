@@ -600,6 +600,11 @@ impl OpLog {
     pub fn change_store_kv_size(&self) -> usize {
         self.change_store.kv_size()
     }
+
+    pub fn encode_change_store(&self) -> bytes::Bytes {
+        self.change_store
+            .encode_all(self.dag.vv(), self.dag.frontiers())
+    }
 }
 
 #[derive(Debug)]

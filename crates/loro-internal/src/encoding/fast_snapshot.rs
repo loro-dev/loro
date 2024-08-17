@@ -1,8 +1,8 @@
+use crate::LoroDoc;
+use bytes::Bytes;
 use loro_common::{LoroError, LoroResult};
 
-use crate::LoroDoc;
-
-pub(super) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
+pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
     let mut state = doc.app_state().try_lock().map_err(|_| {
         LoroError::DecodeError(
             "decode_snapshot: failed to lock app state"
@@ -12,7 +12,7 @@ pub(super) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     })?;
 
     state.check_before_decode_snapshot()?;
-    let mut oplog = doc.oplog().try_lock().map_err(|_| {
+    let oplog = doc.oplog().try_lock().map_err(|_| {
         LoroError::DecodeError(
             "decode_snapshot: failed to lock oplog"
                 .to_string()
@@ -27,7 +27,32 @@ pub(super) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     assert!(state.frontiers.is_empty());
     assert!(oplog.frontiers().is_empty());
 
-    todo!("decode bytes into state kv and oplog's change store kv");
-
+    let oplog_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+    let oplog_bytes = bytes.slice(4..4 + oplog_len as usize);
+    let state_len = u32::from_le_bytes(
+        bytes[(4 + oplog_len as usize)..(8 + oplog_len as usize)]
+            .try_into()
+            .unwrap(),
+    );
+    let state_bytes =
+        bytes.slice(8 + oplog_len as usize..8 + oplog_len as usize + state_len as usize);
+    state.store.decode(state_bytes)?;
+    oplog.change_store().decode_all(oplog_bytes)?;
     Ok(())
+}
+
+pub(crate) fn encode_snapshot(doc: &LoroDoc) -> Vec<Bytes> {
+    let mut state = doc.app_state().try_lock().unwrap();
+    let oplog = doc.oplog().try_lock().unwrap();
+    let oplog_bytes = oplog.encode_change_store();
+    let state_bytes = state.store.encode();
+    let oplog_len = oplog_bytes.len() as u32;
+    let state_len = state_bytes.len() as u32;
+
+    vec![
+        oplog_len.to_le_bytes().to_vec().into(),
+        oplog_bytes,
+        state_len.to_le_bytes().to_vec().into(),
+        state_bytes,
+    ]
 }

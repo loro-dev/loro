@@ -1,15 +1,18 @@
+use std::time::Instant;
+
 use dev_utils::{get_mem_usage, ByteSize};
 use examples::sheet::init_large_sheet;
-use loro::ID;
+use loro::{LoroDoc, ID};
 
 pub fn main() {
+    // dev_utils::setup_test_log();
+    // let doc = init_large_sheet(10_000_000);
     let doc = init_large_sheet(10_000_000);
-    // let doc = init_large_sheet(10_000);
     doc.commit();
     let allocated = get_mem_usage();
     println!("Allocated bytes for 10M cells spreadsheet: {}", allocated);
     println!("Has history cache: {}", doc.has_history_cache());
-
+    examples::utils::bench_fast_snapshot(&doc);
     doc.checkout(&ID::new(doc.peer_id(), 100).into()).unwrap();
     println!(
         "Has history cache after checkout: {}",

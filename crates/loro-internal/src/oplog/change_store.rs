@@ -215,7 +215,7 @@ impl ChangeStore {
     }
 
     /// Flush the cached change to kv_store
-    pub(crate) fn flush_and_compact(&mut self, vv: &VersionVector, frontiers: &Frontiers) {
+    pub(crate) fn flush_and_compact(&self, vv: &VersionVector, frontiers: &Frontiers) {
         let mut inner = self.inner.lock().unwrap();
         let mut store = self.external_kv.lock().unwrap();
         for (id, block) in inner.mem_parsed_kv.iter_mut() {
@@ -232,23 +232,20 @@ impl ChangeStore {
         store.set(FRONTIERS_KEY, frontiers_bytes.into());
     }
 
-    pub(crate) fn encode_all(&mut self, vv: &VersionVector, frontiers: &Frontiers) -> Bytes {
+    pub(super) fn encode_all(&self, vv: &VersionVector, frontiers: &Frontiers) -> Bytes {
         self.flush_and_compact(vv, frontiers);
         self.external_kv.lock().unwrap().export_all()
     }
 
     #[must_use]
-    pub(crate) fn decode_all(
-        &mut self,
-        blocks: Bytes,
-    ) -> Result<(VersionVector, Frontiers), LoroError> {
+    pub(crate) fn decode_all(&self, bytes: Bytes) -> Result<(VersionVector, Frontiers), LoroError> {
         let kv_store = &mut self.external_kv.lock().unwrap();
         assert!(
             kv_store.len() == 0,
             "kv store should be empty when using decode_all"
         );
         kv_store
-            .import_all(blocks)
+            .import_all(bytes)
             .map_err(|e| LoroError::DecodeError(e.into_boxed_str()))?;
         let vv_bytes = kv_store.get(b"vv").unwrap_or_default();
         let vv = VersionVector::decode(&vv_bytes).unwrap();
@@ -452,6 +449,7 @@ impl ChangeStore {
         let mut inner = self.inner.lock().unwrap();
         let Some((next_back_id, next_back_bytes)) = kv
             .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
+            .filter(|(id, _)| id.len() == 12)
             .next_back()
         else {
             return;

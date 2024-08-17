@@ -241,7 +241,6 @@ impl DiffCalculator {
                         op = stack_sliced_op.as_ref().unwrap();
                     }
 
-                    trace!("opid = {}@{}", op.counter, change.id.peer);
                     let vv = &mut vv.borrow_mut();
                     vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
                     let container = op.container;

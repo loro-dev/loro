@@ -2,6 +2,7 @@ pub(crate) mod arena;
 mod encode_reordered;
 pub(crate) mod value;
 pub(crate) mod value_register;
+use bytes::Bytes;
 pub(crate) use encode_reordered::{
     decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
 };
@@ -164,7 +165,9 @@ pub(crate) fn decode_oplog(
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     match mode {
         EncodeMode::Rle | EncodeMode::Snapshot => encode_reordered::decode_updates(oplog, body),
-        EncodeMode::FastSnapshot => unimplemented!("decode fast snapshot"),
+        EncodeMode::FastSnapshot => {
+            unimplemented!("Decode fast snapshot for updates is not supported yet")
+        }
         EncodeMode::Auto => unreachable!(),
     }
 }
@@ -229,6 +232,23 @@ fn encode_header_and_body(mode: EncodeMode, body: Vec<u8>) -> Vec<u8> {
     ans
 }
 
+fn encode_header_and_body_fast_snapshot(body_parts: Vec<Bytes>) -> Vec<u8> {
+    let mut ans =
+        Vec::with_capacity(MIN_HEADER_SIZE + body_parts.iter().map(|b| b.len()).sum::<usize>());
+    ans.extend(MAGIC_BYTES);
+    let checksum = [0; 16];
+    ans.extend(checksum);
+    ans.extend(EncodeMode::FastSnapshot.to_bytes());
+    for p in body_parts {
+        ans.extend(p);
+    }
+
+    let checksum_body = &ans[20..];
+    let checksum = md5::compute(checksum_body).0;
+    ans[4..20].copy_from_slice(&checksum);
+    ans
+}
+
 pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
     let body = encode_reordered::encode_snapshot(
         &doc.oplog().try_lock().unwrap(),
@@ -239,6 +259,11 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
     encode_header_and_body(EncodeMode::Snapshot, body)
 }
 
+pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
+    let body = fast_snapshot::encode_snapshot(doc);
+    encode_header_and_body_fast_snapshot(body)
+}
+
 pub(crate) fn decode_snapshot(
     doc: &LoroDoc,
     mode: EncodeMode,
@@ -246,7 +271,7 @@ pub(crate) fn decode_snapshot(
 ) -> Result<(), LoroError> {
     match mode {
         EncodeMode::Snapshot => encode_reordered::decode_snapshot(doc, body),
-        EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot(doc, body),
+        EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot(doc, body.to_vec().into()),
         _ => unreachable!(),
     }
 }

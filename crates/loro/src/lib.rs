@@ -578,6 +578,11 @@ impl LoroDoc {
     pub fn compact_change_store(&self) {
         self.doc.compact_change_store()
     }
+
+    /// Export the fast snapshot of the document.
+    pub fn export_fast_snapshot(&self) -> Vec<u8> {
+        self.doc.export_fast_snapshot()
+    }
 }
 
 /// It's used to prevent the user from implementing the trait directly.

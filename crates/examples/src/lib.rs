@@ -8,6 +8,7 @@ use std::{
 };
 use tracing::span;
 
+pub mod utils;
 pub mod draw;
 pub mod json;
 pub mod list;
