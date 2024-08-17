@@ -2,8 +2,8 @@ use block_encode::decode_block_range;
 use bytes::Bytes;
 use itertools::Itertools;
 use loro_common::{
-    Counter, HasCounterSpan, HasId, HasIdSpan, IdLp, IdSpan, Lamport, LoroError, LoroResult,
-    PeerID, ID,
+    Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport, LoroError,
+    LoroResult, PeerID, ID,
 };
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RlePush, RleVec, Sliceable};
@@ -17,7 +17,7 @@ mod block_encode;
 mod delta_rle_encode;
 use crate::{
     arena::SharedArena,
-    change::Change,
+    change::{Change, Timestamp},
     estimated_size::EstimatedSize,
     kv_store::KvStore,
     op::Op,
@@ -29,7 +29,10 @@ use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlock
 
 use super::AppDagNode;
 
+#[cfg(not(test))]
 const MAX_BLOCK_SIZE: usize = 1024 * 4;
+#[cfg(test)]
+const MAX_BLOCK_SIZE: usize = 128;
 
 /// # Invariance
 ///
@@ -237,9 +240,8 @@ impl ChangeStore {
         self.external_kv.lock().unwrap().export_all()
     }
 
-    #[must_use]
-    pub(crate) fn decode_all(&self, bytes: Bytes) -> Result<(VersionVector, Frontiers), LoroError> {
-        let kv_store = &mut self.external_kv.lock().unwrap();
+    pub(crate) fn decode_all(&self, bytes: Bytes) -> Result<BatchDecodeInfo, LoroError> {
+        let mut kv_store = self.external_kv.lock().unwrap();
         assert!(
             kv_store.len() == 0,
             "kv store should be empty when using decode_all"
@@ -251,7 +253,29 @@ impl ChangeStore {
         let vv = VersionVector::decode(&vv_bytes).unwrap();
         let frontiers_bytes = kv_store.get(b"fr").unwrap_or_default();
         let frontiers = Frontiers::decode(&frontiers_bytes).unwrap();
-        Ok((vv, frontiers))
+        let mut max_lamport = 0;
+        let mut max_timestamp = 0;
+        drop(kv_store);
+        for id in frontiers.iter() {
+            let c = self.get_change(*id).unwrap();
+            debug_assert_ne!(c.atom_len(), 0);
+            let l = c.lamport_last();
+            if l > max_lamport {
+                max_lamport = l;
+            }
+
+            let t = c.timestamp;
+            if t > max_timestamp {
+                max_timestamp = t;
+            }
+        }
+
+        Ok(BatchDecodeInfo {
+            vv,
+            frontiers,
+            next_lamport: max_lamport + 1,
+            max_timestamp,
+        })
 
         // todo!("replace with kv store");
         // let mut kv = self.mem_kv.lock().unwrap();
@@ -269,20 +293,18 @@ impl ChangeStore {
 
     fn get_parsed_block(&self, id: ID) -> Option<Arc<ChangesBlock>> {
         let mut inner = self.inner.lock().unwrap();
-        let (_id, block) = inner.mem_parsed_kv.range_mut(..=id).next_back()?;
-        if block.peer == id.peer && block.counter_range.1 > id.counter {
-            block
-                .ensure_changes(&self.arena)
-                .expect("Parse block error");
-            return Some(block.clone());
+        if let Some((_id, block)) = inner.mem_parsed_kv.range_mut(..=id).next_back() {
+            if block.peer == id.peer && block.counter_range.1 > id.counter {
+                block
+                    .ensure_changes(&self.arena)
+                    .expect("Parse block error");
+                return Some(block.clone());
+            }
         }
 
         let store = self.external_kv.lock().unwrap();
         let mut iter = store
-            .scan(
-                Bound::Unbounded,
-                Bound::Included(&Bytes::copy_from_slice(&id.to_bytes())),
-            )
+            .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
             .filter(|(id, _)| id.len() == 12);
         let (b_id, b_bytes) = iter.next_back()?;
         let block_id: ID = ID::from_bytes(&b_id[..]);
@@ -328,31 +350,96 @@ impl ChangeStore {
         let mut iter = inner
             .mem_parsed_kv
             .range_mut(ID::new(idlp.peer, 0)..ID::new(idlp.peer, i32::MAX));
-        // FIX: PERF: this is super slow
-        let mut last_counter = None;
-        while let Some((id, block)) = iter.next_back() {
-            if block.lamport_range.0 <= idlp.lamport {
-                if let Some(last_counter) = last_counter {
-                    if block.counter_range.1 != last_counter {
-                        // There is a hole between two blocks
-                        break;
+
+        // This won't change, we only adjust upper_bound
+        let mut lower_bound = 0;
+        let mut upper_bound = i32::MAX;
+        let mut is_binary_searching = false;
+        loop {
+            match iter.next_back() {
+                Some((&id, block)) => {
+                    if block.lamport_range.0 <= idlp.lamport
+                        && (!is_binary_searching || idlp.lamport < block.lamport_range.1)
+                    {
+                        if !is_binary_searching
+                            && upper_bound != i32::MAX
+                            && upper_bound != block.counter_range.1
+                        {
+                            // There is hole between the last block and the current block
+                            // We need to load it from the kv store
+                            break;
+                        }
+
+                        // Found the block
+                        block
+                            .ensure_changes(&self.arena)
+                            .expect("Parse block error");
+                        let index = block.get_change_index_by_lamport_lte(idlp.lamport)?;
+                        return Some(BlockChangeRef {
+                            change_index: index,
+                            block: block.clone(),
+                        });
+                    }
+
+                    if is_binary_searching {
+                        let mid_bound = (lower_bound + upper_bound) / 2;
+                        if block.lamport_range.1 <= idlp.lamport {
+                            // Target is larger than the current block (pointed by mid_bound)
+                            lower_bound = mid_bound;
+                        } else {
+                            debug_assert!(
+                                idlp.lamport < block.lamport_range.0,
+                                "{} {:?}",
+                                idlp,
+                                &block.lamport_range
+                            );
+                            // Target is smaller than the current block (pointed by mid_bound)
+                            upper_bound = mid_bound;
+                        }
+
+                        let mid_bound = (lower_bound + upper_bound) / 2;
+                        iter = inner
+                            .mem_parsed_kv
+                            .range_mut(ID::new(idlp.peer, 0)..ID::new(idlp.peer, mid_bound));
+                    } else {
+                        // Test whether we need to switch to binary search by measuring the gap
+                        if block.lamport_range.0 - idlp.lamport > MAX_BLOCK_SIZE as Lamport * 8 {
+                            // Use binary search to find the block
+                            upper_bound = id.counter;
+                            let mid_bound = (lower_bound + upper_bound) / 2;
+                            iter = inner
+                                .mem_parsed_kv
+                                .range_mut(ID::new(idlp.peer, 0)..ID::new(idlp.peer, mid_bound));
+                            is_binary_searching = true;
+                        }
+
+                        upper_bound = id.counter;
                     }
                 }
+                None => {
+                    if !is_binary_searching {
+                        break;
+                    }
 
-                block
-                    .ensure_changes(&self.arena)
-                    .expect("Parse block error");
-                let index = block.get_change_index_by_lamport_lte(idlp.lamport)?;
-                return Some(BlockChangeRef {
-                    change_index: index,
-                    block: block.clone(),
-                });
+                    let mid_bound = (lower_bound + upper_bound) / 2;
+                    lower_bound = mid_bound;
+                    if upper_bound - lower_bound <= MAX_BLOCK_SIZE as i32 {
+                        // If they are too close, we can just scan the range
+                        iter = inner.mem_parsed_kv.range_mut(
+                            ID::new(idlp.peer, lower_bound)..ID::new(idlp.peer, upper_bound),
+                        );
+                        is_binary_searching = false;
+                    } else {
+                        let mid_bound = (lower_bound + upper_bound) / 2;
+                        iter = inner
+                            .mem_parsed_kv
+                            .range_mut(ID::new(idlp.peer, 0)..ID::new(idlp.peer, mid_bound));
+                    }
+                }
             }
-
-            last_counter = Some(id.counter);
         }
 
-        let counter_end = last_counter.unwrap_or(Counter::MAX);
+        let counter_end = upper_bound;
         let scan_end = ID::new(idlp.peer, counter_end).to_bytes();
         let (id, bytes) = 'block_scan: {
             let kv_store = &self.external_kv.lock().unwrap();
@@ -492,6 +579,8 @@ impl ChangeStore {
             // TODO: PERF avoid alloc
             .collect_vec();
 
+        assert!(iter[0].counter_range.0 <= id_span.counter.start);
+        assert!(iter.last().unwrap().counter_range.1 >= id_span.counter.end);
         iter.into_iter().flat_map(move |block| {
             let changes = block.content.try_changes().unwrap();
             let start;
@@ -607,6 +696,15 @@ impl ChangeStore {
             .map(|(k, v)| k.len() + v.len())
             .sum()
     }
+}
+
+#[must_use]
+#[derive(Clone, Debug)]
+pub(crate) struct BatchDecodeInfo {
+    pub vv: VersionVector,
+    pub frontiers: Frontiers,
+    pub next_lamport: Lamport,
+    pub max_timestamp: Timestamp,
 }
 
 #[derive(Clone, Debug)]

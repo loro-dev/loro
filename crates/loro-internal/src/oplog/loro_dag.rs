@@ -11,7 +11,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 use std::marker::PhantomData;
 use std::sync::Mutex;
+use tracing::trace;
 
+use super::change_store::BatchDecodeInfo;
 use super::ChangeStore;
 
 /// [AppDag] maintains the causal graph of the app.
@@ -360,6 +362,12 @@ impl AppDag {
 
     pub fn total_parsed_dag_node(&self) -> usize {
         self.map.try_lock().unwrap().len()
+    }
+
+    pub(crate) fn set_version_by_fast_snapshot_import(&mut self, v: BatchDecodeInfo) {
+        *self.unparsed_vv.try_lock().unwrap() = v.vv.clone();
+        self.vv = v.vv;
+        self.frontiers = v.frontiers;
     }
 }
 

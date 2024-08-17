@@ -10,6 +10,13 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
         let elapsed = start.elapsed();
         println!("Snapshot size: {}", ByteSize(snapshot.len()));
         println!("Export snapshot time: {:?}", elapsed);
+        let start = Instant::now();
+        let compressed = zstd::encode_all(snapshot.as_slice(), 0).unwrap();
+        println!(
+            "Snapshot size after compression: {}",
+            ByteSize(compressed.len())
+        );
+        println!("Snapshot compression time: {:?}", start.elapsed());
 
         let start = Instant::now();
         let doc = LoroDoc::new();
@@ -25,6 +32,13 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
         let elapsed = start.elapsed();
         println!("Fast Snapshot size: {}", ByteSize(snapshot.len()));
         println!("Export fast snapshot time: {:?}", elapsed);
+        let start = Instant::now();
+        let compressed = zstd::encode_all(snapshot.as_slice(), 0).unwrap();
+        println!(
+            "Snapshot size after compression: {}",
+            ByteSize(compressed.len())
+        );
+        println!("Snapshot compression time: {:?}", start.elapsed());
 
         let mem = dev_utils::get_mem_usage();
         let start = Instant::now();

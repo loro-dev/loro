@@ -249,7 +249,12 @@ impl Transaction {
         let frontiers = state_lock.frontiers.clone();
         let peer = state_lock.peer.load(std::sync::atomic::Ordering::Relaxed);
         let next_counter = oplog_lock.next_id(peer).counter;
-        let next_lamport = oplog_lock.dag.frontiers_to_next_lamport(&frontiers);
+        debug_assert_eq!(&frontiers, oplog_lock.frontiers());
+        debug_assert_eq!(
+            oplog_lock.next_lamport,
+            oplog_lock.dag.frontiers_to_next_lamport(&frontiers)
+        );
+        let next_lamport = oplog_lock.next_lamport;
         drop(state_lock);
         drop(oplog_lock);
         Self {
