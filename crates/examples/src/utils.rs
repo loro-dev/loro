@@ -1,6 +1,6 @@
 use dev_utils::ByteSize;
 use loro::LoroDoc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub fn bench_fast_snapshot(doc: &LoroDoc) {
     let old_v;
@@ -50,16 +50,24 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
         );
         println!("Snapshot compression time: {:?}", start.elapsed());
 
+        let loop_start = Instant::now();
+        let mut new_doc = LoroDoc::new();
         let mem = dev_utils::get_mem_usage();
-        let start = Instant::now();
-        let new_doc = LoroDoc::new();
-        new_doc.import(&snapshot).unwrap();
-        let elapsed = start.elapsed();
-        println!("Import fast snapshot time: {:?}", elapsed);
-        println!(
-            "Memory usage for new doc: {}",
-            dev_utils::get_mem_usage() - mem
-        );
+        loop {
+            new_doc = LoroDoc::new();
+            let start = Instant::now();
+            new_doc.import(&snapshot).unwrap();
+            let elapsed = start.elapsed();
+            println!("Import fast snapshot time: {:?}", elapsed);
+            println!(
+                "Memory usage for new doc: {}",
+                dev_utils::get_mem_usage() - mem
+            );
+
+            if loop_start.elapsed() > Duration::from_secs(10) {
+                break;
+            }
+        }
 
         let start = Instant::now();
         let v = new_doc.get_deep_value();
@@ -78,8 +86,8 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
             elapsed
         );
 
-        let start = Instant::now();
-        new_doc.check_state_correctness_slow();
-        println!("Check state correctness duration: {:?}", start.elapsed());
+        // let start = Instant::now();
+        // new_doc.check_state_correctness_slow();
+        // println!("Check state correctness duration: {:?}", start.elapsed());
     }
 }

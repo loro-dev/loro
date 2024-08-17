@@ -179,11 +179,23 @@ pub(crate) struct ParsedHeaderAndBody<'a> {
     pub body: &'a [u8],
 }
 
+const XXH_SEED: u32 = u32::from_le_bytes(*b"LORO");
 impl ParsedHeaderAndBody<'_> {
     /// Return if the checksum is correct.
     fn check_checksum(&self) -> LoroResult<()> {
-        if md5::compute(self.checksum_body).0 != self.checksum {
-            return Err(LoroError::DecodeChecksumMismatchError);
+        match self.mode {
+            EncodeMode::Rle | EncodeMode::Snapshot => {
+                if md5::compute(self.checksum_body).0 != self.checksum {
+                    return Err(LoroError::DecodeChecksumMismatchError);
+                }
+            }
+            EncodeMode::FastSnapshot => {
+                let expected = u32::from_le_bytes(self.checksum[12..16].try_into().unwrap());
+                if xxhash_rust::xxh32::xxh32(self.checksum_body, XXH_SEED) != expected {
+                    return Err(LoroError::DecodeChecksumMismatchError);
+                }
+            }
+            EncodeMode::Auto => unreachable!(),
         }
 
         Ok(())
@@ -244,8 +256,8 @@ fn encode_header_and_body_fast_snapshot(body_parts: Vec<Bytes>) -> Vec<u8> {
     }
 
     let checksum_body = &ans[20..];
-    let checksum = md5::compute(checksum_body).0;
-    ans[4..20].copy_from_slice(&checksum);
+    let checksum = xxhash_rust::xxh32::xxh32(checksum_body, XXH_SEED);
+    ans[16..20].copy_from_slice(&checksum.to_le_bytes());
     ans
 }
 

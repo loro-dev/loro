@@ -5,7 +5,7 @@ use loro::ID;
 pub fn main() {
     dev_utils::setup_test_log();
     // let doc = init_large_sheet(10_000_000);
-    let doc = init_large_sheet(10_000_000);
+    let doc = init_large_sheet(1_000_000);
     doc.commit();
     let allocated = get_mem_usage();
     println!("Allocated bytes for 10M cells spreadsheet: {}", allocated);
