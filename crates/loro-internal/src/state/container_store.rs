@@ -137,8 +137,8 @@ impl ContainerStore {
 
             id_bytes_pairs.push((id, encoded))
         }
-        id_bytes_pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
 
+        id_bytes_pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
         let mut id_encoder = CidOffsetEncoder::new();
         let mut offset = 0;
         for (id, bytes) in id_bytes_pairs.iter() {
@@ -175,7 +175,7 @@ impl ContainerStore {
             } else {
                 container_bytes.len()
             };
-            let bytes = container_bytes.slice(*offset_start..offset_end);
+
             let container =
                 ContainerWrapper::new_from_bytes(container_bytes.slice(*offset_start..offset_end));
             let idx = self.arena.register_container(cid);

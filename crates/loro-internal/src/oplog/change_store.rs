@@ -308,7 +308,7 @@ impl ChangeStore {
             .filter(|(id, _)| id.len() == 12);
         let (b_id, b_bytes) = iter.next_back()?;
         let block_id: ID = ID::from_bytes(&b_id[..]);
-        let block = ChangesBlock::from_bytes(b_bytes, true).unwrap();
+        let block = ChangesBlock::from_bytes(b_bytes).unwrap();
         if block_id.peer == id.peer
             && block_id.counter <= id.counter
             && block.counter_range.1 > id.counter
@@ -462,7 +462,7 @@ impl ChangeStore {
         };
 
         let block_id = ID::from_bytes(&id);
-        let mut block = Arc::new(ChangesBlock::from_bytes(bytes, true).unwrap());
+        let mut block = Arc::new(ChangesBlock::from_bytes(bytes).unwrap());
         block
             .ensure_changes(&self.arena)
             .expect("Parse block error");
@@ -521,7 +521,7 @@ impl ChangeStore {
                     continue;
                 }
 
-                let block = ChangesBlock::from_bytes(bytes.clone(), true).unwrap();
+                let block = ChangesBlock::from_bytes(bytes.clone()).unwrap();
                 inner.mem_parsed_kv.insert(id, Arc::new(block));
             }
         }
@@ -544,7 +544,7 @@ impl ChangeStore {
 
         let next_back_id = ID::from_bytes(&next_back_id);
         if next_back_id.peer == id.peer {
-            let block = ChangesBlock::from_bytes(next_back_bytes, true).unwrap();
+            let block = ChangesBlock::from_bytes(next_back_bytes).unwrap();
             inner.mem_parsed_kv.insert(next_back_id, Arc::new(block));
         }
     }
@@ -759,7 +759,7 @@ impl BlockOpRef {
 }
 
 impl ChangesBlock {
-    pub fn from_bytes(bytes: Bytes, flushed: bool) -> LoroResult<Self> {
+    pub fn from_bytes(bytes: Bytes) -> LoroResult<Self> {
         let len = bytes.len();
         let mut bytes = ChangesBlockBytes::new(bytes);
         let peer = bytes.peer();
@@ -771,7 +771,7 @@ impl ChangesBlock {
             estimated_size: len,
             counter_range,
             lamport_range,
-            flushed,
+            flushed: true,
             content,
         })
     }
