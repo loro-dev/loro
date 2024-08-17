@@ -202,7 +202,7 @@ impl CRDTFuzzer {
                 info_span!("Attach", peer = j).in_scope(|| {
                     b_doc.attach();
                 });
-                match (i + j) % 3 {
+                match (i + j) % 4 {
                     0 => {
                         info_span!("Updates", from = j, to = i).in_scope(|| {
                             a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
@@ -217,6 +217,14 @@ impl CRDTFuzzer {
                         });
                         info_span!("Snapshot", from = j, to = i).in_scope(|| {
                             a_doc.import(&b_doc.export_snapshot()).unwrap();
+                        });
+                    }
+                    2 => {
+                        info_span!("FastSnapshot", from = i, to = j).in_scope(|| {
+                            b_doc.import(&a_doc.export_fast_snapshot()).unwrap();
+                        });
+                        info_span!("FastSnapshot", from = j, to = i).in_scope(|| {
+                            a_doc.import(&b_doc.export_fast_snapshot()).unwrap();
                         });
                     }
                     _ => {

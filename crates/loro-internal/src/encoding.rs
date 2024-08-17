@@ -165,9 +165,7 @@ pub(crate) fn decode_oplog(
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     match mode {
         EncodeMode::Rle | EncodeMode::Snapshot => encode_reordered::decode_updates(oplog, body),
-        EncodeMode::FastSnapshot => {
-            unimplemented!("Decode fast snapshot for updates is not supported yet")
-        }
+        EncodeMode::FastSnapshot => fast_snapshot::decode_oplog(oplog, body),
         EncodeMode::Auto => unreachable!(),
     }
 }

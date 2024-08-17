@@ -1,6 +1,9 @@
-use crate::{LoroDoc, OpLog};
+use crate::{oplog::ChangeStore, LoroDoc, OpLog};
 use bytes::Bytes;
-use loro_common::{LoroError, LoroResult};
+use fxhash::FxHashMap;
+use loro_common::{HasCounterSpan, LoroError, LoroResult, ID};
+
+use super::encode_reordered::import_changes_to_oplog;
 
 pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
     let mut state = doc.app_state().try_lock().map_err(|_| {
@@ -43,7 +46,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
 
 impl OpLog {
     fn decode_change_store(&mut self, bytes: bytes::Bytes) -> LoroResult<()> {
-        let v = self.change_store().decode_all(bytes)?;
+        let v = self.change_store().import_all(bytes)?;
         self.next_lamport = v.next_lamport;
         self.latest_timestamp = v.max_timestamp;
         self.dag.set_version_by_fast_snapshot_import(v);
@@ -67,4 +70,19 @@ pub(crate) fn encode_snapshot(doc: &LoroDoc) -> Vec<Bytes> {
         state_len.to_le_bytes().to_vec().into(),
         state_bytes,
     ]
+}
+
+pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<(), LoroError> {
+    let oplog_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+    let oplog_bytes = &bytes[4..4 + oplog_len as usize];
+    let changes = ChangeStore::decode_snapshot_for_updates(
+        oplog_bytes.to_vec().into(),
+        &oplog.arena,
+        oplog.vv(),
+    )?;
+    let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
+    // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
+    oplog.try_apply_pending(latest_ids);
+    oplog.import_unknown_lamport_pending_changes(pending_changes)?;
+    Ok(())
 }

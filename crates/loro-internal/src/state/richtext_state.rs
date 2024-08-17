@@ -471,7 +471,6 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
-        trace!("diff = {:#?}", richtext);
         let mut style_starts: FxHashMap<Arc<StyleOp>, usize> = FxHashMap::default();
         let mut entity_index = 0;
         for span in richtext.iter() {

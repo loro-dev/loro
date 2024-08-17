@@ -4,8 +4,8 @@ use std::{
 };
 
 use loro::{
-    awareness::Awareness, FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText,
-    ToJson,
+    awareness::Awareness, loro_value, FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap,
+    LoroText, LoroValue, ToJson,
 };
 use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
 use serde_json::json;
@@ -869,4 +869,44 @@ fn len_and_is_empty_inconsistency() {
     println!("{:#?}", map.get("leaf"));
     assert_eq!(map.len(), 0);
     assert!(map.is_empty());
+}
+
+#[test]
+fn fast_snapshot_for_updates() {
+    let doc_a = LoroDoc::new();
+    // Create some random edits on doc_a
+    let text = doc_a.get_text("text");
+    text.insert(0, "Hello, world!").unwrap();
+
+    let list = doc_a.get_list("list");
+    list.insert(0, 42).unwrap();
+    list.insert(1, "foo").unwrap();
+
+    let map = doc_a.get_map("map");
+    map.insert("key1", "value1").unwrap();
+    map.insert("key2", 3.).unwrap();
+
+    doc_a.commit();
+
+    // Create doc_b
+    let doc_b = LoroDoc::new();
+
+    // Create some random edits on doc_b
+    let text_b = doc_b.get_text("text_b");
+    text_b.insert(0, "Greetings!").unwrap();
+
+    let list_b = doc_b.get_list("list_b");
+    list_b.insert(0, "bar").unwrap();
+    list_b.insert(1, 99).unwrap();
+
+    let map_b = doc_b.get_map("map_b");
+    map_b.insert("keyA", true).unwrap();
+    map_b.insert("keyB", loro_value!([1, 2, 3])).unwrap();
+
+    doc_b.commit();
+
+    doc_b.import(&doc_a.export_fast_snapshot()).unwrap();
+    doc_a.import(&doc_b.export_fast_snapshot()).unwrap();
+
+    assert_eq!(doc_a.get_deep_value(), doc_b.get_deep_value());
 }

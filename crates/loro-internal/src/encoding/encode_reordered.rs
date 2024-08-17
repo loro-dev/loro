@@ -156,6 +156,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
     } = arenas;
     let changes = decode_changes(iter.changes, iter.start_counters, &peer_ids, deps, ops_map)?;
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
+    // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
     Ok(())

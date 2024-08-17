@@ -240,7 +240,7 @@ impl ChangeStore {
         self.external_kv.lock().unwrap().export_all()
     }
 
-    pub(crate) fn decode_all(&self, bytes: Bytes) -> Result<BatchDecodeInfo, LoroError> {
+    pub(crate) fn import_all(&self, bytes: Bytes) -> Result<BatchDecodeInfo, LoroError> {
         let mut kv_store = self.external_kv.lock().unwrap();
         assert!(
             kv_store.len() == 0,
@@ -289,6 +289,30 @@ impl ChangeStore {
         //     reader = &reader[size as usize..];
         // }
         // Ok(())
+    }
+
+    pub(crate) fn decode_snapshot_for_updates(
+        bytes: Bytes,
+        arena: &SharedArena,
+        self_vv: &VersionVector,
+    ) -> Result<Vec<Change>, LoroError> {
+        let change_store = ChangeStore::new_mem(arena, Arc::new(AtomicI64::new(0)));
+        let _ = change_store.import_all(bytes)?;
+        let mut changes = Vec::new();
+        change_store.visit_all_changes(&mut |c| {
+            let cnt_threshold = self_vv.get(&c.id.peer).copied().unwrap_or(0);
+            if c.id.counter >= cnt_threshold {
+                changes.push(c.clone());
+                return;
+            }
+
+            let change_end = c.ctr_end();
+            if change_end > cnt_threshold {
+                changes.push(c.slice((cnt_threshold - c.id.counter) as usize, c.atom_len()));
+            }
+        });
+
+        Ok(changes)
     }
 
     fn get_parsed_block(&self, id: ID) -> Option<Arc<ChangesBlock>> {
@@ -1144,7 +1168,7 @@ mod test {
             .change_store
             .encode_all(&Default::default(), &Default::default());
         let mut store = ChangeStore::new_for_test();
-        store.decode_all(bytes.clone()).unwrap();
+        store.import_all(bytes.clone()).unwrap();
         assert_eq!(store.external_kv.lock().unwrap().export_all(), bytes);
         let mut changes_parsed = Vec::new();
         let a = store.arena.clone();
