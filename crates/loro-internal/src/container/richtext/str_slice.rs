@@ -32,6 +32,7 @@ impl StrSlice {
         for (u, (i, _)) in s.char_indices().enumerate() {
             if u == pos {
                 split_at = i;
+                break;
             }
         }
 

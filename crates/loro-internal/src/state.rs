@@ -1045,10 +1045,9 @@ impl DocState {
     }
 
     pub fn get_container_deep_value(&mut self, container: ContainerIdx) -> LoroValue {
-        let Some(state) = self.store.get_container_mut(container) else {
+        let Some(value) = self.store.get_value(container) else {
             return container.get_type().default_value();
         };
-        let value = state.get_value();
         match value {
             LoroValue::Container(_) => unreachable!(),
             LoroValue::List(mut list) => {
