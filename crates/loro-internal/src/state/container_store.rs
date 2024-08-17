@@ -456,7 +456,12 @@ impl ContainerWrapper {
                 return Ok(());
             }
             #[cfg(feature = "counter")]
-            ContainerType::Counter => CounterState::decode_value(b)?,
+            ContainerType::Counter => {
+                let (v, _rest) = CounterState::decode_value(b)?;
+                self.value = Some(v);
+                self.bytes_offset_for_state = Some(0);
+                return Ok(());
+            }
             ContainerType::Unknown(_) => UnknownState::decode_value(b)?,
         };
 

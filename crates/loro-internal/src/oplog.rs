@@ -454,6 +454,7 @@ impl OpLog {
                     let mut inner_vv = vv.borrow_mut();
                     // FIXME: PERF: it looks slow for large vv, like 10000+ entries
                     inner_vv.clear();
+                    self.dag.ensure_vv_for(&inner.data);
                     inner_vv.extend_to_include_vv(inner.data.vv.get().unwrap().iter());
                     let peer = inner.data.peer;
                     let cnt = inner

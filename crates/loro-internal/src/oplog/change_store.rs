@@ -243,7 +243,8 @@ impl ChangeStore {
     pub(crate) fn import_all(&self, bytes: Bytes) -> Result<BatchDecodeInfo, LoroError> {
         let mut kv_store = self.external_kv.lock().unwrap();
         assert!(
-            kv_store.len() == 0,
+            // 2 because there are vv and frontiers
+            kv_store.len() <= 2,
             "kv store should be empty when using decode_all"
         );
         kv_store
@@ -253,15 +254,19 @@ impl ChangeStore {
         let vv = VersionVector::decode(&vv_bytes).unwrap();
         let frontiers_bytes = kv_store.get(b"fr").unwrap_or_default();
         let frontiers = Frontiers::decode(&frontiers_bytes).unwrap();
-        let mut max_lamport = 0;
+        let mut max_lamport = None;
         let mut max_timestamp = 0;
         drop(kv_store);
         for id in frontiers.iter() {
             let c = self.get_change(*id).unwrap();
             debug_assert_ne!(c.atom_len(), 0);
             let l = c.lamport_last();
-            if l > max_lamport {
-                max_lamport = l;
+            if let Some(x) = max_lamport {
+                if l > x {
+                    max_lamport = Some(l);
+                }
+            } else {
+                max_lamport = Some(l);
             }
 
             let t = c.timestamp;
@@ -273,7 +278,10 @@ impl ChangeStore {
         Ok(BatchDecodeInfo {
             vv,
             frontiers,
-            next_lamport: max_lamport + 1,
+            next_lamport: match max_lamport {
+                Some(l) => l + 1,
+                None => 0,
+            },
             max_timestamp,
         })
 

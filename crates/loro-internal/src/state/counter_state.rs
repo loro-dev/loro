@@ -128,14 +128,14 @@ mod snapshot {
         fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
             Ok((
                 LoroValue::Double(f64::from_le_bytes(bytes.try_into().unwrap())),
-                &[],
+                bytes,
             ))
         }
 
         fn decode_snapshot_fast(
             idx: ContainerIdx,
             v: (LoroValue, &[u8]),
-            ctx: crate::state::ContainerCreationContext,
+            _ctx: crate::state::ContainerCreationContext,
         ) -> LoroResult<Self>
         where
             Self: Sized,

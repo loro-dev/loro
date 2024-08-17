@@ -503,7 +503,7 @@ impl AppDag {
         })
     }
 
-    fn ensure_vv_for(&self, node: &AppDagNode) -> ImVersionVector {
+    pub(crate) fn ensure_vv_for(&self, node: &AppDagNode) -> ImVersionVector {
         if let Some(vv) = node.vv.get() {
             return vv.clone();
         }

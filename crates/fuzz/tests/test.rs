@@ -17,6 +17,11 @@ fn init() {
 }
 
 #[test]
+fn test_empty() {
+    test_multi_sites(5, vec![FuzzTarget::All], &mut [])
+}
+
+#[test]
 fn test_movable_list_0() {
     test_multi_sites(
         2,
