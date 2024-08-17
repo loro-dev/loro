@@ -892,10 +892,6 @@ impl DocState {
         F: FnOnce(&State) -> R,
     {
         let depth = self.arena.get_depth(idx).unwrap().get() as usize;
-        let parent = self
-            .arena
-            .get_parent(idx)
-            .and_then(|a| self.arena.get_container_id(a));
         let state = self
             .store
             .get_or_create(idx, || {

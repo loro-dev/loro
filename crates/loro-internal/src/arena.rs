@@ -222,7 +222,7 @@ impl SharedArena {
             .unwrap()
             .get(&child)
             .copied()
-            .flatten()
+            .expect("InternalError: Parent is not registered")
     }
 
     /// Call `f` on each ancestor of `container`, including `container` itself.
@@ -234,7 +234,7 @@ impl SharedArena {
         while let Some(c) = container {
             f(c, is_first);
             is_first = false;
-            container = self.get_parent(c);
+            container = self.get_parent(c)
         }
     }
 

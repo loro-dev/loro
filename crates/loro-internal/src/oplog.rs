@@ -3,7 +3,6 @@ mod iter;
 pub(crate) mod loro_dag;
 mod pending_changes;
 
-use once_cell::sync::OnceCell;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -21,13 +20,13 @@ use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
-use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
+use crate::span::{HasCounterSpan, HasLamportSpan};
 use crate::version::{Frontiers, VersionVector};
 use crate::LoroError;
 use change_store::BlockOpRef;
 pub use change_store::{BlockChangeRef, ChangeStore};
-use loro_common::{HasId, IdLp, IdSpan};
-use rle::{HasLength, Mergable, RleVec, Sliceable};
+use loro_common::{IdLp, IdSpan};
+use rle::{HasLength, RleVec, Sliceable};
 use smallvec::SmallVec;
 
 use self::iter::MergedChangeIter;

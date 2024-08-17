@@ -21,9 +21,12 @@ pub mod idx {
     ///
     /// TODO: make this type private in this crate only
     ///
+    ///
     // During a transaction, we may create some containers which are deleted later. And these containers also need a unique ContainerIdx.
     // So when we encode snapshot, we need to sort the containers by ContainerIdx and change the `container` of ops to the index of containers.
     // An empty store decodes the snapshot, it will create these containers in a sequence of natural numbers so that containers and ops can correspond one-to-one
+    //
+    // TODO: PERF: use NonZeroU32 to save memory
     #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
     pub struct ContainerIdx(u32);
 
