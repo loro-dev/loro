@@ -59,17 +59,11 @@ impl OpLog {
     }
 }
 
-/// This struct indicates that the dag frontiers should be updated after the change is applied.
-#[must_use]
-pub(crate) struct ShouldUpdateDagFrontiers {
-    pub(crate) should_update: bool,
-}
-
 impl OpLog {
     /// Try to apply pending changes.
     ///
     /// `new_ids` are the ID of the op that is just applied.
-    pub(crate) fn try_apply_pending(&mut self, mut new_ids: Vec<ID>) -> ShouldUpdateDagFrontiers {
+    pub(crate) fn try_apply_pending(&mut self, mut new_ids: Vec<ID>) {
         let mut latest_vv = self.dag.vv().clone();
         let mut updated = false;
         while let Some(id) = new_ids.pop() {
@@ -112,10 +106,6 @@ impl OpLog {
                     }
                 }
             }
-        }
-
-        ShouldUpdateDagFrontiers {
-            should_update: updated,
         }
     }
 
