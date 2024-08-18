@@ -743,13 +743,6 @@ impl TreeState {
     fn bfs_all_nodes_for_fast_snapshot(&self) -> Vec<TreeNode> {
         let mut ans = vec![];
         self._bfs_all_nodes(TreeParentId::Root, &mut ans);
-        // Add delete root here
-        ans.push(TreeNode {
-            id: TreeID::delete_root(),
-            parent: None,
-            position: FractionalIndex::default(),
-            index: 0,
-        });
         self._bfs_all_nodes(TreeParentId::Deleted, &mut ans);
         ans
     }
@@ -1367,9 +1360,10 @@ mod snapshot {
     #[columnar(vec, ser, de, iterable)]
     #[derive(Debug, Clone)]
     struct EncodedTreeNode {
-        /// If this field is 0, it means none
+        /// If this field is 0, it means none, its parent is root
+        /// If this field is 1, its parent is the deleted root
         #[columnar(strategy = "DeltaRle")]
-        parent_idx_plus_one: usize,
+        parent_idx_plus_two: usize,
         #[columnar(strategy = "DeltaRle")]
         last_set_peer_idx: usize,
         #[columnar(strategy = "DeltaRle")]
@@ -1418,9 +1412,15 @@ mod snapshot {
             let n = state.trees.get(&node.id).unwrap();
             let last_set_id = n.last_move_op;
             nodes.push(EncodedTreeNode {
-                parent_idx_plus_one: node
+                parent_idx_plus_two: node
                     .parent
-                    .map(|p| id_to_idx.get(&p).unwrap() + 1)
+                    .map(|p| {
+                        if p.is_deleted_root() {
+                            1
+                        } else {
+                            id_to_idx.get(&p).unwrap() + 2
+                        }
+                    })
                     .unwrap_or(0),
                 last_set_peer_idx: peers.register(&last_set_id.peer),
                 last_set_counter: last_set_id.counter,
@@ -1490,11 +1490,13 @@ mod snapshot {
             for (node_id, node) in node_ids.iter().zip(encoded.nodes.into_iter()) {
                 tree.mov(
                     *node_id,
-                    if node.parent_idx_plus_one == 0 {
-                        TreeParentId::Root
-                    } else {
-                        let id = node_ids[node.parent_idx_plus_one - 1];
-                        TreeParentId::from(Some(id))
+                    match node.parent_idx_plus_two {
+                        0 => TreeParentId::Root,
+                        1 => TreeParentId::Deleted,
+                        n => {
+                            let id = node_ids[n - 2];
+                            TreeParentId::from(Some(id))
+                        }
                     },
                     IdFull::new(
                         peers[node.last_set_peer_idx],
