@@ -740,9 +740,16 @@ impl TreeState {
         ans
     }
 
-    pub fn bfs_all_nodes(&self) -> Vec<TreeNode> {
+    fn bfs_all_nodes_for_fast_snapshot(&self) -> Vec<TreeNode> {
         let mut ans = vec![];
         self._bfs_all_nodes(TreeParentId::Root, &mut ans);
+        // Add delete root here
+        ans.push(TreeNode {
+            id: TreeID::delete_root(),
+            parent: None,
+            position: FractionalIndex::default(),
+            index: 0,
+        });
         self._bfs_all_nodes(TreeParentId::Deleted, &mut ans);
         ans
     }
@@ -1338,7 +1345,7 @@ mod snapshot {
     use fractional_index::FractionalIndex;
     use fxhash::FxHashMap;
     use itertools::Itertools;
-    use loro_common::{IdFull, PeerID, TreeID, ID};
+    use loro_common::{Counter, IdFull, PeerID, TreeID, ID};
     use serde::{Deserialize as _, Serialize as _};
     use serde_columnar::columnar;
 
@@ -1438,7 +1445,7 @@ mod snapshot {
 
     impl FastStateSnapshot for TreeState {
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
-            let all_nodes = self.bfs_all_nodes();
+            let all_nodes = self.bfs_all_nodes_for_fast_snapshot();
             let (peers, encoded) = encode(self, all_nodes);
             let peers = peers.unwrap_vec();
             leb128::write::unsigned(&mut w, peers.len() as u64).unwrap();
