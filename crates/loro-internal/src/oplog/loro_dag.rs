@@ -42,10 +42,6 @@ pub struct AppDag {
     unhandled_dep_points: Mutex<BTreeSet<ID>>,
 }
 
-pub(crate) struct EnsureDagNodeDepsAreAtTheEnd {
-    _private: PhantomData<()>,
-}
-
 #[derive(Debug, Clone)]
 pub struct AppDagNode {
     pub(crate) peer: PeerID,
@@ -84,9 +80,9 @@ impl AppDag {
         self.vv.is_empty()
     }
 
-    pub(super) fn handle_new_change(&mut self, change: &Change) -> EnsureDagNodeDepsAreAtTheEnd {
+    pub(super) fn handle_new_change(&mut self, change: &Change) {
         let len = change.content_len();
-        self.update_frontiers(change.id_last(), &change.deps);
+        self.update_version_on_new_change(change);
         if change.deps_on_self() {
             // don't need to push new element to dag because it only depends on itself
             self.with_last_mut_of_peer(change.id.peer, |last| {
@@ -169,10 +165,6 @@ impl AppDag {
                 }
             }
         }
-
-        EnsureDagNodeDepsAreAtTheEnd {
-            _private: PhantomData,
-        }
     }
 
     fn with_node_mut<R>(
@@ -235,9 +227,15 @@ impl AppDag {
         f(last)
     }
 
-    pub(super) fn update_frontiers(&mut self, id: ID, deps: &Frontiers) {
-        self.frontiers.update_frontiers_on_new_change(id, deps);
-        self.vv.extend_to_include_last_id(id);
+    fn update_version_on_new_change(&mut self, change: &Change) {
+        self.frontiers
+            .update_frontiers_on_new_change(change.id_last(), &change.deps);
+        assert_eq!(
+            self.vv.get(&change.id.peer).copied().unwrap_or(0),
+            change.id.counter
+        );
+
+        self.vv.extend_to_include_last_id(change.id_last());
     }
 
     pub(super) fn lazy_load_last_of_peer(&mut self, peer: u64) {
@@ -365,6 +363,7 @@ impl AppDag {
     }
 
     pub(crate) fn set_version_by_fast_snapshot_import(&mut self, v: BatchDecodeInfo) {
+        assert!(self.vv.is_empty());
         *self.unparsed_vv.try_lock().unwrap() = v.vv.clone();
         self.vv = v.vv;
         self.frontiers = v.frontiers;

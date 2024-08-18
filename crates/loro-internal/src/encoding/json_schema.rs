@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use either::Either;
-use loro_common::{ContainerID, ContainerType, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID};
+use loro_common::{
+    ContainerID, ContainerType, HasCounterSpan, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID,
+};
 use rle::{HasLength, RleVec, Sliceable};
 
 use crate::{
@@ -26,15 +28,15 @@ const SCHEMA_VERSION: u8 = 1;
 
 fn refine_vv(vv: &VersionVector, oplog: &OpLog) -> VersionVector {
     let mut refined = VersionVector::new();
-    for (peer, counter) in vv.iter() {
-        if counter == &0 {
+    for (&peer, &counter) in vv.iter() {
+        if counter == 0 {
             continue;
         }
-        let end = oplog.vv().get(peer).copied().unwrap_or(0);
-        if end <= *counter {
-            refined.insert(*peer, end);
+        let end = oplog.vv().get(&peer).copied().unwrap_or(0);
+        if end <= counter {
+            refined.insert(peer, end);
         } else {
-            refined.insert(*peer, *counter);
+            refined.insert(peer, counter);
         }
     }
     refined
@@ -79,6 +81,10 @@ fn init_encode<'s, 'a: 's>(
         let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
         let end_cnt = end_vv.get(&change.id.peer).copied().unwrap_or(0);
         if change.id.counter < start_cnt {
+            if change.ctr_end() <= start_cnt {
+                continue;
+            }
+
             let offset = start_cnt - change.id.counter;
             let to = change
                 .atom_len()

@@ -243,11 +243,8 @@ pub(crate) fn import_changes_to_oplog(
         let Some(change) = oplog.trim_the_known_part_of_change(change) else {
             continue;
         };
-        // update dag and push the change
-        let mark = oplog.update_dag_on_new_change(&change);
-        oplog.next_lamport = oplog.next_lamport.max(change.lamport_end());
-        oplog.latest_timestamp = oplog.latest_timestamp.max(change.timestamp);
-        oplog.insert_new_change(change, mark);
+
+        oplog.insert_new_change(change);
     }
 
     Ok((latest_ids, pending_changes))

@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::Mutex;
-use tracing::debug;
+use tracing::{debug, trace_span};
 
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;
@@ -30,7 +30,6 @@ use rle::{HasLength, RleVec, Sliceable};
 use smallvec::SmallVec;
 
 use self::iter::MergedChangeIter;
-use self::loro_dag::EnsureDagNodeDepsAreAtTheEnd;
 pub use self::loro_dag::{AppDag, AppDagNode, FrontiersNotIncluded};
 use self::pending_changes::PendingChanges;
 
@@ -159,7 +158,16 @@ impl OpLog {
     }
 
     /// This is the **only** place to update the `OpLog.changes`
-    pub(crate) fn insert_new_change(&mut self, change: Change, _: EnsureDagNodeDepsAreAtTheEnd) {
+    pub(crate) fn insert_new_change(&mut self, change: Change) {
+        let s = trace_span!(
+            "insert_new_change",
+            id = ?change.id,
+            lamport = change.lamport
+        );
+        let _enter = s.enter();
+        self.dag.handle_new_change(&change);
+        self.next_lamport = self.next_lamport.max(change.lamport_end());
+        self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
         self.history_cache
             .lock()
             .unwrap()
@@ -216,19 +224,8 @@ impl OpLog {
             );
         }
 
-        self.next_lamport = self.next_lamport.max(change.lamport_end());
-        self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
-        let mark = self.update_dag_on_new_change(&change);
-        self.insert_new_change(change, mark);
+        self.insert_new_change(change);
         Ok(())
-    }
-
-    /// Every time we import a new change, it should run this function to update the dag
-    pub(crate) fn update_dag_on_new_change(
-        &mut self,
-        change: &Change,
-    ) -> EnsureDagNodeDepsAreAtTheEnd {
-        self.dag.handle_new_change(change)
     }
 
     /// Trim the known part of change

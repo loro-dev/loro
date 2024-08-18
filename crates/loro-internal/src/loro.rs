@@ -15,7 +15,7 @@ use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
 use rle::HasLength;
-use tracing::{info, info_span, instrument};
+use tracing::{info, info_span, instrument, trace};
 
 use crate::{
     arena::SharedArena,
@@ -512,6 +512,11 @@ impl LoroDoc {
                         |oplog| oplog.decode(parsed),
                         origin,
                     )?;
+
+                    // let new_doc = LoroDoc::new();
+                    // new_doc.import(bytes)?;
+                    // let updates = new_doc.export_from(&self.oplog_vv());
+                    // return self.import_with(updates.as_slice(), origin);
                 }
             }
             EncodeMode::Auto => {
@@ -1092,6 +1097,11 @@ impl LoroDoc {
         );
         self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
+        trace!(
+            "oplog: vv={:?} frontiers={:?}",
+            oplog.vv(),
+            oplog.frontiers()
+        );
         let mut state = self.state.lock().unwrap();
         self.detached.store(true, Release);
         let mut calc = self.diff_calculator.lock().unwrap();

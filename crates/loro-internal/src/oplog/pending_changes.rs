@@ -122,10 +122,8 @@ impl OpLog {
         let Some(change) = self.trim_the_known_part_of_change(change) else {
             return;
         };
-        self.next_lamport = self.next_lamport.max(change.lamport_end());
-        self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
-        let mark = self.update_dag_on_new_change(&change);
-        self.insert_new_change(change, mark);
+
+        self.insert_new_change(change);
     }
 }
 
