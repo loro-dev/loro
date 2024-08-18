@@ -51,7 +51,7 @@ impl Actor {
         ))));
         let cb_tracker = tracker.clone();
         loro.subscribe_root(Arc::new(move |e| {
-            info_span!("ApplyDiff", id = id).in_scope(|| {
+            info_span!("[Fuzz] tracker.apply_diff", id = id).in_scope(|| {
                 let mut tracker = cb_tracker.lock().unwrap();
                 tracker.apply_diff(e)
             });
@@ -140,7 +140,7 @@ impl Actor {
         }
 
         let after_undo = self.loro.get_deep_value();
-        assert_value_eq(&before_undo, &after_undo);
+        assert_value_eq(&before_undo, &after_undo, None);
     }
 
     pub fn check_tracker(&self) {
@@ -149,7 +149,7 @@ impl Actor {
             let tracker = self.tracker.lock().unwrap();
             let loro_value = loro.get_deep_value();
             let tracker_value = tracker.to_value();
-            assert_value_eq(&loro_value, &tracker_value);
+            assert_value_eq(&loro_value, &tracker_value, None);
             self.targets.values().for_each(|t| t.check_tracker());
         });
     }
@@ -173,11 +173,23 @@ impl Actor {
             let f = Frontiers::from(f);
             let from = &self.loro.state_frontiers();
             let to = &f;
-            tracing::info_span!("Checkout", ?from, ?to).in_scope(|| {
+            let peer = self.peer;
+            tracing::info_span!("Checkout", ?from, ?to, ?peer).in_scope(|| {
                 self.loro.checkout(&f).unwrap();
                 // self.loro.check_state_correctness_slow();
                 let actual = self.loro.get_deep_value();
-                assert_value_eq(v, &actual);
+                assert_value_eq(
+                    v,
+                    &actual,
+                    Some(&mut || {
+                        format!(
+                            "loro.vv = {:#?}, loro updates = {:#?}",
+                            self.loro.oplog_vv(),
+                            self.loro
+                                .export_json_updates(&Default::default(), &self.loro.oplog_vv())
+                        )
+                    }),
+                );
             });
         }
         let f = self.rand_frontiers();
@@ -348,7 +360,7 @@ pub trait ActorTrait {
     fn add_new_container(&mut self, container: Container);
 }
 
-pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
+pub fn assert_value_eq(a: &LoroValue, b: &LoroValue, mut log: Option<&mut dyn FnMut() -> String>) {
     #[must_use]
     fn eq(a: &LoroValue, b: &LoroValue) -> bool {
         match (a, b) {
@@ -400,9 +412,10 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
     }
     assert!(
         eq(a, b),
-        "Expect left == right, but\nleft = {:#?}\nright = {:#?}",
+        "Expect left == right, but\nleft = {:#?}\nright = {:#?}\n{}",
         a,
-        b
+        b,
+        log.as_mut().map_or(String::new(), |f| f())
     );
 }
 

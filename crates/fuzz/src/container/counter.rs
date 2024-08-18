@@ -70,7 +70,7 @@ impl ActorTrait for CounterActor {
         unknown_loro.import(&loro.export_snapshot()).unwrap();
         let new_loro = LoroDoc::new();
         new_loro.import(&unknown_loro.export_snapshot()).unwrap();
-        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value());
+        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value(), None);
 
         // updates to updates
         let unknown_loro = LoroDocWithoutCounter::new();
@@ -81,7 +81,7 @@ impl ActorTrait for CounterActor {
         new_loro
             .import(&unknown_loro.export_from(&Default::default()))
             .unwrap();
-        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value());
+        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value(), None);
 
         // snapshot to updates
         let unknown_loro = LoroDocWithoutCounter::new();
@@ -90,7 +90,7 @@ impl ActorTrait for CounterActor {
         new_loro
             .import(&unknown_loro.export_from(&Default::default()))
             .unwrap();
-        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value());
+        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value(), None);
 
         // updates to snapshot
         let unknown_loro = LoroDocWithoutCounter::new();
@@ -99,7 +99,7 @@ impl ActorTrait for CounterActor {
             .unwrap();
         let new_loro = LoroDoc::new();
         new_loro.import(&unknown_loro.export_snapshot()).unwrap();
-        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value());
+        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value(), None);
     }
 
     fn add_new_container(&mut self, container: Container) {

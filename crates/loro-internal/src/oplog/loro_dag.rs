@@ -10,6 +10,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 use std::sync::Mutex;
+use tracing::trace;
 
 use super::change_store::BatchDecodeInfo;
 use super::ChangeStore;
@@ -532,7 +533,7 @@ impl AppDag {
                 ans_vv.extend_to_include_vv(dep_vv.iter());
             }
 
-            ans_vv.insert(node.peer, node.ctr_last());
+            ans_vv.insert(node.peer, node.ctr_end());
         }
 
         node.vv.set(ans_vv.clone()).unwrap();
@@ -581,6 +582,11 @@ impl AppDag {
         for id in frontiers.iter() {
             let x = self.get(*id)?;
             let target_vv = self.ensure_vv_for(&x);
+            trace!(
+                "FrontiersToVV id = {:#?} target_vv = {:#?}",
+                &id,
+                &target_vv
+            );
             vv.extend_to_include_vv(target_vv.iter());
             vv.extend_to_include_last_id(*id);
         }

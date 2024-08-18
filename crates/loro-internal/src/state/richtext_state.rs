@@ -283,7 +283,6 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
-        trace!("diff = {:#?}, mode = {:?}", richtext, _ctx.mode);
         // tracing::info!("Self state = {:#?}", &self);
         // PERF: compose delta
         let mut ans: TextDiff = TextDiff::new();

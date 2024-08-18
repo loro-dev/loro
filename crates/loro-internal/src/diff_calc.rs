@@ -15,7 +15,7 @@ use loro_common::{
 };
 use loro_delta::DeltaRope;
 use smallvec::SmallVec;
-use tracing::instrument;
+use tracing::{instrument, trace};
 
 use crate::{
     change::Lamport,
@@ -146,7 +146,7 @@ impl DiffCalculator {
         after_frontiers: Option<&Frontiers>,
         container_filter: Option<&dyn Fn(ContainerIdx) -> bool>,
     ) -> Vec<InternalContainerDiff> {
-        let s = tracing::span!(tracing::Level::INFO, "DiffCalc");
+        let s = tracing::span!(tracing::Level::INFO, "DiffCalc", ?before, ?after,);
         let _e = s.enter();
 
         let mut use_persisted_shortcut = false;
@@ -238,6 +238,7 @@ impl DiffCalculator {
                             op.atom_len().min((end_counter - op.counter) as usize),
                         ));
                         op = stack_sliced_op.as_ref().unwrap();
+                        trace!("Trim op");
                     }
 
                     let vv = &mut vv.borrow_mut();
@@ -260,6 +261,7 @@ impl DiffCalculator {
                         // don't checkout if we have already checked out this container in this round
                         calculator.apply_change(oplog, RichOp::new_by_change(&change, op), None);
                     } else {
+                        trace!("ApplyChange op = {:#?}", &op);
                         calculator.apply_change(
                             oplog,
                             RichOp::new_by_change(&change, op),

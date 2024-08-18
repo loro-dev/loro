@@ -8479,6 +8479,44 @@ fn diff_calc_fuzz_err_3() {
 }
 
 #[test]
+fn fast_snapshot_0() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 254,
+                target: 255,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: true,
+                    key: 48059,
+                    pos: 13527611514411810816,
+                    length: 11,
+                    prop: 13527612320720337851,
+                }),
+            },
+            Sync { from: 187, to: 187 },
+            Sync { from: 187, to: 69 },
+            Handle {
+                site: 187,
+                target: 187,
+                container: 187,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,

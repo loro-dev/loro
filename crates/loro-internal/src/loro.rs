@@ -1098,9 +1098,10 @@ impl LoroDoc {
     #[instrument(level = "info", skip(self))]
     fn checkout_without_emitting(&self, frontiers: &Frontiers) -> Result<(), LoroError> {
         info!(
-            "checkout from={:?} to={:?}",
+            "checkout from={:?} to={:?} cur_vv={:?}",
             self.state_frontiers(),
-            frontiers
+            frontiers,
+            self.oplog_vv()
         );
         self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
