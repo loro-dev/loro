@@ -216,6 +216,12 @@ impl SharedArena {
     }
 
     pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
+        if self.get_container_id(child).unwrap().is_root() {
+            // TODO: PERF: we can speed this up by use a special bit in ContainerIdx to indicate
+            // whether the target is a root container
+            return None;
+        }
+
         self.inner
             .parents
             .lock()
