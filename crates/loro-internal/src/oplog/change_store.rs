@@ -387,6 +387,12 @@ impl ChangeStore {
         let (b_id, b_bytes) = iter.next_back()?;
         let block_id: ID = ID::from_bytes(&b_id[..]);
         let block = ChangesBlock::from_bytes(b_bytes).unwrap();
+        trace!(
+            "block_id={:?} id={:?} counter_range={:?}",
+            block_id,
+            id,
+            block.counter_range
+        );
         if block_id.peer == id.peer
             && block_id.counter <= id.counter
             && block.counter_range.1 > id.counter
@@ -966,6 +972,7 @@ impl ChangesBlock {
             }
         }
 
+        this.flushed = false;
         this.counter_range.1 = next_counter;
         this.lamport_range.1 = next_lamport;
         Ok(())
