@@ -53,7 +53,8 @@ impl OpLog {
                     .entry(miss_dep.counter)
                     .or_default()
                     .push(local_change),
-                _ => unreachable!(),
+                ChangeState::Applied => unreachable!("already applied"),
+                ChangeState::CanApplyDirectly => unreachable!("can apply directly"),
             }
         }
     }

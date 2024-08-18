@@ -61,6 +61,7 @@ impl ContainerState for MapState {
                 // uncreate op
                 assert_eq!(mode, DiffMode::Checkout);
                 self.map.remove(&key);
+                resolved_delta = resolved_delta.with_entry(key, ResolvedMapValue::new_unset());
                 continue;
             };
 

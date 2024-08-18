@@ -79,6 +79,14 @@ impl ResolvedMapValue {
                 .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
         }
     }
+
+    /// This is used to indicate that the entry is unset. (caused by checkout to before the entry is created)
+    pub fn new_unset() -> Self {
+        ResolvedMapValue {
+            idlp: IdLp::new(PeerID::default(), Lamport::MAX),
+            value: None,
+        }
+    }
 }
 
 impl MapDelta {

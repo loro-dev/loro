@@ -77,11 +77,12 @@ pub(crate) fn encode_snapshot(doc: &LoroDoc) -> Vec<Bytes> {
 pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<(), LoroError> {
     let oplog_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
     let oplog_bytes = &bytes[4..4 + oplog_len as usize];
-    let changes = ChangeStore::decode_snapshot_for_updates(
+    let mut changes = ChangeStore::decode_snapshot_for_updates(
         oplog_bytes.to_vec().into(),
         &oplog.arena,
         oplog.vv(),
     )?;
+    changes.sort_unstable_by_key(|x| x.lamport);
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids);
