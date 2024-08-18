@@ -9,9 +9,7 @@ use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
-use std::marker::PhantomData;
 use std::sync::Mutex;
-use tracing::trace;
 
 use super::change_store::BatchDecodeInfo;
 use super::ChangeStore;
@@ -173,7 +171,7 @@ impl AppDag {
         id: ID,
         f: impl FnOnce(Option<&mut AppDagNode>) -> R,
     ) -> R {
-        self.ensure_lazy_load_node(id);
+        self.ensure_lazy_load_node(id, Some(map));
         let x = map.range_mut(..=id).next_back();
         if let Some((_, node)) = x {
             if node.contains_id(id) {
@@ -200,7 +198,7 @@ impl AppDag {
     }
 
     pub(crate) fn find_deps_of_id(&self, id: ID) -> Frontiers {
-        self.ensure_lazy_load_node(id);
+        self.ensure_lazy_load_node(id, None);
         let Some(node) = self.get(id) else {
             return Frontiers::default();
         };
@@ -248,12 +246,21 @@ impl AppDag {
             panic!("unparsed vv don't match with change store. Peer:{peer} is not in change store")
         };
 
-        self.lazy_load_nodes_internal(nodes, peer);
+        self.lazy_load_nodes_internal(nodes, peer, None);
     }
 
-    fn lazy_load_nodes_internal(&self, nodes: Vec<AppDagNode>, peer: u64) {
+    fn lazy_load_nodes_internal(
+        &self,
+        nodes: Vec<AppDagNode>,
+        peer: u64,
+        map_input: Option<&mut BTreeMap<ID, AppDagNode>>,
+    ) {
         assert!(!nodes.is_empty());
-        let mut map = self.map.try_lock().unwrap();
+        let mut map_guard = None;
+        let map = map_input.unwrap_or_else(|| {
+            map_guard = Some(self.map.try_lock().unwrap());
+            map_guard.as_mut().unwrap()
+        });
         let new_dag_start_counter_for_the_peer = nodes[0].cnt;
         let mut unparsed_vv = self.unparsed_vv.try_lock().unwrap();
         let end_counter = unparsed_vv[&peer];
@@ -298,19 +305,27 @@ impl AppDag {
         }
 
         unparsed_vv.insert(peer, new_dag_start_counter_for_the_peer);
-        drop(map);
         drop(unparsed_vv);
-        self.handle_deps_break_points(&deps_on_others, peer);
+        self.handle_deps_break_points(&deps_on_others, peer, Some(map));
     }
 
-    fn handle_deps_break_points(&self, ids: &[ID], skip_peer: PeerID) {
-        let mut map = self.map.try_lock().unwrap();
+    fn handle_deps_break_points(
+        &self,
+        ids: &[ID],
+        skip_peer: PeerID,
+        map: Option<&mut BTreeMap<ID, AppDagNode>>,
+    ) {
+        let mut map_guard = None;
+        let map = map.unwrap_or_else(|| {
+            map_guard = Some(self.map.try_lock().unwrap());
+            map_guard.as_mut().unwrap()
+        });
         for &id in ids.iter() {
             if id.peer == skip_peer {
                 continue;
             }
 
-            let ans = self.with_node_mut(&mut map, id, |target| {
+            let ans = self.with_node_mut(map, id, |target| {
                 // We don't need to break the dag node if it's not loaded yet
                 let target = target?;
                 if target.ctr_last() == id.counter {
@@ -335,7 +350,7 @@ impl AppDag {
         }
     }
 
-    pub(super) fn ensure_lazy_load_node(&self, id: ID) {
+    fn ensure_lazy_load_node(&self, id: ID, map: Option<&mut BTreeMap<ID, AppDagNode>>) {
         if !self.unparsed_vv.try_lock().unwrap().includes_id(id) {
             return;
         }
@@ -344,7 +359,7 @@ impl AppDag {
             panic!("unparsed vv don't match with change store. Id:{id} is not in change store")
         };
 
-        self.lazy_load_nodes_internal(nodes, id.peer);
+        self.lazy_load_nodes_internal(nodes, id.peer, map);
     }
 
     pub(super) fn fork(&self, change_store: ChangeStore) -> AppDag {
@@ -473,7 +488,7 @@ impl Dag for AppDag {
     }
 
     fn get(&self, id: ID) -> Option<Self::Node> {
-        self.ensure_lazy_load_node(id);
+        self.ensure_lazy_load_node(id, None);
         let binding = self.map.try_lock().unwrap();
         let x = binding.range(..=id).next_back()?;
         if x.1.contains_id(id) {
@@ -537,7 +552,7 @@ impl AppDag {
     }
 
     pub fn get_lamport(&self, id: &ID) -> Option<Lamport> {
-        self.ensure_lazy_load_node(*id);
+        self.ensure_lazy_load_node(*id, None);
         self.get(*id).and_then(|node| {
             assert!(id.counter >= node.cnt);
             if node.cnt + node.len as Counter > id.counter {
