@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::Mutex;
-use tracing::{debug, trace_span};
+use tracing::{debug, instrument, trace, trace_span};
 
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;
@@ -535,6 +535,7 @@ impl OpLog {
     }
 
     #[inline(never)]
+    #[instrument(skip(self), level = "trace")]
     pub(crate) fn idlp_to_id(&self, id: loro_common::IdLp) -> Option<ID> {
         let change = self.change_store.get_change_by_lamport_lte(id)?;
         if change.lamport > id.lamport || change.lamport_end() <= id.lamport {

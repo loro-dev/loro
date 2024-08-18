@@ -57,6 +57,13 @@ impl ContainerState for MapState {
         let force = matches!(mode, DiffMode::Checkout | DiffMode::Linear);
         let mut resolved_delta = ResolvedMapDelta::new();
         for (key, value) in delta.updated.into_iter() {
+            let Some(value) = value else {
+                // uncreate op
+                assert_eq!(mode, DiffMode::Checkout);
+                self.map.remove(&key);
+                continue;
+            };
+
             let mut changed = false;
             if force {
                 self.map.insert(key.clone(), value.clone());
@@ -254,7 +261,8 @@ impl MapState {
 }
 
 mod snapshot {
-    use loro_common::InternalString;
+    use fxhash::FxHashSet;
+    use loro_common::{IdLp, InternalString};
     use serde_columnar::Itertools;
 
     use crate::{
@@ -266,6 +274,9 @@ mod snapshot {
 
     impl FastStateSnapshot for MapState {
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
+            // 1. LoroValue
+            // 2. Vec<String> keys_with_none_value
+            // 3. Groups of (u64 peer, leb128 lamp)
             let value = self.get_value();
             postcard::to_io(&value, &mut w).unwrap();
 
@@ -310,17 +321,36 @@ mod snapshot {
                             .into_boxed_str(),
                     )
                 })?;
+            let keys_with_none_value: FxHashSet<_> = keys.iter().cloned().collect();
             keys.extend(value.keys().map(|x| x.as_str().into()));
             keys.sort_unstable();
             let mut key_iter = keys.into_iter();
             let mut ans = MapState::new(idx);
             while !bytes.is_empty() {
+                let key = key_iter.next().unwrap();
                 let peer = u64::from_le_bytes(bytes[..8].try_into().unwrap());
                 bytes = &bytes[8..];
                 let lamp = leb128::read::unsigned(&mut bytes).unwrap() as u32;
-                let key = key_iter.next().unwrap();
-                let value = value.get(&*key).cloned();
-                ans.insert(key.as_str().into(), MapValue { value, lamp, peer });
+                if keys_with_none_value.contains(&key) {
+                    ans.insert(
+                        key.as_str().into(),
+                        MapValue {
+                            value: None,
+                            lamp,
+                            peer,
+                        },
+                    );
+                } else {
+                    let value = value.get(&*key).unwrap();
+                    ans.insert(
+                        key.as_str().into(),
+                        MapValue {
+                            value: Some(value.clone()),
+                            lamp,
+                            peer,
+                        },
+                    );
+                }
             }
 
             Ok(ans)

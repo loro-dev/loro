@@ -7,9 +7,11 @@
 use loro_common::LoroValue;
 
 use crate::{
+    arena::SharedArena,
     change::Change,
     container::{list::list_op::ListOp, map::MapSet},
     op::{ListSlice, RawOp, RawOpContent},
+    oplog::ChangeStore,
     DocState, OpLog,
 };
 
@@ -20,12 +22,16 @@ impl OpLog {
     /// in Loro are properly linked.
     pub(super) fn register_container_and_parent_link(&self, change: &Change) {
         let arena = &self.arena;
-        for op in change.ops.iter() {
-            op.content.visit_created_children(arena, &mut |c| {
-                let idx = arena.register_container(c);
-                arena.set_parent(idx, Some(op.container));
-            });
-        }
+        register_container_and_parent_link(arena, change);
+    }
+}
+
+pub(super) fn register_container_and_parent_link(arena: &SharedArena, change: &Change) {
+    for op in change.ops.iter() {
+        op.content.visit_created_children(arena, &mut |c| {
+            let idx = arena.register_container(c);
+            arena.set_parent(idx, Some(op.container));
+        });
     }
 }
 

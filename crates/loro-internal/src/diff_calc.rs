@@ -15,7 +15,7 @@ use loro_common::{
 };
 use loro_delta::DeltaRope;
 use smallvec::SmallVec;
-use tracing::{instrument, trace, warn};
+use tracing::instrument;
 
 use crate::{
     change::Lamport,
@@ -168,7 +168,6 @@ impl DiffCalculator {
 
                 if *has_all {
                     use_persisted_shortcut = true;
-                    trace!("use persisted shortcut");
                 }
             }
         }
@@ -384,7 +383,8 @@ impl DiffCalculator {
             }
         }
 
-        ans.into_values().map(|x| x.1).collect_vec()
+        let diff = ans.into_values().map(|x| x.1).collect_vec();
+        diff
     }
 
     // TODO: we may remove depth info
@@ -472,7 +472,7 @@ pub(crate) enum ContainerDiffCalculator {
 #[derive(Debug)]
 pub(crate) struct MapDiffCalculator {
     container_idx: ContainerIdx,
-    changed: FxHashMap<InternalString, MapValue>,
+    changed: FxHashMap<InternalString, Option<MapValue>>,
     current_mode: DiffMode,
 }
 
@@ -515,9 +515,9 @@ impl DiffCalculatorTrait for MapDiffCalculator {
             lamp: op.lamport(),
         };
         match self.changed.get(&map.key) {
-            Some(old_value) if old_value > &new_value => {}
+            Some(Some(old_value)) if old_value > &new_value => {}
             _ => {
-                self.changed.insert(map.key.clone(), new_value);
+                self.changed.insert(map.key.clone(), Some(new_value));
             }
         }
     }
@@ -570,24 +570,18 @@ impl DiffCalculatorTrait for MapDiffCalculator {
                 let mut updated =
                     FxHashMap::with_capacity_and_hasher(changed.len(), Default::default());
                 for (key, value) in changed {
-                    let value = value
-                        .map(|v| {
-                            let value = v.value.clone();
-                            if let Some(LoroValue::Container(c)) = &value {
-                                on_new_container(&c);
-                            }
+                    let value = value.map(|v| {
+                        let value = v.value.clone();
+                        if let Some(LoroValue::Container(c)) = &value {
+                            on_new_container(c);
+                        }
 
-                            MapValue {
-                                value,
-                                lamp: v.lamport,
-                                peer: v.peer,
-                            }
-                        })
-                        .unwrap_or_else(|| MapValue {
-                            value: None,
-                            lamp: 0,
-                            peer: 0,
-                        });
+                        MapValue {
+                            value,
+                            lamp: v.lamport,
+                            peer: v.peer,
+                        }
+                    });
 
                     updated.insert(key, value);
                 }
@@ -1045,17 +1039,13 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         _: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         match &mut *self.mode {
-            RichtextCalcMode::Linear { diff, .. } => {
-                trace!("end with linear mode");
-                (
-                    InternalDiff::RichtextRaw(std::mem::take(diff)),
-                    DiffMode::Linear,
-                )
-            }
+            RichtextCalcMode::Linear { diff, .. } => (
+                InternalDiff::RichtextRaw(std::mem::take(diff)),
+                DiffMode::Linear,
+            ),
             RichtextCalcMode::Crdt {
                 tracker, styles, ..
             } => {
-                trace!("end with crdt mode");
                 tracing::debug!("CalcDiff {:?} {:?}", from, to);
                 let mut delta = DeltaRope::new();
                 for item in tracker.diff(from, to) {

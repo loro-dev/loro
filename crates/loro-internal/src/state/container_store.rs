@@ -10,6 +10,7 @@ use bytes::Bytes;
 use encode::{decode_cids, CidOffsetEncoder};
 use fxhash::FxHashMap;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
+use tracing::trace;
 
 use super::{
     unknown_state::UnknownState, ContainerCreationContext, ContainerState, ListState, MapState,
