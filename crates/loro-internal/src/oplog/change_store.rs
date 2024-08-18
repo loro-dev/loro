@@ -13,7 +13,7 @@ use std::{
     ops::{Bound, Deref},
     sync::{atomic::AtomicI64, Arc, Mutex},
 };
-use tracing::{trace, warn};
+use tracing::{info_span, trace, warn};
 mod block_encode;
 mod delta_rle_encode;
 use crate::{
@@ -45,6 +45,10 @@ const MAX_BLOCK_SIZE: usize = 128;
 pub struct ChangeStore {
     inner: Arc<Mutex<ChangeStoreInner>>,
     arena: SharedArena,
+    /// A change may be in external_kv or in the mem_parsed_kv.
+    /// mem_parsed_kv is more up-to-date.
+    ///
+    /// We cannot directly write into the external_kv except from the initial load
     external_kv: Arc<Mutex<dyn KvStore>>,
     merge_interval: Arc<AtomicI64>,
 }
@@ -108,6 +112,28 @@ impl ChangeStore {
     }
 
     pub fn insert_change(&self, mut change: Change, split_when_exceeds: bool) {
+        #[cfg(debug_assertions)]
+        {
+            let inner = self.inner.lock().unwrap();
+            assert_eq!(
+                inner
+                    .mem_parsed_kv
+                    .range(change.id.inc(1)..change.id_end())
+                    .count(),
+                0,
+                "change should not exist"
+            );
+            let kv = self.external_kv.lock().unwrap();
+            let count = kv
+                .scan(
+                    Bound::Excluded(&change.id.to_bytes()),
+                    Bound::Excluded(&change.id_end().to_bytes()),
+                )
+                .count();
+            assert_eq!(count, 0, "change should not exist");
+        }
+        let s = info_span!("change_store insert_change", id = ?change.id);
+        let _e = s.enter();
         let estimated_size = change.estimate_storage_size();
         if estimated_size > MAX_BLOCK_SIZE && split_when_exceeds {
             self.split_change_then_insert(change);
@@ -130,6 +156,8 @@ impl ChangeStore {
                     &self.arena,
                 ) {
                     Ok(_) => {
+                        drop(inner);
+                        debug_assert!(self.get_change(id).is_some());
                         return;
                     }
                     Err(c) => change = c,
@@ -140,6 +168,8 @@ impl ChangeStore {
         inner
             .mem_parsed_kv
             .insert(id, Arc::new(ChangesBlock::new(change, &self.arena)));
+        drop(inner);
+        debug_assert!(self.get_change(id).is_some());
     }
 
     fn split_change_then_insert(&self, change: Change) {
@@ -243,6 +273,7 @@ impl ChangeStore {
         self.external_kv.lock().unwrap().export_all()
     }
 
+    #[tracing::instrument(skip_all, level = "debug", name = "change_store import_all")]
     pub(crate) fn import_all(&self, bytes: Bytes) -> Result<BatchDecodeInfo, LoroError> {
         let mut kv_store = self.external_kv.lock().unwrap();
         assert!(
@@ -381,6 +412,7 @@ impl ChangeStore {
         Some(block.content.iter_dag_nodes())
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     pub fn get_change(&self, id: ID) -> Option<BlockChangeRef> {
         let block = self.get_parsed_block(id)?;
         Some(BlockChangeRef {
@@ -605,6 +637,10 @@ impl ChangeStore {
 
         let next_back_id = ID::from_bytes(&next_back_id);
         if next_back_id.peer == id.peer {
+            if inner.mem_parsed_kv.contains_key(&next_back_id) {
+                return;
+            }
+
             let block = ChangesBlock::from_bytes(next_back_bytes).unwrap();
             inner.mem_parsed_kv.insert(next_back_id, Arc::new(block));
         }
@@ -820,7 +856,7 @@ impl BlockOpRef {
 }
 
 impl ChangesBlock {
-    pub fn from_bytes(bytes: Bytes) -> LoroResult<Self> {
+    fn from_bytes(bytes: Bytes) -> LoroResult<Self> {
         let len = bytes.len();
         let mut bytes = ChangesBlockBytes::new(bytes);
         let peer = bytes.peer();
@@ -841,7 +877,7 @@ impl ChangesBlock {
         &self.content
     }
 
-    pub fn new(change: Change, a: &SharedArena) -> Self {
+    fn new(change: Change, a: &SharedArena) -> Self {
         let atom_len = change.atom_len();
         let counter_range = (change.id.counter, change.id.counter + atom_len as Counter);
         let lamport_range = (change.lamport, change.lamport + atom_len as Lamport);
@@ -858,7 +894,7 @@ impl ChangesBlock {
         }
     }
 
-    pub fn cmp_id(&self, id: ID) -> Ordering {
+    fn cmp_id(&self, id: ID) -> Ordering {
         self.peer.cmp(&id.peer).then_with(|| {
             if self.counter_range.0 > id.counter {
                 Ordering::Greater
@@ -870,7 +906,7 @@ impl ChangesBlock {
         })
     }
 
-    pub fn cmp_idlp(&self, idlp: (PeerID, Lamport)) -> Ordering {
+    fn cmp_idlp(&self, idlp: (PeerID, Lamport)) -> Ordering {
         self.peer.cmp(&idlp.0).then_with(|| {
             if self.lamport_range.0 > idlp.1 {
                 Ordering::Greater
@@ -886,7 +922,7 @@ impl ChangesBlock {
         self.estimated_size > MAX_BLOCK_SIZE
     }
 
-    pub fn push_change(
+    fn push_change(
         self: &mut Arc<Self>,
         change: Change,
         new_change_size: usize,
@@ -935,7 +971,7 @@ impl ChangesBlock {
         Ok(())
     }
 
-    pub fn to_bytes<'a>(self: &'a mut Arc<Self>, a: &SharedArena) -> ChangesBlockBytes {
+    fn to_bytes<'a>(self: &'a mut Arc<Self>, a: &SharedArena) -> ChangesBlockBytes {
         match &self.content {
             ChangesBlockContent::Bytes(bytes) => bytes.clone(),
             ChangesBlockContent::Both(_, bytes) => {
@@ -953,7 +989,7 @@ impl ChangesBlock {
         }
     }
 
-    pub fn ensure_changes(self: &mut Arc<Self>, a: &SharedArena) -> LoroResult<()> {
+    fn ensure_changes(self: &mut Arc<Self>, a: &SharedArena) -> LoroResult<()> {
         match &self.content {
             ChangesBlockContent::Changes(_) => Ok(()),
             ChangesBlockContent::Both(_, _) => Ok(()),

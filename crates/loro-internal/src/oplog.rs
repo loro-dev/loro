@@ -461,6 +461,7 @@ impl OpLog {
                         .max(common_ancestors_vv.get(&peer).copied().unwrap_or(0));
                     let dag_node_end = (inner.data.cnt + inner.data.len as Counter)
                         .min(merged_vv.get(&peer).copied().unwrap_or(0));
+                    trace!("vv: {:?}", self.dag.vv());
                     let change = self.change_store.get_change(ID::new(peer, cnt)).unwrap();
 
                     if change.ctr_end() < dag_node_end {

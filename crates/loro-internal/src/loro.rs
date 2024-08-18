@@ -15,7 +15,7 @@ use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
 use rle::HasLength;
-use tracing::{info, info_span, instrument, trace};
+use tracing::{debug, debug_span, info, info_span, instrument, trace};
 
 use crate::{
     arena::SharedArena,
@@ -460,8 +460,9 @@ impl LoroDoc {
     }
 
     #[inline(always)]
-    #[instrument(skip_all)]
     pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
+        let s = debug_span!("import", peer = self.peer_id());
+        let _e = s.enter();
         self.import_with(bytes, Default::default())
     }
 
@@ -473,6 +474,7 @@ impl LoroDoc {
         ans
     }
 
+    #[tracing::instrument(skip_all)]
     fn _import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
         let parsed = parse_header_and_body(bytes)?;
         match parsed.mode {
@@ -528,6 +530,7 @@ impl LoroDoc {
         Ok(())
     }
 
+    #[tracing::instrument(skip_all)]
     pub(crate) fn update_oplog_and_apply_delta_to_state_if_needed(
         &self,
         f: impl FnOnce(&mut OpLog) -> Result<(), LoroError>,
@@ -538,6 +541,7 @@ impl LoroDoc {
         let old_frontiers = oplog.frontiers().clone();
         f(&mut oplog)?;
         if !self.detached.load(Acquire) {
+            debug!("checkout from {:?} to {:?}", old_vv, oplog.vv());
             let mut diff = DiffCalculator::new(false);
             let diff = diff.calc_diff_internal(
                 &oplog,
@@ -634,7 +638,9 @@ impl LoroDoc {
     /// Import the json schema updates.
     ///
     /// only supports backward compatibility but not forward compatibility.
+    #[tracing::instrument(skip_all)]
     pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> LoroResult<()> {
+        trace!("cur_peer={}", self.peer_id());
         let json = json.try_into().map_err(|_| LoroError::InvalidJsonSchema)?;
         self.commit_then_stop();
         self.update_oplog_and_apply_delta_to_state_if_needed(
@@ -1021,6 +1027,7 @@ impl LoroDoc {
     }
 
     // PERF: opt
+    #[tracing::instrument(skip_all)]
     pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
         self.commit_then_stop();
         let is_detached = self.is_detached();
