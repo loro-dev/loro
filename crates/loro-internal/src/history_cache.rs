@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    marker::PhantomData,
     ops::Bound,
     sync::{Arc, Mutex},
 };
@@ -39,6 +40,11 @@ pub(crate) struct ContainerHistoryCache {
 pub(crate) struct ForCheckout {
     pub(crate) map: MapHistoryCache,
     pub(crate) movable_list: MovableListHistoryCache,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct HasImportingCacheMark {
+    _private: PhantomData<()>,
 }
 
 impl HistoryCacheTrait for ForCheckout {
@@ -132,13 +138,18 @@ impl ContainerHistoryCache {
         self.init_cache_by_visit_all_change_slow(record_for_checkout, record_for_importing);
     }
 
-    pub(crate) fn ensure_importing_caches_exist(&mut self) {
+    pub(crate) fn ensure_importing_caches_exist(&mut self) -> HasImportingCacheMark {
         if self.for_importing.is_some() {
-            return;
+            return HasImportingCacheMark {
+                _private: PhantomData,
+            };
         }
 
         self.for_importing = Some(FxHashMap::default());
         self.init_cache_by_visit_all_change_slow(false, true);
+        HasImportingCacheMark {
+            _private: PhantomData,
+        }
     }
 
     fn init_cache_by_visit_all_change_slow(&mut self, for_checkout: bool, for_importing: bool) {
@@ -177,25 +188,19 @@ impl ContainerHistoryCache {
         });
     }
 
-    pub(crate) fn get_importing_cache_unsafe(
+    pub(crate) fn get_importing_cache(
         &self,
         container_idx: &ContainerIdx,
+        _: HasImportingCacheMark,
     ) -> Option<&HistoryCacheForImporting> {
         self.for_importing.as_ref().unwrap().get(container_idx)
     }
 
-    pub(crate) fn get_tree(&mut self, container_idx: &ContainerIdx) -> Option<&TreeOpGroup> {
-        self.ensure_importing_caches_exist();
-        self.for_importing
-            .as_ref()
-            .unwrap()
-            .get(container_idx)
-            .map(|group| match group {
-                HistoryCacheForImporting::Tree(tree) => tree,
-            })
-    }
-
-    pub(crate) fn get_tree_unsafe(&self, container_idx: &ContainerIdx) -> Option<&TreeOpGroup> {
+    pub(crate) fn get_tree(
+        &self,
+        container_idx: &ContainerIdx,
+        _: HasImportingCacheMark,
+    ) -> Option<&TreeOpGroup> {
         self.for_importing
             .as_ref()
             .unwrap()

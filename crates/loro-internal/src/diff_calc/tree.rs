@@ -10,6 +10,7 @@ use crate::{
     dag::DagUtils,
     delta::{TreeDelta, TreeDeltaItem, TreeInternalDiff},
     event::InternalDiff,
+    history_cache::HasImportingCacheMark,
     state::TreeParentId,
     version::Frontiers,
     OpLog, VersionVector,
@@ -162,8 +163,8 @@ impl TreeDiffCalculator {
 
     fn checkout(&mut self, to: &VersionVector, oplog: &OpLog) {
         oplog.with_history_cache(|h| {
-            h.ensure_importing_caches_exist();
-            let tree_ops = h.get_tree_unsafe(&self.container).unwrap();
+            let mark = h.ensure_importing_caches_exist();
+            let tree_ops = h.get_tree(&self.container, mark).unwrap();
             let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
             let s = format!("checkout current {:?} to {:?}", &tree_cache.current_vv, &to);
             let s = tracing::span!(tracing::Level::INFO, "checkout", s = s);
@@ -207,7 +208,7 @@ impl TreeDiffCalculator {
             let max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
             let mut forward_ops = vec![];
             let group = h
-                .get_importing_cache_unsafe(&self.container)
+                .get_importing_cache(&self.container, mark)
                 .unwrap()
                 .as_tree()
                 .unwrap();
@@ -248,8 +249,8 @@ impl TreeDiffCalculator {
         oplog: &OpLog,
     ) -> TreeDelta {
         oplog.with_history_cache(|h| {
-            h.ensure_importing_caches_exist();
-            let tree_ops = h.get_tree_unsafe(&self.container).unwrap();
+            let mark = h.ensure_importing_caches_exist();
+            let tree_ops = h.get_tree(&self.container, mark).unwrap();
             let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
 
             let s = tracing::span!(tracing::Level::INFO, "checkout_diff");
@@ -343,7 +344,7 @@ impl TreeDiffCalculator {
             // forward
             tracing::info!("forward");
             let group = h
-                .get_importing_cache_unsafe(&self.container)
+                .get_importing_cache(&self.container, mark)
                 .unwrap()
                 .as_tree()
                 .unwrap();
