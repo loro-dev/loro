@@ -11,6 +11,11 @@ use fuzz::{
 };
 use loro::{ContainerType::*, LoroCounter, LoroDoc};
 
+#[ctor::ctor]
+fn init() {
+    dev_utils::setup_test_log();
+}
+
 #[test]
 fn empty() {
     test_multi_sites(5, vec![FuzzTarget::All], &mut []);
@@ -34,5 +39,29 @@ fn one_op() {
                 prop: 0,
             }),
         }],
+    );
+}
+
+#[test]
+fn two_ops() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            SyncAll,
+            Handle {
+                site: 47,
+                target: 190,
+                container: 190,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(0)),
+                    bool: false,
+                    key: 40,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
     );
 }

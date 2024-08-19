@@ -19,7 +19,7 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
     ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)> + '_>;
     fn len(&self) -> usize;
     fn size(&self) -> usize;
-    fn export_all(&self) -> Bytes;
+    fn export_all(&mut self) -> Bytes;
     fn import_all(&mut self, bytes: Bytes) -> Result<(), String>;
     fn clone_store(&self) -> Arc<Mutex<dyn KvStore>>;
 }
@@ -327,6 +327,10 @@ mod sst_binary_format {
                     while left < right{
                         let mid = left + (right - left) / 2;
                         self.prev_to_idx(mid as isize);
+                        // prev idx <= next idx
+                        if !self.prev_is_valid(){
+                            return;
+                        }
                         debug_assert!(self.prev_is_valid());
                         if self.prev_key.as_slice() > key{
                             right = mid;
@@ -407,6 +411,11 @@ mod sst_binary_format {
                     self.next_key.extend_from_slice(&rest[..key_suffix_len]);
                     rest.advance(key_suffix_len);
                     let value_len = rest.get_u16() as usize;
+
+                    if &self.next_key == b"fr" && value_len == 3{
+                        println!();
+                    }
+
                     let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len + SIZE_OF_U16;
                     self.next_value_range = value_start..value_start + value_len;
                     rest.advance(value_len);
@@ -1597,7 +1606,7 @@ mod mem {
         }
 
     
-        fn export_all(&self) -> Bytes {
+        fn export_all(&mut self) -> Bytes {
             let mut builder = SsTableBuilder::new(self.block_size);
             for (k, v) in self.scan(Bound::Unbounded, Bound::Unbounded){
                 builder.add(k, v);
@@ -1606,16 +1615,24 @@ mod mem {
             if builder.is_empty(){
                 return Bytes::new();
             }
-            builder.build().export_all()
+            self.mem_table.clear();
+            let ss = builder.build();
+            let ans = ss.export_all();
+            let _ = std::mem::replace(&mut self.ss_table, Some(ss));
+            ans
         }
     
         fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
+            println!("\n\nimport_all: {:?}", bytes);
             if bytes.is_empty(){
                 self.ss_table = None;
                 return Ok(());
             }
             let ss_table = SsTable::import_all(bytes).map_err(|e| e.to_string())?;
             self.ss_table = Some(ss_table);
+            for (k, v) in self.scan(Bound::Unbounded, Bound::Unbounded){
+                println!("k: {:?}, v: {:?}", k, v);
+            }
             Ok(())
         }
     
@@ -1672,7 +1689,7 @@ mod mem {
                             })
                         }
                         Ordering::Greater=>{
-                            self.current_sstable.take()
+                             self.current_sstable.take()
                         }
                     }
                 }
