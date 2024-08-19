@@ -821,8 +821,8 @@ mod sst_binary_format {
         fn finish(&mut self){
             let builder = std::mem::replace(&mut self.block_builder, BlockBuilder::new(self.block_size));
             let block = builder.build();
-            let is_large = matches!(block, Block::Large(_));
             let encoded_bytes = block.encode();
+            let is_large = block.is_large();
             let meta = BlockMeta{
                 offset: self.data.len(),
                 is_large,
@@ -1019,18 +1019,18 @@ mod sst_binary_format {
                     let idx = table.find_block_idx(start);
                     let block = table.read_block_cached(idx).unwrap();
                     let iter = BlockIter::new_seek_to_key(block, start);
-                    (idx, iter, false)
+                    (idx, iter, None)
                 },
                 Bound::Excluded(start)=>{
                     let idx = table.find_block_idx(start);
                     let block = table.read_block_cached(idx).unwrap();
                     let iter = BlockIter::new_seek_to_key(block, start);
-                    (idx, iter, true)
+                    (idx, iter, Some(start))
                 },
                 Bound::Unbounded=>{
                     let block = table.read_block_cached(0).unwrap();
                     let iter = BlockIter::new_seek_to_first(block);
-                    (0, iter, false)
+                    (0, iter, None)
                 },
             };
             let (end_idx, end_iter, end_excluded) = match end {
@@ -1038,19 +1038,19 @@ mod sst_binary_format {
                         let end_idx = table.find_block_idx(end);
                         let block = table.read_block_cached(end_idx).unwrap();
                         let iter = BlockIter::new_prev_to_key(block, end);
-                        (end_idx, iter, false)
+                        (end_idx, iter, None)
                     },
                     Bound::Excluded(end)=>{
                         let end_idx = table.find_block_idx(end);
                         let block = table.read_block_cached(end_idx).unwrap();
                         let iter = BlockIter::new_prev_to_key(block, end);
-                        (end_idx, iter, true)
+                        (end_idx, iter, Some(end))
                     },
                     Bound::Unbounded=>{
                         let end_idx = table.meta.len() - 1;
                         let block = table.read_block_cached(end_idx).unwrap();
                         let iter = BlockIter::new_seek_to_first(block);
-                        (end_idx, iter, false)
+                        (end_idx, iter, None)
                     }
             };
             let mut ans = SsTableIter{
@@ -1061,11 +1061,15 @@ mod sst_binary_format {
                 prev_block_idx: end_idx as isize,
                 next_first: table_idx == end_idx
             };
-            if excluded{
-                ans.next();
+            if let Some(key) = excluded {
+                if ans.next_value() == key{
+                    ans.next();
+                }
             }
-            if end_excluded{
-                ans.prev();
+            if let Some(key) = end_excluded {
+                if ans.prev_value() == key{
+                    ans.prev();
+                }
             }
             ans
         }
