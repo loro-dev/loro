@@ -3,14 +3,16 @@ use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
-use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, PeerID};
+use fxhash::FxHashSet;
+use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, PeerID};
 use once_cell::sync::OnceCell;
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
-use std::sync::Mutex;
-use tracing::trace;
+use std::ops::Deref;
+use std::sync::{Arc, Mutex};
+use tracing::debug;
 
 use super::change_store::BatchDecodeInfo;
 use super::ChangeStore;
@@ -43,6 +45,27 @@ pub struct AppDag {
 
 #[derive(Debug, Clone)]
 pub struct AppDagNode {
+    inner: Arc<AppDagNodeInner>,
+}
+
+impl Deref for AppDagNode {
+    type Target = AppDagNodeInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl AppDagNode {
+    pub fn new(inner: AppDagNodeInner) -> Self {
+        Self {
+            inner: Arc::new(inner),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AppDagNodeInner {
     pub(crate) peer: PeerID,
     pub(crate) cnt: Counter,
     pub(crate) lamport: Lamport,
@@ -53,6 +76,14 @@ pub struct AppDagNode {
     /// on the middle of other nodes.
     pub(crate) has_succ: bool,
     pub(crate) len: usize,
+}
+
+impl From<AppDagNodeInner> for AppDagNode {
+    fn from(inner: AppDagNodeInner) -> Self {
+        AppDagNode {
+            inner: Arc::new(inner),
+        }
+    }
 }
 
 impl AppDag {
@@ -79,13 +110,29 @@ impl AppDag {
         self.vv.is_empty()
     }
 
+    #[tracing::instrument(skip_all, name = "handle_new_change")]
     pub(super) fn handle_new_change(&mut self, change: &Change) {
         let len = change.content_len();
         self.update_version_on_new_change(change);
+        #[cfg(debug_assertions)]
+        {
+            let unhandled_dep_points = self.unhandled_dep_points.try_lock().unwrap();
+            let c = unhandled_dep_points
+                .range(change.id_start()..change.id_end())
+                .count();
+            assert!(c == 0);
+        }
+
+        let mut inserted = false;
         if change.deps_on_self() {
-            // don't need to push new element to dag because it only depends on itself
-            self.with_last_mut_of_peer(change.id.peer, |last| {
+            // We may not need to push new element to dag because it only depends on itself
+            inserted = self.with_last_mut_of_peer(change.id.peer, |last| {
                 let last = last.unwrap();
+                if last.has_succ {
+                    // Don't merge the node if there are other nodes depending on it
+                    return false;
+                }
+
                 assert_eq!(last.peer, change.id.peer, "peer id is not the same");
                 assert_eq!(
                     last.cnt + last.len as Counter,
@@ -97,82 +144,37 @@ impl AppDag {
                     change.lamport,
                     "lamport is not continuous"
                 );
+                let last = Arc::make_mut(&mut last.inner);
                 last.len = (change.id.counter - last.cnt) as usize + len;
                 last.has_succ = false;
+                true
             });
-        } else {
-            let vv = self.frontiers_to_im_vv(&change.deps);
-            let mut pushed = false;
-            let node = AppDagNode {
-                vv: OnceCell::from(vv),
+        }
+
+        if !inserted {
+            let node: AppDagNode = AppDagNodeInner {
+                vv: OnceCell::new(),
                 peer: change.id.peer,
                 cnt: change.id.counter,
                 lamport: change.lamport,
                 deps: change.deps.clone(),
                 has_succ: false,
                 len,
-            };
-
-            self.with_last_mut_of_peer(change.id.peer, |last| {
-                if let Some(last) = last {
-                    if change.id.counter > 0 {
-                        assert_eq!(
-                            last.ctr_end(),
-                            change.id.counter,
-                            "counter is not continuous"
-                        );
-                    }
-
-                    if last.is_mergable(&node, &()) {
-                        pushed = true;
-                        last.merge(&node, &());
-                    }
-                }
-            });
+            }
+            .into();
 
             let mut map = self.map.try_lock().unwrap();
-            if !pushed {
-                map.insert(node.id_start(), node);
-            }
-
-            for dep in change.deps.iter() {
-                if dep.peer == change.id.peer {
-                    continue;
-                }
-
-                let ans = self.with_node_mut(&mut map, *dep, |target| {
-                    // We don't need to break
-                    let target = target?;
-                    if target.ctr_last() == dep.counter {
-                        target.has_succ = true;
-                        None
-                    } else {
-                        // We need to split the target node into two part
-                        // so that we can ensure the new change depends on the
-                        // last id of a dag node.
-                        let new_node =
-                            target.slice(dep.counter as usize - target.cnt as usize, target.len);
-                        target.len -= new_node.len;
-                        Some(new_node)
-                    }
-                });
-
-                if let Some(new_node) = ans {
-                    map.insert(new_node.id_start(), new_node);
-                } else {
-                    self.unhandled_dep_points.try_lock().unwrap().insert(*dep);
-                }
-            }
+            map.insert(node.id_start(), node);
+            self.handle_deps_break_points(&change.deps, change.id.peer, Some(&mut map));
         }
     }
 
-    fn with_node_mut<R>(
+    fn try_with_node_mut<R>(
         &self,
         map: &mut BTreeMap<ID, AppDagNode>,
         id: ID,
         f: impl FnOnce(Option<&mut AppDagNode>) -> R,
     ) -> R {
-        self.ensure_lazy_load_node(id, Some(map));
         let x = map.range_mut(..=id).next_back();
         if let Some((_, node)) = x {
             if node.contains_id(id) {
@@ -267,6 +269,7 @@ impl AppDag {
         let mut unparsed_vv = self.unparsed_vv.try_lock().unwrap();
         let end_counter = unparsed_vv[&peer];
         let mut deps_on_others = vec![];
+        let mut break_point_set = self.unhandled_dep_points.try_lock().unwrap();
         for mut node in nodes {
             if node.cnt >= end_counter {
                 // skip already parsed nodes
@@ -285,29 +288,41 @@ impl AppDag {
             }
 
             // PERF: we can try to merge the node with the previous node
-            let break_points: Vec<_> = self
-                .unhandled_dep_points
-                .try_lock()
-                .unwrap()
+            let break_point_ends: Vec<_> = break_point_set
                 .range(node.id_start()..node.id_end())
-                .map(|id| (id.counter - node.cnt) as usize)
+                .map(|id| (id.counter - node.cnt) as usize + 1)
                 .collect();
-            if break_points.is_empty() {
+            if break_point_ends.is_empty() {
                 map.insert(node.id_start(), node);
             } else {
                 let mut slice_start = 0;
-                for slice_end in break_points.into_iter().chain(std::iter::once(node.len)) {
-                    let slice_node = node.slice(slice_start, slice_end);
+                for slice_end in break_point_ends.iter().copied() {
+                    let mut slice_node = node.slice(slice_start, slice_end);
+                    let inner = Arc::make_mut(&mut slice_node.inner);
+                    inner.has_succ = true;
                     map.insert(slice_node.id_start(), slice_node);
                     slice_start = slice_end;
                 }
 
-                todo!("we want to test this part well")
+                let last_break_point = break_point_ends.last().copied().unwrap();
+                if last_break_point != node.len {
+                    let slice_node = node.slice(last_break_point, node.len);
+                    map.insert(slice_node.id_start(), slice_node);
+                }
+
+                for break_point in break_point_ends.into_iter() {
+                    break_point_set.remove(&node.id_start().inc(break_point as Counter - 1));
+                }
             }
         }
 
-        unparsed_vv.insert(peer, new_dag_start_counter_for_the_peer);
+        if new_dag_start_counter_for_the_peer == 0 {
+            unparsed_vv.remove(&peer);
+        } else {
+            unparsed_vv.insert(peer, new_dag_start_counter_for_the_peer);
+        }
         drop(unparsed_vv);
+        drop(break_point_set);
         self.handle_deps_break_points(&deps_on_others, peer, Some(map));
     }
 
@@ -327,18 +342,23 @@ impl AppDag {
                 continue;
             }
 
-            let ans = self.with_node_mut(map, id, |target| {
+            let mut handled = false;
+            let ans = self.try_with_node_mut(map, id, |target| {
                 // We don't need to break the dag node if it's not loaded yet
                 let target = target?;
                 if target.ctr_last() == id.counter {
+                    let target = Arc::make_mut(&mut target.inner);
+                    handled = true;
                     target.has_succ = true;
                     None
                 } else {
                     // We need to split the target node into two part
                     // so that we can ensure the new change depends on the
                     // last id of a dag node.
+
                     let new_node =
-                        target.slice(id.counter as usize - target.cnt as usize, target.len);
+                        target.slice(id.counter as usize - target.cnt as usize + 1, target.len);
+                    let target = Arc::make_mut(&mut target.inner);
                     target.len -= new_node.len;
                     Some(new_node)
                 }
@@ -346,7 +366,7 @@ impl AppDag {
 
             if let Some(new_node) = ans {
                 map.insert(new_node.id_start(), new_node);
-            } else {
+            } else if !handled {
                 self.unhandled_dep_points.try_lock().unwrap().insert(id);
             }
         }
@@ -385,6 +405,118 @@ impl AppDag {
         self.vv = v.vv;
         self.frontiers = v.frontiers;
     }
+
+    /// This method is slow and should only be used for debugging and testing.
+    ///
+    /// It will check the following properties:
+    ///
+    /// 1. Counter is continuous
+    /// 2. A node always depends of the last ids of other nodes
+    /// 3. Lamport is correctly calculated
+    /// 4. VV for each node is correctly calculated
+    /// 5. Frontiers are correctly calculated
+    pub fn check_dag_correctness(&self) {
+        {
+            // parse all nodes
+            let unparsed_vv = self.unparsed_vv.try_lock().unwrap().clone();
+            for (peer, cnt) in unparsed_vv.iter() {
+                if *cnt == 0 {
+                    continue;
+                }
+
+                let mut end_cnt = *cnt;
+                while end_cnt > 0 {
+                    let cnt = end_cnt - 1;
+                    self.ensure_lazy_load_node(ID::new(*peer, cnt), None);
+                    end_cnt = self
+                        .unparsed_vv
+                        .try_lock()
+                        .unwrap()
+                        .get(peer)
+                        .copied()
+                        .unwrap_or(0);
+                }
+            }
+
+            self.unparsed_vv.try_lock().unwrap().clear();
+        }
+        {
+            // check property 1: Counter is continuous
+            let map = self.map.try_lock().unwrap();
+            let mut last_end_id = ID::new(0, 0);
+            for (&id, node) in map.iter() {
+                if id.peer == last_end_id.peer {
+                    assert!(id.counter == last_end_id.counter);
+                } else {
+                    assert_eq!(id.counter, 0);
+                }
+
+                last_end_id = id.inc(node.len as Counter);
+            }
+        }
+        {
+            // check property 2: A node always depends of the last ids of other nodes
+            let map = self.map.try_lock().unwrap();
+            check_always_dep_on_last_id(&map);
+        }
+        {
+            // check property 3: Lamport is correctly calculated
+            let map = self.map.try_lock().unwrap();
+            for (_, node) in map.iter() {
+                let mut this_lamport = 0;
+                for &dep in node.deps.iter() {
+                    let (_, dep_node) = map.range(..=dep).next_back().unwrap();
+                    this_lamport = this_lamport.max(dep_node.lamport_end());
+                }
+
+                assert_eq!(this_lamport, node.lamport);
+            }
+        }
+        {
+            // check property 4: VV for each node is correctly calculated
+            let map = self.map.try_lock().unwrap().clone();
+            for (_, node) in map.iter() {
+                let actual_vv = self.ensure_vv_for(node);
+                let mut expected_vv = ImVersionVector::default();
+                for &dep in node.deps.iter() {
+                    let (_, dep_node) = map.range(..=dep).next_back().unwrap();
+                    expected_vv.extend_to_include_vv(dep_node.vv.get().unwrap().iter());
+                    expected_vv.extend_to_include_last_id(dep);
+                }
+
+                assert_eq!(actual_vv, expected_vv);
+            }
+        }
+        {
+            // check property 5: Frontiers are correctly calculated
+            let mut maybe_frontiers = FxHashSet::default();
+            let map = self.map.try_lock().unwrap();
+            for (_, node) in map.iter() {
+                maybe_frontiers.insert(node.id_last());
+            }
+
+            for (_, node) in map.iter() {
+                for dep in node.deps.iter() {
+                    maybe_frontiers.remove(dep);
+                }
+            }
+
+            let frontiers = self.frontiers.iter().copied().collect::<FxHashSet<_>>();
+            assert_eq!(maybe_frontiers, frontiers);
+        }
+    }
+}
+
+fn check_always_dep_on_last_id(map: &BTreeMap<ID, AppDagNode>) {
+    for (_, node) in map.iter() {
+        for &dep in node.deps.iter() {
+            let (&dep_id, dep_node) = map.range(..=dep).next_back().unwrap();
+            assert_eq!(dep_node.id_start(), dep_id);
+            if dep_node.contains_id(dep) {
+                assert_eq!(dep_node.id_last(), dep);
+            }
+        }
+    }
 }
 
 impl HasIndex for AppDagNode {
@@ -400,7 +532,7 @@ impl HasIndex for AppDagNode {
 
 impl Sliceable for AppDagNode {
     fn slice(&self, from: usize, to: usize) -> Self {
-        AppDagNode {
+        AppDagNodeInner {
             peer: self.peer,
             cnt: self.cnt + from as Counter,
             lamport: self.lamport + from as Lamport,
@@ -419,6 +551,7 @@ impl Sliceable for AppDagNode {
             has_succ: if to == self.len { self.has_succ } else { true },
             len: to - from,
         }
+        .into()
     }
 }
 
@@ -465,8 +598,9 @@ impl Mergable for AppDagNode {
         Self: Sized,
     {
         assert_eq!(other.deps[0].counter, self.cnt + self.len as Counter - 1);
-        self.len += other.len;
-        self.has_succ = other.has_succ;
+        let this = Arc::make_mut(&mut self.inner);
+        this.len += other.len;
+        this.has_succ = other.has_succ;
     }
 }
 
@@ -583,11 +717,6 @@ impl AppDag {
         for id in frontiers.iter() {
             let x = self.get(*id)?;
             let target_vv = self.ensure_vv_for(&x);
-            trace!(
-                "FrontiersToVV id = {:#?} target_vv = {:#?}",
-                &id,
-                &target_vv
-            );
             vv.extend_to_include_vv(target_vv.iter());
             vv.extend_to_include_last_id(*id);
         }

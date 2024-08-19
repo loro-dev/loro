@@ -182,6 +182,9 @@ impl Actor {
                     v,
                     &actual,
                     Some(&mut || {
+                        self.loro.with_oplog(|log| {
+                            log.check_dag_correctness();
+                        });
                         format!(
                             "loro.vv = {:#?}, loro updates = {:#?}",
                             self.loro.oplog_vv(),

@@ -1,5 +1,5 @@
 use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
-use super::AppDagNode;
+use super::{loro_dag::AppDagNodeInner, AppDagNode};
 use crate::{
     arena::SharedArena,
     change::{Change, Timestamp},
@@ -431,26 +431,15 @@ mod mut_inner_kv {
 
     use super::*;
     impl ChangeStore {
+        /// This method is the **only place** that push a new change into the change store
+        ///
+        /// The new change either merges with the previous block or is put into a new block.
+        /// This method only updates the internal kv store.
         pub fn insert_change(&self, mut change: Change, split_when_exceeds: bool) {
             #[cfg(debug_assertions)]
             {
-                let inner = self.inner.lock().unwrap();
-                assert_eq!(
-                    inner
-                        .mem_parsed_kv
-                        .range(change.id.inc(1)..change.id_end())
-                        .count(),
-                    0,
-                    "change should not exist"
-                );
-                let kv = self.external_kv.lock().unwrap();
-                let count = kv
-                    .scan(
-                        Bound::Excluded(&change.id.to_bytes()),
-                        Bound::Excluded(&change.id_end().to_bytes()),
-                    )
-                    .count();
-                assert_eq!(count, 0, "change should not exist");
+                let vv = self.external_vv.lock().unwrap();
+                assert!(vv.get(&change.id.peer).copied().unwrap_or(0) <= change.id.counter);
             }
 
             let s = info_span!("change_store insert_change", id = ?change.id);
@@ -463,6 +452,8 @@ mod mut_inner_kv {
 
             let id = change.id;
             let mut inner = self.inner.lock().unwrap();
+
+            // try to merge with previous block
             if let Some((_id, block)) = inner.mem_parsed_kv.range_mut(..id).next_back() {
                 if block.peer == change.id.peer {
                     if block.counter_range.1 != change.id.counter {
@@ -1129,7 +1120,7 @@ impl ChangesBlockContent {
         match self {
             ChangesBlockContent::Changes(c) | ChangesBlockContent::Both(c, _) => {
                 for change in c.iter() {
-                    let new_node = AppDagNode {
+                    let new_node = AppDagNodeInner {
                         peer: change.id.peer,
                         cnt: change.id.counter,
                         lamport: change.lamport,
@@ -1137,7 +1128,8 @@ impl ChangesBlockContent {
                         vv: OnceCell::new(),
                         has_succ: false,
                         len: change.atom_len(),
-                    };
+                    }
+                    .into();
 
                     dag_nodes.push_rle_element(new_node);
                 }
@@ -1147,7 +1139,7 @@ impl ChangesBlockContent {
                 let header = b.header.get().unwrap();
                 let n = header.n_changes;
                 for i in 0..n {
-                    let new_node = AppDagNode {
+                    let new_node = AppDagNodeInner {
                         peer: header.peer,
                         cnt: header.counters[i],
                         lamport: header.lamports[i],
@@ -1155,7 +1147,8 @@ impl ChangesBlockContent {
                         vv: OnceCell::new(),
                         has_succ: false,
                         len: (header.counters[i + 1] - header.counters[i]) as usize,
-                    };
+                    }
+                    .into();
 
                     dag_nodes.push_rle_element(new_node);
                 }
