@@ -872,7 +872,7 @@ fn decode_snapshot_states(
         )?;
     }
 
-    state.init_with_states_and_version(frontiers, oplog, unknown_containers);
+    state.init_with_states_and_version(frontiers, oplog, unknown_containers, true);
     Ok(())
 }
 

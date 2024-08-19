@@ -756,14 +756,17 @@ impl DocState {
         frontiers: Frontiers,
         oplog: &OpLog,
         unknown_containers: Vec<ContainerIdx>,
+        need_to_register_parent: bool,
     ) {
         self.pre_txn(Default::default(), EventTriggerKind::Import);
-        for state in self.store.iter_and_decode_all() {
-            let idx = state.container_idx();
-            let s = state;
-            for child_id in s.get_child_containers() {
-                let child_idx = self.arena.register_container(&child_id);
-                self.arena.set_parent(child_idx, Some(idx));
+        if need_to_register_parent {
+            for state in self.store.iter_and_decode_all() {
+                let idx = state.container_idx();
+                let s = state;
+                for child_id in s.get_child_containers() {
+                    let child_idx = self.arena.register_container(&child_id);
+                    self.arena.set_parent(child_idx, Some(idx));
+                }
             }
         }
 
