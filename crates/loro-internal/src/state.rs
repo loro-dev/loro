@@ -50,25 +50,12 @@ pub(crate) use tree_state::{
     get_meta_value, FractionalIndexGenResult, NodePosition, TreeParentId, TreeState,
 };
 
-use self::{container_store::ContainerWrapper, unknown_state::UnknownState};
+use self::unknown_state::UnknownState;
 
 #[cfg(feature = "counter")]
 use self::counter_state::CounterState;
 
 use super::{arena::SharedArena, event::InternalDocDiff};
-
-macro_rules! get_or_create {
-    ($doc_state: ident, $idx: expr) => {{
-        if !$doc_state.store.contains($idx) {
-            let state = $doc_state.create_state($idx);
-            $doc_state
-                .store
-                .insert($idx, ContainerWrapper::new(state, &$doc_state.arena));
-        }
-
-        $doc_state.store.get_container_mut($idx).unwrap()
-    }};
-}
 
 pub struct DocState {
     pub(super) peer: Arc<AtomicU64>,
@@ -547,7 +534,7 @@ impl DocState {
                 let to_create = std::mem::take(&mut to_revive_in_this_layer);
                 to_revive_in_this_layer = std::mem::take(&mut to_revive_in_next_layer);
                 for new in to_create {
-                    let state = get_or_create!(self, new);
+                    let state = self.store.get_or_create_mut(new);
                     if state.is_state_empty() {
                         continue;
                     }
@@ -579,7 +566,7 @@ impl DocState {
             match &internal_diff {
                 crate::event::DiffVariant::None => {
                     if is_recording {
-                        let state = get_or_create!(self, diff.idx);
+                        let state = self.store.get_or_create_mut(diff.idx);
                         let extern_diff =
                             state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
                         trigger_on_new_container(
@@ -596,7 +583,7 @@ impl DocState {
                     if self.in_txn {
                         self.changed_idx_in_txn.insert(idx);
                     }
-                    let state = get_or_create!(self, idx);
+                    let state = self.store.get_or_create_mut(idx);
                     if is_recording {
                         // process bring_back before apply
                         let external_diff =
@@ -655,7 +642,7 @@ impl DocState {
         while !to_revive_in_this_layer.is_empty() || !to_revive_in_next_layer.is_empty() {
             let to_create = std::mem::take(&mut to_revive_in_this_layer);
             for new in to_create {
-                let state = get_or_create!(self, new);
+                let state = self.store.get_or_create_mut(new);
                 if state.is_state_empty() {
                     continue;
                 }
@@ -693,7 +680,7 @@ impl DocState {
     pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
         // set parent first, `MapContainer` will only be created for TreeID that does not contain
         self.set_container_parent_by_raw_op(raw_op);
-        let state = get_or_create!(self, op.container);
+        let state = self.store.get_or_create_mut(op.container);
         if self.in_txn {
             self.changed_idx_in_txn.insert(op.container);
         }
@@ -719,13 +706,13 @@ impl DocState {
         decode_ctx: StateSnapshotDecodeContext,
     ) -> LoroResult<()> {
         let idx = self.arena.register_container(&cid);
-        let state = get_or_create!(self, idx);
+        let state = self.store.get_or_create_mut(idx);
         state.import_from_snapshot_ops(decode_ctx)
     }
 
     pub(crate) fn init_unknown_container(&mut self, cid: ContainerID) {
         let idx = self.arena.register_container(&cid);
-        get_or_create!(self, idx);
+        self.store.get_or_create_imm(idx);
     }
 
     pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<InternalDocDiff>) {
@@ -742,7 +729,9 @@ impl DocState {
     }
 
     pub(crate) fn get_value_by_idx(&mut self, container_idx: ContainerIdx) -> LoroValue {
-        self.store.get_value(container_idx).unwrap()
+        self.store
+            .get_value(container_idx)
+            .unwrap_or_else(|| container_idx.get_type().default_value())
     }
 
     /// Set the state of the container with the given container idx.
@@ -829,17 +818,7 @@ impl DocState {
     ) -> Option<&mut richtext_state::RichtextState> {
         let idx = self.id_to_idx(id, ContainerType::Text);
         self.store
-            .get_or_create(idx, || {
-                let state = State::new_richtext(idx, self.config.text_style_config.clone());
-                ContainerWrapper::new(state, &self.arena)
-            })
-            .get_state_mut(
-                idx,
-                ContainerCreationContext {
-                    configure: &self.config,
-                    peer: self.peer.load(Ordering::Relaxed),
-                },
-            )
+            .get_or_create_mut(idx)
             .as_richtext_state_mut()
             .map(|x| &mut **x)
     }
@@ -850,21 +829,7 @@ impl DocState {
     pub(crate) fn get_tree<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Option<&mut TreeState> {
         let idx = self.id_to_idx(id, ContainerType::Tree);
         self.store
-            .get_or_create(idx, || {
-                let state = State::new_tree(
-                    idx,
-                    self.peer.load(std::sync::atomic::Ordering::Relaxed),
-                    self.config.tree_position_jitter.clone(),
-                );
-                ContainerWrapper::new(state, &self.arena)
-            })
-            .get_state_mut(
-                idx,
-                ContainerCreationContext {
-                    configure: &self.config,
-                    peer: self.peer.load(Ordering::Relaxed),
-                },
-            )
+            .get_or_create_mut(idx)
             .as_tree_state_mut()
             .map(|x| &mut **x)
     }
@@ -896,21 +861,7 @@ impl DocState {
         F: FnOnce(&State) -> R,
     {
         let depth = self.arena.get_depth(idx).unwrap().get() as usize;
-        let state = self
-            .store
-            .get_or_create(idx, || {
-                ContainerWrapper::new(
-                    create_state_(idx, &self.config, self.peer.load(Ordering::Relaxed)),
-                    &self.arena,
-                )
-            })
-            .get_state_mut(
-                idx,
-                ContainerCreationContext {
-                    configure: &self.config,
-                    peer: self.peer.load(Ordering::Relaxed),
-                },
-            );
+        let state = self.store.get_or_create_imm(idx);
         f(state)
     }
 
@@ -919,19 +870,7 @@ impl DocState {
     where
         F: FnOnce(&mut State) -> R,
     {
-        let state = self
-            .store
-            .get_or_create(idx, || {
-                let state = create_state_(idx, &self.config, self.peer.load(Ordering::Relaxed));
-                ContainerWrapper::new(state, &self.arena)
-            })
-            .get_state_mut(
-                idx,
-                ContainerCreationContext {
-                    configure: &self.config,
-                    peer: self.peer.load(Ordering::Relaxed),
-                },
-            );
+        let state = self.store.get_or_create_mut(idx);
         f(state)
     }
 
