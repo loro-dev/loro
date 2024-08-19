@@ -32,7 +32,7 @@ use std::{
     ops::Deref,
     sync::{Arc, Mutex, Weak},
 };
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, trace};
 mod tree;
 pub use tree::TreeHandler;
 
@@ -1105,6 +1105,7 @@ impl Handler {
         diff: Diff,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
     ) -> LoroResult<()> {
+        trace!("apply_diff: {:#?}", &diff);
         let on_container_remap = &mut |old_id, new_id| {
             container_remap.insert(old_id, new_id);
         };

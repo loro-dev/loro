@@ -14,6 +14,7 @@ use tracing::{debug_span, info_span, instrument};
 use crate::{
     change::get_sys_timestamp,
     cursor::{AbsolutePosition, Cursor},
+    delta::TreeExternalDiff,
     event::{Diff, EventTriggerKind},
     version::Frontiers,
     ContainerDiff, DocDiff, LoroDoc,
@@ -123,7 +124,7 @@ fn transform_cursor(
 #[derive(Debug)]
 pub struct UndoManager {
     peer: PeerID,
-    container_remap: FxHashMap<ContainerID, ContainerID>,
+    container_remap: Arc<Mutex<FxHashMap<ContainerID, ContainerID>>>,
     inner: Arc<Mutex<UndoManagerInner>>,
 }
 
@@ -425,6 +426,8 @@ impl UndoManager {
             doc, peer,
         ))));
         let inner_clone = inner.clone();
+        let remap_containers = Arc::new(Mutex::new(FxHashMap::default()));
+        let remap_containers_clone = remap_containers.clone();
         doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
             EventTriggerKind::Local => {
                 // TODO: PERF undo can be significantly faster if we can get
@@ -454,6 +457,23 @@ impl UndoManager {
             }
             EventTriggerKind::Import => {
                 let mut inner = inner_clone.try_lock().unwrap();
+
+                for e in event.events {
+                    if let Diff::Tree(tree) = &e.diff {
+                        for item in &tree.diff {
+                            let target = item.target;
+                            if let TreeExternalDiff::Create { .. } = &item.action {
+                                // If the concurrent event is a create event, it may bring the deleted tree node back,
+                                // so we need to remove it from the remap of the container.
+                                remap_containers_clone
+                                    .lock()
+                                    .unwrap()
+                                    .remove(&target.associated_meta_container());
+                            }
+                        }
+                    }
+                }
+
                 inner.undo_stack.compose_remote_event(event.events);
                 inner.redo_stack.compose_remote_event(event.events);
             }
@@ -467,7 +487,7 @@ impl UndoManager {
 
         UndoManager {
             peer,
-            container_remap: Default::default(),
+            container_remap: remap_containers,
             inner,
         }
     }
@@ -607,7 +627,7 @@ impl UndoManager {
                         peer: self.peer,
                         counter: span.span,
                     },
-                    &mut self.container_remap,
+                    &mut self.container_remap.lock().unwrap(),
                     Some(&remote_change_clone),
                     &mut |diff| {
                         info_span!("transform remote diff").in_scope(|| {
@@ -628,7 +648,7 @@ impl UndoManager {
                             cursor,
                             &remote_diff.try_lock().unwrap(),
                             doc,
-                            &self.container_remap,
+                            &self.container_remap.lock().unwrap(),
                         );
                     }
 
