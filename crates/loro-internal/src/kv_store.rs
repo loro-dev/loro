@@ -117,12 +117,16 @@ mod default_binary_format {
 
 mod sst_binary_format {
     // Reference: https://github.com/skyzh/mini-lsm
-    use std::{ops::Range, sync::Arc};
+    use std::{cmp::Ordering, collections::BTreeMap, ops::{Bound, Range}, sync::Arc};
 
     use bytes::{Buf, BufMut, Bytes};
+    use fxhash::{FxHashMap, FxHashSet};
     use loro_common::{LoroError, LoroResult};
+    use once_cell::sync::OnceCell;
 
     use crate::kv_store::get_common_prefix_len_and_strip;
+
+    use super::KvStore;
 
     const MAGIC_NUMBER: [u8;4] = *b"LORO";
     const CURRENT_SCHEMA_VERSION: u8 = 0;
@@ -130,88 +134,304 @@ mod sst_binary_format {
     const SIZE_OF_U16: usize = std::mem::size_of::<u16>();
     const SIZE_OF_U32: usize = std::mem::size_of::<u32>();
 
-    struct BlockIter{
+
+    #[derive(Debug, Clone)]
+    pub struct BlockIter{
         block: Arc<Block>,
-        current_key: Vec<u8>,
-        current_value_range: Range<usize>,
-        idx: usize,
+        next_key: Vec<u8>,
+        next_value_range: Range<usize>,
+        prev_key: Vec<u8>,
+        prev_value_range: Range<usize>,
+        next_idx: usize,
+        prev_idx: isize,
         first_key: Bytes,
     }
 
     impl BlockIter{
-        pub fn new(block: Arc<Block>)->Self{
+        pub fn new_seek_to_first(block: Arc<Block>)->Self{
+            let prev_idx = block.len() as isize - 1;
             let mut iter = Self{
+                
                 first_key: block.first_key(),
                 block,
-                current_key: Vec::new(),
-                current_value_range: 0..0,
-                idx: 0,
+                next_key: Vec::new(),
+                next_value_range: 0..0,
+                prev_key: Vec::new(),
+                prev_value_range: 0..0,
+                next_idx: 0,
+                prev_idx,
             };
             iter.seek_to_idx(0);
+            iter.prev_to_idx(prev_idx);
             iter
         }
 
-        pub fn key(&self)-> Bytes{
-            assert!(self.is_valid());
-            Bytes::copy_from_slice(&self.current_key)
+        pub fn new_seek_to_key(block: Arc<Block>, key: &[u8])->Self{
+            let prev_idx = block.len() as isize - 1;
+            let mut iter = Self{
+                first_key: block.first_key(),
+                block,
+                next_key: Vec::new(),
+                next_value_range: 0..0,
+                prev_key: Vec::new(),
+                prev_value_range: 0..0,
+                next_idx: 0,
+                prev_idx,
+
+            };
+            iter.seek_to_key(key);
+            iter.prev_to_idx(prev_idx);
+            iter
         }
 
-        pub fn value(&self)->Bytes{
-            assert!(self.is_valid());
-            self.block.data.slice(self.current_value_range.clone())
+        pub fn new_prev_to_key(block: Arc<Block>, key: &[u8])->Self{
+            let prev_idx = block.len() as isize - 1;
+            let mut iter = Self{
+                first_key: block.first_key(),
+                block,
+                next_key: Vec::new(),
+                next_value_range: 0..0,
+                prev_key: Vec::new(),
+                prev_value_range: 0..0,
+                next_idx: 0,
+                prev_idx,
+            };
+            iter.seek_to_idx(0);
+            iter.prev_to_key(key);
+            iter
         }
 
-        pub fn is_valid(&self) -> bool {
-            !self.current_key.is_empty()
+        pub fn new_range_key(block: Arc<Block>, start: &[u8], end: &[u8])->Self{
+            let prev_idx = block.len() as isize - 1;
+            let mut iter = Self{
+                first_key: block.first_key(),
+                block,
+                next_key: Vec::new(),
+                next_value_range: 0..0,
+                prev_key: Vec::new(),
+                prev_value_range: 0..0,
+                next_idx: 0,
+                prev_idx,
+            };
+            iter.range_key(start, end);
+            iter
+        }
+
+        pub fn new_scan(block: Arc<Block>, start: Bound<&[u8]>, end: Bound<&[u8]>)->Self{
+            let mut iter = match start{
+                Bound::Included(key)=>Self::new_seek_to_key(block, key),
+                Bound::Excluded(key)=>{
+                    let mut iter = Self::new_seek_to_key(block, key); 
+                    while iter.next_is_valid() && iter.next_curr_key() == key{
+                        iter.next();
+                    }
+                    iter
+                },
+                Bound::Unbounded=>Self::new_seek_to_first(block),
+            };
+            match end{
+                Bound::Included(key)=>{
+                    iter.prev_to_key(key);
+                }
+                Bound::Excluded(key)=>{
+                    iter.prev_to_key(key);
+                    while iter.prev_is_valid() && iter.prev_curr_key() == key{
+                        iter.prev();
+                    }
+                }
+                Bound::Unbounded=>{}
+            }
+            iter
+        }
+
+        pub fn next_curr_key(&self)-> Bytes{
+            assert!(self.next_is_valid());
+            Bytes::copy_from_slice(&self.next_key)
+        }
+
+        pub fn next_curr_value(&self)->Bytes{
+            assert!(self.next_is_valid());
+            self.block.data().slice(self.next_value_range.clone())
+        }
+
+        pub fn next_is_valid(&self) -> bool {
+            !self.next_key.is_empty() && self.next_idx <= self.prev_idx as usize
+        }
+
+        pub fn prev_curr_key(&self)-> Bytes{
+            assert!(self.prev_is_valid());
+            Bytes::copy_from_slice(&self.prev_key)
+        }
+
+        pub fn prev_curr_value(&self)->Bytes{
+            assert!(self.prev_is_valid());
+            self.block.data().slice(self.prev_value_range.clone())
+        }
+
+        pub fn prev_is_valid(&self) -> bool {
+            !self.prev_key.is_empty() && self.next_idx <= self.prev_idx as usize
         }
 
         pub fn next(&mut self) {
-            self.idx += 1;
-            self.seek_to_idx(self.idx);
+            self.next_idx += 1;
+            if self.next_idx > self.prev_idx as usize {
+                self.next_key.clear();
+                self.next_value_range = 0..0;
+                return;
+            }
+            self.seek_to_idx(self.next_idx);
+        }
+
+        pub fn prev(&mut self){
+            self.prev_idx -= 1;
+            if self.prev_idx < 0  || (self.prev_idx as usize) < self.next_idx{
+                self.prev_key.clear();
+                self.prev_value_range = 0..0;
+                return;
+            }
+            self.prev_to_idx(self.prev_idx);
         }
 
         pub fn seek_to_key(&mut self, key: &[u8]){
-            let mut left = 0;
-            let mut right = self.block.offsets.len();
-            while left < right{
-                let mid = left + (right - left) / 2;
-                self.seek_to_idx(mid);
-                assert!(self.is_valid());
-                if self.current_key.as_slice() == key{
-                    return;
+            match self.block.as_ref(){
+                Block::Normal(block)=>{
+                    let mut left = 0;
+                    let mut right = block.offsets.len();
+                    while left < right{
+                        let mid = left + (right - left) / 2;
+                        self.seek_to_idx(mid);
+                        assert!(self.next_is_valid());
+                        if self.next_key.as_slice() == key{
+                            return;
+                        }
+                        if self.next_key.as_slice() < key{
+                            left = mid + 1;
+                        }else{
+                            right = mid;
+                        }
+                    }
+                    self.seek_to_idx(left);
                 }
-                if self.current_key.as_slice() < key{
-                    left = mid + 1;
-                }else{
-                    right = mid;
+                Block::Large(block)=>{
+                    if key != block.key(){
+                        self.seek_to_idx(1);
+                    }
                 }
             }
-            self.seek_to_idx(left);
+        }
+
+        pub fn prev_to_key(&mut self, key: &[u8]){
+            match self.block.as_ref(){
+                Block::Normal(block)=>{
+                    let mut left = 0;
+                    let mut right = block.offsets.len();
+                    while left < right{
+                        let mid = left + (right - left) / 2;
+                        self.prev_to_idx(mid as isize);
+                        assert!(self.prev_is_valid());
+                        if self.prev_key.as_slice() > key{
+                            right = mid;
+                        }else{
+                            left = mid + 1;
+                        }
+                    }
+                    self.prev_to_idx(left as isize - 1);
+                }
+                Block::Large(block)=>{
+                    if key != block.key(){
+                        self.prev_to_idx(-1);
+                    }
+                }
+            }
+        }
+
+        pub fn range_key(&mut self, start: &[u8], end: &[u8]){
+            self.seek_to_key(start);
+            self.prev_to_key(end);
         }
 
         fn seek_to_idx(&mut self, idx: usize){
-            if idx >= self.block.offsets.len(){
-                self.current_key.clear();
-                self.current_value_range = 0..0;
-                return;
+           match self.block.as_ref(){
+                Block::Normal(block)=>{
+                    if idx >= block.offsets.len(){
+                        self.next_key.clear();
+                        self.next_value_range = 0..0;
+                        return;
+                    }
+                    let offset = block.offsets[idx] as usize;
+                    self.seek_to_offset(offset);
+                    self.next_idx = idx;
+                   
+                }
+                Block::Large(block)=>{
+                    if idx > 0{
+                        self.next_key.clear();
+                        self.next_value_range = 0..0;
+                        return;
+                    }
+                    self.next_key = block.key().to_vec();
+                    self.next_value_range = (SIZE_OF_U16 + block.key_length) .. block.data.len();
+                    self.next_idx = idx;
+                }
+           }
+        }
+
+        fn prev_to_idx(&mut self, idx: isize){
+            match self.block.as_ref(){
+                Block::Normal(block)=>{
+                    if idx < 0{
+                        self.prev_key.clear();
+                        self.prev_value_range = 0..0;
+                        return;
+                    }
+                    let offset = block.offsets[idx as usize] as usize;
+                    self.prev_to_offset(offset);
+                    self.prev_idx = idx;
+                }
+                Block::Large(block)=>{
+                    if idx < 0{
+                        self.prev_key.clear();
+                        self.prev_value_range = 0..0;
+                        return;
+                    }
+                    self.prev_key = block.key().to_vec();
+                    self.prev_value_range = (SIZE_OF_U16 + block.key_length) .. block.data.len();
+                    self.prev_idx = idx;
+                }
+                
             }
-            let offset = self.block.offsets[idx] as usize;
-            self.seek_to_offset(offset);
-            self.idx = idx;
         }
 
         fn seek_to_offset(&mut self, offset: usize){
-            let mut rest = &self.block.data[offset..];
-            let common_prefix_len = rest.get_u8() as usize;
-            let key_suffix_len = rest.get_u16() as usize;
-            self.current_key.clear();
-            self.current_key.extend_from_slice(&self.first_key[..common_prefix_len]);
-            self.current_key.extend_from_slice(&rest[..key_suffix_len]);
-            rest.advance(key_suffix_len);
-            let value_len = rest.get_u16() as usize;
-            let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len + SIZE_OF_U16;
-            self.current_value_range = value_start..value_start + value_len;
-            // rest.advance(value_len);
+            if let Block::Normal(block) = self.block.as_ref(){
+                let mut rest = &block.data[offset..];
+                let common_prefix_len = rest.get_u8() as usize;
+                let key_suffix_len = rest.get_u16() as usize;
+                self.next_key.clear();
+                self.next_key.extend_from_slice(&self.first_key[..common_prefix_len]);
+                self.next_key.extend_from_slice(&rest[..key_suffix_len]);
+                rest.advance(key_suffix_len);
+                let value_len = rest.get_u16() as usize;
+                let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len + SIZE_OF_U16;
+                self.next_value_range = value_start..value_start + value_len;
+                rest.advance(value_len);
+            }
+        }
+
+        fn prev_to_offset(&mut self, offset: usize){
+            if let Block::Normal(block) = self.block.as_ref(){
+                let mut rest = &block.data[offset..];
+                let common_prefix_len = rest.get_u8() as usize;
+                let key_suffix_len = rest.get_u16() as usize;
+                self.prev_key.clear();
+                self.prev_key.extend_from_slice(&self.first_key[..common_prefix_len]);
+                self.prev_key.extend_from_slice(&rest[..key_suffix_len]);
+                rest.advance(key_suffix_len);
+                let value_len = rest.get_u16() as usize;
+                let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len + SIZE_OF_U16;
+                self.prev_value_range = value_start..value_start + value_len;
+                rest.advance(value_len);
+            }
         }
     }
 
@@ -219,22 +439,77 @@ mod sst_binary_format {
         type Item = (Bytes, Bytes);
 
         fn next(&mut self)->Option<Self::Item>{
-            if !self.is_valid(){
+            if !self.next_is_valid(){
                 return None;
             }
-            let key = self.key();
-            let value = self.value();
+            let key = self.next_curr_key();
+            let value = self.next_curr_value();
             self.next();
             Some((key, value))
         }
     }
 
-    struct Block {
+    impl DoubleEndedIterator for BlockIter{
+        fn next_back(&mut self) -> Option<Self::Item> {
+            if !self.prev_is_valid(){
+                return None;
+            }
+            let key = self.prev_curr_key();
+            let value = self.prev_curr_value();
+            self.prev();
+            Some((key, value))
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct LargeValueBlock{
+        data: Bytes,
+        key_length: usize,
+    }
+
+    impl LargeValueBlock{
+        fn key(&self)->Bytes{
+            self.data.slice(SIZE_OF_U16..SIZE_OF_U16 + self.key_length )
+        }
+
+        fn value(&self)->Bytes{
+            self.data.slice(SIZE_OF_U16 + self.key_length  ..)
+        }
+
+        fn value_length(&self)->usize{
+            self.data.len() - SIZE_OF_U16 - self.key_length  - SIZE_OF_U32
+        }
+
+        fn encode(&self)->Bytes{
+            let mut buf = Vec::with_capacity(self.key_length+ self.value_length() + SIZE_OF_U16 + SIZE_OF_U32);
+            buf.put_u16(self.key_length as u16);
+            buf.put_slice(&self.key());
+            buf.put_slice(&self.value());
+            let checksum = crc32fast::hash(&buf);
+            buf.put_u32(checksum);
+            buf.into()
+        }
+
+        fn decode(bytes:Bytes)->LoroResult<Self>{
+            let key_len = (&bytes[..SIZE_OF_U16]).get_u16() as usize;
+            let checksum = bytes.slice(bytes.len() - SIZE_OF_U32..).get_u32();
+            if checksum != crc32fast::hash(&bytes[..bytes.len()  - SIZE_OF_U32]){
+                return Err(LoroError::DecodeChecksumMismatchError);
+            }
+            Ok(LargeValueBlock{
+                data:bytes,
+                key_length: key_len,
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct NormalBlock {
         data: Bytes,
         offsets: Vec<u16>,
     }
 
-    impl Block {
+    impl NormalBlock {
         /// ┌────────────────────────────────────────────────────────────────────────────────────────┐
         /// │Block                                                                                   │
         /// │┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─┌ ─ ─ ─┌ ─ ─ ─ ┬ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ │
@@ -258,19 +533,17 @@ mod sst_binary_format {
         /// 
         /// # Errors
         /// - [LoroError::DecodeChecksumMismatchError]
-        fn decode(raw_block_and_check: Bytes, block_length: usize)-> LoroResult<Block>{
-            let data = raw_block_and_check.slice(..block_length);
-            let checksum = (&raw_block_and_check[block_length..]).get_u32();
+        fn decode(raw_block_and_check: Bytes)-> LoroResult<NormalBlock>{
+            let data = raw_block_and_check.slice(..raw_block_and_check.len() - SIZE_OF_U32);
+            let checksum = (&raw_block_and_check[raw_block_and_check.len() - SIZE_OF_U32..]).get_u32();
             if checksum != crc32fast::hash(data.as_ref()){
                 return Err(LoroError::DecodeChecksumMismatchError);
             }
-
-
             let offsets_len = (&data[data.len()-SIZE_OF_U16..]).get_u16() as usize;
             let data_end = data.len() - SIZE_OF_U16 * (offsets_len + 1);
             let offsets = &data[data_end..data.len()-SIZE_OF_U16];
             let offsets = offsets.chunks(SIZE_OF_U16).map(|mut chunk| chunk.get_u16()).collect();
-            Ok(Block{
+            Ok(NormalBlock{
                 data: data.slice(..data_end),
                 offsets,
             })
@@ -286,33 +559,87 @@ mod sst_binary_format {
     }
 
     #[derive(Debug)]
-    struct BlockBuilder {
+    pub enum Block{
+        Normal(NormalBlock),
+        Large(LargeValueBlock),
+    }
+
+    impl Block{
+        fn is_large(&self)->bool{
+            matches!(self, Block::Large(_))
+        }
+
+        fn data(&self)->Bytes{
+            match self{
+                Block::Normal(block)=>block.data.clone(),
+                Block::Large(block)=>block.data.clone(),
+            }
+        }
+
+        fn first_key(&self)->Bytes{
+            match self{
+                Block::Normal(block)=>block.first_key(),
+                Block::Large(block)=>block.key(),
+            }
+        }
+
+        fn encode(&self)->Bytes{
+            match self{
+                Block::Normal(block)=>block.encode(),
+                Block::Large(block)=>block.encode(),
+            }
+        }
+
+        fn decode(raw_block_and_check: Bytes, is_large: bool)->LoroResult<Self>{
+            if is_large{
+                return LargeValueBlock::decode(raw_block_and_check).map(Block::Large);
+            }
+            NormalBlock::decode(raw_block_and_check).map(Block::Normal)
+        }
+
+        fn len(&self)->usize{
+            match self{
+                Block::Normal(block)=>block.offsets.len(),
+                Block::Large(_)=>1,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct BlockBuilder {
         data: Vec<u8>,
         offsets: Vec<u16>,
         block_size: usize,
         // for key compression
         first_key: Vec<u8>,
+        is_large: bool,
     }
 
     impl BlockBuilder {
-        fn new(block_size: usize) -> Self {
+        pub fn new(block_size: usize) -> Self {
             Self {
                 data: Vec::new(),
                 offsets: Vec::new(),
                 block_size,
                 first_key: Vec::new(),
+                is_large:false
             }
         }
 
         fn estimated_size(&self) -> usize {
-            // key-value pairs number
-            SIZE_OF_U16 +
-            // offsets 
-            self.offsets.len() * SIZE_OF_U16 + 
-            // key-value pairs data
-            self.data.len() +
-            // checksum
-            SIZE_OF_U32
+            if self.is_large{
+                self.data.len()
+            }else{
+                // key-value pairs number
+                SIZE_OF_U16 +
+                // offsets 
+                self.offsets.len() * SIZE_OF_U16 + 
+                // key-value pairs data
+                self.data.len() +
+                // checksum
+                SIZE_OF_U32
+            }
+            
             
         }
 
@@ -327,12 +654,19 @@ mod sst_binary_format {
         /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ │
         /// └───────────────────────────────────────────────────────────────┘
         /// 
-        /// // TODO: leb128
-        fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
+        pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
             assert!(!key.is_empty(), "key cannot be empty");
+            if  self.first_key.is_empty() && value.len() > self.block_size {
+                let key_len = key.len() as u16;
+                self.data.put_u16(key_len);
+                self.data.put(key);
+                self.data.put(value);
+                self.first_key = key.to_vec();
+                return true;
+            }
 
             // whether the block is full
-            if self.estimated_size() + key.len() + value.len() + SIZE_OF_U8 + SIZE_OF_U16 * 2 > self.block_size && !self.offsets.is_empty() {
+            if self.estimated_size() + key.len() + value.len() + SIZE_OF_U8 + SIZE_OF_U16 * 2 > self.block_size && !self.first_key.is_empty() {
                 return false;
             }
 
@@ -351,12 +685,18 @@ mod sst_binary_format {
             true
         }
 
-        fn build(self)->Block{
+        pub fn build(self)->Block{
             assert!(!self.offsets.is_empty(), "block is empty");
-            Block{
+            if self.is_large{
+                return Block::Large(LargeValueBlock{
+                    data: Bytes::from(self.data),
+                    key_length: self.first_key.len(),
+                });
+            }
+            Block::Normal(NormalBlock{
                 data: Bytes::from(self.data),
                 offsets: self.offsets,
-            }
+            })
         }
     }
 
@@ -367,10 +707,12 @@ mod sst_binary_format {
     /// ││     u32      │      u16      │   bytes   │      u16      │   bytes   ││
     /// │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │
     /// └────────────────────────────────────────────────────────────────────────┘
+    #[derive(Debug, Clone)]
     struct BlockMeta{
         offset: usize,
+        is_large: bool,
         first_key: Bytes,
-        last_key: Bytes,
+        last_key: Option<Bytes>,
     }
 
     impl BlockMeta{
@@ -391,10 +733,15 @@ mod sst_binary_format {
                 estimated_size += SIZE_OF_U16;
                 // first key
                 estimated_size += m.first_key.len();
+                // is large
+                estimated_size += SIZE_OF_U8;
+                if m.is_large{
+                    continue;
+                }
                 // last key length
                 estimated_size += SIZE_OF_U16;
                 // last key
-                estimated_size += m.last_key.len();
+                estimated_size += m.last_key.as_ref().unwrap().len();
             }
             // checksum
             estimated_size += SIZE_OF_U32;
@@ -406,8 +753,12 @@ mod sst_binary_format {
                 buf.put_u32(m.offset as u32);
                 buf.put_u16(m.first_key.len() as u16);
                 buf.put_slice(&m.first_key);
-                buf.put_u16(m.last_key.len() as u16);
-                buf.put_slice(&m.last_key);
+                buf.put_u8(m.is_large as u8);
+                if m.is_large{
+                    continue;
+                }
+                buf.put_u16(m.last_key.as_ref().unwrap().len() as u16);
+                buf.put_slice(m.last_key.as_ref().unwrap());
             }
             let checksum = crc32fast::hash(&buf[ori_length+4..]);
             buf.put_u32(checksum);
@@ -421,9 +772,14 @@ mod sst_binary_format {
                 let offset = buf.get_u32() as usize;
                 let first_key_len = buf.get_u16() as usize;
                 let first_key = buf.copy_to_bytes(first_key_len);
+                let is_large = buf.get_u8() == 1;
+                if is_large{
+                    ans.push(BlockMeta{offset, is_large, first_key, last_key: None});
+                    continue;
+                }
                 let last_key_len = buf.get_u16() as usize;
                 let last_key = buf.copy_to_bytes(last_key_len);
-                ans.push(BlockMeta{offset, first_key, last_key});
+                ans.push(BlockMeta{offset, is_large, first_key, last_key: Some(last_key)});
             }
             let checksum_read = buf.get_u32();
             if checksum != checksum_read{
@@ -477,11 +833,14 @@ mod sst_binary_format {
 
         fn finish(&mut self){
             let builder = std::mem::replace(&mut self.block_builder, BlockBuilder::new(self.block_size));
-            let encoded_bytes = builder.build().encode();
+            let block = builder.build();
+            let is_large = matches!(block, Block::Large(_));
+            let encoded_bytes = block.encode();
             let meta = BlockMeta{
                 offset: self.data.len(),
+                is_large,
                 first_key: std::mem::take(&mut self.first_key),
-                last_key: std::mem::take(&mut self.last_key),
+                last_key: if is_large{None}else{Some(std::mem::take(&mut self.last_key))} ,
             };
             self.meta.push(meta);
             self.data.extend_from_slice(&encoded_bytes);
@@ -503,10 +862,16 @@ mod sst_binary_format {
             SsTable { 
                 data: Bytes::from(buf),
                 first_key: self.meta.first().unwrap().first_key.clone(), 
-                last_key: self.meta.last().unwrap().last_key.clone(), meta: self.meta, meta_offset: meta_offset as usize}
+                last_key: self.meta.last().unwrap().last_key.clone().unwrap_or(self.meta.last().unwrap().first_key.clone()),
+                meta: self.meta, 
+                meta_offset: meta_offset as usize,
+                block_cache: FxHashMap::default(),
+                keys: OnceCell::new(),
+            }
         }
     }
 
+    #[derive(Debug, Clone)]
      pub(crate) struct SsTable{
         // TODO: mmap?
         data: Bytes,
@@ -514,6 +879,9 @@ mod sst_binary_format {
         last_key: Bytes,
         meta: Vec<BlockMeta>,
         meta_offset: usize,
+        block_cache: FxHashMap<usize, Arc<Block>>,
+
+        keys: OnceCell<FxHashSet<Bytes>>
         // TODO: cache
     }
 
@@ -548,61 +916,296 @@ mod sst_binary_format {
             let meta_offset = (&bytes[data_len-SIZE_OF_U32..]).get_u32() as usize;
             let raw_meta = &bytes[meta_offset..data_len-SIZE_OF_U32];
             let meta = BlockMeta::decode_meta(raw_meta)?;
-            Ok(Self { data: bytes, first_key: meta.first().unwrap().first_key.clone(), last_key: meta.last().unwrap().last_key.clone(), meta, meta_offset })
+            let ans = Self { 
+                data: bytes, 
+                first_key: meta.first().unwrap().first_key.clone(),
+                last_key: meta.last().unwrap().last_key.clone().unwrap_or(meta.last().unwrap().first_key.clone()),
+                meta, 
+                meta_offset ,
+                block_cache: FxHashMap::default(),
+                keys: OnceCell::new(),
+            };
+            Ok(ans)
+        }
+
+        pub fn find_block_idx(&self, key: &[u8]) -> usize {
+            self.meta
+                .partition_point(|meta| meta.first_key <= key)
+                .saturating_sub(1)
         }
 
         /// 
         /// # Errors
         /// - [LoroError::DecodeChecksumMismatchError]
-        fn read_block(&self, block_idx: usize)->LoroResult<Block>{
+        fn read_block(&self, block_idx: usize)->LoroResult<Arc<Block>>{
+            // TODO: cache
             let offset = self.meta[block_idx].offset;
             let offset_end = self.meta.get(block_idx+1).map_or(self.meta_offset, |m| m.offset);
-            let block_length = offset_end - offset - SIZE_OF_U32;
             let raw_block_and_check = self.data.slice(offset..offset_end);
-            
-            Block::decode(raw_block_and_check, block_length)
+            let ans = Arc::new(Block::decode(raw_block_and_check, self.meta[block_idx].is_large)?);
+            Ok(ans)
+        }
+
+        fn contains_key(&self, key: &[u8])->bool{
+            let idx = self.find_block_idx(key);
+            let block = self.read_block(idx).unwrap();
+            let block_iter = BlockIter::new_seek_to_key(block, key);
+            block_iter.next_is_valid() && block_iter.next_curr_key() == key
+        }
+
+        fn valid_keys(&self)->&FxHashSet<Bytes>{
+            self.keys.get_or_init(||{
+                let mut keys = FxHashSet::default();
+                for (k, _) in self.iter(){
+                    keys.insert(k);
+                }
+                keys
+            })
         }
     }
 
+    #[derive(Debug)]
     pub struct SsTableIter<'a>{
         table: &'a SsTable,
-        block_iter: BlockIter,
-        block_idx: usize,
+        next_block_iter: BlockIter,
+        prev_block_iter: BlockIter,
+        next_block_idx: usize,
+        prev_block_idx: isize,
+        next_first: bool
     }
 
     impl<'a> SsTableIter<'a>{
         fn new(table: &'a SsTable)->Self{
             let block = table.read_block(0).unwrap();
-            let block_iter = BlockIter::new(Arc::new(block));
+            let block_iter = BlockIter::new_seek_to_first(block);
+            let prev_block_idx = table.meta.len() -1;
+            let prev_block_iter = {
+                let prev_block = table.read_block(prev_block_idx).unwrap();
+                BlockIter::new_seek_to_first(prev_block)
+            };
+
             Self{
                 table,
-                block_iter,
-                block_idx: 0,
+                next_block_iter:block_iter,
+                next_block_idx: 0,
+                prev_block_iter,
+                prev_block_idx: prev_block_idx as isize, 
+                next_first:false
             }
         }
 
-        
+        pub fn new_range_key(table: &'a SsTable, start: &[u8], end: &[u8])->Self{
+            let start_idx = table.find_block_idx(start);
+            let end_idx = table.find_block_idx(end);
+            if start_idx == end_idx{
+                let block = table.read_block(start_idx).unwrap();
+                let block_iter = BlockIter::new_range_key(block, start, end);
+                return Self{
+                    table,
+                    next_block_iter: block_iter.clone(),
+                    next_block_idx: start_idx,
+                    prev_block_iter: block_iter,
+                    prev_block_idx: start_idx as isize,
+                    next_first: true
+                }
+            }
 
-        fn is_valid(&self)->bool{
-            self.block_iter.is_valid()
+            let block = table.read_block(start_idx).unwrap();
+            let mut block_iter = BlockIter::new_seek_to_key(block, start);
+            block_iter.seek_to_key(start);
+            let prev_block_idx = end_idx as isize;
+            let prev_block = table.read_block(prev_block_idx as usize).unwrap();
+            let mut prev_block_iter = BlockIter::new_prev_to_key(prev_block, end);
+            prev_block_iter.seek_to_key(end);
+            Self{
+                table,
+                next_block_iter: block_iter,
+                next_block_idx: start_idx,
+                prev_block_iter,
+                prev_block_idx,
+                next_first:false
+            }
         }
 
-        pub fn key(&self)->Bytes{
-            self.block_iter.key()
+        pub fn new_scan(table: &'a SsTable, start: Bound<&[u8]>, end: Bound<&[u8]>)->Self{
+            let (table_idx, mut iter) = match start{
+                Bound::Included(start)=>{
+                    let idx = table.find_block_idx(start);
+                    let block = table.read_block(idx).unwrap();
+                    let iter = BlockIter::new_seek_to_key(block, start);
+                    (idx, iter)
+                },
+                Bound::Excluded(start)=>{
+                    let idx = table.find_block_idx(start);
+                    let block = table.read_block(idx).unwrap();
+                    let mut iter = BlockIter::new_seek_to_key(block, start);
+                    iter.next();
+                    (idx, iter)
+                },
+                Bound::Unbounded=>{
+                    let block = table.read_block(0).unwrap();
+                    let iter = BlockIter::new_seek_to_first(block);
+                    (0, iter)
+                },
+            };
+            let end_idx = match end{
+                Bound::Included(end)=>{
+                    table.find_block_idx(end)
+                },
+                Bound::Excluded(end)=>{
+                    table.find_block_idx(end)
+                },
+                Bound::Unbounded=>{
+                    table.meta.len() - 1
+                }
+            };
+            if table_idx == end_idx{
+                match end{
+                    Bound::Included(end)=>{
+                        iter.prev_to_key(end);
+                    },
+                    Bound::Excluded(end)=>{
+                        iter.prev_to_key(end);
+                        while iter.prev_is_valid() && iter.prev_curr_key() == end{
+                            iter.prev();
+                        }
+                    },
+                    Bound::Unbounded=>{}
+                };
+                Self{
+                    table,
+                    next_block_iter: iter.clone(),
+                    next_block_idx: table_idx,
+                    prev_block_iter: iter,
+                    prev_block_idx: table_idx as isize,
+                    next_first: true
+                }
+            }else{
+                let end_iter = match end{
+                    Bound::Included(end)=>{
+                        let block = table.read_block(end_idx).unwrap();
+                        let iter = BlockIter::new_prev_to_key(block, end);
+                        iter
+                    },
+                    Bound::Excluded(end)=>{
+                        let block = table.read_block(end_idx).unwrap();
+                        let mut iter = BlockIter::new_prev_to_key(block, end);
+                        while iter.prev_is_valid() && iter.prev_curr_key() == end{
+                            iter.prev();
+                        }
+                        iter
+                    },
+                    Bound::Unbounded=>{
+                        let block = table.read_block(end_idx).unwrap();
+                        let  iter = BlockIter::new_seek_to_first(block);
+                        iter
+                    }
+                };
+                Self{
+                    table,
+                    next_block_iter: iter,
+                    next_block_idx: table_idx,
+                    prev_block_iter: end_iter,
+                    prev_block_idx: end_idx as isize,
+                    next_first: false
+                }
+            }
         }
 
-        pub fn value(&self)->Bytes{
-            self.block_iter.value()
+        fn is_next_valid(&self)->bool{
+            self.next_block_iter.next_is_valid()
+        }
+
+        pub fn next_key(&self)->Bytes{
+            self.next_block_iter.next_curr_key()
+        }
+
+        pub fn next_value(&self)->Bytes{
+            self.next_block_iter.next_curr_value()
+        }
+
+        fn is_prev_valid(&self)->bool{
+            if self.next_first{
+                self.next_block_iter.prev_is_valid()
+            }else{
+                self.prev_block_iter.prev_is_valid()
+            }
+        }
+
+        pub fn prev_key(&self)->Bytes{
+            if self.next_first{
+                self.next_block_iter.prev_curr_key()
+            }else{
+                self.prev_block_iter.prev_curr_key()
+            }
+        }
+
+        pub fn prev_value(&self)->Bytes{
+            if self.next_first{
+                self.next_block_iter.prev_curr_value()
+            }else{
+                self.prev_block_iter.prev_curr_value()
+            }
+        }
+
+        fn seek_to_key(&self, key: &[u8]) -> BlockIter{
+            let block_idx = self.table.find_block_idx(key);
+            let block = self.table.read_block(block_idx).unwrap();
+            let mut block_iter = BlockIter::new_seek_to_key(block, key);
+            block_iter.seek_to_key(key);
+            block_iter
         }
 
         pub fn next(&mut self){
-            self.block_iter.next();
-            if !self.block_iter.is_valid(){
-                self.block_idx += 1;
-                if self.block_idx < self.table.meta.len(){
-                    let block = self.table.read_block(self.block_idx).unwrap();
+            self.next_block_iter.next();
+            while self.next_block_iter.next_is_valid() && self.next_block_iter.next_curr_value().is_empty(){
+                self.next_block_iter.next();
+            }
+            if !self.next_block_iter.next_is_valid(){
+                self.next_block_idx += 1;
+                if self.next_block_idx > self.prev_block_idx as usize{
+                    return;
+                }
+                if self.next_block_idx == self.prev_block_idx as usize && !self.next_first{
+                    std::mem::swap(&mut self.next_block_iter, &mut self.prev_block_iter);
+                    self.next_first = true;
+                }else if self.next_block_idx < self.table.meta.len(){
+                    let block = self.table.read_block(self.next_block_idx).unwrap();
                     // TODO: cache
-                    self.block_iter = BlockIter::new(Arc::new(block));
+                    self.next_block_iter = BlockIter::new_seek_to_first(block);
+                    while self.next_block_iter.next_is_valid() && self.next_block_iter.next_curr_value().is_empty(){
+                        self.next();
+                    }
+                }
+            }
+        }
+
+        pub fn prev(&mut self){
+            let iter = if self.next_first{
+                &mut self.next_block_iter
+            }else{
+                &mut self.prev_block_iter
+            };
+            iter.prev();
+            while iter.prev_is_valid() && iter.prev_curr_value().is_empty(){
+                iter.prev();
+            }
+
+
+            if !iter.prev_is_valid(){
+                self.prev_block_idx -= 1;
+                if self.next_block_idx > self.prev_block_idx as usize{
+                    return;
+                }
+                if self.next_block_idx == self.prev_block_idx as usize && !self.next_first{
+                    self.next_first = true;
+                }else if self.prev_block_idx > 0 {
+                    let block = self.table.read_block(self.prev_block_idx as usize).unwrap();
+                    // TODO: cache
+                    self.prev_block_iter = BlockIter::new_seek_to_first(block);
+                     while self.prev_block_iter.prev_is_valid() && self.prev_block_iter.next_curr_value().is_empty(){
+                        self.prev();
+                    }
                 }
             }
         }
@@ -611,19 +1214,280 @@ mod sst_binary_format {
     impl<'a> Iterator for SsTableIter<'a>{
         type Item = (Bytes, Bytes);
         fn next(&mut self) -> Option<Self::Item> {
-            if !self.is_valid(){
+            if !self.is_next_valid(){
                 return None;
             }
-            let key = self.key();
-            let value = self.value();
+            let key = self.next_key();
+            let value = self.next_value();
             self.next();
             Some((key, value))
         }
     }
+
+    impl<'a> DoubleEndedIterator for SsTableIter<'a>{
+        fn next_back(&mut self) -> Option<Self::Item> {
+            if !self.is_prev_valid(){
+                return None;
+            }
+            let key = self.prev_key();
+            let value = self.prev_value();
+            self.prev();
+            Some((key, value))
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct MemKvStore{
+        mem_table: BTreeMap<Bytes, Bytes>,
+        ss_table: Option<SsTable>,
+        block_size: usize,
+    }
+
+    impl MemKvStore{
+        pub fn new(block_size: usize)->Self{
+            Self{
+                mem_table: BTreeMap::new(),
+                ss_table: None,
+                block_size
+            }
+        }
+        
+    }
+
+    impl KvStore for MemKvStore{
+        fn get(&self, key: &[u8]) -> Option<Bytes> {
+           if let Some(v) = self.mem_table.get(key){
+                if v.is_empty(){
+                    return None;
+                }
+                return Some(v.clone());
+            }
+
+            if let Some(table) = &self.ss_table{
+                // table.
+                let idx = table.find_block_idx(key);
+                let block = table.read_block(idx).unwrap();
+                let block_iter = BlockIter::new_seek_to_key(block, key);
+                if block_iter.next_is_valid() && block_iter.next_curr_key() == key {
+                    Some(block_iter.next_curr_value())
+                }else{
+                    None
+                }
+            }else{
+                None
+            }
+        }
+    
+        fn set(&mut self, key: &[u8], value: Bytes) {
+            self.mem_table.insert(Bytes::copy_from_slice(key), value);
+        }
+    
+        fn compare_and_swap(&mut self, key: &[u8], old: Option<Bytes>, new: Bytes) -> bool {
+            match self.get(key) {
+                Some(v) => {
+                    if old == Some(v) {
+                        self.set(key, new);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => {
+                    if old.is_none() {
+                        self.set(key, new);
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+        }
+    
+        fn remove(&mut self, key: &[u8]) {
+            self.mem_table.set(key, Bytes::new());
+        }
+    
+        fn contains_key(&self, key: &[u8]) -> bool {
+            if self.mem_table.contains_key(key){
+                return !self.mem_table.get(key).unwrap().is_empty();
+            }
+            if let Some(table) = &self.ss_table{
+                return table.contains_key(key);
+            }
+            false
+        }
+    
+        fn scan(
+            &self,
+            start: std::ops::Bound<&[u8]>,
+            end: std::ops::Bound<&[u8]>,
+        ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)> + '_> {
+            if let Some(table) = &self.ss_table{
+                Box::new(MergeIterator::new(self.mem_table.range::<[u8], _>((start, end)).map(|(k,v)|(k.clone(), v.clone())), 
+                    SsTableIter::new_scan(table, start, end)
+                ))
+            }else{
+                Box::new(self.mem_table.range::<[u8], _>((start, end)).map(|(k,v)|(k.clone(), v.clone())))
+            }
+        }
+    
+        fn len(&self) -> usize {
+            let deleted = self.mem_table.iter().filter(|(_, v)| v.is_empty()).map(|(k,_)|k.clone()).collect::<FxHashSet<Bytes>>();
+            let default_keys = FxHashSet::default();
+            let ss_keys = self.ss_table.as_ref().map_or(&default_keys, |table|table.valid_keys());
+            let ss_len = ss_keys.difference(&self.mem_table.keys().cloned().collect()).count();
+            self.mem_table.len() + ss_len - deleted.len()
+        }
+    
+        fn size(&self) -> usize {
+            self.mem_table.iter().fold(0, |acc, (k, v)| acc + k.len() + v.len()) + 
+            self.ss_table.as_ref().map_or(0, |table|table.data.len())
+        }
+    
+        fn binary_search_by(
+            &self,
+            start: std::ops::Bound<&[u8]>,
+            end: std::ops::Bound<&[u8]>,
+            f: super::CompareFn,
+        ) -> Option<(Bytes, Bytes)> {
+            todo!()
+        }
+    
+        fn export_all(&self) -> Bytes {
+            let mut builder = SsTableBuilder::new(self.block_size);
+            for (k, v) in self.scan(Bound::Unbounded, Bound::Unbounded){
+                builder.add(k, v);
+            }
+            builder.build().export_all()
+        }
+    
+        fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
+            let ss_table = SsTable::import_all(bytes).map_err(|e| e.to_string())?;
+            self.ss_table = Some(ss_table);
+            Ok(())
+        }
+    
+        fn clone_store(&self) -> Arc<std::sync::Mutex<dyn KvStore>> {
+            Arc::new(std::sync::Mutex::new(self.clone()))
+        }
+    }
+
+    struct MergeIterator<'a, T>{
+        a: T,
+        b: SsTableIter<'a>,
+        current_btree: Option<(Bytes, Bytes)>,
+        current_sstable: Option<(Bytes, Bytes)>,
+        back_btree: Option<(Bytes, Bytes)>,
+        back_sstable: Option<(Bytes, Bytes)>,
+    }
+
+    impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> MergeIterator<'a, T>{
+        fn new(mut a: T, b: SsTableIter<'a>)->Self{
+            let current_btree = a.next();
+            let back_btree = a.next_back();
+            Self{
+                a,
+                b,
+                current_btree,
+                back_btree,
+                current_sstable: None,
+                back_sstable:None
+            }
+        }
+    }
+
+    impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> Iterator for MergeIterator<'a, T>{
+        type Item = (Bytes, Bytes);
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.current_sstable.is_none(){
+                self.b.next();
+                if self.b.is_next_valid(){
+                    self.current_sstable = Some((self.b.next_key(), self.b.next_value()));
+                }
+            }
+            match (&self.current_btree, &self.current_sstable){
+                (Some((btree_key,_)), Some((iter_key, _))) =>{
+                    match btree_key.cmp(iter_key){
+                        Ordering::Less=>{
+                            self.current_btree.take().map(|kv|{
+                                self.current_btree = self.a.next();
+                                kv
+                            })
+                        }
+                        Ordering::Equal=>{
+                            self.current_sstable.take();
+                            self.current_btree.take().map(|kv|{
+                                self.current_btree = self.a.next();
+                                kv
+                            })
+                        }
+                        Ordering::Greater=>{
+                            self.current_sstable.take()
+                        }
+                    }
+                }
+                (Some(_), None)=>{
+                    self.current_btree.take().map(|kv|{
+                        self.current_btree = self.a.next();
+                        kv
+                    })
+                }
+                (None, Some(_))=>{
+                    self.current_sstable.take()
+                }
+                (None, None)=>None
+            }
+        }
+    }
+
+    impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> DoubleEndedIterator for MergeIterator<'a, T>{
+        fn next_back(&mut self) -> Option<Self::Item> {
+            if self.back_sstable.is_none(){
+                self.b.next_back();
+                if self.b.is_prev_valid(){
+                    self.back_sstable = Some((self.b.prev_key(), self.b.prev_value()))
+                }
+            }
+            match (&self.back_btree, &self.back_sstable){
+                (Some((btree_key,_)), Some((iter_key, _)))=>{
+                    match btree_key.cmp(iter_key){
+                        Ordering::Greater=>{
+                            self.back_btree.take().map(|kv|{
+                                self.back_btree = self.a.next_back();
+                                kv
+                            })
+                        }
+                        Ordering::Equal=>{
+                            self.back_sstable.take();
+                            self.back_btree.take().map(|kv|{
+                                self.back_btree = self.a.next_back();
+                                kv
+                            })
+                        }
+                        Ordering::Less=>{
+                            self.back_sstable.take()
+                        }
+                    }
+                }
+                 (Some(_), None)=>{
+                    self.back_btree.take().map(|kv|{
+                        self.back_btree = self.a.next_back();
+                        kv
+                    })
+                }
+                (None, Some(_))=>{
+                    self.back_sstable.take()
+                }
+                (None, None)=>None
+            }
+        }
+    }
+
+
 }
 
 mod mem {
-    use sst_binary_format::{SsTable, SsTableBuilder};
+    use sst_binary_format::{BlockBuilder, BlockIter, SsTable, SsTableBuilder};
 
     use super::*;
     use std::{collections::BTreeMap, sync::Arc};
@@ -751,5 +1615,149 @@ mod mem {
             assert_eq!(store1.size(), store2.size());
             assert_eq!(store1, store2);
         }
+    }
+
+    #[test]
+    fn block_double_end_iter(){
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(b"key1", b"value1");
+        builder.add(b"key2", b"value2");
+        builder.add(b"key3", b"value3");
+        let block = builder.build();
+        let mut iter = BlockIter::new_seek_to_first(Arc::new(block));
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        let (k2, v2) = Iterator::next(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key1"));
+        assert_eq!(v1, Bytes::from_static(b"value1"));
+        assert_eq!(k2, Bytes::from_static(b"key2"));
+        assert_eq!(v2, Bytes::from_static(b"value2"));
+        assert_eq!(k3, Bytes::from_static(b"key3"));
+        assert_eq!(v3, Bytes::from_static(b"value3"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
+
+    #[test]
+    fn block_range_iter(){
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(b"key1", b"value1");
+        builder.add(b"key2", b"value2");
+        builder.add(b"key3", b"value3");
+        let block = builder.build();
+        let mut iter = BlockIter::new_range_key(Arc::new(block), b"key0", b"key4");
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        let (k2, v2) = Iterator::next(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key1"));
+        assert_eq!(v1, Bytes::from_static(b"value1"));
+        assert_eq!(k2, Bytes::from_static(b"key2"));
+        assert_eq!(v2, Bytes::from_static(b"value2"));
+        assert_eq!(k3, Bytes::from_static(b"key3"));
+        assert_eq!(v3, Bytes::from_static(b"value3"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(b"key1", b"value1");
+        builder.add(b"key2", b"value2");
+        builder.add(b"key3", b"value3");
+        let block = builder.build();
+        let mut iter = BlockIter::new_range_key(Arc::new(block), b"key1", b"key3");
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        let (k2, v2) = Iterator::next(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key1"));
+        assert_eq!(v1, Bytes::from_static(b"value1"));
+        assert_eq!(k2, Bytes::from_static(b"key2"));
+        assert_eq!(v2, Bytes::from_static(b"value2"));
+        assert_eq!(k3, Bytes::from_static(b"key3"));
+        assert_eq!(v3, Bytes::from_static(b"value3"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(b"key0", b"value0");
+        builder.add(b"key2", b"value2");
+        builder.add(b"key3", b"value3");
+        let block = builder.build();
+        let mut iter = BlockIter::new_range_key(Arc::new(block), b"key1", b"key3");
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k2, v2) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key2"));
+        assert_eq!(v1, Bytes::from_static(b"value2"));
+        assert_eq!(k2, Bytes::from_static(b"key3"));
+        assert_eq!(v2, Bytes::from_static(b"value3"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
+
+    #[test]
+    fn block_double_end_iter_with_delete(){
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(b"key1", b"value1");
+        builder.add(b"key2", b"value2");
+        builder.add(b"key4", b"");
+        builder.add(b"key3", b"value3");
+        let block = builder.build();
+        let mut iter = BlockIter::new_seek_to_first(Arc::new(block));
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        let (k2, v2) = Iterator::next(&mut iter).unwrap();
+        let (k4, v4) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key1"));
+        assert_eq!(v1, Bytes::from_static(b"value1"));
+        assert_eq!(k2, Bytes::from_static(b"key2"));
+        assert_eq!(v2, Bytes::from_static(b"value2"));
+        assert_eq!(k3, Bytes::from_static(b"key3"));
+        assert_eq!(v3, Bytes::from_static(b"value3"));
+        assert_eq!(k4, Bytes::from_static(b"key4"));
+        assert_eq!(v4, Bytes::new());
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
+
+    #[test]
+    fn sstable_iter(){
+        let mut builder = SsTableBuilder::new(10);
+        builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
+        builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
+        builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));
+        let table = builder.build();
+        let mut iter = table.iter();
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        let (k2, v2) = Iterator::next(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key1"));
+        assert_eq!(v1, Bytes::from_static(b"value1"));
+        assert_eq!(k3, Bytes::from_static(b"key3"));
+        assert_eq!(v3, Bytes::from_static(b"value3"));
+        assert_eq!(k2, Bytes::from_static(b"key2"));
+        assert_eq!(v2, Bytes::from_static(b"value2"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
+
+    #[test]
+    fn sstable_iter_with_delete(){
+        let mut builder = SsTableBuilder::new(10);
+        builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
+        builder.add(Bytes::from_static(b"key4"), Bytes::new());
+        builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
+        builder.add(Bytes::from_static(b"key5"), Bytes::new());
+        builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));
+        let table = builder.build();
+        let mut iter = table.iter();
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        let (k2, v2) = Iterator::next(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key1"));
+        assert_eq!(v1, Bytes::from_static(b"value1"));
+        assert_eq!(k3, Bytes::from_static(b"key3"));
+        assert_eq!(v3, Bytes::from_static(b"value3"));
+        assert_eq!(k2, Bytes::from_static(b"key2"));
+        assert_eq!(v2, Bytes::from_static(b"value2"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
     }
 }
