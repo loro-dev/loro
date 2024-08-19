@@ -31,9 +31,7 @@ use std::{
     ops::Deref,
     sync::{Arc, Mutex, Weak},
 };
-
 use tracing::{debug, error, info, instrument, trace};
-
 mod tree;
 pub use tree::TreeHandler;
 
