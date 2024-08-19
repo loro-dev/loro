@@ -819,11 +819,11 @@ mod sst_binary_format {
             self.last_key = key;
         }
 
-        pub fn len(&self)->usize{
-            self.meta.len()
+        pub fn is_empty(&self)->bool{
+            self.meta.is_empty()
         }
 
-        fn finish(&mut self){
+        pub(crate) fn finish(&mut self){
             if self.block_builder.is_empty(){
                 return;
             }
@@ -1026,7 +1026,7 @@ mod sst_binary_format {
         }
 
         pub fn new_scan(table: &'a SsTable, start: Bound<&[u8]>, end: Bound<&[u8]>)->Self{
-            let (table_idx, iter, excluded) = match start{
+            let (table_idx, mut iter, excluded) = match start{
                 Bound::Included(start)=>{
                     let idx = table.find_block_idx(start);
                     let block = table.read_block_cached(idx).unwrap();
@@ -1046,40 +1046,69 @@ mod sst_binary_format {
                 },
             };
             let (end_idx, end_iter, end_excluded) = match end {
-                Bound::Included(end)=>{
+                    Bound::Included(end)=>{
                         let end_idx = table.find_block_idx(end);
-                        let block = table.read_block_cached(end_idx).unwrap();
-                        let iter = BlockIter::new_prev_to_key(block, end);
-                        (end_idx, iter, None)
+                        if end_idx == table_idx{
+                            iter.prev_to_key(end);
+                            (end_idx, None, None)
+                        }else{
+                            let block = table.read_block_cached(end_idx).unwrap();
+                            let iter = BlockIter::new_prev_to_key(block, end);
+                            (end_idx, Some(iter), None)
+                        }
                     },
                     Bound::Excluded(end)=>{
                         let end_idx = table.find_block_idx(end);
-                        let block = table.read_block_cached(end_idx).unwrap();
-                        let iter = BlockIter::new_prev_to_key(block, end);
-                        (end_idx, iter, Some(end))
+                        if end_idx == table_idx{
+                            iter.prev_to_key(end);
+                            (end_idx, None, Some(end))
+                        }else{
+                            let block = table.read_block_cached(end_idx).unwrap();
+                            let iter = BlockIter::new_prev_to_key(block, end);
+                            (end_idx, Some(iter), Some(end))
+                        }
+                        
                     },
                     Bound::Unbounded=>{
                         let end_idx = table.meta.len() - 1;
-                        let block = table.read_block_cached(end_idx).unwrap();
-                        let iter = BlockIter::new_seek_to_first(block);
-                        (end_idx, iter, None)
+                        if end_idx == table_idx{
+                            (end_idx, None, None)
+                        }else{
+                            let block = table.read_block_cached(end_idx).unwrap();
+                            let iter = BlockIter::new_seek_to_first(block);
+                            (end_idx, Some(iter), None)
+                        }
                     }
             };
-            let mut ans = SsTableIter{
-                table,
-                next_block_iter: iter,
-                next_block_idx: table_idx,
-                prev_block_iter: end_iter,
-                prev_block_idx: end_idx as isize,
-                next_first: table_idx == end_idx
+            
+            let mut ans = if let Some(end_iter) = end_iter{
+                assert!(end_idx > table_idx);
+                SsTableIter{
+                    table,
+                    next_block_iter: iter,
+                    next_block_idx: table_idx,
+                    prev_block_iter: end_iter,
+                    prev_block_idx: end_idx as isize,
+                    next_first: false
+                }
+            }else{
+                assert!(end_idx == table_idx);
+                SsTableIter{
+                    table,
+                    next_block_iter: iter.clone(),
+                    next_block_idx: table_idx,
+                    prev_block_iter: iter,
+                    prev_block_idx: end_idx as isize,
+                    next_first: true
+                }
             };
             if let Some(key) = excluded {
-                if ans.next_value() == key{
+                if ans.is_next_valid() && ans.next_key() == key{
                     ans.next();
                 }
             }
             if let Some(key) = end_excluded {
-                if ans.prev_value() == key{
+                if ans.is_prev_valid() &&  ans.prev_key() == key{
                     ans.prev();
                 }
             }
@@ -1396,6 +1425,7 @@ mod mem {
     use sst_binary_format::{ BlockIter, SsTable, SsTableBuilder, SsTableIter};
 
     use super::*;
+    use core::str;
     use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
 
    #[derive(Debug, Clone)]
@@ -1522,7 +1552,8 @@ mod mem {
             for (k, v) in self.scan(Bound::Unbounded, Bound::Unbounded){
                 builder.add(k, v);
             }
-            if builder.len() == 0{
+            builder.finish();
+            if builder.is_empty(){
                 return Bytes::new();
             }
             builder.build().export_all()

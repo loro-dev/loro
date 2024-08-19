@@ -435,6 +435,12 @@ mod mut_inner_kv {
                         Bound::Excluded(&change.id_end().to_bytes()),
                     )
                     .count();
+                for (k, v) in kv.scan(
+                    Bound::Excluded(&change.id.to_bytes()),
+                    Bound::Excluded(&change.id_end().to_bytes()),
+                ) {
+                    println!("k={:?} v={:?}", k, v);
+                }
                 assert_eq!(count, 0, "change should not exist");
             }
 
