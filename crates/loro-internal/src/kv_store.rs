@@ -255,7 +255,7 @@ mod sst_binary_format {
         }
 
         pub fn next_is_valid(&self) -> bool {
-            !self.next_key.is_empty() && self.next_idx <= self.prev_idx as usize
+            !self.next_key.is_empty() && self.next_idx as isize <= self.prev_idx
         }
 
         pub fn prev_curr_key(&self)-> Bytes{
@@ -269,12 +269,12 @@ mod sst_binary_format {
         }
 
         pub fn prev_is_valid(&self) -> bool {
-            !self.prev_key.is_empty() && self.next_idx <= self.prev_idx as usize
+            !self.prev_key.is_empty() && self.next_idx as isize <= self.prev_idx
         }
 
         pub fn next(&mut self) {
             self.next_idx += 1;
-            if self.next_idx > self.prev_idx as usize {
+            if self.next_idx as isize > self.prev_idx {
                 self.next_key.clear();
                 self.next_value_range = 0..0;
                 return;
@@ -284,7 +284,7 @@ mod sst_binary_format {
 
         pub fn prev(&mut self){
             self.prev_idx -= 1;
-            if self.prev_idx < 0  || (self.prev_idx as usize) < self.next_idx{
+            if self.prev_idx < 0  || self.prev_idx < (self.next_idx as isize){
                 self.prev_key.clear();
                 self.prev_value_range = 0..0;
                 return;
@@ -1028,88 +1028,86 @@ mod sst_binary_format {
         }
 
         pub fn new_scan(table: &'a SsTable, start: Bound<&[u8]>, end: Bound<&[u8]>)->Self{
-            let (table_idx, mut iter) = match start{
+            let (table_idx, iter, excluded) = match start{
                 Bound::Included(start)=>{
                     let idx = table.find_block_idx(start);
                     let block = table.read_block(idx).unwrap();
                     let iter = BlockIter::new_seek_to_key(block, start);
-                    (idx, iter)
+                    (idx, iter, false)
                 },
                 Bound::Excluded(start)=>{
                     let idx = table.find_block_idx(start);
                     let block = table.read_block(idx).unwrap();
-                    let mut iter = BlockIter::new_seek_to_key(block, start);
-                    iter.next();
-                    (idx, iter)
+                    let iter = BlockIter::new_seek_to_key(block, start);
+                    // iter.next();
+                    // // at the end of Block, we need 
+                    // while !iter.next_is_valid(){
+                    //     idx += 1;
+                    //     let block = table.read_block(idx).unwrap();
+                    //     iter = BlockIter::new_seek_to_first(block);
+                    // }
+                    (idx, iter, true)
                 },
                 Bound::Unbounded=>{
                     let block = table.read_block(0).unwrap();
                     let iter = BlockIter::new_seek_to_first(block);
-                    (0, iter)
+                    (0, iter, false)
                 },
             };
-            let end_idx = match end{
+            let (end_idx, end_iter, end_excluded) = match end {
                 Bound::Included(end)=>{
-                    table.find_block_idx(end)
-                },
-                Bound::Excluded(end)=>{
-                    table.find_block_idx(end)
-                },
-                Bound::Unbounded=>{
-                    table.meta.len() - 1
-                }
-            };
-            if table_idx == end_idx{
-                match end{
-                    Bound::Included(end)=>{
-                        iter.prev_to_key(end);
-                    },
-                    Bound::Excluded(end)=>{
-                        iter.prev_to_key(end);
-                        while iter.prev_is_valid() && iter.prev_curr_key() == end{
-                            iter.prev();
-                        }
-                    },
-                    Bound::Unbounded=>{}
-                };
-                Self{
-                    table,
-                    next_block_iter: iter.clone(),
-                    next_block_idx: table_idx,
-                    prev_block_iter: iter,
-                    prev_block_idx: table_idx as isize,
-                    next_first: true
-                }
-            }else{
-                let end_iter = match end{
-                    Bound::Included(end)=>{
+                        let end_idx = table.find_block_idx(end);
                         let block = table.read_block(end_idx).unwrap();
                         let iter = BlockIter::new_prev_to_key(block, end);
-                        iter
+                        (end_idx, iter, false)
                     },
                     Bound::Excluded(end)=>{
+                        let end_idx = table.find_block_idx(end);
                         let block = table.read_block(end_idx).unwrap();
-                        let mut iter = BlockIter::new_prev_to_key(block, end);
-                        while iter.prev_is_valid() && iter.prev_curr_key() == end{
-                            iter.prev();
-                        }
-                        iter
+                        let iter = BlockIter::new_prev_to_key(block, end);
+                        (end_idx, iter, true)
+                        // while iter.prev_is_valid() && iter.prev_curr_key() == end{
+                        //     iter.prev();
+                        // }
+                        // if !iter.prev_is_valid(){
+                        //     end_idx -=1;
+                        //     if table_idx == end_idx{
+                        //         return Self{
+                        //             table,
+                        //             next_block_iter: iter.clone(),
+                        //             next_block_idx: table_idx,
+                        //             prev_block_iter: iter,
+                        //             prev_block_idx: table_idx as isize,
+                        //             next_first: true
+                        //         }
+                        //     }
+                        //     let block = table.read_block(end_idx).unwrap();
+                        //     iter = BlockIter::new_prev_to_key(block, end);
+                        // }
+                        // iter
                     },
                     Bound::Unbounded=>{
+                        let end_idx = table.meta.len() - 1;
                         let block = table.read_block(end_idx).unwrap();
-                        let  iter = BlockIter::new_seek_to_first(block);
-                        iter
+                        let iter = BlockIter::new_seek_to_first(block);
+                        (end_idx, iter, false)
                     }
-                };
-                Self{
-                    table,
-                    next_block_iter: iter,
-                    next_block_idx: table_idx,
-                    prev_block_iter: end_iter,
-                    prev_block_idx: end_idx as isize,
-                    next_first: false
-                }
+            };
+            let mut ans = SsTableIter{
+                table,
+                next_block_iter: iter,
+                next_block_idx: table_idx,
+                prev_block_iter: end_iter,
+                prev_block_idx: end_idx as isize,
+                next_first: table_idx == end_idx
+            };
+            if excluded{
+                ans.next();
             }
+            if end_excluded{
+                ans.prev();
+            }
+            ans
         }
 
         fn is_next_valid(&self)->bool{
@@ -1496,7 +1494,7 @@ mod sst_binary_format {
 }
 
 mod mem {
-    use sst_binary_format::{BlockBuilder, BlockIter, SsTable, SsTableBuilder};
+    use sst_binary_format::{BlockBuilder, BlockIter, SsTable, SsTableBuilder, SsTableIter};
 
     use super::*;
     use std::{collections::BTreeMap, sync::Arc};
@@ -1702,6 +1700,24 @@ mod mem {
     }
 
     #[test]
+    fn block_scan(){
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(b"key1", b"value1");
+        builder.add(b"key2", b"value2");
+        builder.add(b"key3", b"value3");
+        let block = builder.build();
+        let mut iter = BlockIter::new_scan(Arc::new(block), Bound::Excluded(b"key1"), Bound::Unbounded);
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k2, v2) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key2"));
+        assert_eq!(v1, Bytes::from_static(b"value2"));
+        assert_eq!(k2, Bytes::from_static(b"key3"));
+        assert_eq!(v2, Bytes::from_static(b"value3"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
+
+    #[test]
     fn block_double_end_iter_with_delete(){
         let mut builder = BlockBuilder::new(4096);
         builder.add(b"key1", b"value1");
@@ -1769,4 +1785,25 @@ mod mem {
         assert!(Iterator::next(&mut iter).is_none());
         assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
     }
+
+    #[test]
+    fn sstable_scan(){
+        let mut builder = SsTableBuilder::new(10);
+        builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
+        builder.add(Bytes::from_static(b"key4"), Bytes::new());
+        builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
+        builder.add(Bytes::from_static(b"key5"), Bytes::new());
+        builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));
+        let table = builder.build();
+        let mut iter = SsTableIter::new_scan(&table, Bound::Excluded(b"key1"), Bound::Unbounded);
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k2, v2) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key2"));
+        assert_eq!(v1, Bytes::from_static(b"value2"));
+        assert_eq!(k2, Bytes::from_static(b"key3"));
+        assert_eq!(v2, Bytes::from_static(b"value3"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
+
 }
