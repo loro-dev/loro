@@ -22,8 +22,8 @@ fn one_op() {
         5,
         vec![FuzzTarget::All],
         &mut [Handle {
-            site: 59,
-            target: 0,
+            site: 33,
+            target: 158,
             container: 0,
             action: Generic(GenericAction {
                 value: I32(0),
