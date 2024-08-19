@@ -1,11 +1,15 @@
 use std::{
+    collections::VecDeque,
     fmt::{Debug, Display},
+    sync::{Arc, Mutex},
+    thread,
     time::Instant,
 };
 
 use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
 use loro::{ContainerType, Frontiers};
+use rayon::iter::ParallelExtend;
 use tabled::TableIteratorExt;
 use tracing::{info, info_span};
 
@@ -334,9 +338,9 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
 
 pub fn minify_error<T, F, N>(site_num: u8, f: F, normalize: N, actions: Vec<T>)
 where
-    F: Fn(u8, &mut [T]),
+    F: Fn(u8, &mut [T]) + Send + Sync + 'static,
     N: Fn(u8, &mut [T]) -> Vec<T>,
-    T: Clone + Debug,
+    T: Clone + Debug + Send + 'static,
 {
     std::panic::set_hook(Box::new(|_info| {
         // ignore panic output
@@ -362,54 +366,81 @@ where
         return;
     }
 
-    let mut minified = actions.clone();
-    let mut candidates = Vec::new();
+    let minified = Arc::new(Mutex::new(actions.clone()));
+    let candidates = Arc::new(Mutex::new(VecDeque::new()));
     println!("Setup candidates...");
     for i in 0..actions.len() {
         let mut new = actions.clone();
         new.remove(i);
-        candidates.push(new);
+        candidates.lock().unwrap().push_back(new);
     }
 
     println!("Minifying...");
     let start = Instant::now();
-    while let Some(candidate) = candidates.pop() {
-        let f_ref: *const _ = &f;
-        let f_ref: usize = f_ref as usize;
-        let mut actions_clone = candidate.clone();
-        let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
-        #[allow(clippy::blocks_in_conditions)]
-        if std::panic::catch_unwind(|| {
-            // SAFETY: test
-            let f = unsafe { &*(f_ref as *const F) };
-            // SAFETY: test
-            let actions_ref = unsafe { &mut *(action_ref as *mut Vec<T>) };
-            f(site_num, actions_ref);
-        })
-        .is_err()
-        {
-            for i in 0..candidate.len() {
-                let mut new = candidate.clone();
-                new.remove(i);
-                candidates.push(new);
+    // Get the number of logical cores available on the system
+    let num_cores = num_cpus::get() / 2;
+    let f = Arc::new(f);
+    println!("start with {} threads", num_cores);
+    let mut threads = Vec::new();
+    for _i in 0..num_cores {
+        let candidates = candidates.clone();
+        let minified = minified.clone();
+        let f = f.clone();
+        threads.push(thread::spawn(move || {
+            loop {
+                let candidate = {
+                    let Some(candidate) = candidates.lock().unwrap().pop_back() else {
+                        return;
+                    };
+                    candidate
+                };
+
+                let f_ref: *const _ = &f;
+                let f_ref: usize = f_ref as usize;
+                let mut actions_clone = candidate.clone();
+                let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
+                #[allow(clippy::blocks_in_conditions)]
+                if std::panic::catch_unwind(|| {
+                    // SAFETY: test
+                    let f = unsafe { &*(f_ref as *const F) };
+                    // SAFETY: test
+                    let actions_ref = unsafe { &mut *(action_ref as *mut Vec<T>) };
+                    f(site_num, actions_ref);
+                })
+                .is_err()
+                {
+                    let mut candidates = candidates.lock().unwrap();
+                    let mut minified = minified.lock().unwrap();
+                    for i in 0..candidate.len() {
+                        let mut new = candidate.clone();
+                        new.remove(i);
+                        candidates.push_back(new);
+                    }
+                    if candidate.len() < minified.len() {
+                        *minified = candidate;
+                        println!("New min len={}", minified.len());
+                    }
+
+                    if candidates.len() > 60 {
+                        candidates.drain(0..30);
+                    }
+                }
+
+                if start.elapsed().as_secs() > 10 && minified.lock().unwrap().len() <= 4 {
+                    break;
+                }
+                if start.elapsed().as_secs() > 60 {
+                    break;
+                }
             }
-            if candidate.len() < minified.len() {
-                minified = candidate;
-                println!("New min len={}", minified.len());
-            }
-            if candidates.len() > 40 {
-                candidates.drain(0..30);
-            }
-        }
-        if start.elapsed().as_secs() > 10 && minified.len() <= 4 {
-            break;
-        }
-        if start.elapsed().as_secs() > 60 {
-            break;
-        }
+        }));
     }
 
-    let minified = normalize(site_num, &mut minified);
+    for thread in threads.into_iter() {
+        thread.join().unwrap();
+    }
+
+    let minified = normalize(site_num, &mut minified.lock().unwrap());
     println!(
         "Old Length {}, New Length {}",
         actions.len(),
@@ -417,7 +448,15 @@ where
     );
     dbg!(&minified);
     if actions.len() > minified.len() {
-        minify_error(site_num, f, normalize, minified);
+        minify_error(
+            site_num,
+            match Arc::try_unwrap(f) {
+                Ok(f) => f,
+                Err(_) => panic!(),
+            },
+            normalize,
+            minified,
+        );
     }
 }
 
