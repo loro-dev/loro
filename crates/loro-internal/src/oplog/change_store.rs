@@ -429,9 +429,6 @@ mod mut_inner_kv {
                     "change should not exist"
                 );
                 let kv = self.external_kv.lock().unwrap();
-
-                println!("\n\n start DEBUG\n");
-
                 let count = kv
                     .scan(
                         Bound::Excluded(&change.id.to_bytes()),
@@ -748,12 +745,6 @@ mod mut_inner_kv {
             }
 
             let store = self.external_kv.lock().unwrap();
-            println!("id={:?}\n", Bytes::copy_from_slice(&id.to_bytes()));
-            for (k, v) in store.scan(Bound::Unbounded, Bound::Unbounded) {
-                println!("k={:?} v={:?}", k, v);
-            }
-            println!("store = {:?}", store);
-
             let mut iter = store
                 .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
                 .filter(|(id, _)| id.len() == 12);

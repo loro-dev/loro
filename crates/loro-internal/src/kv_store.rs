@@ -1692,11 +1692,9 @@ mod mem {
 
     impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> DoubleEndedIterator for MergeIterator<'a, T>{
         fn next_back(&mut self) -> Option<Self::Item> {
-            if self.back_sstable.is_none(){
+            if self.back_sstable.is_none() && self.b.is_prev_valid() {
+                self.back_sstable = Some((self.b.prev_key(), self.b.prev_value()));
                 self.b.next_back();
-                if self.b.is_prev_valid(){
-                    self.back_sstable = Some((self.b.prev_key(), self.b.prev_value()))
-                }
             }
             match (&self.back_btree, &self.back_sstable){
                 (Some((btree_key,_)), Some((iter_key, _)))=>{
