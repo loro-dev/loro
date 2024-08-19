@@ -867,13 +867,15 @@ mod sst_binary_format {
                 last_key: self.meta.last().unwrap().last_key.clone().unwrap_or(self.meta.last().unwrap().first_key.clone()),
                 meta: self.meta, 
                 meta_offset: meta_offset as usize,
-                block_cache: FxHashMap::default(),
+                block_cache: BlockCache::new(1 << 20),  // TODO: cache size
                 keys: OnceCell::new(),
             }
         }
     }
 
-    #[derive(Debug, Clone)]
+    type BlockCache = quick_cache::sync::Cache<usize, Arc<Block>>;
+
+    #[derive(Debug)]
      pub(crate) struct SsTable{
         // TODO: mmap?
         data: Bytes,
@@ -881,10 +883,22 @@ mod sst_binary_format {
         pub(crate) last_key: Bytes,
         meta: Vec<BlockMeta>,
         meta_offset: usize,
-        block_cache: FxHashMap<usize, Arc<Block>>,
-
+        block_cache: BlockCache,
         keys: OnceCell<FxHashSet<Bytes>>
-        // TODO: cache
+    }
+
+    impl Clone for SsTable{
+        fn clone(&self)->Self{
+            Self{
+                data: self.data.clone(),
+                first_key: self.first_key.clone(),
+                last_key: self.last_key.clone(),
+                meta: self.meta.clone(),
+                meta_offset: self.meta_offset,
+                block_cache: BlockCache::new(1 << 20),  // TODO: cache size
+                keys: OnceCell::new(),
+            }
+        }
     }
 
     impl SsTable{
@@ -924,7 +938,7 @@ mod sst_binary_format {
                 last_key: meta.last().unwrap().last_key.clone().unwrap_or(meta.last().unwrap().first_key.clone()),
                 meta, 
                 meta_offset ,
-                block_cache: FxHashMap::default(),
+                block_cache: BlockCache::new(1 << 20), // TODO: cache size
                 keys: OnceCell::new(),
             };
             Ok(ans)
@@ -939,7 +953,7 @@ mod sst_binary_format {
         /// 
         /// # Errors
         /// - [LoroError::DecodeChecksumMismatchError]
-        pub(crate) fn read_block(&self, block_idx: usize)->LoroResult<Arc<Block>>{
+        fn read_block(&self, block_idx: usize)->LoroResult<Arc<Block>>{
             // TODO: cache
             let offset = self.meta[block_idx].offset;
             let offset_end = self.meta.get(block_idx+1).map_or(self.meta_offset, |m| m.offset);
@@ -948,14 +962,25 @@ mod sst_binary_format {
             Ok(ans)
         }
 
-        pub fn contains_key(&self, key: &[u8])->bool{
+        /// 
+        /// # Errors
+        /// - [LoroError::DecodeChecksumMismatchError]
+        pub(crate) fn read_block_cached(&self, block_idx: usize)->LoroResult<Arc<Block>>{
+            let block = self.block_cache.get_or_insert_with(&block_idx, ||self.read_block(block_idx))?;
+            Ok(block)
+        }
+
+        /// 
+        /// # Errors
+        /// - [LoroError::DecodeChecksumMismatchError]
+        pub fn contains_key(&self, key: &[u8])->LoroResult<bool>{
             if self.first_key > key || self.last_key < key{
-                return false;
+                return Ok(false);
             }
             let idx = self.find_block_idx(key);
-            let block = self.read_block(idx).unwrap();
+            let block = self.read_block_cached(idx)?;
             let block_iter = BlockIter::new_seek_to_key(block, key);
-            block_iter.next_is_valid() && block_iter.next_curr_key() == key
+            Ok(block_iter.next_is_valid() && block_iter.next_curr_key() == key)
         }
 
         pub fn valid_keys(&self)->&FxHashSet<Bytes>{
@@ -985,11 +1010,11 @@ mod sst_binary_format {
 
     impl<'a> SsTableIter<'a>{
         fn new(table: &'a SsTable)->Self{
-            let block = table.read_block(0).unwrap();
+            let block = table.read_block_cached(0).unwrap();
             let block_iter = BlockIter::new_seek_to_first(block);
             let prev_block_idx = table.meta.len() -1;
             let prev_block_iter = {
-                let prev_block = table.read_block(prev_block_idx).unwrap();
+                let prev_block = table.read_block_cached(prev_block_idx).unwrap();
                 BlockIter::new_seek_to_first(prev_block)
             };
 
@@ -1003,62 +1028,22 @@ mod sst_binary_format {
             }
         }
 
-        // pub fn new_range_key(table: &'a SsTable, start: &[u8], end: &[u8])->Self{
-        //     let start_idx = table.find_block_idx(start);
-        //     let end_idx = table.find_block_idx(end);
-        //     if start_idx == end_idx{
-        //         let block = table.read_block(start_idx).unwrap();
-        //         let block_iter = BlockIter::new_range_key(block, start, end);
-        //         return Self{
-        //             table,
-        //             next_block_iter: block_iter.clone(),
-        //             next_block_idx: start_idx,
-        //             prev_block_iter: block_iter,
-        //             prev_block_idx: start_idx as isize,
-        //             next_first: true
-        //         }
-        //     }
-
-        //     let block = table.read_block(start_idx).unwrap();
-        //     let mut block_iter = BlockIter::new_seek_to_key(block, start);
-        //     block_iter.seek_to_key(start);
-        //     let prev_block_idx = end_idx as isize;
-        //     let prev_block = table.read_block(prev_block_idx as usize).unwrap();
-        //     let mut prev_block_iter = BlockIter::new_prev_to_key(prev_block, end);
-        //     prev_block_iter.seek_to_key(end);
-        //     Self{
-        //         table,
-        //         next_block_iter: block_iter,
-        //         next_block_idx: start_idx,
-        //         prev_block_iter,
-        //         prev_block_idx,
-        //         next_first:false
-        //     }
-        // }
-
         pub fn new_scan(table: &'a SsTable, start: Bound<&[u8]>, end: Bound<&[u8]>)->Self{
             let (table_idx, iter, excluded) = match start{
                 Bound::Included(start)=>{
                     let idx = table.find_block_idx(start);
-                    let block = table.read_block(idx).unwrap();
+                    let block = table.read_block_cached(idx).unwrap();
                     let iter = BlockIter::new_seek_to_key(block, start);
                     (idx, iter, false)
                 },
                 Bound::Excluded(start)=>{
                     let idx = table.find_block_idx(start);
-                    let block = table.read_block(idx).unwrap();
+                    let block = table.read_block_cached(idx).unwrap();
                     let iter = BlockIter::new_seek_to_key(block, start);
-                    // iter.next();
-                    // // at the end of Block, we need 
-                    // while !iter.next_is_valid(){
-                    //     idx += 1;
-                    //     let block = table.read_block(idx).unwrap();
-                    //     iter = BlockIter::new_seek_to_first(block);
-                    // }
                     (idx, iter, true)
                 },
                 Bound::Unbounded=>{
-                    let block = table.read_block(0).unwrap();
+                    let block = table.read_block_cached(0).unwrap();
                     let iter = BlockIter::new_seek_to_first(block);
                     (0, iter, false)
                 },
@@ -1066,38 +1051,19 @@ mod sst_binary_format {
             let (end_idx, end_iter, end_excluded) = match end {
                 Bound::Included(end)=>{
                         let end_idx = table.find_block_idx(end);
-                        let block = table.read_block(end_idx).unwrap();
+                        let block = table.read_block_cached(end_idx).unwrap();
                         let iter = BlockIter::new_prev_to_key(block, end);
                         (end_idx, iter, false)
                     },
                     Bound::Excluded(end)=>{
                         let end_idx = table.find_block_idx(end);
-                        let block = table.read_block(end_idx).unwrap();
+                        let block = table.read_block_cached(end_idx).unwrap();
                         let iter = BlockIter::new_prev_to_key(block, end);
                         (end_idx, iter, true)
-                        // while iter.prev_is_valid() && iter.prev_curr_key() == end{
-                        //     iter.prev();
-                        // }
-                        // if !iter.prev_is_valid(){
-                        //     end_idx -=1;
-                        //     if table_idx == end_idx{
-                        //         return Self{
-                        //             table,
-                        //             next_block_iter: iter.clone(),
-                        //             next_block_idx: table_idx,
-                        //             prev_block_iter: iter,
-                        //             prev_block_idx: table_idx as isize,
-                        //             next_first: true
-                        //         }
-                        //     }
-                        //     let block = table.read_block(end_idx).unwrap();
-                        //     iter = BlockIter::new_prev_to_key(block, end);
-                        // }
-                        // iter
                     },
                     Bound::Unbounded=>{
                         let end_idx = table.meta.len() - 1;
-                        let block = table.read_block(end_idx).unwrap();
+                        let block = table.read_block_cached(end_idx).unwrap();
                         let iter = BlockIter::new_seek_to_first(block);
                         (end_idx, iter, false)
                     }
@@ -1155,14 +1121,6 @@ mod sst_binary_format {
             }
         }
 
-        // fn seek_to_key(&self, key: &[u8]) -> BlockIter{
-        //     let block_idx = self.table.find_block_idx(key);
-        //     let block = self.table.read_block(block_idx).unwrap();
-        //     let mut block_iter = BlockIter::new_seek_to_key(block, key);
-        //     block_iter.seek_to_key(key);
-        //     block_iter
-        // }
-
         pub fn next(&mut self){
             self.next_block_iter.next();
             while self.next_block_iter.next_is_valid() && self.next_block_iter.next_curr_value().is_empty(){
@@ -1177,7 +1135,7 @@ mod sst_binary_format {
                     std::mem::swap(&mut self.next_block_iter, &mut self.prev_block_iter);
                     self.next_first = true;
                 }else if self.next_block_idx < self.table.meta.len(){
-                    let block = self.table.read_block(self.next_block_idx).unwrap();
+                    let block = self.table.read_block_cached(self.next_block_idx).unwrap();
                     // TODO: cache
                     self.next_block_iter = BlockIter::new_seek_to_first(block);
                     while self.next_block_iter.next_is_valid() && self.next_block_iter.next_curr_value().is_empty(){
@@ -1207,7 +1165,7 @@ mod sst_binary_format {
                 if self.next_block_idx == self.prev_block_idx as usize && !self.next_first{
                     self.next_first = true;
                 }else if self.prev_block_idx > 0 {
-                    let block = self.table.read_block(self.prev_block_idx as usize).unwrap();
+                    let block = self.table.read_block_cached(self.prev_block_idx as usize).unwrap();
                     // TODO: cache
                     self.prev_block_iter = BlockIter::new_seek_to_first(block);
                      while self.prev_block_iter.prev_is_valid() && self.prev_block_iter.next_curr_value().is_empty(){
@@ -1479,7 +1437,7 @@ mod mem {
 
                 // table.
                 let idx = table.find_block_idx(key);
-                let block = table.read_block(idx).unwrap();
+                let block = table.read_block_cached(idx).unwrap();
                 let block_iter = BlockIter::new_seek_to_key(block, key);
                 if block_iter.next_is_valid() && block_iter.next_curr_key() == key {
                     Some(block_iter.next_curr_value())
@@ -1525,7 +1483,7 @@ mod mem {
                 return !self.mem_table.get(key).unwrap().is_empty();
             }
             if let Some(table) = &self.ss_table{
-                return table.contains_key(key);
+                return table.contains_key(key).unwrap();
             }
             false
         }
