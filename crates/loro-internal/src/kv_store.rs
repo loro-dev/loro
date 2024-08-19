@@ -1350,7 +1350,16 @@ mod sst_binary_format {
             end: std::ops::Bound<&[u8]>,
             f: super::CompareFn,
         ) -> Option<(Bytes, Bytes)> {
-            todo!()
+            // PERF: This is super slow
+            for (k, v) in self.scan(start, end) {
+                match f(&k, &v) {
+                    std::cmp::Ordering::Equal => return Some((k.clone(), v.clone())),
+                    std::cmp::Ordering::Less => continue,
+                    std::cmp::Ordering::Greater => break,
+                }
+            }
+
+            None
         }
     
         fn export_all(&self) -> Bytes {
