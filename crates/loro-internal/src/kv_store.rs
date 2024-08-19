@@ -203,21 +203,6 @@ mod sst_binary_format {
             iter
         }
 
-        pub fn new_range_key(block: Arc<Block>, start: &[u8], end: &[u8])->Self{
-            let prev_idx = block.len() as isize - 1;
-            let mut iter = Self{
-                first_key: block.first_key(),
-                block,
-                next_key: Vec::new(),
-                next_value_range: 0..0,
-                prev_key: Vec::new(),
-                prev_value_range: 0..0,
-                next_idx: 0,
-                prev_idx,
-            };
-            iter.range_key(start, end);
-            iter
-        }
 
         pub fn new_scan(block: Arc<Block>, start: Bound<&[u8]>, end: Bound<&[u8]>)->Self{
             let mut iter = match start{
@@ -345,11 +330,6 @@ mod sst_binary_format {
                     }
                 }
             }
-        }
-
-        pub fn range_key(&mut self, start: &[u8], end: &[u8]){
-            self.seek_to_key(start);
-            self.prev_to_key(end);
         }
 
         fn seek_to_idx(&mut self, idx: usize){
@@ -482,6 +462,13 @@ mod sst_binary_format {
             self.data.len() - SIZE_OF_U16 - self.key_length  - SIZE_OF_U32
         }
 
+        /// ┌───────────────────────────────────────────────┐
+        /// │Large Block                                    │
+        /// │┌ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ┬ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─ ─ │
+        /// │  key length │  key    value   Block Checksum ││
+        /// ││    u16     │ bytes │ bytes │      u32        │
+        /// │ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘│
+        /// └───────────────────────────────────────────────┘
         fn encode(&self)->Bytes{
             let mut buf = Vec::with_capacity(self.key_length+ self.value_length() + SIZE_OF_U16 + SIZE_OF_U32);
             buf.put_u16(self.key_length as u16);
@@ -641,8 +628,6 @@ mod sst_binary_format {
                 // checksum
                 SIZE_OF_U32
             }
-            
-            
         }
 
         /// Add a key-value pair to the block.
@@ -702,13 +687,13 @@ mod sst_binary_format {
         }
     }
 
-    /// ┌────────────────────────────────────────────────────────────────────────┐
-    /// │ Block Meta                                                             │
-    /// │┌ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ┐│
-    /// │  block offset │ first key len   first key   last key len    last key   │
-    /// ││     u32      │      u16      │   bytes   │      u16      │   bytes   ││
-    /// │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │
-    /// └────────────────────────────────────────────────────────────────────────┘
+    /// ┌──────────────────────────────────────────────────────────────────────────────────────┐
+    /// │ Block Meta                                                                           │
+    /// │┌ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ┐ │
+    /// │  block offset │ first key len   first key   is large │ last key len     last key     │
+    /// ││     u32      │      u16      │   bytes   │    u8    │  u16(option)  │bytes(option)│ │
+    /// │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
+    /// └──────────────────────────────────────────────────────────────────────────────────────┘
     #[derive(Debug, Clone)]
     struct BlockMeta{
         offset: usize,
@@ -1234,7 +1219,7 @@ mod sst_binary_format {
         builder.add(b"key2", b"value2");
         builder.add(b"key3", b"value3");
         let block = builder.build();
-        let mut iter = BlockIter::new_range_key(Arc::new(block), b"key0", b"key4");
+        let mut iter = BlockIter::new_scan(Arc::new(block), Bound::Included(b"key0"), Bound::Included(b"key4"));
         let (k1, v1) = Iterator::next(&mut iter).unwrap();
         let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
         let (k2, v2) = Iterator::next(&mut iter).unwrap();
@@ -1252,7 +1237,7 @@ mod sst_binary_format {
         builder.add(b"key2", b"value2");
         builder.add(b"key3", b"value3");
         let block = builder.build();
-        let mut iter = BlockIter::new_range_key(Arc::new(block), b"key1", b"key3");
+        let mut iter = BlockIter::new_scan(Arc::new(block), Bound::Included(b"key1"), Bound::Included(b"key3"));
         let (k1, v1) = Iterator::next(&mut iter).unwrap();
         let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
         let (k2, v2) = Iterator::next(&mut iter).unwrap();
@@ -1270,7 +1255,7 @@ mod sst_binary_format {
         builder.add(b"key2", b"value2");
         builder.add(b"key3", b"value3");
         let block = builder.build();
-        let mut iter = BlockIter::new_range_key(Arc::new(block), b"key1", b"key3");
+        let mut iter = BlockIter::new_scan(Arc::new(block),Bound::Included( b"key1"), Bound::Included(b"key3"));
         let (k1, v1) = Iterator::next(&mut iter).unwrap();
         let (k2, v2) = DoubleEndedIterator::next_back(&mut iter).unwrap();
         assert_eq!(k1, Bytes::from_static(b"key2"));
