@@ -12,7 +12,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
-use tracing::debug;
 
 use super::change_store::BatchDecodeInfo;
 use super::ChangeStore;
@@ -29,7 +28,7 @@ pub struct AppDag {
     map: Mutex<BTreeMap<ID, AppDagNode>>,
     /// The latest known frontiers
     frontiers: Frontiers,
-    /// The latest known version vector
+    /// The latest known version vectorG
     vv: VersionVector,
     /// Ops included in the version vector but not parsed yet
     ///

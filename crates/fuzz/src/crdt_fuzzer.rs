@@ -152,10 +152,11 @@ impl CRDTFuzzer {
                 let actor = &mut self.actors[*site as usize];
                 let action = action.as_action().unwrap();
                 actor.apply(action, *container);
+                actor.loro.commit();
             }
             Action::Undo { site, op_len } => {
                 let actor = &mut self.actors[*site as usize];
-                let undo_len = *op_len % 4;
+                let undo_len = *op_len % 16;
                 if undo_len != 0 {
                     actor.test_undo(undo_len);
                 }
@@ -180,7 +181,7 @@ impl CRDTFuzzer {
                 }
                 self.actors.iter_mut().for_each(|a| a.record_history());
                 let actor = &mut self.actors[*site as usize];
-                let undo_len = *op_len % 4;
+                let undo_len = *op_len % 8;
                 if undo_len != 0 {
                     actor.test_undo(undo_len);
                 }

@@ -124,6 +124,10 @@ impl Actor {
     }
 
     pub fn test_undo(&mut self, undo_length: u32) {
+        if !self.undo_manager.undo.can_undo() {
+            return;
+        }
+
         self.loro.attach();
         let before_undo = self.loro.get_deep_value();
 
@@ -141,6 +145,7 @@ impl Actor {
 
         let after_undo = self.loro.get_deep_value();
         assert_value_eq(&before_undo, &after_undo, None);
+        self.undo_manager.undo.clear();
     }
 
     pub fn check_tracker(&self) {

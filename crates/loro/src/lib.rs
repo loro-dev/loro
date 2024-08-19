@@ -2030,4 +2030,9 @@ impl UndoManager {
     pub fn set_on_pop(&mut self, on_pop: Option<OnPop>) {
         self.0.set_on_pop(on_pop)
     }
+
+    /// Clear the undo stack and the redo stack
+    pub fn clear(&self) {
+        self.0.clear();
+    }
 }
