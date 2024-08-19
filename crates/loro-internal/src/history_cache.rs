@@ -241,7 +241,6 @@ trait HistoryCacheTrait {
 #[derive(Debug, Clone)]
 pub(crate) struct GroupedMapOpInfo<T = Option<LoroValue>> {
     pub(crate) value: T,
-    pub(crate) counter: Counter,
     pub(crate) lamport: Lamport,
     pub(crate) peer: PeerID,
 }
@@ -343,7 +342,6 @@ impl MapHistoryCache {
                                 self.keys.get_value(entry.key as usize).unwrap().clone(),
                                 GroupedMapOpInfo {
                                     value: map.value.clone(),
-                                    counter: id.counter,
                                     lamport: entry.lamport,
                                     peer: entry.peer,
                                 },
@@ -477,7 +475,6 @@ impl MovableListHistoryCache {
                                 .unwrap();
                             Some(GroupedMapOpInfo {
                                 value,
-                                counter: id.counter,
                                 lamport: key.lamport,
                                 peer: id.peer,
                             })
@@ -496,7 +493,6 @@ impl MovableListHistoryCache {
                         InnerContent::List(InnerListOp::Set { value, .. }) => {
                             Some(GroupedMapOpInfo {
                                 value: value.clone(),
-                                counter: id.counter,
                                 lamport,
                                 peer: id.peer,
                             })
