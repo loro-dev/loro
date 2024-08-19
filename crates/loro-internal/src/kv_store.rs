@@ -627,6 +627,10 @@ mod sst_binary_format {
             }
         }
 
+        pub fn is_empty(&self)->bool{
+            !self.is_large && self.offsets.is_empty()
+        }
+
         /// Add a key-value pair to the block.
         /// Returns true if the key-value pair is added successfully, false the block is full.
         /// 
@@ -645,6 +649,7 @@ mod sst_binary_format {
                 self.data.put_u16(key_len);
                 self.data.put(key);
                 self.data.put(value);
+                self.is_large = true;
                 self.first_key = key.to_vec();
                 return true;
             }
@@ -670,13 +675,13 @@ mod sst_binary_format {
         }
 
         pub fn build(self)->Block{
-            assert!(!self.offsets.is_empty(), "block is empty");
             if self.is_large{
                 return Block::Large(LargeValueBlock{
                     data: Bytes::from(self.data),
                     key_length: self.first_key.len(),
                 });
             }
+            assert!(!self.offsets.is_empty(), "block is empty");
             Block::Normal(NormalBlock{
                 data: Bytes::from(self.data),
                 offsets: self.offsets,
@@ -802,7 +807,6 @@ mod sst_binary_format {
             if self.first_key.is_empty(){
                 self.first_key = key.clone();
             }
-
             if self.block_builder.add(&key, &value){
                 self.last_key = key;
                 return;
@@ -815,7 +819,14 @@ mod sst_binary_format {
             self.last_key = key;
         }
 
+        pub fn len(&self)->usize{
+            self.meta.len()
+        }
+
         fn finish(&mut self){
+            if self.block_builder.is_empty(){
+                return;
+            }
             let builder = std::mem::replace(&mut self.block_builder, BlockBuilder::new(self.block_size));
             let block = builder.build();
             let encoded_bytes = block.encode();
@@ -843,10 +854,12 @@ mod sst_binary_format {
             let meta_offset = buf.len() as u32;
             BlockMeta::encode_meta(&self.meta, &mut buf);
             buf.put_u32(meta_offset);
+            let first_key = self.meta.first().map(|m|m.first_key.clone()).unwrap_or_default();
+            let last_key = self.meta.last().map(|m|m.last_key.clone().unwrap_or(self.meta.last().map(|m|m.first_key.clone()).unwrap_or_default())).unwrap_or_default();
             SsTable { 
                 data: Bytes::from(buf),
-                first_key: self.meta.first().unwrap().first_key.clone(), 
-                last_key: self.meta.last().unwrap().last_key.clone().unwrap_or(self.meta.last().unwrap().first_key.clone()),
+                first_key, 
+                last_key,
                 meta: self.meta, 
                 meta_offset: meta_offset as usize,
                 block_cache: BlockCache::new(1 << 20),  // TODO: cache size
@@ -914,10 +927,12 @@ mod sst_binary_format {
             let meta_offset = (&bytes[data_len-SIZE_OF_U32..]).get_u32() as usize;
             let raw_meta = &bytes[meta_offset..data_len-SIZE_OF_U32];
             let meta = BlockMeta::decode_meta(raw_meta)?;
+            let first_key = meta.first().map(|m|m.first_key.clone()).unwrap_or_default();
+            let last_key = meta.last().map(|m|m.last_key.clone().unwrap_or(meta.last().map(|m|m.first_key.clone()).unwrap_or_default())).unwrap_or_default();
             let ans = Self { 
                 data: bytes, 
-                first_key: meta.first().unwrap().first_key.clone(),
-                last_key: meta.last().unwrap().last_key.clone().unwrap_or(meta.last().unwrap().first_key.clone()),
+                first_key,
+                last_key,
                 meta, 
                 meta_offset ,
                 block_cache: BlockCache::new(1 << 20), // TODO: cache size
@@ -1507,10 +1522,17 @@ mod mem {
             for (k, v) in self.scan(Bound::Unbounded, Bound::Unbounded){
                 builder.add(k, v);
             }
+            if builder.len() == 0{
+                return Bytes::new();
+            }
             builder.build().export_all()
         }
     
         fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
+            if bytes.is_empty(){
+                self.ss_table = None;
+                return Ok(());
+            }
             let ss_table = SsTable::import_all(bytes).map_err(|e| e.to_string())?;
             self.ss_table = Some(ss_table);
             Ok(())

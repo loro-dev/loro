@@ -113,7 +113,9 @@ impl ChangeStore {
 
     pub(super) fn encode_all(&self, vv: &VersionVector, frontiers: &Frontiers) -> Bytes {
         self.flush_and_compact(vv, frontiers);
-        self.external_kv.lock().unwrap().export_all()
+        let kv = self.external_kv.lock().unwrap();
+        let ans = kv.export_all();
+        ans
     }
 
     pub(crate) fn decode_snapshot_for_updates(
