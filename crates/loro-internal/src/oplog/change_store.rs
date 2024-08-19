@@ -4,7 +4,7 @@ use crate::{
     arena::SharedArena,
     change::{Change, Timestamp},
     estimated_size::EstimatedSize,
-    kv_store::KvStore,
+    kv_store::{KvStore, MemKvStore},
     op::Op,
     parent::register_container_and_parent_link,
     version::{Frontiers, ImVersionVector},
@@ -101,7 +101,7 @@ impl ChangeStore {
                 mem_parsed_kv: BTreeMap::new(),
             })),
             arena: a.clone(),
-            external_kv: Arc::new(Mutex::new(BTreeMap::new())),
+            external_kv: Arc::new(Mutex::new(MemKvStore::default())),
             merge_interval,
         }
     }
