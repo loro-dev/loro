@@ -8517,6 +8517,56 @@ fn fast_snapshot_0() {
 }
 
 #[test]
+fn fast_snapshot_1() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 39,
+                target: 39,
+                container: 39,
+                action: Generic(GenericAction {
+                    value: I32(654311424),
+                    bool: true,
+                    key: 656877351,
+                    pos: 17578436819671263015,
+                    length: 1710228712612688883,
+                    prop: 10314409432589529071,
+                }),
+            },
+            Sync { from: 187, to: 59 },
+            Handle {
+                site: 39,
+                target: 39,
+                container: 39,
+                action: Generic(GenericAction {
+                    value: I32(656877351),
+                    bool: true,
+                    key: 656877351,
+                    pos: 2821279934824523559,
+                    length: 11020573209995047,
+                    prop: 2821266740028112896,
+                }),
+            },
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(454761243),
+                    bool: true,
+                    key: 454761243,
+                    pos: 1953184666628076853,
+                    length: 1953184666628070171,
+                    prop: 1953184666628070171,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,
