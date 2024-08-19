@@ -445,11 +445,14 @@ mod sst_binary_format {
 
     impl SsTableBuilder{
         pub fn new(block_size: usize)->Self{
+            let mut data = Vec::with_capacity(5);
+            data.put_u32(u32::from_be_bytes(MAGIC_NUMBER));
+            data.put_u8(CURRENT_SCHEMA_VERSION);
             Self{
                 block_builder: BlockBuilder::new(block_size),
                 first_key: Bytes::new(),
                 last_key: Bytes::new(),
-                data: Vec::new(),
+                data,
                 meta: Vec::new(),
                 block_size,
             }
@@ -484,13 +487,13 @@ mod sst_binary_format {
             self.data.extend_from_slice(&encoded_bytes);
         }
 
-        /// ┌─────────────────────────────────────────────────────────────────┐
-        /// │ SsTable                                                         │
-        /// │┌ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ┐│
-        /// │  Block Chunk   ...  │  Block Chunk    Block Meta │ meta offset  │
-        /// ││    bytes    │      │     bytes     │   bytes    │     u32     ││
-        /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ │
-        /// └─────────────────────────────────────────────────────────────────┘
+        /// ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+        /// │ SsTable                                                                                         │
+        /// │┌ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ┐│
+        /// │  Magic Number │ Schema Version │ Block Chunk   ...  │  Block Chunk    Block Meta │ meta offset  │
+        /// ││     u32      │       u8       │    bytes    │      │     bytes     │   bytes    │     u32     ││
+        /// │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ │
+        /// └─────────────────────────────────────────────────────────────────────────────────────────────────┘
         pub fn build(mut self)->SsTable{
             self.finish();
             let mut buf = self.data;
@@ -531,18 +534,16 @@ mod sst_binary_format {
         ///    - "Invalid magic number"
         ///    - "Invalid schema version"
         pub fn import_all(bytes: Bytes)-> LoroResult<Self>{
-            // let mut header = Bytes::split_to(&mut bytes, 5);
-            // let magic_number = header.get_u32();
-            // if magic_number != u32::from_be_bytes(MAGIC_NUMBER){
-            //     return Err(LoroError::DecodeError("Invalid magic number".into()));
-            // }
-            // let schema_version = header.get_u8();
-            // match schema_version{
-            //     CURRENT_SCHEMA_VERSION => {},
-            //     _ => return Err(LoroError::DecodeError(format!("Invalid schema version {}, 
-            //     current support max version is {}", schema_version, CURRENT_SCHEMA_VERSION).into())),
-            // }
-            // println!("bytes len2: {}", bytes.len());
+            let magic_number = u32::from_be_bytes((&bytes[..SIZE_OF_U32]).try_into().unwrap());
+            if magic_number != u32::from_be_bytes(MAGIC_NUMBER){
+                return Err(LoroError::DecodeError("Invalid magic number".into()));
+            }
+            let schema_version = bytes[SIZE_OF_U32];
+            match schema_version{
+                CURRENT_SCHEMA_VERSION => {},
+                _ => return Err(LoroError::DecodeError(format!("Invalid schema version {}, 
+                current support max version is {}", schema_version, CURRENT_SCHEMA_VERSION).into())),
+            }
             let data_len = bytes.len();
             let meta_offset = (&bytes[data_len-SIZE_OF_U32..]).get_u32() as usize;
             let raw_meta = &bytes[meta_offset..data_len-SIZE_OF_U32];
@@ -558,7 +559,7 @@ mod sst_binary_format {
             let offset_end = self.meta.get(block_idx+1).map_or(self.meta_offset, |m| m.offset);
             let block_length = offset_end - offset - SIZE_OF_U32;
             let raw_block_and_check = self.data.slice(offset..offset_end);
-
+            
             Block::decode(raw_block_and_check, block_length)
         }
     }
