@@ -309,9 +309,7 @@ impl HandlerTrait for TextHandler {
                 let t = t.try_lock().unwrap();
                 LoroValue::String(Arc::new(t.value.to_string()))
             }
-            MaybeDetached::Attached(a) => {
-                a.with_state(|state| state.as_richtext_state_mut().unwrap().get_value())
-            }
+            MaybeDetached::Attached(a) => a.get_value(),
         }
     }
 
@@ -2023,7 +2021,7 @@ impl TextHandler {
         match &self.inner {
             MaybeDetached::Detached(t) => t.try_lock().unwrap().value.to_string(),
             MaybeDetached::Attached(a) => {
-                a.with_state(|s| s.as_richtext_state_mut().unwrap().to_string_mut())
+                Arc::unwrap_or_clone(a.get_value().into_string().unwrap())
             }
         }
     }
@@ -3729,9 +3727,7 @@ pub mod counter {
                     let t = t.try_lock().unwrap();
                     t.value.into()
                 }
-                MaybeDetached::Attached(a) => {
-                    a.with_state(|state| state.as_counter_state_mut().unwrap().get_value())
-                }
+                MaybeDetached::Attached(a) => a.get_value(),
             }
         }
 

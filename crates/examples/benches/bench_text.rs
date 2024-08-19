@@ -5,7 +5,7 @@ use std::{
 };
 
 use bench_utils::TextAction;
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use dev_utils::ByteSize;
 use loro::LoroDoc;
 
@@ -97,6 +97,28 @@ fn bench_text(c: &mut Criterion) {
             |snapshot| {
                 let doc = LoroDoc::new();
                 doc.import(snapshot).unwrap();
+            },
+            criterion::BatchSize::LargeInput,
+        )
+    });
+
+    g.bench_function("B4x100 load and get value", |b| {
+        b.iter_batched(
+            || {
+                if doc_x100_snapshot.get().is_none() {
+                    let doc = apply_text_actions(&actions, 100);
+                    let snapshot = doc.export_fast_snapshot();
+                    println!("B4x100 fast_snapshot size: {:?}", ByteSize(snapshot.len()));
+                    doc_x100_snapshot.set(snapshot).unwrap();
+                }
+
+                doc_x100_snapshot.get().unwrap()
+            },
+            |snapshot| {
+                let doc = LoroDoc::new();
+                doc.import(snapshot).unwrap();
+                let text = doc.get_text("text");
+                black_box(text.to_string());
             },
             criterion::BatchSize::LargeInput,
         )
