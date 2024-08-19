@@ -263,7 +263,7 @@ impl MapState {
 
 mod snapshot {
     use fxhash::FxHashSet;
-    use loro_common::{IdLp, InternalString};
+    use loro_common::InternalString;
     use serde_columnar::Itertools;
 
     use crate::{

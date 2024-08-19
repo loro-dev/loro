@@ -1,7 +1,6 @@
 use crate::{oplog::ChangeStore, LoroDoc, OpLog};
 use bytes::Bytes;
-use fxhash::FxHashMap;
-use loro_common::{HasCounterSpan, LoroError, LoroResult, ID};
+use loro_common::{LoroError, LoroResult};
 
 use super::encode_reordered::import_changes_to_oplog;
 

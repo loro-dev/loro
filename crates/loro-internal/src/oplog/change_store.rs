@@ -855,7 +855,7 @@ impl Deref for BlockChangeRef {
 }
 
 impl BlockChangeRef {
-    pub fn get_op_with_counter(&self, counter: Counter) -> Option<BlockOpRef> {
+    pub(crate) fn get_op_with_counter(&self, counter: Counter) -> Option<BlockOpRef> {
         if counter >= self.ctr_end() {
             return None;
         }
@@ -870,7 +870,7 @@ impl BlockChangeRef {
 }
 
 #[derive(Clone, Debug)]
-pub struct BlockOpRef {
+pub(crate) struct BlockOpRef {
     pub block: Arc<ChangesBlock>,
     pub change_index: usize,
     pub op_index: usize,
@@ -914,7 +914,7 @@ impl ChangesBlock {
         &self.content
     }
 
-    fn new(change: Change, a: &SharedArena) -> Self {
+    fn new(change: Change, _a: &SharedArena) -> Self {
         let atom_len = change.atom_len();
         let counter_range = (change.id.counter, change.id.counter + atom_len as Counter);
         let lamport_range = (change.lamport, change.lamport + atom_len as Lamport);
@@ -931,6 +931,7 @@ impl ChangesBlock {
         }
     }
 
+    #[allow(unused)]
     fn cmp_id(&self, id: ID) -> Ordering {
         self.peer.cmp(&id.peer).then_with(|| {
             if self.counter_range.0 > id.counter {
@@ -943,6 +944,7 @@ impl ChangesBlock {
         })
     }
 
+    #[allow(unused)]
     fn cmp_idlp(&self, idlp: (PeerID, Lamport)) -> Ordering {
         self.peer.cmp(&idlp.0).then_with(|| {
             if self.lamport_range.0 > idlp.1 {
@@ -955,6 +957,7 @@ impl ChangesBlock {
         })
     }
 
+    #[allow(unused)]
     fn is_full(&self) -> bool {
         self.estimated_size > MAX_BLOCK_SIZE
     }
@@ -1083,10 +1086,12 @@ impl ChangesBlock {
         }
     }
 
+    #[allow(unused)]
     fn get_changes(&mut self, a: &SharedArena) -> LoroResult<&Vec<Change>> {
         self.content.changes(a)
     }
 
+    #[allow(unused)]
     fn id(&self) -> ID {
         ID::new(self.peer, self.counter_range.0)
     }
@@ -1143,6 +1148,7 @@ impl ChangesBlockContent {
         dag_nodes
     }
 
+    #[allow(unused)]
     pub fn changes(&mut self, a: &SharedArena) -> LoroResult<&Vec<Change>> {
         match self {
             ChangesBlockContent::Changes(changes) => Ok(changes),
@@ -1266,6 +1272,7 @@ impl ChangesBlockBytes {
         self.header.get().unwrap().n_changes
     }
 
+    #[allow(unused)]
     fn find_deps_for(&mut self, id: ID) -> Frontiers {
         unimplemented!()
     }

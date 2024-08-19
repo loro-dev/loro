@@ -213,8 +213,8 @@ where
         stack.push(*dep);
     }
 
-    while !stack.is_empty() {
-        let node_id = stack.pop().unwrap();
+    while let Some(node_id) = stack.pop() {
+        
         let node = get(node_id).unwrap();
         let node_id_start = node.id_start();
         if !visited.contains(&node_id_start) {

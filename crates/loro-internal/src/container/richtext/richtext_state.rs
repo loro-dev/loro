@@ -1955,8 +1955,8 @@ impl RichtextState {
             }
 
             if let RichtextStateChunk::Text(s) = span.elem {
-                match unicode_slice(&s.as_str(), start, end) {
-                    Ok(x) => ans.push_str(&x),
+                match unicode_slice(s.as_str(), start, end) {
+                    Ok(x) => ans.push_str(x),
                     Err(()) => return Err(LoroError::UTF16InUnicodeCodePoint { pos: pos + len }),
                 }
             }

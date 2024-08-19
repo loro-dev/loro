@@ -1371,7 +1371,7 @@ impl TextHandler {
     pub fn char_at(&self, pos: usize) -> LoroResult<char> {
         if pos >= self.len_event() {
             return Err(LoroError::OutOfBound {
-                pos: pos,
+                pos,
                 len: self.len_event(),
                 info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
             });
@@ -1391,7 +1391,7 @@ impl TextHandler {
             Ok(c)
         } else {
             Err(LoroError::OutOfBound {
-                pos: pos,
+                pos,
                 len: self.len_event(),
                 info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
             })
@@ -1704,10 +1704,12 @@ impl TextHandler {
         let inner = self.inner.try_attached_state()?;
         let s = tracing::span!(tracing::Level::INFO, "delete", "pos={} len={}", pos, len);
         let _e = s.enter();
-        let ranges = match inner.with_state(|state| {
+        let f = |state: &mut State| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
             richtext_state.get_text_entity_ranges_in_event_index_range(pos, len, pos_type)
-        }) {
+        };
+
+        let ranges = match inner.with_state(f) {
             Err(x) => return Err(x),
             Ok(x) => x,
         };
@@ -3230,7 +3232,7 @@ impl MovableListHandler {
                         loro_delta::DeltaItem::Replace {
                             value,
                             delete,
-                            attr,
+                            attr: _,
                         } => {
                             if *delete > 0 {
                                 // skip the deletion if it is already processed by moving

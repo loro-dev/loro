@@ -10,7 +10,6 @@ use bytes::Bytes;
 use encode::{decode_cids, CidOffsetEncoder};
 use fxhash::FxHashMap;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
-use tracing::trace;
 
 use super::{
     unknown_state::UnknownState, ContainerCreationContext, ContainerState, ListState, MapState,
@@ -100,6 +99,7 @@ impl ContainerStore {
         })
     }
 
+    #[allow(unused)]
     pub fn get_container(&mut self, idx: ContainerIdx) -> Option<&State> {
         self.store.get_mut(&idx).map(|x| {
             x.get_state(
@@ -151,14 +151,14 @@ impl ContainerStore {
         // prepend 4 zeros
         bytes.resize(4, 0);
         // append the encoded cids
-        id_encoder.to_io(&mut bytes);
+        id_encoder.write_to_io(&mut bytes);
         // set the first 4 bytes of bytes to the length of itself
         let len = bytes.len() as u32;
         bytes[0] = (len & 0xff) as u8;
         bytes[1] = ((len >> 8) & 0xff) as u8;
         bytes[2] = ((len >> 16) & 0xff) as u8;
         bytes[3] = ((len >> 24) & 0xff) as u8;
-        for (id, b) in id_bytes_pairs.iter() {
+        for (_id, b) in id_bytes_pairs.iter() {
             bytes.extend_from_slice(b);
         }
 
@@ -211,6 +211,7 @@ impl ContainerStore {
         self.store.len()
     }
 
+    #[allow(unused)]
     pub fn iter(&self) -> impl Iterator<Item = (&ContainerIdx, &ContainerWrapper)> {
         self.store.iter()
     }
@@ -264,6 +265,7 @@ impl ContainerStore {
         }
     }
 
+    #[allow(unused)]
     fn check_eq_after_parsing(&mut self, other: &mut ContainerStore) {
         if self.store.len() != other.store.len() {
             panic!("store len mismatch");
@@ -347,6 +349,7 @@ impl ContainerWrapper {
     }
 
     /// It will not decode the state if it is not decoded
+    #[allow(unused)]
     pub fn try_get_state(&self) -> Option<&State> {
         self.state.as_ref()
     }
@@ -423,6 +426,7 @@ impl ContainerWrapper {
         }
     }
 
+    #[allow(unused)]
     pub fn ensure_value(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> &LoroValue {
         if self.value.is_some() {
         } else if self.state.is_some() {
@@ -512,6 +516,7 @@ impl ContainerWrapper {
         self.state.as_ref().unwrap().estimate_size()
     }
 
+    #[allow(unused)]
     pub(crate) fn is_state_empty(&self) -> bool {
         if let Some(state) = self.state.as_ref() {
             return state.is_state_empty();
@@ -603,7 +608,7 @@ mod encode {
             self.offsets.append(offset).unwrap();
         }
 
-        pub fn to_io<W: Write>(self, w: W) {
+        pub fn write_to_io<W: Write>(self, w: W) {
             let mut strings = Vec::with_capacity(self.strings.iter().map(|s| s.len() + 4).sum());
             for s in self.strings {
                 leb128::write::unsigned(&mut strings, s.len() as u64).unwrap();
@@ -726,7 +731,7 @@ mod encode {
                 encoder.push(cid, *offset);
             }
             let mut bytes = Vec::new();
-            encoder.to_io(&mut bytes);
+            encoder.write_to_io(&mut bytes);
 
             let cids = decode_cids(&bytes).unwrap();
             assert_eq!(&cids, &input)
@@ -737,7 +742,7 @@ mod encode {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{ListHandler, LoroDoc, MapHandler, MovableListHandler, TextHandler};
+    use crate::{ListHandler, LoroDoc, MapHandler, MovableListHandler};
 
     fn decode_container_store(bytes: Bytes) -> ContainerStore {
         let mut new_store = ContainerStore::new(

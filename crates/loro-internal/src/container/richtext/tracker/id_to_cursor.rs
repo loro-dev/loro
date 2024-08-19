@@ -303,16 +303,6 @@ pub(super) enum IterCursor {
     },
 }
 
-impl IterCursor {
-    fn len(&self) -> usize {
-        match self {
-            IterCursor::Insert { id_span, .. } => id_span.atom_len(),
-            IterCursor::Delete(id_span) => id_span.atom_len(),
-            IterCursor::Move { .. } => 1,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub(super) enum Cursor {
     Insert(InsertSet),
@@ -334,7 +324,7 @@ mod insert_set {
     use smallvec::SmallVec;
 
     #[derive(Debug)]
-    pub(super) enum InsertSet {
+    pub(crate) enum InsertSet {
         Small(SmallInsertSet),
         Large(LargeInsertSet),
     }
@@ -550,7 +540,7 @@ mod insert_set {
     }
 
     #[derive(Debug)]
-    pub(super) struct SmallInsertSet {
+    pub(crate) struct SmallInsertSet {
         pub set: SmallVec<[Insert; 1]>,
         pub len: u32,
     }
@@ -716,7 +706,7 @@ mod insert_set {
     }
 
     #[derive(Debug)]
-    pub(super) struct LargeInsertSet {
+    pub(crate) struct LargeInsertSet {
         tree: Box<BTree<InsertSetBTreeTrait>>,
     }
 

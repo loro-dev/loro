@@ -1,7 +1,6 @@
 use std::{
     collections::VecDeque,
     fmt::Debug,
-    ops::{Deref, DerefMut},
     sync::{Arc, Mutex},
 };
 

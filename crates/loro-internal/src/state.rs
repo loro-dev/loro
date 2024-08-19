@@ -843,6 +843,7 @@ impl DocState {
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
+    #[allow(unused)]
     pub(crate) fn get_tree<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Option<&mut TreeState> {
         let idx = self.id_to_idx(id, ContainerType::Tree);
         self.store

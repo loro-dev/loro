@@ -1,3 +1,5 @@
+// TODO: use boolrle to encode the has_effects array
+#![allow(dead_code)]
 use std::io::{Read, Write};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

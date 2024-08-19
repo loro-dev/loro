@@ -1215,6 +1215,7 @@ fn undo_tree_concurrent_delete2() -> LoroResult<()> {
     Ok(())
 }
 
+/// ```text
 ///                    ┌ ─ ─ ─ ─            ┌ ─ ─ ─ ─
 ///                      Peer 1 │             Peer 2 │
 ///                    └ ─ ─ ─ ─            └ ─ ─ ─ ─
@@ -1259,6 +1260,7 @@ fn undo_tree_concurrent_delete2() -> LoroResult<()> {
 ///                      Cannot │
 ///                    │  Redo
 ///                     ─ ─ ─ ─ ┘
+/// ```
 #[test]
 fn undo_redo_when_collab() -> anyhow::Result<()> {
     let doc_a = LoroDoc::new();

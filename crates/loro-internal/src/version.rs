@@ -2,7 +2,6 @@ use loro_common::{HasCounter, HasCounterSpan, IdSpanVector};
 use smallvec::smallvec;
 use std::{
     cmp::Ordering,
-    iter,
     ops::{Deref, DerefMut},
 };
 
@@ -231,6 +230,7 @@ impl Frontiers {
         Self(SmallVec::with_capacity(cap))
     }
 
+    #[allow(unused)]
     pub(crate) fn merge_frontiers(&mut self, new_frontiers: &Frontiers) {
         if self.len() <= 1 {
             if self == new_frontiers {

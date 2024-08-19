@@ -3,8 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use loro_common::{CounterSpan, HasIdSpan, HasLamport};
-use rle::RleCollection;
+use loro_common::{CounterSpan, HasIdSpan};
 
 use crate::{OpLog, VersionVector};
 

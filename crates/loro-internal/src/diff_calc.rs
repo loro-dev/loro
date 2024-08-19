@@ -1,4 +1,4 @@
-use std::{num::NonZeroU16, sync::Arc, time::Instant};
+use std::{num::NonZeroU16, sync::Arc};
 
 #[cfg(feature = "counter")]
 mod counter;
@@ -385,8 +385,7 @@ impl DiffCalculator {
             }
         }
 
-        let diff = ans.into_values().map(|x| x.1).collect_vec();
-        diff
+        ans.into_values().map(|x| x.1).collect_vec()
     }
 
     // TODO: we may remove depth info
@@ -633,7 +632,7 @@ impl std::fmt::Debug for ListDiffCalculator {
 }
 
 impl DiffCalculatorTrait for ListDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode) {
+    fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, _mode: DiffMode) {
         if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
             self.tracker = Box::new(RichtextTracker::new_with_unknown());
             self.start_vv = vv.clone();
@@ -931,7 +930,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             RichtextCalcMode::Crdt {
                 tracker,
                 styles,
-                start_vv,
+                start_vv: _,
             } => {
                 if let Some(vv) = vv {
                     tracker.checkout(vv);
@@ -1144,7 +1143,6 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 
 #[derive(Debug)]
 pub(crate) struct MovableListDiffCalculator {
-    container_idx: ContainerIdx,
     list: Box<ListDiffCalculator>,
     changed_elements: FxHashMap<CompactIdLp, ElementDelta>,
     current_mode: DiffMode,
@@ -1451,9 +1449,8 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
 }
 
 impl MovableListDiffCalculator {
-    fn new(container: ContainerIdx) -> MovableListDiffCalculator {
+    fn new(_container: ContainerIdx) -> MovableListDiffCalculator {
         MovableListDiffCalculator {
-            container_idx: container,
             changed_elements: Default::default(),
             list: Default::default(),
             current_mode: DiffMode::Checkout,

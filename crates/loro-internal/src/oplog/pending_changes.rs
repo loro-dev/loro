@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, ops::Deref};
 
 use crate::{change::Change, OpLog, VersionVector};
 use fxhash::FxHashMap;
-use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, HasLamportSpan, PeerID, ID};
+use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, PeerID, ID};
 use smallvec::SmallVec;
 
 #[derive(Debug)]

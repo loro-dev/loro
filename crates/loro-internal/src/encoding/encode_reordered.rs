@@ -5,8 +5,8 @@ use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp,
-    LoroError, LoroResult, PeerID, TreeID, ID,
+    ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, IdLp, LoroError,
+    LoroResult, PeerID, TreeID, ID,
 };
 use rle::HasLength;
 use serde_columnar::{columnar, ColumnarError};
@@ -1229,7 +1229,7 @@ mod encode {
                 #[cfg(feature = "counter")]
                 FutureInnerContent::Counter(c) => {
                     let c_abs = c.abs();
-                    if c_abs.fract() < std::f64::EPSILON && (c_abs as i64) < (2 << 26) {
+                    if c_abs.fract() < f64::EPSILON && (c_abs as i64) < (2 << 26) {
                         Value::I64(*c as i64)
                     } else {
                         Value::F64(*c)

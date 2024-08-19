@@ -1,5 +1,7 @@
+#![allow(unused)]
+
 use fxhash::FxHashMap;
-use loro_common::{IdFull, IdLp, TreeID, ID};
+use loro_common::{IdFull, IdLp, TreeID};
 
 use crate::VersionVector;
 

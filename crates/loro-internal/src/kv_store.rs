@@ -4,7 +4,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub type CompareFn<'a> = &'a mut dyn FnMut(&Bytes, &Bytes) -> std::cmp::Ordering;
 pub trait KvStore: std::fmt::Debug + Send + Sync {
     fn get(&self, key: &[u8]) -> Option<Bytes>;
     fn set(&mut self, key: &[u8], value: Bytes);
@@ -18,27 +17,9 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
     ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)> + '_>;
     fn len(&self) -> usize;
     fn size(&self) -> usize;
-    /// Performs a binary search over the keys in the store.
-    ///
-    /// The comparator function should return an order code that indicates
-    /// whether its argument is `Less`, `Equal` or `Greater` the desired
-    /// target.
-    fn binary_search_by(
-        &self,
-        start: Bound<&[u8]>,
-        end: Bound<&[u8]>,
-        f: CompareFn,
-    ) -> Option<(Bytes, Bytes)>;
     fn export_all(&self) -> Bytes;
     fn import_all(&mut self, bytes: Bytes) -> Result<(), String>;
     fn clone_store(&self) -> Arc<Mutex<dyn KvStore>>;
-}
-
-pub trait KvEntry {
-    type Key;
-    type Value;
-
-    fn parse(key: Bytes, value: Bytes) -> (Self::Key, Self::Value);
 }
 
 mod default_binary_format {
@@ -198,24 +179,6 @@ mod mem {
 
         fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
             default_binary_format::import(self, bytes)
-        }
-
-        fn binary_search_by(
-            &self,
-            start: Bound<&[u8]>,
-            end: Bound<&[u8]>,
-            f: CompareFn,
-        ) -> Option<(Bytes, Bytes)> {
-            // PERF: This is super slow
-            for (k, v) in self.range::<[u8], _>((start, end)) {
-                match f(k, v) {
-                    std::cmp::Ordering::Equal => return Some((k.clone(), v.clone())),
-                    std::cmp::Ordering::Less => continue,
-                    std::cmp::Ordering::Greater => break,
-                }
-            }
-
-            None
         }
 
         fn clone_store(&self) -> Arc<Mutex<dyn KvStore>> {

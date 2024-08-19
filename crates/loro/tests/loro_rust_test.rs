@@ -5,7 +5,7 @@ use std::{
 
 use loro::{
     awareness::Awareness, loro_value, FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap,
-    LoroText, LoroValue, ToJson,
+    LoroText, ToJson,
 };
 use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
 use serde_json::json;

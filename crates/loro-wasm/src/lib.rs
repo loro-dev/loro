@@ -1,6 +1,7 @@
 //! Loro WASM bindings.
 #![allow(non_snake_case)]
 #![allow(clippy::empty_docs)]
+#![allow(clippy::doc_lazy_continuation)]
 #![warn(missing_docs)]
 
 use convert::resolved_diff_to_js;
@@ -1404,8 +1405,8 @@ fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDoc>) -> JsValue {
 }
 
 /// /**
-/// * The concrete event of Loro.
-/// */
+///  * The concrete event of Loro.
+///  */
 /// export interface LoroEvent {
 ///   /**
 ///    * The container ID of the event's target.

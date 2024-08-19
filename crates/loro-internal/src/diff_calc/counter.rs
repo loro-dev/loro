@@ -8,21 +8,19 @@ use super::{DiffCalculatorTrait, DiffMode};
 
 #[derive(Debug)]
 pub(crate) struct CounterDiffCalculator {
-    idx: ContainerIdx,
     ops: BTreeMap<ID, f64>,
 }
 
 impl CounterDiffCalculator {
-    pub(crate) fn new(idx: ContainerIdx) -> Self {
+    pub(crate) fn new(_idx: ContainerIdx) -> Self {
         Self {
-            idx,
             ops: BTreeMap::new(),
         }
     }
 }
 
 impl DiffCalculatorTrait for CounterDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector, mode: DiffMode) {}
+    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector, _mode: DiffMode) {}
 
     fn apply_change(
         &mut self,

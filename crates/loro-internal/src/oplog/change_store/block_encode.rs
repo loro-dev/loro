@@ -71,7 +71,6 @@ use std::collections::BTreeSet;
 use std::io::Write;
 
 use fractional_index::FractionalIndex;
-use fxhash::FxHashSet;
 use loro_common::{
     ContainerID, Counter, HasCounterSpan, HasLamportSpan, InternalString, Lamport, LoroError,
     LoroResult, PeerID, TreeID, ID,
@@ -616,6 +615,7 @@ pub fn decode_block_range(
 }
 
 /// Ensure the cids in header are decoded
+#[allow(unused)]
 pub fn decode_cids(
     bytes: &[u8],
     header: Option<ChangesBlockHeader>,

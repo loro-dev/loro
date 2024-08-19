@@ -273,7 +273,7 @@ impl OpLog {
     }
 
     pub(crate) fn frontiers(&self) -> &Frontiers {
-        &self.dag.frontiers()
+        self.dag.frontiers()
     }
 
     /// - Ordering::Less means self is less than target or parallel

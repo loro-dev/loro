@@ -11,7 +11,6 @@ use crate::{
     change::Change,
     container::{list::list_op::ListOp, map::MapSet},
     op::{ListSlice, RawOp, RawOpContent},
-    oplog::ChangeStore,
     DocState, OpLog,
 };
 

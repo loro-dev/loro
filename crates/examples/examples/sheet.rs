@@ -1,6 +1,5 @@
-use dev_utils::{get_mem_usage, ByteSize};
+use dev_utils::get_mem_usage;
 use examples::sheet::init_large_sheet;
-use loro::ID;
 
 pub fn main() {
     dev_utils::setup_test_log();

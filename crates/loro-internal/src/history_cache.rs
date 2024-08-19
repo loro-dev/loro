@@ -8,7 +8,7 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerType, Counter, HasId, HasLamport, IdFull, IdLp, InternalString, LoroValue, PeerID, ID,
+    ContainerType, Counter, HasLamport, IdFull, IdLp, InternalString, LoroValue, PeerID, ID,
 };
 use rle::HasLength;
 
@@ -16,7 +16,6 @@ use crate::{
     arena::SharedArena,
     change::{Change, Lamport},
     container::{idx::ContainerIdx, list::list_op::InnerListOp, tree::tree_op::TreeOp},
-    delta::MovableListInnerDelta,
     diff_calc::tree::TreeCacheForDiff,
     encoding::value_register::ValueRegister,
     op::{InnerContent, RichOp},
@@ -31,7 +30,6 @@ use crate::{
 /// This cache provides a faster way to do that than scanning the oplog.
 #[derive(Debug)]
 pub(crate) struct ContainerHistoryCache {
-    arena: SharedArena,
     change_store: ChangeStore,
     for_checkout: Option<ForCheckout>,
     for_importing: Option<FxHashMap<ContainerIdx, HistoryCacheForImporting>>,
@@ -54,18 +52,16 @@ impl HistoryCacheTrait for ForCheckout {
 }
 
 impl ContainerHistoryCache {
-    pub(crate) fn fork(&self, arena: SharedArena, change_store: ChangeStore) -> Self {
+    pub(crate) fn fork(&self, _arena: SharedArena, change_store: ChangeStore) -> Self {
         Self {
-            arena,
             change_store,
             for_checkout: None,
             for_importing: None,
         }
     }
 
-    pub(crate) fn new(arena: SharedArena, change_store: ChangeStore) -> Self {
+    pub(crate) fn new(_arena: SharedArena, change_store: ChangeStore) -> Self {
         Self {
-            arena,
             change_store,
             for_checkout: Default::default(),
             for_importing: Default::default(),
@@ -245,16 +241,6 @@ pub(crate) struct GroupedMapOpInfo<T = Option<LoroValue>> {
     pub(crate) peer: PeerID,
 }
 
-impl<T> GroupedMapOpInfo<T> {
-    pub(crate) fn id(&self) -> ID {
-        ID::new(self.peer, self.counter)
-    }
-
-    pub(crate) fn idlp(&self) -> IdLp {
-        IdLp::new(self.peer, self.lamport)
-    }
-}
-
 impl<T> PartialEq for GroupedMapOpInfo<T> {
     fn eq(&self, other: &Self) -> bool {
         self.lamport == other.lamport && self.peer == other.peer
@@ -417,7 +403,7 @@ impl HistoryCacheTrait for MovableListHistoryCache {
         let cur_id = op.id_full();
         match &op.op().content {
             InnerContent::List(l) => match l {
-                crate::container::list::list_op::InnerListOp::Move { from, elem_id, to } => {
+                crate::container::list::list_op::InnerListOp::Move { elem_id, .. } => {
                     self.move_set.insert(MovableListInnerDeltaEntry {
                         element_lamport: elem_id.lamport,
                         element_peer: elem_id.peer,
@@ -426,7 +412,7 @@ impl HistoryCacheTrait for MovableListHistoryCache {
                         counter: cur_id.counter,
                     });
                 }
-                crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
+                crate::container::list::list_op::InnerListOp::Set { elem_id, .. } => {
                     self.set_set.insert(MovableListInnerDeltaEntry {
                         element_lamport: elem_id.lamport,
                         element_peer: elem_id.peer,

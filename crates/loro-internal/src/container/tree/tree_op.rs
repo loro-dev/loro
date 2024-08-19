@@ -39,6 +39,7 @@ impl TreeOp {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn parent(&self) -> Option<TreeID> {
         match self {
             TreeOp::Create { parent, .. } => *parent,

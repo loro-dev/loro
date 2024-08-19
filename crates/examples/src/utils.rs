@@ -51,7 +51,7 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
         println!("Snapshot compression time: {:?}", start.elapsed());
 
         let loop_start = Instant::now();
-        let mut new_doc = LoroDoc::new();
+        let mut new_doc;
         let mem = dev_utils::get_mem_usage();
         loop {
             new_doc = LoroDoc::new();

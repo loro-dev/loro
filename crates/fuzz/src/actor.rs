@@ -12,7 +12,7 @@ use loro::{
     Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, UndoManager, ID,
 };
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use tracing::{info_span, trace};
+use tracing::info_span;
 
 use crate::{
     container::{CounterActor, ListActor, MovableListActor, TextActor, TreeActor},

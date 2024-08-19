@@ -476,16 +476,6 @@ pub struct RawTreeMove {
     pub position_idx: usize,
 }
 
-impl RawTreeMove {
-    pub fn as_tree_op(&self, peer_ids: &[u64]) -> LoroResult<TreeOp> {
-        unimplemented!()
-    }
-
-    pub fn from_tree_op<'p, 'a: 'p>(op: &'a TreeOp, registers: &mut ValueRegister<PeerID>) -> Self {
-        unimplemented!()
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EncodedTreeMove {
     pub target_idx: usize,
@@ -908,6 +898,7 @@ impl<'a> ValueReader<'a> {
         Ok(ans)
     }
 
+    #[allow(unused)]
     fn read_binary_vec(&mut self) -> LoroResult<Vec<u8>> {
         let len = self.read_usize()?;
         if self.raw.len() < len {

@@ -1,11 +1,8 @@
 use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 use serde_columnar::columnar;
-use std::{
-    sync::{Arc, Mutex, Weak},
-    time::Instant,
-};
-use tracing::{instrument, trace, warn};
+use std::sync::{Arc, Mutex, Weak};
+use tracing::{instrument, warn};
 
 use fxhash::FxHashMap;
 use generic_btree::BTree;

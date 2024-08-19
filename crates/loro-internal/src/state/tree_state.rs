@@ -706,6 +706,7 @@ impl TreeState {
         self.get_all_tree_nodes_under(TreeParentId::Root)
     }
 
+    #[allow(unused)]
     pub(crate) fn deleted_tree_nodes(&self) -> Vec<TreeNode> {
         self.get_all_tree_nodes_under(TreeParentId::Deleted)
     }
@@ -1338,8 +1339,8 @@ mod snapshot {
     use fractional_index::FractionalIndex;
     use fxhash::FxHashMap;
     use itertools::Itertools;
-    use loro_common::{Counter, IdFull, PeerID, TreeID, ID};
-    use serde::{Deserialize as _, Serialize as _};
+    use loro_common::{IdFull, PeerID, TreeID};
+
     use serde_columnar::columnar;
 
     use crate::{
