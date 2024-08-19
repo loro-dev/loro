@@ -119,16 +119,14 @@ mod default_binary_format {
 
 mod sst_binary_format {
     // Reference: https://github.com/skyzh/mini-lsm
-    use std::{cmp::Ordering, collections::BTreeMap, ops::{Bound, Range}, sync::Arc};
+    use std::{ ops::{Bound, Range}, sync::Arc};
 
     use bytes::{Buf, BufMut, Bytes};
-    use fxhash::{FxHashMap, FxHashSet};
+    use fxhash::FxHashSet;
     use loro_common::{LoroError, LoroResult};
     use once_cell::sync::OnceCell;
 
     use crate::kv_store::get_common_prefix_len_and_strip;
-
-    use super::KvStore;
 
     const MAGIC_NUMBER: [u8;4] = *b"LORO";
     const CURRENT_SCHEMA_VERSION: u8 = 0;
@@ -202,7 +200,6 @@ mod sst_binary_format {
             iter.prev_to_key(key);
             iter
         }
-
 
         pub fn new_scan(block: Arc<Block>, start: Bound<&[u8]>, end: Bound<&[u8]>)->Self{
             let mut iter = match start{
