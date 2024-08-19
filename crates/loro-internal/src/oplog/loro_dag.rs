@@ -227,14 +227,15 @@ impl AppDag {
     }
 
     fn update_version_on_new_change(&mut self, change: &Change) {
+        let id_last = change.id_last();
         self.frontiers
-            .update_frontiers_on_new_change(change.id_last(), &change.deps);
+            .update_frontiers_on_new_change(id_last, &change.deps);
         assert_eq!(
             self.vv.get(&change.id.peer).copied().unwrap_or(0),
             change.id.counter
         );
 
-        self.vv.extend_to_include_last_id(change.id_last());
+        self.vv.extend_to_include_last_id(id_last);
     }
 
     pub(super) fn lazy_load_last_of_peer(&mut self, peer: u64) {

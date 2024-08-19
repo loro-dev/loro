@@ -50,6 +50,8 @@ pub struct ChangeStore {
     ///
     /// We cannot directly write into the external_kv except from the initial load
     external_kv: Arc<Mutex<dyn KvStore>>,
+    /// The version vector of the external kv store.
+    external_vv: Arc<Mutex<VersionVector>>,
     merge_interval: Arc<AtomicI64>,
 }
 
@@ -101,6 +103,7 @@ impl ChangeStore {
                 mem_parsed_kv: BTreeMap::new(),
             })),
             arena: a.clone(),
+            external_vv: Arc::new(Mutex::new(VersionVector::new())),
             external_kv: Arc::new(Mutex::new(BTreeMap::new())),
             merge_interval,
         }
@@ -296,6 +299,7 @@ impl ChangeStore {
                 mem_parsed_kv: BTreeMap::new(),
             })),
             arena,
+            external_vv: self.external_vv.clone(),
             external_kv: self.external_kv.lock().unwrap().clone_store(),
             merge_interval,
         }
@@ -341,6 +345,7 @@ mod mut_external_kv {
                 kv_store = self.external_kv.lock().unwrap();
             }
 
+            *self.external_vv.lock().unwrap() = vv.clone();
             let frontiers_bytes = kv_store.get(b"fr").unwrap_or_default();
             let frontiers = Frontiers::decode(&frontiers_bytes).unwrap();
             let mut max_lamport = None;
@@ -392,14 +397,26 @@ mod mut_external_kv {
         pub(crate) fn flush_and_compact(&self, vv: &VersionVector, frontiers: &Frontiers) {
             let mut inner = self.inner.lock().unwrap();
             let mut store = self.external_kv.lock().unwrap();
+            let mut external_vv = self.external_vv.lock().unwrap();
             for (id, block) in inner.mem_parsed_kv.iter_mut() {
                 if !block.flushed {
+                    let id_bytes = id.to_bytes();
+                    let counter_start = external_vv.get(&id.peer).copied().unwrap_or(0);
+                    assert!(
+                        counter_start >= block.counter_range.0
+                            && counter_start < block.counter_range.1
+                    );
+                    if counter_start > block.counter_range.0 {
+                        assert!(store.get(&id_bytes).is_some());
+                    }
+                    external_vv.insert(id.peer, block.counter_range.1);
                     let bytes = block.to_bytes(&self.arena);
-                    store.set(&id.to_bytes(), bytes.bytes);
+                    store.set(&id_bytes, bytes.bytes);
                     Arc::make_mut(block).flushed = true;
                 }
             }
 
+            assert_eq!(&*external_vv, vv);
             let vv_bytes = vv.encode();
             let frontiers_bytes = frontiers.encode();
             store.set(VV_KEY, vv_bytes.into());
@@ -1291,7 +1308,7 @@ mod test {
         let oplog = doc.oplog().lock().unwrap();
         let bytes = oplog
             .change_store
-            .encode_all(&Default::default(), &Default::default());
+            .encode_all(oplog.vv(), oplog.dag.frontiers());
         let store = ChangeStore::new_for_test();
         let _ = store.import_all(bytes.clone()).unwrap();
         assert_eq!(store.external_kv.lock().unwrap().export_all(), bytes);
