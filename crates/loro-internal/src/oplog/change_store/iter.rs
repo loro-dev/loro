@@ -8,7 +8,7 @@ use rle::RleCollection;
 
 use crate::{OpLog, VersionVector};
 
-use super::{change_store::ChangesBlock, BlockChangeRef};
+use super::{BlockChangeRef, ChangesBlock};
 
 pub(crate) struct PeerChangesIter {
     blocks: VecDeque<Arc<ChangesBlock>>,

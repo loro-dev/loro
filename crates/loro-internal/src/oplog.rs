@@ -1,5 +1,4 @@
 mod change_store;
-mod iter;
 pub(crate) mod loro_dag;
 mod pending_changes;
 
@@ -10,6 +9,9 @@ use std::rc::Rc;
 use std::sync::Mutex;
 use tracing::{debug, instrument, trace, trace_span};
 
+use self::change_store::iter::MergedChangeIter;
+use self::pending_changes::PendingChanges;
+use super::arena::SharedArena;
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;
 use crate::container::list::list_op;
@@ -24,16 +26,12 @@ use crate::span::{HasCounterSpan, HasLamportSpan};
 use crate::version::{Frontiers, VersionVector};
 use crate::LoroError;
 use change_store::BlockOpRef;
-pub use change_store::{BlockChangeRef, ChangeStore};
 use loro_common::{IdLp, IdSpan};
 use rle::{HasLength, RleVec, Sliceable};
 use smallvec::SmallVec;
 
-use self::iter::MergedChangeIter;
 pub use self::loro_dag::{AppDag, AppDagNode, FrontiersNotIncluded};
-use self::pending_changes::PendingChanges;
-
-use super::arena::SharedArena;
+pub use change_store::{BlockChangeRef, ChangeStore};
 
 /// [OpLog] store all the ops i.e. the history.
 /// It allows multiple [AppState] to attach to it.
