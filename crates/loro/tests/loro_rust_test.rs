@@ -516,7 +516,7 @@ fn prelim_support() -> LoroResult<()> {
     let map = root_map.insert_container("child_map", map)?;
     // `map` is now attached to the doc
     map.insert("1", "223")?; // "223" now presents in the json value of doc
-    let list = map.insert_container("list", LoroList::new())?; // creating subcontainer will be easier
+    let list = map.insert_container("list", LoroList::new())?; // creating sub-container will be easier
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
@@ -831,8 +831,8 @@ fn get_out_of_bound_cursor() {
     text.get_cursor(5, loro_internal::cursor::Side::Right);
     let list = a.get_list("list");
     list.get_cursor(5, loro_internal::cursor::Side::Right);
-    let mlist = a.get_movable_list("list");
-    mlist.get_cursor(5, loro_internal::cursor::Side::Right);
+    let m_list = a.get_movable_list("list");
+    m_list.get_cursor(5, loro_internal::cursor::Side::Right);
 }
 
 #[test]

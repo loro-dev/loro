@@ -10,7 +10,6 @@ use crate::{
     dag::DagUtils,
     delta::{TreeDelta, TreeDeltaItem, TreeInternalDiff},
     event::InternalDiff,
-    history_cache::HasImportingCacheMark,
     state::TreeParentId,
     version::Frontiers,
     OpLog, VersionVector,
