@@ -411,11 +411,6 @@ mod sst_binary_format {
                     self.next_key.extend_from_slice(&rest[..key_suffix_len]);
                     rest.advance(key_suffix_len);
                     let value_len = rest.get_u16() as usize;
-
-                    if &self.next_key == b"fr" && value_len == 3{
-                        println!();
-                    }
-
                     let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len + SIZE_OF_U16;
                     self.next_value_range = value_start..value_start + value_len;
                     rest.advance(value_len);
@@ -1623,16 +1618,12 @@ mod mem {
         }
     
         fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
-            println!("\n\nimport_all: {:?}", bytes);
             if bytes.is_empty(){
                 self.ss_table = None;
                 return Ok(());
             }
             let ss_table = SsTable::import_all(bytes).map_err(|e| e.to_string())?;
             self.ss_table = Some(ss_table);
-            for (k, v) in self.scan(Bound::Unbounded, Bound::Unbounded){
-                println!("k: {:?}, v: {:?}", k, v);
-            }
             Ok(())
         }
     
