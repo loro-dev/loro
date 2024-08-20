@@ -105,6 +105,7 @@ impl ChangeStore {
             arena: a.clone(),
             external_vv: Arc::new(Mutex::new(VersionVector::new())),
             external_kv: Arc::new(Mutex::new(MemKvStore::default())),
+            // external_kv: Arc::new(Mutex::new(BTreeMap::default())),
             merge_interval,
         }
     }

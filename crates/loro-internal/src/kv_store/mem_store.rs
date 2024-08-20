@@ -44,7 +44,7 @@ impl KvStore for MemKvStore {
 
             // table.
             let idx = table.find_block_idx(key);
-            let block = table.read_block_cached(idx).unwrap();
+            let block = table.read_block_cached(idx);
             let block_iter = BlockIter::new_seek_to_key(block, key);
             if block_iter.next_is_valid() && block_iter.next_curr_key() == key {
                 Some(block_iter.next_curr_value())
@@ -90,7 +90,7 @@ impl KvStore for MemKvStore {
             return !self.mem_table.get(key).unwrap().is_empty();
         }
         if let Some(table) = &self.ss_table {
-            return table.contains_key(key).unwrap();
+            return table.contains_key(key);
         }
         false
     }
@@ -146,7 +146,7 @@ impl KvStore for MemKvStore {
         for (k, v) in self.scan(Bound::Unbounded, Bound::Unbounded) {
             builder.add(k, v);
         }
-        builder.finish();
+        builder.finish_block();
         if builder.is_empty() {
             return Bytes::new();
         }

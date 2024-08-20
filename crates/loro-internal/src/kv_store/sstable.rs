@@ -51,16 +51,12 @@ impl LargeValueBlock{
         buf.into()
     }
 
-    fn decode(bytes:Bytes)->LoroResult<Self>{
+    fn decode(bytes:Bytes)->Self{
         let key_len = (&bytes[..SIZE_OF_U16]).get_u16() as usize;
-        let checksum = bytes.slice(bytes.len() - SIZE_OF_U32..).get_u32();
-        if checksum != crc32fast::hash(&bytes[..bytes.len()  - SIZE_OF_U32]){
-            return Err(LoroError::DecodeChecksumMismatchError);
-        }
-        Ok(LargeValueBlock{
+        LargeValueBlock{
             data:bytes,
             key_length: key_len,
-        })
+        }
     }
 }
 
@@ -91,23 +87,16 @@ impl NormalBlock {
         buf.into()
     }
 
-    /// 
-    /// # Errors
-    /// - [LoroError::DecodeChecksumMismatchError]
-    fn decode(raw_block_and_check: Bytes)-> LoroResult<NormalBlock>{
+    fn decode(raw_block_and_check: Bytes)-> NormalBlock{
         let data = raw_block_and_check.slice(..raw_block_and_check.len() - SIZE_OF_U32);
-        let checksum = (&raw_block_and_check[raw_block_and_check.len() - SIZE_OF_U32..]).get_u32();
-        if checksum != crc32fast::hash(data.as_ref()){
-            return Err(LoroError::DecodeChecksumMismatchError);
-        }
         let offsets_len = (&data[data.len()-SIZE_OF_U16..]).get_u16() as usize;
         let data_end = data.len() - SIZE_OF_U16 * (offsets_len + 1);
         let offsets = &data[data_end..data.len()-SIZE_OF_U16];
         let offsets = offsets.chunks(SIZE_OF_U16).map(|mut chunk| chunk.get_u16()).collect();
-        Ok(NormalBlock{
+        NormalBlock{
             data: data.slice(..data_end),
             offsets,
-        })
+        }
     }
 
     fn first_key(&self)->Bytes{
@@ -151,11 +140,11 @@ impl Block{
         }
     }
 
-    fn decode(raw_block_and_check: Bytes, is_large: bool)->LoroResult<Self>{
+    fn decode(raw_block_and_check: Bytes, is_large: bool)->Self{
         if is_large{
-            return LargeValueBlock::decode(raw_block_and_check).map(Block::Large);
+            return Block::Large(LargeValueBlock::decode(raw_block_and_check));
         }
-        NormalBlock::decode(raw_block_and_check).map(Block::Normal)
+        Block::Normal(NormalBlock::decode(raw_block_and_check))
     }
 
     pub fn len(&self)->usize{
@@ -172,7 +161,7 @@ pub struct BlockBuilder {
     offsets: Vec<u16>,
     block_size: usize,
     // for key compression
-    first_key: Vec<u8>,
+    first_key: Bytes,
     is_large: bool,
 }
 
@@ -182,7 +171,7 @@ impl BlockBuilder {
             data: Vec::new(),
             offsets: Vec::new(),
             block_size,
-            first_key: Vec::new(),
+            first_key: Bytes::new(),
             is_large:false
         }
     }
@@ -220,12 +209,13 @@ impl BlockBuilder {
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
         debug_assert!(!key.is_empty(), "key cannot be empty");
         if  self.first_key.is_empty() && value.len() > self.block_size {
-            let key_len = key.len() as u16;
-            self.data.put_u16(key_len);
+            let key_len = key.len();
+            self.data.put_u16(key_len as u16);
+            let start = self.data.len();
             self.data.put(key);
             self.data.put(value);
             self.is_large = true;
-            self.first_key = key.to_vec();
+            self.first_key = Bytes::copy_from_slice(&self.data[start..start+key_len]);
             return true;
         }
 
@@ -236,15 +226,16 @@ impl BlockBuilder {
 
         self.offsets.push(self.data.len() as u16);
         let (common, suffix) = get_common_prefix_len_and_strip(key, &self.first_key);
-        let key_len = suffix.len() as u16;
-        let value_len = value.len() as u16;
+        let key_len = suffix.len() ;
+        let value_len = value.len();
         self.data.put_u8(common);
-        self.data.put_u16(key_len);
+        self.data.put_u16(key_len as u16);
+        let start = self.data.len();
         self.data.put(suffix);
-        self.data.put_u16(value_len);
+        self.data.put_u16(value_len as u16);
         self.data.put(value);
         if self.first_key.is_empty() {
-            self.first_key = key.to_vec();
+            self.first_key = Bytes::copy_from_slice(&self.data[start..start+key_len]);
         }
         true
     }
@@ -387,7 +378,7 @@ impl SsTableBuilder{
             return;
         }
 
-        self.finish();
+        self.finish_block();
 
         self.block_builder.add(&key, &value);
         self.first_key = key.clone();
@@ -398,7 +389,7 @@ impl SsTableBuilder{
         self.meta.is_empty()
     }
 
-    pub(crate) fn finish(&mut self){
+    pub(crate) fn finish_block(&mut self){
         if self.block_builder.is_empty(){
             return;
         }
@@ -424,7 +415,7 @@ impl SsTableBuilder{
     /// │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ │
     /// └─────────────────────────────────────────────────────────────────────────────────────────────────┘
     pub fn build(mut self)->SsTable{
-        self.finish();
+        self.finish_block();
         let mut buf = self.data;
         let meta_offset = buf.len() as u32;
         BlockMeta::encode_meta(&self.meta, &mut buf);
@@ -502,6 +493,7 @@ impl SsTable{
         let meta_offset = (&bytes[data_len-SIZE_OF_U32..]).get_u32() as usize;
         let raw_meta = &bytes[meta_offset..data_len-SIZE_OF_U32];
         let meta = BlockMeta::decode_meta(raw_meta)?;
+        Self::check_block_checksum(&meta, &bytes, meta_offset)?;
         let first_key = meta.first().map(|m|m.first_key.clone()).unwrap_or_default();
         let last_key = meta.last().map(|m|m.last_key.clone().unwrap_or(meta.last().map(|m|m.first_key.clone()).unwrap_or_default())).unwrap_or_default();
         let ans = Self { 
@@ -516,6 +508,19 @@ impl SsTable{
         Ok(ans)
     }
 
+    fn check_block_checksum(meta: &[BlockMeta], bytes: &Bytes, meta_offset: usize)->LoroResult<()>{
+        for i in 0..meta.len(){
+            let offset = meta[i].offset;
+            let offset_end = meta.get(i+1).map_or(meta_offset, |m| m.offset);
+            let raw_block_and_check = bytes.slice(offset..offset_end);
+            let checksum = raw_block_and_check.slice(raw_block_and_check.len() - SIZE_OF_U32..).get_u32();
+            if checksum != crc32fast::hash(&raw_block_and_check[..raw_block_and_check.len() - SIZE_OF_U32]){
+                return Err(LoroError::DecodeChecksumMismatchError);
+            }
+        }
+        Ok(())
+    }
+
     pub fn find_block_idx(&self, key: &[u8]) -> usize {
         self.meta
             .partition_point(|meta| meta.first_key <= key)
@@ -527,49 +532,40 @@ impl SsTable{
             .partition_point(|meta| meta.last_key.as_ref().unwrap_or(&meta.first_key) <= key)
     }
 
-    /// 
-    /// # Errors
-    /// - [LoroError::DecodeChecksumMismatchError]
-    fn read_block(&self, block_idx: usize)->LoroResult<Arc<Block>>{
+    fn read_block(&self, block_idx: usize)->Arc<Block>{
         let offset = self.meta[block_idx].offset;
         let offset_end = self.meta.get(block_idx+1).map_or(self.meta_offset, |m| m.offset);
         let raw_block_and_check = self.data.slice(offset..offset_end);
-        let ans = Arc::new(Block::decode(raw_block_and_check, self.meta[block_idx].is_large)?);
-        Ok(ans)
+       Arc::new(Block::decode(raw_block_and_check, self.meta[block_idx].is_large))
+        
     }
 
-    /// 
-    /// # Errors
-    /// - [LoroError::DecodeChecksumMismatchError]
-    pub(crate) fn read_block_cached(&self, block_idx: usize)->LoroResult<Arc<Block>>{
-        let block = self.block_cache.get_or_insert_with(&block_idx, ||self.read_block(block_idx))?;
-        Ok(block)
+
+    pub(crate) fn read_block_cached(&self, block_idx: usize)->Arc<Block>{
+        self.block_cache.get_or_insert_with(&block_idx, || Ok::<_, LoroError>(self.read_block(block_idx))).unwrap()
     }
 
-    /// 
-    /// # Errors
-    /// - [LoroError::DecodeChecksumMismatchError]
-    pub fn contains_key(&self, key: &[u8])->LoroResult<bool>{
+    pub fn contains_key(&self, key: &[u8])->bool{
         if self.first_key > key || self.last_key < key{
-            return Ok(false);
+            return false;
         }
         let idx = self.find_block_idx(key);
-        let block = self.read_block_cached(idx)?;
+        let block = self.read_block_cached(idx);
         let block_iter = BlockIter::new_seek_to_key(block, key);
-        Ok(block_iter.next_is_valid() && block_iter.next_curr_key() == key)
+        block_iter.next_is_valid() && block_iter.next_curr_key() == key
     }
 
-    pub fn get(&self, key: &[u8])->LoroResult<Option<Bytes>>{
+    pub fn get(&self, key: &[u8])->Option<Bytes>{
         if self.first_key > key || self.last_key < key{
-            return Ok(None);
+            return None;
         }
         let idx = self.find_block_idx(key);
-        let block = self.read_block_cached(idx)?;
+        let block = self.read_block_cached(idx);
         let block_iter = BlockIter::new_seek_to_key(block, key);
         if block_iter.next_is_valid() && block_iter.next_curr_key() == key{
-            return Ok(Some(block_iter.next_curr_value()));
+            return Some(block_iter.next_curr_value());
         }
-        Ok(None)
+        None
     }
 
     pub fn valid_keys(&self)->&FxHashSet<Bytes>{
@@ -613,11 +609,11 @@ impl<'a> Debug for SsTableIter<'a>{
 
 impl<'a> SsTableIter<'a>{
     fn new(table: &'a SsTable)->Self{
-        let block = table.read_block_cached(0).unwrap();
+        let block = table.read_block_cached(0);
         let block_iter = BlockIter::new_seek_to_first(block);
         let prev_block_idx = table.meta.len() -1;
         let prev_block_iter = {
-            let prev_block = table.read_block_cached(prev_block_idx).unwrap();
+            let prev_block = table.read_block_cached(prev_block_idx);
             BlockIter::new_seek_to_first(prev_block)
         };
 
@@ -635,18 +631,18 @@ impl<'a> SsTableIter<'a>{
         let (table_idx, mut iter, excluded) = match start{
             Bound::Included(start)=>{
                 let idx = table.find_block_idx(start);
-                let block = table.read_block_cached(idx).unwrap();
+                let block = table.read_block_cached(idx);
                 let iter = BlockIter::new_seek_to_key(block, start);
                 (idx, iter, None)
             },
             Bound::Excluded(start)=>{
                 let idx = table.find_block_idx(start);
-                let block = table.read_block_cached(idx).unwrap();
+                let block = table.read_block_cached(idx);
                 let iter = BlockIter::new_seek_to_key(block, start);
                 (idx, iter, Some(start))
             },
             Bound::Unbounded=>{
-                let block = table.read_block_cached(0).unwrap();
+                let block = table.read_block_cached(0);
                 let iter = BlockIter::new_seek_to_first(block);
                 (0, iter, None)
             },
@@ -663,7 +659,7 @@ impl<'a> SsTableIter<'a>{
                         }
                         (end_idx, None, None)
                     }else{
-                        let block = table.read_block_cached(end_idx).unwrap();
+                        let block = table.read_block_cached(end_idx);
                         let iter = BlockIter::new_prev_to_key(block, end);
                         (end_idx, Some(iter), None)
                     }
@@ -678,7 +674,7 @@ impl<'a> SsTableIter<'a>{
                         }
                         (end_idx, None, Some(end))
                     }else{
-                        let block = table.read_block_cached(end_idx).unwrap();
+                        let block = table.read_block_cached(end_idx);
                         let iter = BlockIter::new_prev_to_key(block, end);
                         (end_idx, Some(iter), Some(end))
                     }
@@ -689,7 +685,7 @@ impl<'a> SsTableIter<'a>{
                     if end_idx == table_idx{
                         (end_idx, None, None)
                     }else{
-                        let block = table.read_block_cached(end_idx).unwrap();
+                        let block = table.read_block_cached(end_idx);
                         let iter = BlockIter::new_seek_to_first(block);
                         (end_idx, Some(iter), None)
                     }
@@ -788,7 +784,7 @@ impl<'a> SsTableIter<'a>{
                 std::mem::swap(&mut self.next_block_iter, &mut self.prev_block_iter);
                 self.next_first = true;
             }else if self.next_block_idx < self.table.meta.len(){
-                let block = self.table.read_block_cached(self.next_block_idx).unwrap();
+                let block = self.table.read_block_cached(self.next_block_idx);
                 // TODO: cache
                 self.next_block_iter = BlockIter::new_seek_to_first(block);
                 while self.next_block_iter.next_is_valid() && self.next_block_iter.next_curr_value().is_empty(){
@@ -818,7 +814,7 @@ impl<'a> SsTableIter<'a>{
             if self.next_block_idx == self.prev_block_idx as usize && !self.next_first{
                 self.next_first = true;
             }else if self.prev_block_idx > 0 {
-                let block = self.table.read_block_cached(self.prev_block_idx as usize).unwrap();
+                let block = self.table.read_block_cached(self.prev_block_idx as usize);
                 // TODO: cache
                 self.prev_block_iter = BlockIter::new_seek_to_first(block);
                     while self.prev_block_iter.prev_is_valid() && self.prev_block_iter.next_curr_value().is_empty(){
