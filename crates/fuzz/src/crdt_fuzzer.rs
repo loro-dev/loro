@@ -329,11 +329,16 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
         });
     }
 
-    let span = &info_span!("check synced");
-    let _g = span.enter();
-    fuzzer.check_equal();
-    fuzzer.check_tracker();
-    fuzzer.check_history();
+    println!("OpTable \n{}", (&applied).table());
+    info_span!("check synced").in_scope(|| {
+        fuzzer.check_equal();
+    });
+    info_span!("check tracker").in_scope(|| {
+        fuzzer.check_tracker();
+    });
+    info_span!("check history").in_scope(|| {
+        fuzzer.check_history();
+    });
 }
 
 pub fn minify_error<T, F, N>(site_num: u8, f: F, normalize: N, actions: Vec<T>)

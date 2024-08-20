@@ -168,12 +168,14 @@ impl Actor {
     }
 
     pub fn check_history(&mut self) {
+        // let v = self.loro.with_state(|s| s.get_all_container_value_flat());
+        // tracing::info!("ContainerValue = {:#?}", v);
         // let json = self
         //     .loro
         //     .export_json_updates(&Default::default(), &self.loro.oplog_vv());
         // let string = serde_json::to_string_pretty(&json).unwrap();
         // tracing::info!("json = {}", string);
-
+        self.loro.check_state_correctness_slow();
         for (f, v) in self.history.iter() {
             let f = Frontiers::from(f);
             let from = &self.loro.state_frontiers();
@@ -206,7 +208,6 @@ impl Actor {
         }
 
         self.loro.checkout(&f).unwrap();
-        self.loro.check_state_correctness_slow();
         // check snapshot correctness after checkout
         self.loro.checkout_to_latest();
         let new_doc = LoroDoc::new();

@@ -12,6 +12,7 @@ use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::undo::{OnPop, OnPush};
+use loro_internal::DocState;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 
@@ -365,10 +366,21 @@ impl LoroDoc {
     }
 
     /// Access the `OpLog`.
+    ///
+    /// NOTE: Please be ware that the API in `OpLog` is unstable
     #[inline]
     pub fn with_oplog<R>(&self, f: impl FnOnce(&OpLog) -> R) -> R {
         let oplog = self.doc.oplog().lock().unwrap();
         f(&oplog)
+    }
+
+    /// Access the `DocState`.
+    ///
+    /// NOTE: Please be ware that the API in `DocState` is unstable
+    #[inline]
+    pub fn with_state<R>(&self, f: impl FnOnce(&mut DocState) -> R) -> R {
+        let mut state = self.doc.app_state().lock().unwrap();
+        f(&mut state)
     }
 
     /// Get the `VersionVector` version of `OpLog`
@@ -399,6 +411,15 @@ impl LoroDoc {
     #[inline]
     pub fn get_deep_value(&self) -> LoroValue {
         self.doc.get_deep_value()
+    }
+
+    /// Get the current state with container id of the doc
+    pub fn get_deep_value_with_id(&self) -> LoroValue {
+        self.doc
+            .app_state()
+            .lock()
+            .unwrap()
+            .get_deep_value_with_id()
     }
 
     /// Get the `Frontiers` version of `OpLog`

@@ -13,7 +13,7 @@ use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
-use tracing::instrument;
+use tracing::{info_span, instrument, trace};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -580,54 +580,57 @@ impl DocState {
                     }
                 }
                 crate::event::DiffVariant::Internal(_) => {
-                    if self.in_txn {
-                        self.changed_idx_in_txn.insert(idx);
-                    }
-                    let state = self.store.get_or_create_mut(idx);
-                    if is_recording {
-                        // process bring_back before apply
-                        let external_diff =
-                            if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
-                                state.apply_diff(
-                                    internal_diff.into_internal().unwrap(),
-                                    DiffApplyContext {
-                                        mode: diff.diff_mode,
-                                        arena: &self.arena,
-                                        txn: &self.global_txn,
-                                        state: &self.weak_state,
-                                    },
-                                );
-                                state.to_diff(&self.arena, &self.global_txn, &self.weak_state)
-                            } else {
-                                state.apply_diff_and_convert(
-                                    internal_diff.into_internal().unwrap(),
-                                    DiffApplyContext {
-                                        mode: diff.diff_mode,
-                                        arena: &self.arena,
-                                        txn: &self.global_txn,
-                                        state: &self.weak_state,
-                                    },
-                                )
-                            };
-                        trigger_on_new_container(
-                            &external_diff,
-                            |cid| {
-                                to_revive_in_next_layer.insert(cid);
-                            },
-                            &self.arena,
-                        );
-                        diff.diff = external_diff.into();
-                    } else {
-                        state.apply_diff(
-                            internal_diff.into_internal().unwrap(),
-                            DiffApplyContext {
-                                mode: diff.diff_mode,
-                                arena: &self.arena,
-                                txn: &self.global_txn,
-                                state: &self.weak_state,
-                            },
-                        );
-                    }
+                    let cid = self.arena.idx_to_id(idx).unwrap();
+                    info_span!("apply diff on", container_id = ?cid).in_scope(|| {
+                        if self.in_txn {
+                            self.changed_idx_in_txn.insert(idx);
+                        }
+                        let state = self.store.get_or_create_mut(idx);
+                        if is_recording {
+                            // process bring_back before apply
+                            let external_diff =
+                                if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
+                                    state.apply_diff(
+                                        internal_diff.into_internal().unwrap(),
+                                        DiffApplyContext {
+                                            mode: diff.diff_mode,
+                                            arena: &self.arena,
+                                            txn: &self.global_txn,
+                                            state: &self.weak_state,
+                                        },
+                                    );
+                                    state.to_diff(&self.arena, &self.global_txn, &self.weak_state)
+                                } else {
+                                    state.apply_diff_and_convert(
+                                        internal_diff.into_internal().unwrap(),
+                                        DiffApplyContext {
+                                            mode: diff.diff_mode,
+                                            arena: &self.arena,
+                                            txn: &self.global_txn,
+                                            state: &self.weak_state,
+                                        },
+                                    )
+                                };
+                            trigger_on_new_container(
+                                &external_diff,
+                                |cid| {
+                                    to_revive_in_next_layer.insert(cid);
+                                },
+                                &self.arena,
+                            );
+                            diff.diff = external_diff.into();
+                        } else {
+                            state.apply_diff(
+                                internal_diff.into_internal().unwrap(),
+                                DiffApplyContext {
+                                    mode: diff.diff_mode,
+                                    arena: &self.arena,
+                                    txn: &self.global_txn,
+                                    state: &self.weak_state,
+                                },
+                            );
+                        }
+                    });
                 }
                 crate::event::DiffVariant::External(_) => unreachable!(),
             }
@@ -919,6 +922,17 @@ impl DocState {
         }
 
         LoroValue::Map(Arc::new(ans))
+    }
+
+    pub fn get_all_container_value_flat(&mut self) -> LoroValue {
+        let mut map = FxHashMap::default();
+        self.store.iter_and_decode_all().for_each(|c| {
+            let value = c.get_value();
+            let cid = self.arena.idx_to_id(c.container_idx()).unwrap().to_string();
+            map.insert(cid, value);
+        });
+
+        LoroValue::Map(Arc::new(map))
     }
 
     pub(crate) fn get_container_deep_value_with_id(

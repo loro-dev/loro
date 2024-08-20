@@ -169,6 +169,7 @@ impl ContainerStore {
     }
 
     pub fn decode(&mut self, bytes: Bytes) -> LoroResult<()> {
+        assert!(self.is_empty());
         let offset = u32::from_le_bytes((&bytes[..4]).try_into().unwrap()) as usize;
         let cids = &bytes[4..offset];
         let cids = decode_cids(cids)?;
@@ -262,10 +263,6 @@ impl ContainerStore {
 
     pub(super) fn contains(&self, idx: ContainerIdx) -> bool {
         self.store.contains_key(&idx)
-    }
-
-    pub(super) fn insert(&mut self, idx: ContainerIdx, state: ContainerWrapper) {
-        self.store.insert(idx, state);
     }
 
     pub(crate) fn fork(
