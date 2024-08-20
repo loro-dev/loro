@@ -124,7 +124,7 @@ mod sst_binary_format {
     use bytes::{Buf, BufMut, Bytes};
     use fxhash::FxHashSet;
     use itertools::Itertools;
-    use loro_common::{LoroError, LoroResult};
+    use loro_common::{LoroError, LoroResult, ID};
     use once_cell::sync::OnceCell;
 
     use crate::kv_store::get_common_prefix_len_and_strip;
@@ -312,7 +312,7 @@ mod sst_binary_format {
                     self.seek_to_idx(left);
                 }
                 Block::Large(block)=>{
-                    if key != block.key(){
+                    if key > block.key(){
                         self.seek_to_idx(1);
                     }
                 }
@@ -341,7 +341,7 @@ mod sst_binary_format {
                     self.prev_to_idx(left as isize - 1);
                 }
                 Block::Large(block)=>{
-                    if key != block.key(){
+                    if key < block.key(){
                         self.prev_to_idx(-1);
                     }
                 }
@@ -1632,6 +1632,7 @@ mod mem {
         }
     }
 
+    #[derive(Debug)]
     struct MergeIterator<'a, T>{
         a: T,
         b: SsTableIter<'a>,
