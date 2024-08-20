@@ -748,6 +748,16 @@ mod mut_inner_kv {
             let mut iter = store
                 .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
                 .filter(|(id, _)| id.len() == 12);
+
+            // println!(
+            //     "\nkeys {:?}",
+            //     store
+            //         .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
+            //         .filter(|(id, _)| id.len() == 12)
+            //         .map(|(k, _v)| ID::from_bytes(&k))
+            //         .collect::<Vec<_>>()
+            // );
+
             let (b_id, b_bytes) = iter.next_back()?;
             let block_id: ID = ID::from_bytes(&b_id[..]);
             let block = ChangesBlock::from_bytes(b_bytes).unwrap();

@@ -438,8 +438,8 @@ mod sst_binary_format {
                     rest.advance(value_len);
                 },
                 Block::Large(block)=>{
-                    self.next_key = block.key().to_vec();
-                    self.next_value_range = (SIZE_OF_U16 + block.key_length) .. block.data.len();
+                    self.prev_key = block.key().to_vec();
+                    self.prev_value_range = (SIZE_OF_U16 + block.key_length) .. block.data.len();
                 
                 }
             }
@@ -979,6 +979,11 @@ mod sst_binary_format {
                 .saturating_sub(1)
         }
 
+        pub fn find_prev_block_idx(&self, key: &[u8])->usize{
+            self.meta
+                .partition_point(|meta| meta.first_key <= key)
+        }
+
         /// 
         /// # Errors
         /// - [LoroError::DecodeChecksumMismatchError]
@@ -1094,7 +1099,7 @@ mod sst_binary_format {
 
             let (end_idx, end_iter, end_excluded) = match end {
                     Bound::Included(end)=>{
-                        let end_idx = table.find_block_idx(end);
+                        let end_idx = table.find_prev_block_idx(end);
                         if end_idx == table_idx{
                             iter.prev_to_key(end);
                             // if the prev is invalid, the next should also be invalid
@@ -1109,7 +1114,7 @@ mod sst_binary_format {
                         }
                     },
                     Bound::Excluded(end)=>{
-                        let end_idx = table.find_block_idx(end);
+                        let end_idx = table.find_prev_block_idx(end);
                         if end_idx == table_idx{
                             iter.prev_to_key(end);
                             // if the prev is invalid, the next should also be invalid
@@ -1167,11 +1172,19 @@ mod sst_binary_format {
                     ans.prev();
                 }
             }
+
+            // need to skip empty block
+            if ans.is_next_valid() && !ans.next_block_iter.next_is_valid(){
+                ans.next();
+            }
+            if ans.is_prev_valid() && !ans.prev_block_iter.prev_is_valid(){
+                ans.prev();
+            }
             ans
         }
 
         pub fn is_next_valid(&self)->bool{
-            self.next_block_iter.next_is_valid()
+            self.next_block_iter.next_is_valid() || (self.next_block_idx as isize) < self.prev_block_idx
         }
 
         pub fn next_key(&self)->Bytes{
@@ -1186,7 +1199,7 @@ mod sst_binary_format {
             if self.next_first{
                 self.next_block_iter.prev_is_valid()
             }else{
-                self.prev_block_iter.prev_is_valid()
+                self.prev_block_iter.prev_is_valid() || (self.next_block_idx as isize) < self.prev_block_idx
             }
         }
 
@@ -1477,6 +1490,7 @@ mod sst_binary_format {
 
 mod mem {
     use fxhash::FxHashSet;
+    use loro_common::ID;
     use sst_binary_format::{ BlockIter, SsTable, SsTableBuilder, SsTableIter};
 
     use super::*;
@@ -1537,7 +1551,7 @@ mod mem {
         fn set(&mut self, key: &[u8], value: Bytes) {
             self.mem_table.insert(Bytes::copy_from_slice(key), value);
         }
-    
+
         fn compare_and_swap(&mut self, key: &[u8], old: Option<Bytes>, new: Bytes) -> bool {
             match self.get(key) {
                 Some(v) => {
