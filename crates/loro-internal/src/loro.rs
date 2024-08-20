@@ -1198,6 +1198,7 @@ impl LoroDoc {
             let s = info_span!("CheckStateDiffCalcConsistencySlow", ?peer_id);
             let _g = s.enter();
             self.commit_then_stop();
+            self.oplog.try_lock().unwrap().check_dag_correctness();
             let bytes = self.export_from(&Default::default());
             let doc = Self::new();
             doc.detach();

@@ -41,7 +41,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
     oplog.decode_change_store(oplog_bytes)?;
     // FIXME: we may need to extract the unknown containers here?
     // Or we should lazy load it when the time comes?
-    state.init_with_states_and_version(oplog.frontiers().clone(), &oplog, vec![]);
+    state.init_with_states_and_version(oplog.frontiers().clone(), &oplog, vec![], false);
     Ok(())
 }
 

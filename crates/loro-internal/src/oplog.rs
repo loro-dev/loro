@@ -135,8 +135,11 @@ impl OpLog {
         peer: PeerID,
         lamport: Lamport,
     ) -> Option<BlockChangeRef> {
-        self.change_store
-            .get_change_by_lamport_lte(IdLp::new(peer, lamport))
+        let ans = self
+            .change_store
+            .get_change_by_lamport_lte(IdLp::new(peer, lamport))?;
+        debug_assert!(ans.lamport <= lamport);
+        Some(ans)
     }
 
     pub fn get_timestamp_of_version(&self, f: &Frontiers) -> Timestamp {
@@ -602,6 +605,10 @@ impl OpLog {
     pub fn encode_change_store(&self) -> bytes::Bytes {
         self.change_store
             .encode_all(self.dag.vv(), self.dag.frontiers())
+    }
+
+    pub fn check_dag_correctness(&self) {
+        self.dag.check_dag_correctness();
     }
 }
 

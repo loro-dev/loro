@@ -18,6 +18,8 @@ arbitrary = "1"
 tabled = "0.10"
 rand = "0.8.5"
 serde_json = "1"
+num_cpus = "1.16.0"
+rayon = "1.10.0"
 
 [dev-dependencies]
 ctor = "0.2"

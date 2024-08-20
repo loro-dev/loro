@@ -1,5 +1,5 @@
 use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
-use super::AppDagNode;
+use super::{loro_dag::AppDagNodeInner, AppDagNode};
 use crate::{
     arena::SharedArena,
     change::{Change, Timestamp},
@@ -50,6 +50,8 @@ pub struct ChangeStore {
     ///
     /// We cannot directly write into the external_kv except from the initial load
     external_kv: Arc<Mutex<dyn KvStore>>,
+    /// The version vector of the external kv store.
+    external_vv: Arc<Mutex<VersionVector>>,
     merge_interval: Arc<AtomicI64>,
 }
 
@@ -101,6 +103,7 @@ impl ChangeStore {
                 mem_parsed_kv: BTreeMap::new(),
             })),
             arena: a.clone(),
+            external_vv: Arc::new(Mutex::new(VersionVector::new())),
             external_kv: Arc::new(Mutex::new(MemKvStore::default())),
             merge_interval,
         }
@@ -298,6 +301,7 @@ impl ChangeStore {
                 mem_parsed_kv: BTreeMap::new(),
             })),
             arena,
+            external_vv: self.external_vv.clone(),
             external_kv: self.external_kv.lock().unwrap().clone_store(),
             merge_interval,
         }
@@ -343,6 +347,7 @@ mod mut_external_kv {
                 kv_store = self.external_kv.lock().unwrap();
             }
 
+            *self.external_vv.lock().unwrap() = vv.clone();
             let frontiers_bytes = kv_store.get(b"fr").unwrap_or_default();
             let frontiers = Frontiers::decode(&frontiers_bytes).unwrap();
             let mut max_lamport = None;
@@ -394,14 +399,26 @@ mod mut_external_kv {
         pub(crate) fn flush_and_compact(&self, vv: &VersionVector, frontiers: &Frontiers) {
             let mut inner = self.inner.lock().unwrap();
             let mut store = self.external_kv.lock().unwrap();
+            let mut external_vv = self.external_vv.lock().unwrap();
             for (id, block) in inner.mem_parsed_kv.iter_mut() {
                 if !block.flushed {
+                    let id_bytes = id.to_bytes();
+                    let counter_start = external_vv.get(&id.peer).copied().unwrap_or(0);
+                    assert!(
+                        counter_start >= block.counter_range.0
+                            && counter_start < block.counter_range.1
+                    );
+                    if counter_start > block.counter_range.0 {
+                        assert!(store.get(&id_bytes).is_some());
+                    }
+                    external_vv.insert(id.peer, block.counter_range.1);
                     let bytes = block.to_bytes(&self.arena);
-                    store.set(&id.to_bytes(), bytes.bytes);
+                    store.set(&id_bytes, bytes.bytes);
                     Arc::make_mut(block).flushed = true;
                 }
             }
 
+            assert_eq!(&*external_vv, vv);
             let vv_bytes = vv.encode();
             let frontiers_bytes = frontiers.encode();
             store.set(VV_KEY, vv_bytes.into());
@@ -416,32 +433,15 @@ mod mut_inner_kv {
 
     use super::*;
     impl ChangeStore {
+        /// This method is the **only place** that push a new change into the change store
+        ///
+        /// The new change either merges with the previous block or is put into a new block.
+        /// This method only updates the internal kv store.
         pub fn insert_change(&self, mut change: Change, split_when_exceeds: bool) {
             #[cfg(debug_assertions)]
             {
-                let inner = self.inner.lock().unwrap();
-                assert_eq!(
-                    inner
-                        .mem_parsed_kv
-                        .range(change.id.inc(1)..change.id_end())
-                        .count(),
-                    0,
-                    "change should not exist"
-                );
-                let kv = self.external_kv.lock().unwrap();
-                let count = kv
-                    .scan(
-                        Bound::Excluded(&change.id.to_bytes()),
-                        Bound::Excluded(&change.id_end().to_bytes()),
-                    )
-                    .count();
-                for (k, v) in kv.scan(
-                    Bound::Excluded(&change.id.to_bytes()),
-                    Bound::Excluded(&change.id_end().to_bytes()),
-                ) {
-                    println!("k={:?} v={:?}", k, v);
-                }
-                assert_eq!(count, 0, "change should not exist");
+                let vv = self.external_vv.lock().unwrap();
+                assert!(vv.get(&change.id.peer).copied().unwrap_or(0) <= change.id.counter);
             }
 
             let s = info_span!("change_store insert_change", id = ?change.id);
@@ -454,6 +454,8 @@ mod mut_inner_kv {
 
             let id = change.id;
             let mut inner = self.inner.lock().unwrap();
+
+            // try to merge with previous block
             if let Some((_id, block)) = inner.mem_parsed_kv.range_mut(..id).next_back() {
                 if block.peer == change.id.peer {
                     if block.counter_range.1 != change.id.counter {
@@ -1130,7 +1132,7 @@ impl ChangesBlockContent {
         match self {
             ChangesBlockContent::Changes(c) | ChangesBlockContent::Both(c, _) => {
                 for change in c.iter() {
-                    let new_node = AppDagNode {
+                    let new_node = AppDagNodeInner {
                         peer: change.id.peer,
                         cnt: change.id.counter,
                         lamport: change.lamport,
@@ -1138,7 +1140,8 @@ impl ChangesBlockContent {
                         vv: OnceCell::new(),
                         has_succ: false,
                         len: change.atom_len(),
-                    };
+                    }
+                    .into();
 
                     dag_nodes.push_rle_element(new_node);
                 }
@@ -1148,7 +1151,7 @@ impl ChangesBlockContent {
                 let header = b.header.get().unwrap();
                 let n = header.n_changes;
                 for i in 0..n {
-                    let new_node = AppDagNode {
+                    let new_node = AppDagNodeInner {
                         peer: header.peer,
                         cnt: header.counters[i],
                         lamport: header.lamports[i],
@@ -1156,7 +1159,8 @@ impl ChangesBlockContent {
                         vv: OnceCell::new(),
                         has_succ: false,
                         len: (header.counters[i + 1] - header.counters[i]) as usize,
-                    };
+                    }
+                    .into();
 
                     dag_nodes.push_rle_element(new_node);
                 }
@@ -1309,7 +1313,7 @@ mod test {
         let oplog = doc.oplog().lock().unwrap();
         let bytes = oplog
             .change_store
-            .encode_all(&Default::default(), &Default::default());
+            .encode_all(oplog.vv(), oplog.dag.frontiers());
         let store = ChangeStore::new_for_test();
         let _ = store.import_all(bytes.clone()).unwrap();
         assert_eq!(store.external_kv.lock().unwrap().export_all(), bytes);

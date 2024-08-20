@@ -1,4 +1,7 @@
-use std::sync::{atomic::AtomicU64, Arc};
+use std::{
+    cmp::Ordering,
+    sync::{atomic::AtomicU64, Arc},
+};
 
 use crate::{
     arena::SharedArena,
@@ -220,13 +223,32 @@ impl ContainerStore {
         self.store.iter_mut()
     }
 
-    pub(super) fn get_or_create(
-        &mut self,
-        idx: ContainerIdx,
-        f: impl FnOnce() -> ContainerWrapper,
-    ) -> &mut ContainerWrapper {
-        let s = self.store.entry(idx).or_insert_with(f);
-        s
+    pub(super) fn get_or_create_mut(&mut self, idx: ContainerIdx) -> &mut State {
+        self.store
+            .entry(idx)
+            .or_insert_with(|| {
+                let state = super::create_state_(
+                    idx,
+                    &self.conf,
+                    self.peer.load(std::sync::atomic::Ordering::Relaxed),
+                );
+                ContainerWrapper::new(state, &self.arena)
+            })
+            .get_state_mut(idx, ctx!(self))
+    }
+
+    pub(super) fn get_or_create_imm(&mut self, idx: ContainerIdx) -> &State {
+        self.store
+            .entry(idx)
+            .or_insert_with(|| {
+                let state = super::create_state_(
+                    idx,
+                    &self.conf,
+                    self.peer.load(std::sync::atomic::Ordering::Relaxed),
+                );
+                ContainerWrapper::new(state, &self.arena)
+            })
+            .get_state(idx, ctx!(self))
     }
 
     pub(crate) fn estimate_size(&self) -> usize {
