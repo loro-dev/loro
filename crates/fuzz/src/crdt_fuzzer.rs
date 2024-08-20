@@ -329,7 +329,7 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
         });
     }
 
-    println!("OpTable \n{}", (&applied).table());
+    // println!("OpTable \n{}", (&applied).table());
     info_span!("check synced").in_scope(|| {
         fuzzer.check_equal();
     });
