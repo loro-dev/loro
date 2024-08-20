@@ -314,6 +314,8 @@ mod sst_binary_format {
                 Block::Large(block)=>{
                     if key > block.key(){
                         self.seek_to_idx(1);
+                    }else{
+                        self.seek_to_idx(0);
                     }
                 }
             }
@@ -343,6 +345,8 @@ mod sst_binary_format {
                 Block::Large(block)=>{
                     if key < block.key(){
                         self.prev_to_idx(-1);
+                    }else{
+                        self.prev_to_idx(0);
                     }
                 }
             }
@@ -981,7 +985,7 @@ mod sst_binary_format {
 
         pub fn find_prev_block_idx(&self, key: &[u8])->usize{
             self.meta
-                .partition_point(|meta| meta.first_key <= key)
+                .partition_point(|meta| meta.last_key.as_ref().unwrap_or(&meta.first_key) <= key)
         }
 
         /// 
@@ -1015,6 +1019,19 @@ mod sst_binary_format {
             let block = self.read_block_cached(idx)?;
             let block_iter = BlockIter::new_seek_to_key(block, key);
             Ok(block_iter.next_is_valid() && block_iter.next_curr_key() == key)
+        }
+
+        pub fn get(&self, key: &[u8])->LoroResult<Option<Bytes>>{
+            if self.first_key > key || self.last_key < key{
+                return Ok(None);
+            }
+            let idx = self.find_block_idx(key);
+            let block = self.read_block_cached(idx)?;
+            let block_iter = BlockIter::new_seek_to_key(block, key);
+            if block_iter.next_is_valid() && block_iter.next_curr_key() == key{
+                return Ok(Some(block_iter.next_curr_value()));
+            }
+            Ok(None)
         }
 
         pub fn valid_keys(&self)->&FxHashSet<Bytes>{
@@ -1630,7 +1647,7 @@ mod mem {
             let _ = std::mem::replace(&mut self.ss_table, Some(ss));
             ans
         }
-    
+
         fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
             if bytes.is_empty(){
                 self.ss_table = None;

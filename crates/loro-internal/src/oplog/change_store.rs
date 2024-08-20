@@ -117,8 +117,7 @@ impl ChangeStore {
     pub(super) fn encode_all(&self, vv: &VersionVector, frontiers: &Frontiers) -> Bytes {
         self.flush_and_compact(vv, frontiers);
         let mut kv = self.external_kv.lock().unwrap();
-        let ans = kv.export_all();
-        ans
+        kv.export_all()
     }
 
     pub(crate) fn decode_snapshot_for_updates(
@@ -757,8 +756,9 @@ mod mut_inner_kv {
             //         .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
             //         .filter(|(id, _)| id.len() == 12)
             //         .map(|(k, _v)| ID::from_bytes(&k))
-            //         .collect::<Vec<_>>()
+            //         .count()
             // );
+            // println!("id {:?}", id);
 
             let (b_id, b_bytes) = iter.next_back()?;
             let block_id: ID = ID::from_bytes(&b_id[..]);
