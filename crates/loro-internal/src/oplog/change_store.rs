@@ -192,31 +192,51 @@ impl ChangeStore {
                 block
                     .ensure_changes(&self.arena)
                     .expect("Parse block error");
-                Some(block.clone())
+                let changes = block.content.try_changes().unwrap();
+                let start;
+                let end;
+                if id_span.counter.start <= block.counter_range.0
+                    && id_span.counter.end >= block.counter_range.1
+                {
+                    start = 0;
+                    end = changes.len();
+                } else {
+                    start = block
+                        .get_change_index_by_counter(id_span.counter.start)
+                        .unwrap_or_else(|x| x);
+                    end = block
+                        .get_change_index_by_counter(id_span.counter.end)
+                        .map_or_else(|e| e, |i| i + 1)
+                }
+                if start == end {
+                    return None;
+                }
+
+                Some((block.clone(), start, end))
             })
             // TODO: PERF avoid alloc
             .collect_vec();
 
-        // assert!(iter[0].counter_range.0 <= id_span.counter.start);
-        // assert!(iter.last().unwrap().counter_range.1 >= id_span.counter.end);
-        iter.into_iter().flat_map(move |block| {
-            let changes = block.content.try_changes().unwrap();
-            let start;
-            let end;
-            if id_span.counter.start <= block.counter_range.0
-                && id_span.counter.end >= block.counter_range.1
-            {
-                start = 0;
-                end = changes.len();
-            } else {
-                start = block
-                    .get_change_index_by_counter(id_span.counter.start)
-                    .unwrap_or(changes.len());
-                end = block
-                    .get_change_index_by_counter(id_span.counter.end)
-                    .map_or(changes.len(), |i| i + 1);
+        #[cfg(debug_assertions)]
+        {
+            if !iter.is_empty() {
+                assert_eq!(iter[0].0.peer, id_span.peer);
+                {
+                    // Test start
+                    let (block, start, _end) = iter.first().unwrap();
+                    let changes = block.content.try_changes().unwrap();
+                    assert!(changes[*start].id.counter <= id_span.counter.start);
+                }
+                {
+                    // Test end
+                    let (block, _start, end) = iter.last().unwrap();
+                    let changes = block.content.try_changes().unwrap();
+                    assert!(changes[*end - 1].ctr_end() >= id_span.counter.end);
+                }
             }
+        }
 
+        iter.into_iter().flat_map(move |(block, start, end)| {
             (start..end).map(move |i| BlockChangeRef {
                 change_index: i,
                 block: block.clone(),
@@ -1065,9 +1085,9 @@ impl ChangesBlock {
         }
     }
 
-    fn get_change_index_by_counter(&self, counter: Counter) -> Option<usize> {
+    fn get_change_index_by_counter(&self, counter: Counter) -> Result<usize, usize> {
         let changes = self.content.try_changes().unwrap();
-        let r = changes.binary_search_by(|c| {
+        changes.binary_search_by(|c| {
             if c.id.counter > counter {
                 Ordering::Greater
             } else if (c.id.counter + c.content_len() as Counter) <= counter {
@@ -1075,12 +1095,7 @@ impl ChangesBlock {
             } else {
                 Ordering::Equal
             }
-        });
-
-        match r {
-            Ok(found) => Some(found),
-            Err(_) => None,
-        }
+        })
     }
 
     fn get_change_index_by_lamport_lte(&self, lamport: Lamport) -> Option<usize> {

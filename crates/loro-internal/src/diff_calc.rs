@@ -15,7 +15,7 @@ use loro_common::{
 };
 use loro_delta::DeltaRope;
 use smallvec::SmallVec;
-use tracing::{instrument, trace};
+use tracing::{info, instrument};
 
 use crate::{
     change::Lamport,
@@ -238,7 +238,6 @@ impl DiffCalculator {
                             op.atom_len().min((end_counter - op.counter) as usize),
                         ));
                         op = stack_sliced_op.as_ref().unwrap();
-                        trace!("Trim op");
                     }
 
                     let vv = &mut vv.borrow_mut();
@@ -261,7 +260,6 @@ impl DiffCalculator {
                         // don't checkout if we have already checked out this container in this round
                         calculator.apply_change(oplog, RichOp::new_by_change(&change, op), None);
                     } else {
-                        trace!("ApplyChange op = {:#?}", &op);
                         calculator.apply_change(
                             oplog,
                             RichOp::new_by_change(&change, op),
@@ -277,7 +275,7 @@ impl DiffCalculator {
             // We can calculate the diff by the current calculators.
 
             // Find a set of affected containers idx, if it's relatively cheap
-            if before.distance_to(after) < self.calculators.len() {
+            if before.distance_between(after) < self.calculators.len() || cfg!(debug_assertions) {
                 let mut set = FxHashSet::default();
                 oplog.for_each_change_within(before, after, |change| {
                     for op in change.ops.iter() {

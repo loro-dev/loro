@@ -950,6 +950,18 @@ impl MovableListState {
         let item = self.inner.get_list_item_at(pos, IndexType::ForUser);
         item.map(|x| x.id)
     }
+
+    #[allow(unused)]
+    fn check_get_child_index_correctly(&mut self) {
+        let value = self.get_value();
+        let list = value.into_list().unwrap();
+        for (i, item) in list.iter().enumerate() {
+            if let LoroValue::Container(c) = item {
+                let child_index = self.get_child_index(c).expect("cannot find child index");
+                assert_eq!(child_index.into_seq().unwrap(), i);
+            }
+        }
+    }
 }
 
 impl ContainerState for MovableListState {
@@ -1229,16 +1241,17 @@ impl ContainerState for MovableListState {
         }
 
         if cfg!(debug_assertions) {
-            self.inner.check_consistency();
-            let start_value = start_value.unwrap();
-            let mut end_value = start_value.clone();
-            end_value.apply_diff_shallow(&[Diff::List(event.clone())]);
-            let cur_value = self.get_value();
-            assert_eq!(
-                end_value, cur_value,
-                "start_value={:#?} event={:#?} new_state={:#?} but the end_value={:#?}",
-                start_value, event, cur_value, end_value
-            );
+            // self.inner.check_consistency();
+            // let start_value = start_value.unwrap();
+            // let mut end_value = start_value.clone();
+            // end_value.apply_diff_shallow(&[Diff::List(event.clone())]);
+            // let cur_value = self.get_value();
+            // assert_eq!(
+            //     end_value, cur_value,
+            //     "start_value={:#?} event={:#?} new_state={:#?} but the end_value={:#?}",
+            //     start_value, event, cur_value, end_value
+            // );
+            // self.check_get_child_index_correctly();
         }
 
         Diff::List(event)

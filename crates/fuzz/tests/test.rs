@@ -9216,14 +9216,14 @@ fn fast_snapshot_2() {
             },
             Handle {
                 site: 25,
-                target: 25,
+                target: 5,
                 container: 25,
                 action: Generic(GenericAction {
                     value: I32(-538976367),
                     bool: true,
                     key: 685760479,
-                    pos: 16131858456979185696,
-                    length: 1811037595742312729,
+                    pos: 0,
+                    length: 1,
                     prop: 1849036717598251289,
                 }),
             },

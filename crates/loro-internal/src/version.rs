@@ -631,14 +631,18 @@ impl VersionVector {
         self.sub_iter(rhs).map(|x| (x.peer, x.counter)).collect()
     }
 
-    pub fn distance_to(&self, other: &Self) -> usize {
+    pub fn distance_between(&self, other: &Self) -> usize {
         let mut ans = 0;
         for (client_id, &counter) in self.iter() {
             if let Some(&other_counter) = other.get(client_id) {
-                if counter > other_counter {
-                    ans += counter - other_counter;
-                }
+                ans += (counter - other_counter).abs();
             } else if counter > 0 {
+                ans += counter;
+            }
+        }
+
+        for (client_id, &counter) in other.iter() {
+            if !self.contains_key(client_id) {
                 ans += counter;
             }
         }
