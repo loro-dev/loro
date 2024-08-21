@@ -31,14 +31,12 @@ use crate::{
         decode_snapshot, export_fast_snapshot, export_snapshot, json_schema::op::JsonSchema,
         parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    event::InternalDocDiff,
-    event::{str_to_path, EventTriggerKind, Index},
+    event::{str_to_path, EventTriggerKind, Index, InternalDocDiff, Path},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     obs::{Observer, SubID, Subscriber},
     op::InnerContent,
-    oplog::loro_dag::FrontiersNotIncluded,
-    oplog::OpLog,
+    oplog::{loro_dag::FrontiersNotIncluded, OpLog},
     state::DocState,
     txn::Transaction,
     undo::DiffBatch,
@@ -1406,6 +1404,13 @@ impl LoroDoc {
     #[inline]
     pub fn analyze(&self) -> DocAnalysis {
         DocAnalysis::analyze(self)
+    }
+
+    /// Get the path from the root to the container
+    pub fn get_path_to_container(&self, id: &ContainerID) -> Option<Vec<(ContainerID, Index)>> {
+        let mut state = self.state.lock().unwrap();
+        let idx = state.arena.id_to_idx(id)?;
+        state.get_path(idx)
     }
 }
 

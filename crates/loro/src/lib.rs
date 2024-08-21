@@ -612,6 +612,11 @@ impl LoroDoc {
     pub fn analyze(&self) -> DocAnalysis {
         self.doc.analyze()
     }
+
+    /// Get the path from the root to the container
+    pub fn get_path_to_container(&self, id: &ContainerID) -> Option<Vec<(ContainerID, Index)>> {
+        self.doc.get_path_to_container(id)
+    }
 }
 
 /// It's used to prevent the user from implementing the trait directly.

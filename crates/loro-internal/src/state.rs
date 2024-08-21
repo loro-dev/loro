@@ -1212,7 +1212,7 @@ impl DocState {
     }
 
     // the container may be override, so it may return None
-    fn get_path(&mut self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
+    pub(super) fn get_path(&mut self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
         let mut ans = Vec::new();
         let mut idx = idx;
         loop {
