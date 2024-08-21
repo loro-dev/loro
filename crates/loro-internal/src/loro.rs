@@ -1156,8 +1156,6 @@ impl LoroDoc {
         self.import(&other.export_from(&self.oplog_vv()))
     }
 
-    #[cfg(feature = "test_utils")]
-    #[allow(unused)]
     pub(crate) fn arena(&self) -> &SharedArena {
         &self.arena
     }
