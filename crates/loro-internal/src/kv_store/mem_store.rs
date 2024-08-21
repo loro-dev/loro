@@ -5,6 +5,8 @@ use sstable::{SsTable, SsTableBuilder, SsTableIter};
 use super::*;
 use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
 
+const DEFAULT_BLOCK_SIZE: usize = 40 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct MemKvStore {
     mem_table: BTreeMap<Bytes, Bytes>,
@@ -14,7 +16,7 @@ pub struct MemKvStore {
 
 impl Default for MemKvStore {
     fn default() -> Self {
-        Self::new(4 * 1024)
+        Self::new(DEFAULT_BLOCK_SIZE)
     }
 }
 
@@ -147,6 +149,7 @@ impl KvStore for MemKvStore {
             builder.add(k, v);
         }
         builder.finish_block();
+
         if builder.is_empty() {
             return Bytes::new();
         }
@@ -154,6 +157,7 @@ impl KvStore for MemKvStore {
         let ss = builder.build();
         let ans = ss.export_all();
         let _ = std::mem::replace(&mut self.ss_table, Some(ss));
+
         ans
     }
 

@@ -194,13 +194,9 @@ impl BlockBuilder {
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
         debug_assert!(!key.is_empty(), "key cannot be empty");
         if  self.first_key.is_empty() && value.len() > self.block_size {
-            let key_len = key.len();
-            self.data.put_u16(key_len as u16);
-            let start = self.data.len();
-            self.data.put(key);
             self.data.put(value);
             self.is_large = true;
-            self.first_key = Bytes::copy_from_slice(&self.data[start..start+key_len]);
+            self.first_key = Bytes::copy_from_slice(key);
             return true;
         }
 
