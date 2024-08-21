@@ -14,7 +14,7 @@ use std::{
         Arc, Mutex, Weak,
     },
 };
-use tracing::{debug, debug_span, info, info_span, instrument, trace};
+use tracing::{debug, debug_span, info, info_span, instrument, trace, warn};
 
 use crate::{
     arena::SharedArena,
@@ -866,7 +866,13 @@ impl LoroDoc {
             self.state.lock().unwrap().start_recording();
         }
         self.start_auto_commit();
-        self.apply_diff(diff, container_remap, true).unwrap();
+        // Try applying the diff, but ignore the error if it happens.
+        // MovableList's undo behavior is too tricky to handle in a collaborative env
+        // so in edge cases this may be an Error
+        if let Err(e) = self.apply_diff(diff, container_remap, true) {
+            warn!("Undo Failed {:?}", e);
+        }
+
         Ok(CommitWhenDrop {
             doc: self,
             options: CommitOptions::new().origin("undo"),
@@ -942,6 +948,7 @@ impl LoroDoc {
             self.arena.get_depth(idx).unwrap().get()
         });
 
+        let mut ans: LoroResult<()> = Ok(());
         for mut id in containers {
             let mut remapped = false;
             let diff = diff.0.remove(&id).unwrap();
@@ -956,10 +963,12 @@ impl LoroDoc {
             }
 
             let h = self.get_handler(id);
-            h.apply_diff(diff, container_remap).unwrap();
+            if let Err(e) = h.apply_diff(diff, container_remap) {
+                ans = Err(e);
+            }
         }
 
-        Ok(())
+        ans
     }
 
     /// This is for debugging purpose. It will travel the whole oplog
