@@ -469,6 +469,17 @@ impl ContainerWrapper {
             return Ok(());
         };
 
+        if self.bytes_offset_for_value.is_none() {
+            let src: &[u8] = b;
+            let mut bytes: &[u8] = b;
+            bytes = &bytes[1..];
+            let _depth = leb128::read::unsigned(&mut bytes).unwrap();
+            let (_parent, bytes) = postcard::take_from_bytes::<Option<ContainerID>>(bytes).unwrap();
+            // SAFETY: bytes is a slice of b
+            let size = unsafe { bytes.as_ptr().offset_from(src.as_ptr()) };
+            self.bytes_offset_for_value = Some(size as usize);
+        }
+
         let value_offset = self.bytes_offset_for_value.unwrap();
         let b = &b[value_offset..];
 
