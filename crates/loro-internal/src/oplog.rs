@@ -537,7 +537,6 @@ impl OpLog {
     }
 
     #[inline(never)]
-    #[instrument(skip(self), level = "trace")]
     pub(crate) fn idlp_to_id(&self, id: loro_common::IdLp) -> Option<ID> {
         let change = self.change_store.get_change_by_lamport_lte(id)?;
         if change.lamport > id.lamport || change.lamport_end() <= id.lamport {

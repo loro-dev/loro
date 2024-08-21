@@ -465,6 +465,10 @@ impl ContainerWrapper {
     }
 
     fn decode_value(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> LoroResult<()> {
+        if self.value.is_some() || self.state.is_some() {
+            return Ok(());
+        }
+
         let Some(b) = self.bytes.as_ref() else {
             return Ok(());
         };
@@ -489,7 +493,6 @@ impl ContainerWrapper {
             ContainerType::List => ListState::decode_value(b)?,
             ContainerType::MovableList => MovableListState::decode_value(b)?,
             ContainerType::Tree => {
-                assert!(self.state.is_none());
                 let mut state = TreeState::decode_snapshot_fast(idx, (LoroValue::Null, b), ctx)?;
                 self.value = Some(state.get_value());
                 self.state = Some(State::TreeState(Box::new(state)));

@@ -504,7 +504,6 @@ mod mut_inner_kv {
             debug_assert!(self.get_change(id).is_some());
         }
 
-        #[tracing::instrument(skip(self), level = "debug")]
         pub fn get_change(&self, id: ID) -> Option<BlockChangeRef> {
             let block = self.get_parsed_block(id)?;
             Some(BlockChangeRef {
