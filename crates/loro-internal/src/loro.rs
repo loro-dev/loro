@@ -1,3 +1,8 @@
+use either::Either;
+use fxhash::FxHashMap;
+use itertools::Itertools;
+use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
+use rle::HasLength;
 use std::{
     borrow::Cow,
     cmp::Ordering,
@@ -9,12 +14,6 @@ use std::{
         Arc, Mutex, Weak,
     },
 };
-
-use either::Either;
-use fxhash::FxHashMap;
-use itertools::Itertools;
-use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
-use rle::HasLength;
 use tracing::{debug, debug_span, info, info_span, instrument, trace};
 
 use crate::{
@@ -27,29 +26,27 @@ use crate::{
     },
     cursor::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
     dag::DagUtils,
+    diff_calc::DiffCalculator,
     encoding::{
         decode_snapshot, export_fast_snapshot, export_snapshot, json_schema::op::JsonSchema,
         parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
+    event::InternalDocDiff,
     event::{str_to_path, EventTriggerKind, Index},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
+    obs::{Observer, SubID, Subscriber},
     op::InnerContent,
     oplog::loro_dag::FrontiersNotIncluded,
-    undo::DiffBatch,
-    version::Frontiers,
-    HandlerTrait, InternalString, LoroError, VersionVector,
-};
-
-use super::{
-    diff_calc::DiffCalculator,
-    event::InternalDocDiff,
-    obs::{Observer, SubID, Subscriber},
     oplog::OpLog,
     state::DocState,
     txn::Transaction,
-    ListHandler, MapHandler,
+    undo::DiffBatch,
+    version::Frontiers,
+    HandlerTrait, InternalString, ListHandler, LoroError, MapHandler, VersionVector,
 };
+
+pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
 
 /// `LoroApp` serves as the library's primary entry point.
 /// It's constituted by an [OpLog] and an [AppState].
@@ -1403,6 +1400,14 @@ impl LoroDoc {
     #[inline]
     pub fn compact_change_store(&self) {
         self.oplog.lock().unwrap().compact_change_store();
+    }
+
+    /// Analyze the container info of the doc
+    ///
+    /// This is used for development and debugging
+    #[inline]
+    pub fn analyze(&self) -> DocAnalysis {
+        DocAnalysis::analyze(self)
     }
 }
 

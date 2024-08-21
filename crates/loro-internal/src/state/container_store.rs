@@ -367,6 +367,10 @@ impl ContainerWrapper {
         }
     }
 
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
     /// It will not decode the state if it is not decoded
     #[allow(unused)]
     pub fn try_get_state(&self) -> Option<&State> {
@@ -421,7 +425,9 @@ impl ContainerWrapper {
             .as_mut()
             .unwrap()
             .encode_snapshot_fast(&mut output);
-        output.into()
+        let ans: Bytes = output.into();
+        self.bytes = Some(ans.clone());
+        ans
     }
 
     pub fn new_from_bytes(b: Bytes) -> Self {
