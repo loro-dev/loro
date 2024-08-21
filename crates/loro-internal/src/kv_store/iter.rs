@@ -183,7 +183,7 @@ impl BlockIter {
                 self.seek_to_idx(left);
             }
             Block::Large(block) => {
-                if key > block.key() {
+                if key > block.key {
                     self.seek_to_idx(1);
                 } else {
                     self.seek_to_idx(0);
@@ -214,7 +214,7 @@ impl BlockIter {
                 self.prev_to_idx(left as isize - 1);
             }
             Block::Large(block) => {
-                if key < block.key() {
+                if key < block.key {
                     self.prev_to_idx(-1);
                 } else {
                     self.prev_to_idx(0);
@@ -241,8 +241,8 @@ impl BlockIter {
                     self.next_value_range = 0..0;
                     return;
                 }
-                self.next_key = block.key().to_vec();
-                self.next_value_range = (SIZE_OF_U16 + block.key_length)..block.data.len();
+                self.next_key = block.key.to_vec();
+                self.next_value_range = 0..block.value_bytes.len();
                 self.next_idx = idx;
             }
         }
@@ -266,8 +266,8 @@ impl BlockIter {
                     self.prev_value_range = 0..0;
                     return;
                 }
-                self.prev_key = block.key().to_vec();
-                self.prev_value_range = (SIZE_OF_U16 + block.key_length)..block.data.len();
+                self.prev_key = block.key.to_vec();
+                self.prev_value_range = 0..block.value_bytes.len();
                 self.prev_idx = idx;
             }
         }
@@ -290,8 +290,8 @@ impl BlockIter {
                 rest.advance(value_len);
             }
             Block::Large(block) => {
-                self.next_key = block.key().to_vec();
-                self.next_value_range = (SIZE_OF_U16 + block.key_length)..block.data.len();
+                self.next_key = block.key.to_vec();
+                self.next_value_range = 0..block.value_bytes.len();
             }
         }
     }
@@ -313,8 +313,8 @@ impl BlockIter {
                 rest.advance(value_len);
             }
             Block::Large(block) => {
-                self.prev_key = block.key().to_vec();
-                self.prev_value_range = (SIZE_OF_U16 + block.key_length)..block.data.len();
+                self.prev_key = block.key.to_vec();
+                self.prev_value_range = 0..block.value_bytes.len();
             }
         }
     }

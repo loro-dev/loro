@@ -1,4 +1,4 @@
-use std::{ fmt::Debug, ops::{Bound}, sync::Arc};
+use std::{ fmt::Debug, ops::Bound, sync::Arc};
 
 use bytes::{Buf, BufMut, Bytes};
 use fxhash::FxHashSet;
@@ -17,23 +17,12 @@ pub const SIZE_OF_U32: usize = std::mem::size_of::<u32>();
 
 #[derive(Debug)]
 pub struct LargeValueBlock{
-    pub data: Bytes,
-    pub key_length: usize,
+    // without checksum
+    pub value_bytes: Bytes,
+    pub key: Bytes,
 }
 
 impl LargeValueBlock{
-    pub fn key(&self)->Bytes{
-        self.data.slice(SIZE_OF_U16..SIZE_OF_U16 + self.key_length )
-    }
-
-    fn value(&self)->Bytes{
-        self.data.slice(SIZE_OF_U16 + self.key_length  ..)
-    }
-
-    fn value_length(&self)->usize{
-        self.data.len() - SIZE_OF_U16 - self.key_length  - SIZE_OF_U32
-    }
-
     /// ┌───────────────────────────────────────────────┐
     /// │Large Block                                    │
     /// │┌ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ┬ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─ ─ │
@@ -42,20 +31,17 @@ impl LargeValueBlock{
     /// │ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘│
     /// └───────────────────────────────────────────────┘
     fn encode(&self)->Bytes{
-        let mut buf = Vec::with_capacity(self.key_length+ self.value_length() + SIZE_OF_U16 + SIZE_OF_U32);
-        buf.put_u16(self.key_length as u16);
-        buf.put_slice(&self.key());
-        buf.put_slice(&self.value());
+        let mut buf = Vec::with_capacity(self.value_bytes.len() + SIZE_OF_U32);
+        buf.put_slice(&self.value_bytes);
         let checksum = crc32fast::hash(&buf);
         buf.put_u32(checksum);
         buf.into()
     }
 
-    fn decode(bytes:Bytes)->Self{
-        let key_len = (&bytes[..SIZE_OF_U16]).get_u16() as usize;
+    fn decode(bytes:Bytes, key: Bytes)->Self{
         LargeValueBlock{
-            data:bytes,
-            key_length: key_len,
+            value_bytes: bytes.slice(..bytes.len() - SIZE_OF_U32),
+            key,
         }
     }
 }
@@ -63,6 +49,7 @@ impl LargeValueBlock{
 #[derive(Debug)]
 pub struct NormalBlock {
     pub data: Bytes,
+    pub first_key: Bytes,
     pub offsets: Vec<u16>,
 }
 
@@ -87,7 +74,7 @@ impl NormalBlock {
         buf.into()
     }
 
-    fn decode(raw_block_and_check: Bytes)-> NormalBlock{
+    fn decode(raw_block_and_check: Bytes, first_key: Bytes)-> NormalBlock{
         let data = raw_block_and_check.slice(..raw_block_and_check.len() - SIZE_OF_U32);
         let offsets_len = (&data[data.len()-SIZE_OF_U16..]).get_u16() as usize;
         let data_end = data.len() - SIZE_OF_U16 * (offsets_len + 1);
@@ -96,15 +83,8 @@ impl NormalBlock {
         NormalBlock{
             data: data.slice(..data_end),
             offsets,
+            first_key,
         }
-    }
-
-    fn first_key(&self)->Bytes{
-        let mut buf = self.data.as_ref();
-        // skip common prefix of the first key
-        buf.get_u8();
-        let key_len = buf.get_u16() as usize;
-        Bytes::from(buf[..key_len].to_vec())
     }
 }
 
@@ -122,14 +102,14 @@ impl Block{
     pub fn data(&self)->Bytes{
         match self{
             Block::Normal(block)=>block.data.clone(),
-            Block::Large(block)=>block.data.clone(),
+            Block::Large(block)=>block.value_bytes.clone(),
         }
     }
 
     pub fn first_key(&self)->Bytes{
         match self{
-            Block::Normal(block)=>block.first_key(),
-            Block::Large(block)=>block.key(),
+            Block::Normal(block)=>block.first_key.clone(),
+            Block::Large(block)=>block.key.clone(),
         }
     }
 
@@ -140,11 +120,11 @@ impl Block{
         }
     }
 
-    fn decode(raw_block_and_check: Bytes, is_large: bool)->Self{
+    fn decode(raw_block_and_check: Bytes, is_large: bool, key: Bytes)->Self{
         if is_large{
-            return Block::Large(LargeValueBlock::decode(raw_block_and_check));
+            return Block::Large(LargeValueBlock::decode(raw_block_and_check, key));
         }
-        Block::Normal(NormalBlock::decode(raw_block_and_check))
+        Block::Normal(NormalBlock::decode(raw_block_and_check, key))
     }
 
     pub fn len(&self)->usize{
@@ -224,33 +204,33 @@ impl BlockBuilder {
             return false;
         }
 
+        if self.first_key.is_empty() {
+            self.first_key = Bytes::copy_from_slice(key);
+        }
         self.offsets.push(self.data.len() as u16);
         let (common, suffix) = get_common_prefix_len_and_strip(key, &self.first_key);
         let key_len = suffix.len() ;
         let value_len = value.len();
         self.data.put_u8(common);
         self.data.put_u16(key_len as u16);
-        let start = self.data.len();
         self.data.put(suffix);
         self.data.put_u16(value_len as u16);
         self.data.put(value);
-        if self.first_key.is_empty() {
-            self.first_key = Bytes::copy_from_slice(&self.data[start..start+key_len]);
-        }
         true
     }
 
     pub fn build(self)->Block{
         if self.is_large{
             return Block::Large(LargeValueBlock{
-                data: Bytes::from(self.data),
-                key_length: self.first_key.len(),
+                value_bytes: Bytes::from(self.data),
+                key: self.first_key,
             });
         }
         debug_assert!(!self.offsets.is_empty(), "block is empty");
         Block::Normal(NormalBlock{
             data: Bytes::from(self.data),
             offsets: self.offsets,
+            first_key: self.first_key,
         })
     }
 }
@@ -536,8 +516,7 @@ impl SsTable{
         let offset = self.meta[block_idx].offset;
         let offset_end = self.meta.get(block_idx+1).map_or(self.meta_offset, |m| m.offset);
         let raw_block_and_check = self.data.slice(offset..offset_end);
-       Arc::new(Block::decode(raw_block_and_check, self.meta[block_idx].is_large))
-        
+        Arc::new(Block::decode(raw_block_and_check, self.meta[block_idx].is_large, self.meta[block_idx].first_key.clone()))
     }
 
 
