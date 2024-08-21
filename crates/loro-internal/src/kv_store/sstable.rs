@@ -23,13 +23,13 @@ pub struct LargeValueBlock{
 }
 
 impl LargeValueBlock{
-    /// ┌───────────────────────────────────────────────┐
-    /// │Large Block                                    │
-    /// │┌ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ┬ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─ ─ │
-    /// │  key length │  key    value   Block Checksum ││
-    /// ││    u16     │ bytes │ bytes │      u32        │
-    /// │ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘│
-    /// └───────────────────────────────────────────────┘
+    /// ┌──────────────────────────┐
+    /// │Large Block               │
+    /// │┌ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─ ─ │
+    /// │  value   Block Checksum ││
+    /// ││ bytes │      u32        │
+    /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘│
+    /// └──────────────────────────┘
     fn encode(&self)->Bytes{
         let mut buf = Vec::with_capacity(self.value_bytes.len() + SIZE_OF_U32);
         buf.put_slice(&self.value_bytes);
