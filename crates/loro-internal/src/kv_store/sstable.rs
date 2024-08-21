@@ -14,6 +14,8 @@ const CURRENT_SCHEMA_VERSION: u8 = 0;
 pub const SIZE_OF_U8: usize = std::mem::size_of::<u8>();
 pub const SIZE_OF_U16: usize = std::mem::size_of::<u16>();
 pub const SIZE_OF_U32: usize = std::mem::size_of::<u32>();
+// TODO: cache size
+const DEFAULT_CACHE_SIZE: usize = 1 << 20;
 
 
 #[derive(Debug)]
@@ -409,7 +411,7 @@ impl SsTableBuilder{
             last_key,
             meta: self.meta, 
             meta_offset: meta_offset as usize,
-            block_cache: BlockCache::new(1 << 20),  // TODO: cache size
+            block_cache: BlockCache::new(DEFAULT_CACHE_SIZE),
             keys: OnceCell::new(),
         }
     }
@@ -437,7 +439,7 @@ impl Clone for SsTable{
             last_key: self.last_key.clone(),
             meta: self.meta.clone(),
             meta_offset: self.meta_offset,
-            block_cache: BlockCache::new(1 << 20),  // TODO: cache size
+            block_cache: BlockCache::new(DEFAULT_CACHE_SIZE),
             keys: OnceCell::new(),
         }
     }
@@ -483,7 +485,7 @@ impl SsTable{
             last_key,
             meta, 
             meta_offset ,
-            block_cache: BlockCache::new(1 << 20), // TODO: cache size
+            block_cache: BlockCache::new(DEFAULT_CACHE_SIZE),
             keys: OnceCell::new(),
         };
         Ok(ans)

@@ -5,7 +5,7 @@ use sstable::{SsTable, SsTableBuilder, SsTableIter};
 use super::*;
 use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
 
-const DEFAULT_BLOCK_SIZE: usize = 40 * 1024;
+const DEFAULT_BLOCK_SIZE: usize = 4 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct MemKvStore {
