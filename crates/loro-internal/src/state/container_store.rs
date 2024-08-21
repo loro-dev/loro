@@ -367,6 +367,10 @@ impl ContainerWrapper {
         }
     }
 
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
     /// It will not decode the state if it is not decoded
     #[allow(unused)]
     pub fn try_get_state(&self) -> Option<&State> {
@@ -421,7 +425,9 @@ impl ContainerWrapper {
             .as_mut()
             .unwrap()
             .encode_snapshot_fast(&mut output);
-        output.into()
+        let ans: Bytes = output.into();
+        self.bytes = Some(ans.clone());
+        ans
     }
 
     pub fn new_from_bytes(b: Bytes) -> Self {
@@ -459,9 +465,24 @@ impl ContainerWrapper {
     }
 
     fn decode_value(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> LoroResult<()> {
+        if self.value.is_some() || self.state.is_some() {
+            return Ok(());
+        }
+
         let Some(b) = self.bytes.as_ref() else {
             return Ok(());
         };
+
+        if self.bytes_offset_for_value.is_none() {
+            let src: &[u8] = b;
+            let mut bytes: &[u8] = b;
+            bytes = &bytes[1..];
+            let _depth = leb128::read::unsigned(&mut bytes).unwrap();
+            let (_parent, bytes) = postcard::take_from_bytes::<Option<ContainerID>>(bytes).unwrap();
+            // SAFETY: bytes is a slice of b
+            let size = unsafe { bytes.as_ptr().offset_from(src.as_ptr()) };
+            self.bytes_offset_for_value = Some(size as usize);
+        }
 
         let value_offset = self.bytes_offset_for_value.unwrap();
         let b = &b[value_offset..];
@@ -472,7 +493,6 @@ impl ContainerWrapper {
             ContainerType::List => ListState::decode_value(b)?,
             ContainerType::MovableList => MovableListState::decode_value(b)?,
             ContainerType::Tree => {
-                assert!(self.state.is_none());
                 let mut state = TreeState::decode_snapshot_fast(idx, (LoroValue::Null, b), ctx)?;
                 self.value = Some(state.get_value());
                 self.state = Some(State::TreeState(Box::new(state)));

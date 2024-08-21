@@ -1064,6 +1064,8 @@ impl Handler {
         diff: Diff,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
     ) -> LoroResult<()> {
+        // In this method we will not clone the values of the containers if
+        // they are remapped. It's the caller's duty to do so
         trace!("apply_diff: {:?}", &diff);
         let on_container_remap = &mut |old_id, new_id| {
             container_remap.insert(old_id, new_id);
@@ -3230,7 +3232,7 @@ impl MovableListHandler {
                         loro_delta::DeltaItem::Replace {
                             value,
                             delete,
-                            attr: _,
+                            attr,
                         } => {
                             if *delete > 0 {
                                 // skip the deletion if it is already processed by moving
@@ -3273,7 +3275,10 @@ impl MovableListHandler {
                                             deleted.push(old_index);
                                             update_on_delete(&mut to_delete, old_index);
                                             update_on_insert(&mut to_delete, index, 1);
-                                        } else {
+                                        } else if !attr.from_move {
+                                            // If the container is not moved, we need to insert a new container
+                                            // If it is moved, and we cannot find it in the delete set, it should be ignored.
+                                            // Because it's overridden by sth else (like a concurrent set op)
                                             let new_h = self.insert_container(
                                                 index,
                                                 Handler::new_unattached(old_id.container_type()),

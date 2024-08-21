@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     io::Write,
     sync::{
         atomic::{AtomicU64, AtomicU8, Ordering},
@@ -11,6 +12,7 @@ use container_store::ContainerStore;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
+use itertools::Itertools;
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
 use tracing::{info_span, instrument, trace};
@@ -32,6 +34,7 @@ use crate::{
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue, OpLog,
 };
 
+pub(crate) mod analyzer;
 mod container_store;
 #[cfg(feature = "counter")]
 mod counter_state;
@@ -50,7 +53,7 @@ pub(crate) use tree_state::{
     get_meta_value, FractionalIndexGenResult, NodePosition, TreeParentId, TreeState,
 };
 
-use self::unknown_state::UnknownState;
+use self::{container_store::ContainerWrapper, unknown_state::UnknownState};
 
 #[cfg(feature = "counter")]
 use self::counter_state::CounterState;
@@ -703,6 +706,12 @@ impl DocState {
         self.store.iter_and_decode_all()
     }
 
+    pub(crate) fn iter_wrapper_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&ContainerIdx, &mut ContainerWrapper)> {
+        self.store.iter_mut()
+    }
+
     pub(crate) fn init_container(
         &mut self,
         cid: ContainerID,
@@ -950,6 +959,7 @@ impl DocState {
         match value {
             LoroValue::Container(_) => unreachable!(),
             LoroValue::List(mut list) => {
+                // FIXME: doesn't work for tree
                 if list.iter().all(|x| !x.is_container()) {
                     return LoroValue::Map(Arc::new(fx_map!(
                         "cid".into() => cid_str,
@@ -1051,6 +1061,62 @@ impl DocState {
         }
     }
 
+    pub(crate) fn get_all_alive_containers(&mut self) -> FxHashSet<ContainerID> {
+        let mut ans = FxHashSet::default();
+        let mut to_visit = self
+            .arena
+            .root_containers()
+            .iter()
+            .map(|x| self.arena.get_container_id(*x).unwrap())
+            .collect_vec();
+
+        while let Some(id) = to_visit.pop() {
+            self.get_alive_children_of(&id, &mut to_visit);
+            ans.insert(id);
+        }
+
+        ans
+    }
+
+    pub(crate) fn get_alive_children_of(&mut self, id: &ContainerID, ans: &mut Vec<ContainerID>) {
+        let idx = self.arena.register_container(id);
+        let Some(value) = self.store.get_value(idx) else {
+            return;
+        };
+
+        match value {
+            LoroValue::Container(_) => unreachable!(),
+            LoroValue::List(list) => {
+                if idx.get_type() == ContainerType::Tree {
+                    // Each tree node has an associated map container to represent
+                    // the metadata of this node. When the user get the deep value,
+                    // we need to add a field named `meta` to the tree node,
+                    // whose value is deep value of map container.
+                    for node in list.iter() {
+                        let map = node.as_map().unwrap();
+                        let meta = map.get("meta").unwrap();
+                        let id = meta.as_container().unwrap();
+                        ans.push(id.clone());
+                    }
+                } else {
+                    for item in list.iter() {
+                        if let LoroValue::Container(id) = item {
+                            ans.push(id.clone());
+                        }
+                    }
+                }
+            }
+            LoroValue::Map(map) => {
+                for (_key, value) in map.iter() {
+                    if let LoroValue::Container(id) = value {
+                        ans.push(id.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     // Because we need to calculate path based on [DocState], so we cannot extract
     // the event recorder to a separate module.
     fn diffs_to_event(&mut self, diffs: Vec<InternalDocDiff<'_>>, from: Frontiers) -> DocDiff {
@@ -1146,7 +1212,7 @@ impl DocState {
     }
 
     // the container may be override, so it may return None
-    fn get_path(&mut self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
+    pub(super) fn get_path(&mut self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
         let mut ans = Vec::new();
         let mut idx = idx;
         loop {

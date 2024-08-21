@@ -40,6 +40,7 @@ pub use loro_internal::event::Index;
 pub use loro_internal::handler::TextDelta;
 pub use loro_internal::id::{PeerID, TreeID, ID};
 pub use loro_internal::loro::CommitOptions;
+pub use loro_internal::loro::DocAnalysis;
 pub use loro_internal::obs::SubID;
 pub use loro_internal::oplog::FrontiersNotIncluded;
 pub use loro_internal::undo;
@@ -603,6 +604,18 @@ impl LoroDoc {
     /// Export the fast snapshot of the document.
     pub fn export_fast_snapshot(&self) -> Vec<u8> {
         self.doc.export_fast_snapshot()
+    }
+
+    /// Analyze the container info of the doc
+    ///
+    /// This is used for development and debugging. It can be slow.
+    pub fn analyze(&self) -> DocAnalysis {
+        self.doc.analyze()
+    }
+
+    /// Get the path from the root to the container
+    pub fn get_path_to_container(&self, id: &ContainerID) -> Option<Vec<(ContainerID, Index)>> {
+        self.doc.get_path_to_container(id)
     }
 }
 

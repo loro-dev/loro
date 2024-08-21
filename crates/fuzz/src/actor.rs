@@ -335,6 +335,15 @@ impl Actor {
             ContainerType::Unknown(_) => unreachable!(),
         }
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn log_json_history(&self) {
+        let json = self
+            .loro
+            .export_json_updates(&Default::default(), &self.loro.oplog_vv());
+        let string = serde_json::to_string_pretty(&json).unwrap();
+        tracing::info!("vv={:?} json = {}", self.loro.oplog_vv(), string);
+    }
 }
 
 #[enum_dispatch(ActorTrait)]

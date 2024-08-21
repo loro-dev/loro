@@ -9250,6 +9250,133 @@ fn fast_snapshot_2() {
 }
 
 #[test]
+fn out_of_bounds() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 200,
+                target: 19,
+                container: 19,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 320019219,
+                    pos: 1374463283923456787,
+                    length: 1374472080016478995,
+                    prop: 1374463283923456787,
+                }),
+            },
+            Handle {
+                site: 19,
+                target: 19,
+                container: 19,
+                action: Generic(GenericAction {
+                    value: I32(320017171),
+                    bool: true,
+                    key: 320017171,
+                    pos: 1374463309693260563,
+                    length: 1374463283923456531,
+                    prop: 202940420883,
+                }),
+            },
+            Handle {
+                site: 171,
+                target: 19,
+                container: 19,
+                action: Generic(GenericAction {
+                    value: I32(1091769107),
+                    bool: true,
+                    key: 335483667,
+                    pos: 18446743056122319635,
+                    length: 13165911456529954486,
+                    prop: 13165911456529954486,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 19,
+                target: 19,
+                container: 19,
+                action: Generic(GenericAction {
+                    value: I32(320017217),
+                    bool: true,
+                    key: 320017171,
+                    pos: 18446744073709551379,
+                    length: 1441151880758558719,
+                    prop: 6562610054654268258,
+                }),
+            },
+            SyncAllUndo {
+                site: 131,
+                op_len: 2206434179,
+            },
+            Handle {
+                site: 35,
+                target: 19,
+                container: 19,
+                action: Generic(GenericAction {
+                    value: I32(321655571),
+                    bool: true,
+                    key: 95860406,
+                    pos: 13165911456517980160,
+                    length: 13165911456529954486,
+                    prop: 18137885445146982070,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Tree),
+                    bool: true,
+                    key: 4288914339,
+                    pos: 18446744073709551412,
+                    length: 18446744073709551615,
+                    prop: 18446673704965373951,
+                }),
+            },
+            Handle {
+                site: 35,
+                target: 19,
+                container: 19,
+                action: Generic(GenericAction {
+                    value: I32(321655571),
+                    bool: true,
+                    key: 95860406,
+                    pos: 13165911456517980160,
+                    length: 13165911456529954486,
+                    prop: 18137885445146982070,
+                }),
+            },
+            Handle {
+                site: 27,
+                target: 19,
+                container: 19,
+                action: Generic(GenericAction {
+                    value: I32(320017171),
+                    bool: true,
+                    key: 320017171,
+                    pos: 1374463283923456787,
+                    length: 1374463283923456787,
+                    prop: 9444913841941189395,
+                }),
+            },
+            SyncAllUndo {
+                site: 131,
+                op_len: 2206434179,
+            },
+            Undo {
+                site: 255,
+                op_len: 2214592511,
+            },
+        ],
+    );
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,
