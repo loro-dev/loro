@@ -529,7 +529,7 @@ impl SsTable{
 
     pub fn find_prev_block_idx(&self, key: &[u8])->usize{
         self.meta
-            .partition_point(|meta| meta.last_key.as_ref().unwrap_or(&meta.first_key) <= key)
+            .partition_point(|meta| meta.last_key.as_ref().unwrap_or(&meta.first_key) <= key).min(self.meta.len() - 1)
     }
 
     fn read_block(&self, block_idx: usize)->Arc<Block>{
@@ -713,6 +713,16 @@ impl<'a> SsTableIter<'a>{
                 next_first: true
             }
         };
+        // the current iter is empty, but has next iter. we need to skip the empty iter
+        while ans.is_next_valid() && !ans.next_block_iter.next_is_valid(){
+            ans.next();
+        }
+        if !ans.next_first{
+            while ans.is_prev_valid() && !ans.prev_block_iter.prev_is_valid(){
+                ans.prev();
+            }   
+        }
+        
         if let Some(key) = excluded {
             if ans.is_next_valid() && ans.next_key() == key{
                 ans.next();
