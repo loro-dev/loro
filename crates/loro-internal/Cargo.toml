@@ -54,6 +54,7 @@ nonmax = "0.5.5"
 xxhash-rust = { version = "0.8.12", features = ["xxh32"] }
 crc32fast = "^1.4.0"
 quick_cache = "0.6.2"
+lz4_flex = { version = "0.11" }
 
 [dev-dependencies]
 miniz_oxide = "0.7.1"

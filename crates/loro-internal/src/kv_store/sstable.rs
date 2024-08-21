@@ -4,6 +4,7 @@ use bytes::{Buf, BufMut, Bytes};
 use fxhash::FxHashSet;
 use loro_common::{LoroError, LoroResult};
 use once_cell::sync::OnceCell;
+use rle::Sliceable;
 
 use crate::kv_store::get_common_prefix_len_and_strip;
 use super::iter::BlockIter;
@@ -69,19 +70,23 @@ impl NormalBlock {
             buf.put_u16(*offset);
         }
         buf.put_u16(self.offsets.len() as u16);
-        let checksum = crc32fast::hash(&buf);
-        buf.put_u32(checksum);
-        buf.into()
+
+        let mut compressed_data = lz4_flex::compress_prepend_size(&buf);
+
+        let checksum = crc32fast::hash(&compressed_data);
+        compressed_data.put_u32(checksum);
+        compressed_data.into()
     }
 
     fn decode(raw_block_and_check: Bytes, first_key: Bytes)-> NormalBlock{
         let data = raw_block_and_check.slice(..raw_block_and_check.len() - SIZE_OF_U32);
+        let data = lz4_flex::decompress_size_prepended(&data).unwrap();
         let offsets_len = (&data[data.len()-SIZE_OF_U16..]).get_u16() as usize;
         let data_end = data.len() - SIZE_OF_U16 * (offsets_len + 1);
         let offsets = &data[data_end..data.len()-SIZE_OF_U16];
         let offsets = offsets.chunks(SIZE_OF_U16).map(|mut chunk| chunk.get_u16()).collect();
         NormalBlock{
-            data: data.slice(..data_end),
+            data: Bytes::from(data.slice(0, data_end)),
             offsets,
             first_key,
         }
