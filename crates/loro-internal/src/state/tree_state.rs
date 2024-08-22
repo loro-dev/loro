@@ -937,15 +937,27 @@ impl ContainerState for TreeState {
                                     }
                                     // Otherwise, it's a normal move inside deleted nodes, no event is needed
                                 } else {
-                                    // normal move
-                                    ans.push(TreeDiffItem {
-                                        target,
-                                        action: TreeExternalDiff::Move {
-                                            parent: parent.into_node().ok(),
-                                            index: self.get_index_by_tree_id(&target).unwrap(),
-                                            position: position.clone(),
-                                        },
-                                    });
+                                    if was_alive {
+                                        // normal move
+                                        ans.push(TreeDiffItem {
+                                            target,
+                                            action: TreeExternalDiff::Move {
+                                                parent: parent.into_node().ok(),
+                                                index: self.get_index_by_tree_id(&target).unwrap(),
+                                                position: position.clone(),
+                                            },
+                                        });
+                                    } else {
+                                        // create event
+                                        ans.push(TreeDiffItem {
+                                            target,
+                                            action: TreeExternalDiff::Create {
+                                                parent: parent.into_node().ok(),
+                                                index: self.get_index_by_tree_id(&target).unwrap(),
+                                                position: position.clone(),
+                                            },
+                                        });
+                                    }
                                 }
                             }
                         } else {
