@@ -1,12 +1,14 @@
 use std::{
     cmp::Ordering,
-    sync::{atomic::AtomicU64, Arc},
+    collections::BTreeMap,
+    sync::{atomic::AtomicU64, Arc, Mutex},
 };
 
 use crate::{
     arena::SharedArena,
     configure::Configure,
     container::idx::ContainerIdx,
+    kv_store::KvStore,
     state::{FastStateSnapshot, RichtextState},
 };
 use bytes::Bytes;
@@ -59,6 +61,7 @@ use super::counter_state::CounterState;
 pub(crate) struct ContainerStore {
     arena: SharedArena,
     store: FxHashMap<ContainerIdx, ContainerWrapper>,
+    external_kv: Arc<Mutex<dyn KvStore>>,
     conf: Configure,
     peer: Arc<AtomicU64>,
 }
@@ -85,6 +88,7 @@ impl ContainerStore {
         ContainerStore {
             arena,
             store: Default::default(),
+            external_kv: Arc::new(Mutex::new(BTreeMap::default())),
             conf,
             peer,
         }
@@ -280,6 +284,7 @@ impl ContainerStore {
             arena,
             store,
             conf: config,
+            external_kv: self.external_kv.try_lock().unwrap().clone_store(),
             peer,
         }
     }
