@@ -4,7 +4,7 @@ use loro::{KvStore, MemKvStore};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
-#[derive(Debug, Clone, Arbitrary)]
+#[derive(Clone, Arbitrary)]
 pub enum Action {
     Add {
         key: Vec<u8>,
@@ -20,6 +20,34 @@ pub enum Action {
     },
     ExportAndImport,
     Flush,
+}
+
+impl std::fmt::Debug for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Action::Add { key, value } => {
+                write!(
+                    f,
+                    "Add{{\n\tkey: vec!{:?}, \n\tvalue: vec!{:?}\n}}",
+                    key, value
+                )
+            }
+            Action::Get(index) => write!(f, "Get({})", index),
+            Action::Remove(index) => write!(f, "Remove({})", index),
+            Action::Scan {
+                start,
+                end,
+                start_include,
+                end_include,
+            } => write!(
+                f,
+                "Scan{{\n\tstart: {:?}, \n\tend: {:?}, \n\tstart_include: {:?}, \n\tend_include: {:?}\n}}",
+                start, end, start_include, end_include
+            ),
+            Action::ExportAndImport => write!(f, "ExportAndImport"),
+            Action::Flush => write!(f, "Flush"),
+        }
+    }
 }
 
 #[derive(Default)]
