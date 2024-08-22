@@ -1,7 +1,7 @@
 use either::Either;
 use enum_as_inner::EnumAsInner;
 use fractional_index::FractionalIndex;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet, FxHasher};
 use itertools::Itertools;
 use loro_common::{
     ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
@@ -15,6 +15,7 @@ use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, Weak};
+use tracing::trace;
 
 use super::{ContainerState, DiffApplyContext};
 use crate::container::idx::ContainerIdx;
@@ -869,6 +870,78 @@ impl TreeState {
             .then(|| self.children.get(parent).and_then(|x| x.get_id_at(index)))
             .flatten()
     }
+
+    fn convert_affected_set_to_diff(
+        &mut self,
+        affected_set_and_was_alive: FxHashMap<TreeID, bool>,
+    ) -> Diff {
+        trace!(
+            "affected_set_and_was_alive={:#?}",
+            affected_set_and_was_alive
+        );
+        let mut ans = vec![];
+        for (&c, &was_alive) in affected_set_and_was_alive.iter() {
+            let now_alive = !self.is_node_deleted(&c);
+            let Some(node) = self.trees.get(&c) else {
+                if was_alive {
+                    ans.push((
+                        TreeDiffItem {
+                            target: c,
+                            action: TreeExternalDiff::Delete,
+                        },
+                        IdLp::new(0, 0),
+                    ));
+                }
+                continue;
+            };
+            match (was_alive, now_alive) {
+                (true, false) => {
+                    ans.push((
+                        TreeDiffItem {
+                            target: c,
+                            action: TreeExternalDiff::Delete,
+                        },
+                        node.last_move_op.idlp(),
+                    ));
+                }
+                (false, true) => {
+                    ans.push((
+                        TreeDiffItem {
+                            target: c,
+                            action: TreeExternalDiff::Create {
+                                parent: node.parent.id(),
+                                index: self.get_index_by_tree_id(&c).unwrap(),
+                                position: node.position.as_ref().unwrap().clone(),
+                            },
+                        },
+                        node.last_move_op.idlp(),
+                    ));
+                }
+                (true, true) => {
+                    // move event
+                    ans.push((
+                        TreeDiffItem {
+                            target: c,
+                            action: TreeExternalDiff::Move {
+                                parent: node.parent.id(),
+                                index: self.get_index_by_tree_id(&c).unwrap(),
+                                position: node.position.as_ref().unwrap().clone(),
+                            },
+                        },
+                        node.last_move_op.idlp(),
+                    ));
+                }
+                (false, false) => {
+                    // noting happen for users
+                }
+            }
+        }
+
+        ans.sort_unstable_by_key(|x| x.1);
+        trace!("ans={:#?}", &ans);
+        let ans = ans.into_iter().map(|x| x.0).collect_vec();
+        Diff::Tree(TreeDiff { diff: ans })
+    }
 }
 
 pub(crate) enum FractionalIndexGenResult {
@@ -891,14 +964,21 @@ impl ContainerState for TreeState {
 
     // How we apply the diff is coupled with the [DiffMode] we used to calculate the diff.
     // So be careful when you modify this function.
+    /// Note: The sent tree event has a series of ops, when applying them in the order,
+    /// it may create temporary cycle in the tree, but it will be fixed when the whole event is applied.
     fn apply_diff_and_convert(
         &mut self,
         diff: crate::event::InternalDiff,
         ctx: DiffApplyContext,
     ) -> Diff {
         let need_check = !matches!(ctx.mode, DiffMode::Checkout | DiffMode::Linear);
-        let mut ans = vec![];
+        let mut affected_set_and_was_alive = FxHashMap::default();
+
         if let InternalDiff::Tree(tree) = &diff {
+            for diff in tree.diff.iter() {
+                affected_set_and_was_alive.insert(diff.target, !self.is_node_deleted(&diff.target));
+            }
+
             // println!("before {:?}", self.children);
             // assert never cause cycle move
             for diff in tree.diff.iter() {
@@ -910,86 +990,27 @@ impl ContainerState for TreeState {
                     TreeInternalDiff::Create { parent, position } => {
                         self.mov(target, *parent, last_move_op, Some(position.clone()), false)
                             .unwrap();
-                        let index = self.get_index_by_tree_id(&target).unwrap();
-                        ans.push(TreeDiffItem {
-                            target,
-                            action: TreeExternalDiff::Create {
-                                parent: parent.into_node().ok(),
-                                index,
-                                position: position.clone(),
-                            },
-                        });
                     }
                     TreeInternalDiff::Move { parent, position } => {
                         if need_check {
-                            let was_alive = !self.is_node_deleted(&target);
                             if self
                                 .mov(target, *parent, last_move_op, Some(position.clone()), true)
                                 .is_ok()
-                            {
-                                if self.is_node_deleted(&target) {
-                                    if was_alive {
-                                        // delete event
-                                        ans.push(TreeDiffItem {
-                                            target,
-                                            action: TreeExternalDiff::Delete,
-                                        });
-                                    }
-                                    // Otherwise, it's a normal move inside deleted nodes, no event is needed
-                                } else {
-                                    // normal move
-                                    ans.push(TreeDiffItem {
-                                        target,
-                                        action: TreeExternalDiff::Move {
-                                            parent: parent.into_node().ok(),
-                                            index: self.get_index_by_tree_id(&target).unwrap(),
-                                            position: position.clone(),
-                                        },
-                                    });
-                                }
-                            }
+                            {}
                         } else {
                             self.mov(target, *parent, last_move_op, Some(position.clone()), false)
                                 .unwrap();
-
-                            let index = self.get_index_by_tree_id(&target).unwrap();
-                            ans.push(TreeDiffItem {
-                                target,
-                                action: TreeExternalDiff::Move {
-                                    parent: parent.into_node().ok(),
-                                    index,
-                                    position: position.clone(),
-                                },
-                            });
                         };
                     }
                     TreeInternalDiff::Delete { parent, position } => {
-                        let mut send_event = true;
-                        if need_check && self.is_node_deleted(&target) {
-                            send_event = false;
-                        }
-
                         self.mov(target, *parent, last_move_op, position.clone(), false)
                             .unwrap();
-                        if send_event {
-                            ans.push(TreeDiffItem {
-                                target,
-                                action: TreeExternalDiff::Delete,
-                            });
-                        }
                     }
                     TreeInternalDiff::MoveInDelete { parent, position } => {
                         self.mov(target, *parent, last_move_op, position.clone(), false)
                             .unwrap();
                     }
                     TreeInternalDiff::UnCreate => {
-                        // maybe the node created and moved to the parent deleted
-                        if !self.is_node_deleted(&target) {
-                            ans.push(TreeDiffItem {
-                                target,
-                                action: TreeExternalDiff::Delete,
-                            });
-                        }
                         // delete it from state
                         let parent = self.trees.remove(&target);
                         if let Some(parent) = parent {
@@ -1008,7 +1029,7 @@ impl ContainerState for TreeState {
             }
         }
 
-        Diff::Tree(TreeDiff { diff: ans })
+        self.convert_affected_set_to_diff(affected_set_and_was_alive)
     }
 
     // How we apply the diff is coupled with the [DiffMode] we used to calculate the diff.

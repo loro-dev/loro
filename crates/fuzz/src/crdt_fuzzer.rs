@@ -9,7 +9,6 @@ use std::{
 use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
 use loro::{ContainerType, Frontiers};
-use rayon::iter::ParallelExtend;
 use tabled::TableIteratorExt;
 use tracing::{info, info_span};
 
@@ -199,8 +198,8 @@ impl CRDTFuzzer {
                 let _s = info_span!("checking eq", ?i, ?j);
                 let _g = _s.enter();
                 let (a, b) = array_mut_ref!(&mut self.actors, [i, j]);
-                let a_doc = &mut a.loro;
-                let b_doc = &mut b.loro;
+                let a_doc = &a.loro;
+                let b_doc = &b.loro;
                 info_span!("Attach", peer = i).in_scope(|| {
                     a_doc.attach();
                 });

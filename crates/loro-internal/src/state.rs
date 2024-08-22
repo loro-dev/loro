@@ -584,7 +584,7 @@ impl DocState {
                 }
                 crate::event::DiffVariant::Internal(_) => {
                     let cid = self.arena.idx_to_id(idx).unwrap();
-                    info_span!("apply diff on", container_id = ?cid).in_scope(|| {
+                    info_span!("DocState apply diff", container_id = ?cid).in_scope(|| {
                         if self.in_txn {
                             self.changed_idx_in_txn.insert(idx);
                         }

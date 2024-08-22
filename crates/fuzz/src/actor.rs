@@ -51,7 +51,7 @@ impl Actor {
         ))));
         let cb_tracker = tracker.clone();
         loro.subscribe_root(Arc::new(move |e| {
-            info_span!("[Fuzz] tracker.apply_diff", id = id).in_scope(|| {
+            info_span!("tracker.apply_diff", id = id).in_scope(|| {
                 let mut tracker = cb_tracker.lock().unwrap();
                 tracker.apply_diff(e)
             });
@@ -419,8 +419,7 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue, mut log: Option<&mut dyn Fn
             }
             (LoroValue::List(a_list), LoroValue::List(b_list)) => {
                 if is_tree_values(a_list.as_ref()) {
-                    assert_tree_value_eq(a_list, b_list);
-                    true
+                    is_tree_value_eq(a_list, b_list)
                 } else {
                     a_list.iter().zip(b_list.iter()).all(|(a, b)| eq(a, b))
                 }
@@ -535,7 +534,7 @@ impl Node {
     }
 }
 
-pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
+pub fn is_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) -> bool {
     // trace!("a = {:#?}", a);
     // trace!("b = {:#?}", b);
     let a_tree = Node::from_loro_value(a);
@@ -579,12 +578,21 @@ pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
                 meta
             })
             .collect::<FxHashSet<_>>();
-        assert!(a_meta.difference(&b_meta).count() == 0);
-        assert_eq!(children_a.len(), children_b.len());
+
+        if a_meta.difference(&b_meta).count() != 0 {
+            return false;
+        }
+
+        if children_a.len() != children_b.len() {
+            return false;
+        }
+
         if children_a.is_empty() {
             continue;
         }
         a_q.push_back(children_a);
         b_q.push_back(children_b);
     }
+
+    true
 }
