@@ -9,7 +9,6 @@ use std::{
 use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
 use loro::{ContainerType, Frontiers};
-use rayon::iter::ParallelExtend;
 use tabled::TableIteratorExt;
 use tracing::{info, info_span};
 

@@ -4,7 +4,7 @@ use loro::{KvStore, MemKvStore};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
-#[derive(Arbitrary)]
+#[derive(Debug, Clone, Arbitrary)]
 pub enum Action {
     Add {
         key: Vec<u8>,
@@ -42,7 +42,10 @@ impl MemKvFuzzer {
             }
             Action::Get(index) | Action::Remove(index) => {
                 if self.all_keys.is_empty() {
-                    *index = 0;
+                    *action = Action::Add {
+                        key: vec![0],
+                        value: vec![0],
+                    };
                 } else {
                     *index %= self.all_keys.len();
                 }
@@ -50,17 +53,21 @@ impl MemKvFuzzer {
             Action::Scan {
                 start,
                 end,
-                start_include: _,
-                end_include: _,
+                start_include,
+                end_include,
             } => {
                 if self.all_keys.is_empty() {
-                    *start = 0;
-                    *end = 0;
+                    *action = Action::Add {
+                        key: vec![0],
+                        value: vec![0],
+                    };
                 } else {
                     *start %= self.all_keys.len();
                     *end %= self.all_keys.len();
                     if *start > *end {
                         std::mem::swap(start, end);
+                    } else if *start == *end && !*start_include && !*end_include {
+                        *end_include = true;
                     }
                 }
             }
@@ -162,11 +169,15 @@ impl MemKvFuzzer {
     }
 }
 
-pub fn test_mem_kv_fuzzer(actions: &mut Vec<Action>) {
+pub fn test_mem_kv_fuzzer(actions: &mut [Action]) {
     let mut fuzzer = MemKvFuzzer::default();
+    let mut applied = Vec::new();
     for action in actions {
         fuzzer.prepare(action);
+        applied.push(action.clone());
+        tracing::info!("\n{:#?}", applied);
         fuzzer.apply(action);
     }
+    tracing::info!("\n{:#?}", applied);
     fuzzer.equal();
 }
