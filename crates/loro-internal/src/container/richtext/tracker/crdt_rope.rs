@@ -246,6 +246,7 @@ impl CrdtRope {
         }
 
         if reversed && len > 1 {
+            // TODO: PERF: optimize this
             let mut ans = SmallVec::with_capacity(len);
             for i in (0..len).rev() {
                 let a = self.delete(
