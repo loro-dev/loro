@@ -1,13 +1,17 @@
 use std::{
     cmp::Ordering,
-    sync::{atomic::AtomicU64, Arc},
+    collections::BTreeMap,
+    ops::Bound,
+    sync::{atomic::AtomicU64, Arc, Mutex},
 };
 
 use crate::{
     arena::SharedArena,
     configure::Configure,
     container::idx::ContainerIdx,
+    kv_store::KvStore,
     state::{FastStateSnapshot, RichtextState},
+    utils::kv_wrapper::KvWrapper,
 };
 use bytes::Bytes;
 use encode::{decode_cids, CidOffsetEncoder};
@@ -59,6 +63,7 @@ use super::counter_state::CounterState;
 pub(crate) struct ContainerStore {
     arena: SharedArena,
     store: FxHashMap<ContainerIdx, ContainerWrapper>,
+    external_kv: KvWrapper,
     conf: Configure,
     peer: Arc<AtomicU64>,
 }
@@ -85,112 +90,62 @@ impl ContainerStore {
         ContainerStore {
             arena,
             store: Default::default(),
+            external_kv: KvWrapper::new_mem(),
             conf,
             peer,
         }
     }
 
     pub fn get_container_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
-        self.store.get_mut(&idx).map(|x| {
-            x.get_state_mut(
-                idx,
-                ContainerCreationContext {
-                    configure: &self.conf,
-                    peer: self.peer.load(std::sync::atomic::Ordering::Relaxed),
-                },
-            )
-        })
+        self.store
+            .get_mut(&idx)
+            .map(|x| x.get_state_mut(idx, ctx!(self)))
     }
 
     #[allow(unused)]
     pub fn get_container(&mut self, idx: ContainerIdx) -> Option<&State> {
-        self.store.get_mut(&idx).map(|x| {
-            x.get_state(
-                idx,
-                ContainerCreationContext {
-                    configure: &self.conf,
-                    peer: self.peer.load(std::sync::atomic::Ordering::Relaxed),
-                },
-            )
-        })
+        self.store
+            .get_mut(&idx)
+            .map(|x| x.get_state(idx, ctx!(self)))
     }
 
     pub fn get_value(&mut self, idx: ContainerIdx) -> Option<LoroValue> {
-        self.store.get_mut(&idx).map(|c| {
-            c.get_value(
-                idx,
-                ContainerCreationContext {
-                    configure: &self.conf,
-                    peer: self.peer.load(std::sync::atomic::Ordering::Relaxed),
-                },
-            )
-        })
+        self.store
+            .get_mut(&idx)
+            .map(|c| c.get_value(idx, ctx!(self)))
     }
 
     pub fn encode(&mut self) -> Bytes {
-        let mut id_bytes_pairs = Vec::with_capacity(self.store.len());
-        for (idx, container) in self.store.iter_mut() {
-            let id = self.arena.get_container_id(*idx).unwrap();
-            let encoded = container.encode();
-            #[cfg(debug_assertions)]
-            {
-                let mut new = ContainerWrapper::new_from_bytes(encoded.clone());
-                let value = new.get_value(*idx, ctx!(self));
-                assert_eq!(value, container.get_value(*idx, ctx!(self)));
-            }
-
-            id_bytes_pairs.push((id, encoded))
-        }
-
-        id_bytes_pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
-        let mut id_encoder = CidOffsetEncoder::new();
-        let mut offset = 0;
-        for (id, bytes) in id_bytes_pairs.iter() {
-            id_encoder.push(id, offset);
-            offset += bytes.len();
-        }
-
-        let mut bytes = Vec::with_capacity(self.store.len() * 4 + 4);
-        // prepend 4 zeros
-        bytes.resize(4, 0);
-        // append the encoded cids
-        id_encoder.write_to_io(&mut bytes);
-        // set the first 4 bytes of bytes to the length of itself
-        let len = bytes.len() as u32;
-        bytes[0] = (len & 0xff) as u8;
-        bytes[1] = ((len >> 8) & 0xff) as u8;
-        bytes[2] = ((len >> 16) & 0xff) as u8;
-        bytes[3] = ((len >> 24) & 0xff) as u8;
-        for (_id, b) in id_bytes_pairs.iter() {
-            bytes.extend_from_slice(b);
-        }
-
-        bytes.into()
+        self.external_kv
+            .set_all(self.store.iter_mut().filter_map(|(idx, c)| {
+                if c.flushed {
+                    return None;
+                }
+                let key = self.arena.get_container_id(*idx).unwrap();
+                let key: Bytes = key.to_bytes().into();
+                let value = c.encode();
+                Some((key, value))
+            }));
+        self.external_kv.export()
     }
 
     pub fn decode(&mut self, bytes: Bytes) -> LoroResult<()> {
         assert!(self.is_empty());
-        let offset = u32::from_le_bytes((&bytes[..4]).try_into().unwrap()) as usize;
-        let cids = &bytes[4..offset];
-        let cids = decode_cids(cids)?;
-        let container_bytes = bytes.slice(offset..);
-        for (i, (cid, offset_start)) in cids.iter().enumerate() {
-            let offset_end = if i < cids.len() - 1 {
-                cids[i + 1].1
-            } else {
-                container_bytes.len()
-            };
-
-            let container =
-                ContainerWrapper::new_from_bytes(container_bytes.slice(*offset_start..offset_end));
-            let idx = self.arena.register_container(cid);
-            let p = container
-                .parent
-                .as_ref()
-                .map(|p| self.arena.register_container(p));
-            self.arena.set_parent(idx, p);
-            self.store.insert(idx, container);
-        }
+        self.external_kv.import(bytes);
+        self.external_kv.with_kv(|kv| {
+            let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
+            for (k, v) in iter {
+                let cid = ContainerID::from_bytes(&k);
+                let container = ContainerWrapper::new_from_bytes(v);
+                let idx = self.arena.register_container(&cid);
+                let p = container
+                    .parent
+                    .as_ref()
+                    .map(|p| self.arena.register_container(p));
+                self.arena.set_parent(idx, p);
+                self.store.insert(idx, container);
+            }
+        });
 
         Ok(())
     }
@@ -280,6 +235,7 @@ impl ContainerStore {
             arena,
             store,
             conf: config,
+            external_kv: self.external_kv.clone(),
             peer,
         }
     }
@@ -346,6 +302,7 @@ pub(crate) struct ContainerWrapper {
     bytes_offset_for_value: Option<usize>,
     bytes_offset_for_state: Option<usize>,
     state: Option<State>,
+    flushed: bool,
 }
 
 impl ContainerWrapper {
@@ -364,6 +321,7 @@ impl ContainerWrapper {
             value: None,
             bytes_offset_for_state: None,
             bytes_offset_for_value: None,
+            flushed: false,
         }
     }
 
@@ -392,6 +350,7 @@ impl ContainerWrapper {
         self.decode_state(idx, ctx).unwrap();
         self.bytes = None;
         self.value = None;
+        self.flushed = false;
         self.state.as_mut().unwrap()
     }
 
@@ -448,6 +407,7 @@ impl ContainerWrapper {
             bytes: Some(b.clone()),
             bytes_offset_for_value: Some(size as usize),
             bytes_offset_for_state: None,
+            flushed: true,
         }
     }
 
