@@ -64,4 +64,8 @@ impl KvWrapper {
             kv.set(&k, v);
         }
     }
+
+    pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
+        self.kv.lock().unwrap().contains_key(key)
+    }
 }
