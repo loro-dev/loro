@@ -677,6 +677,7 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "arbtest",
+ "bytes",
  "color-backtrace",
  "ctor 0.2.6",
  "dev-utils",

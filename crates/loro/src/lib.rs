@@ -39,6 +39,7 @@ pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
 pub use loro_internal::event::Index;
 pub use loro_internal::handler::TextDelta;
 pub use loro_internal::id::{PeerID, TreeID, ID};
+pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
 pub use loro_internal::obs::SubID;

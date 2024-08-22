@@ -270,6 +270,7 @@ name = "fuzz"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
+ "bytes",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
  "fxhash",

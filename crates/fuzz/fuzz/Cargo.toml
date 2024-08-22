@@ -44,3 +44,9 @@ name = "counter"
 path = "fuzz_targets/counter.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "kv_store"
+path = "fuzz_targets/kv_store.rs"
+test = false
+doc = false
