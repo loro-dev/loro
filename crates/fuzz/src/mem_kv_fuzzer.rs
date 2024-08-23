@@ -180,8 +180,8 @@ impl MemKvFuzzer {
             .btree
             .scan(Bound::Unbounded, Bound::Unbounded)
             .collect();
-
         assert_eq!(kv_scan, btree_scan);
+
         let kv_scan: Vec<_> = self
             .kv
             .scan(Bound::Unbounded, Bound::Unbounded)

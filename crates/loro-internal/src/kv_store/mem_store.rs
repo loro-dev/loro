@@ -241,6 +241,7 @@ impl KvStore for MemKvStore {
             Box::new(
                 self.mem_table
                     .range::<[u8], _>((start, end))
+                    .filter(|(_, v)| !v.is_empty())
                     .map(|(k, v)| (k.clone(), v.clone())),
             )
         }
@@ -336,6 +337,11 @@ impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> Iterator for MergeIterat
             self.current_sstable = Some((self.b.next_key(), self.b.next_value()));
             self.b.next();
         }
+
+        if self.current_btree.is_none() && self.back_btree.is_some() {
+            std::mem::swap(&mut self.back_btree, &mut self.current_btree);
+        }
+
         match (&self.current_btree, &self.current_sstable) {
             (Some((btree_key, _)), Some((iter_key, _))) => match btree_key.cmp(iter_key) {
                 Ordering::Less => self.current_btree.take().map(|kv| {
@@ -369,6 +375,11 @@ impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> DoubleEndedIterator
             self.back_sstable = Some((self.b.prev_key(), self.b.prev_value()));
             self.b.next_back();
         }
+
+        if self.back_btree.is_none() && self.current_btree.is_some() {
+            std::mem::swap(&mut self.back_btree, &mut self.current_btree);
+        }
+
         match (&self.back_btree, &self.back_sstable) {
             (Some((btree_key, _)), Some((iter_key, _))) => match btree_key.cmp(iter_key) {
                 Ordering::Greater => self.back_btree.take().map(|kv| {
