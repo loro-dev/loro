@@ -122,23 +122,20 @@ impl ContainerWrapper {
         parent
     }
 
-    pub fn new_from_bytes(b: Bytes) -> Self {
-        let src: &[u8] = &b;
-        let bytes: &[u8] = &b;
+    pub fn new_from_bytes(bytes: Bytes) -> Self {
         let kind = ContainerType::try_from_u8(bytes[0]).unwrap();
-        let mut bytes = &bytes[1..];
-        let depth = leb128::read::unsigned(&mut bytes).unwrap();
-        let (parent, bytes) = postcard::take_from_bytes(bytes).unwrap();
-        // SAFETY: bytes is a slice of b
-        let size = unsafe { bytes.as_ptr().offset_from(src.as_ptr()) };
+        let mut reader = &bytes[1..];
+        let depth = leb128::read::unsigned(&mut reader).unwrap();
+        let (parent, reader) = postcard::take_from_bytes(reader).unwrap();
+        let size = bytes.len() - reader.len();
         Self {
             depth: depth as usize,
             kind,
             parent,
             state: None,
             value: None,
-            bytes: Some(b.clone()),
-            bytes_offset_for_value: Some(size as usize),
+            bytes: Some(bytes.clone()),
+            bytes_offset_for_value: Some(size),
             bytes_offset_for_state: None,
             flushed: true,
         }
@@ -162,23 +159,23 @@ impl ContainerWrapper {
             return Ok(());
         }
 
-        let Some(b) = self.bytes.as_ref() else {
+        let Some(bytes) = self.bytes.as_ref() else {
             return Ok(());
         };
 
         if self.bytes_offset_for_value.is_none() {
-            let src: &[u8] = b;
-            let mut bytes: &[u8] = b;
-            bytes = &bytes[1..];
-            let _depth = leb128::read::unsigned(&mut bytes).unwrap();
-            let (_parent, bytes) = postcard::take_from_bytes::<Option<ContainerID>>(bytes).unwrap();
+            let mut reader: &[u8] = bytes;
+            reader = &reader[1..];
+            let _depth = leb128::read::unsigned(&mut reader).unwrap();
+            let (_parent, reader) =
+                postcard::take_from_bytes::<Option<ContainerID>>(reader).unwrap();
             // SAFETY: bytes is a slice of b
-            let size = unsafe { bytes.as_ptr().offset_from(src.as_ptr()) };
-            self.bytes_offset_for_value = Some(size as usize);
+            let size = bytes.len() - reader.len();
+            self.bytes_offset_for_value = Some(size);
         }
 
         let value_offset = self.bytes_offset_for_value.unwrap();
-        let b = &b[value_offset..];
+        let b = &bytes[value_offset..];
 
         let (v, rest) = match self.kind {
             ContainerType::Text => RichtextState::decode_value(b)?,
