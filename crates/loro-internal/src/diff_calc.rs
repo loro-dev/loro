@@ -15,7 +15,7 @@ use loro_common::{
 };
 use loro_delta::DeltaRope;
 use smallvec::SmallVec;
-use tracing::{info, instrument};
+use tracing::{debug, info_span, instrument};
 
 use crate::{
     change::Lamport,
@@ -272,6 +272,7 @@ impl DiffCalculator {
 
             Some(started_set)
         } else {
+            debug!("Use persisted shortcut");
             // We can calculate the diff by the current calculators.
 
             // Find a set of affected containers idx, if it's relatively cheap
@@ -333,27 +334,30 @@ impl DiffCalculator {
                 let id = oplog.arena.idx_to_id(container_idx).unwrap();
                 let bring_back = new_containers.remove(&id);
 
-                let (diff, diff_mode) = calc.calculate_diff(oplog, before, after, |c| {
-                    new_containers.insert(c.clone());
-                    container_id_to_depth.insert(c.clone(), depth.and_then(|d| d.checked_add(1)));
-                    oplog.arena.register_container(c);
+                info_span!("CalcDiff", ?id).in_scope(|| {
+                    let (diff, diff_mode) = calc.calculate_diff(oplog, before, after, |c| {
+                        new_containers.insert(c.clone());
+                        container_id_to_depth
+                            .insert(c.clone(), depth.and_then(|d| d.checked_add(1)));
+                        oplog.arena.register_container(c);
+                    });
+                    calc.finish_this_round();
+                    if !diff.is_empty() || bring_back {
+                        ans.insert(
+                            container_idx,
+                            (
+                                *depth,
+                                InternalContainerDiff {
+                                    idx: container_idx,
+                                    bring_back,
+                                    is_container_deleted: false,
+                                    diff: diff.into(),
+                                    diff_mode,
+                                },
+                            ),
+                        );
+                    }
                 });
-                calc.finish_this_round();
-                if !diff.is_empty() || bring_back {
-                    ans.insert(
-                        container_idx,
-                        (
-                            *depth,
-                            InternalContainerDiff {
-                                idx: container_idx,
-                                bring_back,
-                                is_container_deleted: false,
-                                diff: diff.into(),
-                                diff_mode,
-                            },
-                        ),
-                    );
-                }
             }
         }
 
