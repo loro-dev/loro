@@ -65,7 +65,7 @@ pub(crate) use id::{PeerID, ID};
 pub(crate) use loro_common::InternalString;
 
 pub use container::ContainerType;
-pub use encoding::json_schema::op::*;
+pub use encoding::json_schema::json;
 pub use loro_common::{loro_value, to_value};
 #[cfg(feature = "wasm")]
 pub use value::wasm;
