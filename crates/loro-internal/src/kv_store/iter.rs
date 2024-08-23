@@ -229,6 +229,7 @@ impl BlockIter {
                 if idx >= block.offsets.len() {
                     self.next_key.clear();
                     self.next_value_range = 0..0;
+                    self.next_idx = idx;
                     return;
                 }
                 let offset = block.offsets[idx] as usize;
@@ -239,6 +240,7 @@ impl BlockIter {
                 if idx > 0 {
                     self.next_key.clear();
                     self.next_value_range = 0..0;
+                    self.next_idx = idx;
                     return;
                 }
                 self.next_key = block.key.to_vec();
@@ -254,6 +256,7 @@ impl BlockIter {
                 if idx < 0 {
                     self.prev_key.clear();
                     self.prev_value_range = 0..0;
+                    self.prev_idx = idx;
                     return;
                 }
                 let offset = block.offsets[idx as usize] as usize;
@@ -264,6 +267,7 @@ impl BlockIter {
                 if idx < 0 {
                     self.prev_key.clear();
                     self.prev_value_range = 0..0;
+                    self.prev_idx = idx;
                     return;
                 }
                 self.prev_key = block.key.to_vec();

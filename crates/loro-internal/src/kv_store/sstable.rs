@@ -560,8 +560,12 @@ impl SsTable{
         })
     }
 
-    pub fn data_len(&self)->usize{
+    pub fn data_size(&self)->usize{
         self.data.len()
+    }
+
+    pub fn meta_len(&self)->usize{
+        self.meta.len()
     }
 }
 
