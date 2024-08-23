@@ -1,6 +1,8 @@
 //! # MemKvStore Documentation
 //!
-//! MemKvStore use SSTable as backend. The SSTable (Sorted String Table) is a persistent data structure used for storing key-value pairs in a sorted manner. This document describes the binary format of the SSTable.
+//! MemKvStore use SSTable as backend. The SSTable (Sorted String Table) is a persistent data structure
+//! used for storing key-value pairs in a sorted manner. This document describes the binary format of
+//! the SSTable.
 //!
 //! ## Overall Structure
 //!
@@ -19,7 +21,8 @@
 //! 1. Magic Number (4 bytes): A fixed value "LORO" to identify the file format.
 //! 2. Schema Version (1 byte): The version of the MemKVStore schema.
 //! 3. Block Chunks: A series of data blocks containing key-value pairs.
-//! 4. Block Meta: Metadata for all blocks, including block offset, first key, is_large flag, and last key if not large.
+//! 4. Block Meta: Metadata for all blocks, including block offset, the first key of the block, `is_large` flag, and last key
+//!    if not large.
 //! 5. Meta Offset (4 bytes): The offset of the Block Meta section from the beginning of the file.
 //!
 //! ## Block Types
@@ -32,11 +35,11 @@
 //!
 //! ```
 //! ┌────────────────────────────────────────────────────────────────────────────────────────────┐
-//! │Block                                                                                   │
-//! │┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─┌ ─ ─ ─┌ ─ ─ ─ ┬ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ │
-//! │ Key Value Chunk  ...  │Key Value Chunk  offset │ ...  │ offset  kv len │Block Checksum││
-//! ││     bytes     │      │     bytes     │  u16   │      │  u16  │  u16   │     u32       │
-//! │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ┘│
+//! │Block                                                                                       │
+//! │┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─┌ ─ ─ ─┌ ─ ─ ─ ┬ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─     │
+//! │ Key Value Chunk  ...  │Key Value Chunk  offset │ ...  │ offset  kv len │Block Checksum│    │
+//! ││     bytes     │      │     bytes     │  u16   │      │  u16  │  u16   │     u32           │
+//! │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ┘    │
 //! └────────────────────────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!

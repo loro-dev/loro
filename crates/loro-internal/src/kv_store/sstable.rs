@@ -846,186 +846,186 @@ impl<'a> DoubleEndedIterator for SsTableIter<'a>{
 mod test{
 
 use super::*;
-use std:: sync::Arc;
-#[test]
-fn block_double_end_iter(){
-    let mut builder = BlockBuilder::new(4096);
-    builder.add(b"key1", b"value1");
-    builder.add(b"key2", b"value2");
-    builder.add(b"key3", b"value3");
-    let block = builder.build();
-    let mut iter = BlockIter::new_seek_to_first(Arc::new(block));
-    let (k1, v1) = Iterator::next(&mut iter).unwrap();
-    let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
-    let (k2, v2) = Iterator::next(&mut iter).unwrap();
-    assert_eq!(k1, Bytes::from_static(b"key1"));
-    assert_eq!(v1, Bytes::from_static(b"value1"));
-    assert_eq!(k2, Bytes::from_static(b"key2"));
-    assert_eq!(v2, Bytes::from_static(b"value2"));
-    assert_eq!(k3, Bytes::from_static(b"key3"));
-    assert_eq!(v3, Bytes::from_static(b"value3"));
-    assert!(Iterator::next(&mut iter).is_none());
-    assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
-}
+    use std:: sync::Arc;
+    #[test]
+    fn block_double_end_iter(){
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(b"key1", b"value1");
+        builder.add(b"key2", b"value2");
+        builder.add(b"key3", b"value3");
+        let block = builder.build();
+        let mut iter = BlockIter::new_seek_to_first(Arc::new(block));
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        let (k2, v2) = Iterator::next(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key1"));
+        assert_eq!(v1, Bytes::from_static(b"value1"));
+        assert_eq!(k2, Bytes::from_static(b"key2"));
+        assert_eq!(v2, Bytes::from_static(b"value2"));
+        assert_eq!(k3, Bytes::from_static(b"key3"));
+        assert_eq!(v3, Bytes::from_static(b"value3"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
 
-#[test]
-fn block_range_iter(){
-    let mut builder = BlockBuilder::new(4096);
-    builder.add(b"key1", b"value1");
-    builder.add(b"key2", b"value2");
-    builder.add(b"key3", b"value3");
-    let block = builder.build();
-    let mut iter = BlockIter::new_scan(Arc::new(block), Bound::Included(b"key0"), Bound::Included(b"key4"));
-    let (k1, v1) = Iterator::next(&mut iter).unwrap();
-    let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
-    let (k2, v2) = Iterator::next(&mut iter).unwrap();
-    assert_eq!(k1, Bytes::from_static(b"key1"));
-    assert_eq!(v1, Bytes::from_static(b"value1"));
-    assert_eq!(k2, Bytes::from_static(b"key2"));
-    assert_eq!(v2, Bytes::from_static(b"value2"));
-    assert_eq!(k3, Bytes::from_static(b"key3"));
-    assert_eq!(v3, Bytes::from_static(b"value3"));
-    assert!(Iterator::next(&mut iter).is_none());
-    assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    #[test]
+    fn block_range_iter(){
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(b"key1", b"value1");
+        builder.add(b"key2", b"value2");
+        builder.add(b"key3", b"value3");
+        let block = builder.build();
+        let mut iter = BlockIter::new_scan(Arc::new(block), Bound::Included(b"key0"), Bound::Included(b"key4"));
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        let (k2, v2) = Iterator::next(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key1"));
+        assert_eq!(v1, Bytes::from_static(b"value1"));
+        assert_eq!(k2, Bytes::from_static(b"key2"));
+        assert_eq!(v2, Bytes::from_static(b"value2"));
+        assert_eq!(k3, Bytes::from_static(b"key3"));
+        assert_eq!(v3, Bytes::from_static(b"value3"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
 
-    let mut builder = BlockBuilder::new(4096);
-    builder.add(b"key1", b"value1");
-    builder.add(b"key2", b"value2");
-    builder.add(b"key3", b"value3");
-    let block = builder.build();
-    let mut iter = BlockIter::new_scan(Arc::new(block), Bound::Included(b"key1"), Bound::Included(b"key3"));
-    let (k1, v1) = Iterator::next(&mut iter).unwrap();
-    let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
-    let (k2, v2) = Iterator::next(&mut iter).unwrap();
-    assert_eq!(k1, Bytes::from_static(b"key1"));
-    assert_eq!(v1, Bytes::from_static(b"value1"));
-    assert_eq!(k2, Bytes::from_static(b"key2"));
-    assert_eq!(v2, Bytes::from_static(b"value2"));
-    assert_eq!(k3, Bytes::from_static(b"key3"));
-    assert_eq!(v3, Bytes::from_static(b"value3"));
-    assert!(Iterator::next(&mut iter).is_none());
-    assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(b"key1", b"value1");
+        builder.add(b"key2", b"value2");
+        builder.add(b"key3", b"value3");
+        let block = builder.build();
+        let mut iter = BlockIter::new_scan(Arc::new(block), Bound::Included(b"key1"), Bound::Included(b"key3"));
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        let (k2, v2) = Iterator::next(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key1"));
+        assert_eq!(v1, Bytes::from_static(b"value1"));
+        assert_eq!(k2, Bytes::from_static(b"key2"));
+        assert_eq!(v2, Bytes::from_static(b"value2"));
+        assert_eq!(k3, Bytes::from_static(b"key3"));
+        assert_eq!(v3, Bytes::from_static(b"value3"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
 
-    let mut builder = BlockBuilder::new(4096);
-    builder.add(b"key0", b"value0");
-    builder.add(b"key2", b"value2");
-    builder.add(b"key3", b"value3");
-    let block = builder.build();
-    let mut iter = BlockIter::new_scan(Arc::new(block),Bound::Included( b"key1"), Bound::Included(b"key3"));
-    let (k1, v1) = Iterator::next(&mut iter).unwrap();
-    let (k2, v2) = DoubleEndedIterator::next_back(&mut iter).unwrap();
-    assert_eq!(k1, Bytes::from_static(b"key2"));
-    assert_eq!(v1, Bytes::from_static(b"value2"));
-    assert_eq!(k2, Bytes::from_static(b"key3"));
-    assert_eq!(v2, Bytes::from_static(b"value3"));
-    assert!(Iterator::next(&mut iter).is_none());
-    assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
-}
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(b"key0", b"value0");
+        builder.add(b"key2", b"value2");
+        builder.add(b"key3", b"value3");
+        let block = builder.build();
+        let mut iter = BlockIter::new_scan(Arc::new(block),Bound::Included( b"key1"), Bound::Included(b"key3"));
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k2, v2) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key2"));
+        assert_eq!(v1, Bytes::from_static(b"value2"));
+        assert_eq!(k2, Bytes::from_static(b"key3"));
+        assert_eq!(v2, Bytes::from_static(b"value3"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
 
-#[test]
-fn block_scan(){
-    let mut builder = BlockBuilder::new(4096);
-    builder.add(b"key1", b"value1");
-    builder.add(b"key2", b"value2");
-    builder.add(b"key3", b"value3");
-    let block = builder.build();
-    let mut iter = BlockIter::new_scan(Arc::new(block), Bound::Excluded(b"key1"), Bound::Unbounded);
-    let (k1, v1) = Iterator::next(&mut iter).unwrap();
-    let (k2, v2) = DoubleEndedIterator::next_back(&mut iter).unwrap();
-    assert_eq!(k1, Bytes::from_static(b"key2"));
-    assert_eq!(v1, Bytes::from_static(b"value2"));
-    assert_eq!(k2, Bytes::from_static(b"key3"));
-    assert_eq!(v2, Bytes::from_static(b"value3"));
-    assert!(Iterator::next(&mut iter).is_none());
-    assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
-}
+    #[test]
+    fn block_scan(){
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(b"key1", b"value1");
+        builder.add(b"key2", b"value2");
+        builder.add(b"key3", b"value3");
+        let block = builder.build();
+        let mut iter = BlockIter::new_scan(Arc::new(block), Bound::Excluded(b"key1"), Bound::Unbounded);
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k2, v2) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key2"));
+        assert_eq!(v1, Bytes::from_static(b"value2"));
+        assert_eq!(k2, Bytes::from_static(b"key3"));
+        assert_eq!(v2, Bytes::from_static(b"value3"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
 
-#[test]
-fn block_double_end_iter_with_delete(){
-    let mut builder = BlockBuilder::new(4096);
-    builder.add(b"key1", b"value1");
-    builder.add(b"key2", b"value2");
-    builder.add(b"key4", b"");
-    builder.add(b"key3", b"value3");
-    let block = builder.build();
-    let mut iter = BlockIter::new_seek_to_first(Arc::new(block));
-    let (k1, v1) = Iterator::next(&mut iter).unwrap();
-    let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
-    let (k2, v2) = Iterator::next(&mut iter).unwrap();
-    let (k4, v4) = DoubleEndedIterator::next_back(&mut iter).unwrap();
-    assert_eq!(k1, Bytes::from_static(b"key1"));
-    assert_eq!(v1, Bytes::from_static(b"value1"));
-    assert_eq!(k2, Bytes::from_static(b"key2"));
-    assert_eq!(v2, Bytes::from_static(b"value2"));
-    assert_eq!(k3, Bytes::from_static(b"key3"));
-    assert_eq!(v3, Bytes::from_static(b"value3"));
-    assert_eq!(k4, Bytes::from_static(b"key4"));
-    assert_eq!(v4, Bytes::new());
-    assert!(Iterator::next(&mut iter).is_none());
-    assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
-}
+    #[test]
+    fn block_double_end_iter_with_delete(){
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(b"key1", b"value1");
+        builder.add(b"key2", b"value2");
+        builder.add(b"key4", b"");
+        builder.add(b"key3", b"value3");
+        let block = builder.build();
+        let mut iter = BlockIter::new_seek_to_first(Arc::new(block));
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        let (k2, v2) = Iterator::next(&mut iter).unwrap();
+        let (k4, v4) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key1"));
+        assert_eq!(v1, Bytes::from_static(b"value1"));
+        assert_eq!(k2, Bytes::from_static(b"key2"));
+        assert_eq!(v2, Bytes::from_static(b"value2"));
+        assert_eq!(k3, Bytes::from_static(b"key3"));
+        assert_eq!(v3, Bytes::from_static(b"value3"));
+        assert_eq!(k4, Bytes::from_static(b"key4"));
+        assert_eq!(v4, Bytes::new());
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
 
-#[test]
-fn sstable_iter(){
-    let mut builder = SsTableBuilder::new(10);
-    builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
-    builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
-    builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));
-    let table = builder.build();
-    let mut iter = table.iter();
-    let (k1, v1) = Iterator::next(&mut iter).unwrap();
-    let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
-    let (k2, v2) = Iterator::next(&mut iter).unwrap();
-    assert_eq!(k1, Bytes::from_static(b"key1"));
-    assert_eq!(v1, Bytes::from_static(b"value1"));
-    assert_eq!(k3, Bytes::from_static(b"key3"));
-    assert_eq!(v3, Bytes::from_static(b"value3"));
-    assert_eq!(k2, Bytes::from_static(b"key2"));
-    assert_eq!(v2, Bytes::from_static(b"value2"));
-    assert!(Iterator::next(&mut iter).is_none());
-    assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
-}
+    #[test]
+    fn sstable_iter(){
+        let mut builder = SsTableBuilder::new(10);
+        builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
+        builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
+        builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));
+        let table = builder.build();
+        let mut iter = table.iter();
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        let (k2, v2) = Iterator::next(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key1"));
+        assert_eq!(v1, Bytes::from_static(b"value1"));
+        assert_eq!(k3, Bytes::from_static(b"key3"));
+        assert_eq!(v3, Bytes::from_static(b"value3"));
+        assert_eq!(k2, Bytes::from_static(b"key2"));
+        assert_eq!(v2, Bytes::from_static(b"value2"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
 
-#[test]
-fn sstable_iter_with_delete(){
-    let mut builder = SsTableBuilder::new(10);
-    builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
-    builder.add(Bytes::from_static(b"key4"), Bytes::new());
-    builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
-    builder.add(Bytes::from_static(b"key5"), Bytes::new());
-    builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));
-    let table = builder.build();
-    let mut iter = table.iter();
-    let (k1, v1) = Iterator::next(&mut iter).unwrap();
-    let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
-    let (k2, v2) = Iterator::next(&mut iter).unwrap();
-    assert_eq!(k1, Bytes::from_static(b"key1"));
-    assert_eq!(v1, Bytes::from_static(b"value1"));
-    assert_eq!(k3, Bytes::from_static(b"key3"));
-    assert_eq!(v3, Bytes::from_static(b"value3"));
-    assert_eq!(k2, Bytes::from_static(b"key2"));
-    assert_eq!(v2, Bytes::from_static(b"value2"));
-    assert!(Iterator::next(&mut iter).is_none());
-    assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
-}
+    #[test]
+    fn sstable_iter_with_delete(){
+        let mut builder = SsTableBuilder::new(10);
+        builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
+        builder.add(Bytes::from_static(b"key4"), Bytes::new());
+        builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
+        builder.add(Bytes::from_static(b"key5"), Bytes::new());
+        builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));
+        let table = builder.build();
+        let mut iter = table.iter();
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        let (k2, v2) = Iterator::next(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key1"));
+        assert_eq!(v1, Bytes::from_static(b"value1"));
+        assert_eq!(k3, Bytes::from_static(b"key3"));
+        assert_eq!(v3, Bytes::from_static(b"value3"));
+        assert_eq!(k2, Bytes::from_static(b"key2"));
+        assert_eq!(v2, Bytes::from_static(b"value2"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
 
-#[test]
-fn sstable_scan(){
-    let mut builder = SsTableBuilder::new(10);
-    builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
-    builder.add(Bytes::from_static(b"key4"), Bytes::new());
-    builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
-    builder.add(Bytes::from_static(b"key5"), Bytes::new());
-    builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));
-    let table = builder.build();
-    let mut iter = SsTableIter::new_scan(&table, Bound::Excluded(b"key1"), Bound::Unbounded);
-    let (k1, v1) = Iterator::next(&mut iter).unwrap();
-    let (k2, v2) = DoubleEndedIterator::next_back(&mut iter).unwrap();
-    assert_eq!(k1, Bytes::from_static(b"key2"));
-    assert_eq!(v1, Bytes::from_static(b"value2"));
-    assert_eq!(k2, Bytes::from_static(b"key3"));
-    assert_eq!(v2, Bytes::from_static(b"value3"));
-    assert!(Iterator::next(&mut iter).is_none());
-    assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
-}
+    #[test]
+    fn sstable_scan(){
+        let mut builder = SsTableBuilder::new(10);
+        builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
+        builder.add(Bytes::from_static(b"key4"), Bytes::new());
+        builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
+        builder.add(Bytes::from_static(b"key5"), Bytes::new());
+        builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));
+        let table = builder.build();
+        let mut iter = SsTableIter::new_scan(&table, Bound::Excluded(b"key1"), Bound::Unbounded);
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k2, v2) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key2"));
+        assert_eq!(v1, Bytes::from_static(b"value2"));
+        assert_eq!(k2, Bytes::from_static(b"key3"));
+        assert_eq!(v2, Bytes::from_static(b"value3"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
 }
