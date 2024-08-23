@@ -6,6 +6,12 @@ fn test_commit_message() {
     let text = doc.get_text("text");
     text.insert(0, "hello").unwrap();
     doc.commit_with(CommitOptions::new().commit_msg("edits"));
+    let change = doc.get_change(ID::new(doc.peer_id(), 0)).unwrap();
+    assert_eq!(change.message(), "edits");
+
+    // The commit message can be synced to other peers as well
+    let doc2 = LoroDoc::new();
+    doc2.import(&doc.export_snapshot()).unwrap();
     let change = doc.get_change(ID::new(doc.peer_id(), 1)).unwrap();
     assert_eq!(change.message(), "edits");
 }
