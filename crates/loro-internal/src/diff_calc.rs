@@ -15,7 +15,7 @@ use loro_common::{
 };
 use loro_delta::DeltaRope;
 use smallvec::SmallVec;
-use tracing::{info_span, instrument};
+use tracing::{debug, info_span, instrument};
 
 use crate::{
     change::Lamport,
@@ -272,6 +272,7 @@ impl DiffCalculator {
 
             Some(started_set)
         } else {
+            debug!("Use persisted shortcut");
             // We can calculate the diff by the current calculators.
 
             // Find a set of affected containers idx, if it's relatively cheap

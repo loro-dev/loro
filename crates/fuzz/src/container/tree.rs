@@ -10,6 +10,7 @@ use loro::{
     event::Diff, Container, ContainerID, ContainerType, LoroDoc, LoroError, LoroTree, LoroValue,
     TreeExternalDiff, TreeID,
 };
+use tracing::{debug, trace};
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
@@ -379,6 +380,26 @@ impl TreeTracker {
         }
         None
     }
+
+    fn create_node(
+        &mut self,
+        target: TreeID,
+        parent: &Option<TreeID>,
+        position: String,
+        index: &usize,
+    ) {
+        let node = TreeNode::new(target, *parent, position);
+        if let Some(parent) = parent {
+            let parent = self.find_node_by_id_mut(*parent).unwrap();
+            parent.children.insert(*index, node);
+        } else {
+            if self.find_node_by_id_mut(target).is_some() {
+                panic!("{:?} node already exists", target);
+            }
+
+            self.tree.insert(*index, node);
+        };
+    }
 }
 
 impl ApplyDiff for TreeTracker {
@@ -391,6 +412,7 @@ impl ApplyDiff for TreeTracker {
     }
 
     fn apply_diff(&mut self, diff: Diff) {
+        // debug!("applying diff: {:#?}", &diff);
         let diff = diff.as_tree().unwrap();
         for diff in &diff.diff {
             let target = diff.target;
@@ -400,17 +422,7 @@ impl ApplyDiff for TreeTracker {
                     index,
                     position,
                 } => {
-                    let node = TreeNode::new(target, *parent, position.to_string());
-                    if let Some(parent) = parent {
-                        let parent = self.find_node_by_id_mut(*parent).unwrap();
-                        parent.children.insert(*index, node);
-                    } else {
-                        if self.find_node_by_id_mut(target).is_some() {
-                            panic!("{:?} node already exists", target);
-                        }
-
-                        self.tree.insert(*index, node);
-                    };
+                    self.create_node(target, parent, position.to_string(), index);
                 }
                 TreeExternalDiff::Delete { .. } => {
                     let node = self.find_node_by_id(target).unwrap();
@@ -426,9 +438,12 @@ impl ApplyDiff for TreeTracker {
                     parent,
                     index,
                     position,
-                    ..
                 } => {
-                    let node = self.find_node_by_id(target).unwrap();
+                    let Some(node) = self.find_node_by_id(target) else {
+                        self.create_node(target, parent, position.to_string(), index);
+                        continue;
+                    };
+
                     let mut node = if let Some(p) = node.parent {
                         let parent = self.find_node_by_id_mut(p).unwrap();
                         let index = parent.children.iter().position(|n| n.id == target).unwrap();
