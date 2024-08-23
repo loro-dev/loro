@@ -191,13 +191,13 @@ impl BlockBuilder {
     /// Add a key-value pair to the block.
     /// Returns true if the key-value pair is added successfully, false the block is full.
     /// 
-    /// ┌───────────────────────────────────────────────────────────────┐
-    /// │  Key Value Chunk                                              │
-    /// │┌ ─ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ┬ ─ ─ ─ ┐│
-    /// │ common prefix len key suffix len│key suffix│value len  value  │
-    /// ││       u8        │     u16      │  bytes   │   u16   │ bytes ││
-    /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ │
-    /// └───────────────────────────────────────────────────────────────┘
+    /// ┌─────────────────────────────────────────────────────┐
+    /// │  Key Value Chunk                                    │
+    /// │┌ ─ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─┬ ─ ─ ─ ┐│
+    /// │ common prefix len key suffix len│key suffix│ value ││
+    /// ││       u8        │     u16      │  bytes   │ bytes ││
+    /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ┘ ─ ─ ─ ┘│
+    /// └─────────────────────────────────────────────────────┘
     /// 
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
         debug_assert!(!key.is_empty(), "key cannot be empty");
@@ -209,7 +209,7 @@ impl BlockBuilder {
         }
 
         // whether the block is full
-        if self.estimated_size() + key.len() + value.len() + SIZE_OF_U8 + SIZE_OF_U16 * 2 > self.block_size && !self.first_key.is_empty() {
+        if self.estimated_size() + key.len() + value.len() + SIZE_OF_U8 + SIZE_OF_U16 > self.block_size && !self.first_key.is_empty() {
             return false;
         }
 
@@ -219,11 +219,9 @@ impl BlockBuilder {
         self.offsets.push(self.data.len() as u16);
         let (common, suffix) = get_common_prefix_len_and_strip(key, &self.first_key);
         let key_len = suffix.len() ;
-        let value_len = value.len();
         self.data.put_u8(common);
         self.data.put_u16(key_len as u16);
         self.data.put(suffix);
-        self.data.put_u16(value_len as u16);
         self.data.put(value);
         true
     }

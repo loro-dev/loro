@@ -234,7 +234,13 @@ impl BlockIter {
                     return;
                 }
                 let offset = block.offsets[idx] as usize;
-                self.seek_to_offset(offset);
+                self.seek_to_offset(
+                    offset,
+                    *block
+                        .offsets
+                        .get(idx + 1)
+                        .unwrap_or(&(block.data.len() as u16)) as usize,
+                );
                 self.next_idx = idx;
             }
             Block::Large(block) => {
@@ -261,7 +267,13 @@ impl BlockIter {
                     return;
                 }
                 let offset = block.offsets[idx as usize] as usize;
-                self.prev_to_offset(offset);
+                self.prev_to_offset(
+                    offset,
+                    *block
+                        .offsets
+                        .get(idx as usize + 1)
+                        .unwrap_or(&(block.data.len() as u16)) as usize,
+                );
                 self.prev_idx = idx;
             }
             Block::Large(block) => {
@@ -278,7 +290,7 @@ impl BlockIter {
         }
     }
 
-    fn seek_to_offset(&mut self, offset: usize) {
+    fn seek_to_offset(&mut self, offset: usize, offset_end: usize) {
         match self.block.as_ref() {
             Block::Normal(block) => {
                 let mut rest = &block.data[offset..];
@@ -289,10 +301,9 @@ impl BlockIter {
                     .extend_from_slice(&self.first_key[..common_prefix_len]);
                 self.next_key.extend_from_slice(&rest[..key_suffix_len]);
                 rest.advance(key_suffix_len);
-                let value_len = rest.get_u16() as usize;
-                let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len + SIZE_OF_U16;
-                self.next_value_range = value_start..value_start + value_len;
-                rest.advance(value_len);
+                let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len;
+                self.next_value_range = value_start..offset_end;
+                rest.advance(offset_end - value_start);
             }
             Block::Large(block) => {
                 self.next_key = block.key.to_vec();
@@ -301,7 +312,7 @@ impl BlockIter {
         }
     }
 
-    fn prev_to_offset(&mut self, offset: usize) {
+    fn prev_to_offset(&mut self, offset: usize, offset_end: usize) {
         match self.block.as_ref() {
             Block::Normal(block) => {
                 let mut rest = &block.data[offset..];
@@ -312,10 +323,9 @@ impl BlockIter {
                     .extend_from_slice(&self.first_key[..common_prefix_len]);
                 self.prev_key.extend_from_slice(&rest[..key_suffix_len]);
                 rest.advance(key_suffix_len);
-                let value_len = rest.get_u16() as usize;
-                let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len + SIZE_OF_U16;
-                self.prev_value_range = value_start..value_start + value_len;
-                rest.advance(value_len);
+                let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len;
+                self.prev_value_range = value_start..offset_end;
+                rest.advance(offset_end - value_start);
             }
             Block::Large(block) => {
                 self.prev_key = block.key.to_vec();
