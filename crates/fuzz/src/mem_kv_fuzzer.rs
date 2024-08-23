@@ -4,7 +4,7 @@ use loro::{KvStore, MemKvStore};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
-#[derive(Arbitrary)]
+#[derive(Clone, Arbitrary)]
 pub enum Action {
     Add {
         key: Vec<u8>,
@@ -20,6 +20,34 @@ pub enum Action {
     },
     ExportAndImport,
     Flush,
+}
+
+impl std::fmt::Debug for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Action::Add { key, value } => {
+                write!(
+                    f,
+                    "Add{{\n\tkey: vec!{:?}, \n\tvalue: vec!{:?}\n}}",
+                    key, value
+                )
+            }
+            Action::Get(index) => write!(f, "Get({})", index),
+            Action::Remove(index) => write!(f, "Remove({})", index),
+            Action::Scan {
+                start,
+                end,
+                start_include,
+                end_include,
+            } => write!(
+                f,
+                "Scan{{\n\tstart: {:?}, \n\tend: {:?}, \n\tstart_include: {:?}, \n\tend_include: {:?}\n}}",
+                start, end, start_include, end_include
+            ),
+            Action::ExportAndImport => write!(f, "ExportAndImport"),
+            Action::Flush => write!(f, "Flush"),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -42,7 +70,10 @@ impl MemKvFuzzer {
             }
             Action::Get(index) | Action::Remove(index) => {
                 if self.all_keys.is_empty() {
-                    *index = 0;
+                    *action = Action::Add {
+                        key: vec![0],
+                        value: vec![0],
+                    };
                 } else {
                     *index %= self.all_keys.len();
                 }
@@ -50,17 +81,21 @@ impl MemKvFuzzer {
             Action::Scan {
                 start,
                 end,
-                start_include: _,
-                end_include: _,
+                start_include,
+                end_include,
             } => {
                 if self.all_keys.is_empty() {
-                    *start = 0;
-                    *end = 0;
+                    *action = Action::Add {
+                        key: vec![0],
+                        value: vec![0],
+                    };
                 } else {
                     *start %= self.all_keys.len();
                     *end %= self.all_keys.len();
                     if *start > *end {
                         std::mem::swap(start, end);
+                    } else if *start == *end && !*start_include && !*end_include {
+                        *end_include = true;
                     }
                 }
             }
@@ -145,8 +180,8 @@ impl MemKvFuzzer {
             .btree
             .scan(Bound::Unbounded, Bound::Unbounded)
             .collect();
-
         assert_eq!(kv_scan, btree_scan);
+
         let kv_scan: Vec<_> = self
             .kv
             .scan(Bound::Unbounded, Bound::Unbounded)
@@ -162,11 +197,85 @@ impl MemKvFuzzer {
     }
 }
 
-pub fn test_mem_kv_fuzzer(actions: &mut Vec<Action>) {
+pub fn test_mem_kv_fuzzer(actions: &mut [Action]) {
     let mut fuzzer = MemKvFuzzer::default();
+    let mut applied = Vec::new();
     for action in actions {
         fuzzer.prepare(action);
+        applied.push(action.clone());
+        tracing::info!("\n{:#?}", applied);
         fuzzer.apply(action);
     }
+    tracing::info!("\n{:#?}", applied);
     fuzzer.equal();
+}
+
+pub fn minify_simple<T, F>(f: F, actions: Vec<T>)
+where
+    F: Fn(&mut [T]),
+    T: Clone + std::fmt::Debug,
+{
+    std::panic::set_hook(Box::new(|_info| {
+        // ignore panic output
+        // println!("{:?}", _info);
+    }));
+    let f_ref: *const _ = &f;
+    let f_ref: usize = f_ref as usize;
+    #[allow(clippy::redundant_clone)]
+    let mut actions_clone = actions.clone();
+    let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
+    #[allow(clippy::blocks_in_conditions)]
+    if std::panic::catch_unwind(|| {
+        // SAFETY: test
+        let f = unsafe { &*(f_ref as *const F) };
+        // SAFETY: test
+        let actions_ref = unsafe { &mut *(action_ref as *mut Vec<T>) };
+        f(actions_ref);
+    })
+    .is_ok()
+    {
+        println!("No Error Found");
+        return;
+    }
+    let mut minified = actions.clone();
+    let mut current_index = minified.len() as i64 - 1;
+    while current_index > 0 {
+        let a = minified.remove(current_index as usize);
+        let f_ref: *const _ = &f;
+        let f_ref: usize = f_ref as usize;
+        let mut actions_clone = minified.clone();
+        let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
+        let mut re = false;
+        #[allow(clippy::blocks_in_conditions)]
+        if std::panic::catch_unwind(|| {
+            // SAFETY: test
+            let f = unsafe { &*(f_ref as *const F) };
+            // SAFETY: test
+            let actions_ref = unsafe { &mut *(action_ref as *mut Vec<T>) };
+            f(actions_ref);
+        })
+        .is_err()
+        {
+            re = true;
+        } else {
+            minified.insert(current_index as usize, a);
+        }
+        println!(
+            "{}/{} {}",
+            actions.len() as i64 - current_index,
+            actions.len(),
+            re
+        );
+        current_index -= 1;
+    }
+
+    println!("{:?}", &minified);
+    println!(
+        "Old Length {}, New Length {}",
+        actions.len(),
+        minified.len()
+    );
+    if actions.len() > minified.len() {
+        minify_simple(f, minified);
+    }
 }

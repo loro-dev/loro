@@ -192,10 +192,11 @@ impl BlockIter {
         }
     }
 
+    /// MUST be called after seek_to_key()
     pub fn prev_to_key(&mut self, key: &[u8]) {
         match self.block.as_ref() {
             Block::Normal(block) => {
-                let mut left = 0;
+                let mut left = self.next_idx;
                 let mut right = block.offsets.len();
                 while left < right {
                     let mid = left + (right - left) / 2;
@@ -229,6 +230,7 @@ impl BlockIter {
                 if idx >= block.offsets.len() {
                     self.next_key.clear();
                     self.next_value_range = 0..0;
+                    self.next_idx = idx;
                     return;
                 }
                 let offset = block.offsets[idx] as usize;
@@ -239,6 +241,7 @@ impl BlockIter {
                 if idx > 0 {
                     self.next_key.clear();
                     self.next_value_range = 0..0;
+                    self.next_idx = idx;
                     return;
                 }
                 self.next_key = block.key.to_vec();
@@ -254,6 +257,7 @@ impl BlockIter {
                 if idx < 0 {
                     self.prev_key.clear();
                     self.prev_value_range = 0..0;
+                    self.prev_idx = idx;
                     return;
                 }
                 let offset = block.offsets[idx as usize] as usize;
@@ -264,6 +268,7 @@ impl BlockIter {
                 if idx < 0 {
                     self.prev_key.clear();
                     self.prev_value_range = 0..0;
+                    self.prev_idx = idx;
                     return;
                 }
                 self.prev_key = block.key.to_vec();

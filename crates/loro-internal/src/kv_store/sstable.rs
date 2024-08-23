@@ -560,8 +560,12 @@ impl SsTable{
         })
     }
 
-    pub fn data_len(&self)->usize{
+    pub fn data_size(&self)->usize{
         self.data.len()
+    }
+
+    pub fn meta_len(&self)->usize{
+        self.meta.len()
     }
 }
 
@@ -629,7 +633,6 @@ impl<'a> SsTableIter<'a>{
                 (0, iter, None)
             },
         };
-
         let (end_idx, end_iter, end_excluded) = match end {
                 Bound::Included(end)=>{
                     let end_idx = table.find_prev_block_idx(end);
