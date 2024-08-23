@@ -200,9 +200,8 @@ impl ContainerWrapper {
         };
 
         self.value = Some(v);
-        // SAFETY: rest is a slice of b
-        let offset = unsafe { rest.as_ptr().offset_from(b.as_ptr()) };
-        self.bytes_offset_for_state = Some(offset as usize + value_offset);
+        let offset = b.len() - rest.len();
+        self.bytes_offset_for_state = Some(offset + value_offset);
         Ok(())
     }
 
