@@ -4,7 +4,7 @@ use crate::{
     arena::SharedArena,
     change::{Change, Timestamp},
     estimated_size::EstimatedSize,
-    kv_store::{KvStore, MemKvStore},
+    kv_store::KvStore,
     op::Op,
     parent::register_container_and_parent_link,
     version::{Frontiers, ImVersionVector},
@@ -17,6 +17,7 @@ use loro_common::{
     Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport, LoroError,
     LoroResult, PeerID, ID,
 };
+use loro_kv_store::MemKvStore;
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RlePush, RleVec, Sliceable};
 use std::{

@@ -1,0 +1,13 @@
+[package]
+name = "loro-kv-store"
+version = "0.16.2"
+edition = "2021"
+
+[dependencies]
+loro-common = { path = "../loro-common", version = "0.16.2" }
+bytes = { workspace = true }
+fxhash = { workspace = true }
+once_cell = { workspace = true }
+lz4_flex = { version = "0.11" }
+quick_cache = "0.6.2"
+xxhash-rust = { workspace = true }

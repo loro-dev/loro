@@ -1106,7 +1106,6 @@ dependencies = [
  "base64",
  "bench-utils",
  "bytes",
- "crc32fast",
  "criterion 0.5.1",
  "ctor 0.1.26",
  "dev-utils",
@@ -1123,9 +1122,9 @@ dependencies = [
  "leb128",
  "loro-common 0.16.2",
  "loro-delta 0.16.2",
+ "loro-kv-store",
  "loro-rle 0.16.2",
  "loro_fractional_index 0.16.2",
- "lz4_flex",
  "md5",
  "miniz_oxide 0.7.1",
  "nonmax",
@@ -1136,7 +1135,6 @@ dependencies = [
  "postcard",
  "proptest",
  "proptest-derive",
- "quick_cache",
  "rand",
  "serde",
  "serde-wasm-bindgen 0.5.0",
@@ -1185,6 +1183,19 @@ dependencies = [
  "smallvec",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "loro-kv-store"
+version = "0.16.2"
+dependencies = [
+ "bytes",
+ "fxhash",
+ "loro-common 0.16.2",
+ "lz4_flex",
+ "once_cell",
+ "quick_cache",
+ "xxhash-rust",
 ]
 
 [[package]]

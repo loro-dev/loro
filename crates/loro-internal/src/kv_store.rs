@@ -1,14 +1,10 @@
 use bytes::Bytes;
+pub use loro_kv_store::MemKvStore;
 use std::{
     collections::BTreeMap,
     ops::Bound,
     sync::{Arc, Mutex},
 };
-mod iter;
-mod mem_store;
-mod sstable;
-
-pub use mem_store::MemKvStore;
 
 pub trait KvStore: std::fmt::Debug + Send + Sync {
     fn get(&self, key: &[u8]) -> Option<Bytes>;
@@ -22,6 +18,7 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
         end: Bound<&[u8]>,
     ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)> + '_>;
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
     fn size(&self) -> usize;
     fn export_all(&mut self) -> Bytes;
     fn import_all(&mut self, bytes: Bytes) -> Result<(), String>;
@@ -42,6 +39,60 @@ fn get_common_prefix_len_and_strip<'a, T: AsRef<[u8]> + ?Sized>(
 
     let suffix = &this.as_ref()[common_prefix_len..];
     (common_prefix_len as u8, suffix)
+}
+
+impl KvStore for MemKvStore {
+    fn get(&self, key: &[u8]) -> Option<Bytes> {
+        self.get(key)
+    }
+
+    fn set(&mut self, key: &[u8], value: Bytes) {
+        self.set(key, value)
+    }
+
+    fn compare_and_swap(&mut self, key: &[u8], old: Option<Bytes>, new: Bytes) -> bool {
+        self.compare_and_swap(key, old, new)
+    }
+
+    fn remove(&mut self, key: &[u8]) {
+        self.remove(key)
+    }
+
+    fn contains_key(&self, key: &[u8]) -> bool {
+        self.contains_key(key)
+    }
+
+    fn scan(
+        &self,
+        start: Bound<&[u8]>,
+        end: Bound<&[u8]>,
+    ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)> + '_> {
+        self.scan(start, end)
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+
+    fn size(&self) -> usize {
+        self.size()
+    }
+
+    fn export_all(&mut self) -> Bytes {
+        self.export_all()
+    }
+
+    fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
+        self.import_all(bytes)
+    }
+
+    fn clone_store(&self) -> Arc<Mutex<dyn KvStore>> {
+        Arc::new(Mutex::new(self.clone()))
+    }
 }
 
 mod default_binary_format {
@@ -173,6 +224,10 @@ impl KvStore for BTreeMap<Bytes, Bytes> {
 
     fn len(&self) -> usize {
         self.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.is_empty()
     }
 
     fn size(&self) -> usize {

@@ -4,11 +4,10 @@ use bytes::{Buf, BufMut, Bytes};
 use fxhash::FxHashSet;
 use loro_common::{LoroError, LoroResult};
 use once_cell::sync::OnceCell;
-use rle::Sliceable;
 
-use crate::kv_store::get_common_prefix_len_and_strip;
 use super::iter::BlockIter;
 
+const XXH_SEED: u32 = u32::from_le_bytes(*b"LORO");
 const MAGIC_NUMBER: [u8;4] = *b"LORO";
 const CURRENT_SCHEMA_VERSION: u8 = 0;
 pub const SIZE_OF_U8: usize = std::mem::size_of::<u8>();
@@ -36,7 +35,7 @@ impl LargeValueBlock{
     fn encode(&self)->Bytes{
         let mut buf = Vec::with_capacity(self.value_bytes.len() + SIZE_OF_U32);
         buf.put_slice(&self.value_bytes);
-        let checksum = crc32fast::hash(&buf);
+        let checksum = xxhash_rust::xxh32::xxh32(&buf, XXH_SEED);
         buf.put_u32(checksum);
         buf.into()
     }
@@ -75,7 +74,7 @@ impl NormalBlock {
 
         let mut compressed_data = lz4_flex::compress_prepend_size(&buf);
 
-        let checksum = crc32fast::hash(&compressed_data);
+        let checksum = xxhash_rust::xxh32::xxh32(&compressed_data, XXH_SEED);
         compressed_data.put_u32(checksum);
         compressed_data.into()
     }
@@ -88,7 +87,7 @@ impl NormalBlock {
         let offsets = &data[data_end..data.len()-SIZE_OF_U16];
         let offsets = offsets.chunks(SIZE_OF_U16).map(|mut chunk| chunk.get_u16()).collect();
         NormalBlock{
-            data: Bytes::from(data.slice(0, data_end)),
+            data: Bytes::copy_from_slice(&data[..data_end]),
             offsets,
             first_key,
         }
@@ -138,6 +137,13 @@ impl Block{
         match self{
             Block::Normal(block)=>block.offsets.len(),
             Block::Large(_)=>1,
+        }
+    }
+
+    pub fn is_empty(&self)->bool{
+        match self{
+            Block::Normal(block)=>block.offsets.is_empty(),
+            Block::Large(_)=>false,
         }
     }
 }
@@ -298,14 +304,14 @@ impl BlockMeta{
             buf.put_u16(m.last_key.as_ref().unwrap().len() as u16);
             buf.put_slice(m.last_key.as_ref().unwrap());
         }
-        let checksum = crc32fast::hash(&buf[ori_length+4..]);
+        let checksum = xxhash_rust::xxh32::xxh32(&buf[ori_length+4..], XXH_SEED);
         buf.put_u32(checksum);
     }
 
     fn decode_meta(mut buf: &[u8])->LoroResult<Vec<BlockMeta>>{
         let num = buf.get_u32() as usize;
         let mut ans = Vec::with_capacity(num);
-        let checksum = crc32fast::hash(&buf[..buf.remaining() - SIZE_OF_U32]);
+        let checksum = xxhash_rust::xxh32::xxh32(&buf[..buf.remaining() - SIZE_OF_U32], XXH_SEED);
         for _ in 0..num{
             let offset = buf.get_u32() as usize;
             let first_key_len = buf.get_u16() as usize;
@@ -420,7 +426,7 @@ impl SsTableBuilder{
 type BlockCache = quick_cache::sync::Cache<usize, Arc<Block>>;
 
 #[derive(Debug)]
-pub(crate) struct SsTable{
+pub struct SsTable{
     // TODO: mmap?
     data: Bytes,
     pub(crate) first_key: Bytes,
@@ -497,7 +503,7 @@ impl SsTable{
             let offset_end = meta.get(i+1).map_or(meta_offset, |m| m.offset);
             let raw_block_and_check = bytes.slice(offset..offset_end);
             let checksum = raw_block_and_check.slice(raw_block_and_check.len() - SIZE_OF_U32..).get_u32();
-            if checksum != crc32fast::hash(&raw_block_and_check[..raw_block_and_check.len() - SIZE_OF_U32]){
+            if checksum != xxhash_rust::xxh32::xxh32(&raw_block_and_check[..raw_block_and_check.len() - SIZE_OF_U32], XXH_SEED){
                 return Err(LoroError::DecodeChecksumMismatchError);
             }
         }
@@ -537,6 +543,7 @@ impl SsTable{
         block_iter.next_is_valid() && block_iter.next_curr_key() == key
     }
 
+    #[allow(unused)]
     pub fn get(&self, key: &[u8])->Option<Bytes>{
         if self.first_key > key || self.last_key < key{
             return None;
@@ -612,6 +619,7 @@ impl<'a> SsTableIter<'a>{
             next_first:false
         }
     }
+
 
     pub fn new_scan(table: &'a SsTable, start: Bound<&[u8]>, end: Bound<&[u8]>)->Self{
         let (table_idx, mut iter, excluded) = match start{
@@ -843,6 +851,22 @@ impl<'a> DoubleEndedIterator for SsTableIter<'a>{
         self.prev();
         Some((key, value))
     }
+}
+
+fn get_common_prefix_len_and_strip<'a, T: AsRef<[u8]> + ?Sized>(
+    this: &'a T,
+    last: &T,
+) -> (u8, &'a [u8]) {
+    let mut common_prefix_len = 0;
+    for (i, (a, b)) in this.as_ref().iter().zip(last.as_ref().iter()).enumerate() {
+        if a != b || i == 255 {
+            common_prefix_len = i;
+            break;
+        }
+    }
+
+    let suffix = &this.as_ref()[common_prefix_len..];
+    (common_prefix_len as u8, suffix)
 }
 
 #[cfg(test)]
