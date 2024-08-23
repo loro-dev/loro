@@ -209,3 +209,73 @@ pub fn test_mem_kv_fuzzer(actions: &mut [Action]) {
     tracing::info!("\n{:#?}", applied);
     fuzzer.equal();
 }
+
+pub fn minify_simple<T, F>(f: F, actions: Vec<T>)
+where
+    F: Fn(&mut [T]),
+    T: Clone + std::fmt::Debug,
+{
+    std::panic::set_hook(Box::new(|_info| {
+        // ignore panic output
+        // println!("{:?}", _info);
+    }));
+    let f_ref: *const _ = &f;
+    let f_ref: usize = f_ref as usize;
+    #[allow(clippy::redundant_clone)]
+    let mut actions_clone = actions.clone();
+    let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
+    #[allow(clippy::blocks_in_conditions)]
+    if std::panic::catch_unwind(|| {
+        // SAFETY: test
+        let f = unsafe { &*(f_ref as *const F) };
+        // SAFETY: test
+        let actions_ref = unsafe { &mut *(action_ref as *mut Vec<T>) };
+        f(actions_ref);
+    })
+    .is_ok()
+    {
+        println!("No Error Found");
+        return;
+    }
+    let mut minified = actions.clone();
+    let mut current_index = minified.len() as i64 - 1;
+    while current_index > 0 {
+        let a = minified.remove(current_index as usize);
+        let f_ref: *const _ = &f;
+        let f_ref: usize = f_ref as usize;
+        let mut actions_clone = minified.clone();
+        let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
+        let mut re = false;
+        #[allow(clippy::blocks_in_conditions)]
+        if std::panic::catch_unwind(|| {
+            // SAFETY: test
+            let f = unsafe { &*(f_ref as *const F) };
+            // SAFETY: test
+            let actions_ref = unsafe { &mut *(action_ref as *mut Vec<T>) };
+            f(actions_ref);
+        })
+        .is_err()
+        {
+            re = true;
+        } else {
+            minified.insert(current_index as usize, a);
+        }
+        println!(
+            "{}/{} {}",
+            actions.len() as i64 - current_index,
+            actions.len(),
+            re
+        );
+        current_index -= 1;
+    }
+
+    println!("{:?}", &minified);
+    println!(
+        "Old Length {}, New Length {}",
+        actions.len(),
+        minified.len()
+    );
+    if actions.len() > minified.len() {
+        minify_simple(f, minified);
+    }
+}

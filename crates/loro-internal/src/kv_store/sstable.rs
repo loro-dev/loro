@@ -633,7 +633,6 @@ impl<'a> SsTableIter<'a>{
                 (0, iter, None)
             },
         };
-
         let (end_idx, end_iter, end_excluded) = match end {
                 Bound::Included(end)=>{
                     let end_idx = table.find_prev_block_idx(end);

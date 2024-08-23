@@ -1,4 +1,4 @@
-use fuzz::{test_mem_kv_fuzzer, KVAction::*};
+use fuzz::{kv_minify_simple, test_mem_kv_fuzzer, KVAction::*};
 
 #[ctor::ctor]
 fn init() {
@@ -62,4 +62,38 @@ fn add_flush_add_scan() {
             end_include: true,
         },
     ])
+}
+
+#[test]
+fn add_some() {
+    test_mem_kv_fuzzer(&mut [
+        Add {
+            key: vec![255, 255, 255, 255, 63],
+            value: vec![],
+        },
+        Add {
+            key: vec![255, 3],
+            value: vec![255],
+        },
+        Add {
+            key: vec![255],
+            value: vec![],
+        },
+        Add {
+            key: vec![],
+            value: vec![],
+        },
+        Flush,
+        Scan {
+            start: 18446744073709551615,
+            end: 18446744073709551615,
+            start_include: true,
+            end_include: true,
+        },
+    ])
+}
+
+#[test]
+fn minify() {
+    kv_minify_simple(test_mem_kv_fuzzer, vec![])
 }

@@ -238,6 +238,13 @@ impl KvStore for MemKvStore {
                     .map(|(k, v)| (k.clone(), v.clone())),
             );
         }
+        if self.mem_table.is_empty() {
+            return Box::new(SsTableIter::new_scan(
+                self.ss_table.as_ref().unwrap(),
+                start,
+                end,
+            ));
+        }
         Box::new(MergeIterator::new(
             self.mem_table
                 .range::<[u8], _>((start, end))

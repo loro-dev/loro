@@ -192,10 +192,11 @@ impl BlockIter {
         }
     }
 
+    /// MUST be called after seek_to_key()
     pub fn prev_to_key(&mut self, key: &[u8]) {
         match self.block.as_ref() {
             Block::Normal(block) => {
-                let mut left = 0;
+                let mut left = self.next_idx;
                 let mut right = block.offsets.len();
                 while left < right {
                     let mid = left + (right - left) / 2;
