@@ -268,6 +268,7 @@ mod snapshot {
 
     use crate::{
         delta::MapValue,
+        encoding::value_register::ValueRegister,
         state::{ContainerCreationContext, ContainerState, FastStateSnapshot},
     };
 
@@ -277,7 +278,9 @@ mod snapshot {
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
             // 1. LoroValue
             // 2. Vec<String> keys_with_none_value
-            // 3. Groups of (u64 peer, leb128 lamp)
+            // 3. leb128 peer_num + peers (in u64)
+            // 3. Groups of (leb128 peer_idx, leb128 lamport), each has a respective map entry
+            //    from either 1 or 2 when they all sorted by the key strings
             let value = self.get_value();
             postcard::to_io(&value, &mut w).unwrap();
 
@@ -287,11 +290,21 @@ mod snapshot {
                 .filter_map(|(k, v)| if v.value.is_some() { None } else { Some(k) })
                 .collect_vec();
             postcard::to_io(&keys_with_none_value, &mut w).unwrap();
+            let mut peer_register = ValueRegister::new();
+            for v in self.map.values() {
+                peer_register.register(&v.peer);
+            }
+
+            leb128::write::unsigned(&mut w, peer_register.vec().len() as u64).unwrap();
+            for p in peer_register.vec() {
+                w.write_all(&p.to_le_bytes()).unwrap();
+            }
             let mut keys: Vec<&InternalString> = self.map.keys().collect();
             keys.sort_unstable();
             for key in keys.into_iter() {
                 let value = self.map.get(key).unwrap();
-                w.write_all(&value.peer.to_le_bytes()).unwrap();
+                let peer_idx = peer_register.register(&value.peer);
+                leb128::write::unsigned(&mut w, peer_idx as u64).unwrap();
                 leb128::write::unsigned(&mut w, value.lamp as u64).unwrap();
             }
         }
@@ -314,27 +327,39 @@ mod snapshot {
         {
             let value = value.into_map().unwrap();
             // keys_with_none_value
-            let (mut keys, mut bytes) = postcard::take_from_bytes::<Vec<InternalString>>(bytes)
-                .map_err(|_| {
+            let (keys_with_none_value, mut bytes) =
+                postcard::take_from_bytes::<Vec<InternalString>>(bytes).map_err(|_| {
                     loro_common::LoroError::DecodeError(
                         "Decode map keys_with_none_value failed"
                             .to_string()
                             .into_boxed_str(),
                     )
                 })?;
-            let keys_with_none_value: FxHashSet<_> = keys.iter().cloned().collect();
-            keys.extend(value.keys().map(|x| x.as_str().into()));
-            keys.sort_unstable();
-            let mut key_iter = keys.into_iter();
-            let mut ans = MapState::new(idx);
-            while !bytes.is_empty() {
-                let key = key_iter.next().unwrap();
+            let keys_with_none_value: FxHashSet<_> = keys_with_none_value.into_iter().collect();
+
+            // peers
+            let peer_count = leb128::read::unsigned(&mut bytes).unwrap() as usize;
+            let mut peers = Vec::with_capacity(peer_count);
+            for _ in 0..peer_count {
                 let peer = u64::from_le_bytes(bytes[..8].try_into().unwrap());
                 bytes = &bytes[8..];
+                peers.push(peer);
+            }
+
+            //
+            let mut ans = MapState::new(idx);
+            let mut keys: Vec<_> = value.keys().map(|x| x.as_str().into()).collect();
+            keys.extend(keys_with_none_value.iter().cloned());
+            keys.sort_unstable();
+
+            for key in keys {
+                let peer_idx = leb128::read::unsigned(&mut bytes).unwrap() as usize;
                 let lamp = leb128::read::unsigned(&mut bytes).unwrap() as u32;
+                let peer = peers[peer_idx];
+
                 if keys_with_none_value.contains(&key) {
                     ans.insert(
-                        key.as_str().into(),
+                        key,
                         MapValue {
                             value: None,
                             lamp,
@@ -344,7 +369,7 @@ mod snapshot {
                 } else {
                     let value = value.get(&*key).unwrap();
                     ans.insert(
-                        key.as_str().into(),
+                        key,
                         MapValue {
                             value: Some(value.clone()),
                             lamp,
