@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
+use change_meta::ChangeMeta;
 use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::container::IntoContainerId;
@@ -11,11 +12,11 @@ use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
+use loro_internal::json::JsonChange;
 use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::DocState;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
-
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
@@ -25,9 +26,9 @@ use loro_internal::{
 use std::cmp::Ordering;
 use std::ops::Range;
 use std::sync::Arc;
-
 use tracing::info;
 
+mod change_meta;
 pub mod event;
 pub use loro_internal::awareness;
 pub use loro_internal::configure::Configure;
@@ -39,6 +40,8 @@ pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
 pub use loro_internal::event::Index;
 pub use loro_internal::handler::TextDelta;
 pub use loro_internal::id::{PeerID, TreeID, ID};
+pub use loro_internal::json;
+pub use loro_internal::json::JsonSchema;
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
 pub use loro_internal::obs::SubID;
@@ -46,7 +49,6 @@ pub use loro_internal::oplog::FrontiersNotIncluded;
 pub use loro_internal::undo;
 pub use loro_internal::version::{Frontiers, VersionVector};
 pub use loro_internal::ApplyDiff;
-pub use loro_internal::JsonSchema;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
@@ -93,6 +95,24 @@ impl LoroDoc {
     #[inline]
     pub fn config(&self) -> &Configure {
         self.doc.config()
+    }
+
+    /// Get `Change` at the given id.
+    ///
+    /// `Change` is a grouped continuous operations that share the same id, timestamp, commit message.
+    ///
+    /// - The id of the `Change` is the id of its first op.
+    /// - The second op's id is `{ peer: change.id.peer, counter: change.id.counter + 1 }`
+    ///
+    /// The same applies on `Lamport`:
+    ///
+    /// - The lamport of the `Change` is the lamport of its first op.
+    /// - The second op's lamport is `change.lamport + 1`
+    ///
+    /// The length of the `Change` is how many operations it contains
+    pub fn get_change(&self, id: ID) -> Option<ChangeMeta> {
+        let change = self.doc.oplog().lock().unwrap().get_change_at(id)?;
+        Some(ChangeMeta::from_change(&change))
     }
 
     /// Decodes the metadata for an imported blob from the provided bytes.
@@ -300,6 +320,11 @@ impl LoroDoc {
     #[inline]
     pub fn commit_with(&self, options: CommitOptions) {
         self.doc.commit_with(options)
+    }
+
+    /// Set commit message for the current uncommitted changes
+    pub fn set_next_commit_message(&self, msg: &str) {
+        self.doc.set_next_commit_message(msg)
     }
 
     /// Whether the document is in detached mode, where the [loro_internal::DocState] is not

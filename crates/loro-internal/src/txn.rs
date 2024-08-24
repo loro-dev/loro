@@ -57,6 +57,7 @@ pub struct Transaction {
     finished: bool,
     on_commit: Option<OnCommitFn>,
     timestamp: Option<Timestamp>,
+    msg: Option<Arc<str>>,
 }
 
 impl std::fmt::Debug for Transaction {
@@ -274,6 +275,7 @@ impl Transaction {
             local_ops: RleVec::new(),
             finished: false,
             on_commit: None,
+            msg: None,
         }
     }
 
@@ -287,6 +289,10 @@ impl Transaction {
 
     pub fn set_timestamp(&mut self, time: Timestamp) {
         self.timestamp = Some(time);
+    }
+
+    pub fn set_msg(&mut self, msg: Option<Arc<str>>) {
+        self.msg = msg;
     }
 
     pub(crate) fn set_on_commit(&mut self, f: OnCommitFn) {
@@ -321,6 +327,7 @@ impl Transaction {
                 self.timestamp
                     .unwrap_or_else(|| oplog.get_timestamp_for_next_txn()),
             ),
+            commit_msg: take(&mut self.msg),
         };
 
         let diff = if state.is_recording() {

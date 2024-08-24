@@ -636,6 +636,7 @@ pub(crate) fn convert_change_to_remote(
         deps: change.deps.clone(),
         lamport: change.lamport,
         timestamp: change.timestamp,
+        commit_msg: change.commit_msg.clone(),
     }
 }
 

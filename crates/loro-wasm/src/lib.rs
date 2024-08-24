@@ -17,12 +17,13 @@ use loro_internal::{
         Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrHandler,
     },
     id::{Counter, PeerID, TreeID, ID},
+    json::JsonSchema,
     loro::CommitOptions,
     obs::SubID,
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
-    ContainerType, DiffEvent, FxHashMap, HandlerTrait, JsonSchema, LoroDoc, LoroValue,
-    MovableListHandler, UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
+    ContainerType, DiffEvent, FxHashMap, HandlerTrait, LoroDoc, LoroValue, MovableListHandler,
+    UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
