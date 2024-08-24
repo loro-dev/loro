@@ -40,7 +40,7 @@ impl DocAnalysis {
         let mut containers = FxHashMap::default();
         let mut state = doc.app_state().lock().unwrap();
         let alive_containers = state.get_all_alive_containers();
-        for (&idx, c) in state.iter_wrapper_mut() {
+        for (&idx, c) in state.iter_all_containers_mut() {
             let ops_num = ops_nums.get(&idx).unwrap_or(&0);
             let id = doc.arena().get_container_id(idx).unwrap();
             let dropped = !alive_containers.contains(&id);
