@@ -41,13 +41,13 @@
 //!
 //! Each Key Value Chunk is encoded as follows:
 //!
-//! ┌───────────────────────────────────────────────────────────────┐
-//! │  Key Value Chunk                                              │
-//! │┌ ─ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ┬ ─ ─ ─ ┐│
-//! │ common prefix len key suffix len│key suffix│value len  value  │
-//! ││       u8        │     u16      │  bytes   │   u16   │ bytes ││
-//! │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ │
-//! └───────────────────────────────────────────────────────────────┘
+//! ┌─────────────────────────────────────────────────────┐
+//! │  Key Value Chunk                                    │
+//! │┌ ─ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─┬ ─ ─ ─ ┐│
+//! │ common prefix len key suffix len│key suffix│ value ││
+//! ││       u8        │     u16      │  bytes   │ bytes ││
+//! │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ┘─ ─ ─ ─┘│
+//! └─────────────────────────────────────────────────────┘
 //!
 //! Encoding:
 //! 1. Compress key-value pairs data as Key Value Chunk.
