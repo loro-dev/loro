@@ -406,4 +406,21 @@ mod tests {
         store.compare_and_swap(key, Some(value.clone()), large_value.clone());
         assert!(store.contains_key(key));
     }
+
+    #[test]
+    fn same_key() {
+        let mut store = MemKvStore::default();
+        let key = &[0];
+        let value = Bytes::from_static(&[0]);
+        store.set(key, value.clone());
+        store.export_all();
+        store.set(key, Bytes::new());
+        assert_eq!(store.get(key), None);
+        let iter = store
+            .scan(std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
+            .collect::<Vec<_>>();
+        assert_eq!(iter.len(), 0);
+        store.set(key, value.clone());
+        assert_eq!(store.get(key), Some(value));
+    }
 }
