@@ -143,7 +143,7 @@ impl MemKvStore {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.mem_table.is_empty() && self.ss_table.is_none()
+        self.len() == 0
     }
 
     pub fn size(&self) -> usize {
@@ -291,5 +291,119 @@ impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> DoubleEndedIterator
             }
         }
         ans
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::vec;
+
+    use crate::MemKvStore;
+    use bytes::Bytes;
+    #[test]
+    fn test_mem_kv_store() {
+        let key = &[0];
+        let value = Bytes::from_static(&[0]);
+
+        let key2 = &[0, 1];
+        let value2 = Bytes::from_static(&[0, 1]);
+        let mut store = MemKvStore::default();
+        store.set(key, value.clone());
+        assert_eq!(store.get(key), Some(value));
+        store.remove(key);
+        assert!(store.is_empty());
+        assert_eq!(store.get(key), None);
+        store.compare_and_swap(key, None, value2.clone());
+        assert_eq!(store.get(key), Some(value2.clone()));
+        assert!(store.contains_key(key));
+        assert!(!store.contains_key(key2));
+
+        store.set(key2, value2.clone());
+        assert_eq!(store.get(key2), Some(value2.clone()));
+        assert_eq!(store.len(), 2);
+        assert_eq!(store.size(), 7);
+        let bytes = store.export_all();
+        let mut new_store = MemKvStore::default();
+        assert_eq!(new_store.len(), 0);
+        assert_eq!(new_store.size(), 0);
+        new_store.import_all(bytes).unwrap();
+
+        let iter1 = store
+            .scan(std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
+            .collect::<Vec<_>>();
+        let iter2 = new_store
+            .scan(std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
+            .collect::<Vec<_>>();
+        assert_eq!(iter1, iter2);
+
+        let iter1 = store
+            .scan(std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
+            .rev()
+            .collect::<Vec<_>>();
+        let iter2 = new_store
+            .scan(std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
+            .rev()
+            .collect::<Vec<_>>();
+        assert_eq!(iter1, iter2);
+    }
+
+    #[test]
+    fn test_large_block() {
+        let mut store = MemKvStore::default();
+        let key = &[0];
+        let value = Bytes::from_static(&[0]);
+
+        let key2 = &[0, 1];
+        let key3 = &[0, 1, 2];
+        let large_value = Bytes::from_iter([0; 1024 * 8]);
+        let large_value2 = Bytes::from_iter([0; 1024 * 8]);
+        store.set(key, value.clone());
+        store.set(key2, large_value.clone());
+        let v2 = store.get(&[]);
+        assert_eq!(v2, None);
+        assert_eq!(store.get(key), Some(value.clone()));
+        assert_eq!(store.get(key2), Some(large_value.clone()));
+        store.export_all();
+        store.set(key3, large_value2.clone());
+        assert_eq!(store.get(key3), Some(large_value2.clone()));
+        assert_eq!(store.len(), 3);
+
+        let iter = store
+            .scan(std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            iter,
+            vec![
+                (Bytes::from_static(key), value.clone()),
+                (Bytes::from_static(key2), large_value.clone()),
+                (Bytes::from_static(key3), large_value2.clone())
+            ]
+        );
+
+        let iter2 = store
+            .scan(
+                std::ops::Bound::Included(key),
+                std::ops::Bound::Included(key3),
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(iter, iter2);
+
+        let iter3 = store
+            .scan(
+                std::ops::Bound::Excluded(key),
+                std::ops::Bound::Excluded(key3),
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(iter3.len(), 1);
+        assert_eq!(iter3[0], (Bytes::from_static(key2), large_value.clone()));
+
+        let v = store.get(key2).unwrap();
+        assert_eq!(v, large_value);
+
+        let v2 = store.get(&[]);
+        assert_eq!(v2, None);
+
+        store.compare_and_swap(key, Some(value.clone()), large_value.clone());
+        assert!(store.contains_key(key));
     }
 }

@@ -729,7 +729,8 @@ impl<'a> SsTableIter<'a>{
         if ans.is_next_valid() && !ans.next_block_iter.next_is_valid(){
             ans.next();
         }
-        if ans.is_prev_valid() && !ans.prev_block_iter.prev_is_valid(){
+
+        if ans.is_prev_valid() && !ans.next_first && !ans.prev_block_iter.prev_is_valid(){
             ans.prev();
         }
         ans
@@ -880,6 +881,7 @@ use super::*;
         builder.add(b"key3", b"value3");
         let block = builder.build();
         let mut iter = BlockIter::new_seek_to_first(Arc::new(block));
+        println!("{:?}", iter);
         let (k1, v1) = Iterator::next(&mut iter).unwrap();
         let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
         let (k2, v2) = Iterator::next(&mut iter).unwrap();
@@ -966,6 +968,24 @@ use super::*;
     }
 
     #[test]
+    fn block_scan2(){
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(b"key1", b"value1");
+        builder.add(b"key2", b"value2");
+        builder.add(b"key3", b"value3");
+        let block = builder.build();
+        let mut iter = BlockIter::new_scan(Arc::new(block),  Bound::Unbounded,Bound::Excluded(b"key3"));
+        let (k1, v1) = Iterator::next(&mut iter).unwrap();
+        let (k2, v2) = DoubleEndedIterator::next_back(&mut iter).unwrap();
+        assert_eq!(k1, Bytes::from_static(b"key1"));
+        assert_eq!(v1, Bytes::from_static(b"value1"));
+        assert_eq!(k2, Bytes::from_static(b"key2"));
+        assert_eq!(v2, Bytes::from_static(b"value2"));
+        assert!(Iterator::next(&mut iter).is_none());
+        assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
+    }
+
+    #[test]
     fn block_double_end_iter_with_delete(){
         let mut builder = BlockBuilder::new(4096);
         builder.add(b"key1", b"value1");
@@ -1043,6 +1063,7 @@ use super::*;
         builder.add(Bytes::from_static(b"key5"), Bytes::new());
         builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));
         let table = builder.build();
+        assert!(table.contains_key(b"key1"));
         let mut iter = SsTableIter::new_scan(&table, Bound::Excluded(b"key1"), Bound::Unbounded);
         let (k1, v1) = Iterator::next(&mut iter).unwrap();
         let (k2, v2) = DoubleEndedIterator::next_back(&mut iter).unwrap();

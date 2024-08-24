@@ -305,9 +305,8 @@ impl BlockIter {
                 self.next_value_range = value_start..offset_end;
                 rest.advance(offset_end - value_start);
             }
-            Block::Large(block) => {
-                self.next_key = block.key.to_vec();
-                self.next_value_range = 0..block.value_bytes.len();
+            Block::Large(_) => {
+                unreachable!()
             }
         }
     }
@@ -327,9 +326,8 @@ impl BlockIter {
                 self.prev_value_range = value_start..offset_end;
                 rest.advance(offset_end - value_start);
             }
-            Block::Large(block) => {
-                self.prev_key = block.key.to_vec();
-                self.prev_value_range = 0..block.value_bytes.len();
+            Block::Large(_) => {
+                unreachable!()
             }
         }
     }
