@@ -369,8 +369,8 @@ pub(crate) struct GroupedTreeOpInfo {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TreeOpGroup {
-    pub(crate) ops: BTreeMap<IdLp, GroupedTreeOpInfo>,
-    pub(crate) tree_for_diff: Arc<Mutex<TreeCacheForDiff>>,
+    ops: BTreeMap<IdLp, GroupedTreeOpInfo>,
+    tree_for_diff: Arc<Mutex<TreeCacheForDiff>>,
 }
 
 impl HistoryCacheTrait for TreeOpGroup {
@@ -383,6 +383,16 @@ impl HistoryCacheTrait for TreeOpGroup {
                 counter: op.raw_op().counter,
             },
         );
+    }
+}
+
+impl TreeOpGroup {
+    pub fn ops(&self) -> &BTreeMap<IdLp, GroupedTreeOpInfo> {
+        &self.ops
+    }
+
+    pub fn tree(&self) -> &Arc<Mutex<TreeCacheForDiff>> {
+        &self.tree_for_diff
     }
 }
 

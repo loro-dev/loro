@@ -164,7 +164,7 @@ impl TreeDiffCalculator {
         oplog.with_history_cache(|h| {
             let mark = h.ensure_importing_caches_exist();
             let tree_ops = h.get_tree(&self.container, mark).unwrap();
-            let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
+            let mut tree_cache = tree_ops.tree().lock().unwrap();
             let s = format!("checkout current {:?} to {:?}", &tree_cache.current_vv, &to);
             let s = tracing::span!(tracing::Level::INFO, "checkout", s = s);
             let _e = s.enter();
@@ -211,7 +211,7 @@ impl TreeDiffCalculator {
                 .unwrap()
                 .as_tree()
                 .unwrap();
-            for (idlp, op) in group.ops.range(
+            for (idlp, op) in group.ops().range(
                 IdLp {
                     lamport: forward_min_lamport,
                     peer: 0,
@@ -250,7 +250,7 @@ impl TreeDiffCalculator {
         oplog.with_history_cache(|h| {
             let mark = h.ensure_importing_caches_exist();
             let tree_ops = h.get_tree(&self.container, mark).unwrap();
-            let mut tree_cache = tree_ops.tree_for_diff.lock().unwrap();
+            let mut tree_cache = tree_ops.tree().lock().unwrap();
 
             let s = tracing::span!(tracing::Level::INFO, "checkout_diff");
             let _e = s.enter();
@@ -347,7 +347,7 @@ impl TreeDiffCalculator {
                 .unwrap()
                 .as_tree()
                 .unwrap();
-            for (idlp, op) in group.ops.range(
+            for (idlp, op) in group.ops().range(
                 IdLp {
                     lamport: lca_min_lamport,
                     peer: 0,
