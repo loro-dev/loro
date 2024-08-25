@@ -144,10 +144,8 @@ impl Actor {
         }
 
         let after_undo = self.loro.get_deep_value();
-        // TODO: FIXME: This assertion is diabled for now so that we can fuzz the other parts of the system first
-        // There are a few rare cases this assertion fails, but it's not the priority right now
 
-        // assert_value_eq(&before_undo, &after_undo, None);
+        assert_value_eq(&before_undo, &after_undo, None);
         self.undo_manager.undo.clear();
     }
 

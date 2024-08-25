@@ -64,6 +64,11 @@ pub struct CompactId {
     pub counter: NonMaxI32,
 }
 
+/// Return whether the given name is a valid root container name.
+pub fn check_root_container_name(name: &str) -> bool {
+    !name.is_empty() && name.char_indices().all(|(_, x)| x != '/' && x != '\0')
+}
+
 impl CompactId {
     pub fn new(peer: PeerID, counter: Counter) -> Self {
         Self {
@@ -488,9 +493,15 @@ mod container {
 
         #[inline]
         pub fn new_root(name: &str, container_type: ContainerType) -> Self {
-            ContainerID::Root {
-                name: name.into(),
-                container_type,
+            if !check_root_container_name(name) {
+                panic!(
+                    "Invalid root container name, it should not be empty or contain '/' or '\\0'"
+                );
+            } else {
+                ContainerID::Root {
+                    name: name.into(),
+                    container_type,
+                }
             }
         }
 

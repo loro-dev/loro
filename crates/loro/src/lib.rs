@@ -61,9 +61,10 @@ pub use counter::LoroCounter;
 /// `LoroDoc` is the entry for the whole document.
 /// When it's dropped, all the associated [`Handler`]s will be invalidated.
 #[derive(Debug)]
-#[repr(transparent)]
 pub struct LoroDoc {
     doc: InnerLoroDoc,
+    #[cfg(debug_assertions)]
+    _temp: u8,
 }
 
 impl Default for LoroDoc {
@@ -73,13 +74,22 @@ impl Default for LoroDoc {
 }
 
 impl LoroDoc {
+    #[inline(always)]
+    fn _new(doc: InnerLoroDoc) -> Self {
+        Self {
+            doc,
+            #[cfg(debug_assertions)]
+            _temp: 0,
+        }
+    }
+
     /// Create a new `LoroDoc` instance.
     #[inline]
     pub fn new() -> Self {
         let doc = InnerLoroDoc::default();
         doc.start_auto_commit();
 
-        LoroDoc { doc }
+        LoroDoc::_new(doc)
     }
 
     /// Duplicate the document with a different PeerID
@@ -88,7 +98,7 @@ impl LoroDoc {
     #[inline]
     pub fn fork(&self) -> Self {
         let doc = self.doc.fork();
-        LoroDoc { doc }
+        LoroDoc::_new(doc)
     }
 
     /// Get the configurations of the document.
@@ -305,8 +315,12 @@ impl LoroDoc {
     /// Commit the cumulative auto commit transaction.
     ///
     /// There is a transaction behind every operation.
-    /// It will automatically commit when users invoke export or import.
-    /// The event will be sent after a transaction is committed
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     #[inline]
     pub fn commit(&self) {
         self.doc.commit_then_renew()
@@ -479,8 +493,15 @@ impl LoroDoc {
 
     /// Subscribe the events of a container.
     ///
-    /// The callback will be invoked when the container is changed.
+    /// The callback will be invoked after a transaction that change the container.
     /// Returns a subscription id that can be used to unsubscribe.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     ///
     /// # Example
     ///
@@ -526,6 +547,13 @@ impl LoroDoc {
     ///
     /// The callback will be invoked when any part of the [loro_internal::DocState] is changed.
     /// Returns a subscription id that can be used to unsubscribe.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     #[inline]
     pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
         // self.doc.subscribe_root(callback)
@@ -534,8 +562,7 @@ impl LoroDoc {
         }))
     }
 
-    /// Remove a subscription.
-    #[inline]
+    /// Remove a subscription by subscription id.
     pub fn unsubscribe(&self, id: SubID) {
         self.doc.unsubscribe(id)
     }
@@ -1180,6 +1207,11 @@ impl LoroText {
     /// Get the length of the text container in UTF-16.
     pub fn len_utf16(&self) -> usize {
         self.handler.len_utf16()
+    }
+
+    /// Update the current text based on the provided text.
+    pub fn update(&self, text: &str) -> () {
+        self.handler.update(text);
     }
 
     /// Apply a [delta](https://quilljs.com/docs/delta/) to the text container.

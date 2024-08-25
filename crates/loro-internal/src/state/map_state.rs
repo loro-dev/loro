@@ -26,6 +26,7 @@ use super::{ContainerState, DiffApplyContext};
 pub struct MapState {
     idx: ContainerIdx,
     map: FxHashMap<InternalString, MapValue>,
+    size: usize,
 }
 
 impl ContainerState for MapState {
@@ -60,20 +61,20 @@ impl ContainerState for MapState {
             let Some(value) = value else {
                 // uncreate op
                 assert_eq!(mode, DiffMode::Checkout);
-                self.map.remove(&key);
+                self.remove(&key);
                 resolved_delta = resolved_delta.with_entry(key, ResolvedMapValue::new_unset());
                 continue;
             };
 
             let mut changed = false;
             if force {
-                self.map.insert(key.clone(), value.clone());
+                self.insert(key.clone(), value.clone());
                 changed = true;
             } else {
                 match self.map.get(&key) {
                     Some(old_value) if old_value > &value => {}
                     _ => {
-                        self.map.insert(key.clone(), value.clone());
+                        self.insert(key.clone(), value.clone());
                         changed = true;
                     }
                 }
@@ -205,7 +206,7 @@ impl ContainerState for MapState {
             );
 
             let content = op.op.content.as_map().unwrap();
-            self.map.insert(
+            self.insert(
                 content.key.clone(),
                 MapValue {
                     value: content.value.clone(),
@@ -223,19 +224,45 @@ impl MapState {
         Self {
             idx,
             map: FxHashMap::default(),
+            size: 0,
         }
     }
 
     pub fn insert(&mut self, key: InternalString, value: MapValue) {
-        self.map.insert(key.clone(), value);
+        let value_yes = value.value.is_some();
+        let result = self.map.insert(key.clone(), value);
+        match (result, value_yes) {
+            (Some(x), true) => {
+                if let None = x.value {
+                    self.size += 1;
+                }
+            }
+            (None, true) => {
+                self.size += 1;
+            }
+            (Some(x), false) => {
+                if let Some(_) = x.value {
+                    self.size -= 1;
+                }
+            }
+            _ => {}
+        };
+    }
+
+    pub fn remove(&mut self, key: &InternalString) {
+        let result = self.map.remove(key);
+        match result {
+            Some(x) => {
+                if let Some(_) = x.value {
+                    self.size -= 1;
+                }
+            }
+            None => {}
+        };
     }
 
     pub fn iter(&self) -> std::collections::hash_map::Iter<'_, InternalString, MapValue> {
         self.map.iter()
-    }
-
-    pub fn len(&self) -> usize {
-        self.map.len()
     }
 
     fn to_map(&self) -> FxHashMap<String, LoroValue> {
@@ -247,6 +274,7 @@ impl MapState {
 
             ans.insert(key.to_string(), value.value.as_ref().cloned().unwrap());
         }
+
         ans
     }
 
@@ -258,6 +286,10 @@ impl MapState {
             },
             None => None,
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.size
     }
 }
 

@@ -45,7 +45,6 @@ pub(crate) use query::PosType;
 pub(crate) struct RichtextState {
     tree: BTree<RichtextTreeTrait>,
     style_ranges: Option<Box<StyleRangeMap>>,
-    cursor_cache: CursorCache,
 }
 
 impl Display for RichtextState {
@@ -1262,7 +1261,7 @@ mod cursor_cache {
             pos_type: PosType,
             tree: &BTree<RichtextTreeTrait>,
             has_style: bool,
-        ) -> Option<usize> {
+        ) -> Option<(usize, Cursor)> {
             if has_style {
                 return None;
             }
@@ -1284,11 +1283,23 @@ mod cursor_cache {
 
                 if offset < leaf.elem().rle_len() {
                     cache_hit();
-                    return Some(offset + c.entity_index);
+                    return Some((
+                        offset + c.entity_index,
+                        Cursor {
+                            leaf: c.leaf,
+                            offset,
+                        },
+                    ));
                 }
 
                 cache_hit();
-                return Some(offset + c.entity_index);
+                return Some((
+                    offset + c.entity_index,
+                    Cursor {
+                        leaf: c.leaf,
+                        offset,
+                    },
+                ));
             }
 
             cache_miss();
@@ -1328,7 +1339,6 @@ impl RichtextState {
         Self {
             tree: i.collect(),
             style_ranges: Default::default(),
-            cursor_cache: Default::default(),
         }
     }
 
@@ -1336,22 +1346,9 @@ impl RichtextState {
         &mut self,
         pos: usize,
         pos_type: PosType,
-    ) -> Result<usize, LoroError> {
+    ) -> Result<(usize, Option<Cursor>), LoroError> {
         if self.tree.is_empty() {
-            return Ok(0);
-        }
-
-        if let Some(pos) =
-            self.cursor_cache
-                .get_entity_index(pos, pos_type, &self.tree, self.has_styles())
-        {
-            debug_assert!(
-                pos <= self.len_entity(),
-                "tree:{:#?}\ncache:{:#?}",
-                &self.tree,
-                &self.cursor_cache
-            );
-            return Ok(pos);
+            return Ok((0, None));
         }
 
         let (c, entity_index) = match pos_type {
@@ -1362,28 +1359,7 @@ impl RichtextState {
             PosType::Event => self.find_best_insert_pos::<EventIndexQueryT>(pos),
         };
 
-        if let Some(c) = c {
-            // cache to reduce the cost of the next query
-            self.cursor_cache
-                .record_cursor(entity_index, PosType::Entity, c, &self.tree);
-            if !self.has_styles() {
-                if let Err(pos) = self.cursor_cache.record_entity_index(
-                    pos,
-                    pos_type,
-                    entity_index,
-                    c,
-                    &self.tree,
-                ) {
-                    return match pos_type {
-                        PosType::Bytes => Err(LoroError::UTF8InUnicodeCodePoint { pos }),
-                        PosType::Utf16 => Err(LoroError::UTF16InUnicodeCodePoint { pos }),
-                        _ => unreachable!(),
-                    };
-                }
-            }
-        }
-
-        Ok(entity_index)
+        Ok((entity_index, c))
     }
 
     fn has_styles(&self) -> bool {
@@ -1402,10 +1378,10 @@ impl RichtextState {
             return (0..0, None);
         }
 
-        let start = self
+        let (start, _) = self
             .get_entity_index_for_text_insert(range.start, pos_type)
             .unwrap();
-        let end = self
+        let (end, _) = self
             .get_entity_index_for_text_insert(range.end, pos_type)
             .unwrap();
         if self.has_styles() {
@@ -1445,38 +1421,22 @@ impl RichtextState {
         entity_index: usize,
         text: BytesSlice,
         id: IdFull,
-    ) {
+    ) -> Cursor {
         let elem = RichtextStateChunk::try_new(text, id).unwrap();
         self.style_ranges
             .as_mut()
             .map(|x| x.insert(entity_index, elem.rle_len()));
-        let leaf;
-        if let Some(cursor) =
-            self.cursor_cache
-                .get_cursor(entity_index, PosType::Entity, &self.tree)
-        {
-            let p = self.tree.prefer_left(cursor).unwrap_or(cursor);
-            leaf = self.tree.insert_by_path(p, elem).0;
-        } else {
-            leaf = {
-                let q = &entity_index;
-                match self.tree.query::<EntityQuery>(q) {
-                    Some(result) => {
-                        let p = self
-                            .tree
-                            .prefer_left(result.cursor)
-                            .unwrap_or(result.cursor);
-                        self.tree.insert_by_path(p, elem).0
-                    }
-                    None => self.tree.push(elem),
-                }
-            };
+        let q = &entity_index;
+        match self.tree.query::<EntityQuery>(q) {
+            Some(result) => {
+                let p = self
+                    .tree
+                    .prefer_left(result.cursor)
+                    .unwrap_or(result.cursor);
+                self.tree.insert_by_path(p, elem).0
+            }
+            None => self.tree.push(elem),
         }
-
-        self.cursor_cache
-            .invalidate_entity_cache_after(entity_index);
-        self.cursor_cache
-            .record_cursor(entity_index, PosType::Entity, leaf, &self.tree);
     }
 
     /// This is used to accept changes from DiffCalculator.
@@ -1495,24 +1455,12 @@ impl RichtextState {
             &self
         );
 
-        let cursor;
-        let event_index;
-        if let Some(cached_cursor) =
-            self.cursor_cache
-                .get_cursor(entity_index, PosType::Entity, &self.tree)
-        {
-            cursor = Some(cached_cursor);
-            // PERF: how can we avoid this convert
-            event_index = self.cursor_to_event_index(cached_cursor);
-        } else {
-            let (c, f) = self
-                .tree
-                .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&entity_index);
-            cursor = c.map(|x| x.cursor);
-            event_index = f.event_index;
-        }
+        let (c, f) = self
+            .tree
+            .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&entity_index);
+        let cursor = c.map(|x| x.cursor);
+        let event_index = f.event_index;
 
-        self.cursor_cache.invalidate();
         match cursor {
             Some(cursor) => {
                 let styles = self
@@ -1520,9 +1468,7 @@ impl RichtextState {
                     .as_mut()
                     .map(|x| x.insert(entity_index, elem.rle_len()))
                     .unwrap_or(&EMPTY_STYLES);
-                let cursor = self.tree.insert_by_path(cursor, elem).0;
-                self.cursor_cache
-                    .record_cursor(entity_index, PosType::Entity, cursor, &self.tree);
+                self.tree.insert_by_path(cursor, elem);
                 (event_index, styles)
             }
             None => {
@@ -1531,9 +1477,7 @@ impl RichtextState {
                     .as_mut()
                     .map(|x| x.insert(entity_index, elem.rle_len()))
                     .unwrap_or(&EMPTY_STYLES);
-                let cursor = self.tree.push(elem);
-                self.cursor_cache
-                    .record_cursor(entity_index, PosType::Entity, cursor, &self.tree);
+                self.tree.push(elem);
                 (0, styles)
             }
         }
@@ -1984,7 +1928,6 @@ impl RichtextState {
         );
 
         // PERF: may use cache to speed up
-        self.cursor_cache.invalidate();
         let range = pos..pos + len;
         let (start, start_f) = self
             .tree
@@ -2126,6 +2069,22 @@ impl RichtextState {
 
     pub fn entity_index_to_event_index(&self, index: usize) -> usize {
         let cursor = self.tree.query::<EntityQuery>(&index).unwrap();
+        self.cursor_to_event_index(cursor.cursor)
+    }
+
+    pub fn index_to_event_index(&self, index: usize, pos_type: PosType) -> usize {
+        if self.tree.is_empty() {
+            return 0;
+        }
+
+        let cursor = match pos_type {
+            PosType::Entity => self.tree.query::<EntityQuery>(&index).unwrap(),
+            PosType::Utf16 => self.tree.query::<Utf16Query>(&index).unwrap(),
+            PosType::Bytes => self.tree.query::<ByteQuery>(&index).unwrap(),
+            PosType::Event => return index,
+            PosType::Unicode => self.tree.query::<UnicodeQuery>(&index).unwrap(),
+        };
+
         self.cursor_to_event_index(cursor.cursor)
     }
 
@@ -2521,6 +2480,30 @@ impl RichtextState {
             PosType::Bytes => self.len_utf8(),
         }
     }
+
+    pub(crate) fn get_event_index_by_cursor(&self, cursor: Cursor) -> usize {
+        let mut event_index = 0;
+        self.tree
+            .visit_previous_caches(cursor, |cache| match cache {
+                generic_btree::PreviousCache::NodeCache(cache) => {
+                    event_index += EventIndexQueryT::get_cache_len(cache);
+                }
+                generic_btree::PreviousCache::PrevSiblingElem(elem) => {
+                    event_index += EventIndexQueryT::get_elem_len(elem);
+                }
+                generic_btree::PreviousCache::ThisElemAndOffset { elem, offset } => match elem {
+                    RichtextStateChunk::Text(t) => {
+                        if cfg!(feature = "wasm") {
+                            event_index += unicode_to_utf16_index(t.as_str(), offset).unwrap();
+                        } else {
+                            event_index += offset;
+                        }
+                    }
+                    RichtextStateChunk::Style { .. } => {}
+                },
+            });
+        event_index
+    }
 }
 
 pub(crate) struct DrainInfo {
@@ -2622,7 +2605,7 @@ mod test {
             {
                 let state = &mut self.state;
                 let text = self.bytes.slice(start..);
-                let entity_index = state
+                let (entity_index, _) = state
                     .get_entity_index_for_text_insert(pos, PosType::Unicode)
                     .unwrap();
                 state.insert_at_entity_index(entity_index, text, IdFull::new(0, 0, 0));
@@ -2644,11 +2627,11 @@ mod test {
         }
 
         fn mark(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
-            let start = self
+            let (start, _) = self
                 .state
                 .get_entity_index_for_text_insert(range.start, PosType::Unicode)
                 .unwrap();
-            let end = self
+            let (end, _) = self
                 .state
                 .get_entity_index_for_text_insert(range.end, PosType::Unicode)
                 .unwrap();
