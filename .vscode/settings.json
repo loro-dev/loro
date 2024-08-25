@@ -44,10 +44,10 @@
     "unmergeable",
     "yspan"
   ],
-  // "rust-analyzer.runnableEnv": {
-  //   "RUST_BACKTRACE": "full",
-  //   "DEBUG": "*"
-  // },
+  "rust-analyzer.runnableEnv": {
+    "RUST_BACKTRACE": "full",
+    "DEBUG": "*"
+  },
   "rust-analyzer.cargo.features": [
     "test_utils",
     // "counter"
