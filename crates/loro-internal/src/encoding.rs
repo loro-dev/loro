@@ -242,23 +242,6 @@ fn encode_header_and_body(mode: EncodeMode, body: Vec<u8>) -> Vec<u8> {
     ans
 }
 
-fn encode_header_and_body_fast_snapshot(body_parts: Vec<Bytes>) -> Vec<u8> {
-    let mut ans =
-        Vec::with_capacity(MIN_HEADER_SIZE + body_parts.iter().map(|b| b.len()).sum::<usize>());
-    ans.extend(MAGIC_BYTES);
-    let checksum = [0; 16];
-    ans.extend(checksum);
-    ans.extend(EncodeMode::FastSnapshot.to_bytes());
-    for p in body_parts {
-        ans.extend(p);
-    }
-
-    let checksum_body = &ans[20..];
-    let checksum = xxhash_rust::xxh32::xxh32(checksum_body, XXH_SEED);
-    ans[16..20].copy_from_slice(&checksum.to_le_bytes());
-    ans
-}
-
 pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
     let body = encode_reordered::encode_snapshot(
         &doc.oplog().try_lock().unwrap(),
@@ -270,8 +253,21 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
 }
 
 pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
-    let body = fast_snapshot::encode_snapshot(doc);
-    encode_header_and_body_fast_snapshot(body)
+    // HEADER
+    let mut ans = Vec::with_capacity(MIN_HEADER_SIZE);
+    ans.extend(MAGIC_BYTES);
+    let checksum = [0; 16];
+    ans.extend(checksum);
+    ans.extend(EncodeMode::FastSnapshot.to_bytes());
+
+    // BODY
+    fast_snapshot::encode_snapshot(doc, &mut ans);
+
+    // CHECKSUM in HEADER
+    let checksum_body = &ans[20..];
+    let checksum = xxhash_rust::xxh32::xxh32(checksum_body, XXH_SEED);
+    ans[16..20].copy_from_slice(&checksum.to_le_bytes());
+    ans
 }
 
 pub(crate) fn decode_snapshot(

@@ -1,8 +1,64 @@
+//! Fast snapshot encoding and decoding.
+//!
+//! # Layout
+//!
+//! - u32 in little endian for len of bytes for oplog
+//! - oplog bytes
+//! - u32 in little endian for len of bytes for state
+//! - state bytes
+//! - u32 in little endian for len of bytes for gc
+//! - gc bytes
+//!
+//! All of `oplog bytes`, `state bytes` and `gc bytes` are encoded KV store bytes.
+//!
+//!
+//!
+use std::io::{Read, Write};
+
 use crate::{oplog::ChangeStore, LoroDoc, OpLog};
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 use loro_common::{LoroError, LoroResult};
 
 use super::encode_reordered::import_changes_to_oplog;
+
+struct Snapshot {
+    oplog_bytes: Bytes,
+    state_bytes: Bytes,
+    gc_bytes: Bytes,
+}
+
+fn _encode_snapshot<W: Write>(s: Snapshot, w: &mut W) {
+    w.write_all(&(s.oplog_bytes.len() as u32).to_le_bytes())
+        .unwrap();
+    w.write_all(&s.oplog_bytes).unwrap();
+    w.write_all(&(s.state_bytes.len() as u32).to_le_bytes())
+        .unwrap();
+    w.write_all(&s.state_bytes).unwrap();
+    w.write_all(&(s.gc_bytes.len() as u32).to_le_bytes())
+        .unwrap();
+    w.write_all(&s.gc_bytes).unwrap();
+}
+
+fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
+    let mut r = bytes.reader();
+    let oplog_bytes_len = read_u32_le(&mut r) as usize;
+    let oplog_bytes = r.get_mut().copy_to_bytes(oplog_bytes_len);
+    let state_bytes_len = read_u32_le(&mut r) as usize;
+    let state_bytes = r.get_mut().copy_to_bytes(state_bytes_len);
+    let gc_bytes_len = read_u32_le(&mut r) as usize;
+    let gc_bytes = r.get_mut().copy_to_bytes(gc_bytes_len);
+    Ok(Snapshot {
+        oplog_bytes,
+        state_bytes,
+        gc_bytes,
+    })
+}
+
+fn read_u32_le(r: &mut bytes::buf::Reader<Bytes>) -> u32 {
+    let mut buf = [0; 4];
+    r.read_exact(&mut buf).unwrap();
+    u32::from_le_bytes(buf)
+}
 
 pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
     let mut state = doc.app_state().try_lock().map_err(|_| {
@@ -28,17 +84,13 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
 
     assert!(state.frontiers.is_empty());
     assert!(oplog.frontiers().is_empty());
-    let oplog_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-    let oplog_bytes = bytes.slice(4..4 + oplog_len as usize);
-    let state_len = u32::from_le_bytes(
-        bytes[(4 + oplog_len as usize)..(8 + oplog_len as usize)]
-            .try_into()
-            .unwrap(),
-    );
-    let state_bytes =
-        bytes.slice(8 + oplog_len as usize..8 + oplog_len as usize + state_len as usize);
-    state.store.decode(state_bytes)?;
+    let Snapshot {
+        oplog_bytes,
+        state_bytes,
+        gc_bytes: _,
+    } = _decode_snapshot_bytes(bytes)?;
     oplog.decode_change_store(oplog_bytes)?;
+    state.store.decode(state_bytes)?;
     // FIXME: we may need to extract the unknown containers here?
     // Or we should lazy load it when the time comes?
     state.init_with_states_and_version(oplog.frontiers().clone(), &oplog, vec![], false);
@@ -55,7 +107,7 @@ impl OpLog {
     }
 }
 
-pub(crate) fn encode_snapshot(doc: &LoroDoc) -> Vec<Bytes> {
+pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
     let mut state = doc.app_state().try_lock().unwrap();
     let oplog = doc.oplog().try_lock().unwrap();
     assert!(!state.is_in_txn());
@@ -63,14 +115,14 @@ pub(crate) fn encode_snapshot(doc: &LoroDoc) -> Vec<Bytes> {
 
     let oplog_bytes = oplog.encode_change_store();
     let state_bytes = state.store.encode();
-    let oplog_len = oplog_bytes.len() as u32;
-    let state_len = state_bytes.len() as u32;
-    vec![
-        oplog_len.to_le_bytes().to_vec().into(),
-        oplog_bytes,
-        state_len.to_le_bytes().to_vec().into(),
-        state_bytes,
-    ]
+    _encode_snapshot(
+        Snapshot {
+            oplog_bytes,
+            state_bytes,
+            gc_bytes: Bytes::new(),
+        },
+        w,
+    );
 }
 
 pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<(), LoroError> {
