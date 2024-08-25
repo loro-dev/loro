@@ -1,360 +1,476 @@
 use std::{
+    cell::RefCell,
+    collections::{binary_heap::PeekMut, BinaryHeap},
     fmt::Debug,
-    ops::{Bound, Range},
-    sync::Arc,
+    rc::Rc,
 };
 
-use bytes::{Buf, Bytes};
+use bytes::Bytes;
 
-use super::sstable::{Block, SIZE_OF_U16, SIZE_OF_U8};
-
-#[derive(Clone)]
-pub struct BlockIter {
-    block: Arc<Block>,
-    next_key: Vec<u8>,
-    next_value_range: Range<usize>,
-    prev_key: Vec<u8>,
-    prev_value_range: Range<usize>,
-    next_idx: usize,
-    prev_idx: isize,
-    first_key: Bytes,
+pub trait KvIterator: Debug {
+    fn next_key(&self) -> Bytes;
+    fn next_value(&self) -> Bytes;
+    fn find_next(&mut self);
+    fn is_next_valid(&self) -> bool;
+    fn prev_key(&self) -> Bytes;
+    fn prev_value(&self) -> Bytes;
+    fn find_prev(&mut self);
+    fn is_prev_valid(&self) -> bool;
 }
 
-impl Debug for BlockIter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BlockIter")
-            .field("is_large", &self.block.is_large())
-            .field("next_key", &Bytes::copy_from_slice(&self.next_key))
-            .field("next_value_range", &self.next_value_range)
-            .field("prev_key", &Bytes::copy_from_slice(&self.prev_key))
-            .field("prev_value_range", &self.prev_value_range)
-            .field("next_idx", &self.next_idx)
-            .field("prev_idx", &self.prev_idx)
-            .field("first_key", &Bytes::copy_from_slice(&self.first_key))
-            .finish()
-    }
+#[derive(Debug)]
+struct HeapIterWrapper<T> {
+    pub idx: usize,
+    pub iter: Rc<RefCell<T>>,
+    pub f2b: bool,
 }
 
-impl BlockIter {
-    pub fn new_seek_to_first(block: Arc<Block>) -> Self {
-        let prev_idx = block.len() as isize - 1;
-        let mut iter = Self {
-            first_key: block.first_key(),
-            block,
-            next_key: Vec::new(),
-            next_value_range: 0..0,
-            prev_key: Vec::new(),
-            prev_value_range: 0..0,
-            next_idx: 0,
-            prev_idx,
-        };
-        iter.seek_to_idx(0);
-        iter.prev_to_idx(prev_idx);
-        iter
-    }
-
-    pub fn new_seek_to_key(block: Arc<Block>, key: &[u8]) -> Self {
-        let prev_idx = block.len() as isize - 1;
-        let mut iter = Self {
-            first_key: block.first_key(),
-            block,
-            next_key: Vec::new(),
-            next_value_range: 0..0,
-            prev_key: Vec::new(),
-            prev_value_range: 0..0,
-            next_idx: 0,
-            prev_idx,
-        };
-        iter.seek_to_key(key);
-        iter.prev_to_idx(prev_idx);
-        iter
-    }
-
-    pub fn new_prev_to_key(block: Arc<Block>, key: &[u8]) -> Self {
-        let prev_idx = block.len() as isize - 1;
-        let mut iter = Self {
-            first_key: block.first_key(),
-            block,
-            next_key: Vec::new(),
-            next_value_range: 0..0,
-            prev_key: Vec::new(),
-            prev_value_range: 0..0,
-            next_idx: 0,
-            prev_idx,
-        };
-        iter.seek_to_idx(0);
-        iter.prev_to_key(key);
-        iter
-    }
-
-    pub fn new_scan(block: Arc<Block>, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Self {
-        let mut iter = match start {
-            Bound::Included(key) => Self::new_seek_to_key(block, key),
-            Bound::Excluded(key) => {
-                let mut iter = Self::new_seek_to_key(block, key);
-                while iter.next_is_valid() && iter.next_curr_key() == key {
-                    iter.next();
-                }
-                iter
-            }
-            Bound::Unbounded => Self::new_seek_to_first(block),
-        };
-        match end {
-            Bound::Included(key) => {
-                iter.prev_to_key(key);
-            }
-            Bound::Excluded(key) => {
-                iter.prev_to_key(key);
-                while iter.prev_is_valid() && iter.prev_curr_key() == key {
-                    iter.prev();
-                }
-            }
-            Bound::Unbounded => {}
+impl<T: KvIterator> Ord for HeapIterWrapper<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        if self.f2b {
+            self.iter
+                .borrow()
+                .next_key()
+                .cmp(&other.iter.borrow().next_key())
+                .then(self.idx.cmp(&other.idx))
+                .reverse()
+        } else {
+            self.iter
+                .borrow()
+                .prev_key()
+                .cmp(&other.iter.borrow().prev_key())
+                .then(self.idx.cmp(&other.idx).reverse())
         }
-        iter
+    }
+}
+
+impl<T: KvIterator> PartialOrd for HeapIterWrapper<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: KvIterator> PartialEq for HeapIterWrapper<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl<T: KvIterator> Eq for HeapIterWrapper<T> {}
+
+#[derive(Debug)]
+pub struct MergeIterator<T: KvIterator> {
+    next_iters: BinaryHeap<HeapIterWrapper<T>>,
+    next_current: Option<HeapIterWrapper<T>>,
+    back_iters: BinaryHeap<HeapIterWrapper<T>>,
+    back_current: Option<HeapIterWrapper<T>>,
+}
+
+impl<T: KvIterator> MergeIterator<T> {
+    pub fn new(iters: Vec<T>) -> Self {
+        if iters.is_empty() {
+            return Self {
+                next_iters: BinaryHeap::new(),
+                next_current: None,
+                back_iters: BinaryHeap::new(),
+                back_current: None,
+            };
+        }
+        let mut next_heap = BinaryHeap::new();
+        let mut back_heap = BinaryHeap::new();
+        let shared_iters: Vec<Rc<RefCell<T>>> = iters
+            .into_iter()
+            .map(|iter| Rc::new(RefCell::new(iter)))
+            .collect();
+
+        let next_current = if shared_iters.iter().all(|x| !x.borrow().is_next_valid()) {
+            Some(HeapIterWrapper {
+                idx: 0,
+                iter: Rc::clone(shared_iters.last().unwrap()),
+                f2b: true,
+            })
+        } else {
+            for (idx, iter) in shared_iters.iter().enumerate() {
+                if iter.borrow().is_next_valid() {
+                    next_heap.push(HeapIterWrapper {
+                        idx,
+                        iter: Rc::clone(iter),
+                        f2b: true,
+                    });
+                }
+            }
+            next_heap.pop()
+        };
+
+        let back_current = if shared_iters.iter().all(|x| !x.borrow().is_prev_valid()) {
+            Some(HeapIterWrapper {
+                idx: 0,
+                iter: Rc::clone(shared_iters.first().unwrap()),
+                f2b: false,
+            })
+        } else {
+            for (idx, iter) in shared_iters.iter().enumerate() {
+                if iter.borrow().is_prev_valid() {
+                    back_heap.push(HeapIterWrapper {
+                        idx,
+                        iter: Rc::clone(iter),
+                        f2b: false,
+                    });
+                }
+            }
+            back_heap.pop()
+        };
+
+        Self {
+            next_iters: next_heap,
+            next_current,
+            back_iters: back_heap,
+            back_current,
+        }
+    }
+}
+
+impl<T: KvIterator> KvIterator for MergeIterator<T> {
+    fn next_key(&self) -> Bytes {
+        self.next_current.as_ref().unwrap().iter.borrow().next_key()
     }
 
-    pub fn next_curr_key(&self) -> Bytes {
-        debug_assert!(self.next_is_valid());
-        Bytes::copy_from_slice(&self.next_key)
+    fn next_value(&self) -> Bytes {
+        self.next_current
+            .as_ref()
+            .unwrap()
+            .iter
+            .borrow()
+            .next_value()
     }
 
-    pub fn next_curr_value(&self) -> Bytes {
-        debug_assert!(self.next_is_valid());
-        self.block.data().slice(self.next_value_range.clone())
-    }
-
-    pub fn next_is_valid(&self) -> bool {
-        !self.next_key.is_empty() && self.next_idx as isize <= self.prev_idx
-    }
-
-    pub fn prev_curr_key(&self) -> Bytes {
-        debug_assert!(self.prev_is_valid());
-        Bytes::copy_from_slice(&self.prev_key)
-    }
-
-    pub fn prev_curr_value(&self) -> Bytes {
-        debug_assert!(self.prev_is_valid());
-        self.block.data().slice(self.prev_value_range.clone())
-    }
-
-    pub fn prev_is_valid(&self) -> bool {
-        !self.prev_key.is_empty() && self.next_idx as isize <= self.prev_idx
-    }
-
-    pub fn next(&mut self) {
-        self.next_idx += 1;
-        if self.next_idx as isize > self.prev_idx {
-            self.next_key.clear();
-            self.next_value_range = 0..0;
+    fn find_next(&mut self) {
+        let next_current = self.next_current.as_mut().unwrap();
+        while let Some(inner_iter) = self.next_iters.peek_mut() {
+            debug_assert!(
+                inner_iter.iter.borrow().next_key() >= next_current.iter.borrow().next_key()
+            );
+            if inner_iter.iter.borrow().next_key() == next_current.iter.borrow().next_key() {
+                inner_iter.iter.borrow_mut().find_next();
+                if !inner_iter.iter.borrow().is_next_valid() {
+                    PeekMut::pop(inner_iter);
+                }
+            } else {
+                break;
+            }
+        }
+        next_current.iter.borrow_mut().find_next();
+        if !next_current.iter.borrow().is_next_valid() {
+            if let Some(iter) = self.next_iters.pop() {
+                *next_current = iter;
+            }
             return;
         }
-        self.seek_to_idx(self.next_idx);
+
+        if let Some(mut iter) = self.next_iters.peek_mut() {
+            if *next_current < *iter {
+                std::mem::swap(&mut *iter, next_current)
+            }
+        }
     }
 
-    pub fn prev(&mut self) {
-        self.prev_idx -= 1;
-        if self.prev_idx < 0 || self.prev_idx < (self.next_idx as isize) {
-            self.prev_key.clear();
-            self.prev_value_range = 0..0;
+    fn is_next_valid(&self) -> bool {
+        self.next_current
+            .as_ref()
+            .map(|x| x.iter.borrow().is_next_valid())
+            .unwrap_or(false)
+    }
+
+    fn prev_key(&self) -> Bytes {
+        self.back_current.as_ref().unwrap().iter.borrow().prev_key()
+    }
+
+    fn prev_value(&self) -> Bytes {
+        self.back_current
+            .as_ref()
+            .unwrap()
+            .iter
+            .borrow()
+            .prev_value()
+    }
+
+    fn find_prev(&mut self) {
+        let back_current = self.back_current.as_mut().unwrap();
+        while let Some(inner_iter) = self.back_iters.peek_mut() {
+            debug_assert!(
+                inner_iter.iter.borrow().prev_key() <= back_current.iter.borrow().prev_key()
+            );
+            if inner_iter.iter.borrow().prev_key() == back_current.iter.borrow().prev_key() {
+                inner_iter.iter.borrow_mut().find_prev();
+                if !inner_iter.iter.borrow().is_prev_valid() {
+                    PeekMut::pop(inner_iter);
+                }
+            } else {
+                break;
+            }
+        }
+        back_current.iter.borrow_mut().find_prev();
+        if !back_current.iter.borrow().is_prev_valid() {
+            if let Some(iter) = self.back_iters.pop() {
+                *back_current = iter;
+            }
             return;
         }
-        self.prev_to_idx(self.prev_idx);
-    }
 
-    pub fn seek_to_key(&mut self, key: &[u8]) {
-        match self.block.as_ref() {
-            Block::Normal(block) => {
-                let mut left = 0;
-                let mut right = block.offsets.len();
-                while left < right {
-                    let mid = left + (right - left) / 2;
-                    self.seek_to_idx(mid);
-                    debug_assert!(self.next_is_valid());
-                    if self.next_key.as_slice() == key {
-                        return;
-                    }
-                    if self.next_key.as_slice() < key {
-                        left = mid + 1;
-                    } else {
-                        right = mid;
-                    }
-                }
-                self.seek_to_idx(left);
-            }
-            Block::Large(block) => {
-                if key > block.key {
-                    self.seek_to_idx(1);
-                } else {
-                    self.seek_to_idx(0);
-                }
+        if let Some(mut iter) = self.back_iters.peek_mut() {
+            if *back_current < *iter {
+                std::mem::swap(&mut *iter, back_current)
             }
         }
     }
 
-    /// MUST be called after seek_to_key()
-    pub fn prev_to_key(&mut self, key: &[u8]) {
-        match self.block.as_ref() {
-            Block::Normal(block) => {
-                let mut left = self.next_idx;
-                let mut right = block.offsets.len();
-                while left < right {
-                    let mid = left + (right - left) / 2;
-                    self.prev_to_idx(mid as isize);
-                    // prev idx <= next idx
-                    if !self.prev_is_valid() {
-                        return;
-                    }
-                    debug_assert!(self.prev_is_valid());
-                    if self.prev_key.as_slice() > key {
-                        right = mid;
-                    } else {
-                        left = mid + 1;
-                    }
-                }
-                self.prev_to_idx(left as isize - 1);
-            }
-            Block::Large(block) => {
-                if key < block.key {
-                    self.prev_to_idx(-1);
-                } else {
-                    self.prev_to_idx(0);
-                }
-            }
-        }
-    }
-
-    fn seek_to_idx(&mut self, idx: usize) {
-        match self.block.as_ref() {
-            Block::Normal(block) => {
-                if idx >= block.offsets.len() {
-                    self.next_key.clear();
-                    self.next_value_range = 0..0;
-                    self.next_idx = idx;
-                    return;
-                }
-                let offset = block.offsets[idx] as usize;
-                self.seek_to_offset(
-                    offset,
-                    *block
-                        .offsets
-                        .get(idx + 1)
-                        .unwrap_or(&(block.data.len() as u16)) as usize,
-                );
-                self.next_idx = idx;
-            }
-            Block::Large(block) => {
-                if idx > 0 {
-                    self.next_key.clear();
-                    self.next_value_range = 0..0;
-                    self.next_idx = idx;
-                    return;
-                }
-                self.next_key = block.key.to_vec();
-                self.next_value_range = 0..block.value_bytes.len();
-                self.next_idx = idx;
-            }
-        }
-    }
-
-    fn prev_to_idx(&mut self, idx: isize) {
-        match self.block.as_ref() {
-            Block::Normal(block) => {
-                if idx < 0 {
-                    self.prev_key.clear();
-                    self.prev_value_range = 0..0;
-                    self.prev_idx = idx;
-                    return;
-                }
-                let offset = block.offsets[idx as usize] as usize;
-                self.prev_to_offset(
-                    offset,
-                    *block
-                        .offsets
-                        .get(idx as usize + 1)
-                        .unwrap_or(&(block.data.len() as u16)) as usize,
-                );
-                self.prev_idx = idx;
-            }
-            Block::Large(block) => {
-                if idx < 0 {
-                    self.prev_key.clear();
-                    self.prev_value_range = 0..0;
-                    self.prev_idx = idx;
-                    return;
-                }
-                self.prev_key = block.key.to_vec();
-                self.prev_value_range = 0..block.value_bytes.len();
-                self.prev_idx = idx;
-            }
-        }
-    }
-
-    fn seek_to_offset(&mut self, offset: usize, offset_end: usize) {
-        match self.block.as_ref() {
-            Block::Normal(block) => {
-                let mut rest = &block.data[offset..];
-                let common_prefix_len = rest.get_u8() as usize;
-                let key_suffix_len = rest.get_u16() as usize;
-                self.next_key.clear();
-                self.next_key
-                    .extend_from_slice(&self.first_key[..common_prefix_len]);
-                self.next_key.extend_from_slice(&rest[..key_suffix_len]);
-                rest.advance(key_suffix_len);
-                let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len;
-                self.next_value_range = value_start..offset_end;
-                rest.advance(offset_end - value_start);
-            }
-            Block::Large(_) => {
-                unreachable!()
-            }
-        }
-    }
-
-    fn prev_to_offset(&mut self, offset: usize, offset_end: usize) {
-        match self.block.as_ref() {
-            Block::Normal(block) => {
-                let mut rest = &block.data[offset..];
-                let common_prefix_len = rest.get_u8() as usize;
-                let key_suffix_len = rest.get_u16() as usize;
-                self.prev_key.clear();
-                self.prev_key
-                    .extend_from_slice(&self.first_key[..common_prefix_len]);
-                self.prev_key.extend_from_slice(&rest[..key_suffix_len]);
-                rest.advance(key_suffix_len);
-                let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len;
-                self.prev_value_range = value_start..offset_end;
-                rest.advance(offset_end - value_start);
-            }
-            Block::Large(_) => {
-                unreachable!()
-            }
-        }
+    fn is_prev_valid(&self) -> bool {
+        self.back_current
+            .as_ref()
+            .map(|x| x.iter.borrow().is_prev_valid())
+            .unwrap_or(false)
     }
 }
 
-impl Iterator for BlockIter {
+#[derive(Debug)]
+pub struct FilterEmptyIter<T: KvIterator> {
+    iter: T,
+}
+
+impl<T: KvIterator> FilterEmptyIter<T> {
+    pub fn new(mut iter: T) -> Self {
+        while iter.is_next_valid() && iter.next_value().is_empty() {
+            iter.find_next();
+        }
+        while iter.is_prev_valid() && iter.prev_value().is_empty() {
+            iter.find_prev();
+        }
+
+        Self { iter }
+    }
+}
+
+impl<T: KvIterator> KvIterator for FilterEmptyIter<T> {
+    fn next_key(&self) -> Bytes {
+        self.iter.next_key()
+    }
+
+    fn next_value(&self) -> Bytes {
+        self.iter.next_value()
+    }
+
+    fn find_next(&mut self) {
+        self.iter.find_next();
+        while self.is_next_valid() && self.iter.next_value().is_empty() {
+            self.iter.find_next();
+        }
+    }
+
+    fn is_next_valid(&self) -> bool {
+        self.iter.is_next_valid()
+    }
+
+    fn prev_key(&self) -> Bytes {
+        self.iter.prev_key()
+    }
+
+    fn prev_value(&self) -> Bytes {
+        self.iter.prev_value()
+    }
+
+    fn find_prev(&mut self) {
+        self.iter.find_prev();
+        while self.is_prev_valid() && self.iter.prev_value().is_empty() {
+            self.iter.find_prev();
+        }
+    }
+
+    fn is_prev_valid(&self) -> bool {
+        self.iter.is_prev_valid()
+    }
+}
+
+impl<T: KvIterator> Iterator for MergeIterator<T> {
     type Item = (Bytes, Bytes);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if !self.next_is_valid() {
+        if !self.is_next_valid() {
             return None;
         }
-        let key = self.next_curr_key();
-        let value = self.next_curr_value();
-        self.next();
+        let key = self.next_key();
+        let value = self.next_value();
+        KvIterator::find_next(self);
         Some((key, value))
     }
 }
 
-impl DoubleEndedIterator for BlockIter {
+impl<T: KvIterator> DoubleEndedIterator for MergeIterator<T> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if !self.prev_is_valid() {
+        if !self.is_prev_valid() {
             return None;
         }
-        let key = self.prev_curr_key();
-        let value = self.prev_curr_value();
-        self.prev();
+        let key = self.prev_key();
+        let value = self.prev_value();
+        KvIterator::find_prev(self);
         Some((key, value))
+    }
+}
+
+impl<T: KvIterator> Iterator for FilterEmptyIter<T> {
+    type Item = (Bytes, Bytes);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.is_next_valid() {
+            return None;
+        }
+        let key = self.next_key();
+        let value = self.next_value();
+        KvIterator::find_next(self);
+        Some((key, value))
+    }
+}
+
+impl<T: KvIterator> DoubleEndedIterator for FilterEmptyIter<T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if !self.is_prev_valid() {
+            return None;
+        }
+        let key = self.prev_key();
+        let value = self.prev_value();
+        KvIterator::find_prev(self);
+        Some((key, value))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ops::Bound;
+
+    use super::*;
+    use crate::sstable;
+    use bytes::Bytes;
+    #[test]
+    fn test_merge_iterator() {
+        let a = Bytes::from("a");
+        let b = Bytes::from("b");
+        let c = Bytes::from("c");
+        let d = Bytes::from("d");
+
+        let mut sstable1 = sstable::SsTableBuilder::new(10);
+        sstable1.add(a.clone(), a.clone());
+        sstable1.add(c.clone(), c.clone());
+        let sstable1 = sstable1.build();
+        let iter1 = sstable::SsTableIter::new_scan(&sstable1, Bound::Unbounded, Bound::Unbounded);
+
+        let mut sstable2 = sstable::SsTableBuilder::new(10);
+        sstable2.add(b.clone(), b.clone());
+        sstable2.add(d.clone(), d.clone());
+        let sstable2 = sstable2.build();
+        let iter2 = sstable::SsTableIter::new_scan(&sstable2, Bound::Unbounded, Bound::Unbounded);
+
+        let merged_iter = MergeIterator::new(vec![iter1.clone(), iter2.clone()]);
+        assert_eq!(merged_iter.next_key(), a.clone());
+        assert_eq!(merged_iter.next_value(), a.clone());
+        assert_eq!(merged_iter.prev_key(), d.clone());
+        assert_eq!(merged_iter.prev_value(), d.clone());
+        let ans = merged_iter.collect::<Vec<_>>();
+        assert_eq!(
+            ans,
+            vec![
+                (a.clone(), a.clone()),
+                (b.clone(), b.clone()),
+                (c.clone(), c.clone()),
+                (d.clone(), d.clone())
+            ]
+        );
+
+        let merged_iter = MergeIterator::new(vec![iter1.clone(), iter2.clone()]);
+        assert_eq!(merged_iter.next_key(), a.clone());
+        assert_eq!(merged_iter.next_value(), a.clone());
+        assert_eq!(merged_iter.prev_key(), d.clone());
+        assert_eq!(merged_iter.prev_value(), d.clone());
+        let ans2 = merged_iter.rev().collect::<Vec<_>>();
+        assert_eq!(ans2, ans.iter().rev().cloned().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn same_key() {
+        let a = Bytes::from("a");
+        let a2 = Bytes::from("a2");
+        let c = Bytes::from("c");
+        let d = Bytes::from("d");
+
+        let mut sstable1 = sstable::SsTableBuilder::new(10);
+        sstable1.add(a.clone(), a.clone());
+        sstable1.add(c.clone(), c.clone());
+        let sstable1 = sstable1.build();
+        let iter1 = sstable::SsTableIter::new_scan(&sstable1, Bound::Unbounded, Bound::Unbounded);
+
+        let mut sstable2 = sstable::SsTableBuilder::new(10);
+        sstable2.add(a.clone(), a2.clone());
+        sstable2.add(d.clone(), d.clone());
+        let sstable2 = sstable2.build();
+        let iter2 = sstable::SsTableIter::new_scan(&sstable2, Bound::Unbounded, Bound::Unbounded);
+
+        let merged_iter = MergeIterator::new(vec![iter1.clone(), iter2.clone()]);
+        let ans = merged_iter.collect::<Vec<_>>();
+        assert_eq!(
+            ans,
+            vec![
+                (a.clone(), a.clone()),
+                (c.clone(), c.clone()),
+                (d.clone(), d.clone())
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_iter() {
+        let a = Bytes::from("a");
+        let b = Bytes::from("b");
+        let c = Bytes::from("c");
+        let d = Bytes::from("d");
+
+        let mut sstable1 = sstable::SsTableBuilder::new(10);
+        sstable1.add(a.clone(), Bytes::new());
+        sstable1.add(c.clone(), c.clone());
+        let sstable1 = sstable1.build();
+        let iter1 = sstable::SsTableIter::new_scan(&sstable1, Bound::Unbounded, Bound::Unbounded);
+
+        let mut sstable2 = sstable::SsTableBuilder::new(0);
+        sstable2.add(a.clone(), a.clone());
+        sstable2.add(b.clone(), Bytes::new());
+        sstable2.add(d.clone(), d.clone());
+        let sstable2 = sstable2.build();
+        let iter2 = sstable::SsTableIter::new_scan(&sstable2, Bound::Unbounded, Bound::Unbounded);
+
+        let merged_iter = MergeIterator::new(vec![iter1.clone(), iter2.clone()]);
+        let ans = merged_iter.collect::<Vec<_>>();
+        assert_eq!(
+            ans,
+            vec![
+                (a.clone(), Bytes::new()),
+                (b.clone(), Bytes::new()),
+                (c.clone(), c.clone()),
+                (d.clone(), d.clone())
+            ]
+        );
+
+        let merged_iter = MergeIterator::new(vec![iter1.clone(), iter2.clone()]);
+        let ans = merged_iter.rev().collect::<Vec<_>>();
+        assert_eq!(
+            ans,
+            vec![
+                (d.clone(), d.clone()),
+                (c.clone(), c.clone()),
+                (b.clone(), Bytes::new()),
+                (a.clone(), Bytes::new())
+            ]
+        );
+
+        let filtered_iter =
+            FilterEmptyIter::new(MergeIterator::new(vec![iter1.clone(), iter2.clone()]));
+        let ans = filtered_iter.collect::<Vec<_>>();
+        assert_eq!(ans, vec![(c.clone(), c.clone()), (d.clone(), d.clone())]);
     }
 }

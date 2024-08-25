@@ -117,6 +117,7 @@
 //! 2. For each block, read its metadata.
 //! 3. Verify the xxhash_32 checksum.
 //!
+pub mod block;
 pub mod iter;
 pub mod mem_store;
 pub mod sstable;

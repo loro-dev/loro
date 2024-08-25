@@ -1,4 +1,4 @@
-use crate::iter::BlockIter;
+use crate::block::BlockIter;
 use crate::sstable::{SsTable, SsTableBuilder, SsTableIter};
 use bytes::Bytes;
 use fxhash::FxHashSet;
@@ -116,7 +116,7 @@ impl MemKvStore {
                 end,
             ));
         }
-        Box::new(MergeIterator::new(
+        Box::new(MemStoreIterator::new(
             self.mem_table
                 .range::<[u8], _>((start, end))
                 .map(|(k, v)| (k.clone(), v.clone())),
@@ -183,7 +183,7 @@ impl MemKvStore {
 }
 
 #[derive(Debug)]
-struct MergeIterator<'a, T> {
+struct MemStoreIterator<'a, T> {
     a: T,
     b: SsTableIter<'a>,
     current_btree: Option<(Bytes, Bytes)>,
@@ -192,7 +192,7 @@ struct MergeIterator<'a, T> {
     back_sstable: Option<(Bytes, Bytes)>,
 }
 
-impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> MergeIterator<'a, T> {
+impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> MemStoreIterator<'a, T> {
     fn new(mut a: T, b: SsTableIter<'a>) -> Self {
         let current_btree = a.next();
         let back_btree = a.next_back();
@@ -207,7 +207,7 @@ impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> MergeIterator<'a, T> {
     }
 }
 
-impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> Iterator for MergeIterator<'a, T> {
+impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> Iterator for MemStoreIterator<'a, T> {
     type Item = (Bytes, Bytes);
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_sstable.is_none() && self.b.is_next_valid() {
@@ -251,7 +251,7 @@ impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> Iterator for MergeIterat
 }
 
 impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> DoubleEndedIterator
-    for MergeIterator<'a, T>
+    for MemStoreIterator<'a, T>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.back_sstable.is_none() && self.b.is_prev_valid() {
@@ -285,6 +285,7 @@ impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> DoubleEndedIterator
             (None, Some(_)) => self.back_sstable.take(),
             (None, None) => None,
         };
+        // TODO: use EmptyFilterIterator
         if let Some((_k, v)) = &ans {
             if v.is_empty() {
                 return self.next_back();
