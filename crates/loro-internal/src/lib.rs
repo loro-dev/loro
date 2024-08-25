@@ -8,6 +8,7 @@
 #![warn(missing_debug_implementations)]
 
 pub mod arena;
+pub mod diff;
 pub mod diff_calc;
 pub mod handler;
 pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem, ListDiffItem};

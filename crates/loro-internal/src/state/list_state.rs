@@ -634,6 +634,9 @@ mod test {
             0,
             loro_common::ContainerType::List,
         ));
+        fn id(name: &str) -> ContainerID {
+            ContainerID::new_root(name, crate::ContainerType::List)
+        }
         list.insert(0, LoroValue::Container(id("abc")), IdFull::new(0, 0, 0));
         list.insert(0, LoroValue::Container(id("x")), IdFull::new(0, 0, 0));
         assert_eq!(list.get_child_container_index(&id("x")), Some(0));

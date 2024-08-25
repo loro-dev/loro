@@ -347,6 +347,7 @@ where
     N: Fn(u8, &mut [T]) -> Vec<T>,
     T: Clone + Debug + Send + 'static,
 {
+    println!("Minifying...");
     std::panic::set_hook(Box::new(|_info| {
         // ignore panic output
         // println!("{:?}", _info);

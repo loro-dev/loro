@@ -46,7 +46,7 @@ pub enum LoroError {
     ArgErr(Box<str>),
     #[error("Auto commit has not started. The doc is readonly when detached. You should ensure autocommit is on and the doc and the state is attached.")]
     AutoCommitNotStarted,
-    #[error("You need to specify the style flag for \"({0:?})\" before mark with this key")]
+    #[error("Style configuration missing for \"({0:?})\". Please provide the style configuration using `configTextStyle` on your Loro doc.")]
     StyleConfigMissing(InternalString),
     #[error("Unknown Error ({0})")]
     Unknown(Box<str>),
@@ -74,6 +74,8 @@ pub enum LoroError {
     UTF16InUnicodeCodePoint { pos: usize },
     #[error("The end index cannot be less than the start index")]
     EndIndexLessThanStartIndex { start: usize, end: usize },
+    #[error("Invalid root container name! Don't include '/' or '\\0'")]
+    InvalidRootContainerName,
 }
 
 #[derive(Error, Debug)]
