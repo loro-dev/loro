@@ -151,10 +151,18 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
     let DecodedArenas {
         peer_ids,
         deps,
+        keys,
         state_blob_arena: _,
         ..
     } = arenas;
-    let changes = decode_changes(iter.changes, iter.start_counters, &peer_ids, deps, ops_map)?;
+    let changes = decode_changes(
+        iter.changes,
+        iter.start_counters,
+        &peer_ids,
+        &keys,
+        deps,
+        ops_map,
+    )?;
     let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids);
@@ -255,12 +263,9 @@ fn decode_changes<'a>(
     encoded_changes: IterableEncodedChange<'_>,
     mut counters: Vec<i32>,
     peer_ids: &PeerIdArena,
+    keys: &KeyArena,
     mut deps: impl Iterator<Item = Result<EncodedDep, ColumnarError>> + 'a,
-    mut ops_map: std::collections::HashMap<
-        u64,
-        Vec<Op>,
-        std::hash::BuildHasherDefault<fxhash::FxHasher>,
-    >,
+    mut ops_map: FxHashMap<u64, Vec<Op>>,
 ) -> LoroResult<Vec<Change>> {
     let mut changes = Vec::with_capacity(encoded_changes.size_hint().0);
     for encoded_change in encoded_changes {
@@ -270,7 +275,7 @@ fn decode_changes<'a>(
             timestamp,
             deps_len,
             dep_on_self,
-            msg_len: _,
+            msg_idx_plus_one,
         } = encoded_change?;
         if peer_ids.peer_ids.len() <= peer_idx || counters.len() <= peer_idx {
             return Err(LoroError::DecodeDataCorruptionError);
@@ -284,6 +289,13 @@ fn decode_changes<'a>(
             ops: Default::default(),
             deps: Frontiers::with_capacity((deps_len + if dep_on_self { 1 } else { 0 }) as usize),
             lamport: 0,
+            commit_msg: if msg_idx_plus_one == 0 {
+                None
+            } else {
+                let key = keys.get(msg_idx_plus_one as usize - 1).unwrap();
+                let s = key.to_string();
+                Some(Arc::from(s))
+            },
             timestamp,
         };
 
@@ -650,12 +662,20 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     )?;
     let DecodedArenas {
         peer_ids,
+        keys,
         deps,
         state_blob_arena,
         ..
     } = arenas;
 
-    let changes = decode_changes(iter.changes, iter.start_counters, &peer_ids, deps, ops_map)?;
+    let changes = decode_changes(
+        iter.changes,
+        iter.start_counters,
+        &peer_ids,
+        &keys,
+        deps,
+        ops_map,
+    )?;
     let (new_ids, pending_changes) = import_changes_to_oplog(changes, &mut oplog)?;
 
     for op in ops.iter_mut() {
@@ -883,7 +903,7 @@ mod encode {
     use fxhash::FxHashMap;
     use loro_common::{ContainerType, HasId, PeerID, ID};
     use rle::{HasLength, Sliceable};
-    use std::borrow::Cow;
+    use std::{borrow::Cow, ops::Deref};
 
     use crate::{
         arena::SharedArena,
@@ -1032,13 +1052,19 @@ mod encode {
             }
 
             let peer_idx = registers.peer.register(&change.id.peer);
+            let msg_idx_plus_one = if let Some(msg) = change.commit_msg.as_ref() {
+                registers.key.register(&msg.deref().into()) + 1
+            } else {
+                0
+            };
+
             changes.push(EncodedChange {
                 dep_on_self,
                 deps_len,
                 peer_idx,
                 len: change.atom_len(),
                 timestamp: change.timestamp,
-                msg_len: 0,
+                msg_idx_plus_one: msg_idx_plus_one as i32,
             });
 
             for op in change.ops().iter() {
@@ -1589,7 +1615,7 @@ struct EncodedChange {
     #[columnar(strategy = "BoolRle")]
     dep_on_self: bool,
     #[columnar(strategy = "DeltaRle")]
-    msg_len: i32,
+    msg_idx_plus_one: i32,
 }
 
 #[columnar(vec, ser, de, iterable)]

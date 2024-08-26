@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
+use change_meta::ChangeMeta;
 use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::container::IntoContainerId;
@@ -11,11 +12,11 @@ use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
+use loro_internal::json::JsonChange;
 use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::DocState;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
-
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
@@ -25,9 +26,9 @@ use loro_internal::{
 use std::cmp::Ordering;
 use std::ops::Range;
 use std::sync::Arc;
-
 use tracing::info;
 
+mod change_meta;
 pub mod event;
 pub use loro_internal::awareness;
 pub use loro_internal::configure::Configure;
@@ -39,6 +40,8 @@ pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
 pub use loro_internal::event::Index;
 pub use loro_internal::handler::TextDelta;
 pub use loro_internal::id::{PeerID, TreeID, ID};
+pub use loro_internal::json;
+pub use loro_internal::json::JsonSchema;
 pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
@@ -47,7 +50,6 @@ pub use loro_internal::oplog::FrontiersNotIncluded;
 pub use loro_internal::undo;
 pub use loro_internal::version::{Frontiers, VersionVector};
 pub use loro_internal::ApplyDiff;
-pub use loro_internal::JsonSchema;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
@@ -60,9 +62,10 @@ pub use counter::LoroCounter;
 /// `LoroDoc` is the entry for the whole document.
 /// When it's dropped, all the associated [`Handler`]s will be invalidated.
 #[derive(Debug)]
-#[repr(transparent)]
 pub struct LoroDoc {
     doc: InnerLoroDoc,
+    #[cfg(debug_assertions)]
+    _temp: u8,
 }
 
 impl Default for LoroDoc {
@@ -72,13 +75,22 @@ impl Default for LoroDoc {
 }
 
 impl LoroDoc {
+    #[inline(always)]
+    fn _new(doc: InnerLoroDoc) -> Self {
+        Self {
+            doc,
+            #[cfg(debug_assertions)]
+            _temp: 0,
+        }
+    }
+
     /// Create a new `LoroDoc` instance.
     #[inline]
     pub fn new() -> Self {
         let doc = InnerLoroDoc::default();
         doc.start_auto_commit();
 
-        LoroDoc { doc }
+        LoroDoc::_new(doc)
     }
 
     /// Duplicate the document with a different PeerID
@@ -87,13 +99,31 @@ impl LoroDoc {
     #[inline]
     pub fn fork(&self) -> Self {
         let doc = self.doc.fork();
-        LoroDoc { doc }
+        LoroDoc::_new(doc)
     }
 
     /// Get the configurations of the document.
     #[inline]
     pub fn config(&self) -> &Configure {
         self.doc.config()
+    }
+
+    /// Get `Change` at the given id.
+    ///
+    /// `Change` is a grouped continuous operations that share the same id, timestamp, commit message.
+    ///
+    /// - The id of the `Change` is the id of its first op.
+    /// - The second op's id is `{ peer: change.id.peer, counter: change.id.counter + 1 }`
+    ///
+    /// The same applies on `Lamport`:
+    ///
+    /// - The lamport of the `Change` is the lamport of its first op.
+    /// - The second op's lamport is `change.lamport + 1`
+    ///
+    /// The length of the `Change` is how many operations it contains
+    pub fn get_change(&self, id: ID) -> Option<ChangeMeta> {
+        let change = self.doc.oplog().lock().unwrap().get_change_at(id)?;
+        Some(ChangeMeta::from_change(&change))
     }
 
     /// Decodes the metadata for an imported blob from the provided bytes.
@@ -286,8 +316,12 @@ impl LoroDoc {
     /// Commit the cumulative auto commit transaction.
     ///
     /// There is a transaction behind every operation.
-    /// It will automatically commit when users invoke export or import.
-    /// The event will be sent after a transaction is committed
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     #[inline]
     pub fn commit(&self) {
         self.doc.commit_then_renew()
@@ -301,6 +335,11 @@ impl LoroDoc {
     #[inline]
     pub fn commit_with(&self, options: CommitOptions) {
         self.doc.commit_with(options)
+    }
+
+    /// Set commit message for the current uncommitted changes
+    pub fn set_next_commit_message(&self, msg: &str) {
+        self.doc.set_next_commit_message(msg)
     }
 
     /// Whether the document is in detached mode, where the [loro_internal::DocState] is not
@@ -455,8 +494,15 @@ impl LoroDoc {
 
     /// Subscribe the events of a container.
     ///
-    /// The callback will be invoked when the container is changed.
+    /// The callback will be invoked after a transaction that change the container.
     /// Returns a subscription id that can be used to unsubscribe.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     ///
     /// # Example
     ///
@@ -502,6 +548,13 @@ impl LoroDoc {
     ///
     /// The callback will be invoked when any part of the [loro_internal::DocState] is changed.
     /// Returns a subscription id that can be used to unsubscribe.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     #[inline]
     pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
         // self.doc.subscribe_root(callback)
@@ -510,8 +563,7 @@ impl LoroDoc {
         }))
     }
 
-    /// Remove a subscription.
-    #[inline]
+    /// Remove a subscription by subscription id.
     pub fn unsubscribe(&self, id: SubID) {
         self.doc.unsubscribe(id)
     }
@@ -1156,6 +1208,11 @@ impl LoroText {
     /// Get the length of the text container in UTF-16.
     pub fn len_utf16(&self) -> usize {
         self.handler.len_utf16()
+    }
+
+    /// Update the current text based on the provided text.
+    pub fn update(&self, text: &str) -> () {
+        self.handler.update(text);
     }
 
     /// Apply a [delta](https://quilljs.com/docs/delta/) to the text container.

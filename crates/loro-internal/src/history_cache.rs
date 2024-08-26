@@ -220,7 +220,7 @@ impl ContainerHistoryCache {
 }
 
 #[enum_dispatch(OpGroupTrait)]
-#[derive(Debug, Clone, EnumAsInner)]
+#[derive(Debug, EnumAsInner)]
 pub(crate) enum HistoryCacheForImporting {
     Tree(TreeOpGroup),
 }
@@ -367,10 +367,10 @@ pub(crate) struct GroupedTreeOpInfo {
     pub(crate) value: Arc<TreeOp>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub(crate) struct TreeOpGroup {
-    pub(crate) ops: BTreeMap<IdLp, GroupedTreeOpInfo>,
-    pub(crate) tree_for_diff: Arc<Mutex<TreeCacheForDiff>>,
+    ops: BTreeMap<IdLp, GroupedTreeOpInfo>,
+    tree_for_diff: Mutex<TreeCacheForDiff>,
 }
 
 impl HistoryCacheTrait for TreeOpGroup {
@@ -383,6 +383,16 @@ impl HistoryCacheTrait for TreeOpGroup {
                 counter: op.raw_op().counter,
             },
         );
+    }
+}
+
+impl TreeOpGroup {
+    pub fn ops(&self) -> &BTreeMap<IdLp, GroupedTreeOpInfo> {
+        &self.ops
+    }
+
+    pub fn tree(&self) -> &Mutex<TreeCacheForDiff> {
+        &self.tree_for_diff
     }
 }
 

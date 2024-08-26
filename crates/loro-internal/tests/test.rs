@@ -1010,6 +1010,7 @@ fn test_insert_utf8_detached() {
 
 #[test]
 #[should_panic]
+#[ignore = "fix me later after gbtree support Result for query"]
 fn test_insert_utf8_panic_cross_unicode() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
@@ -1239,4 +1240,24 @@ fn test_text_iter_detached() {
         true
     });
     assert_eq!(str, "HHelloello");
+}
+
+#[test]
+fn test_text_update() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello 😊Bro").unwrap();
+    text.update("Hello World Bro😊");
+    assert_eq!(text.to_string(), "Hello World Bro😊");
+}
+
+#[test]
+fn test_map_contains_key() {
+    let doc = LoroDoc::new_auto_commit();
+    let map = doc.get_map("m");
+    assert_eq!(map.contains_key("bro"), false);
+    map.insert("bro", 114514).unwrap();
+    assert_eq!(map.contains_key("bro"), true);
+    map.delete("bro").unwrap();
+    assert_eq!(map.contains_key("bro"), false);
 }

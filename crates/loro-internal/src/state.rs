@@ -706,10 +706,10 @@ impl DocState {
         self.store.iter_and_decode_all()
     }
 
-    pub(crate) fn iter_wrapper_mut(
+    pub(crate) fn iter_all_containers_mut(
         &mut self,
     ) -> impl Iterator<Item = (&ContainerIdx, &mut ContainerWrapper)> {
-        self.store.iter_mut()
+        self.store.iter_all_containers()
     }
 
     pub(crate) fn init_container(
@@ -792,7 +792,7 @@ impl DocState {
         if self.is_recording() {
             let diff: Vec<_> = self
                 .store
-                .iter_mut()
+                .iter_all_containers()
                 .map(|(&idx, state)| InternalContainerDiff {
                     idx,
                     bring_back: false,

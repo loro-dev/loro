@@ -69,6 +69,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::io::Write;
+use std::sync::Arc;
 
 use fractional_index::FractionalIndex;
 use loro_common::{
@@ -153,6 +154,7 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     let mut timestamp_encoder = DeltaRleEncoder::new();
     let mut lamport_encoder = UnsignedDeltaEncoder::new(block.len() * 2 + 4);
     let mut commit_msg_len_encoder = AnyRleEncoder::<u32>::new();
+    let mut commit_msgs = String::new();
     let mut dep_self_encoder = BoolRleEncoder::new();
     let mut dep_len_encoder = AnyRleEncoder::<u64>::new();
     let mut encoded_deps = EncodedDeps {
@@ -162,7 +164,12 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     for c in block {
         timestamp_encoder.append(c.timestamp()).unwrap();
         lamport_encoder.push(c.lamport() as u64);
-        commit_msg_len_encoder.append(0).unwrap();
+        if let Some(msg) = c.commit_msg.as_ref() {
+            commit_msg_len_encoder.append(msg.len() as u32).unwrap();
+            commit_msgs.push_str(msg);
+        } else {
+            commit_msg_len_encoder.append(0).unwrap();
+        }
 
         let mut dep_on_self = false;
         for dep in c.deps().iter() {
@@ -311,7 +318,7 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
         lamports: lamport_encoder.finish().0.into(),
         timestamps: timestamp_encoder.finish().unwrap().into(),
         commit_msg_lengths: commit_msg_len_encoder.finish().unwrap().into(),
-        commit_msgs: Cow::Owned(vec![]),
+        commit_msgs: Cow::Owned(commit_msgs.into_bytes()),
         cids: container_arena.encode().into(),
         keys: keys_bytes.into(),
         positions: position_bytes.into(),
@@ -677,6 +684,7 @@ pub fn decode_block(
         first_counter,
         timestamps,
         commit_msg_lengths,
+        commit_msgs,
         cids,
         keys,
         ops,
@@ -689,7 +697,8 @@ pub fn decode_block(
         return Err(LoroError::IncompatibleFutureEncodingError(version as usize));
     }
     let mut timestamp_decoder: DeltaRleDecoder<i64> = DeltaRleDecoder::new(&timestamps);
-    let _commit_msg_len_decoder = AnyRleDecoder::<u32>::new(&commit_msg_lengths);
+    let mut commit_msg_len_decoder = AnyRleDecoder::<u32>::new(&commit_msg_lengths);
+    let mut commit_msg_index = 0;
     let keys = header.keys.get_or_init(|| decode_keys(&keys));
     let decode_arena = ValueDecodeArena {
         peers: &header.peers,
@@ -711,12 +720,31 @@ pub fn decode_block(
     let op_iter = encoded_ops_iters.ops;
     let mut del_iter = encoded_ops_iters.delete_start_ids;
     for i in 0..(n_changes as usize) {
+        let commit_msg: Option<Arc<str>> = {
+            let len = commit_msg_len_decoder.next().unwrap().unwrap();
+            if len == 0 {
+                None
+            } else {
+                let end = commit_msg_index + len;
+                match std::str::from_utf8(&commit_msgs[commit_msg_index as usize..end as usize]) {
+                    Ok(s) => {
+                        commit_msg_index = end;
+                        Some(Arc::from(s))
+                    }
+                    Err(_) => {
+                        tracing::error!("Invalid UTF8 String");
+                        return LoroResult::Err(LoroError::DecodeDataCorruptionError);
+                    }
+                }
+            }
+        };
         changes.push(Change {
             ops: Default::default(),
             deps: header.deps_groups[i].clone(),
             id: ID::new(header.peer, header.counters[i]),
             lamport: header.lamports[i],
             timestamp: timestamp_decoder.next().unwrap().unwrap() as Timestamp,
+            commit_msg,
         })
     }
 

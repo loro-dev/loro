@@ -675,6 +675,7 @@ mod mut_inner_kv {
                 id: change.id,
                 lamport: change.lamport,
                 timestamp: change.timestamp,
+                commit_msg: change.commit_msg.clone(),
             };
 
             let mut total_len = 0;
@@ -747,6 +748,7 @@ mod mut_inner_kv {
                 id: ID::new(new_change.id.peer, ctr_end),
                 lamport: next_lamport,
                 timestamp: new_change.timestamp,
+                commit_msg: new_change.commit_msg.clone(),
             };
 
             self.insert_change(new_change, false);
@@ -1024,8 +1026,7 @@ impl ChangesBlock {
         let changes = Arc::make_mut(changes);
         match changes.last_mut() {
             Some(last)
-                if change.deps_on_self()
-                    && change.timestamp - last.timestamp < merge_interval
+                if last.can_merge_right(&change, merge_interval)
                     && (!is_full
                         || (change.ops.len() == 1
                             && last.ops.last().unwrap().is_mergable(&change.ops[0], &()))) =>

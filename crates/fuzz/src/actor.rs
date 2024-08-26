@@ -144,6 +144,7 @@ impl Actor {
         }
 
         let after_undo = self.loro.get_deep_value();
+
         assert_value_eq(&before_undo, &after_undo, None);
         self.undo_manager.undo.clear();
     }

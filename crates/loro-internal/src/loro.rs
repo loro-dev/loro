@@ -6,6 +6,7 @@ use rle::HasLength;
 use std::{
     borrow::Cow,
     cmp::Ordering,
+    f32::consts::E,
     sync::{
         atomic::{
             AtomicBool,
@@ -28,7 +29,7 @@ use crate::{
     dag::DagUtils,
     diff_calc::DiffCalculator,
     encoding::{
-        decode_snapshot, export_fast_snapshot, export_snapshot, json_schema::op::JsonSchema,
+        decode_snapshot, export_fast_snapshot, export_snapshot, json_schema::json::JsonSchema,
         parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff, Path},
@@ -371,6 +372,10 @@ impl LoroDoc {
             txn.set_timestamp(timestamp);
         }
 
+        if let Some(msg) = config.commit_msg.as_ref() {
+            txn.set_msg(Some(msg.clone()));
+        }
+
         txn.commit().unwrap();
         if config.immediate_renew {
             let mut txn_guard = self.txn.try_lock().unwrap();
@@ -380,6 +385,20 @@ impl LoroDoc {
 
         if let Some(on_commit) = on_commit {
             on_commit(&self.state);
+        }
+    }
+
+    /// Set the commit message of the next commit
+    pub fn set_next_commit_message(&self, message: &str) {
+        let mut binding = self.txn.try_lock().unwrap();
+        let Some(txn) = binding.as_mut() else {
+            return;
+        };
+
+        if message.is_empty() {
+            txn.set_msg(None)
+        } else {
+            txn.set_msg(Some(message.into()))
         }
     }
 
@@ -1455,10 +1474,10 @@ impl<'a> Drop for CommitWhenDrop<'a> {
 
 #[derive(Debug, Clone)]
 pub struct CommitOptions {
-    origin: Option<InternalString>,
-    immediate_renew: bool,
-    timestamp: Option<Timestamp>,
-    commit_msg: Option<Box<str>>,
+    pub origin: Option<InternalString>,
+    pub immediate_renew: bool,
+    pub timestamp: Option<Timestamp>,
+    pub commit_msg: Option<Arc<str>>,
 }
 
 impl CommitOptions {

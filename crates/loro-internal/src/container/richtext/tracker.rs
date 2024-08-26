@@ -156,7 +156,7 @@ impl Tracker {
     pub(crate) fn delete(
         &mut self,
         mut op_id: ID,
-        target_start_id: ID,
+        mut target_start_id: ID,
         pos: usize,
         mut len: usize,
         reverse: bool,
@@ -165,6 +165,7 @@ impl Tracker {
             // the op is partially included, need to slice the op
             let start = (applied_counter_end - op_id.counter) as usize;
             op_id.counter = applied_counter_end;
+            target_start_id = target_start_id.inc(start as i32);
             len -= start;
             // If reverse, don't need to change the pos, because it's deleting backwards.
             // If not reverse, we don't need to change the pos either, because the `start` chars after it are already deleted
