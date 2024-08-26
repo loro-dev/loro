@@ -1178,4 +1178,21 @@ fn test_map_checkout_on_trimmed_doc() {
             }
         })
     );
+    new_doc.checkout_to_latest();
+    assert_eq!(
+        new_doc.get_deep_value(),
+        loro_value!({
+            "map": {
+                "0": 0,
+                "1": 1,
+                "2": 4,
+                "3": 3,
+            }
+        })
+    );
+
+    let err = new_doc
+        .checkout(&ID::new(doc.peer_id(), 0).into())
+        .unwrap_err();
+    assert_eq!(err, LoroError::SwitchToTrimmedVersion);
 }

@@ -536,10 +536,6 @@ impl AppDag {
             return true;
         }
 
-        if deps == &self.trimmed_frontiers {
-            return false;
-        }
-
         deps.iter().any(|x| self.trimmed_vv.includes_id(*x))
     }
 }
