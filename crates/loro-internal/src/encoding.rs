@@ -2,11 +2,11 @@ pub(crate) mod arena;
 mod encode_reordered;
 pub(crate) mod value;
 pub(crate) mod value_register;
-use bytes::Bytes;
 pub(crate) use encode_reordered::{
     decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
 };
 mod fast_snapshot;
+mod gc;
 pub(crate) mod json_schema;
 
 use crate::op::OpWithId;
@@ -18,6 +18,14 @@ use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 use serde::{Deserialize, Serialize};
 pub(crate) use value::OwnedValue;
+
+#[non_exhaustive]
+pub enum ExportMode<'a> {
+    Snapshot,
+    Updates(&'a VersionVector),
+    GcSnapshot(&'a Frontiers),
+}
+
 const MAGIC_BYTES: [u8; 4] = *b"loro";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,6 +35,7 @@ pub(crate) enum EncodeMode {
     Rle = 1,
     Snapshot = 2,
     FastSnapshot = 3,
+    FastUpdates = 4,
 }
 
 impl num_traits::FromPrimitive for EncodeMode {
@@ -38,6 +47,7 @@ impl num_traits::FromPrimitive for EncodeMode {
             n if n == EncodeMode::Rle as i64 => Some(EncodeMode::Rle),
             n if n == EncodeMode::Snapshot as i64 => Some(EncodeMode::Snapshot),
             n if n == EncodeMode::FastSnapshot as i64 => Some(EncodeMode::FastSnapshot),
+            n if n == EncodeMode::FastUpdates as i64 => Some(EncodeMode::FastUpdates),
             _ => None,
         }
     }
@@ -56,6 +66,7 @@ impl num_traits::ToPrimitive for EncodeMode {
             EncodeMode::Rle => EncodeMode::Rle as i64,
             EncodeMode::Snapshot => EncodeMode::Snapshot as i64,
             EncodeMode::FastSnapshot => EncodeMode::FastSnapshot as i64,
+            EncodeMode::FastUpdates => EncodeMode::FastUpdates as i64,
         })
     }
     #[inline]
@@ -165,7 +176,9 @@ pub(crate) fn decode_oplog(
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     match mode {
         EncodeMode::Rle | EncodeMode::Snapshot => encode_reordered::decode_updates(oplog, body),
-        EncodeMode::FastSnapshot => fast_snapshot::decode_oplog(oplog, body),
+        EncodeMode::FastSnapshot | EncodeMode::FastUpdates => {
+            fast_snapshot::decode_oplog(oplog, body)
+        }
         EncodeMode::Auto => unreachable!(),
     }
 }
@@ -187,7 +200,7 @@ impl ParsedHeaderAndBody<'_> {
                     return Err(LoroError::DecodeChecksumMismatchError);
                 }
             }
-            EncodeMode::FastSnapshot => {
+            EncodeMode::FastSnapshot | EncodeMode::FastUpdates => {
                 let expected = u32::from_le_bytes(self.checksum[12..16].try_into().unwrap());
                 if xxhash_rust::xxh32::xxh32(self.checksum_body, XXH_SEED) != expected {
                     return Err(LoroError::DecodeChecksumMismatchError);
@@ -262,6 +275,24 @@ pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
 
     // BODY
     fast_snapshot::encode_snapshot(doc, &mut ans);
+
+    // CHECKSUM in HEADER
+    let checksum_body = &ans[20..];
+    let checksum = xxhash_rust::xxh32::xxh32(checksum_body, XXH_SEED);
+    ans[16..20].copy_from_slice(&checksum.to_le_bytes());
+    ans
+}
+
+pub(crate) fn export_fast_updates(doc: &LoroDoc, vv: &VersionVector) -> Vec<u8> {
+    // HEADER
+    let mut ans = Vec::with_capacity(MIN_HEADER_SIZE);
+    ans.extend(MAGIC_BYTES);
+    let checksum = [0; 16];
+    ans.extend(checksum);
+    ans.extend(EncodeMode::FastUpdates.to_bytes());
+
+    // BODY
+    fast_snapshot::encode_updates(doc, vv, &mut ans);
 
     // CHECKSUM in HEADER
     let checksum_body = &ans[20..];

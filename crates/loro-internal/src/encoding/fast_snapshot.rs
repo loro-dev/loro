@@ -15,7 +15,7 @@
 //!
 use std::io::{Read, Write};
 
-use crate::{oplog::ChangeStore, LoroDoc, OpLog};
+use crate::{oplog::ChangeStore, LoroDoc, OpLog, VersionVector};
 use bytes::{Buf, Bytes};
 use loro_common::{LoroError, LoroResult};
 
@@ -119,6 +119,19 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
         Snapshot {
             oplog_bytes,
             state_bytes,
+            gc_bytes: Bytes::new(),
+        },
+        w,
+    );
+}
+
+pub(crate) fn encode_updates<W: std::io::Write>(doc: &LoroDoc, vv: &VersionVector, w: &mut W) {
+    let oplog = doc.oplog().try_lock().unwrap();
+    let bytes = oplog.export_from_fast(vv);
+    _encode_snapshot(
+        Snapshot {
+            oplog_bytes: bytes,
+            state_bytes: Bytes::new(),
             gc_bytes: Bytes::new(),
         },
         w,

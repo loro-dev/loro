@@ -5,7 +5,7 @@ use std::{
 
 use loro::{
     awareness::Awareness, loro_value, FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap,
-    LoroText, ToJson,
+    LoroText, ToJson, VersionVector,
 };
 use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
 use serde_json::json;
@@ -909,4 +909,50 @@ fn fast_snapshot_for_updates() {
     doc_a.import(&doc_b.export_fast_snapshot()).unwrap();
 
     assert_eq!(doc_a.get_deep_value(), doc_b.get_deep_value());
+}
+
+#[test]
+fn new_update_encode_mode() {
+    let doc = LoroDoc::new();
+    // Create some random edits on doc
+    let text = doc.get_text("text");
+    text.insert(0, "Hello, world!").unwrap();
+
+    let list = doc.get_list("list");
+    list.insert(0, 42).unwrap();
+    list.insert(1, "foo").unwrap();
+
+    let map = doc.get_map("map");
+    map.insert("key1", "value1").unwrap();
+    map.insert("key2", 3).unwrap();
+
+    doc.commit();
+
+    // Create another doc
+    let doc2 = LoroDoc::new();
+
+    // Export updates from doc and import to doc2
+    let updates = doc.export(loro::ExportMode::Updates(&Default::default()));
+    doc2.import(&updates).unwrap();
+
+    // Check equality
+    assert_eq!(doc.get_deep_value(), doc2.get_deep_value());
+    // Make some edits on doc2
+    let text2 = doc2.get_text("text");
+    text2.insert(13, " How are you?").unwrap();
+
+    let list2 = doc2.get_list("list");
+    list2.insert(2, "bar").unwrap();
+
+    let map2 = doc2.get_map("map");
+    map2.insert("key3", 4.5).unwrap();
+
+    doc2.commit();
+
+    // Export updates from doc2 and import to doc
+    let updates2 = doc2.export(loro::ExportMode::Updates(&doc.oplog_vv()));
+    doc.import(&updates2).unwrap();
+
+    // Check equality after syncing back
+    assert_eq!(doc.get_deep_value(), doc2.get_deep_value());
 }

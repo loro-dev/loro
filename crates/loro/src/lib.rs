@@ -37,6 +37,7 @@ pub use loro_internal::container::richtext::ExpandType;
 pub use loro_internal::container::{ContainerID, ContainerType};
 pub use loro_internal::cursor;
 pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
+pub use loro_internal::encoding::ExportMode;
 pub use loro_internal::event::Index;
 pub use loro_internal::handler::TextDelta;
 pub use loro_internal::id::{PeerID, TreeID, ID};
@@ -668,6 +669,11 @@ impl LoroDoc {
     /// Get the path from the root to the container
     pub fn get_path_to_container(&self, id: &ContainerID) -> Option<Vec<(ContainerID, Index)>> {
         self.doc.get_path_to_container(id)
+    }
+
+    /// Export the document in the given mode.
+    pub fn export(&self, mode: ExportMode) -> Vec<u8> {
+        self.doc.export(mode)
     }
 }
 

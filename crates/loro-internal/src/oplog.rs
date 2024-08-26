@@ -2,6 +2,7 @@ mod change_store;
 pub(crate) mod loro_dag;
 mod pending_changes;
 
+use bytes::Bytes;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -359,6 +360,12 @@ impl OpLog {
     #[inline(always)]
     pub(crate) fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
         encode_oplog(self, vv, EncodeMode::Auto)
+    }
+
+    #[inline(always)]
+    pub(crate) fn export_from_fast(&self, vv: &VersionVector) -> Bytes {
+        self.change_store
+            .export_from(vv, self.vv(), self.frontiers())
     }
 
     #[inline(always)]

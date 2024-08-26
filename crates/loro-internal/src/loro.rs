@@ -6,7 +6,6 @@ use rle::HasLength;
 use std::{
     borrow::Cow,
     cmp::Ordering,
-    f32::consts::E,
     sync::{
         atomic::{
             AtomicBool,
@@ -29,10 +28,10 @@ use crate::{
     dag::DagUtils,
     diff_calc::DiffCalculator,
     encoding::{
-        decode_snapshot, export_fast_snapshot, export_snapshot, json_schema::json::JsonSchema,
-        parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
+        decode_snapshot, export_fast_snapshot, export_fast_updates, export_snapshot,
+        json_schema::json::JsonSchema, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    event::{str_to_path, EventTriggerKind, Index, InternalDocDiff, Path},
+    event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     obs::{Observer, SubID, Subscriber},
@@ -45,6 +44,7 @@ use crate::{
     HandlerTrait, InternalString, ListHandler, LoroError, MapHandler, VersionVector,
 };
 
+pub use crate::encoding::ExportMode;
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
 
 /// `LoroApp` serves as the library's primary entry point.
@@ -534,6 +534,12 @@ impl LoroDoc {
                     // let updates = new_doc.export_from(&self.oplog_vv());
                     // return self.import_with(updates.as_slice(), origin);
                 }
+            }
+            EncodeMode::FastUpdates => {
+                self.update_oplog_and_apply_delta_to_state_if_needed(
+                    |oplog| oplog.decode(parsed),
+                    origin,
+                )?;
             }
             EncodeMode::Auto => {
                 unreachable!()
@@ -1439,6 +1445,18 @@ impl LoroDoc {
         let mut state = self.state.lock().unwrap();
         let idx = state.arena.id_to_idx(id)?;
         state.get_path(idx)
+    }
+
+    pub fn export(&self, mode: ExportMode) -> Vec<u8> {
+        self.commit_then_stop();
+        let ans = match mode {
+            ExportMode::Snapshot => export_fast_snapshot(self),
+            ExportMode::Updates(vv) => export_fast_updates(self, vv),
+            ExportMode::GcSnapshot(_) => todo!(),
+        };
+
+        self.renew_txn_if_auto_commit();
+        ans
     }
 }
 

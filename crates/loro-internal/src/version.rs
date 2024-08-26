@@ -923,7 +923,7 @@ impl VersionVector {
 }
 
 /// Use minimal set of ids to represent the frontiers
-fn shrink_frontiers(mut last_ids: Vec<ID>, dag: &AppDag) -> Frontiers {
+pub fn shrink_frontiers(mut last_ids: Vec<ID>, dag: &AppDag) -> Frontiers {
     // it only keep the ids of ops that are concurrent to each other
 
     let mut frontiers = Frontiers::default();
