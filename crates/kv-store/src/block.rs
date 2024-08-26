@@ -278,7 +278,7 @@ impl BlockIter {
             prev_idx,
         };
         iter.seek_to_idx(0);
-        iter.prev_to_idx(prev_idx);
+        iter.back_to_idx(prev_idx);
         iter
     }
 
@@ -295,11 +295,11 @@ impl BlockIter {
             prev_idx,
         };
         iter.seek_to_key(key);
-        iter.prev_to_idx(prev_idx);
+        iter.back_to_idx(prev_idx);
         iter
     }
 
-    pub fn new_prev_to_key(block: Arc<Block>, key: &[u8]) -> Self {
+    pub fn new_back_to_key(block: Arc<Block>, key: &[u8]) -> Self {
         let prev_idx = block.len() as isize - 1;
         let mut iter = Self {
             first_key: block.first_key(),
@@ -312,7 +312,7 @@ impl BlockIter {
             prev_idx,
         };
         iter.seek_to_idx(0);
-        iter.prev_to_key(key);
+        iter.back_to_key(key);
         iter
     }
 
@@ -330,12 +330,12 @@ impl BlockIter {
         };
         match end {
             Bound::Included(key) => {
-                iter.prev_to_key(key);
+                iter.back_to_key(key);
             }
             Bound::Excluded(key) => {
-                iter.prev_to_key(key);
-                while iter.prev_is_valid() && iter.prev_curr_key() == key {
-                    iter.prev();
+                iter.back_to_key(key);
+                while iter.has_next_back() && iter.back_curr_key() == key {
+                    iter.next_back();
                 }
             }
             Bound::Unbounded => {}
@@ -357,17 +357,17 @@ impl BlockIter {
         !self.next_key.is_empty() && self.next_idx as isize <= self.prev_idx
     }
 
-    pub fn prev_curr_key(&self) -> Bytes {
-        debug_assert!(self.prev_is_valid());
+    pub fn back_curr_key(&self) -> Bytes {
+        debug_assert!(self.has_next_back());
         Bytes::copy_from_slice(&self.prev_key)
     }
 
-    pub fn prev_curr_value(&self) -> Bytes {
-        debug_assert!(self.prev_is_valid());
+    pub fn back_curr_value(&self) -> Bytes {
+        debug_assert!(self.has_next_back());
         self.block.data().slice(self.prev_value_range.clone())
     }
 
-    pub fn prev_is_valid(&self) -> bool {
+    pub fn has_next_back(&self) -> bool {
         !self.prev_key.is_empty() && self.next_idx as isize <= self.prev_idx
     }
 
@@ -381,14 +381,14 @@ impl BlockIter {
         self.seek_to_idx(self.next_idx);
     }
 
-    pub fn prev(&mut self) {
+    pub fn next_back(&mut self) {
         self.prev_idx -= 1;
         if self.prev_idx < 0 || self.prev_idx < (self.next_idx as isize) {
             self.prev_key.clear();
             self.prev_value_range = 0..0;
             return;
         }
-        self.prev_to_idx(self.prev_idx);
+        self.back_to_idx(self.prev_idx);
     }
 
     pub fn seek_to_key(&mut self, key: &[u8]) {
@@ -422,32 +422,32 @@ impl BlockIter {
     }
 
     /// MUST be called after seek_to_key()
-    pub fn prev_to_key(&mut self, key: &[u8]) {
+    pub fn back_to_key(&mut self, key: &[u8]) {
         match self.block.as_ref() {
             Block::Normal(block) => {
                 let mut left = self.next_idx;
                 let mut right = block.offsets.len();
                 while left < right {
                     let mid = left + (right - left) / 2;
-                    self.prev_to_idx(mid as isize);
+                    self.back_to_idx(mid as isize);
                     // prev idx <= next idx
-                    if !self.prev_is_valid() {
+                    if !self.has_next_back() {
                         return;
                     }
-                    debug_assert!(self.prev_is_valid());
+                    debug_assert!(self.has_next_back());
                     if self.prev_key.as_slice() > key {
                         right = mid;
                     } else {
                         left = mid + 1;
                     }
                 }
-                self.prev_to_idx(left as isize - 1);
+                self.back_to_idx(left as isize - 1);
             }
             Block::Large(block) => {
                 if key < block.key {
-                    self.prev_to_idx(-1);
+                    self.back_to_idx(-1);
                 } else {
-                    self.prev_to_idx(0);
+                    self.back_to_idx(0);
                 }
             }
         }
@@ -486,7 +486,7 @@ impl BlockIter {
         }
     }
 
-    fn prev_to_idx(&mut self, idx: isize) {
+    fn back_to_idx(&mut self, idx: isize) {
         match self.block.as_ref() {
             Block::Normal(block) => {
                 if idx < 0 {
@@ -496,7 +496,7 @@ impl BlockIter {
                     return;
                 }
                 let offset = block.offsets[idx as usize] as usize;
-                self.prev_to_offset(
+                self.back_to_offset(
                     offset,
                     *block
                         .offsets
@@ -540,7 +540,7 @@ impl BlockIter {
         }
     }
 
-    fn prev_to_offset(&mut self, offset: usize, offset_end: usize) {
+    fn back_to_offset(&mut self, offset: usize, offset_end: usize) {
         match self.block.as_ref() {
             Block::Normal(block) => {
                 let mut rest = &block.data[offset..];
@@ -575,24 +575,24 @@ impl KvIterator for BlockIter{
         self.next();    
     }
 
-    fn is_next_valid(&self) -> bool {
+    fn has_next(&self) -> bool {
         self.next_is_valid()
     }
 
-    fn prev_key(&self) -> Bytes {
-        self.prev_curr_key()
+    fn next_back_key(&self) -> Bytes {
+        self.back_curr_key()
     }
 
-    fn prev_value(&self) -> Bytes {
-        self.prev_curr_value()
+    fn next_back_value(&self) -> Bytes {
+        self.back_curr_value()
     }
 
-    fn find_prev(&mut self) {
-        self.prev();
+    fn find_next_back(&mut self) {
+        self.next_back();
     }
 
-    fn is_prev_valid(&self) -> bool {
-        self.prev_is_valid()
+    fn has_next_back(&self) -> bool {
+        self.has_next_back()
     }
 }
 
@@ -612,12 +612,12 @@ impl Iterator for BlockIter {
 
 impl DoubleEndedIterator for BlockIter {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if !self.prev_is_valid() {
+        if !self.has_next_back() {
             return None;
         }
-        let key = self.prev_curr_key();
-        let value = self.prev_curr_value();
-        self.prev();
+        let key = self.back_curr_key();
+        let value = self.back_curr_value();
+        self.next_back();
         Some((key, value))
     }
 }

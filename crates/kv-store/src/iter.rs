@@ -11,11 +11,11 @@ pub trait KvIterator: Debug {
     fn next_key(&self) -> Bytes;
     fn next_value(&self) -> Bytes;
     fn find_next(&mut self);
-    fn is_next_valid(&self) -> bool;
-    fn prev_key(&self) -> Bytes;
-    fn prev_value(&self) -> Bytes;
-    fn find_prev(&mut self);
-    fn is_prev_valid(&self) -> bool;
+    fn has_next(&self) -> bool;
+    fn next_back_key(&self) -> Bytes;
+    fn next_back_value(&self) -> Bytes;
+    fn find_next_back(&mut self);
+    fn has_next_back(&self) -> bool;
 }
 
 #[derive(Debug)]
@@ -37,8 +37,8 @@ impl<T: KvIterator> Ord for HeapIterWrapper<T> {
         } else {
             self.iter
                 .borrow()
-                .prev_key()
-                .cmp(&other.iter.borrow().prev_key())
+                .next_back_key()
+                .cmp(&other.iter.borrow().next_back_key())
                 .then(self.idx.cmp(&other.idx).reverse())
         }
     }
@@ -83,7 +83,7 @@ impl<T: KvIterator> MergeIterator<T> {
             .map(|iter| Rc::new(RefCell::new(iter)))
             .collect();
 
-        let next_current = if shared_iters.iter().all(|x| !x.borrow().is_next_valid()) {
+        let next_current = if shared_iters.iter().all(|x| !x.borrow().has_next()) {
             Some(HeapIterWrapper {
                 idx: 0,
                 iter: Rc::clone(shared_iters.last().unwrap()),
@@ -91,7 +91,7 @@ impl<T: KvIterator> MergeIterator<T> {
             })
         } else {
             for (idx, iter) in shared_iters.iter().enumerate() {
-                if iter.borrow().is_next_valid() {
+                if iter.borrow().has_next() {
                     next_heap.push(HeapIterWrapper {
                         idx,
                         iter: Rc::clone(iter),
@@ -102,7 +102,7 @@ impl<T: KvIterator> MergeIterator<T> {
             next_heap.pop()
         };
 
-        let back_current = if shared_iters.iter().all(|x| !x.borrow().is_prev_valid()) {
+        let back_current = if shared_iters.iter().all(|x| !x.borrow().has_next_back()) {
             Some(HeapIterWrapper {
                 idx: 0,
                 iter: Rc::clone(shared_iters.first().unwrap()),
@@ -110,7 +110,7 @@ impl<T: KvIterator> MergeIterator<T> {
             })
         } else {
             for (idx, iter) in shared_iters.iter().enumerate() {
-                if iter.borrow().is_prev_valid() {
+                if iter.borrow().has_next_back() {
                     back_heap.push(HeapIterWrapper {
                         idx,
                         iter: Rc::clone(iter),
@@ -152,7 +152,7 @@ impl<T: KvIterator> KvIterator for MergeIterator<T> {
             );
             if inner_iter.iter.borrow().next_key() == next_current.iter.borrow().next_key() {
                 inner_iter.iter.borrow_mut().find_next();
-                if !inner_iter.iter.borrow().is_next_valid() {
+                if !inner_iter.iter.borrow().has_next() {
                     PeekMut::pop(inner_iter);
                 }
             } else {
@@ -160,7 +160,7 @@ impl<T: KvIterator> KvIterator for MergeIterator<T> {
             }
         }
         next_current.iter.borrow_mut().find_next();
-        if !next_current.iter.borrow().is_next_valid() {
+        if !next_current.iter.borrow().has_next() {
             if let Some(iter) = self.next_iters.pop() {
                 *next_current = iter;
             }
@@ -174,43 +174,51 @@ impl<T: KvIterator> KvIterator for MergeIterator<T> {
         }
     }
 
-    fn is_next_valid(&self) -> bool {
+    fn has_next(&self) -> bool {
         self.next_current
             .as_ref()
-            .map(|x| x.iter.borrow().is_next_valid())
+            .map(|x| x.iter.borrow().has_next())
             .unwrap_or(false)
     }
 
-    fn prev_key(&self) -> Bytes {
-        self.back_current.as_ref().unwrap().iter.borrow().prev_key()
-    }
-
-    fn prev_value(&self) -> Bytes {
+    fn next_back_key(&self) -> Bytes {
         self.back_current
             .as_ref()
             .unwrap()
             .iter
             .borrow()
-            .prev_value()
+            .next_back_key()
     }
 
-    fn find_prev(&mut self) {
+    fn next_back_value(&self) -> Bytes {
+        self.back_current
+            .as_ref()
+            .unwrap()
+            .iter
+            .borrow()
+            .next_back_value()
+    }
+
+    fn find_next_back(&mut self) {
         let back_current = self.back_current.as_mut().unwrap();
         while let Some(inner_iter) = self.back_iters.peek_mut() {
             debug_assert!(
-                inner_iter.iter.borrow().prev_key() <= back_current.iter.borrow().prev_key()
+                inner_iter.iter.borrow().next_back_key()
+                    <= back_current.iter.borrow().next_back_key()
             );
-            if inner_iter.iter.borrow().prev_key() == back_current.iter.borrow().prev_key() {
-                inner_iter.iter.borrow_mut().find_prev();
-                if !inner_iter.iter.borrow().is_prev_valid() {
+            if inner_iter.iter.borrow().next_back_key()
+                == back_current.iter.borrow().next_back_key()
+            {
+                inner_iter.iter.borrow_mut().find_next_back();
+                if !inner_iter.iter.borrow().has_next_back() {
                     PeekMut::pop(inner_iter);
                 }
             } else {
                 break;
             }
         }
-        back_current.iter.borrow_mut().find_prev();
-        if !back_current.iter.borrow().is_prev_valid() {
+        back_current.iter.borrow_mut().find_next_back();
+        if !back_current.iter.borrow().has_next_back() {
             if let Some(iter) = self.back_iters.pop() {
                 *back_current = iter;
             }
@@ -224,10 +232,10 @@ impl<T: KvIterator> KvIterator for MergeIterator<T> {
         }
     }
 
-    fn is_prev_valid(&self) -> bool {
+    fn has_next_back(&self) -> bool {
         self.back_current
             .as_ref()
-            .map(|x| x.iter.borrow().is_prev_valid())
+            .map(|x| x.iter.borrow().has_next_back())
             .unwrap_or(false)
     }
 }
@@ -239,11 +247,11 @@ pub struct FilterEmptyIter<T: KvIterator> {
 
 impl<T: KvIterator> FilterEmptyIter<T> {
     pub fn new(mut iter: T) -> Self {
-        while iter.is_next_valid() && iter.next_value().is_empty() {
+        while iter.has_next() && iter.next_value().is_empty() {
             iter.find_next();
         }
-        while iter.is_prev_valid() && iter.prev_value().is_empty() {
-            iter.find_prev();
+        while iter.has_next_back() && iter.next_back_value().is_empty() {
+            iter.find_next_back();
         }
 
         Self { iter }
@@ -261,32 +269,32 @@ impl<T: KvIterator> KvIterator for FilterEmptyIter<T> {
 
     fn find_next(&mut self) {
         self.iter.find_next();
-        while self.is_next_valid() && self.iter.next_value().is_empty() {
+        while self.has_next() && self.iter.next_value().is_empty() {
             self.iter.find_next();
         }
     }
 
-    fn is_next_valid(&self) -> bool {
-        self.iter.is_next_valid()
+    fn has_next(&self) -> bool {
+        self.iter.has_next()
     }
 
-    fn prev_key(&self) -> Bytes {
-        self.iter.prev_key()
+    fn next_back_key(&self) -> Bytes {
+        self.iter.next_back_key()
     }
 
-    fn prev_value(&self) -> Bytes {
-        self.iter.prev_value()
+    fn next_back_value(&self) -> Bytes {
+        self.iter.next_back_value()
     }
 
-    fn find_prev(&mut self) {
-        self.iter.find_prev();
-        while self.is_prev_valid() && self.iter.prev_value().is_empty() {
-            self.iter.find_prev();
+    fn find_next_back(&mut self) {
+        self.iter.find_next_back();
+        while self.has_next_back() && self.iter.next_back_value().is_empty() {
+            self.iter.find_next_back();
         }
     }
 
-    fn is_prev_valid(&self) -> bool {
-        self.iter.is_prev_valid()
+    fn has_next_back(&self) -> bool {
+        self.iter.has_next_back()
     }
 }
 
@@ -294,7 +302,7 @@ impl<T: KvIterator> Iterator for MergeIterator<T> {
     type Item = (Bytes, Bytes);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if !self.is_next_valid() {
+        if !self.has_next() {
             return None;
         }
         let key = self.next_key();
@@ -306,12 +314,12 @@ impl<T: KvIterator> Iterator for MergeIterator<T> {
 
 impl<T: KvIterator> DoubleEndedIterator for MergeIterator<T> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if !self.is_prev_valid() {
+        if !self.has_next_back() {
             return None;
         }
-        let key = self.prev_key();
-        let value = self.prev_value();
-        KvIterator::find_prev(self);
+        let key = self.next_back_key();
+        let value = self.next_back_value();
+        KvIterator::find_next_back(self);
         Some((key, value))
     }
 }
@@ -320,7 +328,7 @@ impl<T: KvIterator> Iterator for FilterEmptyIter<T> {
     type Item = (Bytes, Bytes);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if !self.is_next_valid() {
+        if !self.has_next() {
             return None;
         }
         let key = self.next_key();
@@ -332,12 +340,12 @@ impl<T: KvIterator> Iterator for FilterEmptyIter<T> {
 
 impl<T: KvIterator> DoubleEndedIterator for FilterEmptyIter<T> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if !self.is_prev_valid() {
+        if !self.has_next_back() {
             return None;
         }
-        let key = self.prev_key();
-        let value = self.prev_value();
-        KvIterator::find_prev(self);
+        let key = self.next_back_key();
+        let value = self.next_back_value();
+        KvIterator::find_next_back(self);
         Some((key, value))
     }
 }
@@ -371,8 +379,8 @@ mod tests {
         let merged_iter = MergeIterator::new(vec![iter1.clone(), iter2.clone()]);
         assert_eq!(merged_iter.next_key(), a.clone());
         assert_eq!(merged_iter.next_value(), a.clone());
-        assert_eq!(merged_iter.prev_key(), d.clone());
-        assert_eq!(merged_iter.prev_value(), d.clone());
+        assert_eq!(merged_iter.next_back_key(), d.clone());
+        assert_eq!(merged_iter.next_back_value(), d.clone());
         let ans = merged_iter.collect::<Vec<_>>();
         assert_eq!(
             ans,
@@ -387,8 +395,8 @@ mod tests {
         let merged_iter = MergeIterator::new(vec![iter1.clone(), iter2.clone()]);
         assert_eq!(merged_iter.next_key(), a.clone());
         assert_eq!(merged_iter.next_value(), a.clone());
-        assert_eq!(merged_iter.prev_key(), d.clone());
-        assert_eq!(merged_iter.prev_value(), d.clone());
+        assert_eq!(merged_iter.next_back_key(), d.clone());
+        assert_eq!(merged_iter.next_back_value(), d.clone());
         let ans2 = merged_iter.rev().collect::<Vec<_>>();
         assert_eq!(ans2, ans.iter().rev().cloned().collect::<Vec<_>>());
     }

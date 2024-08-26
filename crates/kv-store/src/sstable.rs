@@ -351,7 +351,7 @@ impl SsTable {
             .saturating_sub(1)
     }
 
-    pub fn find_prev_block_idx(&self, key: &[u8]) -> usize {
+    pub fn find_back_block_idx(&self, key: &[u8]) -> usize {
         self.meta
             .partition_point(|meta| meta.last_key.as_ref().unwrap_or(&meta.first_key) <= key)
             .min(self.meta.len() - 1)
@@ -426,9 +426,9 @@ impl SsTable {
 pub struct SsTableIter<'a> {
     table: &'a SsTable,
     next_block_iter: BlockIter,
-    prev_block_iter: BlockIter,
+    back_block_iter: BlockIter,
     next_block_idx: usize,
-    prev_block_idx: isize,
+    back_block_idx: isize,
     next_first: bool,
 }
 
@@ -436,9 +436,9 @@ impl<'a> Debug for SsTableIter<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SsTableIter")
             .field("next_block_iter", &self.next_block_iter)
-            .field("prev_block_iter", &self.prev_block_iter)
+            .field("back_block_iter", &self.back_block_iter)
             .field("next_block_idx", &self.next_block_idx)
-            .field("prev_block_idx", &self.prev_block_idx)
+            .field("back_block_idx", &self.back_block_idx)
             .field("next_first", &self.next_first)
             .finish()
     }
@@ -448,18 +448,18 @@ impl<'a> SsTableIter<'a> {
     fn new(table: &'a SsTable) -> Self {
         let block = table.read_block_cached(0);
         let block_iter = BlockIter::new_seek_to_first(block);
-        let prev_block_idx = table.meta.len() - 1;
-        let prev_block_iter = {
-            let prev_block = table.read_block_cached(prev_block_idx);
-            BlockIter::new_seek_to_first(prev_block)
+        let back_block_idx = table.meta.len() - 1;
+        let back_block_iter = {
+            let back_block = table.read_block_cached(back_block_idx);
+            BlockIter::new_seek_to_first(back_block)
         };
 
         Self {
             table,
             next_block_iter: block_iter,
             next_block_idx: 0,
-            prev_block_iter,
-            prev_block_idx: prev_block_idx as isize,
+            back_block_iter,
+            back_block_idx: back_block_idx as isize,
             next_first: false,
         }
     }
@@ -486,32 +486,32 @@ impl<'a> SsTableIter<'a> {
         };
         let (end_idx, end_iter, end_excluded) = match end {
             Bound::Included(end) => {
-                let end_idx = table.find_prev_block_idx(end);
+                let end_idx = table.find_back_block_idx(end);
                 if end_idx == table_idx {
-                    iter.prev_to_key(end);
-                    // if the prev is invalid, the next should also be invalid
-                    if !iter.prev_is_valid() {
+                    iter.back_to_key(end);
+                    // if the next back is invalid, the next should also be invalid
+                    if !iter.has_next_back() {
                         iter.next();
                     }
                     (end_idx, None, None)
                 } else {
                     let block = table.read_block_cached(end_idx);
-                    let iter = BlockIter::new_prev_to_key(block, end);
+                    let iter = BlockIter::new_back_to_key(block, end);
                     (end_idx, Some(iter), None)
                 }
             }
             Bound::Excluded(end) => {
-                let end_idx = table.find_prev_block_idx(end);
+                let end_idx = table.find_back_block_idx(end);
                 if end_idx == table_idx {
-                    iter.prev_to_key(end);
-                    // if the prev is invalid, the next should also be invalid
-                    if !iter.prev_is_valid() {
+                    iter.back_to_key(end);
+                    // if the next back is invalid, the next should also be invalid
+                    if !iter.has_next_back() {
                         iter.next();
                     }
                     (end_idx, None, Some(end))
                 } else {
                     let block = table.read_block_cached(end_idx);
-                    let iter = BlockIter::new_prev_to_key(block, end);
+                    let iter = BlockIter::new_back_to_key(block, end);
                     (end_idx, Some(iter), Some(end))
                 }
             }
@@ -533,8 +533,8 @@ impl<'a> SsTableIter<'a> {
                 table,
                 next_block_iter: iter,
                 next_block_idx: table_idx,
-                prev_block_iter: end_iter,
-                prev_block_idx: end_idx as isize,
+                back_block_iter: end_iter,
+                back_block_idx: end_idx as isize,
                 next_first: false,
             }
         } else {
@@ -543,8 +543,8 @@ impl<'a> SsTableIter<'a> {
                 table,
                 next_block_iter: iter.clone(),
                 next_block_idx: table_idx,
-                prev_block_iter: iter,
-                prev_block_idx: end_idx as isize,
+                back_block_iter: iter,
+                back_block_idx: end_idx as isize,
                 next_first: true,
             }
         };
@@ -553,8 +553,8 @@ impl<'a> SsTableIter<'a> {
             ans.next();
         }
         if !ans.next_first {
-            while ans.is_prev_valid() && !ans.prev_block_iter.prev_is_valid() {
-                ans.prev();
+            while ans.has_next_back() && !ans.back_block_iter.has_next_back() {
+                ans.next_back();
             }
         }
 
@@ -564,8 +564,8 @@ impl<'a> SsTableIter<'a> {
             }
         }
         if let Some(key) = end_excluded {
-            if ans.is_prev_valid() && ans.prev_key() == key {
-                ans.prev();
+            if ans.has_next_back() && ans.next_back_key() == key {
+                ans.next_back();
             }
         }
 
@@ -574,14 +574,14 @@ impl<'a> SsTableIter<'a> {
             ans.next();
         }
 
-        if ans.is_prev_valid() && !ans.next_first && !ans.prev_block_iter.prev_is_valid() {
-            ans.prev();
+        if ans.has_next_back() && !ans.next_first && !ans.back_block_iter.has_next_back() {
+            ans.next_back();
         }
         ans
     }
 
     pub fn is_next_valid(&self) -> bool {
-        self.next_block_iter.next_is_valid() || (self.next_block_idx as isize) < self.prev_block_idx
+        self.next_block_iter.next_is_valid() || (self.next_block_idx as isize) < self.back_block_idx
     }
 
     pub fn next_key(&self) -> Bytes {
@@ -592,28 +592,28 @@ impl<'a> SsTableIter<'a> {
         self.next_block_iter.next_curr_value()
     }
 
-    pub fn is_prev_valid(&self) -> bool {
+    pub fn has_next_back(&self) -> bool {
         if self.next_first {
-            self.next_block_iter.prev_is_valid()
+            self.next_block_iter.has_next_back()
         } else {
-            self.prev_block_iter.prev_is_valid()
-                || (self.next_block_idx as isize) < self.prev_block_idx
+            self.back_block_iter.has_next_back()
+                || (self.next_block_idx as isize) < self.back_block_idx
         }
     }
 
-    pub fn prev_key(&self) -> Bytes {
+    pub fn next_back_key(&self) -> Bytes {
         if self.next_first {
-            self.next_block_iter.prev_curr_key()
+            self.next_block_iter.back_curr_key()
         } else {
-            self.prev_block_iter.prev_curr_key()
+            self.back_block_iter.back_curr_key()
         }
     }
 
-    pub fn prev_value(&self) -> Bytes {
+    pub fn next_back_value(&self) -> Bytes {
         if self.next_first {
-            self.next_block_iter.prev_curr_value()
+            self.next_block_iter.back_curr_value()
         } else {
-            self.prev_block_iter.prev_curr_value()
+            self.back_block_iter.back_curr_value()
         }
     }
 
@@ -621,11 +621,11 @@ impl<'a> SsTableIter<'a> {
         self.next_block_iter.next();
         if !self.next_block_iter.next_is_valid() {
             self.next_block_idx += 1;
-            if self.next_block_idx > self.prev_block_idx as usize {
+            if self.next_block_idx > self.back_block_idx as usize {
                 return;
             }
-            if self.next_block_idx == self.prev_block_idx as usize && !self.next_first {
-                std::mem::swap(&mut self.next_block_iter, &mut self.prev_block_iter);
+            if self.next_block_idx == self.back_block_idx as usize && !self.next_first {
+                std::mem::swap(&mut self.next_block_iter, &mut self.back_block_iter);
                 self.next_first = true;
             } else if self.next_block_idx < self.table.meta.len() {
                 let block = self.table.read_block_cached(self.next_block_idx);
@@ -635,23 +635,23 @@ impl<'a> SsTableIter<'a> {
         }
     }
 
-    pub fn prev(&mut self) {
+    pub fn next_back(&mut self) {
         let iter = if self.next_first {
             &mut self.next_block_iter
         } else {
-            &mut self.prev_block_iter
+            &mut self.back_block_iter
         };
-        iter.prev();
-        if !iter.prev_is_valid() {
-            self.prev_block_idx -= 1;
-            if self.next_block_idx > self.prev_block_idx as usize {
+        iter.next_back();
+        if !iter.has_next_back() {
+            self.back_block_idx -= 1;
+            if self.next_block_idx > self.back_block_idx as usize {
                 return;
             }
-            if self.next_block_idx == self.prev_block_idx as usize && !self.next_first {
+            if self.next_block_idx == self.back_block_idx as usize && !self.next_first {
                 self.next_first = true;
-            } else if self.prev_block_idx > 0 {
-                let block = self.table.read_block_cached(self.prev_block_idx as usize);
-                self.prev_block_iter = BlockIter::new_seek_to_first(block);
+            } else if self.back_block_idx > 0 {
+                let block = self.table.read_block_cached(self.back_block_idx as usize);
+                self.back_block_iter = BlockIter::new_seek_to_first(block);
             }
         }
     }
@@ -670,24 +670,24 @@ impl<'a> KvIterator for SsTableIter<'a> {
         self.next()
     }
 
-    fn is_next_valid(&self) -> bool {
+    fn has_next(&self) -> bool {
         self.is_next_valid()
     }
 
-    fn prev_key(&self) -> Bytes {
-        self.prev_key()
+    fn next_back_key(&self) -> Bytes {
+        self.next_back_key()
     }
 
-    fn prev_value(&self) -> Bytes {
-        self.prev_value()
+    fn next_back_value(&self) -> Bytes {
+        self.next_back_value()
     }
 
-    fn find_prev(&mut self) {
-        self.prev()
+    fn find_next_back(&mut self) {
+        self.next_back()
     }
 
-    fn is_prev_valid(&self) -> bool {
-        self.is_prev_valid()
+    fn has_next_back(&self) -> bool {
+        self.has_next_back()
     }
 }
 
@@ -706,12 +706,12 @@ impl<'a> Iterator for SsTableIter<'a> {
 
 impl<'a> DoubleEndedIterator for SsTableIter<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if !self.is_prev_valid() {
+        if !self.has_next_back() {
             return None;
         }
-        let key = self.prev_key();
-        let value = self.prev_value();
-        self.prev();
+        let key = self.next_back_key();
+        let value = self.next_back_value();
+        self.next_back();
         Some((key, value))
     }
 }

@@ -254,8 +254,8 @@ impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> DoubleEndedIterator
     for MemStoreIterator<'a, T>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.back_sstable.is_none() && self.b.is_prev_valid() {
-            self.back_sstable = Some((self.b.prev_key(), self.b.prev_value()));
+        if self.back_sstable.is_none() && self.b.has_next_back() {
+            self.back_sstable = Some((self.b.next_back_key(), self.b.next_back_value()));
             self.b.next_back();
         }
 
