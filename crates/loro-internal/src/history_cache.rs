@@ -14,13 +14,13 @@ use loro_common::{
 use rle::HasLength;
 
 use crate::{
-    arena::SharedArena,
     change::{Change, Lamport},
     container::{idx::ContainerIdx, list::list_op::InnerListOp, tree::tree_op::TreeOp},
     diff_calc::tree::TreeCacheForDiff,
     encoding::value_register::ValueRegister,
     op::{InnerContent, RichOp},
     oplog::ChangeStore,
+    state::GcStore,
     OpLog, VersionVector,
 };
 
@@ -32,6 +32,7 @@ use crate::{
 #[derive(Debug)]
 pub(crate) struct ContainerHistoryCache {
     change_store: ChangeStore,
+    gc: Option<Arc<GcStore>>,
     for_checkout: Option<ForCheckout>,
     for_importing: Option<FxHashMap<ContainerIdx, HistoryCacheForImporting>>,
 }
@@ -58,19 +59,21 @@ impl HistoryCacheTrait for ForCheckout {
 }
 
 impl ContainerHistoryCache {
-    pub(crate) fn fork(&self, _arena: SharedArena, change_store: ChangeStore) -> Self {
+    pub(crate) fn fork(&self, change_store: ChangeStore, gc: Option<Arc<GcStore>>) -> Self {
         Self {
             change_store,
             for_checkout: None,
             for_importing: None,
+            gc,
         }
     }
 
-    pub(crate) fn new(_arena: SharedArena, change_store: ChangeStore) -> Self {
+    pub(crate) fn new(change_store: ChangeStore, gc: Option<Arc<GcStore>>) -> Self {
         Self {
             change_store,
             for_checkout: Default::default(),
             for_importing: Default::default(),
+            gc,
         }
     }
 
@@ -216,6 +219,10 @@ impl ContainerHistoryCache {
 
     pub(crate) fn free(&mut self) {
         self.for_checkout = None;
+    }
+
+    pub(crate) fn set_gc_store(&mut self, gc_store: Option<Arc<GcStore>>) {
+        self.gc = gc_store;
     }
 }
 

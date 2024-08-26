@@ -79,7 +79,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
     })?;
 
     if !oplog.is_empty() {
-        unimplemented!("You can only import snapshot to a empty loro doc now");
+        panic!("InternalError importing snapshot to an non-empty doc");
     }
 
     assert!(state.frontiers.is_empty());
@@ -98,6 +98,10 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
             state_bytes,
             oplog.dag().trimmed_frontiers().clone(),
         )?;
+        let gc_store = state.gc_store().cloned();
+        oplog.with_history_cache(|h| {
+            h.set_gc_store(gc_store);
+        });
     }
     // FIXME: we may need to extract the unknown containers here?
     // Or we should lazy load it when the time comes?

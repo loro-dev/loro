@@ -14,7 +14,7 @@ use bytes::Bytes;
 use fxhash::FxHashMap;
 use inner_store::InnerStore;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
-use std::sync::{atomic::AtomicU64, Arc};
+use std::sync::{atomic::AtomicU64, Arc, Mutex};
 
 pub(crate) use container_wrapper::ContainerWrapper;
 
@@ -57,7 +57,7 @@ mod inner_store;
 pub(crate) struct ContainerStore {
     arena: SharedArena,
     store: InnerStore,
-    gc_store: Option<Box<GcStore>>,
+    gc_store: Option<Arc<GcStore>>,
     conf: Configure,
     peer: Arc<AtomicU64>,
 }
@@ -70,9 +70,10 @@ impl std::fmt::Debug for ContainerStore {
     }
 }
 
-struct GcStore {
-    trimmed_frontiers: Frontiers,
-    store: InnerStore,
+#[derive(Debug)]
+pub(crate) struct GcStore {
+    pub trimmed_frontiers: Frontiers,
+    pub store: Mutex<InnerStore>,
 }
 
 macro_rules! ctx {
@@ -108,6 +109,10 @@ impl ContainerStore {
             .map(|x| x.get_state(idx, ctx!(self)))
     }
 
+    pub fn gc_store(&self) -> Option<&Arc<GcStore>> {
+        self.gc_store.as_ref()
+    }
+
     pub fn get_value(&mut self, idx: ContainerIdx) -> Option<LoroValue> {
         self.store
             .get_mut(idx)
@@ -120,7 +125,7 @@ impl ContainerStore {
 
     pub fn encode_gc(&mut self) -> Bytes {
         if let Some(gc) = self.gc_store.as_mut() {
-            gc.store.encode()
+            gc.store.try_lock().unwrap().get_kv().export()
         } else {
             Bytes::new()
         }
@@ -143,11 +148,12 @@ impl ContainerStore {
         assert!(self.gc_store.is_none());
         self.store.decode_twice(gc_bytes.clone(), state_bytes)?;
         if !start_frontiers.is_empty() {
-            self.gc_store = Some(Box::new(GcStore {
+            let mut inner = InnerStore::new(self.arena.clone());
+            inner.decode(gc_bytes)?;
+            self.gc_store = Some(Arc::new(GcStore {
                 trimmed_frontiers: start_frontiers,
-                store: InnerStore::new(self.arena.clone()),
+                store: Mutex::new(inner),
             }));
-            self.gc_store.as_mut().unwrap().store.decode(gc_bytes)?;
         }
         Ok(())
     }

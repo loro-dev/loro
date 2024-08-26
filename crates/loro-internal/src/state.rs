@@ -46,6 +46,7 @@ mod tree_state;
 mod unknown_state;
 
 pub(crate) use self::movable_list_state::{IndexType, MovableListState};
+pub(crate) use container_store::GcStore;
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
@@ -1461,6 +1462,10 @@ impl DocState {
         };
 
         Some(value)
+    }
+
+    pub fn gc_store(&self) -> Option<&Arc<GcStore>> {
+        self.store.gc_store()
     }
 }
 

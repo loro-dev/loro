@@ -39,7 +39,7 @@ impl KvWrapper {
 
     pub fn import(&self, bytes: Bytes) {
         let mut kv = self.kv.lock().unwrap();
-        kv.import_all(bytes);
+        kv.import_all(bytes).unwrap();
     }
 
     pub fn export(&self) -> Bytes {

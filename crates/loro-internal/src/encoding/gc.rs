@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use loro_common::LoroResult;
 use tracing::debug;
 
@@ -8,8 +7,6 @@ use crate::{
     version::Frontiers,
     LoroDoc,
 };
-
-use super::fast_snapshot::_decode_snapshot_bytes;
 
 #[tracing::instrument(skip_all)]
 pub(crate) fn export_gc_snapshot<W: std::io::Write>(
@@ -67,32 +64,4 @@ fn calc_actual_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
 
     let cur_f = oplog.frontiers();
     oplog.dag.find_common_ancestor(&start, cur_f).0
-}
-
-pub(crate) fn import_gc_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
-    let mut oplog = doc.oplog().lock().unwrap();
-    let mut state = doc.app_state().lock().unwrap();
-    if !oplog.is_empty() || !state.is_empty() {
-        panic!()
-    }
-
-    let Snapshot {
-        oplog_bytes,
-        state_bytes,
-        gc_bytes,
-    } = _decode_snapshot_bytes(bytes)?;
-    oplog.decode_change_store(oplog_bytes)?;
-    if !gc_bytes.is_empty() {
-        state.store.decode_gc(
-            gc_bytes,
-            state_bytes,
-            oplog.dag().trimmed_frontiers().clone(),
-        )?;
-    } else {
-        state.store.decode(state_bytes)?;
-    }
-    // FIXME: we may need to extract the unknown containers here?
-    // Or we should lazy load it when the time comes?
-    state.init_with_states_and_version(oplog.frontiers().clone(), &oplog, vec![], false);
-    Ok(())
 }

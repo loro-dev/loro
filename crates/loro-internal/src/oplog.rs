@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tracing::{debug, instrument, trace, trace_span};
 
 use self::change_store::iter::MergedChangeIter;
@@ -24,6 +24,7 @@ use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasLamportSpan};
+use crate::state::GcStore;
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::BlockOpRef;
@@ -77,10 +78,7 @@ impl OpLog {
         let cfg = Configure::default();
         let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval.clone());
         Self {
-            history_cache: Mutex::new(ContainerHistoryCache::new(
-                arena.clone(),
-                change_store.clone(),
-            )),
+            history_cache: Mutex::new(ContainerHistoryCache::new(change_store.clone(), None)),
             dag: AppDag::new(change_store.clone()),
             change_store,
             arena,
@@ -92,7 +90,12 @@ impl OpLog {
         }
     }
 
-    pub(crate) fn fork(&self, arena: SharedArena, configure: Configure) -> Self {
+    pub(crate) fn fork(
+        &self,
+        arena: SharedArena,
+        configure: Configure,
+        gc: Option<Arc<GcStore>>,
+    ) -> Self {
         let change_store = self
             .change_store
             .fork(arena.clone(), configure.merge_interval.clone());
@@ -101,7 +104,7 @@ impl OpLog {
                 self.history_cache
                     .lock()
                     .unwrap()
-                    .fork(arena.clone(), change_store.clone()),
+                    .fork(change_store.clone(), gc),
             ),
             change_store: change_store.clone(),
             dag: self.dag.fork(change_store),

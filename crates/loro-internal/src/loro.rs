@@ -125,13 +125,13 @@ impl LoroDoc {
                 .lock()
                 .unwrap()
                 .fork(arena.clone(), Arc::downgrade(&txn), config.clone());
+        let gc = new_state.try_lock().unwrap().gc_store().cloned();
         let doc = LoroDoc {
-            oplog: Arc::new(Mutex::new(
-                self.oplog()
-                    .lock()
-                    .unwrap()
-                    .fork(arena.clone(), config.clone()),
-            )),
+            oplog: Arc::new(Mutex::new(self.oplog().lock().unwrap().fork(
+                arena.clone(),
+                config.clone(),
+                gc,
+            ))),
             state: new_state,
             arena,
             config,
