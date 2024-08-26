@@ -32,9 +32,9 @@ pub struct AppDag {
     /// The latest known version vectorG
     vv: VersionVector,
     /// The latest known frontiers
-    start_frontiers: Frontiers,
+    trimmed_frontiers: Frontiers,
     /// The latest known version vectorG
-    start_vv: ImVersionVector,
+    trimmed_vv: ImVersionVector,
     /// Ops included in the version vector but not parsed yet
     ///
     /// # Invariants
@@ -99,8 +99,8 @@ impl AppDag {
             vv: VersionVector::default(),
             unparsed_vv: Mutex::new(VersionVector::default()),
             unhandled_dep_points: Mutex::new(BTreeSet::new()),
-            start_frontiers: Default::default(),
-            start_vv: Default::default(),
+            trimmed_frontiers: Default::default(),
+            trimmed_vv: Default::default(),
         }
     }
 
@@ -113,11 +113,11 @@ impl AppDag {
     }
 
     pub fn start_vv(&self) -> &ImVersionVector {
-        &self.start_vv
+        &self.trimmed_vv
     }
 
     pub fn start_frontiers(&self) -> &Frontiers {
-        &self.start_frontiers
+        &self.trimmed_frontiers
     }
 
     pub fn is_empty(&self) -> bool {
@@ -407,8 +407,8 @@ impl AppDag {
             vv: self.vv.clone(),
             unparsed_vv: Mutex::new(self.unparsed_vv.try_lock().unwrap().clone()),
             unhandled_dep_points: Mutex::new(self.unhandled_dep_points.try_lock().unwrap().clone()),
-            start_frontiers: self.start_frontiers.clone(),
-            start_vv: self.start_vv.clone(),
+            trimmed_frontiers: self.trimmed_frontiers.clone(),
+            trimmed_vv: self.trimmed_vv.clone(),
         }
     }
 
@@ -422,8 +422,8 @@ impl AppDag {
         self.vv = v.vv;
         self.frontiers = v.frontiers;
         if let Some((vv, f)) = v.start_version {
-            self.start_frontiers = f;
-            self.start_vv = ImVersionVector::from_vv(&vv);
+            self.trimmed_frontiers = f;
+            self.trimmed_vv = ImVersionVector::from_vv(&vv);
         }
     }
 
@@ -525,6 +525,18 @@ impl AppDag {
             let frontiers = self.frontiers.iter().copied().collect::<FxHashSet<_>>();
             assert_eq!(maybe_frontiers, frontiers);
         }
+    }
+
+    pub(crate) fn is_dep_on_trimmed_history(&self, deps: &Frontiers) -> bool {
+        if self.trimmed_vv.is_empty() {
+            return false;
+        }
+
+        if deps.is_empty() {
+            return true;
+        }
+
+        deps.iter().any(|x| self.trimmed_vv.includes_id(*x))
     }
 }
 
@@ -680,8 +692,8 @@ impl AppDag {
         }
 
         let mut ans_vv = ImVersionVector::default();
-        if node.deps == self.start_frontiers {
-            for (&p, &c) in self.start_vv.iter() {
+        if node.deps == self.trimmed_frontiers {
+            for (&p, &c) in self.trimmed_vv.iter() {
                 ans_vv.insert(p, c);
             }
         } else {

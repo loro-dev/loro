@@ -153,6 +153,10 @@ impl ImVersionVector {
             self.set_last(id)
         }
     }
+
+    pub(crate) fn includes_id(&self, x: ID) -> bool {
+        self.get(&x.peer).copied().unwrap_or(0) > x.counter
+    }
 }
 
 // TODO: use a better data structure that is Array when small

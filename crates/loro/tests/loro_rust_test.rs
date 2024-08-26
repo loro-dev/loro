@@ -1044,3 +1044,43 @@ fn test_gc_empty() {
     doc_c.import(&bytes).unwrap();
     assert_eq!(doc_c.get_deep_value(), new_doc.get_deep_value());
 }
+
+#[test]
+fn test_gc_import_outdated_updates() {
+    let doc = LoroDoc::new();
+    apply_random_ops(&doc, 123, 11);
+    let bytes = doc.export(loro::ExportMode::GcSnapshot(
+        &ID::new(doc.peer_id(), 5).into(),
+    ));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes).unwrap();
+
+    let other_doc = LoroDoc::new();
+    apply_random_ops(&other_doc, 123, 11);
+    let err = new_doc
+        .import(&other_doc.export_from(&Default::default()))
+        .unwrap_err();
+    assert_eq!(err, LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+}
+
+#[test]
+fn test_gc_import_pending_updates_that_is_outdated() {
+    let doc = LoroDoc::new();
+    apply_random_ops(&doc, 123, 11);
+    let bytes = doc.export(loro::ExportMode::GcSnapshot(
+        &ID::new(doc.peer_id(), 5).into(),
+    ));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes).unwrap();
+
+    let other_doc = LoroDoc::new();
+    apply_random_ops(&other_doc, 123, 5);
+    let bytes_a = other_doc.export_from(&Default::default());
+    let vv = other_doc.oplog_vv();
+    apply_random_ops(&other_doc, 123, 5);
+    let bytes_b = other_doc.export_from(&vv);
+    // pending
+    new_doc.import(&bytes_b).unwrap();
+    let err = new_doc.import(&bytes_a).unwrap_err();
+    assert_eq!(err, LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+}

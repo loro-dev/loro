@@ -572,7 +572,7 @@ impl LoroDoc {
         let mut oplog = self.oplog.lock().unwrap();
         let old_vv = oplog.vv().clone();
         let old_frontiers = oplog.frontiers().clone();
-        f(&mut oplog)?;
+        let result = f(&mut oplog);
         if !self.detached.load(Acquire) {
             debug!("checkout from {:?} to {:?}", old_vv, oplog.vv());
             let mut diff = DiffCalculator::new(false);
@@ -594,7 +594,7 @@ impl LoroDoc {
         } else {
             tracing::info!("Detached");
         }
-        Ok(())
+        result
     }
 
     /// For fuzzing tests

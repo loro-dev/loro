@@ -239,6 +239,10 @@ pub(crate) fn import_changes_to_oplog(
             continue;
         }
 
+        if oplog.dag.is_dep_on_trimmed_history(&change.deps) {
+            return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+        }
+
         latest_ids.push(change.id_last());
         // calc lamport or pending if its deps are not satisfied
         match oplog.dag.get_change_lamport_from_deps(&change.deps) {
