@@ -237,6 +237,9 @@ impl BlockBuilder {
 }
 
 
+/// Block iterator
+/// 
+/// If the key is empty, it means the iterator is invalid.
 #[derive(Clone)]
 pub struct BlockIter {
     block: Arc<Block>,
@@ -321,7 +324,7 @@ impl BlockIter {
             Bound::Included(key) => Self::new_seek_to_key(block, key),
             Bound::Excluded(key) => {
                 let mut iter = Self::new_seek_to_key(block, key);
-                while iter.next_is_valid() && iter.next_curr_key() == key {
+                while iter.has_next() && iter.next_curr_key().unwrap() == key {
                     iter.next();
                 }
                 iter
@@ -334,7 +337,7 @@ impl BlockIter {
             }
             Bound::Excluded(key) => {
                 iter.back_to_key(key);
-                while iter.has_next_back() && iter.back_curr_key() == key {
+                while iter.has_next_back() && iter.back_curr_key().unwrap() == key {
                     iter.next_back();
                 }
             }
@@ -343,28 +346,40 @@ impl BlockIter {
         iter
     }
 
-    pub fn next_curr_key(&self) -> Bytes {
-        debug_assert!(self.next_is_valid());
-        Bytes::copy_from_slice(&self.next_key)
+    pub fn next_curr_key(&self) -> Option<Bytes> {
+        if self.has_next(){
+            Some(Bytes::copy_from_slice(&self.next_key))
+        }else{
+            None
+        }
     }
 
-    pub fn next_curr_value(&self) -> Bytes {
-        debug_assert!(self.next_is_valid());
-        self.block.data().slice(self.next_value_range.clone())
+    pub fn next_curr_value(&self) -> Option<Bytes> {
+        if self.has_next(){
+            Some(self.block.data().slice(self.next_value_range.clone()))
+        }else{
+            None
+        }
     }
 
-    pub fn next_is_valid(&self) -> bool {
+    pub fn has_next(&self) -> bool {
         !self.next_key.is_empty() && self.next_idx as isize <= self.prev_idx
     }
 
-    pub fn back_curr_key(&self) -> Bytes {
-        debug_assert!(self.has_next_back());
-        Bytes::copy_from_slice(&self.prev_key)
+    pub fn back_curr_key(&self) -> Option<Bytes> {
+        if self.has_next_back(){
+            Some(Bytes::copy_from_slice(&self.prev_key))
+        }else{
+            None
+        }
     }
 
-    pub fn back_curr_value(&self) -> Bytes {
-        debug_assert!(self.has_next_back());
-        self.block.data().slice(self.prev_value_range.clone())
+    pub fn back_curr_value(&self) -> Option<Bytes> {
+        if self.has_next_back(){
+            Some(self.block.data().slice(self.prev_value_range.clone()))
+        }else{
+            None
+        }
     }
 
     pub fn has_next_back(&self) -> bool {
@@ -399,7 +414,7 @@ impl BlockIter {
                 while left < right {
                     let mid = left + (right - left) / 2;
                     self.seek_to_idx(mid);
-                    debug_assert!(self.next_is_valid());
+                    debug_assert!(self.has_next());
                     if self.next_key == key {
                         return;
                     }
@@ -563,31 +578,31 @@ impl BlockIter {
 }
 
 impl KvIterator for BlockIter{
-    fn next_key(&self) -> Bytes {
+    fn next_key(&self) -> Option<Bytes> {
         self.next_curr_key()
     }
 
-    fn next_value(&self) -> Bytes {
+    fn next_value(&self) -> Option<Bytes> {
         self.next_curr_value()
     }
 
-    fn find_next(&mut self) {
+    fn next_(&mut self) {
         self.next();    
     }
 
     fn has_next(&self) -> bool {
-        self.next_is_valid()
+        self.has_next()
     }
 
-    fn next_back_key(&self) -> Bytes {
+    fn next_back_key(&self) -> Option<Bytes> {
         self.back_curr_key()
     }
 
-    fn next_back_value(&self) -> Bytes {
-        self.back_curr_value()
+    fn next_back_value(&self) -> Option<Bytes> {
+      self.back_curr_value()
     }
 
-    fn find_next_back(&mut self) {
+    fn next_back_(&mut self) {
         self.next_back();
     }
 
@@ -600,11 +615,11 @@ impl Iterator for BlockIter {
     type Item = (Bytes, Bytes);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if !self.next_is_valid() {
+        if !self.has_next() {
             return None;
         }
-        let key = self.next_curr_key();
-        let value = self.next_curr_value();
+        let key = self.next_curr_key().unwrap();
+        let value = self.next_curr_value().unwrap();
         self.next();
         Some((key, value))
     }
@@ -615,8 +630,8 @@ impl DoubleEndedIterator for BlockIter {
         if !self.has_next_back() {
             return None;
         }
-        let key = self.back_curr_key();
-        let value = self.back_curr_value();
+        let key = self.back_curr_key().unwrap();
+        let value = self.back_curr_value().unwrap();
         self.next_back();
         Some((key, value))
     }

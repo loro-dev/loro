@@ -44,7 +44,7 @@ impl KvWrapper {
     }
 
     pub fn export(&self) -> Bytes {
-        let kv = self.kv.lock().unwrap();
+        let mut kv = self.kv.lock().unwrap();
         kv.export_all()
     }
 

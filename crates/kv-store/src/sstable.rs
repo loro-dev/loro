@@ -386,7 +386,7 @@ impl SsTable {
         let idx = self.find_block_idx(key);
         let block = self.read_block_cached(idx);
         let block_iter = BlockIter::new_seek_to_key(block, key);
-        block_iter.next_is_valid() && block_iter.next_curr_key() == key
+        block_iter.next_curr_key() == Some(Bytes::copy_from_slice(key))
     }
 
     #[allow(unused)]
@@ -397,10 +397,13 @@ impl SsTable {
         let idx = self.find_block_idx(key);
         let block = self.read_block_cached(idx);
         let block_iter = BlockIter::new_seek_to_key(block, key);
-        if block_iter.next_is_valid() && block_iter.next_curr_key() == key {
-            return Some(block_iter.next_curr_value());
-        }
-        None
+        block_iter.next_curr_key().and_then(|k| {
+            if k == key {
+                block_iter.next_curr_value()
+            } else {
+                None
+            }
+        })
     }
 
     pub fn valid_keys(&self) -> &FxHashSet<Bytes> {
@@ -446,22 +449,7 @@ impl<'a> Debug for SsTableIter<'a> {
 
 impl<'a> SsTableIter<'a> {
     fn new(table: &'a SsTable) -> Self {
-        let block = table.read_block_cached(0);
-        let block_iter = BlockIter::new_seek_to_first(block);
-        let back_block_idx = table.meta.len() - 1;
-        let back_block_iter = {
-            let back_block = table.read_block_cached(back_block_idx);
-            BlockIter::new_seek_to_first(back_block)
-        };
-
-        Self {
-            table,
-            next_block_iter: block_iter,
-            next_block_idx: 0,
-            back_block_iter,
-            back_block_idx: back_block_idx as isize,
-            next_first: false,
-        }
+        Self::new_scan(table, Bound::Unbounded, Bound::Unbounded)
     }
 
     pub fn new_scan(table: &'a SsTable, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Self {
@@ -549,28 +537,22 @@ impl<'a> SsTableIter<'a> {
             }
         };
         // the current iter is empty, but has next iter. we need to skip the empty iter
-        while ans.is_next_valid() && !ans.next_block_iter.next_is_valid() {
-            ans.next();
-        }
-        if !ans.next_first {
-            while ans.has_next_back() && !ans.back_block_iter.has_next_back() {
-                ans.next_back();
-            }
-        }
+        ans.skip_next_empty();
+        ans.skip_next_back_empty();
 
         if let Some(key) = excluded {
-            if ans.is_next_valid() && ans.next_key() == key {
+            if ans.has_next() && ans.next_key().unwrap() == key {
                 ans.next();
             }
         }
         if let Some(key) = end_excluded {
-            if ans.has_next_back() && ans.next_back_key() == key {
+            if ans.has_next_back() && ans.next_back_key().unwrap() == key {
                 ans.next_back();
             }
         }
 
         // need to skip empty block
-        if ans.is_next_valid() && !ans.next_block_iter.next_is_valid() {
+        if ans.has_next() && !ans.next_block_iter.has_next() {
             ans.next();
         }
 
@@ -580,19 +562,39 @@ impl<'a> SsTableIter<'a> {
         ans
     }
 
-    pub fn is_next_valid(&self) -> bool {
-        self.next_block_iter.next_is_valid() || (self.next_block_idx as isize) < self.back_block_idx
+    fn skip_next_empty(&mut self) {
+        while self.has_next() && !self.next_block_iter.has_next() {
+            self.next();
+        }
     }
 
-    pub fn next_key(&self) -> Bytes {
-        self.next_block_iter.next_curr_key()
+    fn skip_next_back_empty(&mut self) {
+        while self.has_next_back() && !self.next_first && !self.back_block_iter.has_next_back() {
+            self.next_back();
+        }
     }
 
-    pub fn next_value(&self) -> Bytes {
-        self.next_block_iter.next_curr_value()
+    fn has_next(&self) -> bool {
+        self.next_block_iter.has_next() || (self.next_block_idx as isize) < self.back_block_idx
     }
 
-    pub fn has_next_back(&self) -> bool {
+    pub fn next_key(&self) -> Option<Bytes> {
+        if self.has_next() {
+            self.next_block_iter.next_curr_key()
+        } else {
+            None
+        }
+    }
+
+    pub fn next_value(&self) -> Option<Bytes> {
+        if self.has_next() {
+            self.next_block_iter.next_curr_value()
+        } else {
+            None
+        }
+    }
+
+    fn has_next_back(&self) -> bool {
         if self.next_first {
             self.next_block_iter.has_next_back()
         } else {
@@ -601,7 +603,10 @@ impl<'a> SsTableIter<'a> {
         }
     }
 
-    pub fn next_back_key(&self) -> Bytes {
+    pub fn next_back_key(&self) -> Option<Bytes> {
+        if !self.has_next_back() {
+            return None;
+        }
         if self.next_first {
             self.next_block_iter.back_curr_key()
         } else {
@@ -609,7 +614,10 @@ impl<'a> SsTableIter<'a> {
         }
     }
 
-    pub fn next_back_value(&self) -> Bytes {
+    pub fn next_back_value(&self) -> Option<Bytes> {
+        if !self.has_next_back() {
+            return None;
+        }
         if self.next_first {
             self.next_block_iter.back_curr_value()
         } else {
@@ -619,7 +627,7 @@ impl<'a> SsTableIter<'a> {
 
     pub fn next(&mut self) {
         self.next_block_iter.next();
-        if !self.next_block_iter.next_is_valid() {
+        if !self.next_block_iter.has_next() {
             self.next_block_idx += 1;
             if self.next_block_idx > self.back_block_idx as usize {
                 return;
@@ -629,8 +637,8 @@ impl<'a> SsTableIter<'a> {
                 self.next_first = true;
             } else if self.next_block_idx < self.table.meta.len() {
                 let block = self.table.read_block_cached(self.next_block_idx);
-                // TODO: cache
                 self.next_block_iter = BlockIter::new_seek_to_first(block);
+                self.skip_next_empty();
             }
         }
     }
@@ -652,37 +660,38 @@ impl<'a> SsTableIter<'a> {
             } else if self.back_block_idx > 0 {
                 let block = self.table.read_block_cached(self.back_block_idx as usize);
                 self.back_block_iter = BlockIter::new_seek_to_first(block);
+                self.skip_next_back_empty();
             }
         }
     }
 }
 
 impl<'a> KvIterator for SsTableIter<'a> {
-    fn next_key(&self) -> Bytes {
+    fn next_key(&self) -> Option<Bytes> {
         self.next_key()
     }
 
-    fn next_value(&self) -> Bytes {
+    fn next_value(&self) -> Option<Bytes> {
         self.next_value()
     }
 
-    fn find_next(&mut self) {
+    fn next_(&mut self) {
         self.next()
     }
 
     fn has_next(&self) -> bool {
-        self.is_next_valid()
+        self.has_next()
     }
 
-    fn next_back_key(&self) -> Bytes {
+    fn next_back_key(&self) -> Option<Bytes> {
         self.next_back_key()
     }
 
-    fn next_back_value(&self) -> Bytes {
+    fn next_back_value(&self) -> Option<Bytes> {
         self.next_back_value()
     }
 
-    fn find_next_back(&mut self) {
+    fn next_back_(&mut self) {
         self.next_back()
     }
 
@@ -694,11 +703,11 @@ impl<'a> KvIterator for SsTableIter<'a> {
 impl<'a> Iterator for SsTableIter<'a> {
     type Item = (Bytes, Bytes);
     fn next(&mut self) -> Option<Self::Item> {
-        if !self.is_next_valid() {
+        if !self.has_next() {
             return None;
         }
-        let key = self.next_key();
-        let value = self.next_value();
+        let key = self.next_key().unwrap();
+        let value = self.next_value().unwrap();
         self.next();
         Some((key, value))
     }
@@ -709,8 +718,8 @@ impl<'a> DoubleEndedIterator for SsTableIter<'a> {
         if !self.has_next_back() {
             return None;
         }
-        let key = self.next_back_key();
-        let value = self.next_back_value();
+        let key = self.next_back_key().unwrap();
+        let value = self.next_back_value().unwrap();
         self.next_back();
         Some((key, value))
     }

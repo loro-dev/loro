@@ -117,8 +117,13 @@
 //! 2. For each block, read its metadata.
 //! 3. Verify the xxhash_32 checksum.
 //!
+//!
+//! Note: In this crate, **only** [MemStoreIterator] will filter empty value,
+//! and other iterators use empty value as deleted.
+//!
 pub mod block;
 pub mod iter;
 pub mod mem_store;
 pub mod sstable;
-pub use mem_store::MemKvStore;
+pub use iter::{KvIterator, MergeIterator};
+pub use mem_store::{MemKvStore, MemStoreIterator};

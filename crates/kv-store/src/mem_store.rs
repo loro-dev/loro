@@ -38,23 +38,23 @@ impl MemKvStore {
             return Some(v.clone());
         }
 
-        if let Some(table) = &self.ss_table {
+        self.ss_table.as_ref().and_then(|table| {
             if table.first_key > key || table.last_key < key {
                 return None;
             }
-
             // table.
             let idx = table.find_block_idx(key);
             let block = table.read_block_cached(idx);
             let block_iter = BlockIter::new_seek_to_key(block, key);
-            if block_iter.next_is_valid() && block_iter.next_curr_key() == key {
-                Some(block_iter.next_curr_value())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+
+            block_iter.next_curr_key().and_then(|k| {
+                if k == key {
+                    block_iter.next_curr_value()
+                } else {
+                    None
+                }
+            })
+        })
     }
 
     pub fn set(&mut self, key: &[u8], value: Bytes) {
@@ -86,6 +86,9 @@ impl MemKvStore {
         self.set(key, Bytes::new());
     }
 
+    /// Check if the key exists in the mem table or the sstable
+    ///
+    /// If the value is empty, it means the key is deleted
     pub fn contains_key(&self, key: &[u8]) -> bool {
         if self.mem_table.contains_key(key) {
             return !self.mem_table.get(key).unwrap().is_empty();
@@ -159,7 +162,6 @@ impl MemKvStore {
             builder.add(k, v);
         }
         builder.finish_block();
-
         if builder.is_empty() {
             return Bytes::new();
         }
@@ -167,7 +169,6 @@ impl MemKvStore {
         let ss = builder.build();
         let ans = ss.export_all();
         let _ = std::mem::replace(&mut self.ss_table, Some(ss));
-
         ans
     }
 
@@ -183,17 +184,21 @@ impl MemKvStore {
 }
 
 #[derive(Debug)]
-struct MemStoreIterator<'a, T> {
+pub struct MemStoreIterator<T, S> {
     mem: T,
-    sst: SsTableIter<'a>,
+    sst: S,
     current_mem: Option<(Bytes, Bytes)>,
     current_sstable: Option<(Bytes, Bytes)>,
     back_mem: Option<(Bytes, Bytes)>,
     back_sstable: Option<(Bytes, Bytes)>,
 }
 
-impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> MemStoreIterator<'a, T> {
-    fn new(mut mem: T, sst: SsTableIter<'a>) -> Self {
+impl<T, S> MemStoreIterator<T, S>
+where
+    T: DoubleEndedIterator<Item = (Bytes, Bytes)>,
+    S: DoubleEndedIterator<Item = (Bytes, Bytes)>,
+{
+    fn new(mut mem: T, sst: S) -> Self {
         let current_mem = mem.next();
         let back_mem = mem.next_back();
         Self {
@@ -207,12 +212,17 @@ impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> MemStoreIterator<'a, T> 
     }
 }
 
-impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> Iterator for MemStoreIterator<'a, T> {
+impl<T, S> Iterator for MemStoreIterator<T, S>
+where
+    T: DoubleEndedIterator<Item = (Bytes, Bytes)>,
+    S: DoubleEndedIterator<Item = (Bytes, Bytes)>,
+{
     type Item = (Bytes, Bytes);
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_sstable.is_none() && self.sst.is_next_valid() {
-            self.current_sstable = Some((self.sst.next_key(), self.sst.next_value()));
-            self.sst.next();
+        if self.current_sstable.is_none() {
+            if let Some((k, v)) = self.sst.next() {
+                self.current_sstable = Some((k, v));
+            }
         }
 
         if self.current_mem.is_none() && self.back_mem.is_some() {
@@ -250,13 +260,16 @@ impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> Iterator for MemStoreIte
     }
 }
 
-impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> DoubleEndedIterator
-    for MemStoreIterator<'a, T>
+impl<T, S> DoubleEndedIterator for MemStoreIterator<T, S>
+where
+    T: DoubleEndedIterator<Item = (Bytes, Bytes)>,
+    S: DoubleEndedIterator<Item = (Bytes, Bytes)>,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.back_sstable.is_none() && self.sst.has_next_back() {
-            self.back_sstable = Some((self.sst.next_back_key(), self.sst.next_back_value()));
-            self.sst.next_back();
+        if self.back_sstable.is_none() {
+            if let Some((k, v)) = self.sst.next_back() {
+                self.back_sstable = Some((k, v));
+            }
         }
 
         if self.back_mem.is_none() && self.current_mem.is_some() {
