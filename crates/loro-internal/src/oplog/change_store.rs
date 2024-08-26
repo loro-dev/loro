@@ -440,7 +440,11 @@ mod mut_external_kv {
             let vv_bytes = kv_store.get(VV_KEY).unwrap_or_default();
             let vv = VersionVector::decode(&vv_bytes).unwrap();
             let start_vv_bytes = kv_store.get(START_VV_KEY).unwrap_or_default();
-            let start_vv = VersionVector::decode(&start_vv_bytes).unwrap();
+            let start_vv = if start_vv_bytes.is_empty() {
+                Default::default()
+            } else {
+                VersionVector::decode(&start_vv_bytes).unwrap()
+            };
 
             #[cfg(test)]
             {
@@ -456,7 +460,11 @@ mod mut_external_kv {
             let frontiers_bytes = kv_store.get(FRONTIERS_KEY).unwrap_or_default();
             let frontiers = Frontiers::decode(&frontiers_bytes).unwrap();
             let start_frontiers = kv_store.get(START_FRONTIERS_KEY).unwrap_or_default();
-            let start_frontiers = Frontiers::decode(&start_frontiers).unwrap();
+            let start_frontiers = if start_frontiers.is_empty() {
+                Default::default()
+            } else {
+                Frontiers::decode(&start_frontiers).unwrap()
+            };
 
             let mut max_lamport = None;
             let mut max_timestamp = 0;

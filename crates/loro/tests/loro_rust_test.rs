@@ -1084,3 +1084,19 @@ fn test_gc_import_pending_updates_that_is_outdated() {
     let err = new_doc.import(&bytes_a).unwrap_err();
     assert_eq!(err, LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
 }
+
+#[test]
+fn test_calling_exporting_snapshot_on_gc_doc() {
+    let doc = LoroDoc::new();
+    apply_random_ops(&doc, 123, 11);
+    let bytes = doc.export(loro::ExportMode::GcSnapshot(
+        &ID::new(doc.peer_id(), 5).into(),
+    ));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes).unwrap();
+    let snapshot = new_doc.export(loro::ExportMode::Snapshot);
+    let doc_c = LoroDoc::new();
+    doc_c.import(&snapshot).unwrap();
+    assert_eq!(doc_c.get_deep_value(), new_doc.get_deep_value());
+    assert_eq!(new_doc.trimmed_vv(), doc_c.trimmed_vv());
+}

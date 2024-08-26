@@ -618,11 +618,15 @@ impl OpLog {
     }
 
     pub fn trimmed_vv(&self) -> &ImVersionVector {
-        self.dag.start_vv()
+        self.dag.trimmed_vv()
     }
 
     pub fn trimmed_frontiers(&self) -> &Frontiers {
-        self.dag.start_frontiers()
+        self.dag.trimmed_frontiers()
+    }
+
+    pub fn is_trimmed(&self) -> bool {
+        !self.dag.trimmed_vv().is_empty()
     }
 }
 

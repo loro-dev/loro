@@ -112,11 +112,11 @@ impl AppDag {
         &self.vv
     }
 
-    pub fn start_vv(&self) -> &ImVersionVector {
+    pub fn trimmed_vv(&self) -> &ImVersionVector {
         &self.trimmed_vv
     }
 
-    pub fn start_frontiers(&self) -> &Frontiers {
+    pub fn trimmed_frontiers(&self) -> &Frontiers {
         &self.trimmed_frontiers
     }
 

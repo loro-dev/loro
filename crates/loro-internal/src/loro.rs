@@ -543,17 +543,6 @@ impl LoroDoc {
                     origin,
                 )?;
             }
-            EncodeMode::GcSnapshot => {
-                if self.can_reset_with_snapshot() {
-                    tracing::info!("Init by fast snapshot {}", self.peer_id());
-                    decode_snapshot(self, parsed.mode, parsed.body)?;
-                } else {
-                    self.update_oplog_and_apply_delta_to_state_if_needed(
-                        |oplog| oplog.decode(parsed),
-                        origin,
-                    )?;
-                }
-            }
             EncodeMode::Auto => {
                 unreachable!()
             }
@@ -1478,6 +1467,10 @@ impl LoroDoc {
 
     pub fn trimmed_frontiers(&self) -> Frontiers {
         self.oplog().lock().unwrap().trimmed_frontiers().clone()
+    }
+
+    pub fn is_trimmed(&self) -> bool {
+        !self.oplog().lock().unwrap().trimmed_vv().is_empty()
     }
 }
 

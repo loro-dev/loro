@@ -87,10 +87,18 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
     let Snapshot {
         oplog_bytes,
         state_bytes,
-        gc_bytes: _,
+        gc_bytes,
     } = _decode_snapshot_bytes(bytes)?;
     oplog.decode_change_store(oplog_bytes)?;
-    state.store.decode(state_bytes)?;
+    if gc_bytes.is_empty() {
+        state.store.decode(state_bytes)?;
+    } else {
+        state.store.decode_gc(
+            gc_bytes,
+            state_bytes,
+            oplog.dag().trimmed_frontiers().clone(),
+        )?;
+    }
     // FIXME: we may need to extract the unknown containers here?
     // Or we should lazy load it when the time comes?
     state.init_with_states_and_version(oplog.frontiers().clone(), &oplog, vec![], false);
@@ -116,11 +124,19 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
 
     let oplog_bytes = oplog.encode_change_store();
     let state_bytes = state.store.encode();
+
+    if oplog.is_trimmed() {
+        assert_eq!(
+            oplog.trimmed_frontiers(),
+            state.store.trimmed_frontiers().unwrap()
+        );
+    }
+
     _encode_snapshot(
         Snapshot {
             oplog_bytes,
             state_bytes,
-            gc_bytes: Bytes::new(),
+            gc_bytes: state.store.encode_gc(),
         },
         w,
     );

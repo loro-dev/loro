@@ -83,9 +83,11 @@ pub(crate) fn import_gc_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> 
     } = _decode_snapshot_bytes(bytes)?;
     oplog.decode_change_store(oplog_bytes)?;
     if !gc_bytes.is_empty() {
-        state
-            .store
-            .decode_gc(gc_bytes, state_bytes, oplog.dag().start_frontiers().clone())?;
+        state.store.decode_gc(
+            gc_bytes,
+            state_bytes,
+            oplog.dag().trimmed_frontiers().clone(),
+        )?;
     } else {
         state.store.decode(state_bytes)?;
     }

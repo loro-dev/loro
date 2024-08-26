@@ -71,7 +71,7 @@ impl std::fmt::Debug for ContainerStore {
 }
 
 struct GcStore {
-    start_frontiers: Frontiers,
+    trimmed_frontiers: Frontiers,
     store: InnerStore,
 }
 
@@ -118,6 +118,18 @@ impl ContainerStore {
         self.store.encode()
     }
 
+    pub fn encode_gc(&mut self) -> Bytes {
+        if let Some(gc) = self.gc_store.as_mut() {
+            gc.store.encode()
+        } else {
+            Bytes::new()
+        }
+    }
+
+    pub fn trimmed_frontiers(&self) -> Option<&Frontiers> {
+        self.gc_store.as_ref().map(|x| &x.trimmed_frontiers)
+    }
+
     pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<()> {
         self.store.decode(bytes)
     }
@@ -132,10 +144,10 @@ impl ContainerStore {
         self.store.decode_twice(gc_bytes.clone(), state_bytes)?;
         if !start_frontiers.is_empty() {
             self.gc_store = Some(Box::new(GcStore {
-                start_frontiers,
+                trimmed_frontiers: start_frontiers,
                 store: InnerStore::new(self.arena.clone()),
             }));
-            self.gc_store.as_mut().unwrap().store.decode(gc_bytes);
+            self.gc_store.as_mut().unwrap().store.decode(gc_bytes)?;
         }
         Ok(())
     }
