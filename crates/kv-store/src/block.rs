@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::{iter::KvIterator, sstable::{get_common_prefix_len_and_strip, SIZE_OF_U32, XXH_SEED}};
 
@@ -240,9 +240,9 @@ impl BlockBuilder {
 #[derive(Clone)]
 pub struct BlockIter {
     block: Arc<Block>,
-    next_key: Vec<u8>,
+    next_key: Bytes,
     next_value_range: Range<usize>,
-    prev_key: Vec<u8>,
+    prev_key: Bytes,
     prev_value_range: Range<usize>,
     next_idx: usize,
     prev_idx: isize,
@@ -253,9 +253,9 @@ impl Debug for BlockIter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BlockIter")
             .field("is_large", &self.block.is_large())
-            .field("next_key", &Bytes::copy_from_slice(&self.next_key))
+            .field("next_key", &self.next_key)
             .field("next_value_range", &self.next_value_range)
-            .field("prev_key", &Bytes::copy_from_slice(&self.prev_key))
+            .field("prev_key", &self.prev_key)
             .field("prev_value_range", &self.prev_value_range)
             .field("next_idx", &self.next_idx)
             .field("prev_idx", &self.prev_idx)
@@ -270,9 +270,9 @@ impl BlockIter {
         let mut iter = Self {
             first_key: block.first_key(),
             block,
-            next_key: Vec::new(),
+            next_key: Bytes::new(),
             next_value_range: 0..0,
-            prev_key: Vec::new(),
+            prev_key: Bytes::new(),
             prev_value_range: 0..0,
             next_idx: 0,
             prev_idx,
@@ -287,9 +287,9 @@ impl BlockIter {
         let mut iter = Self {
             first_key: block.first_key(),
             block,
-            next_key: Vec::new(),
+            next_key: Bytes::new(),
             next_value_range: 0..0,
-            prev_key: Vec::new(),
+            prev_key: Bytes::new(),
             prev_value_range: 0..0,
             next_idx: 0,
             prev_idx,
@@ -304,9 +304,9 @@ impl BlockIter {
         let mut iter = Self {
             first_key: block.first_key(),
             block,
-            next_key: Vec::new(),
+            next_key: Bytes::new(),
             next_value_range: 0..0,
-            prev_key: Vec::new(),
+            prev_key: Bytes::new(),
             prev_value_range: 0..0,
             next_idx: 0,
             prev_idx,
@@ -400,10 +400,10 @@ impl BlockIter {
                     let mid = left + (right - left) / 2;
                     self.seek_to_idx(mid);
                     debug_assert!(self.next_is_valid());
-                    if self.next_key.as_slice() == key {
+                    if self.next_key == key {
                         return;
                     }
-                    if self.next_key.as_slice() < key {
+                    if self.next_key < key {
                         left = mid + 1;
                     } else {
                         right = mid;
@@ -435,7 +435,7 @@ impl BlockIter {
                         return;
                     }
                     debug_assert!(self.has_next_back());
-                    if self.prev_key.as_slice() > key {
+                    if self.prev_key > key {
                         right = mid;
                     } else {
                         left = mid + 1;
@@ -479,7 +479,7 @@ impl BlockIter {
                     self.next_idx = idx;
                     return;
                 }
-                self.next_key = block.key.to_vec();
+                self.next_key = block.key.clone();
                 self.next_value_range = 0..block.value_bytes.len();
                 self.next_idx = idx;
             }
@@ -512,7 +512,7 @@ impl BlockIter {
                     self.prev_idx = idx;
                     return;
                 }
-                self.prev_key = block.key.to_vec();
+                self.prev_key = block.key.clone();
                 self.prev_value_range = 0..block.value_bytes.len();
                 self.prev_idx = idx;
             }
@@ -525,10 +525,10 @@ impl BlockIter {
                 let mut rest = &block.data[offset..];
                 let common_prefix_len = rest.get_u8() as usize;
                 let key_suffix_len = rest.get_u16() as usize;
-                self.next_key.clear();
-                self.next_key
-                    .extend_from_slice(&self.first_key[..common_prefix_len]);
-                self.next_key.extend_from_slice(&rest[..key_suffix_len]);
+                let mut next_key = BytesMut::new();
+                next_key.put(&self.first_key[..common_prefix_len]);
+                next_key.put(&rest[..key_suffix_len]);
+                self.next_key = next_key.freeze();
                 rest.advance(key_suffix_len);
                 let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len;
                 self.next_value_range = value_start..offset_end;
@@ -546,10 +546,10 @@ impl BlockIter {
                 let mut rest = &block.data[offset..];
                 let common_prefix_len = rest.get_u8() as usize;
                 let key_suffix_len = rest.get_u16() as usize;
-                self.prev_key.clear();
-                self.prev_key
-                    .extend_from_slice(&self.first_key[..common_prefix_len]);
-                self.prev_key.extend_from_slice(&rest[..key_suffix_len]);
+                let mut prev_key = BytesMut::new();
+                prev_key.put(&self.first_key[..common_prefix_len]);
+                prev_key.put(&rest[..key_suffix_len]);
+                self.prev_key = prev_key.freeze();
                 rest.advance(key_suffix_len);
                 let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len;
                 self.prev_value_range = value_start..offset_end;
