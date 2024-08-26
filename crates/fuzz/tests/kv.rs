@@ -44,6 +44,17 @@ fn add_flush_remove() {
 }
 
 #[test]
+fn export_and_import() {
+    test_mem_kv_fuzzer(&mut [
+        Add {
+            key: vec![],
+            value: vec![],
+        },
+        ExportAndImport,
+    ])
+}
+
+#[test]
 fn add_flush_add_scan() {
     test_mem_kv_fuzzer(&mut [
         Add {

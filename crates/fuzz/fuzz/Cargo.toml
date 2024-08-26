@@ -59,3 +59,9 @@ name = "kv_store"
 path = "fuzz_targets/kv_store.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "random_import"
+path = "fuzz_targets/random_import.rs"
+test = false
+doc = false

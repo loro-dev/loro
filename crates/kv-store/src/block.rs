@@ -5,8 +5,9 @@ use std::{
 };
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use loro_common::LoroResult;
 
-use crate::{iter::KvIterator, sstable::{get_common_prefix_len_and_strip, SIZE_OF_U32, XXH_SEED}};
+use crate::{compress::{compress, decompress, CompressionType}, iter::KvIterator, sstable::{get_common_prefix_len_and_strip,  SIZE_OF_U32, XXH_SEED}};
 
 use super::sstable::{ SIZE_OF_U16, SIZE_OF_U8};
 
@@ -26,19 +27,30 @@ impl LargeValueBlock{
     /// ││ bytes │      u32        │
     /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘│
     /// └──────────────────────────┘
-    fn encode(&self)->Bytes{
+    fn encode(&self, compression_type: CompressionType)->Bytes{
         let mut buf = Vec::with_capacity(self.value_bytes.len() + SIZE_OF_U32);
         buf.put_slice(&self.value_bytes);
-        let checksum = xxhash_rust::xxh32::xxh32(&buf, XXH_SEED);
-        buf.put_u32(checksum);
+        if !compression_type.is_none(){
+            let compressed_data = compress(&buf, compression_type);
+            let checksum = xxhash_rust::xxh32::xxh32(&compressed_data, XXH_SEED);
+            buf.put_u32(checksum);
+        }else{
+            let checksum = xxhash_rust::xxh32::xxh32(&buf, XXH_SEED);
+            buf.put_u32(checksum);
+        }
         buf.into()
     }
 
-    fn decode(bytes:Bytes, key: Bytes)->Self{
-        LargeValueBlock{
-            value_bytes: bytes.slice(..bytes.len() - SIZE_OF_U32),
+    fn decode(bytes:Bytes, key: Bytes, compression_type: CompressionType)->LoroResult<Self>{
+        let value_bytes = if compression_type.is_none(){
+            bytes.slice(..bytes.len() - SIZE_OF_U32)
+        }else{
+            decompress(bytes.slice(..bytes.len() - SIZE_OF_U32), compression_type)?
+        };
+        Ok(LargeValueBlock{
+            value_bytes,
             key,
-        }
+        })
     }
 }
 
@@ -59,32 +71,40 @@ impl NormalBlock {
     /// └────────────────────────────────────────────────────────────────────────────────────────┘
     /// 
     /// check sum will be calculated by crc32 later
-    fn encode(&self) -> Bytes {
+    fn encode(&self, compression_type: CompressionType) -> Bytes {
         let mut buf = self.data.to_vec();
         for offset in &self.offsets {
             buf.put_u16(*offset);
         }
         buf.put_u16(self.offsets.len() as u16);
 
-        let mut compressed_data = lz4_flex::compress_prepend_size(&buf);
+        let mut compressed_data = if compression_type.is_none(){
+            buf
+        }else{
+            compress(&buf, compression_type)
+        };
 
         let checksum = xxhash_rust::xxh32::xxh32(&compressed_data, XXH_SEED);
         compressed_data.put_u32(checksum);
         compressed_data.into()
     }
 
-    fn decode(raw_block_and_check: Bytes, first_key: Bytes)-> NormalBlock{
+    fn decode(raw_block_and_check: Bytes, first_key: Bytes, compression_type: CompressionType)-> LoroResult<NormalBlock>{
         let data = raw_block_and_check.slice(..raw_block_and_check.len() - SIZE_OF_U32);
-        let data = lz4_flex::decompress_size_prepended(&data).unwrap();
+        let data = if compression_type.is_none(){   
+            data
+        }else{
+            decompress(data, compression_type)?
+        };
         let offsets_len = (&data[data.len()-SIZE_OF_U16..]).get_u16() as usize;
         let data_end = data.len() - SIZE_OF_U16 * (offsets_len + 1);
         let offsets = &data[data_end..data.len()-SIZE_OF_U16];
         let offsets = offsets.chunks(SIZE_OF_U16).map(|mut chunk| chunk.get_u16()).collect();
-        NormalBlock{
+        Ok(NormalBlock{
             data: Bytes::copy_from_slice(&data[..data_end]),
             offsets,
             first_key,
-        }
+        })
     }
 }
 
@@ -113,18 +133,19 @@ impl Block{
         }
     }
 
-    pub fn encode(&self)->Bytes{
+    pub fn encode(&self, compression_type: CompressionType)->Bytes{
         match self{
-            Block::Normal(block)=>block.encode(),
-            Block::Large(block)=>block.encode(),
+            Block::Normal(block)=>block.encode(compression_type),
+            Block::Large(block)=>block.encode(compression_type),
         }
     }
 
-    pub fn decode(raw_block_and_check: Bytes, is_large: bool, key: Bytes)->Self{
+    pub fn decode(raw_block_and_check: Bytes, is_large: bool, key: Bytes, compression_type: CompressionType)->Self{
+        // we have checked the checksum, so the block should be valid when decompressing
         if is_large{
-            return Block::Large(LargeValueBlock::decode(raw_block_and_check, key));
+            return LargeValueBlock::decode(raw_block_and_check, key, compression_type).map(Block::Large).unwrap()
         }
-        Block::Normal(NormalBlock::decode(raw_block_and_check, key))
+        NormalBlock::decode(raw_block_and_check, key, compression_type).map(Block::Normal).unwrap()
     }
 
     pub fn len(&self)->usize{

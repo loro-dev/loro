@@ -1,4 +1,5 @@
 use crate::block::BlockIter;
+use crate::compress::CompressionType;
 use crate::sstable::{SsTable, SsTableBuilder, SsTableIter};
 use bytes::Bytes;
 use fxhash::FxHashSet;
@@ -13,20 +14,22 @@ pub struct MemKvStore {
     mem_table: BTreeMap<Bytes, Bytes>,
     ss_table: Option<SsTable>,
     block_size: usize,
+    compression_type: CompressionType,
 }
 
 impl Default for MemKvStore {
     fn default() -> Self {
-        Self::new(DEFAULT_BLOCK_SIZE)
+        Self::new(DEFAULT_BLOCK_SIZE, CompressionType::LZ4)
     }
 }
 
 impl MemKvStore {
-    pub fn new(block_size: usize) -> Self {
+    pub fn new(block_size: usize, compression_type: CompressionType) -> Self {
         Self {
             mem_table: BTreeMap::new(),
             ss_table: None,
             block_size,
+            compression_type,
         }
     }
 
@@ -157,7 +160,7 @@ impl MemKvStore {
     }
 
     pub fn export_all(&mut self) -> Bytes {
-        let mut builder = SsTableBuilder::new(self.block_size);
+        let mut builder = SsTableBuilder::new(self.block_size, self.compression_type);
         for (k, v) in self.scan(Bound::Unbounded, Bound::Unbounded) {
             builder.add(k, v);
         }

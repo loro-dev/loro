@@ -212,7 +212,14 @@ pub fn test_mem_kv_fuzzer(actions: &mut [Action]) {
 
 pub fn test_random_bytes_import(bytes: &[u8]) {
     let mut kv = MemKvStore::default();
-    kv.import_all(Bytes::from(bytes.to_vec()));
+    match kv.import_all(Bytes::from(bytes.to_vec())) {
+        Ok(_) => {
+            // do nothing
+        }
+        Err(_) => {
+            // do nothing
+        }
+    }
 }
 
 pub fn minify_simple<T, F>(f: F, actions: Vec<T>)

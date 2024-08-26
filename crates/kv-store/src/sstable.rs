@@ -8,7 +8,9 @@ use once_cell::sync::OnceCell;
 use super::block::BlockIter;
 use crate::{
     block::{Block, BlockBuilder},
+    compress::CompressionType,
     iter::KvIterator,
+    utils::{get_u16, get_u32, get_u8},
 };
 
 pub(crate) const XXH_SEED: u32 = u32::from_le_bytes(*b"LORO");
@@ -20,17 +22,18 @@ pub const SIZE_OF_U32: usize = std::mem::size_of::<u32>();
 // TODO: cache size
 const DEFAULT_CACHE_SIZE: usize = 1 << 20;
 
-/// ┌──────────────────────────────────────────────────────────────────────────────────────┐
-/// │ Block Meta                                                                           │
-/// │┌ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ┐ │
-/// │  block offset │ first key len   first key   is large │ last key len     last key     │
-/// ││     u32      │      u16      │   bytes   │    u8    │  u16(option)  │bytes(option)│ │
-/// │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
-/// └──────────────────────────────────────────────────────────────────────────────────────┘
+/// ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+/// │ Block Meta                                                                                   │
+/// │┌ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ┐ │
+/// │  block offset │ first key len   first key   large & compress │ last key len     last key     │
+/// ││     u32      │      u16      │   bytes   │        u8        │  u16(option)  │bytes(option)│ │
+/// │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
+/// └──────────────────────────────────────────────────────────────────────────────────────────────┘
 #[derive(Debug, Clone)]
 pub(crate) struct BlockMeta {
     offset: usize,
     is_large: bool,
+    compression_type: CompressionType,
     first_key: Bytes,
     last_key: Option<Bytes>,
 }
@@ -73,7 +76,8 @@ impl BlockMeta {
             buf.put_u32(m.offset as u32);
             buf.put_u16(m.first_key.len() as u16);
             buf.put_slice(&m.first_key);
-            buf.put_u8(m.is_large as u8);
+            let large_and_compress = (m.is_large as u8) << 7 | m.compression_type as u8;
+            buf.put_u8(large_and_compress);
             if m.is_large {
                 continue;
             }
@@ -84,34 +88,51 @@ impl BlockMeta {
         buf.put_u32(checksum);
     }
 
-    fn decode_meta(mut buf: &[u8]) -> LoroResult<Vec<BlockMeta>> {
-        let num = buf.get_u32() as usize;
-        let mut ans = Vec::with_capacity(num);
-        let checksum = xxhash_rust::xxh32::xxh32(&buf[..buf.remaining() - SIZE_OF_U32], XXH_SEED);
+    fn decode_meta(data: &[u8]) -> LoroResult<Vec<BlockMeta>> {
+        let (num, mut data) = get_u32(data)?;
+        if num > 10_000_000 {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+        let mut ans = Vec::with_capacity(num as usize);
+        if data.len() < SIZE_OF_U32 {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+        let checksum = xxhash_rust::xxh32::xxh32(&data[..data.len() - SIZE_OF_U32], XXH_SEED);
         for _ in 0..num {
-            let offset = buf.get_u32() as usize;
-            let first_key_len = buf.get_u16() as usize;
-            let first_key = buf.copy_to_bytes(first_key_len);
-            let is_large = buf.get_u8() == 1;
+            let (offset, buf) = get_u32(data)?;
+            let (first_key_len, mut buf) = get_u16(buf)?;
+            if buf.len() < first_key_len as usize {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+            let first_key = buf.copy_to_bytes(first_key_len as usize);
+            let (is_large_and_compression_type, buf) = get_u8(buf)?;
+            let is_large = is_large_and_compression_type & 0b1000_0000 != 0;
+            let compression_type = is_large_and_compression_type & 0b0111_1111;
             if is_large {
                 ans.push(BlockMeta {
-                    offset,
+                    offset: offset as usize,
                     is_large,
+                    compression_type: compression_type.try_into()?,
                     first_key,
                     last_key: None,
                 });
                 continue;
             }
-            let last_key_len = buf.get_u16() as usize;
-            let last_key = buf.copy_to_bytes(last_key_len);
+            let (last_key_len, mut buf) = get_u16(buf)?;
+            if buf.len() < last_key_len as usize {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+            let last_key = buf.copy_to_bytes(last_key_len as usize);
             ans.push(BlockMeta {
-                offset,
+                offset: offset as usize,
                 is_large,
+                compression_type: compression_type.try_into()?,
                 first_key,
                 last_key: Some(last_key),
             });
+            data = buf;
         }
-        let checksum_read = buf.get_u32();
+        let (checksum_read, _) = get_u32(data)?;
         if checksum != checksum_read {
             return Err(LoroError::DecodeChecksumMismatchError);
         }
@@ -126,11 +147,12 @@ pub(crate) struct SsTableBuilder {
     data: Vec<u8>,
     meta: Vec<BlockMeta>,
     block_size: usize,
+    compression_type: CompressionType,
     // TODO: bloom filter
 }
 
 impl SsTableBuilder {
-    pub fn new(block_size: usize) -> Self {
+    pub fn new(block_size: usize, compression_type: CompressionType) -> Self {
         let mut data = Vec::with_capacity(5);
         data.put_u32(u32::from_be_bytes(MAGIC_NUMBER));
         data.put_u8(CURRENT_SCHEMA_VERSION);
@@ -141,6 +163,7 @@ impl SsTableBuilder {
             data,
             meta: Vec::new(),
             block_size,
+            compression_type,
         }
     }
 
@@ -171,11 +194,12 @@ impl SsTableBuilder {
         let builder =
             std::mem::replace(&mut self.block_builder, BlockBuilder::new(self.block_size));
         let block = builder.build();
-        let encoded_bytes = block.encode();
+        let encoded_bytes = block.encode(self.compression_type);
         let is_large = block.is_large();
         let meta = BlockMeta {
             offset: self.data.len(),
             is_large,
+            compression_type: self.compression_type,
             first_key: std::mem::take(&mut self.first_key),
             last_key: if is_large {
                 None
@@ -274,6 +298,9 @@ impl SsTable {
     ///    - "Invalid magic number"
     ///    - "Invalid schema version"
     pub fn import_all(bytes: Bytes) -> LoroResult<Self> {
+        if bytes.len() < 9 {
+            return Err(LoroError::DecodeError("Invalid sstable bytes".into()));
+        }
         let magic_number = u32::from_be_bytes((&bytes[..SIZE_OF_U32]).try_into().unwrap());
         if magic_number != u32::from_be_bytes(MAGIC_NUMBER) {
             return Err(LoroError::DecodeError("Invalid magic number".into()));
@@ -294,6 +321,9 @@ impl SsTable {
         }
         let data_len = bytes.len();
         let meta_offset = (&bytes[data_len - SIZE_OF_U32..]).get_u32() as usize;
+        if meta_offset >= data_len - 4 {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
         let raw_meta = &bytes[meta_offset..data_len - SIZE_OF_U32];
         let meta = BlockMeta::decode_meta(raw_meta)?;
         Self::check_block_checksum(&meta, &bytes, meta_offset)?;
@@ -329,6 +359,9 @@ impl SsTable {
         for i in 0..meta.len() {
             let offset = meta[i].offset;
             let offset_end = meta.get(i + 1).map_or(meta_offset, |m| m.offset);
+            if offset_end > bytes.len() {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
             let raw_block_and_check = bytes.slice(offset..offset_end);
             let checksum = raw_block_and_check
                 .slice(raw_block_and_check.len() - SIZE_OF_U32..)
@@ -368,6 +401,7 @@ impl SsTable {
             raw_block_and_check,
             self.meta[block_idx].is_large,
             self.meta[block_idx].first_key.clone(),
+            self.meta[block_idx].compression_type,
         ))
     }
 
@@ -901,7 +935,7 @@ mod test {
 
     #[test]
     fn sstable_iter() {
-        let mut builder = SsTableBuilder::new(10);
+        let mut builder = SsTableBuilder::new(10, CompressionType::LZ4);
         builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
         builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
         builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));
@@ -922,7 +956,7 @@ mod test {
 
     #[test]
     fn sstable_iter_with_delete() {
-        let mut builder = SsTableBuilder::new(10);
+        let mut builder = SsTableBuilder::new(10, CompressionType::LZ4);
         builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
         builder.add(Bytes::from_static(b"key4"), Bytes::new());
         builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
@@ -951,7 +985,7 @@ mod test {
 
     #[test]
     fn sstable_scan() {
-        let mut builder = SsTableBuilder::new(10);
+        let mut builder = SsTableBuilder::new(10, CompressionType::LZ4);
         builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
         builder.add(Bytes::from_static(b"key4"), Bytes::new());
         builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));

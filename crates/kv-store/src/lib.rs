@@ -99,17 +99,18 @@
 //!
 //! Each Block Meta entry is encoded as follows:
 //!
-//! ┌──────────────────────────────────────────────────────────────────────────────────────┐
-//! │ Block Meta                                                                           │
-//! │┌ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ┐ │
-//! │  block offset │ first key len   first key   is large │ last key len     last key     │
-//! ││     u32      │      u16      │   bytes   │    u8    │  u16(option)  │bytes(option)│ │
-//! │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
-//! └──────────────────────────────────────────────────────────────────────────────────────┘
+//! ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+//! │ Block Meta                                                                                   │
+//! │┌ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ┐ │
+//! │  block offset │ first key len   first key   large & compress │ last key len     last key     │
+//! ││     u32      │      u16      │   bytes   │        u8        │  u16(option)  │bytes(option)│ │
+//! │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
+//! └──────────────────────────────────────────────────────────────────────────────────────────────┘
 //!
 //! Encoding:
 //! 1. Write the number of blocks.
-//! 2. For each block, write its metadata (offset, first key, is_large flag, and last key if not large).
+//! 2. For each block, write its metadata (offset, first key, is_large and compression_type flag, and last key if not large).
+//!     - is_large and compression_type flag: the first bit for is_large, the next 7 bits for compression_type.
 //! 3. Calculate and append xxhash_32 checksum.
 //!
 //! Decoding:
@@ -122,8 +123,10 @@
 //! and other iterators use empty value as deleted.
 //!
 pub mod block;
+pub mod compress;
 pub mod iter;
 pub mod mem_store;
 pub mod sstable;
+mod utils;
 pub use iter::{KvIterator, MergeIterator};
 pub use mem_store::{MemKvStore, MemStoreIterator};
