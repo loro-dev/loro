@@ -82,12 +82,12 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, mut op_id: IdFull, mut pos: usize, mut content: RichtextChunk) {
-        trace!(
-            "TrackerInsert op_id = {:#?}, pos = {:#?}, content = {:#?}",
-            op_id,
-            &pos,
-            &content
-        );
+        // trace!(
+        //     "TrackerInsert op_id = {:#?}, pos = {:#?}, content = {:#?}",
+        //     op_id,
+        //     &pos,
+        //     &content
+        // );
         // tracing::span!(tracing::Level::INFO, "TrackerInsert");
         if let ControlFlow::Break(_) =
             self.skip_applied(op_id.id(), content.len(), |applied_counter_end| {

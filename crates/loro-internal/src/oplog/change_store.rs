@@ -123,6 +123,7 @@ impl ChangeStore {
         self.external_kv.lock().unwrap().export_all()
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     pub(super) fn export_from(
         &self,
         start_vv: &VersionVector,
@@ -144,8 +145,7 @@ impl ChangeStore {
 
                 assert_ne!(start, end);
                 let ch = c.slice(start, end);
-                new_store.insert_change(ch, false);
-                for dep in c.deps.iter() {
+                for dep in ch.deps.iter() {
                     if start_vv.includes_id(*dep) {
                         match start_frontiers.entry(dep.peer) {
                             std::collections::hash_map::Entry::Occupied(v) => {
@@ -159,14 +159,19 @@ impl ChangeStore {
                         }
                     }
                 }
+                new_store.insert_change(ch, false);
             }
         }
 
-        let start_frontiers = Frontiers::from_iter(
-            start_frontiers
-                .into_iter()
-                .map(|(peer, counter)| ID::new(peer, counter)),
-        );
+        let start_frontiers = if latest_vv == start_vv {
+            latest_frontiers.clone()
+        } else {
+            Frontiers::from_iter(
+                start_frontiers
+                    .into_iter()
+                    .map(|(peer, counter)| ID::new(peer, counter)),
+            )
+        };
 
         new_store.encode_from(start_vv, &start_frontiers, latest_vv, latest_frontiers)
     }
@@ -456,21 +461,28 @@ mod mut_external_kv {
             let mut max_lamport = None;
             let mut max_timestamp = 0;
             drop(kv_store);
-            for id in frontiers.iter() {
-                let c = self.get_change(*id).unwrap();
-                debug_assert_ne!(c.atom_len(), 0);
-                let l = c.lamport_last();
-                if let Some(x) = max_lamport {
-                    if l > x {
+            trace!(
+                "frontiers = {:#?}\n start_frontiers={:#?}",
+                &frontiers,
+                &start_frontiers
+            );
+            if frontiers != start_frontiers {
+                for id in frontiers.iter() {
+                    let c = self.get_change(*id).unwrap();
+                    debug_assert_ne!(c.atom_len(), 0);
+                    let l = c.lamport_last();
+                    if let Some(x) = max_lamport {
+                        if l > x {
+                            max_lamport = Some(l);
+                        }
+                    } else {
                         max_lamport = Some(l);
                     }
-                } else {
-                    max_lamport = Some(l);
-                }
 
-                let t = c.timestamp;
-                if t > max_timestamp {
-                    max_timestamp = t;
+                    let t = c.timestamp;
+                    if t > max_timestamp {
+                        max_timestamp = t;
+                    }
                 }
             }
 
@@ -516,8 +528,11 @@ mod mut_external_kv {
                     let id_bytes = id.to_bytes();
                     let counter_start = external_vv.get(&id.peer).copied().unwrap_or(0);
                     assert!(
-                        counter_start >= block.counter_range.0
-                            && counter_start < block.counter_range.1
+                        counter_start < block.counter_range.1,
+                        "Peer={} Block Counter Range={:?}, counter_start={}",
+                        id.peer,
+                        &block.counter_range,
+                        counter_start
                     );
                     if counter_start > block.counter_range.0 {
                         assert!(store.get(&id_bytes).is_some());

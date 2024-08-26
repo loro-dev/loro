@@ -26,6 +26,7 @@ serde_json = "1.0.87"
 anyhow = "1.0.83"
 ctor = "0.2"
 dev-utils = { path = "../dev-utils" }
+rand = "0.8.5"
 
 [features]
 counter = ["loro-internal/counter"]

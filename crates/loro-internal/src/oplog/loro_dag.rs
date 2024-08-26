@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
+use tracing::trace;
 
 use super::change_store::BatchDecodeInfo;
 use super::ChangeStore;
@@ -30,6 +31,10 @@ pub struct AppDag {
     frontiers: Frontiers,
     /// The latest known version vectorG
     vv: VersionVector,
+    /// The latest known frontiers
+    start_frontiers: Frontiers,
+    /// The latest known version vectorG
+    start_vv: ImVersionVector,
     /// Ops included in the version vector but not parsed yet
     ///
     /// # Invariants
@@ -94,6 +99,8 @@ impl AppDag {
             vv: VersionVector::default(),
             unparsed_vv: Mutex::new(VersionVector::default()),
             unhandled_dep_points: Mutex::new(BTreeSet::new()),
+            start_frontiers: Default::default(),
+            start_vv: Default::default(),
         }
     }
 
@@ -103,6 +110,14 @@ impl AppDag {
 
     pub fn vv(&self) -> &VersionVector {
         &self.vv
+    }
+
+    pub fn start_vv(&self) -> &ImVersionVector {
+        &self.start_vv
+    }
+
+    pub fn start_frontiers(&self) -> &Frontiers {
+        &self.start_frontiers
     }
 
     pub fn is_empty(&self) -> bool {
@@ -376,6 +391,7 @@ impl AppDag {
             return;
         }
 
+        trace!("Trying to get id={}", id);
         let Some(nodes) = self.change_store.get_dag_nodes_that_contains(id) else {
             panic!("unparsed vv don't match with change store. Id:{id} is not in change store")
         };
@@ -391,6 +407,8 @@ impl AppDag {
             vv: self.vv.clone(),
             unparsed_vv: Mutex::new(self.unparsed_vv.try_lock().unwrap().clone()),
             unhandled_dep_points: Mutex::new(self.unhandled_dep_points.try_lock().unwrap().clone()),
+            start_frontiers: self.start_frontiers.clone(),
+            start_vv: self.start_vv.clone(),
         }
     }
 
@@ -403,6 +421,10 @@ impl AppDag {
         *self.unparsed_vv.try_lock().unwrap() = v.vv.clone();
         self.vv = v.vv;
         self.frontiers = v.frontiers;
+        if let Some((vv, f)) = v.start_version {
+            self.start_frontiers = f;
+            self.start_vv = ImVersionVector::from_vv(&vv);
+        }
     }
 
     /// This method is slow and should only be used for debugging and testing.
@@ -658,16 +680,22 @@ impl AppDag {
         }
 
         let mut ans_vv = ImVersionVector::default();
-        for id in node.deps.iter() {
-            let node = self.get(*id).expect("deps should be in the dag");
-            let dep_vv = self.ensure_vv_for(&node);
-            if ans_vv.is_empty() {
-                ans_vv = dep_vv;
-            } else {
-                ans_vv.extend_to_include_vv(dep_vv.iter());
+        if node.deps == self.start_frontiers {
+            for (&p, &c) in self.start_vv.iter() {
+                ans_vv.insert(p, c);
             }
+        } else {
+            for id in node.deps.iter() {
+                let node = self.get(*id).expect("deps should be in the dag");
+                let dep_vv = self.ensure_vv_for(&node);
+                if ans_vv.is_empty() {
+                    ans_vv = dep_vv;
+                } else {
+                    ans_vv.extend_to_include_vv(dep_vv.iter());
+                }
 
-            ans_vv.insert(node.peer, node.ctr_end());
+                ans_vv.insert(node.peer, node.ctr_end());
+            }
         }
 
         node.vv.set(ans_vv.clone()).unwrap();

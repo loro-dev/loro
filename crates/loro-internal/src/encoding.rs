@@ -36,6 +36,7 @@ pub(crate) enum EncodeMode {
     Snapshot = 2,
     FastSnapshot = 3,
     FastUpdates = 4,
+    GcSnapshot = 5,
 }
 
 impl num_traits::FromPrimitive for EncodeMode {
@@ -48,6 +49,7 @@ impl num_traits::FromPrimitive for EncodeMode {
             n if n == EncodeMode::Snapshot as i64 => Some(EncodeMode::Snapshot),
             n if n == EncodeMode::FastSnapshot as i64 => Some(EncodeMode::FastSnapshot),
             n if n == EncodeMode::FastUpdates as i64 => Some(EncodeMode::FastUpdates),
+            n if n == EncodeMode::GcSnapshot as i64 => Some(EncodeMode::GcSnapshot),
             _ => None,
         }
     }
@@ -67,6 +69,7 @@ impl num_traits::ToPrimitive for EncodeMode {
             EncodeMode::Snapshot => EncodeMode::Snapshot as i64,
             EncodeMode::FastSnapshot => EncodeMode::FastSnapshot as i64,
             EncodeMode::FastUpdates => EncodeMode::FastUpdates as i64,
+            EncodeMode::GcSnapshot => EncodeMode::GcSnapshot as i64,
         })
     }
     #[inline]
@@ -176,7 +179,7 @@ pub(crate) fn decode_oplog(
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     match mode {
         EncodeMode::Rle | EncodeMode::Snapshot => encode_reordered::decode_updates(oplog, body),
-        EncodeMode::FastSnapshot | EncodeMode::FastUpdates => {
+        EncodeMode::FastSnapshot | EncodeMode::FastUpdates | EncodeMode::GcSnapshot => {
             fast_snapshot::decode_oplog(oplog, body)
         }
         EncodeMode::Auto => unreachable!(),
@@ -200,7 +203,7 @@ impl ParsedHeaderAndBody<'_> {
                     return Err(LoroError::DecodeChecksumMismatchError);
                 }
             }
-            EncodeMode::FastSnapshot | EncodeMode::FastUpdates => {
+            EncodeMode::FastSnapshot | EncodeMode::FastUpdates | EncodeMode::GcSnapshot => {
                 let expected = u32::from_le_bytes(self.checksum[12..16].try_into().unwrap());
                 if xxhash_rust::xxh32::xxh32(self.checksum_body, XXH_SEED) != expected {
                     return Err(LoroError::DecodeChecksumMismatchError);
@@ -301,6 +304,24 @@ pub(crate) fn export_fast_updates(doc: &LoroDoc, vv: &VersionVector) -> Vec<u8> 
     ans
 }
 
+pub(crate) fn export_gc_snapshot(doc: &LoroDoc, f: &Frontiers) -> Vec<u8> {
+    // HEADER
+    let mut ans = Vec::with_capacity(MIN_HEADER_SIZE);
+    ans.extend(MAGIC_BYTES);
+    let checksum = [0; 16];
+    ans.extend(checksum);
+    ans.extend(EncodeMode::GcSnapshot.to_bytes());
+
+    // BODY
+    gc::export_gc_snapshot(doc, f, &mut ans);
+
+    // CHECKSUM in HEADER
+    let checksum_body = &ans[20..];
+    let checksum = xxhash_rust::xxh32::xxh32(checksum_body, XXH_SEED);
+    ans[16..20].copy_from_slice(&checksum.to_le_bytes());
+    ans
+}
+
 pub(crate) fn decode_snapshot(
     doc: &LoroDoc,
     mode: EncodeMode,
@@ -309,6 +330,7 @@ pub(crate) fn decode_snapshot(
     match mode {
         EncodeMode::Snapshot => encode_reordered::decode_snapshot(doc, body),
         EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot(doc, body.to_vec().into()),
+        EncodeMode::GcSnapshot => gc::import_gc_snapshot(doc, body.to_vec().into()),
         _ => unreachable!(),
     }
 }

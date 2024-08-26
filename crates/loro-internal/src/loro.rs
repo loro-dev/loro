@@ -28,8 +28,9 @@ use crate::{
     dag::DagUtils,
     diff_calc::DiffCalculator,
     encoding::{
-        decode_snapshot, export_fast_snapshot, export_fast_updates, export_snapshot,
-        json_schema::json::JsonSchema, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
+        decode_snapshot, export_fast_snapshot, export_fast_updates, export_gc_snapshot,
+        export_snapshot, json_schema::json::JsonSchema, parse_header_and_body, EncodeMode,
+        ParsedHeaderAndBody,
     },
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
@@ -40,7 +41,7 @@ use crate::{
     state::DocState,
     txn::Transaction,
     undo::DiffBatch,
-    version::Frontiers,
+    version::{Frontiers, ImVersionVector},
     HandlerTrait, InternalString, ListHandler, LoroError, MapHandler, VersionVector,
 };
 
@@ -491,6 +492,7 @@ impl LoroDoc {
     #[tracing::instrument(skip_all)]
     fn _import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
         let parsed = parse_header_and_body(bytes)?;
+        info!("Importing with mode={:?}", &parsed.mode);
         match parsed.mode {
             EncodeMode::Rle => {
                 if self.state.lock().unwrap().is_in_txn() {
@@ -540,6 +542,17 @@ impl LoroDoc {
                     |oplog| oplog.decode(parsed),
                     origin,
                 )?;
+            }
+            EncodeMode::GcSnapshot => {
+                if self.can_reset_with_snapshot() {
+                    tracing::info!("Init by fast snapshot {}", self.peer_id());
+                    decode_snapshot(self, parsed.mode, parsed.body)?;
+                } else {
+                    self.update_oplog_and_apply_delta_to_state_if_needed(
+                        |oplog| oplog.decode(parsed),
+                        origin,
+                    )?;
+                }
             }
             EncodeMode::Auto => {
                 unreachable!()
@@ -1452,11 +1465,19 @@ impl LoroDoc {
         let ans = match mode {
             ExportMode::Snapshot => export_fast_snapshot(self),
             ExportMode::Updates(vv) => export_fast_updates(self, vv),
-            ExportMode::GcSnapshot(_) => todo!(),
+            ExportMode::GcSnapshot(f) => export_gc_snapshot(self, f),
         };
 
         self.renew_txn_if_auto_commit();
         ans
+    }
+
+    pub fn trimmed_vv(&self) -> ImVersionVector {
+        self.oplog().lock().unwrap().trimmed_vv().clone()
+    }
+
+    pub fn trimmed_frontiers(&self) -> Frontiers {
+        self.oplog().lock().unwrap().trimmed_frontiers().clone()
     }
 }
 

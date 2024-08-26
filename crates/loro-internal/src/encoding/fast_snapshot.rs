@@ -21,13 +21,13 @@ use loro_common::{LoroError, LoroResult};
 
 use super::encode_reordered::import_changes_to_oplog;
 
-struct Snapshot {
-    oplog_bytes: Bytes,
-    state_bytes: Bytes,
-    gc_bytes: Bytes,
+pub(super) struct Snapshot {
+    pub oplog_bytes: Bytes,
+    pub state_bytes: Bytes,
+    pub gc_bytes: Bytes,
 }
 
-fn _encode_snapshot<W: Write>(s: Snapshot, w: &mut W) {
+pub(super) fn _encode_snapshot<W: Write>(s: Snapshot, w: &mut W) {
     w.write_all(&(s.oplog_bytes.len() as u32).to_le_bytes())
         .unwrap();
     w.write_all(&s.oplog_bytes).unwrap();
@@ -39,7 +39,7 @@ fn _encode_snapshot<W: Write>(s: Snapshot, w: &mut W) {
     w.write_all(&s.gc_bytes).unwrap();
 }
 
-fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
+pub(super) fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
     let mut r = bytes.reader();
     let oplog_bytes_len = read_u32_le(&mut r) as usize;
     let oplog_bytes = r.get_mut().copy_to_bytes(oplog_bytes_len);
@@ -98,10 +98,11 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
 }
 
 impl OpLog {
-    fn decode_change_store(&mut self, bytes: bytes::Bytes) -> LoroResult<()> {
+    pub(super) fn decode_change_store(&mut self, bytes: bytes::Bytes) -> LoroResult<()> {
         let v = self.change_store().import_all(bytes)?;
         self.next_lamport = v.next_lamport;
         self.latest_timestamp = v.max_timestamp;
+        // FIXME: handle start vv and start frontiers
         self.dag.set_version_by_fast_snapshot_import(v);
         Ok(())
     }

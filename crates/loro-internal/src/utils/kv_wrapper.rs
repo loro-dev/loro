@@ -39,7 +39,6 @@ impl KvWrapper {
 
     pub fn import(&self, bytes: Bytes) {
         let mut kv = self.kv.lock().unwrap();
-        assert!(kv.len() == 0);
         kv.import_all(bytes);
     }
 
@@ -67,5 +66,15 @@ impl KvWrapper {
 
     pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
         self.kv.lock().unwrap().contains_key(key)
+    }
+
+    pub(crate) fn remove_same(&self, old_kv: &KvWrapper) {
+        let other = old_kv.kv.lock().unwrap();
+        let mut this = self.kv.lock().unwrap();
+        for (k, v) in other.scan(Bound::Unbounded, Bound::Unbounded) {
+            if this.get(&k) == Some(v) {
+                this.remove(&k)
+            }
+        }
     }
 }

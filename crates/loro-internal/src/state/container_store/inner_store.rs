@@ -87,9 +87,40 @@ impl InnerStore {
         self.kv.export()
     }
 
+    pub(crate) fn get_kv(&self) -> &KvWrapper {
+        &self.kv
+    }
+
     pub(crate) fn decode(&mut self, bytes: bytes::Bytes) -> Result<(), loro_common::LoroError> {
         assert!(self.len == 0);
         self.kv.import(bytes);
+        self.kv.with_kv(|kv| {
+            let mut count = 0;
+            let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
+            for (k, v) in iter {
+                count += 1;
+                let cid = ContainerID::from_bytes(&k);
+                let parent = ContainerWrapper::decode_parent(&v);
+                let idx = self.arena.register_container(&cid);
+                let p = parent.as_ref().map(|p| self.arena.register_container(p));
+                self.arena.set_parent(idx, p);
+            }
+
+            self.len = count;
+        });
+
+        self.all_loaded = false;
+        Ok(())
+    }
+
+    pub(crate) fn decode_twice(
+        &mut self,
+        bytes_a: bytes::Bytes,
+        bytes_b: bytes::Bytes,
+    ) -> Result<(), loro_common::LoroError> {
+        assert!(self.len == 0);
+        self.kv.import(bytes_a);
+        self.kv.import(bytes_b);
         self.kv.with_kv(|kv| {
             let mut count = 0;
             let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);

@@ -14,6 +14,7 @@ use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::json::JsonChange;
 use loro_internal::undo::{OnPop, OnPush};
+use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
@@ -434,6 +435,14 @@ impl LoroDoc {
     #[inline]
     pub fn state_vv(&self) -> VersionVector {
         self.doc.state_vv()
+    }
+
+    /// Get the `VersionVector` of trimmed history
+    ///
+    /// The ops included by the trimmed history are not in the doc.
+    #[inline]
+    pub fn trimmed_vv(&self) -> ImVersionVector {
+        self.doc.trimmed_vv()
     }
 
     /// Get the total number of operations in the `OpLog`

@@ -6,6 +6,9 @@ use crate::{
     configure::Configure,
     container::idx::ContainerIdx,
     state::{FastStateSnapshot, RichtextState},
+    utils::kv_wrapper::KvWrapper,
+    version::Frontiers,
+    VersionVector,
 };
 use bytes::Bytes;
 use fxhash::FxHashMap;
@@ -54,6 +57,7 @@ mod inner_store;
 pub(crate) struct ContainerStore {
     arena: SharedArena,
     store: InnerStore,
+    gc_store: Option<Box<GcStore>>,
     conf: Configure,
     peer: Arc<AtomicU64>,
 }
@@ -64,6 +68,11 @@ impl std::fmt::Debug for ContainerStore {
             .field("store", &self.store)
             .finish()
     }
+}
+
+struct GcStore {
+    start_frontiers: Frontiers,
+    store: InnerStore,
 }
 
 macro_rules! ctx {
@@ -81,6 +90,7 @@ impl ContainerStore {
             store: InnerStore::new(arena.clone()),
             arena,
             conf,
+            gc_store: None,
             peer,
         }
     }
@@ -108,8 +118,26 @@ impl ContainerStore {
         self.store.encode()
     }
 
-    pub fn decode(&mut self, bytes: Bytes) -> LoroResult<()> {
+    pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<()> {
         self.store.decode(bytes)
+    }
+
+    pub(crate) fn decode_gc(
+        &mut self,
+        gc_bytes: Bytes,
+        state_bytes: Bytes,
+        start_frontiers: Frontiers,
+    ) -> LoroResult<()> {
+        assert!(self.gc_store.is_none());
+        self.store.decode_twice(gc_bytes.clone(), state_bytes)?;
+        if !start_frontiers.is_empty() {
+            self.gc_store = Some(Box::new(GcStore {
+                start_frontiers,
+                store: InnerStore::new(self.arena.clone()),
+            }));
+            self.gc_store.as_mut().unwrap().store.decode(gc_bytes);
+        }
+        Ok(())
     }
 
     pub fn iter_and_decode_all(&mut self) -> impl Iterator<Item = &mut State> {
@@ -122,6 +150,10 @@ impl ContainerStore {
                 },
             )
         })
+    }
+
+    pub fn get_kv(&self) -> &KvWrapper {
+        self.store.get_kv()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -179,6 +211,7 @@ impl ContainerStore {
             arena,
             conf: config,
             peer,
+            gc_store: None,
         }
     }
 

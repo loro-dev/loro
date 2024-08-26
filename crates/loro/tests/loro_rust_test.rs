@@ -4,12 +4,13 @@ use std::{
 };
 
 use loro::{
-    awareness::Awareness, loro_value, FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap,
-    LoroText, ToJson, VersionVector,
+    awareness::Awareness, loro_value, Frontiers, FrontiersNotIncluded, LoroDoc, LoroError,
+    LoroList, LoroMap, LoroText, ToJson, VersionVector,
 };
 use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
+use rand::{Rng, SeedableRng};
 use serde_json::json;
-use tracing::trace_span;
+use tracing::{trace, trace_span};
 
 mod integration_test;
 
@@ -955,4 +956,91 @@ fn new_update_encode_mode() {
 
     // Check equality after syncing back
     assert_eq!(doc.get_deep_value(), doc2.get_deep_value());
+}
+
+fn apply_random_ops(doc: &LoroDoc, seed: u64, mut op_len: usize) {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    while op_len > 0 {
+        match rng.gen_range(0..4) {
+            0 => {
+                // Insert text
+                let text = doc.get_text("text");
+                let pos = rng.gen_range(0..=text.len_unicode());
+                let content = rng.gen_range('A'..='z').to_string();
+                text.insert(pos, &content).unwrap();
+                op_len -= 1;
+            }
+            1 => {
+                // Delete text
+                let text = doc.get_text("text");
+                if text.len_unicode() > 0 {
+                    let start = rng.gen_range(0..text.len_unicode());
+                    text.delete(start, 1).unwrap();
+                    op_len -= 1;
+                }
+            }
+            2 => {
+                // Insert into map
+                let map = doc.get_map("map");
+                let key = format!("key{}", rng.gen::<u32>());
+                let value = rng.gen::<i32>();
+                map.insert(&key, value).unwrap();
+                op_len -= 1;
+            }
+            3 => {
+                // Push to list
+                let list = doc.get_list("list");
+                let item = format!("item{}", rng.gen::<u32>());
+                list.push(item).unwrap();
+                op_len -= 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    doc.commit();
+}
+
+#[test]
+fn test_gc_sync() {
+    let doc = LoroDoc::new();
+    apply_random_ops(&doc, 123, 11);
+    let bytes = doc.export(loro::ExportMode::GcSnapshot(
+        &ID::new(doc.peer_id(), 10).into(),
+    ));
+
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes).unwrap();
+    assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
+    let trim_end = new_doc.trimmed_vv().get(&doc.peer_id()).copied().unwrap();
+    assert_eq!(trim_end, 10);
+
+    apply_random_ops(&new_doc, 1234, 5);
+    let updates = new_doc.export(loro::ExportMode::Updates(&doc.oplog_vv()));
+    doc.import(&updates).unwrap();
+    assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
+
+    apply_random_ops(&doc, 11, 5);
+    let updates = doc.export(loro::ExportMode::Updates(&new_doc.oplog_vv()));
+    new_doc.import(&updates).unwrap();
+    assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
+}
+
+#[test]
+fn test_gc_empty() {
+    let doc = LoroDoc::new();
+    apply_random_ops(&doc, 123, 11);
+    let bytes = doc.export(loro::ExportMode::GcSnapshot(&Frontiers::default()));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes).unwrap();
+    assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
+    apply_random_ops(&new_doc, 0, 10);
+    doc.import(&new_doc.export_from(&Default::default()))
+        .unwrap();
+    assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
+
+    let bytes = new_doc.export(loro::ExportMode::Snapshot);
+    let doc_c = LoroDoc::new();
+    doc_c.import(&bytes).unwrap();
+    assert_eq!(doc_c.get_deep_value(), new_doc.get_deep_value());
 }

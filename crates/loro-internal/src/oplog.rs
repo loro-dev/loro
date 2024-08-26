@@ -24,7 +24,7 @@ use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasLamportSpan};
-use crate::version::{Frontiers, VersionVector};
+use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::BlockOpRef;
 use loro_common::{IdLp, IdSpan};
@@ -615,6 +615,14 @@ impl OpLog {
 
     pub fn check_dag_correctness(&self) {
         self.dag.check_dag_correctness();
+    }
+
+    pub fn trimmed_vv(&self) -> &ImVersionVector {
+        self.dag.start_vv()
+    }
+
+    pub fn trimmed_frontiers(&self) -> &Frontiers {
+        self.dag.start_frontiers()
     }
 }
 
