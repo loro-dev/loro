@@ -1136,6 +1136,10 @@ impl LoroDoc {
         );
         self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
+        if oplog.dag.is_on_trimmed_history(frontiers) {
+            return Err(LoroError::SwitchToTrimmedVersion);
+        }
+
         trace!(
             "oplog: vv={:?} frontiers={:?}",
             oplog.vv(),

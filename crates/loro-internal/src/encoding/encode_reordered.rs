@@ -239,7 +239,7 @@ pub(crate) fn import_changes_to_oplog(
             continue;
         }
 
-        if oplog.dag.is_dep_on_trimmed_history(&change.deps) {
+        if oplog.dag.is_on_trimmed_history(&change.deps) {
             return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
         }
 

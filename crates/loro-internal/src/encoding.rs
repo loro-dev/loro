@@ -310,7 +310,7 @@ pub(crate) fn export_gc_snapshot(doc: &LoroDoc, f: &Frontiers) -> Vec<u8> {
     ans.extend(EncodeMode::FastSnapshot.to_bytes());
 
     // BODY
-    gc::export_gc_snapshot(doc, f, &mut ans);
+    gc::export_gc_snapshot(doc, f, &mut ans).unwrap();
 
     // CHECKSUM in HEADER
     let checksum_body = &ans[20..];

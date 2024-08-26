@@ -527,13 +527,17 @@ impl AppDag {
         }
     }
 
-    pub(crate) fn is_dep_on_trimmed_history(&self, deps: &Frontiers) -> bool {
+    pub(crate) fn is_on_trimmed_history(&self, deps: &Frontiers) -> bool {
         if self.trimmed_vv.is_empty() {
             return false;
         }
 
         if deps.is_empty() {
             return true;
+        }
+
+        if deps == &self.trimmed_frontiers {
+            return false;
         }
 
         deps.iter().any(|x| self.trimmed_vv.includes_id(*x))
@@ -752,6 +756,11 @@ impl AppDag {
     ///
     /// If the frontiers version is not found in the dag, return None
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
+        if frontiers == &self.trimmed_frontiers {
+            let vv = VersionVector::from_im_vv(&self.trimmed_vv);
+            return Some(vv);
+        }
+
         let mut vv: VersionVector = Default::default();
         for id in frontiers.iter() {
             let x = self.get(*id)?;

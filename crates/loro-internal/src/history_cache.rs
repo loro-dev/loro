@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use either::Either;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
@@ -16,11 +17,12 @@ use rle::HasLength;
 use crate::{
     change::{Change, Lamport},
     container::{idx::ContainerIdx, list::list_op::InnerListOp, tree::tree_op::TreeOp},
+    delta::MapValue,
     diff_calc::tree::TreeCacheForDiff,
     encoding::value_register::ValueRegister,
     op::{InnerContent, RichOp},
     oplog::ChangeStore,
-    state::GcStore,
+    state::{ContainerCreationContext, GcStore},
     OpLog, VersionVector,
 };
 
@@ -156,11 +158,15 @@ impl ContainerHistoryCache {
     }
 
     fn init_cache_by_visit_all_change_slow(&mut self, for_checkout: bool, for_importing: bool) {
-        self.change_store.visit_all_changes(&mut |c| {
-            if self.for_checkout.is_none() && self.for_importing.is_none() {
-                return;
-            }
+        if self.for_checkout.is_none() && self.for_importing.is_none() {
+            return;
+        }
 
+        if !for_checkout && !for_importing {
+            return;
+        }
+
+        self.change_store.visit_all_changes(&mut |c| {
             for op in c.ops.iter() {
                 match op.container.get_type() {
                     ContainerType::Map | ContainerType::MovableList
@@ -189,6 +195,44 @@ impl ContainerHistoryCache {
                 }
             }
         });
+
+        if let Some(state) = self.gc.as_ref() {
+            let mut store = state.store.try_lock().unwrap();
+            for (idx, c) in store.iter_all_containers_mut() {
+                match idx.get_type() {
+                    ContainerType::Text | ContainerType::List | ContainerType::Unknown(_) => {
+                        continue
+                    }
+                    #[cfg(feature = "counter")]
+                    ContainerType::Counter => continue,
+                    ContainerType::Map => {}
+                    ContainerType::MovableList => {}
+                    ContainerType::Tree => {}
+                }
+
+                let state = c.get_state_mut(
+                    *idx,
+                    ContainerCreationContext {
+                        configure: &Default::default(),
+                        peer: 0,
+                    },
+                );
+
+                match state {
+                    crate::state::State::MapState(m) => {
+                        if for_checkout {
+                            let c = self.for_checkout.as_mut().unwrap();
+                            for (k, v) in m.iter() {
+                                c.map.record_gc_state_entry(*idx, k, v);
+                            }
+                        }
+                    }
+                    crate::state::State::MovableListState(_) => todo!(),
+                    crate::state::State::TreeState(_) => todo!(),
+                    _ => unreachable!(),
+                }
+            }
+        }
     }
 
     pub(crate) fn get_importing_cache(
@@ -274,13 +318,40 @@ impl<T> Ord for GroupedMapOpInfo<T> {
     }
 }
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 struct MapHistoryCacheEntry {
     container: ContainerIdx,
     key: u32,
     lamport: Lamport,
     peer: PeerID,
-    counter: Counter,
+    counter_or_value: Either<Counter, Box<Option<LoroValue>>>,
+}
+
+impl PartialEq for MapHistoryCacheEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.container == other.container
+            && self.key == other.key
+            && self.lamport == other.lamport
+            && self.peer == other.peer
+    }
+}
+
+impl Eq for MapHistoryCacheEntry {}
+
+impl PartialOrd for MapHistoryCacheEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for MapHistoryCacheEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.container
+            .cmp(&other.container)
+            .then_with(|| self.key.cmp(&other.key))
+            .then_with(|| self.lamport.cmp(&other.lamport))
+            .then_with(|| self.peer.cmp(&other.peer))
+    }
 }
 
 #[derive(Debug, Default)]
@@ -303,12 +374,23 @@ impl HistoryCacheTrait for MapHistoryCache {
             key: key_idx as u32,
             lamport: op.lamport(),
             peer: op.peer,
-            counter: op.counter(),
+            counter_or_value: Either::Left(op.counter()),
         });
     }
 }
 
 impl MapHistoryCache {
+    fn record_gc_state_entry(&mut self, idx: ContainerIdx, k: &InternalString, v: &MapValue) {
+        let key_idx = self.keys.register(k);
+        self.map.insert(MapHistoryCacheEntry {
+            container: idx,
+            key: key_idx as u32,
+            lamport: v.lamport(),
+            peer: v.peer,
+            counter_or_value: Either::Right(Box::new(v.value.clone())),
+        });
+    }
+
     pub fn get_container_latest_op_at_vv(
         &self,
         container: ContainerIdx,
@@ -327,37 +409,54 @@ impl MapHistoryCache {
                     key: 0,
                     lamport: 0,
                     peer: 0,
-                    counter: 0,
+                    counter_or_value: Either::Left(0),
                 }),
                 Bound::Excluded(MapHistoryCacheEntry {
                     container,
                     key: last_key,
                     lamport: 0,
                     peer: 0,
-                    counter: 0,
+                    counter_or_value: Either::Left(0),
                 }),
             );
 
             for entry in self.map.range(range).rev() {
-                if vv.get(&entry.peer).copied().unwrap_or(0) > entry.counter {
-                    let id = ID::new(entry.peer, entry.counter);
-                    let op = oplog.get_op_that_includes(id).unwrap();
-                    debug_assert_eq!(op.atom_len(), 1);
-                    match &op.content {
-                        InnerContent::Map(map) => {
-                            ans.insert(
-                                self.keys.get_value(entry.key as usize).unwrap().clone(),
-                                GroupedMapOpInfo {
-                                    value: map.value.clone(),
-                                    lamport: entry.lamport,
-                                    peer: entry.peer,
-                                },
-                            );
+                match &entry.counter_or_value {
+                    Either::Left(cnt) => {
+                        if vv.get(&entry.peer).copied().unwrap_or(0) > *cnt {
+                            let id = ID::new(entry.peer, *cnt);
+                            let op = oplog.get_op_that_includes(id).unwrap();
+                            debug_assert_eq!(op.atom_len(), 1);
+                            match &op.content {
+                                InnerContent::Map(map) => {
+                                    ans.insert(
+                                        self.keys.get_value(entry.key as usize).unwrap().clone(),
+                                        GroupedMapOpInfo {
+                                            value: map.value.clone(),
+                                            lamport: entry.lamport,
+                                            peer: entry.peer,
+                                        },
+                                    );
+                                }
+                                _ => unreachable!(),
+                            }
+                            last_key = entry.key;
+                            continue 'outer;
                         }
-                        _ => unreachable!(),
                     }
-                    last_key = entry.key;
-                    continue 'outer;
+                    Either::Right(v) => {
+                        let k = self.keys.get_value(entry.key as usize).unwrap().clone();
+                        ans.insert(
+                            k,
+                            GroupedMapOpInfo {
+                                value: (**v).clone(),
+                                lamport: entry.lamport,
+                                peer: entry.peer,
+                            },
+                        );
+                        last_key = entry.key;
+                        continue 'outer;
+                    }
                 }
             }
 

@@ -78,6 +78,8 @@ pub enum LoroError {
     InvalidRootContainerName,
     #[error("Import Failed: The dependencies of the importing updates are trimmed from the doc.")]
     ImportUpdatesThatDependsOnOutdatedVersion,
+    #[error("You cannot switch a document to a version before the trimmed version.")]
+    SwitchToTrimmedVersion,
 }
 
 #[derive(Error, Debug, PartialEq)]

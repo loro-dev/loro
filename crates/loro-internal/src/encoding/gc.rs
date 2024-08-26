@@ -1,5 +1,5 @@
 use loro_common::LoroResult;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
     dag::DagUtils,
@@ -16,8 +16,14 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
 ) -> LoroResult<Frontiers> {
     assert!(!doc.is_detached());
     let oplog = doc.oplog().lock().unwrap();
+    trace!("start_from: {:?}", &start_from);
     let start_from = calc_actual_start(&oplog, start_from);
-    let start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
+    let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
+    trace!("start_from: {:?}", &start_from);
+    for id in start_from.iter() {
+        // we need to include the ops in start_from, this can make things easier
+        start_vv.insert(id.peer, id.counter);
+    }
     debug!(
         "start version vv={:?} frontiers={:?}",
         &start_vv, &start_from,
@@ -48,15 +54,6 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
 
 /// The real start version should be the lca of the given one and the latest frontiers
 fn calc_actual_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
-    let mut frontiers = frontiers;
-    let f;
-    if frontiers == oplog.frontiers() && !frontiers.is_empty() {
-        // This is not allowed.
-        // We need to at least export one op
-        f = Some(oplog.get_deps_of(frontiers[0]).unwrap());
-        frontiers = f.as_ref().unwrap();
-    }
-
     // start is the real start frontiers
     let (start, _) = oplog
         .dag()

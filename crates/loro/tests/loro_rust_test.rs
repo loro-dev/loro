@@ -1100,3 +1100,82 @@ fn test_calling_exporting_snapshot_on_gc_doc() {
     assert_eq!(doc_c.get_deep_value(), new_doc.get_deep_value());
     assert_eq!(new_doc.trimmed_vv(), doc_c.trimmed_vv());
 }
+
+#[test]
+fn sync_two_trimmed_docs() {
+    let doc = LoroDoc::new();
+    apply_random_ops(&doc, 123, 11);
+    let bytes = doc.export(loro::ExportMode::GcSnapshot(
+        &ID::new(doc.peer_id(), 10).into(),
+    ));
+
+    let doc_a = LoroDoc::new();
+    doc_a.import(&bytes).unwrap();
+    let doc_b = LoroDoc::new();
+    doc_b.import(&bytes).unwrap();
+    apply_random_ops(&doc_a, 12312, 10);
+    apply_random_ops(&doc_b, 2312, 10);
+
+    // Sync doc_a and doc_b
+    let bytes_a = doc_a.export_from(&doc_b.oplog_vv());
+    let bytes_b = doc_b.export_from(&doc_a.oplog_vv());
+
+    doc_a.import(&bytes_b).unwrap();
+    doc_b.import(&bytes_a).unwrap();
+
+    // Check if doc_a and doc_b are equal after syncing
+    assert_eq!(doc_a.get_deep_value(), doc_b.get_deep_value());
+    assert_eq!(doc_a.oplog_vv(), doc_b.oplog_vv());
+    assert_eq!(doc_a.oplog_frontiers(), doc_b.oplog_frontiers());
+    assert_eq!(doc_a.state_vv(), doc_b.state_vv());
+    assert_eq!(doc_a.trimmed_vv(), doc_b.trimmed_vv());
+}
+
+#[test]
+fn test_map_checkout_on_trimmed_doc() {
+    let doc = LoroDoc::new();
+    doc.get_map("map").insert("0", 0).unwrap();
+    doc.get_map("map").insert("1", 1).unwrap();
+    doc.get_map("map").insert("2", 2).unwrap();
+    doc.get_map("map").insert("3", 3).unwrap();
+    doc.get_map("map").insert("2", 4).unwrap();
+
+    let new_doc_bytes = doc.export(loro::ExportMode::GcSnapshot(
+        &ID::new(doc.peer_id(), 1).into(),
+    ));
+
+    let new_doc = LoroDoc::new();
+    new_doc.import(&new_doc_bytes).unwrap();
+    assert_eq!(
+        new_doc.get_deep_value(),
+        loro_value!({
+            "map": {
+                "0": 0,
+                "1": 1,
+                "2": 4,
+                "3": 3,
+            }
+        })
+    );
+    new_doc.checkout(&ID::new(doc.peer_id(), 2).into()).unwrap();
+    assert_eq!(
+        new_doc.get_deep_value(),
+        loro_value!({
+            "map": {
+                "0": 0,
+                "1": 1,
+                "2": 2,
+            }
+        })
+    );
+    new_doc.checkout(&ID::new(doc.peer_id(), 1).into()).unwrap();
+    assert_eq!(
+        new_doc.get_deep_value(),
+        loro_value!({
+            "map": {
+                "0": 0,
+                "1": 1,
+            }
+        })
+    );
+}

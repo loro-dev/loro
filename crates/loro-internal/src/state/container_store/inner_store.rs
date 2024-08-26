@@ -4,7 +4,10 @@ use bytes::Bytes;
 use fxhash::FxHashMap;
 use loro_common::ContainerID;
 
-use crate::{arena::SharedArena, container::idx::ContainerIdx, utils::kv_wrapper::KvWrapper};
+use crate::{
+    arena::SharedArena, container::idx::ContainerIdx, state::ContainerCreationContext,
+    utils::kv_wrapper::KvWrapper,
+};
 
 use super::ContainerWrapper;
 
@@ -14,7 +17,7 @@ use super::ContainerWrapper;
 ///   it should only take 1 space in `len`.
 /// - `kv` is either the same or older than `store`.
 /// - if `all_loaded` is true, then `store` contains all the entries from `kv`
-pub(super) struct InnerStore {
+pub(crate) struct InnerStore {
     arena: SharedArena,
     store: FxHashMap<ContainerIdx, ContainerWrapper>,
     kv: KvWrapper,
