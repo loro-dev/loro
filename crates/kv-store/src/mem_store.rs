@@ -184,8 +184,8 @@ impl MemKvStore {
 
 #[derive(Debug)]
 struct MemStoreIterator<'a, T> {
-    a: T,
-    b: SsTableIter<'a>,
+    mem: T,
+    sst: SsTableIter<'a>,
     current_btree: Option<(Bytes, Bytes)>,
     current_sstable: Option<(Bytes, Bytes)>,
     back_btree: Option<(Bytes, Bytes)>,
@@ -193,12 +193,12 @@ struct MemStoreIterator<'a, T> {
 }
 
 impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> MemStoreIterator<'a, T> {
-    fn new(mut a: T, b: SsTableIter<'a>) -> Self {
-        let current_btree = a.next();
-        let back_btree = a.next_back();
+    fn new(mut mem: T, sst: SsTableIter<'a>) -> Self {
+        let current_btree = mem.next();
+        let back_btree = mem.next_back();
         Self {
-            a,
-            b,
+            mem,
+            sst,
             current_btree,
             back_btree,
             current_sstable: None,
@@ -210,9 +210,9 @@ impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> MemStoreIterator<'a, T> 
 impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> Iterator for MemStoreIterator<'a, T> {
     type Item = (Bytes, Bytes);
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_sstable.is_none() && self.b.is_next_valid() {
-            self.current_sstable = Some((self.b.next_key(), self.b.next_value()));
-            self.b.next();
+        if self.current_sstable.is_none() && self.sst.is_next_valid() {
+            self.current_sstable = Some((self.sst.next_key(), self.sst.next_value()));
+            self.sst.next();
         }
 
         if self.current_btree.is_none() && self.back_btree.is_some() {
@@ -221,20 +221,20 @@ impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> Iterator for MemStoreIte
         let ans = match (&self.current_btree, &self.current_sstable) {
             (Some((btree_key, _)), Some((iter_key, _))) => match btree_key.cmp(iter_key) {
                 Ordering::Less => self.current_btree.take().map(|kv| {
-                    self.current_btree = self.a.next();
+                    self.current_btree = self.mem.next();
                     kv
                 }),
                 Ordering::Equal => {
                     self.current_sstable.take();
                     self.current_btree.take().map(|kv| {
-                        self.current_btree = self.a.next();
+                        self.current_btree = self.mem.next();
                         kv
                     })
                 }
                 Ordering::Greater => self.current_sstable.take(),
             },
             (Some(_), None) => self.current_btree.take().map(|kv| {
-                self.current_btree = self.a.next();
+                self.current_btree = self.mem.next();
                 kv
             }),
             (None, Some(_)) => self.current_sstable.take(),
@@ -254,9 +254,9 @@ impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> DoubleEndedIterator
     for MemStoreIterator<'a, T>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.back_sstable.is_none() && self.b.has_next_back() {
-            self.back_sstable = Some((self.b.next_back_key(), self.b.next_back_value()));
-            self.b.next_back();
+        if self.back_sstable.is_none() && self.sst.has_next_back() {
+            self.back_sstable = Some((self.sst.next_back_key(), self.sst.next_back_value()));
+            self.sst.next_back();
         }
 
         if self.back_btree.is_none() && self.current_btree.is_some() {
@@ -266,20 +266,20 @@ impl<'a, T: DoubleEndedIterator<Item = (Bytes, Bytes)>> DoubleEndedIterator
         let ans = match (&self.back_btree, &self.back_sstable) {
             (Some((btree_key, _)), Some((iter_key, _))) => match btree_key.cmp(iter_key) {
                 Ordering::Greater => self.back_btree.take().map(|kv| {
-                    self.back_btree = self.a.next_back();
+                    self.back_btree = self.mem.next_back();
                     kv
                 }),
                 Ordering::Equal => {
                     self.back_sstable.take();
                     self.back_btree.take().map(|kv| {
-                        self.back_btree = self.a.next_back();
+                        self.back_btree = self.mem.next_back();
                         kv
                     })
                 }
                 Ordering::Less => self.back_sstable.take(),
             },
             (Some(_), None) => self.back_btree.take().map(|kv| {
-                self.back_btree = self.a.next_back();
+                self.back_btree = self.mem.next_back();
                 kv
             }),
             (None, Some(_)) => self.back_sstable.take(),
