@@ -53,12 +53,13 @@
 //! 1. Compress key-value pairs data as Key Value Chunk.
 //! 2. Write offsets for each key-value pair.
 //! 3. Write the number of key-value pairs.
-//! 4. **Compress** the entire block using LZ4.
+//! 4. By default, **Compress** the entire block using LZ4. If you set `compression_type` to `None`, it will not compress the block.
+//!     - For now, there are two compression type: `None` and `LZ4`.
 //! 5. Calculate and append xxhash_32 checksum.
 //!
 //! Decoding:
 //! 1. Verify the xxhash_32 checksum.
-//! 2. **Decompress** the block using LZ4.
+//! 2. By default, **Decompress** the block using LZ4. If you set `compression_type` to `None`, it will not decompress the block.
 //! 3. Read the number of key-value pairs.
 //! 4. Read offsets for each key-value pair.
 //! 5. Parse individual key-value chunks.
@@ -92,25 +93,25 @@
 //! ┌────────────────────────────────────────────────────────────┐
 //! │ All Block Meta                                             │
 //! │┌ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─┌ ─ ─ ─┌ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ │
-//! │  block length │ Block Meta │ ...  │ Block Meta │ checksum ││
+//! │  block number │ Block Meta │ ...  │ Block Meta │ checksum ││
 //! ││     u32      │   bytes    │      │   bytes    │   u32     │
 //! │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ┘─ ─ ─ ┘─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ┘│
 //! └────────────────────────────────────────────────────────────┘
 //!
 //! Each Block Meta entry is encoded as follows:
 //!
-//! ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
-//! │ Block Meta                                                                                   │
-//! │┌ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ┐ │
-//! │  block offset │ first key len   first key   large & compress │ last key len     last key     │
-//! ││     u32      │      u16      │   bytes   │        u8        │  u16(option)  │bytes(option)│ │
-//! │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
-//! └──────────────────────────────────────────────────────────────────────────────────────────────┘
+//! ┌──────────────────────────────────────────────────────────────────────────────────────────┐
+//! │ Block Meta                                                                               │
+//! │┌ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ┐ │
+//! │  block offset │ first key len   first key    block type  │ last key len     last key     │
+//! ││     u32      │      u16      │   bytes   │      u8      │  u16(option)  │bytes(option)│ │
+//! │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
+//! └──────────────────────────────────────────────────────────────────────────────────────────┘
 //!
 //! Encoding:
 //! 1. Write the number of blocks.
-//! 2. For each block, write its metadata (offset, first key, is_large and compression_type flag, and last key if not large).
-//!     - is_large and compression_type flag: the first bit for is_large, the next 7 bits for compression_type.
+//! 2. For each block, write its metadata (offset, first key, block type, and last key if not large).
+//!     - block type: the first bit for is_large, the next 7 bits for compression_type.
 //! 3. Calculate and append xxhash_32 checksum.
 //!
 //! Decoding:
@@ -119,9 +120,8 @@
 //! 3. Verify the xxhash_32 checksum.
 //!
 //!
-//! Note: In this crate, **only** [MemStoreIterator] will filter empty value,
-//! and other iterators use empty value as deleted.
-//!
+//! Note: In this crate, the empty value is regarded as deleted. **only** [MemStoreIterator] will filter empty value.
+//! Other iterators will still return empty value.
 pub mod block;
 pub mod compress;
 pub mod iter;
