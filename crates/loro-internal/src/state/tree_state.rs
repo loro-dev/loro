@@ -726,6 +726,7 @@ impl TreeState {
                 parent,
                 position: position.position.clone(),
                 index,
+                last_move_op: self.trees.get(&target).map(|x| x.last_move_op).unwrap(),
             });
             if let Some(children) = self.children.get(&TreeParentId::Node(target)) {
                 q.extend(
@@ -757,6 +758,7 @@ impl TreeState {
                     parent: root.id(),
                     position: position.position.clone(),
                     index,
+                    last_move_op: self.trees.get(target).map(|x| x.last_move_op).unwrap(),
                 });
             }
 
@@ -1238,6 +1240,7 @@ pub(crate) struct TreeNode {
     pub(crate) parent: Option<TreeID>,
     pub(crate) position: FractionalIndex,
     pub(crate) index: usize,
+    pub(crate) last_move_op: IdFull,
 }
 
 impl TreeNode {

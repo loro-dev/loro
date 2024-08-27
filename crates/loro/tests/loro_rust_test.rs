@@ -961,7 +961,7 @@ fn new_update_encode_mode() {
 fn apply_random_ops(doc: &LoroDoc, seed: u64, mut op_len: usize) {
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     while op_len > 0 {
-        match rng.gen_range(0..4) {
+        match rng.gen_range(0..6) {
             0 => {
                 // Insert text
                 let text = doc.get_text("text");
@@ -990,6 +990,19 @@ fn apply_random_ops(doc: &LoroDoc, seed: u64, mut op_len: usize) {
             3 => {
                 // Push to list
                 let list = doc.get_list("list");
+                let item = format!("item{}", rng.gen::<u32>());
+                list.push(item).unwrap();
+                op_len -= 1;
+            }
+            4 => {
+                // Create node in tree
+                let tree = doc.get_tree("tree");
+                tree.create(None).unwrap();
+                op_len -= 1;
+            }
+            5 => {
+                // Push to movable list
+                let list = doc.get_movable_list("movable_list");
                 let item = format!("item{}", rng.gen::<u32>());
                 list.push(item).unwrap();
                 op_len -= 1;

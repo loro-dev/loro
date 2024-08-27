@@ -753,7 +753,7 @@ impl MovableListState {
     }
 
     #[inline]
-    fn elements(&self) -> &FxHashMap<CompactIdLp, Element> {
+    pub(crate) fn elements(&self) -> &FxHashMap<CompactIdLp, Element> {
         self.inner.elements()
     }
 

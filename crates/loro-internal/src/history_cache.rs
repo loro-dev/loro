@@ -18,7 +18,7 @@ use crate::{
     change::{Change, Lamport},
     container::{idx::ContainerIdx, list::list_op::InnerListOp, tree::tree_op::TreeOp},
     delta::MapValue,
-    diff_calc::tree::TreeCacheForDiff,
+    diff_calc::tree::{MoveLamportAndID, TreeCacheForDiff},
     encoding::value_register::ValueRegister,
     op::{InnerContent, RichOp},
     oplog::ChangeStore,
@@ -227,8 +227,25 @@ impl ContainerHistoryCache {
                             }
                         }
                     }
-                    crate::state::State::MovableListState(_) => todo!(),
-                    crate::state::State::TreeState(_) => todo!(),
+                    crate::state::State::MovableListState(l) => {}
+                    crate::state::State::TreeState(t) => {
+                        if for_importing {
+                            let c = self.for_importing.as_mut().unwrap();
+                            if let Some(HistoryCacheForImporting::Tree(tree)) = c.get_mut(idx) {
+                                for node in t.tree_nodes() {
+                                    tree.record_gc_cache(MoveLamportAndID {
+                                        id: node.last_move_op,
+                                        op: Arc::new(TreeOp::Create {
+                                            target: node.id,
+                                            parent: node.parent,
+                                            position: node.position.clone(),
+                                        }),
+                                        effected: true,
+                                    });
+                                }
+                            }
+                        }
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -499,6 +516,11 @@ impl TreeOpGroup {
 
     pub fn tree(&self) -> &Mutex<TreeCacheForDiff> {
         &self.tree_for_diff
+    }
+
+    pub(crate) fn record_gc_cache(&mut self, node: MoveLamportAndID) {
+        let mut tree = self.tree_for_diff.lock().unwrap();
+        tree.apply_gc(node);
     }
 }
 
