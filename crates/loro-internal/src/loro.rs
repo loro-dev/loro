@@ -216,7 +216,12 @@ impl LoroDoc {
     /// Is the document empty? (no ops)
     #[inline(always)]
     pub fn can_reset_with_snapshot(&self) -> bool {
-        self.oplog.lock().unwrap().is_empty() && self.state.lock().unwrap().is_empty()
+        let oplog = self.oplog.lock().unwrap();
+        if oplog.batch_importing {
+            return false;
+        }
+
+        oplog.is_empty() && self.state.lock().unwrap().is_empty()
     }
 
     /// Whether [OpLog] and [DocState] are detached.

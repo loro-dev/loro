@@ -213,7 +213,7 @@ impl LoroDoc {
     /// Import a batch of updates/snapshot.
     ///
     /// The data can be in arbitrary order. The import result will be the same.
-    pub fn import_batch(&mut self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
         self.doc.import_batch(bytes)
     }
 
