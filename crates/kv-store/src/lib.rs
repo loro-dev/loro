@@ -49,6 +49,16 @@
 //! │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ┘─ ─ ─ ─┘│
 //! └─────────────────────────────────────────────────────┘
 //!
+//! Because the key of the first chunk is equal to the first key of the block,
+//! the first chunk can be simplified as:
+//! ┌────────────────────┐
+//! │  Key Value Chunk   │
+//! │┌ ─ ─ ─ ─ ─┬ ─ ─ ─ ┐│
+//! ││key suffix│ value ││
+//! ││  bytes   │ bytes ││
+//! │ ─ ─ ─ ─ ─ ┘─ ─ ─ ─┘│
+//! └────────────────────┘
+//!
 //! Encoding:
 //! 1. Compress key-value pairs data as Key Value Chunk.
 //! 2. Write offsets for each key-value pair.

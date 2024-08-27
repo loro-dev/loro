@@ -208,6 +208,9 @@ impl BlockBuilder {
 
         if self.first_key.is_empty() {
             self.first_key = Bytes::copy_from_slice(key);
+            self.offsets.push(self.data.len() as u16);
+            self.data.put(value);
+            return true;
         }
         self.offsets.push(self.data.len() as u16);
         let (common, suffix) = get_common_prefix_len_and_strip(key, &self.first_key);
@@ -536,6 +539,11 @@ impl BlockIter {
     fn seek_to_offset(&mut self, offset: usize, offset_end: usize) {
         match self.block.as_ref() {
             Block::Normal(block) => {
+                if offset == 0{
+                    self.next_key = self.first_key.clone();
+                    self.next_value_range = 0..offset_end;
+                    return;
+                }
                 let mut rest = &block.data[offset..];
                 let common_prefix_len = rest.get_u8() as usize;
                 let key_suffix_len = rest.get_u16_le() as usize;
@@ -557,6 +565,11 @@ impl BlockIter {
     fn back_to_offset(&mut self, offset: usize, offset_end: usize) {
         match self.block.as_ref() {
             Block::Normal(block) => {
+                if offset == 0{
+                    self.prev_key = self.first_key.clone();
+                    self.prev_value_range = 0..offset_end;
+                    return;
+                }
                 let mut rest = &block.data[offset..];
                 let common_prefix_len = rest.get_u8() as usize;
                 let key_suffix_len = rest.get_u16_le() as usize;
