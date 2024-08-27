@@ -92,20 +92,6 @@ async function buildTarget(target: string) {
   console.log(">", cmd);
   await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
   console.log();
-
-  if (target === "nodejs") {
-    console.log("🔨  Patching nodejs target");
-    const patch = await Deno.readTextFile(
-      path.resolve(__dirname, "./nodejs_patch.js"),
-    );
-    const wasm = await Deno.readTextFile(
-      path.resolve(targetDirPath, "loro_wasm.js"),
-    );
-    await Deno.writeTextFile(
-      path.resolve(targetDirPath, "loro_wasm.js"),
-      wasm + "\n" + patch,
-    );
-  }
 }
 
 build();
