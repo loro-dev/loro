@@ -1221,7 +1221,10 @@ impl LoroDoc {
                     .id_to_idx(&pos.container)
                     .ok_or(CannotFindRelativePosition::ContainerDeleted)?;
                 // We know where the target id is when we trace back to the delete_op_id.
-                let delete_op_id = find_last_delete_op(&oplog, id, idx).unwrap();
+                let Some(delete_op_id) = find_last_delete_op(&oplog, id, idx) else {
+                    tracing::error!("Cannot find id {}", id);
+                    return Err(CannotFindRelativePosition::IdNotFound);
+                };
                 let mut diff_calc = DiffCalculator::new();
                 let before_frontiers: Frontiers = oplog.dag.find_deps_of_id(delete_op_id);
                 let before = &oplog.dag.frontiers_to_vv(&before_frontiers).unwrap();
@@ -1341,7 +1344,7 @@ impl LoroDoc {
 }
 
 fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
-    let start_vv = oplog.dag.frontiers_to_vv(&id.into()).unwrap();
+    let start_vv = oplog.dag.frontiers_to_vv(&id.into())?;
     for change in oplog.iter_changes_causally_rev(&start_vv, &oplog.dag.vv) {
         for op in change.ops.iter().rev() {
             if op.container != idx {
