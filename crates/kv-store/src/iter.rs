@@ -38,7 +38,7 @@ impl<T: KvIterator> Iterator for MergeIterator<T> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut min_key = None;
         let mut min_index = None;
-        let mut empty_iter = vec![];
+        let mut has_to_remove = false;
         for (i, iter) in self.iters.iter_mut().enumerate() {
             if let Some(key) = iter.next_key() {
                 if let Some(this_min_key) = &min_key {
@@ -58,16 +58,18 @@ impl<T: KvIterator> Iterator for MergeIterator<T> {
                     min_index = Some(i);
                 }
             } else {
-                empty_iter.push(i);
+                has_to_remove = true;
             }
         }
+
         let ans = if let Some(idx) = min_index {
             self.iters[idx].next()
         } else {
             None
         };
-        for i in empty_iter.iter().rev() {
-            self.iters.remove(*i);
+
+        if has_to_remove {
+            self.iters.retain(|x| x.has_next());
         }
         ans
     }
@@ -77,7 +79,7 @@ impl<T: KvIterator> DoubleEndedIterator for MergeIterator<T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         let mut max_key = None;
         let mut max_index = None;
-        let mut empty_iter = vec![];
+        let mut has_to_remove = false;
         for (i, iter) in self.iters.iter_mut().enumerate() {
             if let Some(key) = iter.next_back_key() {
                 if let Some(this_max_key) = &max_key {
@@ -97,7 +99,7 @@ impl<T: KvIterator> DoubleEndedIterator for MergeIterator<T> {
                     max_index = Some(i);
                 }
             } else {
-                empty_iter.push(i);
+                has_to_remove = true;
             }
         }
         let ans = if let Some(idx) = max_index {
@@ -105,8 +107,9 @@ impl<T: KvIterator> DoubleEndedIterator for MergeIterator<T> {
         } else {
             None
         };
-        for i in empty_iter.iter().rev() {
-            self.iters.remove(*i);
+
+        if has_to_remove {
+            self.iters.retain(|x| x.has_next_back());
         }
         ans
     }

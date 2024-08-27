@@ -1009,4 +1009,17 @@ mod test {
         assert!(Iterator::next(&mut iter).is_none());
         assert!(DoubleEndedIterator::next_back(&mut iter).is_none());
     }
+
+    #[test]
+    fn sstable_import_checksum() {
+        // Create an SSTable in memory
+        let mut builder = SsTableBuilder::new(10, CompressionType::LZ4);
+        builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
+        builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
+        builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));
+        let original_table = builder.build();
+        let mut buffer = original_table.export_all().to_vec();
+        buffer[11] = 123;
+        assert!(SsTable::import_all(buffer.into()).is_err());
+    }
 }

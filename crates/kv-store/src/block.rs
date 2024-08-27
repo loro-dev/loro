@@ -70,7 +70,6 @@ impl NormalBlock {
     /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ┘│
     /// └────────────────────────────────────────────────────────────────────────────────────────┘
     /// 
-    /// check sum will be calculated by crc32 later
     fn encode(&self, compression_type: CompressionType) -> Bytes {
         let mut buf = self.data.to_vec();
         for offset in &self.offsets {
