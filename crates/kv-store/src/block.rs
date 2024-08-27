@@ -31,9 +31,10 @@ impl LargeValueBlock{
         let mut buf = Vec::with_capacity(self.value_bytes.len() + SIZE_OF_U32);
         buf.put_slice(&self.value_bytes);
         if !compression_type.is_none(){
-            let compressed_data = compress(&buf, compression_type);
+            let mut compressed_data = compress(&buf, compression_type);
             let checksum = xxhash_rust::xxh32::xxh32(&compressed_data, XXH_SEED);
-            buf.put_u32(checksum);
+            compressed_data.put_u32(checksum);
+            buf = compressed_data;
         }else{
             let checksum = xxhash_rust::xxh32::xxh32(&buf, XXH_SEED);
             buf.put_u32(checksum);
