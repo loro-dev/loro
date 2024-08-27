@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.9
+
+### Patch Changes
+
+- a761430: Fix build script
+- Updated dependencies [a761430]
+  - loro-wasm@0.16.9
+
 ## 0.16.8
 
 ### Patch Changes
