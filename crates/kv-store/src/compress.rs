@@ -1,3 +1,8 @@
+use std::{
+    borrow::Cow,
+    io::{self, Write},
+};
+
 use bytes::Bytes;
 use loro_common::LoroError;
 
@@ -36,20 +41,34 @@ impl From<CompressionType> for u8 {
     }
 }
 
-pub fn compress(data: &[u8], compression_type: CompressionType) -> Vec<u8> {
+pub fn compress(w: &mut Vec<u8>, data: Cow<[u8]>, compression_type: CompressionType) {
     match compression_type {
-        CompressionType::None => unreachable!(),
-        CompressionType::LZ4 => lz4_flex::compress_prepend_size(data),
+        CompressionType::None => {
+            w.write_all(&data).unwrap();
+        }
+        CompressionType::LZ4 => {
+            let mut encoder = lz4_flex::frame::FrameEncoder::new(w);
+            encoder.write_all(&data).unwrap();
+            let _w = encoder.finish().unwrap();
+        }
     }
 }
 
-pub fn decompress(data: Bytes, compression_type: CompressionType) -> Result<Bytes, LoroError> {
+pub fn decompress(
+    out: &mut Vec<u8>,
+    data: Bytes,
+    compression_type: CompressionType,
+) -> Result<(), LoroError> {
     match compression_type {
-        CompressionType::None => unreachable!(),
+        CompressionType::None => {
+            out.write_all(&data).unwrap();
+            Ok(())
+        }
         CompressionType::LZ4 => {
-            let decompressed_data = lz4_flex::decompress_size_prepended(&data)
+            let mut decoder = lz4_flex::frame::FrameDecoder::new(data.as_ref());
+            io::copy(&mut decoder, out)
                 .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
-            Ok(Bytes::from(decompressed_data))
+            Ok(())
         }
     }
 }

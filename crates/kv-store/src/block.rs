@@ -1,7 +1,5 @@
 use std::{
-    fmt::Debug,
-    ops::{Bound, Range},
-    sync::Arc,
+    borrow::Cow, fmt::Debug, io::Write, ops::{Bound, Range}, sync::Arc
 };
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -27,29 +25,18 @@ impl LargeValueBlock{
     /// ││ bytes │      u32        │
     /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘│
     /// └──────────────────────────┘
-    fn encode(&self, compression_type: CompressionType)->Bytes{
-        let mut buf = Vec::with_capacity(self.value_bytes.len() + SIZE_OF_U32);
-        buf.put_slice(&self.value_bytes);
-        if !compression_type.is_none(){
-            let mut compressed_data = compress(&buf, compression_type);
-            let checksum = xxhash_rust::xxh32::xxh32(&compressed_data, XXH_SEED);
-            compressed_data.put_u32(checksum);
-            buf = compressed_data;
-        }else{
-            let checksum = xxhash_rust::xxh32::xxh32(&buf, XXH_SEED);
-            buf.put_u32(checksum);
-        }
-        buf.into()
+    fn encode(&self,  w: &mut Vec<u8>, compression_type: CompressionType){
+        let origin_len = w.len();
+        compress(w, Cow::Borrowed(&self.value_bytes), compression_type);
+        let checksum = xxhash_rust::xxh32::xxh32(&w[origin_len..], XXH_SEED);
+        w.write_all(&checksum.to_le_bytes()).unwrap();
     }
 
     fn decode(bytes:Bytes, key: Bytes, compression_type: CompressionType)->LoroResult<Self>{
-        let value_bytes = if compression_type.is_none(){
-            bytes.slice(..bytes.len() - SIZE_OF_U32)
-        }else{
-            decompress(bytes.slice(..bytes.len() - SIZE_OF_U32), compression_type)?
-        };
+        let mut value_bytes = vec![];
+        decompress(&mut value_bytes, bytes.slice(..bytes.len() - SIZE_OF_U32), compression_type)?;
         Ok(LargeValueBlock{
-            value_bytes,
+            value_bytes: Bytes::from(value_bytes),
             key,
         })
     }
@@ -71,35 +58,26 @@ impl NormalBlock {
     /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ┘│
     /// └────────────────────────────────────────────────────────────────────────────────────────┘
     /// 
-    fn encode(&self, compression_type: CompressionType) -> Bytes {
+    fn encode(&self, w: &mut Vec<u8>,compression_type: CompressionType)  {
+        let origin_len = w.len();
         let mut buf = self.data.to_vec();
         for offset in &self.offsets {
-            buf.put_u16(*offset);
+            buf.put_u16_le(*offset);
         }
-        buf.put_u16(self.offsets.len() as u16);
-
-        let mut compressed_data = if compression_type.is_none(){
-            buf
-        }else{
-            compress(&buf, compression_type)
-        };
-
-        let checksum = xxhash_rust::xxh32::xxh32(&compressed_data, XXH_SEED);
-        compressed_data.put_u32(checksum);
-        compressed_data.into()
+        buf.put_u16_le(self.offsets.len() as u16);
+        compress(w,Cow::Owned(buf), compression_type);
+        let checksum = xxhash_rust::xxh32::xxh32(&w[origin_len..], XXH_SEED);
+        w.put_u32_le(checksum);
     }
 
     fn decode(raw_block_and_check: Bytes, first_key: Bytes, compression_type: CompressionType)-> LoroResult<NormalBlock>{
-        let data = raw_block_and_check.slice(..raw_block_and_check.len() - SIZE_OF_U32);
-        let data = if compression_type.is_none(){   
-            data
-        }else{
-            decompress(data, compression_type)?
-        };
-        let offsets_len = (&data[data.len()-SIZE_OF_U16..]).get_u16() as usize;
+        let buf = raw_block_and_check.slice(..raw_block_and_check.len() - SIZE_OF_U32);
+        let mut data = vec![];
+        decompress(&mut data, buf,compression_type)?;
+        let offsets_len = (&data[data.len()-SIZE_OF_U16..]).get_u16_le() as usize;
         let data_end = data.len() - SIZE_OF_U16 * (offsets_len + 1);
         let offsets = &data[data_end..data.len()-SIZE_OF_U16];
-        let offsets = offsets.chunks(SIZE_OF_U16).map(|mut chunk| chunk.get_u16()).collect();
+        let offsets = offsets.chunks(SIZE_OF_U16).map(|mut chunk| chunk.get_u16_le()).collect();
         Ok(NormalBlock{
             data: Bytes::copy_from_slice(&data[..data_end]),
             offsets,
@@ -133,10 +111,10 @@ impl Block{
         }
     }
 
-    pub fn encode(&self, compression_type: CompressionType)->Bytes{
+    pub fn encode(&self,  w: &mut Vec<u8>, compression_type: CompressionType){
         match self{
-            Block::Normal(block)=>block.encode(compression_type),
-            Block::Large(block)=>block.encode(compression_type),
+            Block::Normal(block)=>block.encode(w,compression_type),
+            Block::Large(block)=>block.encode(w,compression_type),
         }
     }
 
@@ -235,7 +213,7 @@ impl BlockBuilder {
         let (common, suffix) = get_common_prefix_len_and_strip(key, &self.first_key);
         let key_len = suffix.len() ;
         self.data.put_u8(common);
-        self.data.put_u16(key_len as u16);
+        self.data.put_u16_le(key_len as u16);
         self.data.put(suffix);
         self.data.put(value);
         true
@@ -560,7 +538,7 @@ impl BlockIter {
             Block::Normal(block) => {
                 let mut rest = &block.data[offset..];
                 let common_prefix_len = rest.get_u8() as usize;
-                let key_suffix_len = rest.get_u16() as usize;
+                let key_suffix_len = rest.get_u16_le() as usize;
                 let mut next_key = BytesMut::new();
                 next_key.put(&self.first_key[..common_prefix_len]);
                 next_key.put(&rest[..key_suffix_len]);
@@ -581,7 +559,7 @@ impl BlockIter {
             Block::Normal(block) => {
                 let mut rest = &block.data[offset..];
                 let common_prefix_len = rest.get_u8() as usize;
-                let key_suffix_len = rest.get_u16() as usize;
+                let key_suffix_len = rest.get_u16_le() as usize;
                 let mut prev_key = BytesMut::new();
                 prev_key.put(&self.first_key[..common_prefix_len]);
                 prev_key.put(&rest[..key_suffix_len]);

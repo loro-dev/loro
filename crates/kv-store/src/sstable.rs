@@ -10,7 +10,7 @@ use crate::{
     block::{Block, BlockBuilder},
     compress::CompressionType,
     iter::KvIterator,
-    utils::{get_u16, get_u32, get_u8},
+    utils::{get_u16_le, get_u32_le, get_u8_le},
 };
 
 pub(crate) const XXH_SEED: u32 = u32::from_le_bytes(*b"LORO");
@@ -71,25 +71,25 @@ impl BlockMeta {
 
         buf.reserve(estimated_size);
         let ori_length = buf.len();
-        buf.put_u32(meta.len() as u32);
+        buf.put_u32_le(meta.len() as u32);
         for m in meta {
-            buf.put_u32(m.offset as u32);
-            buf.put_u16(m.first_key.len() as u16);
+            buf.put_u32_le(m.offset as u32);
+            buf.put_u16_le(m.first_key.len() as u16);
             buf.put_slice(&m.first_key);
             let large_and_compress = (m.is_large as u8) << 7 | m.compression_type as u8;
             buf.put_u8(large_and_compress);
             if m.is_large {
                 continue;
             }
-            buf.put_u16(m.last_key.as_ref().unwrap().len() as u16);
+            buf.put_u16_le(m.last_key.as_ref().unwrap().len() as u16);
             buf.put_slice(m.last_key.as_ref().unwrap());
         }
         let checksum = xxhash_rust::xxh32::xxh32(&buf[ori_length + 4..], XXH_SEED);
-        buf.put_u32(checksum);
+        buf.put_u32_le(checksum);
     }
 
     fn decode_meta(data: &[u8]) -> LoroResult<Vec<BlockMeta>> {
-        let (num, mut data) = get_u32(data)?;
+        let (num, mut data) = get_u32_le(data)?;
         if num > 10_000_000 {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
         }
@@ -99,13 +99,13 @@ impl BlockMeta {
         }
         let checksum = xxhash_rust::xxh32::xxh32(&data[..data.len() - SIZE_OF_U32], XXH_SEED);
         for _ in 0..num {
-            let (offset, buf) = get_u32(data)?;
-            let (first_key_len, mut buf) = get_u16(buf)?;
+            let (offset, buf) = get_u32_le(data)?;
+            let (first_key_len, mut buf) = get_u16_le(buf)?;
             if buf.len() < first_key_len as usize {
                 return Err(LoroError::DecodeError("Invalid bytes".into()));
             }
             let first_key = buf.copy_to_bytes(first_key_len as usize);
-            let (is_large_and_compression_type, buf) = get_u8(buf)?;
+            let (is_large_and_compression_type, buf) = get_u8_le(buf)?;
             let is_large = is_large_and_compression_type & 0b1000_0000 != 0;
             let compression_type = is_large_and_compression_type & 0b0111_1111;
             if is_large {
@@ -118,7 +118,7 @@ impl BlockMeta {
                 });
                 continue;
             }
-            let (last_key_len, mut buf) = get_u16(buf)?;
+            let (last_key_len, mut buf) = get_u16_le(buf)?;
             if buf.len() < last_key_len as usize {
                 return Err(LoroError::DecodeError("Invalid bytes".into()));
             }
@@ -132,7 +132,7 @@ impl BlockMeta {
             });
             data = buf;
         }
-        let (checksum_read, _) = get_u32(data)?;
+        let (checksum_read, _) = get_u32_le(data)?;
         if checksum != checksum_read {
             return Err(LoroError::DecodeChecksumMismatchError);
         }
@@ -154,7 +154,7 @@ pub(crate) struct SsTableBuilder {
 impl SsTableBuilder {
     pub fn new(block_size: usize, compression_type: CompressionType) -> Self {
         let mut data = Vec::with_capacity(5);
-        data.put_u32(u32::from_be_bytes(MAGIC_NUMBER));
+        data.put_u32_le(u32::from_le_bytes(MAGIC_NUMBER));
         data.put_u8(CURRENT_SCHEMA_VERSION);
         Self {
             block_builder: BlockBuilder::new(block_size),
@@ -194,10 +194,11 @@ impl SsTableBuilder {
         let builder =
             std::mem::replace(&mut self.block_builder, BlockBuilder::new(self.block_size));
         let block = builder.build();
-        let encoded_bytes = block.encode(self.compression_type);
+        let offset = self.data.len();
+        block.encode(&mut self.data, self.compression_type);
         let is_large = block.is_large();
         let meta = BlockMeta {
-            offset: self.data.len(),
+            offset,
             is_large,
             compression_type: self.compression_type,
             first_key: std::mem::take(&mut self.first_key),
@@ -208,7 +209,6 @@ impl SsTableBuilder {
             },
         };
         self.meta.push(meta);
-        self.data.extend_from_slice(&encoded_bytes);
     }
 
     /// ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -223,7 +223,7 @@ impl SsTableBuilder {
         let mut buf = self.data;
         let meta_offset = buf.len() as u32;
         BlockMeta::encode_meta(&self.meta, &mut buf);
-        buf.put_u32(meta_offset);
+        buf.put_u32_le(meta_offset);
         let first_key = self
             .meta
             .first()
@@ -301,8 +301,8 @@ impl SsTable {
         if bytes.len() < 9 {
             return Err(LoroError::DecodeError("Invalid sstable bytes".into()));
         }
-        let magic_number = u32::from_be_bytes((&bytes[..SIZE_OF_U32]).try_into().unwrap());
-        if magic_number != u32::from_be_bytes(MAGIC_NUMBER) {
+        let magic_number = u32::from_le_bytes((&bytes[..SIZE_OF_U32]).try_into().unwrap());
+        if magic_number != u32::from_le_bytes(MAGIC_NUMBER) {
             return Err(LoroError::DecodeError("Invalid magic number".into()));
         }
         let schema_version = bytes[SIZE_OF_U32];
@@ -320,7 +320,7 @@ impl SsTable {
             }
         }
         let data_len = bytes.len();
-        let meta_offset = (&bytes[data_len - SIZE_OF_U32..]).get_u32() as usize;
+        let meta_offset = (&bytes[data_len - SIZE_OF_U32..]).get_u32_le() as usize;
         if meta_offset >= data_len - 4 {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
         }
@@ -365,7 +365,7 @@ impl SsTable {
             let raw_block_and_check = bytes.slice(offset..offset_end);
             let checksum = raw_block_and_check
                 .slice(raw_block_and_check.len() - SIZE_OF_U32..)
-                .get_u32();
+                .get_u32_le();
             if checksum
                 != xxhash_rust::xxh32::xxh32(
                     &raw_block_and_check[..raw_block_and_check.len() - SIZE_OF_U32],
