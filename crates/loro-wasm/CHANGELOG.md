@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.10
+
+### Patch Changes
+
+- 7cf54e8: Fix batch importing with snapshot
+
 ## 0.16.9
 
 ### Patch Changes
