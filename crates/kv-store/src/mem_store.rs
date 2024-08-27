@@ -1,8 +1,8 @@
 use crate::block::BlockIter;
 use crate::compress::CompressionType;
 use crate::sstable::{SsTable, SsTableBuilder, SsTableIter};
+use crate::MergeIterator;
 use bytes::Bytes;
-use fxhash::FxHashSet;
 
 use std::ops::Bound;
 use std::{cmp::Ordering, collections::BTreeMap};
@@ -12,7 +12,8 @@ const DEFAULT_BLOCK_SIZE: usize = 4 * 1024;
 #[derive(Debug, Clone)]
 pub struct MemKvStore {
     mem_table: BTreeMap<Bytes, Bytes>,
-    ss_table: Option<SsTable>,
+    // From the oldest to the newest
+    ss_table: Vec<SsTable>,
     block_size: usize,
     compression_type: CompressionType,
 }
@@ -27,7 +28,7 @@ impl MemKvStore {
     pub fn new(block_size: usize, compression_type: CompressionType) -> Self {
         Self {
             mem_table: BTreeMap::new(),
-            ss_table: None,
+            ss_table: Vec::new(),
             block_size,
             compression_type,
         }
@@ -41,23 +42,22 @@ impl MemKvStore {
             return Some(v.clone());
         }
 
-        self.ss_table.as_ref().and_then(|table| {
+        for table in self.ss_table.iter().rev() {
             if table.first_key > key || table.last_key < key {
-                return None;
+                continue;
             }
             // table.
             let idx = table.find_block_idx(key);
             let block = table.read_block_cached(idx);
             let block_iter = BlockIter::new_seek_to_key(block, key);
-
-            block_iter.next_curr_key().and_then(|k| {
+            if let Some(k) = block_iter.next_curr_key() {
+                let v = block_iter.next_curr_value().unwrap();
                 if k == key {
-                    block_iter.next_curr_value()
-                } else {
-                    None
+                    return if v.is_empty() { None } else { Some(v) };
                 }
-            })
-        })
+            }
+        }
+        None
     }
 
     pub fn set(&mut self, key: &[u8], value: Bytes) {
@@ -96,8 +96,13 @@ impl MemKvStore {
         if self.mem_table.contains_key(key) {
             return !self.mem_table.get(key).unwrap().is_empty();
         }
-        if let Some(table) = &self.ss_table {
-            return table.contains_key(key);
+
+        for table in self.ss_table.iter().rev() {
+            if table.contains_key(key) {
+                if let Some(v) = table.get(key) {
+                    return !v.is_empty();
+                }
+            }
         }
         false
     }
@@ -107,7 +112,7 @@ impl MemKvStore {
         start: std::ops::Bound<&[u8]>,
         end: std::ops::Bound<&[u8]>,
     ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)> + '_> {
-        if self.ss_table.is_none() || self.ss_table.as_ref().unwrap().meta_len() == 0 {
+        if self.ss_table.is_empty() {
             return Box::new(
                 self.mem_table
                     .range::<[u8], _>((start, end))
@@ -115,37 +120,26 @@ impl MemKvStore {
                     .map(|(k, v)| (k.clone(), v.clone())),
             );
         }
-        if self.mem_table.is_empty() {
-            return Box::new(SsTableIter::new_scan(
-                self.ss_table.as_ref().unwrap(),
-                start,
-                end,
-            ));
-        }
+
         Box::new(MemStoreIterator::new(
             self.mem_table
                 .range::<[u8], _>((start, end))
                 .map(|(k, v)| (k.clone(), v.clone())),
-            SsTableIter::new_scan(self.ss_table.as_ref().unwrap(), start, end),
+            MergeIterator::new(
+                self.ss_table
+                    .iter()
+                    .rev()
+                    .map(|table| SsTableIter::new_scan(table, start, end))
+                    .collect(),
+            ),
+            true,
         ))
     }
 
+    /// The number of valid keys in the mem table and sstable, it's expensive to call
     pub fn len(&self) -> usize {
-        let deleted = self
-            .mem_table
-            .iter()
-            .filter(|(_, v)| v.is_empty())
-            .map(|(k, _)| k.clone())
-            .collect::<FxHashSet<Bytes>>();
-        let default_keys = FxHashSet::default();
-        let ss_keys = self
-            .ss_table
-            .as_ref()
-            .map_or(&default_keys, |table| table.valid_keys());
-        let ss_len = ss_keys
-            .difference(&self.mem_table.keys().cloned().collect())
-            .count();
-        self.mem_table.len() + ss_len - deleted.len()
+        // TODO: PERF
+        self.scan(Bound::Unbounded, Bound::Unbounded).count()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -156,14 +150,32 @@ impl MemKvStore {
         self.mem_table
             .iter()
             .fold(0, |acc, (k, v)| acc + k.len() + v.len())
-            + self.ss_table.as_ref().map_or(0, |table| table.data_size())
+            + self
+                .ss_table
+                .iter()
+                .map(|table| table.data_size())
+                .sum::<usize>()
     }
 
     pub fn export_all(&mut self) -> Bytes {
         let mut builder = SsTableBuilder::new(self.block_size, self.compression_type);
-        for (k, v) in self.scan(Bound::Unbounded, Bound::Unbounded) {
+        // we could use scan() here, we should keep the empty value
+        for (k, v) in MemStoreIterator::new(
+            self.mem_table
+                .range::<[u8], _>((Bound::Unbounded, Bound::Unbounded))
+                .map(|(k, v)| (k.clone(), v.clone())),
+            MergeIterator::new(
+                self.ss_table
+                    .iter()
+                    .rev()
+                    .map(|table| SsTableIter::new_scan(table, Bound::Unbounded, Bound::Unbounded))
+                    .collect(),
+            ),
+            false,
+        ) {
             builder.add(k, v);
         }
+
         builder.finish_block();
         if builder.is_empty() {
             return Bytes::new();
@@ -171,17 +183,17 @@ impl MemKvStore {
         self.mem_table.clear();
         let ss = builder.build();
         let ans = ss.export_all();
-        let _ = std::mem::replace(&mut self.ss_table, Some(ss));
+        let _ = std::mem::replace(&mut self.ss_table, vec![ss]);
         ans
     }
 
+    /// We can import several times, the latter will override the former.
     pub fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
         if bytes.is_empty() {
-            self.ss_table = None;
             return Ok(());
         }
         let ss_table = SsTable::import_all(bytes).map_err(|e| e.to_string())?;
-        self.ss_table = Some(ss_table);
+        self.ss_table.push(ss_table);
         Ok(())
     }
 }
@@ -194,6 +206,7 @@ pub struct MemStoreIterator<T, S> {
     current_sstable: Option<(Bytes, Bytes)>,
     back_mem: Option<(Bytes, Bytes)>,
     back_sstable: Option<(Bytes, Bytes)>,
+    filter_empty: bool,
 }
 
 impl<T, S> MemStoreIterator<T, S>
@@ -201,7 +214,7 @@ where
     T: DoubleEndedIterator<Item = (Bytes, Bytes)>,
     S: DoubleEndedIterator<Item = (Bytes, Bytes)>,
 {
-    fn new(mut mem: T, sst: S) -> Self {
+    fn new(mut mem: T, sst: S, filter_empty: bool) -> Self {
         let current_mem = mem.next();
         let back_mem = mem.next_back();
         Self {
@@ -211,6 +224,7 @@ where
             back_mem,
             current_sstable: None,
             back_sstable: None,
+            filter_empty,
         }
     }
 }
@@ -254,9 +268,11 @@ where
             (None, None) => None,
         };
 
-        if let Some((_k, v)) = &ans {
-            if v.is_empty() {
-                return self.next();
+        if self.filter_empty {
+            if let Some((_k, v)) = &ans {
+                if v.is_empty() {
+                    return self.next();
+                }
             }
         }
         ans
@@ -301,10 +317,11 @@ where
             (None, Some(_)) => self.back_sstable.take(),
             (None, None) => None,
         };
-        // TODO: use EmptyFilterIterator
-        if let Some((_k, v)) = &ans {
-            if v.is_empty() {
-                return self.next_back();
+        if self.filter_empty {
+            if let Some((_k, v)) = &ans {
+                if v.is_empty() {
+                    return self.next_back();
+                }
             }
         }
         ans
@@ -439,5 +456,41 @@ mod tests {
         assert_eq!(iter.len(), 0);
         store.set(key, value.clone());
         assert_eq!(store.get(key), Some(value));
+    }
+
+    #[test]
+    fn import_several_times() {
+        let a = Bytes::from_static(b"a");
+        let b = Bytes::from_static(b"b");
+        let c = Bytes::from_static(b"c");
+        let d = Bytes::from_static(b"d");
+        let e = Bytes::from_static(b"e");
+        let mut store = MemKvStore::default();
+        store.set(&a, a.clone());
+        store.export_all();
+        store.set(&c, c.clone());
+        let encode1 = store.export_all();
+        let mut store2 = MemKvStore::default();
+        store2.set(&b, b.clone());
+        store2.export_all();
+        store2.set(&c, Bytes::new());
+        let encode2 = store2.export_all();
+        let mut store3 = MemKvStore::default();
+        store3.set(&d, d.clone());
+        store3.set(&a, Bytes::new());
+        store3.export_all();
+        store3.set(&e, e.clone());
+        store3.set(&c, c.clone());
+        let encode3 = store3.export_all();
+
+        let mut store = MemKvStore::default();
+        store.import_all(encode1).unwrap();
+        store.import_all(encode2).unwrap();
+        store.import_all(encode3).unwrap();
+        assert_eq!(store.get(&a), None);
+        assert_eq!(store.get(&b), Some(b.clone()));
+        assert_eq!(store.get(&c), Some(c.clone()));
+        assert_eq!(store.get(&d), Some(d.clone()));
+        assert_eq!(store.get(&e), Some(e.clone()));
     }
 }

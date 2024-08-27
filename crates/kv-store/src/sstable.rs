@@ -116,6 +116,7 @@ impl BlockMeta {
                     first_key,
                     last_key: None,
                 });
+                data = buf;
                 continue;
             }
             let (last_key_len, mut buf) = get_u16_le(buf)?;

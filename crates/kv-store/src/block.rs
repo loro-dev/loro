@@ -486,6 +486,7 @@ impl BlockIter {
                         .offsets
                         .get(idx + 1)
                         .unwrap_or(&(block.data.len() as u16)) as usize,
+                    idx == 0,
                 );
                 self.next_idx = idx;
             }
@@ -519,6 +520,7 @@ impl BlockIter {
                         .offsets
                         .get(idx as usize + 1)
                         .unwrap_or(&(block.data.len() as u16)) as usize,
+                    idx == 0,
                 );
                 self.prev_idx = idx;
             }
@@ -536,12 +538,12 @@ impl BlockIter {
         }
     }
 
-    fn seek_to_offset(&mut self, offset: usize, offset_end: usize) {
+    fn seek_to_offset(&mut self, offset: usize, offset_end: usize, is_first: bool) {
         match self.block.as_ref() {
             Block::Normal(block) => {
-                if offset == 0{
+                if is_first{
                     self.next_key = self.first_key.clone();
-                    self.next_value_range = 0..offset_end;
+                    self.next_value_range = offset..offset_end;
                     return;
                 }
                 let mut rest = &block.data[offset..];
@@ -562,12 +564,12 @@ impl BlockIter {
         }
     }
 
-    fn back_to_offset(&mut self, offset: usize, offset_end: usize) {
+    fn back_to_offset(&mut self, offset: usize, offset_end: usize, is_first: bool) {
         match self.block.as_ref() {
             Block::Normal(block) => {
-                if offset == 0{
+                if is_first{
                     self.prev_key = self.first_key.clone();
-                    self.prev_value_range = 0..offset_end;
+                    self.prev_value_range = offset..offset_end;
                     return;
                 }
                 let mut rest = &block.data[offset..];
