@@ -15,7 +15,7 @@ wasm-bindgen = "=0.2.92"
 serde-wasm-bindgen = { version = "^0.6.5" }
 wasm-bindgen-derive = "0.2.1"
 console_error_panic_hook = { version = "0.1.6", optional = true }
-getrandom = { version = "0.2.10", features = ["js"] }
+getrandom = { version = "0.2.15", features = ["js"] }
 serde = { workspace = true }
 rle = { path = "../rle", package = "loro-rle" }
 tracing-wasm = "0.2.1"

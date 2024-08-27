@@ -60,6 +60,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitmaps"
+version = "3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1d084b0137aaa901caf9f1e8b21daa6aa24d41cd806e111335541eff9683bd6"
+
+[[package]]
 name = "bytecount"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -210,7 +216,7 @@ dependencies = [
  "arref",
  "fxhash",
  "heapless 0.7.16",
- "itertools",
+ "itertools 0.11.0",
  "loro-thunderdome",
  "proc-macro2",
 ]
@@ -286,7 +292,7 @@ version = "15.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0acd33ff0285af998aaf9b57342af478078f53492322fafc47450e09397e0e9"
 dependencies = [
- "bitmaps",
+ "bitmaps 2.1.0",
  "rand_core",
  "rand_xoshiro",
  "sized-chunks",
@@ -295,10 +301,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "imbl"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc3be8d8cd36f33a46b1849f31f837c44d9fa87223baee3b4bd96b8f11df81eb"
+dependencies = [
+ "bitmaps 3.2.1",
+ "imbl-sized-chunks",
+ "rand_core",
+ "rand_xoshiro",
+ "version_check",
+]
+
+[[package]]
+name = "imbl-sized-chunks"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "144006fb58ed787dcae3f54575ff4349755b00ccc99f4b4873860b654be1ed63"
+dependencies = [
+ "bitmaps 3.2.1",
+]
+
+[[package]]
 name = "itertools"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
 dependencies = [
  "either",
 ]
@@ -353,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "0.5.0"
+version = "0.16.2"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
@@ -368,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "loro-delta"
-version = "0.5.0"
+version = "0.16.2"
 dependencies = [
  "arrayvec",
  "enum-as-inner 0.5.1",
@@ -379,22 +416,24 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "0.5.0"
+version = "0.16.2"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
  "arref",
+ "either",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
  "fxhash",
  "generic-btree",
  "getrandom",
  "im",
- "itertools",
+ "itertools 0.12.1",
  "leb128",
  "loro-common",
  "loro-delta",
  "loro-rle",
+ "loro_fractional_index",
  "md5",
  "num",
  "num-derive",
@@ -421,7 +460,7 @@ dependencies = [
 
 [[package]]
 name = "loro-rle"
-version = "0.5.0"
+version = "0.16.2"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -436,6 +475,16 @@ name = "loro-thunderdome"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
+
+[[package]]
+name = "loro_fractional_index"
+version = "0.16.2"
+dependencies = [
+ "imbl",
+ "rand",
+ "serde",
+ "smallvec",
+]
 
 [[package]]
 name = "md5"
@@ -752,7 +801,7 @@ version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5d54dd7e7a1ec134c842f8a3bdb5a1fc662d002682e0457f976f3046cf9ccf8"
 dependencies = [
- "itertools",
+ "itertools 0.11.0",
  "postcard",
  "serde",
  "serde_columnar_derive",
@@ -805,7 +854,7 @@ version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16d69225bde7a69b235da73377861095455d298f2b970996eec25ddbb42b3d1e"
 dependencies = [
- "bitmaps",
+ "bitmaps 2.1.0",
  "typenum",
 ]
 
