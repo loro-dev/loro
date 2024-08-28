@@ -533,6 +533,7 @@ impl TreeOpGroup {
     }
 
     pub(crate) fn record_gc_cache(&mut self, node: MoveLamportAndID) {
+        // TODO:
         let mut tree = self.tree_for_diff.lock().unwrap();
         tree.apply_gc(node);
     }
@@ -747,6 +748,9 @@ impl MovableListHistoryCache {
                 },
                 |e| {
                     let id = ID::new(e.peer, e.counter);
+                    if e.value.is_some() {
+                        return Some(IdFull::new(e.peer, e.counter, e.lamport));
+                    }
                     let lamport = oplog.get_lamport_at(id).unwrap_or(e.lamport);
                     Some(IdFull::new(e.peer, e.counter, lamport))
                 },
