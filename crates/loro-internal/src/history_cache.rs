@@ -558,7 +558,6 @@ struct MovableListInnerDeltaEntry {
     lamport: Lamport,
     peer: PeerID,
     counter: Counter,
-    value: Box<Option<LoroValue>>,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -619,7 +618,6 @@ impl HistoryCacheTrait for MovableListHistoryCache {
                         lamport: cur_id.lamport,
                         peer: cur_id.peer,
                         counter: cur_id.counter,
-                        value: Box::new(None),
                     });
                 }
                 crate::container::list::list_op::InnerListOp::Set { elem_id, .. } => {
@@ -659,7 +657,6 @@ impl MovableListHistoryCache {
             lamport: id.lamport,
             peer: id.peer,
             counter: id.counter,
-            value: Box::new(Some(value)),
         });
     }
 
@@ -762,7 +759,6 @@ impl MovableListHistoryCache {
                     lamport: 0,
                     peer: 0,
                     counter: 0,
-                    value: Box::new(None),
                 }),
                 Bound::Excluded(MovableListInnerDeltaEntry {
                     element_lamport: key.lamport,
@@ -770,7 +766,6 @@ impl MovableListHistoryCache {
                     lamport: max_lamport,
                     peer: PeerID::MAX,
                     counter: Counter::MAX,
-                    value: Box::new(None),
                 }),
             ))
             .rev()
@@ -786,9 +781,6 @@ impl MovableListHistoryCache {
                 },
                 |e| {
                     let id = ID::new(e.peer, e.counter);
-                    if e.value.is_some() {
-                        return Some(IdFull::new(e.peer, e.counter, e.lamport));
-                    }
                     let lamport = oplog.get_lamport_at(id).unwrap_or(e.lamport);
                     Some(IdFull::new(e.peer, e.counter, lamport))
                 },
