@@ -43,7 +43,7 @@ pub struct ListItem {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Element {
-    value: LoroValue,
+    pub(crate) value: LoroValue,
     pub(crate) value_id: IdLp,
     pub(crate) pos: IdLp,
 }
