@@ -227,7 +227,19 @@ impl ContainerHistoryCache {
                             }
                         }
                     }
-                    crate::state::State::MovableListState(l) => {}
+                    crate::state::State::MovableListState(l) => {
+                        for (idlp, elem) in l.elements() {
+                            if for_checkout {
+                                let c = self.for_checkout.as_mut().unwrap();
+                                let item = l.get_list_item(elem.pos).unwrap();
+                                c.movable_list.record_gc_state(
+                                    item.id,
+                                    idlp.peer,
+                                    idlp.lamport.into(),
+                                );
+                            }
+                        }
+                    }
                     crate::state::State::TreeState(t) => {
                         if for_importing {
                             let c = self.for_importing.as_mut().unwrap();
@@ -570,6 +582,23 @@ impl HistoryCacheTrait for MovableListHistoryCache {
 }
 
 impl MovableListHistoryCache {
+    pub(crate) fn record_gc_state(&mut self, id: IdFull, elem_peer: PeerID, elem_lamport: Lamport) {
+        self.set_set.insert(MovableListInnerDeltaEntry {
+            element_lamport: elem_lamport,
+            element_peer: elem_peer,
+            lamport: id.lamport,
+            peer: id.peer,
+            counter: id.counter,
+        });
+        self.move_set.insert(MovableListInnerDeltaEntry {
+            element_lamport: elem_lamport,
+            element_peer: elem_peer,
+            lamport: id.lamport,
+            peer: id.peer,
+            counter: id.counter,
+        });
+    }
+
     pub(crate) fn last_value(
         &self,
         key: IdLp,
@@ -680,7 +709,7 @@ impl MovableListHistoryCache {
                 },
                 |e| {
                     let id = ID::new(e.peer, e.counter);
-                    let lamport = oplog.get_lamport_at(id).unwrap();
+                    let lamport = oplog.get_lamport_at(id).unwrap_or(e.lamport);
                     Some(IdFull::new(e.peer, e.counter, lamport))
                 },
             )
