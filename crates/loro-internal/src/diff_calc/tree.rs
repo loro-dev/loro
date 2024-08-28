@@ -506,9 +506,12 @@ impl TreeCacheForDiff {
         effected
     }
 
-    pub(crate) fn apply_gc(&mut self, node: MoveLamportAndID) {
-        self.current_vv.set_last(node.id.id());
-        self.tree.entry(node.op.target()).or_default().insert(node);
+    pub(crate) fn init_tree_with_trimmed_version(&mut self, nodes: Vec<MoveLamportAndID>) {
+        debug_assert!(self.tree.is_empty());
+        self.current_vv.set_last(nodes.last().unwrap().id.id());
+        for node in nodes.into_iter() {
+            self.tree.entry(node.op.target()).or_default().insert(node);
+        }
     }
 
     fn is_parent_deleted(&self, parent: TreeParentId) -> bool {

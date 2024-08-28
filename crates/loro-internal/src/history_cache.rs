@@ -13,7 +13,6 @@ use loro_common::{
     ContainerType, Counter, HasLamport, IdFull, IdLp, InternalString, LoroValue, PeerID, ID,
 };
 use rle::HasLength;
-use serde::de::value;
 
 use crate::{
     change::{Change, Lamport},
@@ -246,17 +245,20 @@ impl ContainerHistoryCache {
                         if for_importing {
                             let c = self.for_importing.as_mut().unwrap();
                             if let Some(HistoryCacheForImporting::Tree(tree)) = c.get_mut(idx) {
-                                for node in t.tree_nodes() {
-                                    tree.record_gc_cache(MoveLamportAndID {
-                                        id: node.last_move_op,
-                                        op: Arc::new(TreeOp::Create {
-                                            target: node.id,
-                                            parent: node.parent,
-                                            position: node.position.clone(),
-                                        }),
-                                        effected: true,
-                                    });
-                                }
+                                tree.record_gc_state(
+                                    t.tree_nodes()
+                                        .into_iter()
+                                        .map(|node| MoveLamportAndID {
+                                            id: node.last_move_op,
+                                            op: Arc::new(TreeOp::Create {
+                                                target: node.id,
+                                                parent: node.parent,
+                                                position: node.position.clone(),
+                                            }),
+                                            effected: true,
+                                        })
+                                        .collect(),
+                                );
                             }
                         }
                     }
@@ -532,16 +534,18 @@ impl TreeOpGroup {
         &self.tree_for_diff
     }
 
-    pub(crate) fn record_gc_cache(&mut self, node: MoveLamportAndID) {
+    pub(crate) fn record_gc_state(&mut self, nodes: Vec<MoveLamportAndID>) {
         let mut tree = self.tree_for_diff.lock().unwrap();
-        self.ops.insert(
-            node.id.idlp(),
-            GroupedTreeOpInfo {
-                counter: node.id.counter,
-                value: node.op.clone(),
-            },
-        );
-        tree.apply_gc(node);
+        for node in nodes.iter() {
+            self.ops.insert(
+                node.id.idlp(),
+                GroupedTreeOpInfo {
+                    counter: node.id.counter,
+                    value: node.op.clone(),
+                },
+            );
+        }
+        tree.init_tree_with_trimmed_version(nodes);
     }
 }
 
@@ -576,7 +580,6 @@ impl Ord for MovableListInnerDeltaEntry {
             .then_with(|| self.element_peer.cmp(&other.element_peer))
             .then_with(|| self.lamport.cmp(&other.lamport))
             .then_with(|| self.peer.cmp(&other.peer))
-            .then_with(|| self.counter.cmp(&other.counter))
     }
 }
 
@@ -599,10 +602,6 @@ impl Ord for MovableListSetDeltaEntry {
             .then_with(|| self.element_peer.cmp(&other.element_peer))
             .then_with(|| self.lamport.cmp(&other.lamport))
             .then_with(|| self.peer.cmp(&other.peer))
-            .then_with(|| match (&self.counter_or_value, &other.counter_or_value) {
-                (Either::Left(l), Either::Left(r)) => l.cmp(r),
-                _ => std::cmp::Ordering::Equal,
-            })
     }
 }
 
