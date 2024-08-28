@@ -533,8 +533,14 @@ impl TreeOpGroup {
     }
 
     pub(crate) fn record_gc_cache(&mut self, node: MoveLamportAndID) {
-        // TODO:
         let mut tree = self.tree_for_diff.lock().unwrap();
+        self.ops.insert(
+            node.id.idlp(),
+            GroupedTreeOpInfo {
+                counter: node.id.counter,
+                value: node.op.clone(),
+            },
+        );
         tree.apply_gc(node);
     }
 }
@@ -542,7 +548,7 @@ impl TreeOpGroup {
 #[derive(Debug, Default)]
 pub(crate) struct MovableListHistoryCache {
     move_set: BTreeSet<MovableListInnerDeltaEntry>,
-    set_set: BTreeSet<MovableListInnerDeltaEntry>,
+    set_set: BTreeSet<MovableListSetDeltaEntry>,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -553,6 +559,15 @@ struct MovableListInnerDeltaEntry {
     peer: PeerID,
     counter: Counter,
     value: Box<Option<LoroValue>>,
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+struct MovableListSetDeltaEntry {
+    element_lamport: Lamport,
+    element_peer: PeerID,
+    lamport: Lamport,
+    peer: PeerID,
+    counter_or_value: Either<Counter, Box<LoroValue>>,
 }
 
 impl Ord for MovableListInnerDeltaEntry {
@@ -572,6 +587,26 @@ impl PartialOrd for MovableListInnerDeltaEntry {
     }
 }
 
+impl PartialOrd for MovableListSetDeltaEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for MovableListSetDeltaEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.element_lamport
+            .cmp(&other.element_lamport)
+            .then_with(|| self.element_peer.cmp(&other.element_peer))
+            .then_with(|| self.lamport.cmp(&other.lamport))
+            .then_with(|| self.peer.cmp(&other.peer))
+            .then_with(|| match (&self.counter_or_value, &other.counter_or_value) {
+                (Either::Left(l), Either::Left(r)) => l.cmp(r),
+                _ => std::cmp::Ordering::Equal,
+            })
+    }
+}
+
 impl HistoryCacheTrait for MovableListHistoryCache {
     fn insert(&mut self, op: &RichOp) {
         let cur_id = op.id_full();
@@ -588,13 +623,12 @@ impl HistoryCacheTrait for MovableListHistoryCache {
                     });
                 }
                 crate::container::list::list_op::InnerListOp::Set { elem_id, .. } => {
-                    self.set_set.insert(MovableListInnerDeltaEntry {
+                    self.set_set.insert(MovableListSetDeltaEntry {
                         element_lamport: elem_id.lamport,
                         element_peer: elem_id.peer,
                         lamport: cur_id.lamport,
                         peer: cur_id.peer,
-                        counter: cur_id.counter,
-                        value: Box::new(None),
+                        counter_or_value: Either::Left(cur_id.counter),
                     });
                 }
                 _ => {}
@@ -612,13 +646,12 @@ impl MovableListHistoryCache {
         elem_lamport: Lamport,
         value: LoroValue,
     ) {
-        self.set_set.insert(MovableListInnerDeltaEntry {
+        self.set_set.insert(MovableListSetDeltaEntry {
             element_lamport: elem_lamport,
             element_peer: elem_peer,
             lamport: id.lamport,
             peer: id.peer,
-            counter: id.counter,
-            value: Box::new(Some(value.clone())),
+            counter_or_value: Either::Right(Box::new(value.clone())),
         });
         self.move_set.insert(MovableListInnerDeltaEntry {
             element_lamport: elem_lamport,
@@ -639,25 +672,29 @@ impl MovableListHistoryCache {
     ) -> Option<GroupedMapOpInfo<LoroValue>> {
         self.set_set
             .range((
-                Bound::Included(MovableListInnerDeltaEntry {
+                Bound::Included(MovableListSetDeltaEntry {
                     element_lamport: key.lamport,
                     element_peer: key.peer,
                     lamport: 0,
                     peer: 0,
-                    counter: 0,
-                    value: Box::new(None),
+                    counter_or_value: Either::Left(0),
                 }),
-                Bound::Excluded(MovableListInnerDeltaEntry {
+                Bound::Excluded(MovableListSetDeltaEntry {
                     element_lamport: key.lamport,
                     element_peer: key.peer,
                     lamport: max_lamport,
                     peer: PeerID::MAX,
-                    counter: Counter::MAX,
-                    value: Box::new(None),
+                    counter_or_value: Either::Left(Counter::MAX),
                 }),
             ))
             .rev()
-            .find(|e| vv.get(&e.peer).copied().unwrap_or(0) > e.counter)
+            .find(|e| {
+                let counter = match &e.counter_or_value {
+                    Either::Left(c) => *c,
+                    Either::Right(v) => -1,
+                };
+                vv.get(&e.peer).copied().unwrap_or(0) > counter
+            })
             .map_or_else(
                 || {
                     let id = oplog.idlp_to_id(key).unwrap();
@@ -684,26 +721,27 @@ impl MovableListHistoryCache {
                     }
                 },
                 |e| {
-                    let id = ID::new(e.peer, e.counter);
-                    let (lamport, value) = if let Some(value) = &*e.value {
-                        (e.lamport, value.clone())
-                    } else {
-                        let op = oplog.get_op_that_includes(id).unwrap();
-                        debug_assert_eq!(op.atom_len(), 1);
-                        let lamport = op.lamport();
-                        match &op.content {
-                            InnerContent::List(InnerListOp::Set { value, .. }) => {
-                                (lamport, value.clone())
-                            }
-                            _ => {
-                                unreachable!()
+                    let (lamport, value) = match &e.counter_or_value {
+                        Either::Left(c) => {
+                            let id = ID::new(e.peer, *c);
+                            let op = oplog.get_op_that_includes(id).unwrap();
+                            debug_assert_eq!(op.atom_len(), 1);
+                            let lamport = op.lamport();
+                            match &op.content {
+                                InnerContent::List(InnerListOp::Set { value, .. }) => {
+                                    (lamport, value.clone())
+                                }
+                                _ => {
+                                    unreachable!()
+                                }
                             }
                         }
+                        Either::Right(v) => (e.lamport, v.as_ref().clone()),
                     };
                     Some(GroupedMapOpInfo {
                         value: value.clone(),
                         lamport,
-                        peer: id.peer,
+                        peer: e.peer,
                     })
                 },
             )
