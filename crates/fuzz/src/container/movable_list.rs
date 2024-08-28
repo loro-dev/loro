@@ -75,7 +75,7 @@ impl ActorTrait for MovableListActor {
         let tracker = self.tracker.lock().unwrap().to_value();
         assert_eq!(
             &value,
-            tracker.into_map().unwrap().get("movable_list").unwrap()
+            tracker.into_map().unwrap().0.get("movable_list").unwrap()
         );
     }
 

@@ -346,7 +346,10 @@ impl HandlerTrait for TextHandler {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.try_lock().unwrap();
-                LoroValue::String(Arc::new(t.value.to_string()))
+                LoroValue::String(Arc::new((
+                    t.value.to_string(),
+                    once_cell::sync::OnceCell::new(),
+                )))
             }
             MaybeDetached::Attached(a) => {
                 a.with_state(|state| state.as_richtext_state_mut().unwrap().get_value())
@@ -489,7 +492,7 @@ impl HandlerTrait for MapHandler {
                 for (k, v) in m.value.iter() {
                     map.insert(k.to_string(), v.to_value());
                 }
-                LoroValue::Map(Arc::new(map))
+                LoroValue::Map(Arc::new((map, once_cell::sync::OnceCell::new())))
             }
             MaybeDetached::Attached(a) => a.get_value(),
         }
@@ -503,7 +506,7 @@ impl HandlerTrait for MapHandler {
                 for (k, v) in m.value.iter() {
                     map.insert(k.to_string(), v.to_deep_value());
                 }
-                LoroValue::Map(Arc::new(map))
+                LoroValue::Map(Arc::new((map, once_cell::sync::OnceCell::new())))
             }
             MaybeDetached::Attached(a) => a.get_deep_value(),
         }
@@ -545,7 +548,7 @@ impl HandlerTrait for MapHandler {
                 let new_inner = create_handler(a, self_id);
                 let ans = new_inner.into_map().unwrap();
 
-                for (k, v) in self.get_value().into_map().unwrap().iter() {
+                for (k, v) in self.get_value().into_map().unwrap().0.iter() {
                     if let LoroValue::Container(id) = v {
                         ans.insert_container_with_txn(txn, k, create_handler(a, id.clone()))
                             .unwrap();
@@ -611,7 +614,10 @@ impl HandlerTrait for MovableListHandler {
         match &self.inner {
             MaybeDetached::Detached(a) => {
                 let a = a.try_lock().unwrap();
-                LoroValue::List(Arc::new(a.value.iter().map(|v| v.to_value()).collect()))
+                LoroValue::List(Arc::new((
+                    a.value.iter().map(|v| v.to_value()).collect(),
+                    once_cell::sync::OnceCell::new(),
+                )))
             }
             MaybeDetached::Attached(a) => a.get_value(),
         }
@@ -621,9 +627,10 @@ impl HandlerTrait for MovableListHandler {
         match &self.inner {
             MaybeDetached::Detached(a) => {
                 let a = a.try_lock().unwrap();
-                LoroValue::List(Arc::new(
+                LoroValue::List(Arc::new((
                     a.value.iter().map(|v| v.to_deep_value()).collect(),
-                ))
+                    once_cell::sync::OnceCell::new(),
+                )))
             }
             MaybeDetached::Attached(a) => a.get_deep_value(),
         }
@@ -672,7 +679,7 @@ impl HandlerTrait for MovableListHandler {
                 let new_inner = create_handler(a, self_id);
                 let ans = new_inner.into_movable_list().unwrap();
 
-                for (i, v) in self.get_value().into_list().unwrap().iter().enumerate() {
+                for (i, v) in self.get_value().into_list().unwrap().0.iter().enumerate() {
                     if let LoroValue::Container(id) = v {
                         ans.insert_container_with_txn(txn, i, create_handler(a, id.clone()))
                             .unwrap();
@@ -724,7 +731,10 @@ impl HandlerTrait for ListHandler {
         match &self.inner {
             MaybeDetached::Detached(a) => {
                 let a = a.try_lock().unwrap();
-                LoroValue::List(Arc::new(a.value.iter().map(|v| v.to_value()).collect()))
+                LoroValue::List(Arc::new((
+                    a.value.iter().map(|v| v.to_value()).collect(),
+                    once_cell::sync::OnceCell::new(),
+                )))
             }
             MaybeDetached::Attached(a) => a.get_value(),
         }
@@ -734,9 +744,10 @@ impl HandlerTrait for ListHandler {
         match &self.inner {
             MaybeDetached::Detached(a) => {
                 let a = a.try_lock().unwrap();
-                LoroValue::List(Arc::new(
+                LoroValue::List(Arc::new((
                     a.value.iter().map(|v| v.to_deep_value()).collect(),
-                ))
+                    once_cell::sync::OnceCell::new(),
+                )))
             }
             MaybeDetached::Attached(a) => a.get_deep_value(),
         }
@@ -778,7 +789,7 @@ impl HandlerTrait for ListHandler {
                 let new_inner = create_handler(a, self_id);
                 let ans = new_inner.into_list().unwrap();
 
-                for (i, v) in self.get_value().into_list().unwrap().iter().enumerate() {
+                for (i, v) in self.get_value().into_list().unwrap().0.iter().enumerate() {
                     if let LoroValue::Container(id) = v {
                         ans.insert_container_with_txn(txn, i, create_handler(a, id.clone()))
                             .unwrap();
@@ -3960,15 +3971,15 @@ mod test {
         loro2.import(&exported).unwrap();
         let mut txn = loro2.txn().unwrap();
         let text = txn.get_text("hello");
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello");
         text.insert_with_txn(&mut txn, 5, " world").unwrap();
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello world");
         txn.commit().unwrap();
         loro.import(&loro2.export_from(&Default::default()))
             .unwrap();
         let txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello world");
     }
 
     #[test]
@@ -3987,21 +3998,21 @@ mod test {
         loro2.import(&exported).unwrap();
         let mut txn = loro2.txn().unwrap();
         let text = txn.get_text("hello");
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello");
         text.insert_with_txn(&mut txn, 5, " world").unwrap();
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello world");
         txn.commit().unwrap();
 
         loro.import(&loro2.export_from(&Default::default()))
             .unwrap();
         let txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello world");
         txn.commit().unwrap();
 
         // test checkout
         loro.checkout(&Frontiers::from_id(ID::new(2, 1))).unwrap();
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello w");
+        assert_eq!(text.get_value().as_string().unwrap().0, "hello w");
     }
 
     #[test]
@@ -4041,7 +4052,7 @@ mod test {
         // assert has bold
         let value = handler.get_richtext_value();
         assert_eq!(value[0]["insert"], "hello".into());
-        let meta = value[0]["attributes"].as_map().unwrap();
+        let meta = &value[0]["attributes"].as_map().unwrap().0;
         assert_eq!(meta.len(), 1);
         meta.get("bold").unwrap();
 
@@ -4050,12 +4061,12 @@ mod test {
             .import(&loro.export_from(&Default::default()))
             .unwrap();
         let handler2 = loro2.get_text("richtext");
-        assert_eq!(&**handler2.get_value().as_string().unwrap(), "hello world");
+        assert_eq!(handler2.get_value().as_string().unwrap().0, "hello world");
 
         // assert has bold
         let value = handler2.get_richtext_value();
         assert_eq!(value[0]["insert"], "hello".into());
-        let meta = value[0]["attributes"].as_map().unwrap();
+        let meta = &value[0]["attributes"].as_map().unwrap().0;
         assert_eq!(meta.len(), 1);
         meta.get("bold").unwrap();
 

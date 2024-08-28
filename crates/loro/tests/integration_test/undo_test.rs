@@ -1122,16 +1122,18 @@ fn undo_tree_move() -> LoroResult<()> {
     // a
     undo.undo(&doc_a)?;
     let a_value = tree_a.get_value().as_list().unwrap().clone();
-    assert_eq!(a_value.len(), 2);
-    assert!(a_value[0]
+    assert_eq!(a_value.0.len(), 2);
+    assert!(a_value.0[0]
         .as_map()
         .unwrap()
+        .0
         .get("parent")
         .unwrap()
         .is_null());
-    assert!(a_value[1]
+    assert!(a_value.0[1]
         .as_map()
         .unwrap()
+        .0
         .get("parent")
         .unwrap()
         .is_null());
@@ -1141,23 +1143,25 @@ fn undo_tree_move() -> LoroResult<()> {
     // b
     undo2.undo(&doc_b)?;
     let b_value = tree_b.get_value().as_list().unwrap().clone();
-    assert_eq!(b_value.len(), 0);
+    assert_eq!(b_value.0.len(), 0);
     undo.undo(&doc_a)?;
     undo.undo(&doc_a)?;
     let a_value = tree_a.get_value().as_list().unwrap().clone();
-    assert_eq!(a_value.len(), 1);
+    assert_eq!(a_value.0.len(), 1);
     assert_eq!(
-        a_value[0]
+        a_value.0[0]
             .as_map()
             .unwrap()
+            .0
             .get("id")
             .unwrap()
             .to_json_value(),
         json!("0@2")
     );
-    assert!(a_value[0]
+    assert!(a_value.0[0]
         .as_map()
         .unwrap()
+        .0
         .get("parent")
         .unwrap()
         .is_null());
@@ -1179,7 +1183,7 @@ fn undo_tree_concurrent_delete() -> LoroResult<()> {
     doc_a.import(&doc_b.export_from(&Default::default()))?;
     doc_b.import(&doc_a.export_from(&Default::default()))?;
     undo_b.undo(&doc_b)?;
-    assert!(tree_b.get_value().as_list().unwrap().is_empty());
+    assert!(tree_b.get_value().as_list().unwrap().0.is_empty());
     Ok(())
 }
 
@@ -1201,11 +1205,12 @@ fn undo_tree_concurrent_delete2() -> LoroResult<()> {
     doc_a.import(&doc_b.export_from(&Default::default()))?;
     doc_b.import(&doc_a.export_from(&Default::default()))?;
     undo_b.undo(&doc_b)?;
-    assert_eq!(tree_b.get_value().as_list().unwrap().len(), 1);
+    assert_eq!(tree_b.get_value().as_list().unwrap().0.len(), 1);
     assert_eq!(
-        tree_b.get_value().as_list().unwrap()[0]
+        tree_b.get_value().as_list().unwrap().0[0]
             .as_map()
             .unwrap()
+            .0
             .get("id")
             .unwrap()
             .to_json_value(),

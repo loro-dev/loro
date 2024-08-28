@@ -127,7 +127,7 @@ impl ContainerState for MapState {
 
     fn get_value(&mut self) -> LoroValue {
         let ans = self.to_map();
-        LoroValue::Map(Arc::new(ans))
+        LoroValue::Map(Arc::new((ans, once_cell::sync::OnceCell::new())))
     }
 
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {

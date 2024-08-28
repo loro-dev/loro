@@ -256,7 +256,7 @@ impl ApplyDiff for LoroValue {
     fn apply_diff_shallow(&mut self, diff: &[Diff]) {
         match self {
             LoroValue::String(value) => {
-                let mut s = value.to_string();
+                let mut s = value.0.to_string();
                 for item in diff.iter() {
                     let delta = item.as_text().unwrap();
                     let mut index = 0;
@@ -288,7 +288,7 @@ impl ApplyDiff for LoroValue {
                         }
                     }
                 }
-                *value = Arc::new(s);
+                *value = Arc::new((s, once_cell::sync::OnceCell::new()));
             }
             LoroValue::List(seq) => {
                 let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
@@ -308,7 +308,7 @@ impl ApplyDiff for LoroValue {
                                     delete,
                                 } => {
                                     let len = value.len();
-                                    seq.splice(
+                                    seq.0.splice(
                                         index..index + delete,
                                         value.iter().map(|x| x.to_value()),
                                     );
@@ -339,10 +339,10 @@ impl ApplyDiff for LoroValue {
                             for (key, value) in diff.updated.iter() {
                                 match &value.value {
                                     Some(value) => {
-                                        map.insert(key.to_string(), value.to_value());
+                                        map.0.insert(key.to_string(), value.to_value());
                                     }
                                     None => {
-                                        map.remove(&key.to_string());
+                                        map.0.remove(&key.to_string());
                                     }
                                 }
                             }
@@ -358,7 +358,7 @@ impl ApplyDiff for LoroValue {
     fn apply_diff(&mut self, diff: &[Diff]) {
         match self {
             LoroValue::String(value) => {
-                let mut s = value.to_string();
+                let mut s = value.0.to_string();
                 for item in diff.iter() {
                     let delta = item.as_text().unwrap();
                     let mut index = 0;
@@ -378,7 +378,7 @@ impl ApplyDiff for LoroValue {
                         }
                     }
                 }
-                *value = Arc::new(s);
+                *value = Arc::new((s, once_cell::sync::OnceCell::new()));
             }
             LoroValue::List(seq) => {
                 let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
@@ -398,7 +398,7 @@ impl ApplyDiff for LoroValue {
                                     delete,
                                 } => {
                                     let value_iter = value.iter().map(unresolved_to_collection);
-                                    seq.splice(index..index + *delete, value_iter);
+                                    seq.0.splice(index..index + *delete, value_iter);
                                     index += value.len();
                                 }
                             }
@@ -426,13 +426,13 @@ impl ApplyDiff for LoroValue {
                             for (key, value) in diff.updated.iter() {
                                 match &value.value {
                                     Some(value) => {
-                                        map.insert(
+                                        map.0.insert(
                                             key.to_string(),
                                             unresolved_to_collection(value),
                                         );
                                     }
                                     None => {
-                                        map.remove(&key.to_string());
+                                        map.0.remove(&key.to_string());
                                     }
                                 }
                             }
@@ -476,7 +476,7 @@ impl ApplyDiff for LoroValue {
                     Index::Key(key) => {
                         let m = value.as_map_mut().unwrap();
                         let map = Arc::make_mut(m);
-                        value = map.entry(key.to_string()).or_insert_with(|| match hint {
+                        value = map.0.entry(key.to_string()).or_insert_with(|| match hint {
                             TypeHint::Map => LoroValue::Map(Default::default()),
                             TypeHint::Text => LoroValue::String(Default::default()),
                             TypeHint::List => LoroValue::List(Default::default()),
@@ -488,20 +488,28 @@ impl ApplyDiff for LoroValue {
                     Index::Seq(index) => {
                         let l = value.as_list_mut().unwrap();
                         let list = Arc::make_mut(l);
-                        value = list.get_mut(*index).unwrap();
+                        value = list.0.get_mut(*index).unwrap();
                     }
                     Index::Node(tree_id) => {
                         let l = value.as_list_mut().unwrap();
                         let list = Arc::make_mut(l);
-                        let Some(map) = list.iter_mut().find(|x| {
-                            let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
-                            id.as_ref() == &tree_id.to_string()
+                        let Some(map) = list.0.iter_mut().find(|x| {
+                            let id = &x
+                                .as_map()
+                                .unwrap()
+                                .0
+                                .get("id")
+                                .unwrap()
+                                .as_string()
+                                .unwrap()
+                                .0;
+                            id == &tree_id.to_string()
                         }) else {
                             // delete node first
                             return;
                         };
                         let map_mut = Arc::make_mut(map.as_map_mut().unwrap());
-                        let meta = map_mut.get_mut("meta").unwrap();
+                        let meta = map_mut.0.get_mut("meta").unwrap();
                         if meta.is_container() {
                             *meta = ContainerType::Map.default_value();
                         }

@@ -63,7 +63,10 @@ impl ActorTrait for CounterActor {
         let counter = loro.get_counter("counter");
         let result = counter.get_value();
         let tracker = self.tracker.lock().unwrap().to_value();
-        assert_eq!(&result, tracker.into_map().unwrap().get("counter").unwrap());
+        assert_eq!(
+            &result,
+            tracker.into_map().unwrap().0.get("counter").unwrap()
+        );
 
         use loro_without_counter::LoroDoc as LoroDocWithoutCounter;
         // snapshot to snapshot

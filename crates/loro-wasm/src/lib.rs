@@ -1735,7 +1735,7 @@ impl LoroText {
     #[allow(clippy::inherent_to_string)]
     #[wasm_bindgen(js_name = "toString")]
     pub fn to_string(&self) -> String {
-        self.handler.get_value().as_string().unwrap().to_string()
+        self.handler.get_value().as_string().unwrap().0.to_string()
     }
 
     /// Get the text in [Delta](https://quilljs.com/docs/delta/) format.
@@ -3330,14 +3330,14 @@ impl LoroTree {
     pub fn to_array(&mut self) -> JsResult<Array> {
         let value = self.handler.get_value().into_list().unwrap();
         let ans = Array::new();
-        for v in value.as_ref() {
+        for v in &value.as_ref().0 {
             let v = v.as_map().unwrap();
-            let id: JsValue = TreeID::try_from(v["id"].as_string().unwrap().as_str())
+            let id: JsValue = TreeID::try_from(v.0["id"].as_string().unwrap().0.as_str())
                 .unwrap()
                 .into();
             let id: JsTreeID = id.into();
-            let parent = if let LoroValue::String(p) = &v["parent"] {
-                Some(TreeID::try_from(p.as_str())?)
+            let parent = if let LoroValue::String(p) = &v.0["parent"] {
+                Some(TreeID::try_from(p.0.as_str())?)
             } else {
                 None
             };
@@ -3345,8 +3345,8 @@ impl LoroTree {
                 .map(|x| LoroTreeNode::from_tree(x, self.handler.clone(), self.doc.clone()).into())
                 .unwrap_or(JsValue::undefined())
                 .into();
-            let index = *v["index"].as_i64().unwrap() as u32;
-            let position = v["fractional_index"].as_string().unwrap();
+            let index = *v.0["index"].as_i64().unwrap() as u32;
+            let position = v.0["fractional_index"].as_string().unwrap().0.clone();
             let map: LoroMap = self.get_node_by_id(&id).unwrap().data()?;
             let obj = Object::new();
             js_sys::Reflect::set(&obj, &"id".into(), &id)?;
@@ -3355,7 +3355,7 @@ impl LoroTree {
             js_sys::Reflect::set(
                 &obj,
                 &"fractional_index".into(),
-                &JsValue::from_str(position),
+                &JsValue::from_str(&position),
             )?;
             js_sys::Reflect::set(&obj, &"meta".into(), &map.into())?;
             ans.push(&obj);

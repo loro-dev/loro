@@ -258,7 +258,7 @@ mod test {
             count_cp.fetch_add(1, Ordering::SeqCst);
             let mut txn = loro.txn().unwrap();
             let text = loro.get_text("id");
-            if text.get_value().as_string().unwrap().len() > 10 {
+            if text.get_value().as_string().unwrap().0.len() > 10 {
                 return;
             }
             text.insert_with_txn(&mut txn, 0, "123").unwrap();

@@ -4,8 +4,8 @@ use enum_as_inner::EnumAsInner;
 use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue, TreeID,
-    ID,
+    ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue,
+    LoroValueBinary, TreeID, ID,
 };
 use serde::{Deserialize, Serialize};
 
@@ -589,7 +589,10 @@ impl<'a> ValueReader<'a> {
             LoroValueKind::False => LoroValue::Bool(false),
             LoroValueKind::I64 => LoroValue::I64(self.read_i64()?),
             LoroValueKind::F64 => LoroValue::Double(self.read_f64()?),
-            LoroValueKind::Str => LoroValue::String(Arc::new(self.read_str()?.to_owned())),
+            LoroValueKind::Str => LoroValue::String(Arc::new((
+                self.read_str()?.to_owned(),
+                once_cell::sync::OnceCell::new(),
+            ))),
             LoroValueKind::List => {
                 let len = self.read_usize()?;
                 if len > MAX_COLLECTION_SIZE {
@@ -618,7 +621,9 @@ impl<'a> ValueReader<'a> {
                 }
                 ans.into()
             }
-            LoroValueKind::Binary => LoroValue::Binary(Arc::new(self.read_binary()?.to_owned())),
+            LoroValueKind::Binary => {
+                LoroValue::Binary(LoroValueBinary::new(Box::from(self.read_binary()?)))
+            }
             LoroValueKind::ContainerType => {
                 let u8 = self.read_u8()?;
                 let container_id = ContainerID::new_normal(
@@ -698,7 +703,10 @@ impl<'a> ValueReader<'a> {
                     LoroValueKind::False => LoroValue::Bool(false),
                     LoroValueKind::I64 => LoroValue::I64(self.read_i64()?),
                     LoroValueKind::F64 => LoroValue::Double(self.read_f64()?),
-                    LoroValueKind::Str => LoroValue::String(Arc::new(self.read_str()?.to_owned())),
+                    LoroValueKind::Str => LoroValue::String(Arc::new((
+                        self.read_str()?.to_owned(),
+                        once_cell::sync::OnceCell::new(),
+                    ))),
                     LoroValueKind::List => {
                         let len = self.read_usize()?;
                         if len > MAX_COLLECTION_SIZE {
@@ -729,7 +737,7 @@ impl<'a> ValueReader<'a> {
                         continue;
                     }
                     LoroValueKind::Binary => {
-                        LoroValue::Binary(Arc::new(self.read_binary()?.to_owned()))
+                        LoroValue::Binary(LoroValueBinary::new(Box::from(self.read_binary()?)))
                     }
                     LoroValueKind::ContainerType => {
                         let u8 = self.read_u8()?;
@@ -945,18 +953,18 @@ impl ValueWriter {
             LoroValue::Bool(false) => (LoroValueKind::False, 0),
             LoroValue::I64(value) => (LoroValueKind::I64, self.write_i64(*value)),
             LoroValue::Double(value) => (LoroValueKind::F64, self.write_f64(*value)),
-            LoroValue::String(value) => (LoroValueKind::Str, self.write_str(value)),
+            LoroValue::String(value) => (LoroValueKind::Str, self.write_str(value.0.as_str())),
             LoroValue::List(value) => {
-                let mut len = self.write_usize(value.len());
-                for value in value.iter() {
+                let mut len = self.write_usize(value.0.len());
+                for value in value.0.iter() {
                     let l = self.write_value_type_and_content(value, registers);
                     len += l;
                 }
                 (LoroValueKind::List, len)
             }
             LoroValue::Map(value) => {
-                let mut len = self.write_usize(value.len());
-                for (key, value) in value.iter() {
+                let mut len = self.write_usize(value.0.len());
+                for (key, value) in value.0.iter() {
                     let key_idx = registers.key.register(&key.as_str().into());
                     len += self.write_usize(key_idx);
                     let l = self.write_value_type_and_content(value, registers);
@@ -964,7 +972,7 @@ impl ValueWriter {
                 }
                 (LoroValueKind::Map, len)
             }
-            LoroValue::Binary(value) => (LoroValueKind::Binary, self.write_binary(value)),
+            LoroValue::Binary(value) => (LoroValueKind::Binary, self.write_binary(&value)),
             LoroValue::Container(c) => (
                 LoroValueKind::ContainerType,
                 self.write_u8(c.container_type().to_u8()),

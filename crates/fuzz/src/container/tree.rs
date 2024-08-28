@@ -136,7 +136,7 @@ impl ActorTrait for TreeActor {
         let tree = loro.get_tree("tree");
         let result = tree.get_value_with_meta();
         let tracker = self.tracker.lock().unwrap().to_value();
-        assert_eq!(&result, tracker.into_map().unwrap().get("tree").unwrap());
+        assert_eq!(&result, tracker.into_map().unwrap().0.get("tree").unwrap());
     }
 
     fn add_new_container(&mut self, container: Container) {

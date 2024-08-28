@@ -10,7 +10,7 @@ fn auto_commit() {
     let text_a = doc_a.get_text("text");
     text_a.insert(0, "hello").unwrap();
     text_a.delete(2, 2).unwrap();
-    assert_eq!(&**text_a.get_value().as_string().unwrap(), "heo");
+    assert_eq!(text_a.get_value().as_string().unwrap().0, "heo");
     let bytes = doc_a.export_from(&Default::default());
 
     let doc_b = LoroDoc::default();

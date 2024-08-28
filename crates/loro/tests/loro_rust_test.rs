@@ -312,7 +312,7 @@ fn travel_back_should_remove_styles() {
     });
     doc.checkout(&f).unwrap();
     assert_eq!(
-        text.to_delta().as_list().unwrap().len(),
+        text.to_delta().as_list().unwrap().0.len(),
         1,
         "should remove the bold style but got {:?}",
         text.to_delta()
@@ -667,17 +667,17 @@ fn get_container_by_str_path() {
         .unwrap();
     let v = doc.get_by_str_path("map/text/0").unwrap();
     assert_eq!(
-        v.into_value().unwrap().into_string().unwrap().to_string(),
+        v.into_value().unwrap().into_string().unwrap().0.to_string(),
         "1"
     );
     let v = doc.get_by_str_path("map/text/1").unwrap();
     assert_eq!(
-        v.into_value().unwrap().into_string().unwrap().to_string(),
+        v.into_value().unwrap().into_string().unwrap().0.to_string(),
         "2"
     );
     let v = doc.get_by_str_path("map/text/2").unwrap();
     assert_eq!(
-        v.into_value().unwrap().into_string().unwrap().to_string(),
+        v.into_value().unwrap().into_string().unwrap().0.to_string(),
         "3"
     );
 
@@ -694,6 +694,7 @@ fn get_container_by_str_path() {
             .unwrap()
             .into_string()
             .unwrap()
+            .0
             .to_string(),
         "value"
     );

@@ -495,14 +495,14 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
             JsonOpContent::List(list) => match list {
                 op::ListOp::Insert { pos, value } => {
                     let mut values = value.into_list().unwrap();
-                    Arc::make_mut(&mut values).iter_mut().for_each(|v| {
+                    Arc::make_mut(&mut values).0.iter_mut().for_each(|v| {
                         if let LoroValue::Container(id) = v {
                             if id.is_normal() {
                                 *id = convert_container_id(id.clone(), peers);
                             }
                         }
                     });
-                    let range = arena.alloc_values(values.iter().cloned());
+                    let range = arena.alloc_values(values.0.iter().cloned());
                     InnerContent::List(InnerListOp::Insert {
                         slice: SliceRange::new(range.start as u32..range.end as u32),
                         pos,
@@ -524,14 +524,14 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
             JsonOpContent::MovableList(list) => match list {
                 op::MovableListOp::Insert { pos, value } => {
                     let mut values = value.into_list().unwrap();
-                    Arc::make_mut(&mut values).iter_mut().for_each(|v| {
+                    Arc::make_mut(&mut values).0.iter_mut().for_each(|v| {
                         if let LoroValue::Container(id) = v {
                             if id.is_normal() {
                                 *id = convert_container_id(id.clone(), peers);
                             }
                         }
                     });
-                    let range = arena.alloc_values(values.iter().cloned());
+                    let range = arena.alloc_values(values.0.iter().cloned());
                     InnerContent::List(InnerListOp::Insert {
                         slice: SliceRange::new(range.start as u32..range.end as u32),
                         pos,

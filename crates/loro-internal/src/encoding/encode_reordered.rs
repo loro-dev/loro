@@ -1364,7 +1364,8 @@ fn decode_op(
             let pos = prop as usize;
             match value {
                 Value::LoroValue(arr) => {
-                    let range = shared_arena.alloc_values(arr.into_list().unwrap().iter().cloned());
+                    let range =
+                        shared_arena.alloc_values(arr.into_list().unwrap().0.iter().cloned());
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
                             slice: SliceRange::new(range.start as u32..range.end as u32),
@@ -1405,7 +1406,8 @@ fn decode_op(
             let pos = prop as usize;
             match value {
                 Value::LoroValue(arr) => {
-                    let range = shared_arena.alloc_values(arr.into_list().unwrap().iter().cloned());
+                    let range =
+                        shared_arena.alloc_values(arr.into_list().unwrap().0.iter().cloned());
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
                             slice: SliceRange::new(range.start as u32..range.end as u32),
@@ -1623,7 +1625,7 @@ struct EncodedStateInfo {
 mod test {
     use std::sync::Arc;
 
-    use loro_common::LoroValue;
+    use loro_common::{LoroValue, LoroValueBinary};
 
     use crate::fx_map;
 
@@ -1665,7 +1667,9 @@ mod test {
         test_loro_value_read_write(1.23, None);
         test_loro_value_read_write(LoroValue::Null, None);
         test_loro_value_read_write(
-            LoroValue::Binary(Arc::new(vec![123, 223, 255, 0, 1, 2, 3])),
+            LoroValue::Binary(LoroValueBinary::new(Box::from(vec![
+                123, 223, 255, 0, 1, 2, 3,
+            ]))),
             None,
         );
         test_loro_value_read_write("sldk;ajfas;dlkfas测试", None);
@@ -1686,11 +1690,14 @@ mod test {
         );
         test_loro_value_read_write(vec![1i32, 2, 3], None);
         test_loro_value_read_write(
-            LoroValue::Map(Arc::new(fx_map![
-                "1".into() => 123.into(),
-                "2".into() => "123".into(),
-                "3".into() => vec![true].into()
-            ])),
+            LoroValue::Map(Arc::new((
+                fx_map![
+                    "1".into() => 123.into(),
+                    "2".into() => "123".into(),
+                    "3".into() => vec![true].into()
+                ],
+                once_cell::sync::OnceCell::new(),
+            ))),
             None,
         );
     }
