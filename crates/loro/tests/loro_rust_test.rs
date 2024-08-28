@@ -1381,3 +1381,71 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
     assert_eq!(err, LoroError::SwitchToTrimmedVersion);
     Ok(())
 }
+
+#[test]
+fn test_tree_with_other_ops_checkout_on_trimmed_doc() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(0)?;
+    let tree = doc.get_tree("tree");
+    let root = tree.create(None)?;
+    let child1 = tree.create(None)?;
+    tree.mov(child1, root)?;
+    let child2 = tree.create(None).unwrap();
+    tree.mov(child2, root)?;
+    let map = doc.get_map("map");
+    map.insert("0", 0)?;
+    map.insert("1", 1)?;
+    doc.commit();
+    let gc_frontiers = doc.oplog_frontiers();
+    map.insert("2", 2)?;
+    tree.mov(child2, child1)?;
+    tree.delete(child1)?;
+
+    let new_doc_bytes = doc.export(loro::ExportMode::GcSnapshot(&gc_frontiers));
+
+    let new_doc = LoroDoc::new();
+    new_doc.import(&new_doc_bytes).unwrap();
+
+    new_doc.checkout(&gc_frontiers)?;
+    let value = new_doc.get_deep_value();
+    assert_eq!(
+        value,
+        loro_value!(
+            {
+                "map":{
+                    "0":0,
+                    "1":1,
+                },
+                "tree":[
+                {
+                    "parent": null,
+                    "meta":{},
+                    "id": "0@0",
+                    "index": 0,
+                    "fractional_index": "80",
+                },
+                {
+                    "parent": "0@0",
+                    "meta":{},
+                    "id": "1@0",
+                    "index": 0,
+                    "fractional_index": "80",
+                },
+                {
+                    "parent": "0@0",
+                    "meta":{},
+                    "id": "3@0",
+                    "index": 1,
+                    "fractional_index": "8180",
+                },
+            ]
+            }
+        )
+    );
+
+    let err = new_doc
+        .checkout(&ID::new(doc.peer_id(), 0).into())
+        .unwrap_err();
+    assert_eq!(err, LoroError::SwitchToTrimmedVersion);
+    Ok(())
+}
