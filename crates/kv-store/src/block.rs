@@ -2,7 +2,7 @@ use std::{
     borrow::Cow, fmt::Debug, io::Write, ops::{Bound, Range}, sync::Arc
 };
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf,  Bytes};
 use loro_common::LoroResult;
 
 use crate::{compress::{compress, decompress, CompressionType}, iter::KvIterator, sstable::{get_common_prefix_len_and_strip,  SIZE_OF_U32, XXH_SEED}};
@@ -63,13 +63,13 @@ impl NormalBlock {
         let origin_len = w.len();
         let mut buf = self.data.to_vec();
         for offset in &self.offsets {
-            buf.put_u16_le(*offset);
+            buf.extend_from_slice(&offset.to_le_bytes());
         }
 
-        buf.put_u16_le(self.offsets.len() as u16);
+        buf.extend_from_slice(&(self.offsets.len() as u16).to_le_bytes());
         compress(w,Cow::Owned(buf), compression_type);
         let checksum = xxhash_rust::xxh32::xxh32(&w[origin_len..], XXH_SEED);
-        w.put_u32_le(checksum);
+        w.extend_from_slice(&checksum.to_le_bytes());
     }
 
     fn decode(raw_block_and_check: Bytes, first_key: Bytes, compression_type: CompressionType)-> LoroResult<NormalBlock>{
@@ -198,7 +198,7 @@ impl BlockBuilder {
         debug_assert!(!key.is_empty(), "key cannot be empty");
         if  self.first_key.is_empty() {
             if value.len() > self.block_size {
-                self.data.put(value);
+                self.data.extend_from_slice(value);
                 self.is_large = true;
                 self.first_key = Bytes::copy_from_slice(key);
                 return true;
@@ -206,7 +206,7 @@ impl BlockBuilder {
 
             self.first_key = Bytes::copy_from_slice(key);
             self.offsets.push(self.data.len() as u16);
-            self.data.put(value);
+            self.data.extend_from_slice(value);
             return true;
         }
 
@@ -218,10 +218,10 @@ impl BlockBuilder {
         self.offsets.push(self.data.len() as u16);
         let (common, suffix) = get_common_prefix_len_and_strip(key, &self.first_key);
         let key_len = suffix.len() ;
-        self.data.put_u8(common);
-        self.data.put_u16_le(key_len as u16);
-        self.data.put(suffix);
-        self.data.put(value);
+        self.data.push(common);
+        self.data.extend_from_slice(&(key_len as u16).to_le_bytes());
+        self.data.extend_from_slice(suffix);
+        self.data.extend_from_slice(value);
         true
     }
 
@@ -552,14 +552,12 @@ impl BlockIter {
                 let mut rest = &block.data[offset..];
                 let common_prefix_len = rest.get_u8() as usize;
                 let key_suffix_len = rest.get_u16_le() as usize;
-                let mut next_key = BytesMut::new();
-                next_key.put(&self.first_key[..common_prefix_len]);
-                next_key.put(&rest[..key_suffix_len]);
-                self.next_key = next_key.freeze();
-                rest.advance(key_suffix_len);
+                let mut next_key = Vec::with_capacity(common_prefix_len + key_suffix_len);
+                next_key.extend_from_slice(&self.first_key[..common_prefix_len]);
+                next_key.extend_from_slice(&rest[..key_suffix_len]);
+                self.next_key = next_key.into();
                 let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len;
                 self.next_value_range = value_start..offset_end;
-                rest.advance(offset_end - value_start);
             }
             Block::Large(_) => {
                 unreachable!()
@@ -578,14 +576,12 @@ impl BlockIter {
                 let mut rest = &block.data[offset..];
                 let common_prefix_len = rest.get_u8() as usize;
                 let key_suffix_len = rest.get_u16_le() as usize;
-                let mut prev_key = BytesMut::new();
-                prev_key.put(&self.first_key[..common_prefix_len]);
-                prev_key.put(&rest[..key_suffix_len]);
-                self.prev_key = prev_key.freeze();
-                rest.advance(key_suffix_len);
+                let mut prev_key = Vec::with_capacity(common_prefix_len + key_suffix_len);
+                prev_key.extend_from_slice(&self.first_key[..common_prefix_len]);
+                prev_key.extend_from_slice(&rest[..key_suffix_len]);
+                self.prev_key = prev_key.into();
                 let value_start = offset + SIZE_OF_U8 + SIZE_OF_U16 + key_suffix_len;
                 self.prev_value_range = value_start..offset_end;
-                rest.advance(offset_end - value_start);
             }
             Block::Large(_) => {
                 unreachable!()
