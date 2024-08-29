@@ -1,9 +1,7 @@
 use std::{fmt::Debug, ops::Bound, sync::Arc};
 
 use bytes::{Buf, BufMut, Bytes};
-use fxhash::FxHashSet;
 use loro_common::{LoroError, LoroResult};
-use once_cell::sync::OnceCell;
 
 use super::block::BlockIter;
 use crate::{
@@ -250,7 +248,6 @@ impl SsTableBuilder {
             meta: self.meta,
             meta_offset: meta_offset as usize,
             block_cache: BlockCache::new(DEFAULT_CACHE_SIZE),
-            keys: OnceCell::new(),
         }
     }
 }
@@ -266,7 +263,6 @@ pub struct SsTable {
     meta: Vec<BlockMeta>,
     meta_offset: usize,
     block_cache: BlockCache,
-    keys: OnceCell<FxHashSet<Bytes>>,
 }
 
 impl Clone for SsTable {
@@ -278,7 +274,6 @@ impl Clone for SsTable {
             meta: self.meta.clone(),
             meta_offset: self.meta_offset,
             block_cache: BlockCache::new(DEFAULT_CACHE_SIZE),
-            keys: OnceCell::new(),
         }
     }
 }
@@ -349,7 +344,6 @@ impl SsTable {
             meta,
             meta_offset,
             block_cache: BlockCache::new(DEFAULT_CACHE_SIZE),
-            keys: OnceCell::new(),
         };
         Ok(ans)
     }
@@ -443,16 +437,6 @@ impl SsTable {
         })
     }
 
-    pub fn valid_keys(&self) -> &FxHashSet<Bytes> {
-        self.keys.get_or_init(|| {
-            let mut keys = FxHashSet::default();
-            for (k, _) in self.iter() {
-                keys.insert(k);
-            }
-            keys
-        })
-    }
-
     pub fn data_size(&self) -> usize {
         self.data.len()
     }
@@ -465,21 +449,17 @@ impl SsTable {
 #[derive(Clone)]
 pub struct SsTableIter<'a> {
     table: &'a SsTable,
-    next_block_iter: BlockIter,
-    back_block_iter: BlockIter,
+    iter: SsTableIterInner,
     next_block_idx: usize,
     back_block_idx: isize,
-    next_first: bool,
 }
 
 impl<'a> Debug for SsTableIter<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SsTableIter")
-            .field("next_block_iter", &self.next_block_iter)
-            .field("back_block_iter", &self.back_block_iter)
+            .field("iter", &self.iter)
             .field("next_block_idx", &self.next_block_idx)
             .field("back_block_idx", &self.back_block_idx)
-            .field("next_first", &self.next_first)
             .finish()
     }
 }
@@ -556,21 +536,20 @@ impl<'a> SsTableIter<'a> {
             debug_assert!(end_idx > table_idx);
             SsTableIter {
                 table,
-                next_block_iter: iter,
+                iter: SsTableIterInner::Double {
+                    front: iter,
+                    back: end_iter,
+                },
                 next_block_idx: table_idx,
-                back_block_iter: end_iter,
                 back_block_idx: end_idx as isize,
-                next_first: false,
             }
         } else {
             debug_assert!(end_idx == table_idx);
             SsTableIter {
                 table,
-                next_block_iter: iter.clone(),
+                iter: SsTableIterInner::Same(iter),
                 next_block_idx: table_idx,
-                back_block_iter: iter,
                 back_block_idx: end_idx as isize,
-                next_first: true,
             }
         };
         // the current iter may be empty, but has next iter. we need to skip the empty iter
@@ -595,24 +574,24 @@ impl<'a> SsTableIter<'a> {
     }
 
     fn skip_next_empty(&mut self) {
-        while self.has_next() && !self.next_block_iter.has_next() {
+        while self.has_next() && !self.iter.front_iter().has_next() {
             self.next();
         }
     }
 
     fn skip_next_back_empty(&mut self) {
-        while self.has_next_back() && !self.next_first && !self.back_block_iter.has_next_back() {
+        while self.has_next_back() && !self.iter.back_iter().has_next_back() {
             self.next_back();
         }
     }
 
     fn has_next(&self) -> bool {
-        self.next_block_iter.has_next() || (self.next_block_idx as isize) < self.back_block_idx
+        self.iter.front_iter().has_next() || (self.next_block_idx as isize) < self.back_block_idx
     }
 
     pub fn peek_next_key(&self) -> Option<Bytes> {
         if self.has_next() {
-            self.next_block_iter.peek_next_curr_key()
+            self.iter.front_iter().peek_next_curr_key()
         } else {
             None
         }
@@ -620,78 +599,61 @@ impl<'a> SsTableIter<'a> {
 
     pub fn peek_next_value(&self) -> Option<Bytes> {
         if self.has_next() {
-            self.next_block_iter.peek_next_curr_value()
+            self.iter.front_iter().peek_next_curr_value()
         } else {
             None
         }
     }
 
     fn has_next_back(&self) -> bool {
-        if self.next_first {
-            self.next_block_iter.has_next_back()
-        } else {
-            self.back_block_iter.has_next_back()
-                || (self.next_block_idx as isize) < self.back_block_idx
-        }
+        self.iter.back_iter().has_next_back()
+            || (self.next_block_idx as isize) < self.back_block_idx
     }
 
     pub fn peek_next_back_key(&self) -> Option<Bytes> {
         if !self.has_next_back() {
             return None;
         }
-        if self.next_first {
-            self.next_block_iter.peek_back_curr_key()
-        } else {
-            self.back_block_iter.peek_back_curr_key()
-        }
+        self.iter.back_iter().peek_back_curr_key()
     }
 
     pub fn peek_next_back_value(&self) -> Option<Bytes> {
         if !self.has_next_back() {
             return None;
         }
-        if self.next_first {
-            self.next_block_iter.peek_back_curr_value()
-        } else {
-            self.back_block_iter.peek_back_curr_value()
-        }
+        self.iter.back_iter().peek_back_curr_value()
     }
 
     pub fn next(&mut self) {
-        self.next_block_iter.next();
-        if !self.next_block_iter.has_next() {
+        self.iter.front_iter_mut().next();
+        if !self.iter.front_iter().has_next() {
             self.next_block_idx += 1;
             if self.next_block_idx > self.back_block_idx as usize {
                 return;
             }
-            if self.next_block_idx == self.back_block_idx as usize && !self.next_first {
-                std::mem::swap(&mut self.next_block_iter, &mut self.back_block_iter);
-                self.next_first = true;
+            if self.next_block_idx == self.back_block_idx as usize && !self.iter.is_same() {
+                self.iter.convert_back_as_same();
             } else if self.next_block_idx < self.table.meta.len() {
                 let block = self.table.read_block_cached(self.next_block_idx);
-                self.next_block_iter = BlockIter::new(block);
+                self.iter.reset_front(BlockIter::new(block));
                 self.skip_next_empty();
             }
         }
     }
 
     pub fn next_back(&mut self) {
-        let iter = if self.next_first {
-            &mut self.next_block_iter
-        } else {
-            &mut self.back_block_iter
-        };
+        let iter = self.iter.back_iter_mut();
         iter.next_back();
         if !iter.has_next_back() {
             self.back_block_idx -= 1;
             if self.next_block_idx > self.back_block_idx as usize {
                 return;
             }
-            if self.next_block_idx == self.back_block_idx as usize && !self.next_first {
-                self.next_first = true;
+            if self.next_block_idx == self.back_block_idx as usize && !self.iter.is_same() {
+                self.iter.convert_front_as_same();
             } else if self.back_block_idx > 0 {
                 let block = self.table.read_block_cached(self.back_block_idx as usize);
-                self.back_block_iter = BlockIter::new(block);
+                self.iter.reset_back(BlockIter::new(block));
                 self.skip_next_back_empty();
             }
         }
@@ -773,6 +735,77 @@ pub(crate) fn get_common_prefix_len_and_strip<'a, T: AsRef<[u8]> + ?Sized>(
     (common_prefix_len as u8, suffix)
 }
 
+#[derive(Clone, Debug)]
+enum SsTableIterInner {
+    Same(BlockIter),
+    Double { front: BlockIter, back: BlockIter },
+}
+
+impl SsTableIterInner {
+    fn front_iter(&self) -> &BlockIter {
+        match self {
+            SsTableIterInner::Same(iter) => iter,
+            SsTableIterInner::Double { front, .. } => front,
+        }
+    }
+
+    fn front_iter_mut(&mut self) -> &mut BlockIter {
+        match self {
+            SsTableIterInner::Same(iter) => iter,
+            SsTableIterInner::Double { front, .. } => front,
+        }
+    }
+
+    fn back_iter(&self) -> &BlockIter {
+        match self {
+            SsTableIterInner::Same(iter) => iter,
+            SsTableIterInner::Double { back, .. } => back,
+        }
+    }
+
+    fn back_iter_mut(&mut self) -> &mut BlockIter {
+        match self {
+            SsTableIterInner::Same(iter) => iter,
+            SsTableIterInner::Double { back, .. } => back,
+        }
+    }
+
+    fn is_same(&self) -> bool {
+        matches!(self, SsTableIterInner::Same(_))
+    }
+
+    fn reset_front(&mut self, iter: BlockIter) {
+        debug_assert!(!self.is_same());
+        let SsTableIterInner::Double { front, back: _ } = self else {
+            unreachable!()
+        };
+        *front = iter;
+    }
+
+    fn reset_back(&mut self, iter: BlockIter) {
+        debug_assert!(!self.is_same());
+        let SsTableIterInner::Double { front: _, back } = self else {
+            unreachable!()
+        };
+        *back = iter;
+    }
+
+    fn convert_front_as_same(&mut self) {
+        debug_assert!(!self.is_same());
+        let SsTableIterInner::Double { front, back: _ } = self else {
+            unreachable!()
+        };
+        *self = SsTableIterInner::Same(front.clone());
+    }
+
+    fn convert_back_as_same(&mut self) {
+        debug_assert!(!self.is_same());
+        let SsTableIterInner::Double { front: _, back } = self else {
+            unreachable!()
+        };
+        *self = SsTableIterInner::Same(back.clone());
+    }
+}
 #[cfg(test)]
 mod test {
 
