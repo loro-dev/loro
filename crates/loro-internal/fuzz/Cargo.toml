@@ -20,53 +20,7 @@ features = ["test_utils"]
 members = ["."]
 
 [[bin]]
-name = "yata"
-path = "fuzz_targets/yata.rs"
-test = false
-doc = false
-
-# [profile.dev]
-# lto = true
-# opt-level = 3
-
-[[bin]]
-name = "text_refactored"
-path = "fuzz_targets/text_refactored.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "recursive_refactored"
-path = "fuzz_targets/recursive_refactored.rs"
-test = false
-doc = false
-
-[[bin]]
 name = "import"
 path = "fuzz_targets/import.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "tree"
-path = "fuzz_targets/tree.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "richtext"
-path = "fuzz_targets/richtext.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "map"
-path = "fuzz_targets/map.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "kv_store"
-path = "fuzz_targets/kv_store.rs"
 test = false
 doc = false

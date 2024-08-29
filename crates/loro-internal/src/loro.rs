@@ -212,7 +212,12 @@ impl LoroDoc {
     /// Is the document empty? (no ops)
     #[inline(always)]
     pub fn can_reset_with_snapshot(&self) -> bool {
-        self.oplog.lock().unwrap().is_empty() && self.state.lock().unwrap().is_empty()
+        let oplog = self.oplog.lock().unwrap();
+        if oplog.batch_importing {
+            return false;
+        }
+
+        oplog.is_empty() && self.state.lock().unwrap().is_empty()
     }
 
     /// Whether [OpLog] and [DocState] are detached.
@@ -1280,7 +1285,10 @@ impl LoroDoc {
                     .id_to_idx(&pos.container)
                     .ok_or(CannotFindRelativePosition::ContainerDeleted)?;
                 // We know where the target id is when we trace back to the delete_op_id.
-                let delete_op_id = find_last_delete_op(&oplog, id, idx).unwrap();
+                let Some(delete_op_id) = find_last_delete_op(&oplog, id, idx) else {
+                    tracing::error!("Cannot find id {}", id);
+                    return Err(CannotFindRelativePosition::IdNotFound);
+                };
                 // Should use persist mode so that it will force all the diff calculators to use the `checkout` mode
                 let mut diff_calc = DiffCalculator::new(true);
                 let before_frontiers: Frontiers = oplog.dag.find_deps_of_id(delete_op_id);
@@ -1443,7 +1451,7 @@ impl LoroDoc {
 }
 
 fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
-    let start_vv = oplog.dag.frontiers_to_vv(&id.into()).unwrap();
+    let start_vv = oplog.dag.frontiers_to_vv(&id.into())?;
     for change in oplog.iter_changes_causally_rev(&start_vv, oplog.vv()) {
         for op in change.ops.iter().rev() {
             if op.container != idx {

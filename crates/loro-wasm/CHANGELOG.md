@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.16.10
+
+### Patch Changes
+
+- 7cf54e8: Fix batch importing with snapshot
+
+## 0.16.9
+
+### Patch Changes
+
+- a761430: Fix build script
+
+## 0.16.8
+
+### Patch Changes
+
+- 38b4bcf: Add text update API
+
+  - Remove the patch for crypto
+  - Add text update API (#404)
+  - Check invalid root container name (#411)
+
+  ### 🐛 Bug Fixes
+
+  - Workaround lldb bug make loro crate debuggable (#414)
+  - Delete the **bring back** tree node from the undo container remap (#423)
+
+  ### 📚 Documentation
+
+  - Fix typo
+  - Refine docs about event (#417)
+
+  ### 🎨 Styling
+
+  - Use clippy to perf code (#407)
+
+  ### ⚙️ Miscellaneous Tasks
+
+  - Add test tools (#410)
+
 ## 0.16.7
 
 ### Patch Changes
