@@ -7,7 +7,7 @@ description = "Loro internal library. It's used as a delta between two versions 
 homepage = "https://loro.dev"
 repository = "https://github.com/loro-dev/loro/"
 authors = ["Zixuan Chen", "Liang Zhao"]
-categories = ["data-structures", "text-editing"]
+categories = ["data-structures"]
 keywords = ["rope"]
 
 [dependencies]
