@@ -50,8 +50,8 @@ impl MemKvStore {
             let idx = table.find_block_idx(key);
             let block = table.read_block_cached(idx);
             let block_iter = BlockIter::new_seek_to_key(block, key);
-            if let Some(k) = block_iter.next_curr_key() {
-                let v = block_iter.next_curr_value().unwrap();
+            if let Some(k) = block_iter.peek_next_curr_key() {
+                let v = block_iter.peek_next_curr_value().unwrap();
                 if k == key {
                     return if v.is_empty() { None } else { Some(v) };
                 }

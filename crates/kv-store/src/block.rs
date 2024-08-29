@@ -273,7 +273,7 @@ impl Debug for BlockIter {
 }
 
 impl BlockIter {
-    pub fn new_seek_to_first(block: Arc<Block>) -> Self {
+    pub fn new(block: Arc<Block>) -> Self {
         let prev_idx = block.len() as isize - 1;
         let mut iter = Self {
             first_key: block.first_key(),
@@ -329,12 +329,12 @@ impl BlockIter {
             Bound::Included(key) => Self::new_seek_to_key(block, key),
             Bound::Excluded(key) => {
                 let mut iter = Self::new_seek_to_key(block, key);
-                while iter.has_next() && iter.next_curr_key().unwrap() == key {
+                while iter.has_next() && iter.peek_next_curr_key().unwrap() == key {
                     iter.next();
                 }
                 iter
             }
-            Bound::Unbounded => Self::new_seek_to_first(block),
+            Bound::Unbounded => Self::new(block),
         };
         match end {
             Bound::Included(key) => {
@@ -342,7 +342,7 @@ impl BlockIter {
             }
             Bound::Excluded(key) => {
                 iter.back_to_key(key);
-                while iter.has_next_back() && iter.back_curr_key().unwrap() == key {
+                while iter.has_next_back() && iter.peek_back_curr_key().unwrap() == key {
                     iter.next_back();
                 }
             }
@@ -351,7 +351,7 @@ impl BlockIter {
         iter
     }
 
-    pub fn next_curr_key(&self) -> Option<Bytes> {
+    pub fn peek_next_curr_key(&self) -> Option<Bytes> {
         if self.has_next(){
             Some(Bytes::copy_from_slice(&self.next_key))
         }else{
@@ -359,7 +359,7 @@ impl BlockIter {
         }
     }
 
-    pub fn next_curr_value(&self) -> Option<Bytes> {
+    pub fn peek_next_curr_value(&self) -> Option<Bytes> {
         if self.has_next(){
             Some(self.block.data().slice(self.next_value_range.clone()))
         }else{
@@ -371,7 +371,7 @@ impl BlockIter {
         !self.next_key.is_empty() && self.next_idx as isize <= self.prev_idx
     }
 
-    pub fn back_curr_key(&self) -> Option<Bytes> {
+    pub fn peek_back_curr_key(&self) -> Option<Bytes> {
         if self.has_next_back(){
             Some(Bytes::copy_from_slice(&self.prev_key))
         }else{
@@ -379,7 +379,7 @@ impl BlockIter {
         }
     }
 
-    pub fn back_curr_value(&self) -> Option<Bytes> {
+    pub fn peek_back_curr_value(&self) -> Option<Bytes> {
         if self.has_next_back(){
             Some(self.block.data().slice(self.prev_value_range.clone()))
         }else{
@@ -595,12 +595,12 @@ impl BlockIter {
 }
 
 impl KvIterator for BlockIter{
-    fn next_key(&self) -> Option<Bytes> {
-        self.next_curr_key()
+    fn peek_next_key(&self) -> Option<Bytes> {
+        self.peek_next_curr_key()
     }
 
-    fn next_value(&self) -> Option<Bytes> {
-        self.next_curr_value()
+    fn peek_next_value(&self) -> Option<Bytes> {
+        self.peek_next_curr_value()
     }
 
     fn next_(&mut self) {
@@ -611,12 +611,12 @@ impl KvIterator for BlockIter{
         self.has_next()
     }
 
-    fn next_back_key(&self) -> Option<Bytes> {
-        self.back_curr_key()
+    fn peek_next_back_key(&self) -> Option<Bytes> {
+        self.peek_back_curr_key()
     }
 
-    fn next_back_value(&self) -> Option<Bytes> {
-      self.back_curr_value()
+    fn peek_next_back_value(&self) -> Option<Bytes> {
+      self.peek_back_curr_value()
     }
 
     fn next_back_(&mut self) {
@@ -635,8 +635,8 @@ impl Iterator for BlockIter {
         if !self.has_next() {
             return None;
         }
-        let key = self.next_curr_key().unwrap();
-        let value = self.next_curr_value().unwrap();
+        let key = self.peek_next_curr_key().unwrap();
+        let value = self.peek_next_curr_value().unwrap();
         self.next();
         Some((key, value))
     }
@@ -647,8 +647,8 @@ impl DoubleEndedIterator for BlockIter {
         if !self.has_next_back() {
             return None;
         }
-        let key = self.back_curr_key().unwrap();
-        let value = self.back_curr_value().unwrap();
+        let key = self.peek_back_curr_key().unwrap();
+        let value = self.peek_back_curr_value().unwrap();
         self.next_back();
         Some((key, value))
     }

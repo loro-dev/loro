@@ -14,13 +14,14 @@ use crate::{
 };
 
 pub(crate) const XXH_SEED: u32 = u32::from_le_bytes(*b"LORO");
-const MAGIC_NUMBER: [u8; 4] = *b"LORO";
+const MAGIC_BYTES: [u8; 4] = *b"LORO";
 const CURRENT_SCHEMA_VERSION: u8 = 0;
 pub const SIZE_OF_U8: usize = std::mem::size_of::<u8>();
 pub const SIZE_OF_U16: usize = std::mem::size_of::<u16>();
 pub const SIZE_OF_U32: usize = std::mem::size_of::<u32>();
 // TODO: cache size
 const DEFAULT_CACHE_SIZE: usize = 1 << 20;
+const MAX_BLOCK_NUM: u32 = 10_000_000;
 
 /// ┌──────────────────────────────────────────────────────────────────────────────────────────┐
 /// │ Block Meta                                                                               │
@@ -90,7 +91,7 @@ impl BlockMeta {
 
     fn decode_meta(data: &[u8]) -> LoroResult<Vec<BlockMeta>> {
         let (num, mut data) = get_u32_le(data)?;
-        if num > 10_000_000 {
+        if num > MAX_BLOCK_NUM {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
         }
         let mut ans = Vec::with_capacity(num as usize);
@@ -155,7 +156,7 @@ pub(crate) struct SsTableBuilder {
 impl SsTableBuilder {
     pub fn new(block_size: usize, compression_type: CompressionType) -> Self {
         let mut data = Vec::with_capacity(5);
-        data.put_u32_le(u32::from_le_bytes(MAGIC_NUMBER));
+        data.put_u32_le(u32::from_le_bytes(MAGIC_BYTES));
         data.put_u8(CURRENT_SCHEMA_VERSION);
         Self {
             block_builder: BlockBuilder::new(block_size),
@@ -299,11 +300,12 @@ impl SsTable {
     ///    - "Invalid magic number"
     ///    - "Invalid schema version"
     pub fn import_all(bytes: Bytes) -> LoroResult<Self> {
-        if bytes.len() < 9 {
+        // magic number + schema version + meta offset
+        if bytes.len() < SIZE_OF_U32 + SIZE_OF_U8 + SIZE_OF_U32 {
             return Err(LoroError::DecodeError("Invalid sstable bytes".into()));
         }
         let magic_number = u32::from_le_bytes((&bytes[..SIZE_OF_U32]).try_into().unwrap());
-        if magic_number != u32::from_le_bytes(MAGIC_NUMBER) {
+        if magic_number != u32::from_le_bytes(MAGIC_BYTES) {
             return Err(LoroError::DecodeError("Invalid magic number".into()));
         }
         let schema_version = bytes[SIZE_OF_U32];
@@ -322,7 +324,7 @@ impl SsTable {
         }
         let data_len = bytes.len();
         let meta_offset = (&bytes[data_len - SIZE_OF_U32..]).get_u32_le() as usize;
-        if meta_offset >= data_len - 4 {
+        if meta_offset >= data_len - SIZE_OF_U32 {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
         }
         let raw_meta = &bytes[meta_offset..data_len - SIZE_OF_U32];
@@ -421,7 +423,7 @@ impl SsTable {
         let idx = self.find_block_idx(key);
         let block = self.read_block_cached(idx);
         let block_iter = BlockIter::new_seek_to_key(block, key);
-        block_iter.next_curr_key() == Some(Bytes::copy_from_slice(key))
+        block_iter.peek_next_curr_key() == Some(Bytes::copy_from_slice(key))
     }
 
     #[allow(unused)]
@@ -432,9 +434,9 @@ impl SsTable {
         let idx = self.find_block_idx(key);
         let block = self.read_block_cached(idx);
         let block_iter = BlockIter::new_seek_to_key(block, key);
-        block_iter.next_curr_key().and_then(|k| {
+        block_iter.peek_next_curr_key().and_then(|k| {
             if k == key {
-                block_iter.next_curr_value()
+                block_iter.peek_next_curr_value()
             } else {
                 None
             }
@@ -503,7 +505,7 @@ impl<'a> SsTableIter<'a> {
             }
             Bound::Unbounded => {
                 let block = table.read_block_cached(0);
-                let iter = BlockIter::new_seek_to_first(block);
+                let iter = BlockIter::new(block);
                 (0, iter, None)
             }
         };
@@ -544,7 +546,7 @@ impl<'a> SsTableIter<'a> {
                     (end_idx, None, None)
                 } else {
                     let block = table.read_block_cached(end_idx);
-                    let iter = BlockIter::new_seek_to_first(block);
+                    let iter = BlockIter::new(block);
                     (end_idx, Some(iter), None)
                 }
             }
@@ -571,29 +573,24 @@ impl<'a> SsTableIter<'a> {
                 next_first: true,
             }
         };
-        // the current iter is empty, but has next iter. we need to skip the empty iter
+        // the current iter may be empty, but has next iter. we need to skip the empty iter
         ans.skip_next_empty();
         ans.skip_next_back_empty();
 
         if let Some(key) = excluded {
-            if ans.has_next() && ans.next_key().unwrap() == key {
+            if ans.has_next() && ans.peek_next_key().unwrap() == key {
                 ans.next();
             }
         }
         if let Some(key) = end_excluded {
-            if ans.has_next_back() && ans.next_back_key().unwrap() == key {
+            if ans.has_next_back() && ans.peek_next_back_key().unwrap() == key {
                 ans.next_back();
             }
         }
 
         // need to skip empty block
-        if ans.has_next() && !ans.next_block_iter.has_next() {
-            ans.next();
-        }
-
-        if ans.has_next_back() && !ans.next_first && !ans.back_block_iter.has_next_back() {
-            ans.next_back();
-        }
+        ans.skip_next_empty();
+        ans.skip_next_back_empty();
         ans
     }
 
@@ -613,17 +610,17 @@ impl<'a> SsTableIter<'a> {
         self.next_block_iter.has_next() || (self.next_block_idx as isize) < self.back_block_idx
     }
 
-    pub fn next_key(&self) -> Option<Bytes> {
+    pub fn peek_next_key(&self) -> Option<Bytes> {
         if self.has_next() {
-            self.next_block_iter.next_curr_key()
+            self.next_block_iter.peek_next_curr_key()
         } else {
             None
         }
     }
 
-    pub fn next_value(&self) -> Option<Bytes> {
+    pub fn peek_next_value(&self) -> Option<Bytes> {
         if self.has_next() {
-            self.next_block_iter.next_curr_value()
+            self.next_block_iter.peek_next_curr_value()
         } else {
             None
         }
@@ -638,25 +635,25 @@ impl<'a> SsTableIter<'a> {
         }
     }
 
-    pub fn next_back_key(&self) -> Option<Bytes> {
+    pub fn peek_next_back_key(&self) -> Option<Bytes> {
         if !self.has_next_back() {
             return None;
         }
         if self.next_first {
-            self.next_block_iter.back_curr_key()
+            self.next_block_iter.peek_back_curr_key()
         } else {
-            self.back_block_iter.back_curr_key()
+            self.back_block_iter.peek_back_curr_key()
         }
     }
 
-    pub fn next_back_value(&self) -> Option<Bytes> {
+    pub fn peek_next_back_value(&self) -> Option<Bytes> {
         if !self.has_next_back() {
             return None;
         }
         if self.next_first {
-            self.next_block_iter.back_curr_value()
+            self.next_block_iter.peek_back_curr_value()
         } else {
-            self.back_block_iter.back_curr_value()
+            self.back_block_iter.peek_back_curr_value()
         }
     }
 
@@ -672,7 +669,7 @@ impl<'a> SsTableIter<'a> {
                 self.next_first = true;
             } else if self.next_block_idx < self.table.meta.len() {
                 let block = self.table.read_block_cached(self.next_block_idx);
-                self.next_block_iter = BlockIter::new_seek_to_first(block);
+                self.next_block_iter = BlockIter::new(block);
                 self.skip_next_empty();
             }
         }
@@ -694,7 +691,7 @@ impl<'a> SsTableIter<'a> {
                 self.next_first = true;
             } else if self.back_block_idx > 0 {
                 let block = self.table.read_block_cached(self.back_block_idx as usize);
-                self.back_block_iter = BlockIter::new_seek_to_first(block);
+                self.back_block_iter = BlockIter::new(block);
                 self.skip_next_back_empty();
             }
         }
@@ -702,12 +699,12 @@ impl<'a> SsTableIter<'a> {
 }
 
 impl<'a> KvIterator for SsTableIter<'a> {
-    fn next_key(&self) -> Option<Bytes> {
-        self.next_key()
+    fn peek_next_key(&self) -> Option<Bytes> {
+        self.peek_next_key()
     }
 
-    fn next_value(&self) -> Option<Bytes> {
-        self.next_value()
+    fn peek_next_value(&self) -> Option<Bytes> {
+        self.peek_next_value()
     }
 
     fn next_(&mut self) {
@@ -718,12 +715,12 @@ impl<'a> KvIterator for SsTableIter<'a> {
         self.has_next()
     }
 
-    fn next_back_key(&self) -> Option<Bytes> {
-        self.next_back_key()
+    fn peek_next_back_key(&self) -> Option<Bytes> {
+        self.peek_next_back_key()
     }
 
-    fn next_back_value(&self) -> Option<Bytes> {
-        self.next_back_value()
+    fn peek_next_back_value(&self) -> Option<Bytes> {
+        self.peek_next_back_value()
     }
 
     fn next_back_(&mut self) {
@@ -741,8 +738,8 @@ impl<'a> Iterator for SsTableIter<'a> {
         if !self.has_next() {
             return None;
         }
-        let key = self.next_key().unwrap();
-        let value = self.next_value().unwrap();
+        let key = self.peek_next_key().unwrap();
+        let value = self.peek_next_value().unwrap();
         self.next();
         Some((key, value))
     }
@@ -753,8 +750,8 @@ impl<'a> DoubleEndedIterator for SsTableIter<'a> {
         if !self.has_next_back() {
             return None;
         }
-        let key = self.next_back_key().unwrap();
-        let value = self.next_back_value().unwrap();
+        let key = self.peek_next_back_key().unwrap();
+        let value = self.peek_next_back_value().unwrap();
         self.next_back();
         Some((key, value))
     }
@@ -790,7 +787,7 @@ mod test {
         builder.add(b"key2", b"value2");
         builder.add(b"key3", b"value3");
         let block = builder.build();
-        let mut iter = BlockIter::new_seek_to_first(Arc::new(block));
+        let mut iter = BlockIter::new(Arc::new(block));
         println!("{:?}", iter);
         let (k1, v1) = Iterator::next(&mut iter).unwrap();
         let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
@@ -917,7 +914,7 @@ mod test {
         builder.add(b"key4", b"");
         builder.add(b"key3", b"value3");
         let block = builder.build();
-        let mut iter = BlockIter::new_seek_to_first(Arc::new(block));
+        let mut iter = BlockIter::new(Arc::new(block));
         let (k1, v1) = Iterator::next(&mut iter).unwrap();
         let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
         let (k2, v2) = Iterator::next(&mut iter).unwrap();

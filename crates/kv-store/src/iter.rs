@@ -4,12 +4,12 @@ use bytes::Bytes;
 
 /// When you need peek next key and value and next back key and value, use this trait.
 pub trait KvIterator: Debug + DoubleEndedIterator<Item = (Bytes, Bytes)> {
-    fn next_key(&self) -> Option<Bytes>;
-    fn next_value(&self) -> Option<Bytes>;
+    fn peek_next_key(&self) -> Option<Bytes>;
+    fn peek_next_value(&self) -> Option<Bytes>;
     fn next_(&mut self);
     fn has_next(&self) -> bool;
-    fn next_back_key(&self) -> Option<Bytes>;
-    fn next_back_value(&self) -> Option<Bytes>;
+    fn peek_next_back_key(&self) -> Option<Bytes>;
+    fn peek_next_back_value(&self) -> Option<Bytes>;
     fn next_back_(&mut self);
     fn has_next_back(&self) -> bool;
 }
@@ -40,7 +40,7 @@ impl<T: KvIterator> Iterator for MergeIterator<T> {
         let mut min_index = None;
         let mut has_to_remove = false;
         for (i, iter) in self.iters.iter_mut().enumerate() {
-            if let Some(key) = iter.next_key() {
+            if let Some(key) = iter.peek_next_key() {
                 if let Some(this_min_key) = &min_key {
                     match key.cmp(this_min_key) {
                         std::cmp::Ordering::Less => {
@@ -81,7 +81,7 @@ impl<T: KvIterator> DoubleEndedIterator for MergeIterator<T> {
         let mut max_index = None;
         let mut has_to_remove = false;
         for (i, iter) in self.iters.iter_mut().enumerate() {
-            if let Some(key) = iter.next_back_key() {
+            if let Some(key) = iter.peek_next_back_key() {
                 if let Some(this_max_key) = &max_key {
                     match key.cmp(this_max_key) {
                         std::cmp::Ordering::Less => {}
