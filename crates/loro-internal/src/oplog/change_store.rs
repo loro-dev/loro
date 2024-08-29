@@ -723,7 +723,7 @@ mod mut_inner_kv {
                 self.insert_change(new_change, false);
             }
 
-            debug_assert_eq!(total_len, original_len);
+            assert_eq!(total_len, original_len);
         }
 
         fn _insert_splitted_change(

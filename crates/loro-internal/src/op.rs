@@ -130,12 +130,14 @@ impl Op {
             InnerContent::List(l) => match l {
                 crate::container::list::list_op::InnerListOp::Insert { .. } => {
                     if matches!(self.container.get_type(), ContainerType::Text) {
-                        Some(size)
+                        Some(size.min(self.atom_len()))
                     } else {
-                        Some(size / 4)
+                        Some((size / 4).min(self.atom_len()))
                     }
                 }
-                crate::container::list::list_op::InnerListOp::InsertText { .. } => Some(size),
+                crate::container::list::list_op::InnerListOp::InsertText { .. } => {
+                    Some(size.min(self.atom_len()))
+                }
                 _ => unreachable!(),
             },
             _ => unreachable!(),
@@ -175,6 +177,7 @@ impl HasLength for Op {
 impl Sliceable for Op {
     fn slice(&self, from: usize, to: usize) -> Self {
         assert!(to > from, "{to} should be greater than {from}");
+        assert!(to <= self.atom_len());
         let content: InnerContent = self.content.slice(from, to);
         Op {
             counter: (self.counter + from as Counter),
