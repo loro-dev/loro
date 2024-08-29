@@ -55,6 +55,8 @@ pub struct MemKvFuzzer {
     kv: MemKvStore,
     btree: BTreeMap<Bytes, Bytes>,
     all_keys: BTreeSet<Bytes>,
+    merged_kv: MemKvStore,
+    merged_btree: BTreeMap<Bytes, Bytes>,
 }
 
 impl MemKvFuzzer {
@@ -120,10 +122,10 @@ impl MemKvFuzzer {
                 }
             }
             Action::Remove(index) => {
-                if let Some(key) = self.all_keys.iter().nth(*index).cloned() {
-                    self.kv.remove(&key);
-                    self.btree.remove(&key);
-                }
+                let key = self.all_keys.iter().nth(*index).unwrap();
+                self.kv.remove(key);
+                self.btree.insert(key.clone(), Bytes::new());
+                self.all_keys.remove(&key.clone());
             }
             Action::Scan {
                 start,
@@ -144,29 +146,39 @@ impl MemKvFuzzer {
                 };
 
                 let kv_scan: Vec<_> = self.kv.scan(start_bound, end_bound).collect();
-                let btree_scan: Vec<_> = self.btree.scan(start_bound, end_bound).collect();
+                let btree_scan: Vec<_> = self
+                    .btree
+                    .scan(start_bound, end_bound)
+                    .filter(|(_, v)| !v.is_empty())
+                    .collect();
 
                 assert_eq!(kv_scan, btree_scan);
 
                 let kv_scan: Vec<_> = self.kv.scan(start_bound, end_bound).rev().collect();
-                let btree_scan: Vec<_> = self.btree.scan(start_bound, end_bound).rev().collect();
+                let btree_scan: Vec<_> = self
+                    .btree
+                    .scan(start_bound, end_bound)
+                    .filter(|(_, v)| !v.is_empty())
+                    .rev()
+                    .collect();
 
                 assert_eq!(kv_scan, btree_scan);
             }
             Action::ExportAndImport => {
                 let exported = self.kv.export_all();
-                let mut new_kv = MemKvStore::default();
-                new_kv.import_all(exported).expect("import failed");
+                self.kv = MemKvStore::default();
+                self.merged_kv.import_all(exported).expect("import failed");
+                self.merged_btree.extend(std::mem::take(&mut self.btree));
 
-                for (key, value) in self.btree.iter() {
+                for (key, value) in self.merged_btree.iter().filter(|(_, v)| !v.is_empty()) {
                     assert_eq!(
-                        new_kv.get(key),
+                        self.merged_kv.get(key),
                         Some(value.clone()),
-                        "export and import failed"
+                        "export and import failed key: {:?}",
+                        key
                     );
                 }
-
-                self.kv = new_kv;
+                self.all_keys.clear();
             }
             Action::Flush => {
                 self.kv.export_all();
@@ -179,6 +191,7 @@ impl MemKvFuzzer {
         let btree_scan: Vec<_> = self
             .btree
             .scan(Bound::Unbounded, Bound::Unbounded)
+            .filter(|(_, v)| !v.is_empty())
             .collect();
         assert_eq!(kv_scan, btree_scan);
 
@@ -190,10 +203,36 @@ impl MemKvFuzzer {
         let btree_scan: Vec<_> = self
             .btree
             .scan(Bound::Unbounded, Bound::Unbounded)
+            .filter(|(_, v)| !v.is_empty())
             .rev()
             .collect();
 
         assert_eq!(kv_scan, btree_scan);
+
+        let merge_scan: Vec<_> = self
+            .merged_kv
+            .scan(Bound::Unbounded, Bound::Unbounded)
+            .collect();
+        let btree_scan: Vec<_> = self
+            .merged_btree
+            .scan(Bound::Unbounded, Bound::Unbounded)
+            .filter(|(_, v)| !v.is_empty())
+            .collect();
+        assert_eq!(merge_scan, btree_scan);
+
+        let merge_scan: Vec<_> = self
+            .merged_kv
+            .scan(Bound::Unbounded, Bound::Unbounded)
+            .rev()
+            .collect();
+        let btree_scan: Vec<_> = self
+            .merged_btree
+            .scan(Bound::Unbounded, Bound::Unbounded)
+            .filter(|(_, v)| !v.is_empty())
+            .rev()
+            .collect();
+
+        assert_eq!(merge_scan, btree_scan);
     }
 }
 

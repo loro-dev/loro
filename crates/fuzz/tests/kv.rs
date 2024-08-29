@@ -105,6 +105,64 @@ fn add_some() {
 }
 
 #[test]
+fn merge_import() {
+    test_mem_kv_fuzzer(&mut [
+        Add {
+            key: vec![205, 197, 255, 12],
+            value: vec![0, 0, 9],
+        },
+        Add {
+            key: vec![],
+            value: vec![],
+        },
+        Flush,
+        Add {
+            key: vec![57],
+            value: vec![209, 3, 255, 174, 0, 255],
+        },
+        Add {
+            key: vec![41],
+            value: vec![209, 0, 41, 63, 205],
+        },
+        Add {
+            key: vec![0, 0],
+            value: vec![1],
+        },
+        ExportAndImport,
+        Flush,
+        ExportAndImport,
+        Remove(14829789716734785489),
+        Remove(13191005920967349589),
+        ExportAndImport,
+        ExportAndImport,
+        Get(13238251090391746632),
+        Add {
+            key: vec![],
+            value: vec![],
+        },
+    ])
+}
+
+#[test]
+fn scan_empty() {
+    test_mem_kv_fuzzer(&mut [
+	    Add{
+	    	key: vec![0, 255],
+	    	value: vec![]
+	    },
+	    Add{
+	    	key: vec![],
+	    	value: vec![]
+	    },
+	    Scan{
+	    	start: 129,
+	    	end: 0,
+	    	start_include: false,
+	    	end_include: false
+	    },
+	])
+}
+#[test]
 fn minify() {
     kv_minify_simple(test_mem_kv_fuzzer, vec![])
 }
