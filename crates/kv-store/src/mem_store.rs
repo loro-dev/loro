@@ -158,6 +158,10 @@ impl MemKvStore {
     }
 
     pub fn export_all(&mut self) -> Bytes {
+        if self.mem_table.is_empty() && self.ss_table.len() == 1 {
+            return self.ss_table[0].export_all();
+        }
+
         let mut builder = SsTableBuilder::new(self.block_size, self.compression_type);
         // we could use scan() here, we should keep the empty value
         for (k, v) in MemStoreIterator::new(
