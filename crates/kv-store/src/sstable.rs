@@ -179,7 +179,7 @@ impl SsTableBuilder {
 
         self.finish_block();
 
-        self.block_builder.add(&key, &value);
+        assert!(self.block_builder.add(&key, &value));
         self.first_key = key.clone();
         self.last_key = key;
     }

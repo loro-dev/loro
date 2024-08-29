@@ -58,12 +58,14 @@ impl NormalBlock {
     /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ┘│
     /// └────────────────────────────────────────────────────────────────────────────────────────┘
     /// 
-    fn encode(&self, w: &mut Vec<u8>,compression_type: CompressionType)  {
+    /// The block body may be compressed then we calculate its checksum (the checksum is not compressed).
+    fn encode(&self, w: &mut Vec<u8>, compression_type: CompressionType)  {
         let origin_len = w.len();
         let mut buf = self.data.to_vec();
         for offset in &self.offsets {
             buf.put_u16_le(*offset);
         }
+
         buf.put_u16_le(self.offsets.len() as u16);
         compress(w,Cow::Owned(buf), compression_type);
         let checksum = xxhash_rust::xxh32::xxh32(&w[origin_len..], XXH_SEED);
@@ -194,24 +196,25 @@ impl BlockBuilder {
     /// 
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
         debug_assert!(!key.is_empty(), "key cannot be empty");
-        if  self.first_key.is_empty() && value.len() > self.block_size {
-            self.data.put(value);
-            self.is_large = true;
-            self.first_key = Bytes::copy_from_slice(key);
-            return true;
-        }
+        if  self.first_key.is_empty() {
+            if value.len() > self.block_size {
+                self.data.put(value);
+                self.is_large = true;
+                self.first_key = Bytes::copy_from_slice(key);
+                return true;
+            }
 
-        // whether the block is full
-        if self.estimated_size() + key.len() + value.len() + SIZE_OF_U8 + SIZE_OF_U16 > self.block_size && !self.first_key.is_empty() {
-            return false;
-        }
-
-        if self.first_key.is_empty() {
             self.first_key = Bytes::copy_from_slice(key);
             self.offsets.push(self.data.len() as u16);
             self.data.put(value);
             return true;
         }
+
+        // whether the block is full
+        if self.estimated_size() + key.len() + value.len() + SIZE_OF_U8 + SIZE_OF_U16 > self.block_size {
+            return false;
+        }
+
         self.offsets.push(self.data.len() as u16);
         let (common, suffix) = get_common_prefix_len_and_strip(key, &self.first_key);
         let key_len = suffix.len() ;
