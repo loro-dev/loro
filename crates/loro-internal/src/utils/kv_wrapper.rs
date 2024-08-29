@@ -7,6 +7,7 @@ use std::{
 use bytes::Bytes;
 use fxhash::FxHashMap;
 use loro_common::ContainerID;
+use loro_kv_store::MemKvStore;
 
 use crate::kv_store::KvStore;
 
@@ -33,7 +34,8 @@ impl Clone for KvWrapper {
 impl KvWrapper {
     pub fn new_mem() -> Self {
         Self {
-            kv: Arc::new(Mutex::new(BTreeMap::new())),
+            // kv: Arc::new(Mutex::new(BTreeMap::new())),
+            kv: Arc::new(Mutex::new(MemKvStore::default())),
         }
     }
 
