@@ -566,10 +566,6 @@ impl<'a> SsTableIter<'a> {
                 ans.next_back();
             }
         }
-
-        // need to skip empty block
-        ans.skip_next_empty();
-        ans.skip_next_back_empty();
         ans
     }
 
