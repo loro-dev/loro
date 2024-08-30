@@ -42,6 +42,7 @@ pub use loro_internal::handler::TextDelta;
 pub use loro_internal::id::{PeerID, TreeID, ID};
 pub use loro_internal::json;
 pub use loro_internal::json::JsonSchema;
+pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
 pub use loro_internal::obs::SubID;
