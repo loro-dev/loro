@@ -50,8 +50,8 @@ num-traits = "0.2"
 num-derive = "0.3"
 either = "1"
 md5 = "0.7.0"
-tracing = { version = "0.1", features = ["release_max_level_warn"] }
 arref = "0.1.0"
+tracing = { version = "0.1" }
 nonmax = "0.5.5"
 
 
