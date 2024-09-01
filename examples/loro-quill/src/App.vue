@@ -57,7 +57,7 @@
       };
 
       text.subscribe((e) => {
-        if (e.local) {
+        if (e.by === "local") {
           Promise.resolve().then(sync);
         }
         Promise.resolve().then(() => {

@@ -2,7 +2,7 @@
  *  The skeleton of this binding is learned from https://github.com/yjs/y-quill
  */
 
-import { Delta, Loro, LoroText, setDebug } from "loro-crdt";
+import { Delta, Loro, LoroText } from "loro-crdt";
 import Quill, { DeltaOperation, DeltaStatic, Sources } from "quill";
 // @ts-ignore
 import isEqual from "is-equal";
@@ -35,11 +35,14 @@ export class QuillBinding {
     });
     this.quill = quill;
     this.richtext = doc.getText("text");
-    this.richtext.subscribe(doc, (event) => {
-      Promise.resolve().then(() => {
-        if (!event.local && event.diff.type == "text") {
-          console.log(doc.peerId, "CRDT_EVENT", event);
-          const eventDelta = event.diff.diff;
+    this.richtext.subscribe((event) => {
+      if (event.by !== "import") {
+        return;
+      }
+
+      for (const e of event.events) {
+        if (e.diff.type == "text") {
+          const eventDelta = e.diff.diff;
           const delta: Delta<string>[] = [];
           let index = 0;
           for (let i = 0; i < eventDelta.length; i++) {
@@ -74,7 +77,7 @@ export class QuillBinding {
             quill.setContents(new Delta(a), "this" as any);
           }
         }
-      });
+      }
     });
     quill.setContents(
       new Delta(
