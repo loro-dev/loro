@@ -5,6 +5,11 @@ pub struct Configure {
     pub(crate) text_style_config: Arc<RwLock<StyleConfigMap>>,
     record_timestamp: Arc<AtomicBool>,
     pub(crate) merge_interval: Arc<AtomicI64>,
+    /// Whether the tree has fractional index. `false` by default.
+    ///
+    /// If false, the fractional index is always [`FractionalIndex::place_holder`] and
+    /// `tree_position_jitter` is not used.
+    pub(crate) tree_with_fractional_index: Arc<AtomicBool>,
     /// do not use `jitter` by default
     pub(crate) tree_position_jitter: Arc<AtomicU8>,
 }
@@ -16,6 +21,7 @@ impl Default for Configure {
             record_timestamp: Arc::new(AtomicBool::new(false)),
             merge_interval: Arc::new(AtomicI64::new(1000 * 1000)),
             tree_position_jitter: Arc::new(AtomicU8::new(0)),
+            tree_with_fractional_index: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -38,6 +44,10 @@ impl Configure {
                 self.tree_position_jitter
                     .load(std::sync::atomic::Ordering::Relaxed),
             )),
+            tree_with_fractional_index: Arc::new(AtomicBool::new(
+                self.tree_with_fractional_index
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            )),
         }
     }
 
@@ -53,6 +63,11 @@ impl Configure {
     pub fn set_record_timestamp(&self, record: bool) {
         self.record_timestamp
             .store(record, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn set_with_fractional_index(&self, with_fractional_index: bool) {
+        self.tree_with_fractional_index
+            .store(with_fractional_index, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn set_fractional_index_jitter(&self, jitter: u8) {

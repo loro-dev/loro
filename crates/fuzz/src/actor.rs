@@ -24,6 +24,8 @@ use super::{
     container::MapActor,
 };
 
+const DEFAULT_WITH_FRACTIONAL_INDEX: bool = false;
+
 #[derive(Debug)]
 pub struct Undo {
     pub undo: UndoManager,
@@ -45,6 +47,7 @@ impl Actor {
     pub fn new(id: PeerID) -> Self {
         let loro = LoroDoc::new();
         loro.set_peer_id(id).unwrap();
+        loro.set_with_fractional_index(DEFAULT_WITH_FRACTIONAL_INDEX);
         let undo = UndoManager::new(&loro);
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(MapTracker::empty(
             ContainerID::new_root("sys:root", ContainerType::Map),

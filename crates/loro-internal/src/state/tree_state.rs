@@ -13,7 +13,7 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use super::{ContainerState, DiffApplyContext};
@@ -41,6 +41,10 @@ pub struct TreeState {
     idx: ContainerIdx,
     trees: FxHashMap<TreeID, TreeStateNode>,
     children: TreeChildrenCache,
+    /// Whether the tree has fractional index.
+    ///
+    /// If false, the fractional index is always [`FractionalIndex::place_holder`]
+    with_fractional_index: bool,
     rng: Option<rand::rngs::StdRng>,
     jitter: u8,
 }
@@ -597,14 +601,21 @@ impl NodePosition {
 }
 
 impl TreeState {
-    pub fn new(idx: ContainerIdx, peer_id: PeerID, config: Arc<AtomicU8>) -> Self {
-        let jitter = config.load(Ordering::Relaxed);
+    pub fn new(
+        idx: ContainerIdx,
+        peer_id: PeerID,
+        jitter_config: Arc<AtomicU8>,
+        with_fractional_index: Arc<AtomicBool>,
+    ) -> Self {
+        let jitter = jitter_config.load(Ordering::Relaxed);
         let use_jitter = jitter != 1;
+        let with_fractional_index = with_fractional_index.load(Ordering::Relaxed);
 
         Self {
             idx,
             trees: FxHashMap::default(),
             children: Default::default(),
+            with_fractional_index,
             rng: use_jitter.then_some(rand::rngs::StdRng::seed_from_u64(peer_id)),
             jitter,
         }
@@ -675,10 +686,6 @@ impl TreeState {
 
     pub fn contains(&self, target: TreeID) -> bool {
         !self.is_node_deleted(&target)
-    }
-
-    pub fn contains_internal(&self, target: &TreeID) -> bool {
-        self.trees.contains_key(target)
     }
 
     /// Get the parent of the node, if the node is deleted or does not exist, return None
@@ -823,6 +830,10 @@ impl TreeState {
         parent: &TreeParentId,
         index: usize,
     ) -> FractionalIndexGenResult {
+        if !self.with_fractional_index {
+            return FractionalIndexGenResult::Ok(FractionalIndex::default());
+        }
+
         if let Some(rng) = self.rng.as_mut() {
             self.children
                 .entry(*parent)
@@ -936,28 +947,26 @@ impl ContainerState for TreeState {
                                         });
                                     }
                                     // Otherwise, it's a normal move inside deleted nodes, no event is needed
+                                } else if was_alive {
+                                    // normal move
+                                    ans.push(TreeDiffItem {
+                                        target,
+                                        action: TreeExternalDiff::Move {
+                                            parent: parent.into_node().ok(),
+                                            index: self.get_index_by_tree_id(&target).unwrap(),
+                                            position: position.clone(),
+                                        },
+                                    });
                                 } else {
-                                    if was_alive {
-                                        // normal move
-                                        ans.push(TreeDiffItem {
-                                            target,
-                                            action: TreeExternalDiff::Move {
-                                                parent: parent.into_node().ok(),
-                                                index: self.get_index_by_tree_id(&target).unwrap(),
-                                                position: position.clone(),
-                                            },
-                                        });
-                                    } else {
-                                        // create event
-                                        ans.push(TreeDiffItem {
-                                            target,
-                                            action: TreeExternalDiff::Create {
-                                                parent: parent.into_node().ok(),
-                                                index: self.get_index_by_tree_id(&target).unwrap(),
-                                                position: position.clone(),
-                                            },
-                                        });
-                                    }
+                                    // create event
+                                    ans.push(TreeDiffItem {
+                                        target,
+                                        action: TreeExternalDiff::Create {
+                                            parent: parent.into_node().ok(),
+                                            index: self.get_index_by_tree_id(&target).unwrap(),
+                                            position: position.clone(),
+                                        },
+                                    });
                                 }
                             }
                         } else {
@@ -1490,8 +1499,12 @@ mod snapshot {
                 peers.push(PeerID::from_le_bytes(buf));
             }
 
-            let mut tree =
-                TreeState::new(idx, ctx.peer, ctx.configure.tree_position_jitter.clone());
+            let mut tree = TreeState::new(
+                idx,
+                ctx.peer,
+                ctx.configure.tree_position_jitter.clone(),
+                ctx.configure.tree_with_fractional_index.clone(),
+            );
             let encoded: EncodedTree = serde_columnar::from_bytes(bytes)?;
             let fractional_indexes = PositionArena::decode(&encoded.fractional_indexes).unwrap();
             let fractional_indexes = fractional_indexes.parse_to_positions();

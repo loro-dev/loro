@@ -210,7 +210,6 @@ impl HandlerTrait for TreeHandler {
         self.inner.attached_handler()
     }
 
-    // TODO:
     fn get_value(&self) -> LoroValue {
         match &self.inner {
             MaybeDetached::Detached(t) => {
