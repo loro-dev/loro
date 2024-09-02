@@ -5,9 +5,7 @@ pub struct Configure {
     pub(crate) text_style_config: Arc<RwLock<StyleConfigMap>>,
     record_timestamp: Arc<AtomicBool>,
     pub(crate) merge_interval: Arc<AtomicI64>,
-    /// Whether the tree has fractional index. `false` by default.
-    ///
-    /// If false, the fractional index is always [`FractionalIndex::place_holder`] and
+    /// Whether the tree has fractional index. `false` by default. If false, the fractional index is always [`FractionalIndex::default`] and
     /// `tree_position_jitter` is not used.
     pub(crate) tree_with_fractional_index: Arc<AtomicBool>,
     /// do not use `jitter` by default

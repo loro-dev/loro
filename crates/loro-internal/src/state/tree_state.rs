@@ -41,12 +41,10 @@ pub struct TreeState {
     idx: ContainerIdx,
     trees: FxHashMap<TreeID, TreeStateNode>,
     children: TreeChildrenCache,
-    /// Whether the tree has fractional index.
-    ///
-    /// If false, the fractional index is always [`FractionalIndex::place_holder`]
-    with_fractional_index: bool,
+    /// Whether the tree has fractional index. If false, the fractional index is always [`FractionalIndex::default`]
+    with_fractional_index: Arc<AtomicBool>,
     rng: Option<rand::rngs::StdRng>,
-    jitter: u8,
+    jitter: Arc<AtomicU8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -609,7 +607,6 @@ impl TreeState {
     ) -> Self {
         let jitter = jitter_config.load(Ordering::Relaxed);
         let use_jitter = jitter != 1;
-        let with_fractional_index = with_fractional_index.load(Ordering::Relaxed);
 
         Self {
             idx,
@@ -617,7 +614,7 @@ impl TreeState {
             children: Default::default(),
             with_fractional_index,
             rng: use_jitter.then_some(rand::rngs::StdRng::seed_from_u64(peer_id)),
-            jitter,
+            jitter: jitter_config,
         }
     }
 
@@ -830,7 +827,7 @@ impl TreeState {
         parent: &TreeParentId,
         index: usize,
     ) -> FractionalIndexGenResult {
-        if !self.with_fractional_index {
+        if !self.with_fractional_index.load(Ordering::Relaxed) {
             return FractionalIndexGenResult::Ok(FractionalIndex::default());
         }
 
@@ -838,7 +835,7 @@ impl TreeState {
             self.children
                 .entry(*parent)
                 .or_default()
-                .generate_fi_at_jitter(index, target, rng, self.jitter)
+                .generate_fi_at_jitter(index, target, rng, self.jitter.load(Ordering::Relaxed))
         } else {
             self.children
                 .entry(*parent)
