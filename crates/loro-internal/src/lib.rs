@@ -22,6 +22,7 @@ pub use loro_common;
 pub use oplog::OpLog;
 pub use state::DocState;
 pub use undo::UndoManager;
+pub use utils::subscription::Subscription;
 pub mod awareness;
 pub mod cursor;
 mod kv_store;

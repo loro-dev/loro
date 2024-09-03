@@ -372,6 +372,124 @@ describe("event", () => {
     await oneMs();
     expect(triggered).toBeTruthy();
   });
+
+  describe("local updates events", () => {
+    it("basic", () => {
+      const loro = new Loro();
+      const text = loro.getText("text");
+      let updateReceived = false;
+
+      const unsubscribe = loro.subscribeLocalUpdates((update) => {
+        updateReceived = true;
+        expect(update).toBeInstanceOf(Uint8Array);
+        expect(update.length).toBeGreaterThan(0);
+      });
+
+      text.insert(0, "Hello");
+      loro.commit();
+
+      expect(updateReceived).toBe(true);
+
+      // Test unsubscribe
+      updateReceived = false;
+      unsubscribe();
+
+      text.insert(5, " World");
+      loro.commit();
+
+      expect(updateReceived).toBe(false);
+    });
+
+    it("multiple subscribers", () => {
+      const loro = new Loro();
+      const text = loro.getText("text");
+      let count1 = 0;
+      let count2 = 0;
+
+      const unsubscribe1 = loro.subscribeLocalUpdates(() => {
+        count1++;
+      });
+
+      const unsubscribe2 = loro.subscribeLocalUpdates(() => {
+        count2++;
+      });
+
+      text.insert(0, "Hello");
+      loro.commit();
+
+      expect(count1).toBe(1);
+      expect(count2).toBe(1);
+
+      unsubscribe1();
+
+      text.insert(5, " World");
+      loro.commit();
+
+      expect(count1).toBe(1);
+      expect(count2).toBe(2);
+
+      unsubscribe2();
+    });
+
+    it("updates for different containers", () => {
+      const loro = new Loro();
+      const text = loro.getText("text");
+      const list = loro.getList("list");
+      const map = loro.getMap("map");
+      let updates = 0;
+
+      loro.subscribeLocalUpdates(() => {
+        updates++;
+      });
+
+      text.insert(0, "Hello");
+      list.push("World");
+      map.set("key", "value");
+      loro.commit();
+
+      expect(updates).toBe(1);  // All changes are bundled in one update
+
+      text.insert(5, "!");
+      loro.commit();
+
+      expect(updates).toBe(2);
+    })
+
+    it("can be used to sync", () => {
+      const loro1 = new Loro();
+      const loro2 = new Loro();
+      const text1 = loro1.getText("text");
+      const text2 = loro2.getText("text");
+
+      loro1.subscribeLocalUpdates((updates) => {
+        loro2.import(updates);
+      });
+
+      loro2.subscribeLocalUpdates((updates) => {
+        loro1.import(updates);
+      });
+
+      text1.insert(0, "Hello");
+      loro1.commit();
+
+      expect(text2.toString()).toBe("Hello");
+
+      text2.insert(5, " World");
+      loro2.commit();
+
+      expect(text1.toString()).toBe("Hello World");
+
+      // Test concurrent edits
+      text1.insert(0, "1. ");
+      text2.insert(text2.length, "!");
+      loro1.commit();
+      loro2.commit();
+
+      // Both documents should converge to the same state
+      expect(text1.toString()).toBe("1. Hello World!");
+      expect(text2.toString()).toBe("1. Hello World!");
+    })
+  })
 });
 
 function oneMs(): Promise<void> {

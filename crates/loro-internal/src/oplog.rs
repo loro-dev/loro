@@ -372,6 +372,11 @@ impl OpLog {
     }
 
     #[inline(always)]
+    pub(crate) fn export_from_fast_in_range(&self, spans: &[IdSpan]) -> Bytes {
+        self.change_store.export_from_fast_in_range(spans)
+    }
+
+    #[inline(always)]
     pub(crate) fn decode(&mut self, data: ParsedHeaderAndBody) -> Result<(), LoroError> {
         decode_oplog(self, data)
     }

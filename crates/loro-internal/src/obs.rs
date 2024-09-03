@@ -15,6 +15,7 @@ use super::{
     event::{DiffEvent, DocDiff},
 };
 
+pub type LocalUpdateCallback = Box<dyn Fn(&[u8]) + Send + Sync + 'static>;
 pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
 
 #[derive(Default)]

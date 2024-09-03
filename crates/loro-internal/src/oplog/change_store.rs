@@ -176,6 +176,33 @@ impl ChangeStore {
         new_store.encode_from(start_vv, &start_frontiers, latest_vv, latest_frontiers)
     }
 
+    pub(super) fn export_from_fast_in_range(&self, spans: &[IdSpan]) -> Bytes {
+        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        let latest_vv: VersionVector = spans.iter().map(|x| x.id_last()).collect();
+        let start_vv: VersionVector = spans.iter().map(|x| x.id_start()).collect();
+        for span in spans {
+            let mut span = *span;
+            span.normalize_();
+            // PERF: this can be optimized by reusing the current encoded blocks
+            // In the current method, it needs to parse and re-encode the blocks
+            for c in self.iter_changes(span) {
+                let start = ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
+                let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
+
+                assert_ne!(start, end);
+                let ch = c.slice(start, end);
+                new_store.insert_change(ch, false);
+            }
+        }
+
+        new_store.encode_from(
+            &start_vv,
+            &Default::default(),
+            &latest_vv,
+            &Default::default(),
+        )
+    }
+
     fn encode_from(
         &self,
         start_vv: &VersionVector,
