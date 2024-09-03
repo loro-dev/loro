@@ -25,7 +25,7 @@ pub use undo::UndoManager;
 pub use utils::subscription::Subscription;
 pub mod awareness;
 pub mod cursor;
-mod kv_store;
+pub mod kv_store;
 pub mod loro;
 pub mod obs;
 pub mod oplog;

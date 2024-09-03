@@ -229,10 +229,19 @@ impl HasLength for InnerContent {
 impl Sliceable for InnerContent {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
-            a @ InnerContent::Map(_) => a.clone(),
-            a @ InnerContent::Tree(_) => a.clone(),
+            a @ InnerContent::Map(_) => {
+                assert!(from == 0 && to == 1);
+                a.clone()
+            }
+            a @ InnerContent::Tree(_) => {
+                assert!(from == 0 && to == 1);
+                a.clone()
+            }
             InnerContent::List(x) => InnerContent::List(x.slice(from, to)),
-            InnerContent::Future(f) => InnerContent::Future(f.clone()),
+            InnerContent::Future(f) => {
+                assert!(from == 0 && to == 1);
+                InnerContent::Future(f.clone())
+            }
         }
     }
 }

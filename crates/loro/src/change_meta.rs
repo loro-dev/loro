@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::{cmp::Ordering, sync::Arc};
 
 use loro_internal::{
     change::{Change, Lamport, Timestamp},
-    id::ID,
+    id::{Counter, ID},
     version::Frontiers,
 };
 
@@ -19,12 +19,34 @@ use loro_internal::{
 /// The length of the `Change` is how many operations it contains
 #[derive(Debug, Clone)]
 pub struct ChangeMeta {
-    pub id: ID,
     pub lamport: Lamport,
+    pub id: ID,
     pub timestamp: Timestamp,
     pub message: Option<Arc<str>>,
     pub deps: Frontiers,
     pub len: usize,
+}
+
+impl PartialEq for ChangeMeta {
+    fn eq(&self, other: &Self) -> bool {
+        self.lamport == other.lamport && self.id == other.id
+    }
+}
+
+impl Eq for ChangeMeta {}
+
+impl PartialOrd for ChangeMeta {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ChangeMeta {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (self.lamport + self.len as Lamport)
+            .cmp(&(other.lamport + other.len as Lamport))
+            .then(self.id.peer.cmp(&other.id.peer))
+    }
 }
 
 impl ChangeMeta {

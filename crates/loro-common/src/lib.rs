@@ -269,7 +269,8 @@ impl ContainerID {
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
+        // normal need 13 bytes
+        let mut bytes = Vec::with_capacity(13);
         self.encode(&mut bytes).unwrap();
         bytes
     }

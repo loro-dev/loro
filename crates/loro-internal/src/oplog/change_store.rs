@@ -18,6 +18,7 @@ use loro_common::{
     Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport, LoroError,
     LoroResult, PeerID, ID,
 };
+use loro_kv_store::MemKvStore;
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RlePush, RleVec, Sliceable};
 use std::{
@@ -108,7 +109,8 @@ impl ChangeStore {
             })),
             arena: a.clone(),
             external_vv: Arc::new(Mutex::new(VersionVector::new())),
-            external_kv: Arc::new(Mutex::new(BTreeMap::new())),
+            external_kv: Arc::new(Mutex::new(MemKvStore::default())),
+            // external_kv: Arc::new(Mutex::new(BTreeMap::default())),
             merge_interval,
         }
     }
@@ -120,7 +122,8 @@ impl ChangeStore {
 
     pub(super) fn encode_all(&self, vv: &VersionVector, frontiers: &Frontiers) -> Bytes {
         self.flush_and_compact(vv, frontiers);
-        self.external_kv.lock().unwrap().export_all()
+        let mut kv = self.external_kv.lock().unwrap();
+        kv.export_all()
     }
 
     #[tracing::instrument(skip(self), level = "debug")]
@@ -877,7 +880,7 @@ mod mut_inner_kv {
                 self.insert_change(new_change, false);
             }
 
-            debug_assert_eq!(total_len, original_len);
+            assert_eq!(total_len, original_len);
         }
 
         fn _insert_splitted_change(
@@ -923,6 +926,17 @@ mod mut_inner_kv {
             let mut iter = store
                 .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
                 .filter(|(id, _)| id.len() == 12);
+
+            // println!(
+            //     "\nkeys {:?}",
+            //     store
+            //         .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
+            //         .filter(|(id, _)| id.len() == 12)
+            //         .map(|(k, _v)| ID::from_bytes(&k))
+            //         .count()
+            // );
+            // println!("id {:?}", id);
+
             let (b_id, b_bytes) = iter.next_back()?;
             let block_id: ID = ID::from_bytes(&b_id[..]);
             let block = ChangesBlock::from_bytes(b_bytes).unwrap();

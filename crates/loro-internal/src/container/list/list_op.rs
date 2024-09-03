@@ -633,7 +633,10 @@ impl Sliceable for InnerListOp {
             InnerListOp::StyleStart { .. }
             | InnerListOp::StyleEnd { .. }
             | InnerListOp::Move { .. }
-            | InnerListOp::Set { .. } => self.clone(),
+            | InnerListOp::Set { .. } => {
+                assert!(from == 0 && to == 1);
+                self.clone()
+            }
         }
     }
 }

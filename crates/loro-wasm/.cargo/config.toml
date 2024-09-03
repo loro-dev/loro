@@ -5,3 +5,4 @@ opt-level = "s"
 # But it's valuable for debugging.
 debug = true
 codegen-units = 1
+strip = true

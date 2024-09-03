@@ -41,15 +41,16 @@ impl InnerStore {
         if let std::collections::hash_map::Entry::Vacant(e) = self.store.entry(idx) {
             let id = self.arena.get_container_id(idx).unwrap();
             let key = id.to_bytes();
-            if !self.all_loaded && self.kv.contains_key(&key) {
-                let c = ContainerWrapper::new_from_bytes(self.kv.get(&key).unwrap());
-                e.insert(c);
-                return self.store.get_mut(&idx).unwrap();
-            } else {
-                let c = f();
-                e.insert(c);
-                self.len += 1;
+            if !self.all_loaded {
+                if let Some(v) = self.kv.get(&key) {
+                    let c = ContainerWrapper::new_from_bytes(v);
+                    e.insert(c);
+                    return self.store.get_mut(&idx).unwrap();
+                }
             }
+            let c = f();
+            e.insert(c);
+            self.len += 1;
         }
 
         self.store.get_mut(&idx).unwrap()
@@ -59,9 +60,11 @@ impl InnerStore {
         if let std::collections::hash_map::Entry::Vacant(e) = self.store.entry(idx) {
             let id = self.arena.get_container_id(idx).unwrap();
             let key = id.to_bytes();
-            if !self.all_loaded && self.kv.contains_key(&key) {
-                let c = ContainerWrapper::new_from_bytes(self.kv.get(&key).unwrap());
-                e.insert(c);
+            if !self.all_loaded {
+                if let Some(v) = self.kv.get(&key) {
+                    let c = ContainerWrapper::new_from_bytes(v);
+                    e.insert(c);
+                }
             }
         }
 
