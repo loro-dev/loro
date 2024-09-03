@@ -38,14 +38,14 @@ pub struct MovableListState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListItem {
     pointed_by: Option<CompactIdLp>,
-    id: IdFull,
+    pub(crate) id: IdFull,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Element {
-    value: LoroValue,
-    value_id: IdLp,
-    pos: IdLp,
+    pub(crate) value: LoroValue,
+    pub(crate) value_id: IdLp,
+    pub(crate) pos: IdLp,
 }
 
 impl Element {
@@ -748,12 +748,12 @@ impl MovableListState {
     }
 
     #[inline]
-    fn list(&self) -> &BTree<MovableListTreeTrait> {
+    pub(crate) fn list(&self) -> &BTree<MovableListTreeTrait> {
         self.inner.list()
     }
 
     #[inline]
-    fn elements(&self) -> &FxHashMap<CompactIdLp, Element> {
+    pub(crate) fn elements(&self) -> &FxHashMap<CompactIdLp, Element> {
         self.inner.elements()
     }
 
@@ -871,7 +871,7 @@ impl MovableListState {
         Some(self.inner.get_index_of(c.cursor.leaf, to) as usize)
     }
 
-    fn get_list_item(&self, id: IdLp) -> Option<&ListItem> {
+    pub(crate) fn get_list_item(&self, id: IdLp) -> Option<&ListItem> {
         self.inner.get_list_item_by_id(id)
     }
 
