@@ -52,7 +52,7 @@
   },
   "rust-analyzer.cargo.features": [
     // "test_utils",
-    // "counter"
+    "counter"
   ],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
   "rust-analyzer.server.extraEnv": {
