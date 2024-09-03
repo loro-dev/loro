@@ -13,16 +13,18 @@ use crate::op::OpWithId;
 use crate::version::Frontiers;
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{IdLpSpan, LoroResult, PeerID};
+use loro_common::{IdLpSpan, IdSpan, LoroResult, PeerID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 use serde::{Deserialize, Serialize};
 pub(crate) use value::OwnedValue;
 
 #[non_exhaustive]
+#[derive(Debug, Clone, Copy)]
 pub enum ExportMode<'a> {
     Snapshot,
-    Updates(&'a VersionVector),
+    Updates { from: &'a VersionVector },
+    UpdatesInRange { spans: &'a [IdSpan] },
     GcSnapshot(&'a Frontiers),
 }
 
@@ -293,6 +295,24 @@ pub(crate) fn export_fast_updates(doc: &LoroDoc, vv: &VersionVector) -> Vec<u8> 
 
     // BODY
     fast_snapshot::encode_updates(doc, vv, &mut ans);
+
+    // CHECKSUM in HEADER
+    let checksum_body = &ans[20..];
+    let checksum = xxhash_rust::xxh32::xxh32(checksum_body, XXH_SEED);
+    ans[16..20].copy_from_slice(&checksum.to_le_bytes());
+    ans
+}
+
+pub(crate) fn export_fast_updates_in_range(oplog: &OpLog, spans: &[IdSpan]) -> Vec<u8> {
+    // HEADER
+    let mut ans = Vec::with_capacity(MIN_HEADER_SIZE);
+    ans.extend(MAGIC_BYTES);
+    let checksum = [0; 16];
+    ans.extend(checksum);
+    ans.extend(EncodeMode::FastUpdates.to_bytes());
+
+    // BODY
+    fast_snapshot::encode_updates_in_range(oplog, spans, &mut ans);
 
     // CHECKSUM in HEADER
     let checksum_body = &ans[20..];

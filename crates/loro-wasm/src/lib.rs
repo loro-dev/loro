@@ -1120,6 +1120,25 @@ impl Loro {
         self.0.unsubscribe(SubID::from_u32(subscription))
     }
 
+    /// Subscribe the updates from local edits
+    #[wasm_bindgen(js_name = "subscribeLocalUpdates", skip_typescript)]
+    pub fn subscribe_local_updates(&self, f: js_sys::Function) -> JsValue {
+        let observer = observer::Observer::new(f);
+        let mut sub = Some(self.0.subscribe_local_update(Box::new(move |e| {
+            let arr = js_sys::Uint8Array::new_with_length(e.len() as u32);
+            arr.copy_from(e);
+            if let Err(e) = observer.call1(&arr.into()) {
+                console_error!("Error: {:?}", e);
+            }
+        })));
+
+        let closure = Closure::wrap(Box::new(move || {
+            drop(sub.take());
+        }) as Box<dyn FnMut()>);
+
+        closure.into_js_value()
+    }
+
     /// Debug the size of the history
     #[wasm_bindgen(js_name = "debugHistory")]
     pub fn debug_history(&self) {
@@ -4121,6 +4140,51 @@ interface Loro {
      *  ```
      */
     getContainerById(id: ContainerID): Container;
+
+    /** 
+     * Subscribe to updates from local edits.
+     * 
+     * This method allows you to listen for local changes made to the document.
+     * It's useful for syncing changes with other instances or saving updates.
+     * 
+     * @param f - A callback function that receives a Uint8Array containing the update data.
+     * @returns A function to unsubscribe from the updates.
+     * 
+     * @example
+     * ```ts
+     * const loro = new Loro();
+     * const text = loro.getText("text");
+     * 
+     * const unsubscribe = loro.subscribeLocalUpdates((update) => {
+     *   console.log("Local update received:", update);
+     *   // You can send this update to other Loro instances
+     * });
+     * 
+     * text.insert(0, "Hello");
+     * loro.commit();
+     * 
+     * // Later, when you want to stop listening:
+     * unsubscribe();
+     * ```
+     * 
+     * @example
+     * ```ts
+     * const loro1 = new Loro();
+     * const loro2 = new Loro();
+     * 
+     * // Set up two-way sync
+     * loro1.subscribeLocalUpdates((updates) => {
+     *   loro2.import(updates);
+     * });
+     * 
+     * loro2.subscribeLocalUpdates((updates) => {
+     *   loro1.import(updates);
+     * });
+     * 
+     * // Now changes in loro1 will be reflected in loro2 and vice versa
+     * ```
+     */
+    subscribeLocalUpdates(f: (bytes: Uint8Array) => void): () => void
 }
 
 /**

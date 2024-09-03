@@ -10,7 +10,7 @@ use loro::{
 use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
 use rand::{Rng, SeedableRng};
 use serde_json::json;
-use tracing::{trace, trace_span};
+use tracing::{info, trace, trace_span};
 
 mod integration_test;
 
@@ -933,7 +933,9 @@ fn new_update_encode_mode() {
     let doc2 = LoroDoc::new();
 
     // Export updates from doc and import to doc2
-    let updates = doc.export(loro::ExportMode::Updates(&Default::default()));
+    let updates = doc.export(loro::ExportMode::Updates {
+        from: &Default::default(),
+    });
     doc2.import(&updates).unwrap();
 
     // Check equality
@@ -951,7 +953,9 @@ fn new_update_encode_mode() {
     doc2.commit();
 
     // Export updates from doc2 and import to doc
-    let updates2 = doc2.export(loro::ExportMode::Updates(&doc.oplog_vv()));
+    let updates2 = doc2.export(loro::ExportMode::Updates {
+        from: &doc.oplog_vv(),
+    });
     doc.import(&updates2).unwrap();
 
     // Check equality after syncing back
@@ -1029,12 +1033,16 @@ fn test_gc_sync() {
     assert_eq!(trim_end, 10);
 
     apply_random_ops(&new_doc, 1234, 5);
-    let updates = new_doc.export(loro::ExportMode::Updates(&doc.oplog_vv()));
+    let updates = new_doc.export(loro::ExportMode::Updates {
+        from: &doc.oplog_vv(),
+    });
     doc.import(&updates).unwrap();
     assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
 
     apply_random_ops(&doc, 11, 5);
-    let updates = doc.export(loro::ExportMode::Updates(&new_doc.oplog_vv()));
+    let updates = doc.export(loro::ExportMode::Updates {
+        from: &new_doc.oplog_vv(),
+    });
     new_doc.import(&updates).unwrap();
     assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
 }
@@ -1211,6 +1219,49 @@ fn test_map_checkout_on_trimmed_doc() {
 }
 
 #[test]
+fn test_loro_export_local_updates() {
+    use std::sync::{Arc, Mutex};
+
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    let updates = Arc::new(Mutex::new(Vec::new()));
+
+    let updates_clone = updates.clone();
+    let subscription = doc.subscribe_local_update(Box::new(move |bytes: &[u8]| {
+        updates_clone.lock().unwrap().push(bytes.to_vec());
+    }));
+
+    // Make some changes
+    text.insert(0, "Hello").unwrap();
+    doc.commit();
+    text.insert(5, " world").unwrap();
+    doc.commit();
+
+    // Check that updates were recorded
+    {
+        let recorded_updates = updates.lock().unwrap();
+        assert_eq!(recorded_updates.len(), 2);
+
+        // Verify the content of the updates
+        let doc_b = LoroDoc::new();
+        doc_b.import(&recorded_updates[0]).unwrap();
+        assert_eq!(doc_b.get_text("text").to_string(), "Hello");
+
+        doc_b.import(&recorded_updates[1]).unwrap();
+        assert_eq!(doc_b.get_text("text").to_string(), "Hello world");
+    }
+
+    {
+        // Test that the subscription can be dropped
+        drop(subscription);
+        // Make another change
+        text.insert(11, "!").unwrap();
+        doc.commit();
+        // Check that no new update was recorded
+        assert_eq!(updates.lock().unwrap().len(), 2);
+    }
+}
+
 fn test_movable_list_checkout_on_trimmed_doc() -> LoroResult<()> {
     let doc = LoroDoc::new();
     let list = doc.get_movable_list("list");

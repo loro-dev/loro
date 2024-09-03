@@ -13,6 +13,7 @@ use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::json::JsonChange;
+use loro_internal::obs::LocalUpdateCallback;
 use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
@@ -51,6 +52,7 @@ pub use loro_internal::oplog::FrontiersNotIncluded;
 pub use loro_internal::undo;
 pub use loro_internal::version::{Frontiers, VersionVector};
 pub use loro_internal::ApplyDiff;
+pub use loro_internal::Subscription;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
@@ -577,6 +579,11 @@ impl LoroDoc {
         self.doc.unsubscribe(id)
     }
 
+    /// Subscribe the local update of the document.
+    pub fn subscribe_local_update(&self, callback: LocalUpdateCallback) -> Subscription {
+        self.doc.subscribe_local_update(callback)
+    }
+
     /// Estimate the size of the document states in memory.
     #[inline]
     pub fn log_estimate_size(&self) {
@@ -668,6 +675,11 @@ impl LoroDoc {
         self.doc.export_fast_snapshot()
     }
 
+    /// Export the document in the given mode.
+    pub fn export(&self, mode: ExportMode) -> Vec<u8> {
+        self.doc.export(mode)
+    }
+
     /// Analyze the container info of the doc
     ///
     /// This is used for development and debugging. It can be slow.
@@ -678,11 +690,6 @@ impl LoroDoc {
     /// Get the path from the root to the container
     pub fn get_path_to_container(&self, id: &ContainerID) -> Option<Vec<(ContainerID, Index)>> {
         self.doc.get_path_to_container(id)
-    }
-
-    /// Export the document in the given mode.
-    pub fn export(&self, mode: ExportMode) -> Vec<u8> {
-        self.doc.export(mode)
     }
 }
 

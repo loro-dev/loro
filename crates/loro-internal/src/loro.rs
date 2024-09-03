@@ -28,19 +28,20 @@ use crate::{
     dag::DagUtils,
     diff_calc::DiffCalculator,
     encoding::{
-        decode_snapshot, export_fast_snapshot, export_fast_updates, export_gc_snapshot,
-        export_snapshot, json_schema::json::JsonSchema, parse_header_and_body, EncodeMode,
-        ParsedHeaderAndBody,
+        decode_snapshot, export_fast_snapshot, export_fast_updates, export_fast_updates_in_range,
+        export_gc_snapshot, export_snapshot, json_schema::json::JsonSchema, parse_header_and_body,
+        EncodeMode, ParsedHeaderAndBody,
     },
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
-    obs::{Observer, SubID, Subscriber},
+    obs::{LocalUpdateCallback, Observer, SubID, Subscriber},
     op::InnerContent,
     oplog::{loro_dag::FrontiersNotIncluded, OpLog},
     state::DocState,
     txn::Transaction,
     undo::DiffBatch,
+    utils::subscription::{SubscriberSet, Subscription},
     version::{Frontiers, ImVersionVector},
     HandlerTrait, InternalString, ListHandler, LoroError, MapHandler, VersionVector,
 };
@@ -71,6 +72,7 @@ pub struct LoroDoc {
     arena: SharedArena,
     config: Configure,
     observer: Arc<Observer>,
+    local_update_subs: SubscriberSet<(), LocalUpdateCallback>,
     diff_calculator: Arc<Mutex<DiffCalculator>>,
     // when dropping the doc, the txn will be committed
     txn: Arc<Mutex<Option<Transaction>>>,
@@ -108,6 +110,7 @@ impl LoroDoc {
             config,
             detached: AtomicBool::new(false),
             auto_commit: AtomicBool::new(false),
+            local_update_subs: SubscriberSet::new(),
             observer: Arc::new(Observer::new(arena.clone())),
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn: global_txn,
@@ -136,6 +139,7 @@ impl LoroDoc {
             arena,
             config,
             observer: Arc::new(Observer::new(self.arena.clone())),
+            local_update_subs: SubscriberSet::new(),
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn,
             auto_commit: AtomicBool::new(false),
@@ -220,22 +224,6 @@ impl LoroDoc {
     #[inline(always)]
     pub fn is_detached(&self) -> bool {
         self.detached.load(Acquire)
-    }
-
-    #[allow(unused)]
-    pub(super) fn from_existing(oplog: OpLog, state: DocState) -> Self {
-        let obs = Observer::new(oplog.arena.clone());
-        Self {
-            arena: oplog.arena.clone(),
-            observer: Arc::new(obs),
-            config: Default::default(),
-            auto_commit: AtomicBool::new(false),
-            oplog: Arc::new(Mutex::new(oplog)),
-            state: Arc::new(Mutex::new(state)),
-            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
-            txn: Arc::new(Mutex::new(None)),
-            detached: AtomicBool::new(false),
-        }
     }
 
     #[inline(always)]
@@ -377,6 +365,7 @@ impl LoroDoc {
             txn.set_msg(Some(msg.clone()));
         }
 
+        let id_span = txn.id_span();
         txn.commit().unwrap();
         if config.immediate_renew {
             let mut txn_guard = self.txn.try_lock().unwrap();
@@ -385,7 +374,7 @@ impl LoroDoc {
         }
 
         if let Some(on_commit) = on_commit {
-            on_commit(&self.state);
+            on_commit(&self.state, &self.oplog, id_span);
         }
     }
 
@@ -440,12 +429,26 @@ impl LoroDoc {
         );
 
         let obs = self.observer.clone();
-        txn.set_on_commit(Box::new(move |state| {
+        let local_update_subs = self.local_update_subs.clone();
+        txn.set_on_commit(Box::new(move |state, oplog, id_span| {
             let mut state = state.try_lock().unwrap();
             let events = state.take_events();
             drop(state);
             for event in events {
                 obs.emit(event);
+            }
+
+            if !local_update_subs.is_empty() {
+                trace!("exporting fast updates");
+                let bytes =
+                    { export_fast_updates_in_range(&oplog.try_lock().unwrap(), &[id_span]) };
+                trace!("exported fast updates");
+                local_update_subs.retain(&(), |callback| {
+                    trace!("calling callback");
+                    callback(&bytes);
+                    trace!("called callback");
+                    true
+                });
             }
         }));
 
@@ -1057,6 +1060,12 @@ impl LoroDoc {
         self.observer.unsubscribe(id);
     }
 
+    pub fn subscribe_local_update(&self, callback: LocalUpdateCallback) -> Subscription {
+        let (sub, activate) = self.local_update_subs.insert((), callback);
+        activate();
+        sub
+    }
+
     // PERF: opt
     #[tracing::instrument(skip_all)]
     pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
@@ -1457,7 +1466,10 @@ impl LoroDoc {
         self.commit_then_stop();
         let ans = match mode {
             ExportMode::Snapshot => export_fast_snapshot(self),
-            ExportMode::Updates(vv) => export_fast_updates(self, vv),
+            ExportMode::Updates { from: vv } => export_fast_updates(self, vv),
+            ExportMode::UpdatesInRange { spans } => {
+                export_fast_updates_in_range(&self.oplog.lock().unwrap(), spans)
+            }
             ExportMode::GcSnapshot(f) => export_gc_snapshot(self, f),
         };
 
