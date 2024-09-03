@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use dev_utils::{get_mem_usage, ByteSize};
-use loro::{LoroCounter, LoroDoc, LoroMap};
+use loro::{CommitOptions, LoroCounter, LoroDoc, LoroMap};
 
 #[derive(Debug)]
 struct NewProject {
@@ -11,6 +11,8 @@ struct NewProject {
 
 pub fn main() {
     let doc = LoroDoc::new();
+    doc.set_record_timestamp(true);
+    doc.set_change_merge_interval(1000 * 600);
     let projects = doc.get_map("projects");
     let n = 100;
     // ten years
@@ -39,7 +41,9 @@ pub fn main() {
             .c
             .increment(record_interval as f64)
             .unwrap();
+        doc.commit_with(CommitOptions::new().timestamp(i * 1000 * 10));
     }
+
     let mut total_time = 0.0;
     for project in all_projects.iter() {
         total_time += project.c.get();
@@ -54,19 +58,5 @@ pub fn main() {
     println!("GC Shallow Snapshot Size {}", ByteSize(gc_snapshot.len()));
     println!("mem: {}", get_mem_usage());
 
-    let start = Instant::now();
-    let new_doc = LoroDoc::new();
-    new_doc.import(&snapshot);
-    println!("Import Fast Snapshot Time: {:?}", start.elapsed());
-
-    let start = Instant::now();
-    let new_doc = LoroDoc::new();
-    new_doc.import(&gc_snapshot);
-    println!("Import GC Snapshot Time: {:?}", start.elapsed());
-    let deep_value = new_doc.get_deep_value();
-    println!(
-        "Import GC Snapshot + Get Depp Value Time: {:?}",
-        start.elapsed()
-    );
-    assert_eq!(deep_value, doc.get_deep_value());
+    examples::utils::bench_fast_snapshot(&doc);
 }
