@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { Loro } from "../src";
+import { LoroDoc } from "../src";
 
 describe("Checkout", () => {
   it("simple checkout", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     doc.setPeerId(0n);
     const text = doc.getText("text");
     text.insert(0, "H");
@@ -31,7 +31,7 @@ describe("Checkout", () => {
   });
 
   it("Chinese char", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText("text");
     text.insert(0, "你好世界");
     doc.commit();
@@ -55,13 +55,13 @@ describe("Checkout", () => {
   });
 
   it("two clients", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText("text");
     text.insert(0, "0");
     doc.commit();
 
     const v0 = doc.frontiers();
-    const docB = new Loro();
+    const docB = new LoroDoc();
     docB.import(doc.exportFrom());
     expect(docB.cmpWithFrontiers(v0)).toBe(0);
     text.insert(1, "0");

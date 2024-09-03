@@ -6,7 +6,6 @@ use rle::HasLength;
 use std::{
     borrow::Cow,
     cmp::Ordering,
-    f32::consts::E,
     sync::{
         atomic::{
             AtomicBool,
