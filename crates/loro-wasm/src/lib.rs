@@ -1580,7 +1580,7 @@ impl LoroText {
     /// text.insert(0, "Hello");
     /// text.update("Hello World");
     /// ```
-    pub fn update(&self, text: &str) -> () {
+    pub fn update(&self, text: &str) {
         self.handler.update(text);
     }
 

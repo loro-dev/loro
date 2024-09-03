@@ -1,6 +1,6 @@
 {
   "name": "loro-wasm",
-  "version": "0.16.7",
+  "version": "0.16.10",
   "description": "Loro CRDTs is a high-performance CRDT framework that makes your app state synchronized, collaborative and maintainable effortlessly.",
   "keywords": [
     "crdt",

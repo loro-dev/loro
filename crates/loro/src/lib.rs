@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
-use change_meta::ChangeMeta;
+pub use change_meta::ChangeMeta;
 use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::container::IntoContainerId;
@@ -45,6 +45,7 @@ pub use loro_internal::handler::TextDelta;
 pub use loro_internal::id::{PeerID, TreeID, ID};
 pub use loro_internal::json;
 pub use loro_internal::json::JsonSchema;
+pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
 pub use loro_internal::obs::SubID;
@@ -251,7 +252,7 @@ impl LoroDoc {
     ///
     /// The data can be in arbitrary order. The import result will be the same.
     #[inline]
-    pub fn import_batch(&mut self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
         self.doc.import_batch(bytes)
     }
 
