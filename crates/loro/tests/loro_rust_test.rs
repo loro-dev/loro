@@ -5,12 +5,12 @@ use std::{
 
 use loro::{
     awareness::Awareness, loro_value, Frontiers, FrontiersNotIncluded, LoroDoc, LoroError,
-    LoroList, LoroMap, LoroText, ToJson, VersionVector,
+    LoroList, LoroMap, LoroText, ToJson,
 };
 use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
 use rand::{Rng, SeedableRng};
 use serde_json::json;
-use tracing::{info, trace, trace_span};
+use tracing::trace_span;
 
 mod integration_test;
 

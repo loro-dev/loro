@@ -73,8 +73,21 @@ impl KvWrapper {
         let mut this = self.kv.lock().unwrap();
         for (k, v) in other.scan(Bound::Unbounded, Bound::Unbounded) {
             if this.get(&k) == Some(v) {
-                this.remove(&k)
+                this.remove(&k);
             }
         }
+    }
+
+    pub(crate) fn encode_with_special_kv(&self, k: &[u8], v: Bytes) -> Bytes {
+        let mut kv = self.kv.lock().unwrap();
+        assert!(!kv.contains_key(k));
+        kv.set(k, v);
+        let ans = kv.export_all();
+        kv.remove(k);
+        ans
+    }
+
+    pub(crate) fn remove(&self, k: &[u8]) -> Option<Bytes> {
+        self.kv.lock().unwrap().remove(k)
     }
 }

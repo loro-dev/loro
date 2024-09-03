@@ -1178,7 +1178,7 @@ impl LoroText {
 
     /// Insert a string at the given unicode position.
     pub fn insert(&self, pos: usize, s: &str) -> LoroResult<()> {
-        self.handler.insert(pos, s)
+        self.handler.insert_unicode(pos, s)
     }
 
     /// Insert a string at the given utf-8 position.
@@ -1188,7 +1188,7 @@ impl LoroText {
 
     /// Delete a range of text at the given unicode position with unicode length.
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
-        self.handler.delete(pos, len)
+        self.handler.delete_unicode(pos, len)
     }
 
     /// Delete a range of text at the given utf-8 position with utf-8 length.

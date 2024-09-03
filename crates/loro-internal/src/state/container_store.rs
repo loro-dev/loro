@@ -123,6 +123,10 @@ impl ContainerStore {
         self.store.encode()
     }
 
+    pub fn encode_with_frontiers(&mut self, f: &Frontiers) -> Bytes {
+        self.store.encode_with_frontiers(f)
+    }
+
     pub fn encode_gc(&mut self) -> Bytes {
         if let Some(gc) = self.gc_store.as_mut() {
             gc.store.try_lock().unwrap().get_kv().export()
@@ -135,26 +139,31 @@ impl ContainerStore {
         self.gc_store.as_ref().map(|x| &x.trimmed_frontiers)
     }
 
-    pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<()> {
+    pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<Option<Frontiers>> {
         self.store.decode(bytes)
     }
 
     pub(crate) fn decode_gc(
         &mut self,
         gc_bytes: Bytes,
-        state_bytes: Bytes,
         start_frontiers: Frontiers,
-    ) -> LoroResult<()> {
+    ) -> LoroResult<Option<Frontiers>> {
         assert!(self.gc_store.is_none());
+        let mut inner = InnerStore::new(self.arena.clone());
+        let f = inner.decode(gc_bytes)?;
+        self.gc_store = Some(Arc::new(GcStore {
+            trimmed_frontiers: start_frontiers,
+            store: Mutex::new(inner),
+        }));
+        Ok(f)
+    }
+
+    pub(crate) fn decode_state_by_two_bytes(
+        &mut self,
+        gc_bytes: Bytes,
+        state_bytes: Bytes,
+    ) -> LoroResult<()> {
         self.store.decode_twice(gc_bytes.clone(), state_bytes)?;
-        if !start_frontiers.is_empty() {
-            let mut inner = InnerStore::new(self.arena.clone());
-            inner.decode(gc_bytes)?;
-            self.gc_store = Some(Arc::new(GcStore {
-                trimmed_frontiers: start_frontiers,
-                store: Mutex::new(inner),
-            }));
-        }
         Ok(())
     }
 

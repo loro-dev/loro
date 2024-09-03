@@ -507,6 +507,10 @@ impl TreeCacheForDiff {
     }
 
     pub(crate) fn init_tree_with_trimmed_version(&mut self, nodes: Vec<MoveLamportAndID>) {
+        if nodes.is_empty() {
+            return;
+        }
+
         debug_assert!(self.tree.is_empty());
         self.current_vv.set_last(nodes.last().unwrap().id.id());
         for node in nodes.into_iter() {

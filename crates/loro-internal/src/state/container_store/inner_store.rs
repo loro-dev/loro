@@ -6,7 +6,7 @@ use loro_common::ContainerID;
 
 use crate::{
     arena::SharedArena, container::idx::ContainerIdx, state::ContainerCreationContext,
-    utils::kv_wrapper::KvWrapper,
+    utils::kv_wrapper::KvWrapper, version::Frontiers,
 };
 
 use super::ContainerWrapper;
@@ -76,6 +76,11 @@ impl InnerStore {
     }
 
     pub(crate) fn encode(&mut self) -> Bytes {
+        self.flush_all();
+        self.kv.export()
+    }
+
+    fn flush_all(&mut self) {
         self.kv
             .set_all(self.store.iter_mut().filter_map(|(idx, c)| {
                 if c.is_flushed() {
@@ -85,18 +90,33 @@ impl InnerStore {
                 let key = self.arena.get_container_id(*idx).unwrap();
                 let key: Bytes = key.to_bytes().into();
                 let value = c.encode();
+                c.set_flushed(true);
                 Some((key, value))
             }));
-        self.kv.export()
+    }
+
+    const FRONTIERS_KEY: &'static [u8] = b"fr";
+    pub(crate) fn encode_with_frontiers(&mut self, f: &Frontiers) -> Bytes {
+        self.flush_all();
+        self.kv
+            .encode_with_special_kv(Self::FRONTIERS_KEY, f.encode().into())
     }
 
     pub(crate) fn get_kv(&self) -> &KvWrapper {
         &self.kv
     }
 
-    pub(crate) fn decode(&mut self, bytes: bytes::Bytes) -> Result<(), loro_common::LoroError> {
+    pub(crate) fn decode(
+        &mut self,
+        bytes: bytes::Bytes,
+    ) -> Result<Option<Frontiers>, loro_common::LoroError> {
         assert!(self.len == 0);
+        let mut fr = None;
         self.kv.import(bytes);
+        if let Some(f) = self.kv.remove(Self::FRONTIERS_KEY) {
+            fr = Some(Frontiers::decode(&f)?);
+        }
+
         self.kv.with_kv(|kv| {
             let mut count = 0;
             let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
@@ -113,7 +133,7 @@ impl InnerStore {
         });
 
         self.all_loaded = false;
-        Ok(())
+        Ok(fr)
     }
 
     pub(crate) fn decode_twice(
@@ -124,6 +144,7 @@ impl InnerStore {
         assert!(self.len == 0);
         self.kv.import(bytes_a);
         self.kv.import(bytes_b);
+        self.kv.remove(Self::FRONTIERS_KEY);
         self.kv.with_kv(|kv| {
             let mut count = 0;
             let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);

@@ -8,7 +8,7 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
     fn get(&self, key: &[u8]) -> Option<Bytes>;
     fn set(&mut self, key: &[u8], value: Bytes);
     fn compare_and_swap(&mut self, key: &[u8], old: Option<Bytes>, new: Bytes) -> bool;
-    fn remove(&mut self, key: &[u8]);
+    fn remove(&mut self, key: &[u8]) -> Option<Bytes>;
     fn contains_key(&self, key: &[u8]) -> bool;
     fn scan(
         &self,
@@ -146,8 +146,8 @@ mod mem {
             }
         }
 
-        fn remove(&mut self, key: &[u8]) {
-            self.remove(key);
+        fn remove(&mut self, key: &[u8]) -> Option<Bytes> {
+            self.remove(key)
         }
 
         fn contains_key(&self, key: &[u8]) -> bool {

@@ -1,4 +1,6 @@
+use bytes::Bytes;
 use loro_common::LoroResult;
+use rle::HasLength;
 use tracing::{debug, trace};
 
 use crate::{
@@ -7,6 +9,11 @@ use crate::{
     version::Frontiers,
     LoroDoc,
 };
+
+#[cfg(test)]
+const MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE: usize = 16;
+#[cfg(not(test))]
+const MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE: usize = 256;
 
 #[tracing::instrument(skip_all)]
 pub(crate) fn export_gc_snapshot<W: std::io::Write>(
@@ -30,18 +37,25 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     );
 
     let oplog_bytes = oplog.export_from_fast(&start_vv);
+    let latest_vv = oplog.vv();
+    let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
     drop(oplog);
     doc.checkout(&start_from)?;
     let mut state = doc.app_state().lock().unwrap();
-    let gc_state_bytes = state.store.encode();
+    let gc_state_bytes = state.store.encode_with_frontiers(&start_from);
     let old_kv = state.store.get_kv().clone();
     drop(state);
     doc.checkout_to_latest();
-    let mut state = doc.app_state().lock().unwrap();
-    state.store.encode();
-    let new_kv = state.store.get_kv().clone();
-    new_kv.remove_same(&old_kv);
-    let state_bytes = new_kv.export();
+    let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
+        let mut state = doc.app_state().lock().unwrap();
+        state.store.encode();
+        let new_kv = state.store.get_kv().clone();
+        new_kv.remove_same(&old_kv);
+        Some(new_kv.export())
+    } else {
+        None
+    };
+
     let snapshot = Snapshot {
         oplog_bytes,
         state_bytes,

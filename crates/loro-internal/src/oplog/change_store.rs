@@ -27,7 +27,7 @@ use std::{
     ops::{Bound, Deref},
     sync::{atomic::AtomicI64, Arc, Mutex},
 };
-use tracing::{info_span, trace, warn};
+use tracing::{debug, info_span, trace, warn};
 
 mod block_encode;
 mod delta_rle_encode;
@@ -173,6 +173,10 @@ impl ChangeStore {
             )
         };
 
+        debug!(
+            "start_vv={:?} start_frontiers={:?}",
+            &start_vv, &start_frontiers
+        );
         new_store.encode_from(start_vv, &start_frontiers, latest_vv, latest_frontiers)
     }
 
