@@ -50,25 +50,16 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
         );
         println!("Snapshot compression time: {:?}", start.elapsed());
 
-        let loop_start = Instant::now();
-        let mut new_doc;
         let mem = dev_utils::get_mem_usage();
-        loop {
-            new_doc = LoroDoc::new();
-            let start = Instant::now();
-            new_doc.import(&snapshot).unwrap();
-            let elapsed = start.elapsed();
-            println!("Import fast snapshot time: {:?}", elapsed);
-            println!(
-                "Memory usage for new doc: {}",
-                dev_utils::get_mem_usage() - mem
-            );
-
-            if loop_start.elapsed() > Duration::from_secs(10) {
-                break;
-            }
-        }
-
+        let new_doc = LoroDoc::new();
+        let start = Instant::now();
+        new_doc.import(&snapshot).unwrap();
+        let elapsed = start.elapsed();
+        println!("Import fast snapshot time: {:?}", elapsed);
+        println!(
+            "Memory usage for new doc: {}",
+            dev_utils::get_mem_usage() - mem
+        );
         let start = Instant::now();
         let v = new_doc.get_deep_value();
         println!("Get deep value time: {:?}", start.elapsed());
@@ -106,24 +97,16 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
         );
         println!("Snapshot compression time: {:?}", start.elapsed());
 
-        let loop_start = Instant::now();
-        let mut new_doc;
         let mem = dev_utils::get_mem_usage();
-        loop {
-            new_doc = LoroDoc::new();
-            let start = Instant::now();
-            new_doc.import(&snapshot).unwrap();
-            let elapsed = start.elapsed();
-            println!("Import fast snapshot with GC time: {:?}", elapsed);
-            println!(
-                "Memory usage for new doc: {}",
-                dev_utils::get_mem_usage() - mem
-            );
-
-            if loop_start.elapsed() > Duration::from_secs(10) {
-                break;
-            }
-        }
+        let new_doc = LoroDoc::new();
+        let start = Instant::now();
+        new_doc.import(&snapshot).unwrap();
+        let elapsed = start.elapsed();
+        println!("Import fast snapshot with GC time: {:?}", elapsed);
+        println!(
+            "Memory usage for new doc: {}",
+            dev_utils::get_mem_usage() - mem
+        );
 
         let start = Instant::now();
         let v = new_doc.get_deep_value();
