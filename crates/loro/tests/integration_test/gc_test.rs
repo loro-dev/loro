@@ -73,7 +73,29 @@ fn test_checkout_to_list_that_were_created_before_gc() -> anyhow::Result<()> {
     new_doc.checkout(&frontiers)?;
     assert_eq!(
         new_doc.get_list("list").to_vec(),
-        vec![2.into(), 3.into(), 1.into(), 0.into()]
+        vec![0.into(), 3.into(), 1.into(), 2.into()]
+    );
+    Ok(())
+}
+
+#[test]
+fn test_checkout_to_movable_list_that_were_created_before_gc() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.get_movable_list("list").insert(0, 0)?;
+    doc.get_movable_list("list").insert(1, 1)?;
+    doc.get_movable_list("list").insert(2, 2)?;
+    doc.get_movable_list("list").insert(1, 3)?;
+    doc.commit();
+    let frontiers = doc.oplog_frontiers();
+    doc.get_movable_list("list").delete(0, 3)?;
+    let bytes = doc.export(loro::ExportMode::GcSnapshot(&frontiers));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes)?;
+    new_doc.checkout(&frontiers)?;
+    assert_eq!(
+        new_doc.get_movable_list("list").to_vec(),
+        vec![0.into(), 3.into(), 1.into(), 2.into()]
     );
     Ok(())
 }

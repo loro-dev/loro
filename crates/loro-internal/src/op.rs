@@ -9,7 +9,7 @@ use crate::{
 use crate::{delta::DeltaValue, LoroValue};
 use either::Either;
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerType, CounterSpan, IdFull, IdLp, IdSpan};
+use loro_common::{CompactIdLp, ContainerType, CounterSpan, IdFull, IdLp, IdSpan};
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -547,6 +547,8 @@ impl<'a> Mergable for ListSlice<'a> {
 #[derive(Debug, Clone)]
 pub struct SliceWithId {
     pub values: Either<SliceRange, LoroValue>,
+    /// This field is no-none when diff calculating movable list that need to handle_unknown
+    pub elem_id: Option<CompactIdLp>,
     pub id: IdFull,
 }
 
@@ -569,11 +571,11 @@ impl DeltaValue for SliceWithId {
                 if left_range.0.end == right_range.0.start =>
             {
                 left_range.0.end = right_range.0.end;
-                return Ok(());
+                Ok(())
             }
             _ => {
                 // If one is SliceRange and the other is LoroValue, we can't merge
-                return Err(other);
+                Err(other)
             }
         }
     }
@@ -589,6 +591,7 @@ impl DeltaValue for SliceWithId {
                 Self {
                     id: old_id,
                     values: Either::Left(ans),
+                    elem_id: None,
                 }
             }
             Either::Right(_) => unimplemented!(),

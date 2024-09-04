@@ -447,6 +447,19 @@ impl RichtextStateChunk {
         }
     }
 
+    pub(crate) fn counter(&self) -> Counter {
+        match self {
+            RichtextStateChunk::Text(t) => t.id().counter,
+            RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
+                AnchorType::Start => style.id().counter,
+                AnchorType::End => {
+                    let id = style.id();
+                    id.counter + 1
+                }
+            },
+        }
+    }
+
     pub fn entity_range_to_event_range(&self, range: Range<usize>) -> Range<usize> {
         match self {
             RichtextStateChunk::Text(t) => t.entity_range_to_event_range(range),

@@ -339,13 +339,14 @@ impl ContainerHistoryCache {
             }
         });
 
+        ans.sort_unstable_by_key(|x| x.counter());
         ans
     }
 
     pub(crate) fn find_list_chunks_in(
         &self,
         idx: ContainerIdx,
-        target_end: loro_common::IdSpan,
+        target_span: loro_common::IdSpan,
     ) -> Vec<SliceWithId> {
         let Some(state) = self.gc.as_ref() else {
             return Vec::new();
@@ -364,15 +365,35 @@ impl ContainerHistoryCache {
             },
         );
 
+        let mut ans = Vec::with_capacity(target_span.atom_len());
         match list_state {
-            crate::state::State::ListState(list) => todo!(),
-            crate::state::State::MovableListState(_) => todo!(),
-            _ => {
-                unreachable!()
+            crate::state::State::ListState(list) => {
+                for v in list.iter_with_id() {
+                    if target_span.contains(v.id.id()) {
+                        ans.push(SliceWithId {
+                            values: Either::Right(v.v.clone()),
+                            id: v.id,
+                            elem_id: None,
+                        })
+                    }
+                }
             }
+            crate::state::State::MovableListState(list) => {
+                for (move_id, elem_id, v) in list.iter_with_last_move_id_and_elem_id() {
+                    if target_span.contains(move_id.id()) {
+                        ans.push(SliceWithId {
+                            values: Either::Right(v.clone()),
+                            id: move_id,
+                            elem_id: Some(elem_id),
+                        })
+                    }
+                }
+            }
+            _ => unreachable!(),
         }
 
-        todo!()
+        ans.sort_unstable_by_key(|x| x.id.counter);
+        ans
     }
 }
 

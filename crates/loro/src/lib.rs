@@ -1892,6 +1892,37 @@ impl LoroMovableList {
     pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
         self.handler.get_cursor(pos, side)
     }
+
+    /// Get the elements of the list as a vector of LoroValues.
+    ///
+    /// This method returns a vector containing all the elements in the list as LoroValues.
+    /// It provides a convenient way to access the entire contents of the LoroMovableList
+    /// as a standard Rust vector.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<LoroValue>` containing all elements of the list.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let list = doc.get_movable_list("mylist");
+    /// list.insert(0, 1).unwrap();
+    /// list.insert(1, "hello").unwrap();
+    /// list.insert(2, true).unwrap();
+    ///
+    /// let vec = list.to_vec();
+    /// assert_eq!(vec.len(), 3);
+    /// assert_eq!(vec[0], 1.into());
+    /// assert_eq!(vec[1], "hello".into());
+    /// assert_eq!(vec[2], true.into());
+    /// ```
+    pub fn to_vec(&self) -> Vec<LoroValue> {
+        Arc::unwrap_or_clone(self.get_value().into_list().unwrap())
+    }
 }
 
 impl Default for LoroMovableList {

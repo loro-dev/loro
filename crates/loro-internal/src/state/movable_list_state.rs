@@ -913,6 +913,19 @@ impl MovableListState {
         (0..self.len()).map(move |i| self.get(i, IndexType::ForUser).unwrap())
     }
 
+    pub fn iter_with_last_move_id_and_elem_id(
+        &self,
+    ) -> impl Iterator<Item = (IdFull, CompactIdLp, &LoroValue)> {
+        self.inner.list().iter().filter_map(|list_item| {
+            if let Some(elem_id) = list_item.pointed_by.as_ref() {
+                let elem = self.inner.elements().get(elem_id).unwrap();
+                Some((list_item.id, *elem_id, &elem.value))
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn len(&self) -> usize {
         self.inner.list().root_cache().user_len as usize
     }
