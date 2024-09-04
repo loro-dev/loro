@@ -1,11 +1,11 @@
 use bytes::Bytes;
-use loro_kv_store::MemKvStore;
+use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 
 #[test]
 fn add_and_remove() {
     let key = &[0];
     let value = Bytes::from_static(&[0]);
-    let mut store = MemKvStore::default();
+    let mut store = MemKvStore::new(MemKvConfig::default());
     store.set(key, value.clone());
     assert_eq!(store.get(key), Some(value));
     store.remove(key);
@@ -16,7 +16,7 @@ fn add_and_remove() {
 fn add_flush_remove() {
     let key = &[0];
     let value = Bytes::from_static(&[0]);
-    let mut store = MemKvStore::default();
+    let mut store = MemKvStore::new(MemKvConfig::default());
     store.set(key, value.clone());
     store.export_all();
     store.remove(key);
@@ -29,7 +29,7 @@ fn add_flush_add_scan() {
     let value1 = Bytes::from_static(&[0]);
     let key2 = &[128];
     let value2 = Bytes::from_static(&[252, 169]);
-    let mut store = MemKvStore::default();
+    let mut store = MemKvStore::new(MemKvConfig::new().should_encode_none(true));
     store.set(key1, value1.clone());
     store.export_all();
     store.set(key2, value2.clone());

@@ -18,7 +18,7 @@ use loro_common::{
     Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport, LoroError,
     LoroResult, PeerID, ID,
 };
-use loro_kv_store::MemKvStore;
+use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RlePush, RleVec, Sliceable};
 use std::{
@@ -109,7 +109,7 @@ impl ChangeStore {
             })),
             arena: a.clone(),
             external_vv: Arc::new(Mutex::new(VersionVector::new())),
-            external_kv: Arc::new(Mutex::new(MemKvStore::default())),
+            external_kv: Arc::new(Mutex::new(MemKvStore::new(MemKvConfig::default()))),
             // external_kv: Arc::new(Mutex::new(BTreeMap::default())),
             merge_interval,
         }

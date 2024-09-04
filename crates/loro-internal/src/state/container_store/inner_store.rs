@@ -1,12 +1,16 @@
 use std::ops::Bound;
 
 use bytes::Bytes;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use loro_common::ContainerID;
+use tracing::trace;
 
 use crate::{
-    arena::SharedArena, container::idx::ContainerIdx, state::ContainerCreationContext,
-    utils::kv_wrapper::KvWrapper, version::Frontiers,
+    arena::SharedArena,
+    container::idx::ContainerIdx,
+    state::{container_store::FRONTIERS_KEY, ContainerCreationContext},
+    utils::kv_wrapper::KvWrapper,
+    version::Frontiers,
 };
 
 use super::ContainerWrapper;
@@ -79,30 +83,23 @@ impl InnerStore {
     }
 
     pub(crate) fn encode(&mut self) -> Bytes {
-        self.flush_all();
+        self.flush();
         self.kv.export()
     }
 
-    fn flush_all(&mut self) {
+    pub(crate) fn flush(&mut self) {
         self.kv
             .set_all(self.store.iter_mut().filter_map(|(idx, c)| {
                 if c.is_flushed() {
                     return None;
                 }
 
-                let key = self.arena.get_container_id(*idx).unwrap();
-                let key: Bytes = key.to_bytes().into();
+                let cid = self.arena.get_container_id(*idx).unwrap();
+                let cid: Bytes = cid.to_bytes().into();
                 let value = c.encode();
                 c.set_flushed(true);
-                Some((key, value))
+                Some((cid, value))
             }));
-    }
-
-    const FRONTIERS_KEY: &'static [u8] = b"fr";
-    pub(crate) fn encode_with_frontiers(&mut self, f: &Frontiers) -> Bytes {
-        self.flush_all();
-        self.kv
-            .encode_with_special_kv(Self::FRONTIERS_KEY, f.encode().into())
     }
 
     pub(crate) fn get_kv(&self) -> &KvWrapper {
@@ -116,7 +113,7 @@ impl InnerStore {
         assert!(self.len == 0);
         let mut fr = None;
         self.kv.import(bytes);
-        if let Some(f) = self.kv.remove(Self::FRONTIERS_KEY) {
+        if let Some(f) = self.kv.remove(FRONTIERS_KEY) {
             fr = Some(Frontiers::decode(&f)?);
         }
 
@@ -147,7 +144,7 @@ impl InnerStore {
         assert!(self.len == 0);
         self.kv.import(bytes_a);
         self.kv.import(bytes_b);
-        self.kv.remove(Self::FRONTIERS_KEY);
+        self.kv.remove(FRONTIERS_KEY);
         self.kv.with_kv(|kv| {
             let mut count = 0;
             let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);

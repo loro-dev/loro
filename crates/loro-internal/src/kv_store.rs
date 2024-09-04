@@ -1,4 +1,5 @@
 use bytes::Bytes;
+pub use loro_kv_store::compress::CompressionType;
 pub use loro_kv_store::MemKvStore;
 use std::{
     collections::BTreeMap,

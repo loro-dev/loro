@@ -1500,3 +1500,69 @@ fn test_tree_with_other_ops_checkout_on_trimmed_doc() -> LoroResult<()> {
     assert_eq!(err, LoroError::SwitchToTrimmedVersion);
     Ok(())
 }
+
+#[test]
+fn test_gc_can_remove_unreachable_states() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let map = doc.get_map("map");
+    map.insert("1", 1)?; // 0
+    let list = map.insert_container("0", LoroList::new())?; // 1
+    list.insert_container(0, LoroText::new())?; // 2
+    list.insert_container(1, LoroText::new())?; // 3
+                                                // {
+                                                //     "map": {
+                                                //         "0": [{
+                                                //             "text": ""
+                                                //         }, {
+                                                //             "text": ""
+                                                //         }],
+                                                //         "1", "1"
+                                                //     }
+                                                // }
+    doc.commit();
+
+    {
+        assert_eq!(doc.analyze().dropped_len(), 0);
+        map.insert("0", 0)?; // 4
+                             // {
+                             //     "map": {
+                             //         "0": 0,
+                             //         "1", 1
+                             //     }
+                             // }
+        doc.commit();
+        assert_eq!(doc.analyze().dropped_len(), 3);
+    }
+
+    doc.checkout(&Frontiers::from(ID::new(1, 3))).unwrap();
+    assert_eq!(doc.analyze().len(), 4);
+    assert_eq!(doc.analyze().dropped_len(), 0);
+    doc.checkout_to_latest();
+
+    {
+        let snapshot = doc.export(loro::ExportMode::GcSnapshot(&Frontiers::from(ID::new(
+            1, 3,
+        ))));
+        let new_doc = LoroDoc::new();
+        new_doc.import(&snapshot)?;
+        let a = new_doc.analyze();
+        assert_eq!(a.len(), 4);
+        assert_eq!(a.dropped_len(), 3);
+        new_doc.checkout(&Frontiers::from(ID::new(1, 3))).unwrap();
+        let a = new_doc.analyze();
+        assert_eq!(a.len(), 4);
+        assert_eq!(a.dropped_len(), 0);
+    }
+
+    {
+        let snapshot = doc.export(loro::ExportMode::GcSnapshot(&Frontiers::from(ID::new(
+            1, 4,
+        ))));
+        let new_doc = LoroDoc::new();
+        new_doc.import(&snapshot)?;
+        assert_eq!(new_doc.analyze().dropped_len(), 0);
+    }
+
+    Ok(())
+}

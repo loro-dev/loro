@@ -11,7 +11,7 @@ use crate::{
     VersionVector,
 };
 use bytes::Bytes;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use inner_store::InnerStore;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
 use std::sync::{atomic::AtomicU64, Arc, Mutex};
@@ -62,6 +62,7 @@ pub(crate) struct ContainerStore {
     peer: Arc<AtomicU64>,
 }
 
+pub(crate) const FRONTIERS_KEY: &[u8] = b"fr";
 impl std::fmt::Debug for ContainerStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ContainerStore")
@@ -123,8 +124,8 @@ impl ContainerStore {
         self.store.encode()
     }
 
-    pub fn encode_with_frontiers(&mut self, f: &Frontiers) -> Bytes {
-        self.store.encode_with_frontiers(f)
+    pub(crate) fn flush(&mut self) {
+        self.store.flush()
     }
 
     pub fn encode_gc(&mut self) -> Bytes {

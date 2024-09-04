@@ -57,6 +57,7 @@ pub use loro_internal::Subscription;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
+pub use loro_kv_store as kv_store;
 
 #[cfg(feature = "counter")]
 mod counter;

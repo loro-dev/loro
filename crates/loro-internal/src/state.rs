@@ -35,7 +35,7 @@ use crate::{
 };
 
 pub(crate) mod analyzer;
-mod container_store;
+pub(crate) mod container_store;
 #[cfg(feature = "counter")]
 mod counter_state;
 mod list_state;

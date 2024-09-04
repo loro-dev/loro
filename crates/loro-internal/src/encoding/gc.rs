@@ -1,11 +1,13 @@
-use bytes::Bytes;
-use loro_common::LoroResult;
 use rle::HasLength;
+use std::collections::BTreeSet;
+
+use loro_common::LoroResult;
 use tracing::{debug, trace};
 
 use crate::{
     dag::DagUtils,
     encoding::fast_snapshot::{Snapshot, _encode_snapshot},
+    state::container_store::FRONTIERS_KEY,
     version::Frontiers,
     LoroDoc,
 };
@@ -42,19 +44,26 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     drop(oplog);
     doc.checkout(&start_from)?;
     let mut state = doc.app_state().lock().unwrap();
-    let gc_state_bytes = state.store.encode_with_frontiers(&start_from);
-    let old_kv = state.store.get_kv().clone();
+    let alive_containers = state.get_all_alive_containers();
+    let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
+    state.store.flush();
+    let gc_state_kv = state.store.get_kv().clone();
     drop(state);
     doc.checkout_to_latest();
     let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
         let mut state = doc.app_state().lock().unwrap();
         state.store.encode();
         let new_kv = state.store.get_kv().clone();
-        new_kv.remove_same(&old_kv);
+        new_kv.remove_same(&gc_state_kv);
+        new_kv.retain_keys(&alive_c_bytes);
         Some(new_kv.export())
     } else {
         None
     };
+
+    gc_state_kv.retain_keys(&alive_c_bytes);
+    gc_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+    let gc_state_bytes = gc_state_kv.export();
 
     let snapshot = Snapshot {
         oplog_bytes,
