@@ -24,7 +24,7 @@ use crate::{
     delta::MapValue,
     diff_calc::tree::{MoveLamportAndID, TreeCacheForDiff},
     encoding::value_register::ValueRegister,
-    op::{InnerContent, RichOp, SliceRanges},
+    op::{InnerContent, RichOp, SliceWithId},
     oplog::ChangeStore,
     state::{ContainerCreationContext, GcStore},
     OpLog, VersionVector,
@@ -346,7 +346,7 @@ impl ContainerHistoryCache {
         &self,
         idx: ContainerIdx,
         target_end: loro_common::IdSpan,
-    ) -> Vec<SliceRanges> {
+    ) -> Vec<SliceWithId> {
         let Some(state) = self.gc.as_ref() else {
             return Vec::new();
         };

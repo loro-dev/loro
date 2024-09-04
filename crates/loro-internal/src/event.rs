@@ -13,7 +13,7 @@ use crate::{
     },
     diff_calc::DiffMode,
     handler::ValueOrHandler,
-    op::SliceRanges,
+    op::SliceWithId,
     utils::string_slice::StringSlice,
     InternalString,
 };
@@ -232,7 +232,7 @@ impl DiffVariant {
 #[non_exhaustive]
 #[derive(Clone, Debug, EnumAsInner)]
 pub(crate) enum InternalDiff {
-    ListRaw(Delta<SliceRanges>),
+    ListRaw(Delta<SliceWithId>),
     /// This always uses entity indexes.
     RichtextRaw(DeltaRope<RichtextStateChunk, ()>),
     Map(MapDelta),

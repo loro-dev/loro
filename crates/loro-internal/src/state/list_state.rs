@@ -381,11 +381,14 @@ impl ContainerState for ListState {
                 }
                 crate::delta::DeltaItem::Insert { insert: value, .. } => {
                     let mut arr = Vec::new();
-                    for slices in value.ranges.iter() {
-                        for i in slices.0.start..slices.0.end {
-                            let value = arena.get_value(i as usize).unwrap();
-                            arr.push(value);
+                    match &value.values {
+                        either::Either::Left(range) => {
+                            for i in range.to_range() {
+                                let value = arena.get_value(i as usize).unwrap();
+                                arr.push(value);
+                            }
                         }
+                        either::Either::Right(v) => arr.push(v.clone()),
                     }
                     for arr in ArrayVec::from_many(
                         arr.iter()
@@ -418,14 +421,17 @@ impl ContainerState for ListState {
                         }
                         crate::delta::DeltaItem::Insert { insert: value, .. } => {
                             let mut arr = Vec::new();
-                            for slices in value.ranges.iter() {
-                                for i in slices.0.start..slices.0.end {
-                                    let value = arena.get_value(i as usize).unwrap();
-                                    arr.push(value);
+                            match &value.values {
+                                either::Either::Left(range) => {
+                                    for i in range.to_range() {
+                                        let value = arena.get_value(i).unwrap();
+                                        arr.push(value);
+                                    }
                                 }
+                                either::Either::Right(v) => arr.push(v.clone()),
                             }
-                            let len = arr.len();
 
+                            let len = arr.len();
                             self.insert_batch(index, arr, value.id);
                             index += len;
                         }

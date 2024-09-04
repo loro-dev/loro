@@ -6,6 +6,7 @@ mod counter;
 pub(crate) use counter::CounterDiffCalculator;
 pub(super) mod tree;
 mod unknown;
+use either::Either;
 use generic_btree::rle::HasLength as _;
 use itertools::Itertools;
 
@@ -29,9 +30,11 @@ use crate::{
         },
     },
     cursor::AbsolutePosition,
-    delta::{Delta, DeltaItem, ElementDelta, MapDelta, MapValue, MovableListInnerDelta},
+    delta::{
+        Delta, DeltaItem, DeltaValue, ElementDelta, MapDelta, MapValue, MovableListInnerDelta,
+    },
     event::{DiffVariant, InternalDiff},
-    op::{InnerContent, RichOp, SliceRange, SliceRanges},
+    op::{InnerContent, RichOp, SliceRange, SliceWithId},
     span::{HasId, HasLamport},
     version::Frontiers,
     InternalString, VersionVector,
@@ -709,8 +712,8 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                                 on_new_container(c);
                             }
                         }
-                        delta = delta.insert(SliceRanges {
-                            ranges: smallvec::smallvec![SliceRange(range)],
+                        delta = delta.insert(SliceWithId {
+                            values: Either::Left(SliceRange(range)),
                             id: IdFull::new(id.peer, id.counter, lamport.unwrap()),
                         });
                     }
@@ -737,8 +740,8 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             oplog: &OpLog,
             len: u32,
             on_new_container: &mut dyn FnMut(&ContainerID),
-            mut delta: Delta<SliceRanges>,
-        ) -> Delta<SliceRanges> {
+            mut delta: Delta<SliceWithId>,
+        ) -> Delta<SliceWithId> {
             // assert not unknown id
             assert_ne!(id.peer, PeerID::MAX);
             let mut acc_len = 0;
@@ -773,15 +776,15 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                             }
                         }
 
-                        delta = delta.insert(SliceRanges {
-                            ranges: smallvec::smallvec![range],
+                        delta = delta.insert(SliceWithId {
+                            values: Either::Left(range),
                             id: IdFull::new(id.peer, op.counter, lamport),
                         });
                     } else if let InnerListOp::Move { .. } = op.content.as_list().unwrap() {
-                        delta = delta.insert(SliceRanges {
+                        delta = delta.insert(SliceWithId {
                             // We do NOT need an actual value range,
                             // movable list container will only use the id info
-                            ranges: smallvec::smallvec![SliceRange(0..1)],
+                            values: Either::Left(SliceRange(0..1)),
                             id: IdFull::new(id.peer, op.counter, lamport),
                         });
                     }
@@ -1406,7 +1409,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         attributes: (),
                     },
                     DeltaItem::Insert { insert, .. } => {
-                        let len = insert.ranges.iter().map(|x| x.atom_len()).sum();
+                        let len = insert.length();
                         let id = insert.id;
                         let mut new_insert = SmallVec::with_capacity(len);
                         for i in 0..len {
