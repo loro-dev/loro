@@ -1,13 +1,11 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     ops::Bound,
     sync::{Arc, Mutex},
 };
 
 use bytes::Bytes;
-use fxhash::FxHashMap;
-use loro_common::ContainerID;
-use loro_kv_store::MemKvStore;
+use loro_kv_store::{compress::CompressionType, mem_store::MemKvConfig, MemKvStore};
 
 use crate::kv_store::KvStore;
 
@@ -35,7 +33,10 @@ impl KvWrapper {
     pub fn new_mem() -> Self {
         Self {
             // kv: Arc::new(Mutex::new(BTreeMap::new())),
-            kv: Arc::new(Mutex::new(MemKvStore::default())),
+            kv: Arc::new(Mutex::new(MemKvStore::new(
+                // set false because it's depended by GC snapshot's import & export
+                MemKvConfig::default().should_encode_none(false),
+            ))),
         }
     }
 
@@ -75,9 +76,13 @@ impl KvWrapper {
         let mut this = self.kv.lock().unwrap();
         for (k, v) in other.scan(Bound::Unbounded, Bound::Unbounded) {
             if this.get(&k) == Some(v) {
-                this.remove(&k)
+                this.remove(&k);
             }
         }
+    }
+
+    pub(crate) fn remove(&self, k: &[u8]) -> Option<Bytes> {
+        self.kv.lock().unwrap().remove(k)
     }
 
     /// Remove all keys not in the given set
@@ -93,5 +98,9 @@ impl KvWrapper {
         for k in to_remove {
             kv.remove(&k);
         }
+    }
+
+    pub(crate) fn insert(&self, k: &[u8], v: Bytes) {
+        self.kv.lock().unwrap().set(k, v);
     }
 }

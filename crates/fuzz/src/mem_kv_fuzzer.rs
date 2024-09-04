@@ -1,5 +1,6 @@
 use arbitrary::Arbitrary;
 use bytes::Bytes;
+use loro::kv_store::mem_store::MemKvConfig;
 use loro::{KvStore, MemKvStore};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
@@ -50,13 +51,24 @@ impl std::fmt::Debug for Action {
     }
 }
 
-#[derive(Default)]
 pub struct MemKvFuzzer {
     kv: MemKvStore,
     btree: BTreeMap<Bytes, Bytes>,
     all_keys: BTreeSet<Bytes>,
     merged_kv: MemKvStore,
     merged_btree: BTreeMap<Bytes, Bytes>,
+}
+
+impl Default for MemKvFuzzer {
+    fn default() -> Self {
+        Self {
+            kv: MemKvStore::new(MemKvConfig::new().should_encode_none(false)),
+            btree: Default::default(),
+            all_keys: Default::default(),
+            merged_kv: MemKvStore::new(MemKvConfig::new().should_encode_none(false)),
+            merged_btree: Default::default(),
+        }
+    }
 }
 
 impl MemKvFuzzer {
@@ -166,7 +178,7 @@ impl MemKvFuzzer {
             }
             Action::ExportAndImport => {
                 let exported = self.kv.export_all();
-                self.kv = MemKvStore::default();
+                self.kv = MemKvStore::new(MemKvConfig::new().should_encode_none(true));
                 self.merged_kv.import_all(exported).expect("import failed");
                 self.merged_btree.extend(std::mem::take(&mut self.btree));
 
@@ -250,7 +262,7 @@ pub fn test_mem_kv_fuzzer(actions: &mut [Action]) {
 }
 
 pub fn test_random_bytes_import(bytes: &[u8]) {
-    let mut kv = MemKvStore::default();
+    let mut kv = MemKvStore::new(MemKvConfig::new().should_encode_none(true));
     match kv.import_all(Bytes::from(bytes.to_vec())) {
         Ok(_) => {
             // do nothing

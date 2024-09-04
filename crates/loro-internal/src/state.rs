@@ -35,7 +35,7 @@ use crate::{
 };
 
 pub(crate) mod analyzer;
-mod container_store;
+pub(crate) mod container_store;
 #[cfg(feature = "counter")]
 mod counter_state;
 mod list_state;
@@ -493,6 +493,8 @@ impl DocState {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
+
+        trace!("ApplyDiff {:?}", &diff.new_version);
         let is_recording = self.is_recording();
         self.pre_txn(diff.origin.clone(), diff.by);
         let Cow::Owned(mut diffs) = std::mem::take(&mut diff.diff) else {
@@ -678,7 +680,7 @@ impl DocState {
         }
 
         diff.diff = diffs.into();
-        (*diff.new_version).clone_into(&mut self.frontiers);
+        self.frontiers = diff.new_version.clone().into_owned();
         if self.is_recording() {
             self.record_diff(diff)
         }
@@ -774,11 +776,19 @@ impl DocState {
 
         if !unknown_containers.is_empty() {
             let mut diff_calc = DiffCalculator::new(false);
+            let stack_vv;
+            let vv = if oplog.frontiers() == &frontiers {
+                oplog.vv()
+            } else {
+                stack_vv = oplog.dag().frontiers_to_vv(&frontiers);
+                stack_vv.as_ref().unwrap()
+            };
+
             let unknown_diffs = diff_calc.calc_diff_internal(
                 oplog,
                 &Default::default(),
                 Some(&Default::default()),
-                oplog.vv(),
+                vv,
                 Some(&frontiers),
                 Some(&|idx| !idx.is_unknown() && unknown_containers.contains(&idx)),
             );

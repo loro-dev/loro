@@ -6,8 +6,11 @@ use loro_common::ContainerID;
 use tracing::trace;
 
 use crate::{
-    arena::SharedArena, container::idx::ContainerIdx, state::ContainerCreationContext,
+    arena::SharedArena,
+    container::idx::ContainerIdx,
+    state::{container_store::FRONTIERS_KEY, ContainerCreationContext},
     utils::kv_wrapper::KvWrapper,
+    version::Frontiers,
 };
 
 use super::ContainerWrapper;
@@ -94,6 +97,7 @@ impl InnerStore {
                 let cid = self.arena.get_container_id(*idx).unwrap();
                 let cid: Bytes = cid.to_bytes().into();
                 let value = c.encode();
+                c.set_flushed(true);
                 Some((cid, value))
             }));
     }
@@ -102,9 +106,17 @@ impl InnerStore {
         &self.kv
     }
 
-    pub(crate) fn decode(&mut self, bytes: bytes::Bytes) -> Result<(), loro_common::LoroError> {
+    pub(crate) fn decode(
+        &mut self,
+        bytes: bytes::Bytes,
+    ) -> Result<Option<Frontiers>, loro_common::LoroError> {
         assert!(self.len == 0);
+        let mut fr = None;
         self.kv.import(bytes);
+        if let Some(f) = self.kv.remove(FRONTIERS_KEY) {
+            fr = Some(Frontiers::decode(&f)?);
+        }
+
         self.kv.with_kv(|kv| {
             let mut count = 0;
             let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
@@ -121,7 +133,7 @@ impl InnerStore {
         });
 
         self.all_loaded = false;
-        Ok(())
+        Ok(fr)
     }
 
     pub(crate) fn decode_twice(
@@ -132,6 +144,7 @@ impl InnerStore {
         assert!(self.len == 0);
         self.kv.import(bytes_a);
         self.kv.import(bytes_b);
+        self.kv.remove(FRONTIERS_KEY);
         self.kv.with_kv(|kv| {
             let mut count = 0;
             let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);

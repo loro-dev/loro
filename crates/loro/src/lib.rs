@@ -57,6 +57,7 @@ pub use loro_internal::Subscription;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
+pub use loro_kv_store as kv_store;
 
 #[cfg(feature = "counter")]
 mod counter;
@@ -1179,7 +1180,7 @@ impl LoroText {
 
     /// Insert a string at the given unicode position.
     pub fn insert(&self, pos: usize, s: &str) -> LoroResult<()> {
-        self.handler.insert(pos, s)
+        self.handler.insert_unicode(pos, s)
     }
 
     /// Insert a string at the given utf-8 position.
@@ -1189,7 +1190,7 @@ impl LoroText {
 
     /// Delete a range of text at the given unicode position with unicode length.
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
-        self.handler.delete(pos, len)
+        self.handler.delete_unicode(pos, len)
     }
 
     /// Delete a range of text at the given utf-8 position with utf-8 length.

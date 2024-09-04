@@ -1017,6 +1017,7 @@ dependencies = [
  "generic-btree",
  "loro-delta 0.16.2",
  "loro-internal 0.16.2",
+ "loro-kv-store",
  "rand",
  "serde_json",
  "tracing",

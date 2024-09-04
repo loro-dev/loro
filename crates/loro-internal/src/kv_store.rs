@@ -1,4 +1,5 @@
 use bytes::Bytes;
+pub use loro_kv_store::compress::CompressionType;
 pub use loro_kv_store::MemKvStore;
 use std::{
     collections::BTreeMap,
@@ -10,7 +11,7 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
     fn get(&self, key: &[u8]) -> Option<Bytes>;
     fn set(&mut self, key: &[u8], value: Bytes);
     fn compare_and_swap(&mut self, key: &[u8], old: Option<Bytes>, new: Bytes) -> bool;
-    fn remove(&mut self, key: &[u8]);
+    fn remove(&mut self, key: &[u8]) -> Option<Bytes>;
     fn contains_key(&self, key: &[u8]) -> bool;
     fn scan(
         &self,
@@ -54,8 +55,10 @@ impl KvStore for MemKvStore {
         self.compare_and_swap(key, old, new)
     }
 
-    fn remove(&mut self, key: &[u8]) {
-        self.remove(key)
+    fn remove(&mut self, key: &[u8]) -> Option<Bytes> {
+        let ans = self.get(key);
+        self.remove(key);
+        ans
     }
 
     fn contains_key(&self, key: &[u8]) -> bool {
@@ -203,8 +206,8 @@ impl KvStore for BTreeMap<Bytes, Bytes> {
         }
     }
 
-    fn remove(&mut self, key: &[u8]) {
-        self.remove(key);
+    fn remove(&mut self, key: &[u8]) -> Option<Bytes> {
+        self.remove(key)
     }
 
     fn contains_key(&self, key: &[u8]) -> bool {

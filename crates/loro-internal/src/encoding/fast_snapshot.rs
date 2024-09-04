@@ -18,12 +18,14 @@ use std::io::{Read, Write};
 use crate::{oplog::ChangeStore, LoroDoc, OpLog, VersionVector};
 use bytes::{Buf, Bytes};
 use loro_common::{IdSpan, LoroError, LoroResult};
+use tracing::trace;
 
 use super::encode_reordered::import_changes_to_oplog;
 
+pub(crate) const EMPTY_MARK: &[u8] = b"E";
 pub(super) struct Snapshot {
     pub oplog_bytes: Bytes,
-    pub state_bytes: Bytes,
+    pub state_bytes: Option<Bytes>,
     pub gc_bytes: Bytes,
 }
 
@@ -31,9 +33,12 @@ pub(super) fn _encode_snapshot<W: Write>(s: Snapshot, w: &mut W) {
     w.write_all(&(s.oplog_bytes.len() as u32).to_le_bytes())
         .unwrap();
     w.write_all(&s.oplog_bytes).unwrap();
-    w.write_all(&(s.state_bytes.len() as u32).to_le_bytes())
+    let state_bytes = s
+        .state_bytes
+        .unwrap_or_else(|| Bytes::from_static(EMPTY_MARK));
+    w.write_all(&(state_bytes.len() as u32).to_le_bytes())
         .unwrap();
-    w.write_all(&s.state_bytes).unwrap();
+    w.write_all(&state_bytes).unwrap();
     w.write_all(&(s.gc_bytes.len() as u32).to_le_bytes())
         .unwrap();
     w.write_all(&s.gc_bytes).unwrap();
@@ -45,6 +50,11 @@ pub(super) fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
     let oplog_bytes = r.get_mut().copy_to_bytes(oplog_bytes_len);
     let state_bytes_len = read_u32_le(&mut r) as usize;
     let state_bytes = r.get_mut().copy_to_bytes(state_bytes_len);
+    let state_bytes = if state_bytes == EMPTY_MARK {
+        None
+    } else {
+        Some(state_bytes)
+    };
     let gc_bytes_len = read_u32_le(&mut r) as usize;
     let gc_bytes = r.get_mut().copy_to_bytes(gc_bytes_len);
     Ok(Snapshot {
@@ -90,22 +100,45 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
         gc_bytes,
     } = _decode_snapshot_bytes(bytes)?;
     oplog.decode_change_store(oplog_bytes)?;
+    let need_calc = state_bytes.is_none();
+    let state_frontiers;
     if gc_bytes.is_empty() {
-        state.store.decode(state_bytes)?;
+        if let Some(bytes) = state_bytes {
+            state.store.decode(bytes)?;
+        }
+        state_frontiers = oplog.frontiers().clone();
     } else {
-        state.store.decode_gc(
-            gc_bytes,
-            state_bytes,
-            oplog.dag().trimmed_frontiers().clone(),
-        )?;
+        let gc_state_frontiers = state
+            .store
+            .decode_gc(gc_bytes.clone(), oplog.dag().trimmed_frontiers().clone())?;
+        state
+            .store
+            .decode_state_by_two_bytes(gc_bytes, state_bytes.unwrap_or_default())?;
+
         let gc_store = state.gc_store().cloned();
         oplog.with_history_cache(|h| {
             h.set_gc_store(gc_store);
         });
+
+        if need_calc {
+            state_frontiers = gc_state_frontiers.unwrap();
+        } else {
+            state_frontiers = oplog.frontiers().clone();
+        }
     }
+
     // FIXME: we may need to extract the unknown containers here?
     // Or we should lazy load it when the time comes?
-    state.init_with_states_and_version(oplog.frontiers().clone(), &oplog, vec![], false);
+
+    state.init_with_states_and_version(state_frontiers, &oplog, vec![], false);
+    drop(oplog);
+    drop(state);
+    if need_calc {
+        doc.detach();
+        doc.checkout_to_latest();
+        debug_assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
+    }
+
     Ok(())
 }
 
@@ -139,7 +172,7 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
     _encode_snapshot(
         Snapshot {
             oplog_bytes,
-            state_bytes,
+            state_bytes: Some(state_bytes),
             gc_bytes: state.store.encode_gc(),
         },
         w,
@@ -152,7 +185,7 @@ pub(crate) fn encode_updates<W: std::io::Write>(doc: &LoroDoc, vv: &VersionVecto
     _encode_snapshot(
         Snapshot {
             oplog_bytes: bytes,
-            state_bytes: Bytes::new(),
+            state_bytes: None,
             gc_bytes: Bytes::new(),
         },
         w,
@@ -168,7 +201,7 @@ pub(crate) fn encode_updates_in_range<W: std::io::Write>(
     _encode_snapshot(
         Snapshot {
             oplog_bytes: bytes,
-            state_bytes: Bytes::new(),
+            state_bytes: None,
             gc_bytes: Bytes::new(),
         },
         w,

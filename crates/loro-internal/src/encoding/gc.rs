@@ -1,15 +1,21 @@
+use rle::HasLength;
 use std::collections::BTreeSet;
 
 use loro_common::LoroResult;
-use rand::seq::IteratorRandom;
 use tracing::{debug, trace};
 
 use crate::{
     dag::DagUtils,
     encoding::fast_snapshot::{Snapshot, _encode_snapshot},
+    state::container_store::FRONTIERS_KEY,
     version::Frontiers,
     LoroDoc,
 };
+
+#[cfg(test)]
+const MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE: usize = 16;
+#[cfg(not(test))]
+const MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE: usize = 256;
 
 #[tracing::instrument(skip_all)]
 pub(crate) fn export_gc_snapshot<W: std::io::Write>(
@@ -33,23 +39,32 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     );
 
     let oplog_bytes = oplog.export_from_fast(&start_vv);
+    let latest_vv = oplog.vv();
+    let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
     drop(oplog);
     doc.checkout(&start_from)?;
     let mut state = doc.app_state().lock().unwrap();
     let alive_containers = state.get_all_alive_containers();
     let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
     state.store.flush();
-    let old_kv = state.store.get_kv().clone();
+    let gc_state_kv = state.store.get_kv().clone();
     drop(state);
     doc.checkout_to_latest();
-    let mut state = doc.app_state().lock().unwrap();
-    state.store.encode();
-    let new_kv = state.store.get_kv().clone();
-    new_kv.remove_same(&old_kv);
-    new_kv.retain_keys(&alive_c_bytes);
-    old_kv.retain_keys(&alive_c_bytes);
-    let gc_state_bytes = old_kv.export();
-    let state_bytes = new_kv.export();
+    let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
+        let mut state = doc.app_state().lock().unwrap();
+        state.store.encode();
+        let new_kv = state.store.get_kv().clone();
+        new_kv.remove_same(&gc_state_kv);
+        new_kv.retain_keys(&alive_c_bytes);
+        Some(new_kv.export())
+    } else {
+        None
+    };
+
+    gc_state_kv.retain_keys(&alive_c_bytes);
+    gc_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+    let gc_state_bytes = gc_state_kv.export();
+
     let snapshot = Snapshot {
         oplog_bytes,
         state_bytes,

@@ -62,6 +62,7 @@ pub(crate) struct ContainerStore {
     peer: Arc<AtomicU64>,
 }
 
+pub(crate) const FRONTIERS_KEY: &[u8] = b"fr";
 impl std::fmt::Debug for ContainerStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ContainerStore")
@@ -139,26 +140,31 @@ impl ContainerStore {
         self.gc_store.as_ref().map(|x| &x.trimmed_frontiers)
     }
 
-    pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<()> {
+    pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<Option<Frontiers>> {
         self.store.decode(bytes)
     }
 
     pub(crate) fn decode_gc(
         &mut self,
         gc_bytes: Bytes,
-        state_bytes: Bytes,
         start_frontiers: Frontiers,
-    ) -> LoroResult<()> {
+    ) -> LoroResult<Option<Frontiers>> {
         assert!(self.gc_store.is_none());
+        let mut inner = InnerStore::new(self.arena.clone());
+        let f = inner.decode(gc_bytes)?;
+        self.gc_store = Some(Arc::new(GcStore {
+            trimmed_frontiers: start_frontiers,
+            store: Mutex::new(inner),
+        }));
+        Ok(f)
+    }
+
+    pub(crate) fn decode_state_by_two_bytes(
+        &mut self,
+        gc_bytes: Bytes,
+        state_bytes: Bytes,
+    ) -> LoroResult<()> {
         self.store.decode_twice(gc_bytes.clone(), state_bytes)?;
-        if !start_frontiers.is_empty() {
-            let mut inner = InnerStore::new(self.arena.clone());
-            inner.decode(gc_bytes)?;
-            self.gc_store = Some(Arc::new(GcStore {
-                trimmed_frontiers: start_frontiers,
-                store: Mutex::new(inner),
-            }));
-        }
         Ok(())
     }
 
