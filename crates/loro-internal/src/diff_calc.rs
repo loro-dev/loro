@@ -6,6 +6,7 @@ mod counter;
 pub(crate) use counter::CounterDiffCalculator;
 pub(super) mod tree;
 mod unknown;
+use generic_btree::rle::HasLength as _;
 use itertools::Itertools;
 
 use enum_dispatch::enum_dispatch;
@@ -335,12 +336,13 @@ impl DiffCalculator {
                 let bring_back = new_containers.remove(&id);
 
                 info_span!("CalcDiff", ?id).in_scope(|| {
-                    let (diff, diff_mode) = calc.calculate_diff(oplog, before, after, |c| {
-                        new_containers.insert(c.clone());
-                        container_id_to_depth
-                            .insert(c.clone(), depth.and_then(|d| d.checked_add(1)));
-                        oplog.arena.register_container(c);
-                    });
+                    let (diff, diff_mode) =
+                        calc.calculate_diff(container_idx, oplog, before, after, |c| {
+                            new_containers.insert(c.clone());
+                            container_id_to_depth
+                                .insert(c.clone(), depth.and_then(|d| d.checked_add(1)));
+                            oplog.arena.register_container(c);
+                        });
                     calc.finish_this_round();
                     if !diff.is_empty() || bring_back {
                         ans.insert(
@@ -450,6 +452,7 @@ pub(crate) trait DiffCalculatorTrait {
     );
     fn calculate_diff(
         &mut self,
+        idx: ContainerIdx,
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
@@ -532,6 +535,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
 
     fn calculate_diff(
         &mut self,
+        _idx: ContainerIdx,
         oplog: &super::oplog::OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
@@ -603,7 +607,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
     }
 }
 
-use rle::{HasLength, Sliceable};
+use rle::{HasLength as _, Sliceable};
 
 #[derive(Default)]
 pub(crate) struct ListDiffCalculator {
@@ -681,6 +685,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
 
     fn calculate_diff(
         &mut self,
+        idx: ContainerIdx,
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
@@ -711,10 +716,10 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                     }
                     RichtextChunkValue::StyleAnchor { .. } => unreachable!(),
                     RichtextChunkValue::Unknown(len) => {
-                        delta = handle_unknown(id, oplog, len, &mut on_new_container, delta);
+                        delta = handle_unknown(idx, id, oplog, len, &mut on_new_container, delta);
                     }
                     RichtextChunkValue::MoveAnchor => {
-                        delta = handle_unknown(id, oplog, 1, &mut on_new_container, delta);
+                        delta = handle_unknown(idx, id, oplog, 1, &mut on_new_container, delta);
                     }
                 },
                 CrdtRopeDelta::Delete(len) => {
@@ -727,7 +732,8 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         ///
         /// We can lookup the content of the span by the id in the oplog
         fn handle_unknown(
-            id: ID,
+            idx: ContainerIdx,
+            mut id: ID,
             oplog: &OpLog,
             len: u32,
             on_new_container: &mut dyn FnMut(&ContainerID),
@@ -736,35 +742,49 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             // assert not unknown id
             assert_ne!(id.peer, PeerID::MAX);
             let mut acc_len = 0;
-            for rich_op in oplog.iter_ops(IdSpan::new(
-                id.peer,
-                id.counter,
-                id.counter + len as Counter,
-            )) {
-                acc_len += rich_op.content_len();
-                let op = rich_op.op();
-                let lamport = rich_op.lamport();
+            let end = id.counter + len as Counter;
+            let trimmed_start = oplog.trimmed_vv().get(&id.peer).copied().unwrap_or(0);
+            if id.counter < trimmed_start {
+                // need to find the content between id.counter ~ target_end in gc state
+                let target_end = trimmed_start.min(end);
+                oplog.with_history_cache(|h| {
+                    // let chunks =
+                    //     h.find_list_chunks_in(idx, IdSpan::new(id.peer, id.counter, target_end));
+                    // for c in chunks {
+                    //     acc_len += c.rle_len();
+                    //     delta.push_insert(c, ());
+                    // }
+                });
+                id.counter = trimmed_start;
+            }
 
-                if let InnerListOp::Insert { slice, pos: _ } = op.content.as_list().unwrap() {
-                    let range = slice.clone();
-                    for i in slice.0.clone() {
-                        let v = oplog.arena.get_value(i as usize);
-                        if let Some(LoroValue::Container(c)) = &v {
-                            (on_new_container)(c);
+            if id.counter < end {
+                for rich_op in oplog.iter_ops(IdSpan::new(id.peer, id.counter, end)) {
+                    acc_len += rich_op.content_len();
+                    let op = rich_op.op();
+                    let lamport = rich_op.lamport();
+
+                    if let InnerListOp::Insert { slice, pos: _ } = op.content.as_list().unwrap() {
+                        let range = slice.clone();
+                        for i in slice.0.clone() {
+                            let v = oplog.arena.get_value(i as usize);
+                            if let Some(LoroValue::Container(c)) = &v {
+                                (on_new_container)(c);
+                            }
                         }
-                    }
 
-                    delta = delta.insert(SliceRanges {
-                        ranges: smallvec::smallvec![range],
-                        id: IdFull::new(id.peer, op.counter, lamport),
-                    });
-                } else if let InnerListOp::Move { .. } = op.content.as_list().unwrap() {
-                    delta = delta.insert(SliceRanges {
-                        // We do NOT need an actual value range,
-                        // movable list container will only use the id info
-                        ranges: smallvec::smallvec![SliceRange(0..1)],
-                        id: IdFull::new(id.peer, op.counter, lamport),
-                    });
+                        delta = delta.insert(SliceRanges {
+                            ranges: smallvec::smallvec![range],
+                            id: IdFull::new(id.peer, op.counter, lamport),
+                        });
+                    } else if let InnerListOp::Move { .. } = op.content.as_list().unwrap() {
+                        delta = delta.insert(SliceRanges {
+                            // We do NOT need an actual value range,
+                            // movable list container will only use the id info
+                            ranges: smallvec::smallvec![SliceRange(0..1)],
+                            id: IdFull::new(id.peer, op.counter, lamport),
+                        });
+                    }
                 }
             }
 
@@ -1036,6 +1056,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 
     fn calculate_diff(
         &mut self,
+        idx: ContainerIdx,
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
@@ -1087,31 +1108,51 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                             RichtextChunkValue::Unknown(len) => {
                                 // assert not unknown id
                                 assert_ne!(id.peer, PeerID::MAX);
+                                let mut id = id;
                                 let mut acc_len = 0;
-                                for rich_op in oplog.iter_ops(IdSpan::new(
-                                    id.peer,
-                                    id.counter,
-                                    id.counter + len as Counter,
-                                )) {
-                                    acc_len += rich_op.content_len();
-                                    let op = rich_op.op();
-                                    let lamport = rich_op.lamport();
-                                    let content = op.content.as_list().unwrap();
-                                    match content {
-                                crate::container::list::list_op::InnerListOp::InsertText {
-                                    slice,
-                                    ..
-                                } => {
-                                    delta.push_insert(
-                                        RichtextStateChunk::Text(TextChunk::new(
-                                            slice.clone(),
-                                            IdFull::new(id.peer, op.counter, lamport),
-                                        )),
-                                        (),
-                                    );
+                                let end = id.counter + len as Counter;
+                                let trimmed_start =
+                                    oplog.trimmed_vv().get(&id.peer).copied().unwrap_or(0);
+                                if id.counter < trimmed_start {
+                                    // need to find the content between id.counter ~ target_end in gc state
+                                    let target_end = trimmed_start.min(end);
+                                    oplog.with_history_cache(|h| {
+                                        let chunks = h.find_text_chunks_in(
+                                            idx,
+                                            IdSpan::new(id.peer, id.counter, target_end),
+                                        );
+                                        for c in chunks {
+                                            acc_len += c.rle_len();
+                                            delta.push_insert(c, ());
+                                        }
+                                    });
+                                    id.counter = trimmed_start;
                                 }
-                                _ => unreachable!("{:?}", content),
-                            }
+
+                                if id.counter < end {
+                                    for rich_op in
+                                        oplog.iter_ops(IdSpan::new(id.peer, id.counter, end))
+                                    {
+                                        acc_len += rich_op.content_len();
+                                        let op = rich_op.op();
+                                        let lamport = rich_op.lamport();
+                                        let content = op.content.as_list().unwrap();
+                                        match content {
+                                        crate::container::list::list_op::InnerListOp::InsertText {
+                                            slice,
+                                            ..
+                                        } => {
+                                            delta.push_insert(
+                                                RichtextStateChunk::Text(TextChunk::new(
+                                                    slice.clone(),
+                                                    IdFull::new(id.peer, op.counter, lamport),
+                                                )),
+                                                (),
+                                            );
+                                        }
+                                        _ => unreachable!("{:?}", content),
+                                    }
+                                    }
                                 }
 
                                 debug_assert_eq!(acc_len, len as usize);
@@ -1330,13 +1371,14 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
     #[instrument(skip(self, oplog, on_new_container))]
     fn calculate_diff(
         &mut self,
+        idx: ContainerIdx,
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         let (InternalDiff::ListRaw(list_diff), diff_mode) =
-            self.list.calculate_diff(oplog, from, to, |_| {})
+            self.list.calculate_diff(idx, oplog, from, to, |_| {})
         else {
             unreachable!()
         };

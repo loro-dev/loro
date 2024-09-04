@@ -932,6 +932,32 @@ impl LoroList {
     pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
         self.handler.get_cursor(pos, side)
     }
+
+    /// Converts the LoroList to a Vec of LoroValue.
+    ///
+    /// This method unwraps the internal Arc and clones the data if necessary,
+    /// returning a Vec containing all the elements of the LoroList as LoroValue.
+    ///
+    /// # Returns
+    ///
+    /// A Vec<LoroValue> containing all elements of the LoroList.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use loro::{LoroDoc, LoroValue};
+    ///
+    /// let doc = LoroDoc::new();
+    /// let list = doc.get_list("my_list");
+    /// list.insert(0, 1).unwrap();
+    /// list.insert(1, "hello").unwrap();
+    /// list.insert(2, true).unwrap();
+    ///
+    /// let vec = list.to_vec();
+    /// ```
+    pub fn to_vec(&self) -> Vec<LoroValue> {
+        Arc::unwrap_or_clone(self.get_value().into_list().unwrap())
+    }
 }
 
 impl Default for LoroList {

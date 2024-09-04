@@ -9,6 +9,7 @@ use either::Either;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
+use generic_btree::rle::Sliceable;
 use loro_common::{
     ContainerType, Counter, HasLamport, IdFull, IdLp, InternalString, LoroValue, PeerID, ID,
 };
@@ -16,11 +17,14 @@ use rle::HasLength;
 
 use crate::{
     change::{Change, Lamport},
-    container::{idx::ContainerIdx, list::list_op::InnerListOp, tree::tree_op::TreeOp},
+    container::{
+        idx::ContainerIdx, list::list_op::InnerListOp,
+        richtext::richtext_state::RichtextStateChunk, tree::tree_op::TreeOp,
+    },
     delta::MapValue,
     diff_calc::tree::{MoveLamportAndID, TreeCacheForDiff},
     encoding::value_register::ValueRegister,
-    op::{InnerContent, RichOp},
+    op::{InnerContent, RichOp, SliceRanges},
     oplog::ChangeStore,
     state::{ContainerCreationContext, GcStore},
     OpLog, VersionVector,
@@ -196,6 +200,10 @@ impl ContainerHistoryCache {
             }
         });
 
+        let default_ctx = ContainerCreationContext {
+            configure: &Default::default(),
+            peer: 0,
+        };
         if let Some(state) = self.gc.as_ref() {
             let mut store = state.store.try_lock().unwrap();
             for (idx, c) in store.iter_all_containers_mut() {
@@ -210,13 +218,7 @@ impl ContainerHistoryCache {
                     ContainerType::Tree => {}
                 }
 
-                let state = c.get_state_mut(
-                    *idx,
-                    ContainerCreationContext {
-                        configure: &Default::default(),
-                        peer: 0,
-                    },
-                );
+                let state = c.get_state_mut(*idx, default_ctx);
 
                 match state {
                     crate::state::State::MapState(m) => {
@@ -300,6 +302,77 @@ impl ContainerHistoryCache {
 
     pub(crate) fn set_gc_store(&mut self, gc_store: Option<Arc<GcStore>>) {
         self.gc = gc_store;
+    }
+
+    pub(crate) fn find_text_chunks_in(
+        &self,
+        idx: ContainerIdx,
+        target_span: loro_common::IdSpan,
+    ) -> Vec<RichtextStateChunk> {
+        let Some(state) = self.gc.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut binding = state.store.lock().unwrap();
+        let Some(text) = binding.get_mut(idx) else {
+            return Vec::new();
+        };
+
+        let text_state = text
+            .get_state(
+                idx,
+                ContainerCreationContext {
+                    configure: &Default::default(),
+                    peer: 0,
+                },
+            )
+            .as_richtext_state()
+            .unwrap();
+
+        // TODO: FIXME: This could be super slow in some cases
+        let mut ans = Vec::new();
+        text_state.iter_raw(&mut |chunk| {
+            let c_span = chunk.get_id_span();
+            if let Some(range) = target_span.get_slice_range_on(&c_span) {
+                let c = chunk.slice(range.0..range.1);
+                ans.push(c);
+            }
+        });
+
+        ans
+    }
+
+    pub(crate) fn find_list_chunks_in(
+        &self,
+        idx: ContainerIdx,
+        target_end: loro_common::IdSpan,
+    ) -> Vec<SliceRanges> {
+        let Some(state) = self.gc.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut binding = state.store.lock().unwrap();
+        let Some(list) = binding.get_mut(idx) else {
+            return Vec::new();
+        };
+
+        let list_state = list.get_state(
+            idx,
+            ContainerCreationContext {
+                configure: &Default::default(),
+                peer: 0,
+            },
+        );
+
+        match list_state {
+            crate::state::State::ListState(list) => todo!(),
+            crate::state::State::MovableListState(_) => todo!(),
+            _ => {
+                unreachable!()
+            }
+        }
+
+        todo!()
     }
 }
 

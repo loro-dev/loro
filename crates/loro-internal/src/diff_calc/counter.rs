@@ -39,6 +39,7 @@ impl DiffCalculatorTrait for CounterDiffCalculator {
 
     fn calculate_diff(
         &mut self,
+        _idx: ContainerIdx,
         _oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,

@@ -108,6 +108,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
 
     fn calculate_diff(
         &mut self,
+        idx: ContainerIdx,
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
