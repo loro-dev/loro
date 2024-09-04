@@ -1,8 +1,9 @@
 use std::ops::Bound;
 
 use bytes::Bytes;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use loro_common::ContainerID;
+use tracing::trace;
 
 use crate::{
     arena::SharedArena, container::idx::ContainerIdx, state::ContainerCreationContext,
@@ -79,18 +80,22 @@ impl InnerStore {
     }
 
     pub(crate) fn encode(&mut self) -> Bytes {
+        self.flush();
+        self.kv.export()
+    }
+
+    pub(crate) fn flush(&mut self) {
         self.kv
             .set_all(self.store.iter_mut().filter_map(|(idx, c)| {
                 if c.is_flushed() {
                     return None;
                 }
 
-                let key = self.arena.get_container_id(*idx).unwrap();
-                let key: Bytes = key.to_bytes().into();
+                let cid = self.arena.get_container_id(*idx).unwrap();
+                let cid: Bytes = cid.to_bytes().into();
                 let value = c.encode();
-                Some((key, value))
+                Some((cid, value))
             }));
-        self.kv.export()
     }
 
     pub(crate) fn get_kv(&self) -> &KvWrapper {

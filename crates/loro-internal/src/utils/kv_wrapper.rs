@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ops::Bound,
     sync::{Arc, Mutex},
 };
@@ -77,6 +77,21 @@ impl KvWrapper {
             if this.get(&k) == Some(v) {
                 this.remove(&k)
             }
+        }
+    }
+
+    /// Remove all keys not in the given set
+    pub(crate) fn retain_keys(&self, keys: &BTreeSet<Vec<u8>>) {
+        let mut kv = self.kv.lock().unwrap();
+        let mut to_remove = BTreeSet::new();
+        for (k, _) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
+            if !keys.contains(&*k) {
+                to_remove.insert(k);
+            }
+        }
+
+        for k in to_remove {
+            kv.remove(&k);
         }
     }
 }

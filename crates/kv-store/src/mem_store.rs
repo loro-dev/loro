@@ -177,7 +177,9 @@ impl MemKvStore {
             ),
             false,
         ) {
-            builder.add(k, v);
+            if !v.is_empty() {
+                builder.add(k, v);
+            }
         }
 
         builder.finish_block();

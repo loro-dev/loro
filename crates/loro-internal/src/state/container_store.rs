@@ -11,7 +11,7 @@ use crate::{
     VersionVector,
 };
 use bytes::Bytes;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use inner_store::InnerStore;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
 use std::sync::{atomic::AtomicU64, Arc, Mutex};
@@ -121,6 +121,10 @@ impl ContainerStore {
 
     pub fn encode(&mut self) -> Bytes {
         self.store.encode()
+    }
+
+    pub(crate) fn flush(&mut self) {
+        self.store.flush()
     }
 
     pub fn encode_gc(&mut self) -> Bytes {

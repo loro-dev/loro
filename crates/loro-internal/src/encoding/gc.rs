@@ -1,4 +1,7 @@
+use std::collections::BTreeSet;
+
 use loro_common::LoroResult;
+use rand::seq::IteratorRandom;
 use tracing::{debug, trace};
 
 use crate::{
@@ -33,7 +36,9 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     drop(oplog);
     doc.checkout(&start_from)?;
     let mut state = doc.app_state().lock().unwrap();
-    let gc_state_bytes = state.store.encode();
+    let alive_containers = state.get_all_alive_containers();
+    let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
+    state.store.flush();
     let old_kv = state.store.get_kv().clone();
     drop(state);
     doc.checkout_to_latest();
@@ -41,6 +46,9 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     state.store.encode();
     let new_kv = state.store.get_kv().clone();
     new_kv.remove_same(&old_kv);
+    new_kv.retain_keys(&alive_c_bytes);
+    old_kv.retain_keys(&alive_c_bytes);
+    let gc_state_bytes = old_kv.export();
     let state_bytes = new_kv.export();
     let snapshot = Snapshot {
         oplog_bytes,
