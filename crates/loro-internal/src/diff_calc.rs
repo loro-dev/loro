@@ -822,7 +822,8 @@ pub(crate) struct RichtextDiffCalculator {
 enum RichtextCalcMode {
     Crdt {
         tracker: Box<RichtextTracker>,
-        styles: Vec<StyleOp>,
+        /// (op, end_pos)
+        styles: Vec<(StyleOp, usize)>,
         start_vv: VersionVector,
     },
     Linear {
@@ -1011,14 +1012,17 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         } => {
                             debug_assert!(start < end, "start: {}, end: {}", start, end);
                             let style_id = styles.len();
-                            styles.push(StyleOp {
-                                lamport: op.lamport(),
-                                peer: op.peer,
-                                cnt: op.id_start().counter,
-                                key: key.clone(),
-                                value: value.clone(),
-                                info: *info,
-                            });
+                            styles.push((
+                                StyleOp {
+                                    lamport: op.lamport(),
+                                    peer: op.peer,
+                                    cnt: op.id_start().counter,
+                                    key: key.clone(),
+                                    value: value.clone(),
+                                    info: *info,
+                                },
+                                *end as usize,
+                            ));
                             tracker.insert(
                                 op.id_full(),
                                 *start as usize,
@@ -1027,42 +1031,61 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         }
                         crate::container::list::list_op::InnerListOp::StyleEnd => {
                             let id = op.id();
-                            // PERF: this can be sped up by caching the last style op
-                            let start_op = oplog.get_op_that_includes(op.id().inc(-1)).unwrap();
-                            let InnerListOp::StyleStart {
-                                start: _,
-                                end,
-                                key,
-                                value,
-                                info,
-                            } = start_op.content.as_list().unwrap()
-                            else {
-                                unreachable!()
-                            };
-                            let style_id = match styles.last() {
-                                Some(last)
-                                    if last.peer == id.peer && last.cnt == id.counter - 1 =>
-                                {
-                                    styles.len() - 1
-                                }
-                                _ => {
-                                    styles.push(StyleOp {
+                            if let Some(pos) = styles.iter().rev().position(|(op, _pos)| {
+                                op.peer == id.peer && op.cnt == id.counter - 1
+                            }) {
+                                let style_id = styles.len() - pos - 1;
+                                let (_start_op, end_pos) = &styles[style_id];
+                                tracker.insert(
+                                    op.id_full(),
+                                    // need to shift 1 because we insert the start style anchor before this pos
+                                    *end_pos + 1,
+                                    RichtextChunk::new_style_anchor(
+                                        style_id as u32,
+                                        AnchorType::End,
+                                    ),
+                                );
+                            } else {
+                                let Some(start_op) = oplog.get_op_that_includes(op.id().inc(-1))
+                                else {
+                                    // Checkout on richtext that export at a gc version that split
+                                    // start style op and end style op apart. Won't fix for now.
+                                    // It's such a rare case...
+                                    unimplemented!("Unhandled checkout case")
+                                };
+                                let InnerListOp::StyleStart {
+                                    start: _,
+                                    end,
+                                    key,
+                                    value,
+                                    info,
+                                } = start_op.content.as_list().unwrap()
+                                else {
+                                    unreachable!()
+                                };
+
+                                styles.push((
+                                    StyleOp {
                                         lamport: op.lamport() - 1,
                                         peer: id.peer,
                                         cnt: id.counter - 1,
                                         key: key.clone(),
                                         value: value.clone(),
                                         info: *info,
-                                    });
-                                    styles.len() - 1
-                                }
-                            };
-                            tracker.insert(
-                                op.id_full(),
-                                // need to shift 1 because we insert the start style anchor before this pos
-                                *end as usize + 1,
-                                RichtextChunk::new_style_anchor(style_id as u32, AnchorType::End),
-                            );
+                                    },
+                                    *end as usize,
+                                ));
+                                let style_id = styles.len() - 1;
+                                tracker.insert(
+                                    op.id_full(),
+                                    // need to shift 1 because we insert the start style anchor before this pos
+                                    *end as usize + 1,
+                                    RichtextChunk::new_style_anchor(
+                                        style_id as u32,
+                                        AnchorType::End,
+                                    ),
+                                );
+                            }
                         }
                     },
                     _ => unreachable!(),
@@ -1116,7 +1139,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                             RichtextChunkValue::StyleAnchor { id, anchor_type } => {
                                 delta.push_insert(
                                     RichtextStateChunk::Style {
-                                        style: Arc::new(styles[id as usize].clone()),
+                                        style: Arc::new(styles[id as usize].0.clone()),
                                         anchor_type,
                                     },
                                     (),

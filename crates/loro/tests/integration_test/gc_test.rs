@@ -147,3 +147,27 @@ fn export_snapshot_on_a_trimmed_doc() -> anyhow::Result<()> {
     assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
     Ok(())
 }
+
+#[test]
+fn test_richtext_gc() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let text = doc.get_text("text");
+    text.insert(0, "1")?; // 0
+    text.insert(0, "2")?; // 1
+    text.insert(0, "3")?; // 2
+    text.mark(0..2, "bold", "value")?; // 3, 4
+    doc.commit();
+    text.insert(3, "456")?; // 5, 6, 7
+    let bytes = doc.export(loro::ExportMode::GcSnapshot(&Frontiers::from(ID::new(
+        1, 3,
+    ))));
+
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes)?;
+    new_doc.checkout(&Frontiers::from(ID::new(1, 4)))?;
+    assert_eq!(new_doc.get_text("text").to_string(), "321");
+    new_doc.checkout_to_latest();
+    assert_eq!(new_doc.get_text("text").to_string(), "321456");
+    Ok(())
+}

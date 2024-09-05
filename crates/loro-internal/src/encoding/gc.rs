@@ -2,9 +2,10 @@ use rle::HasLength;
 use std::collections::BTreeSet;
 
 use loro_common::LoroResult;
-use tracing::{debug, trace};
+use tracing::debug;
 
 use crate::{
+    container::list::list_op::InnerListOp,
     dag::DagUtils,
     encoding::fast_snapshot::{Snapshot, _encode_snapshot},
     state::container_store::FRONTIERS_KEY,
@@ -25,10 +26,8 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
 ) -> LoroResult<Frontiers> {
     assert!(!doc.is_detached());
     let oplog = doc.oplog().lock().unwrap();
-    trace!("start_from: {:?}", &start_from);
-    let start_from = calc_actual_start(&oplog, start_from);
+    let start_from = calc_gc_doc_start(&oplog, start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
-    trace!("start_from: {:?}", &start_from);
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
         start_vv.insert(id.peer, id.counter);
@@ -75,13 +74,28 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     Ok(start_from)
 }
 
-/// The real start version should be the lca of the given one and the latest frontiers
-fn calc_actual_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
+/// Calculates optimal starting version for the trimmed doc
+///
+/// It should be the LCA of the user given version and the latest version.
+/// Otherwise, users cannot replay the history from the initial version till the latest version.
+fn calc_gc_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
     // start is the real start frontiers
-    let (start, _) = oplog
+    let (mut start, _) = oplog
         .dag()
         .find_common_ancestor(frontiers, oplog.frontiers());
+    for id in start.iter_mut() {
+        if let Some(op) = oplog.get_op_that_includes(*id) {
+            if let crate::op::InnerContent::List(InnerListOp::StyleStart { .. }) = &op.content {
+                // StyleStart and StyleEnd operations must be kept together in the GC snapshot.
+                // Splitting them could lead to an weird document state that cannot be
+                // properly encoded. To ensure they stay together, we advance the frontier by
+                // one step to include both operations.
 
-    let cur_f = oplog.frontiers();
-    oplog.dag.find_common_ancestor(&start, cur_f).0
+                // > Id.counter + 1 is guaranteed to be the StyleEnd Op
+                id.counter += 1;
+            }
+        }
+    }
+
+    start
 }
