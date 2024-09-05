@@ -1,8 +1,8 @@
-use std::{cmp::Ordering, sync::Arc};
+use std::{cmp::Ordering, sync::Arc, time::Instant};
 
 use loro_internal::{
     change::{Change, Lamport, Timestamp},
-    id::{Counter, ID},
+    id::ID,
     version::Frontiers,
 };
 
@@ -19,11 +19,18 @@ use loro_internal::{
 /// The length of the `Change` is how many operations it contains
 #[derive(Debug, Clone)]
 pub struct ChangeMeta {
+    /// Lamport timestamp of the Change
     pub lamport: Lamport,
+    /// The first Op id of the Change
     pub id: ID,
+    /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
+    /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub timestamp: Timestamp,
+    /// The commit message of the change
     pub message: Option<Arc<str>>,
+    /// The dependencies of the first op of the change
     pub deps: Frontiers,
+    /// The total op num inside this change
     pub len: usize,
 }
 
@@ -61,6 +68,7 @@ impl ChangeMeta {
         }
     }
 
+    /// Get the commit message in &str
     pub fn message(&self) -> &str {
         match self.message.as_ref() {
             Some(m) => m,

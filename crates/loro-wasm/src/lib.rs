@@ -4238,6 +4238,12 @@ export interface Change {
     counter: number,
     lamport: number,
     length: number,
+    /**
+     * The timestamp in seconds.
+     * 
+     * [Unix time](https://en.wikipedia.org/wiki/Unix_time)
+     * It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
+     */
     timestamp: number,
     deps: OpId[],
 }
@@ -4442,6 +4448,12 @@ export type JsonSchema = {
 
 export type JsonChange = {
   id: JsonOpID
+  /**
+   * The timestamp in seconds.
+   * 
+   * [Unix time](https://en.wikipedia.org/wiki/Unix_time)
+   * It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
+   */
   timestamp: number,
   deps: JsonOpID[],
   lamport: number,
