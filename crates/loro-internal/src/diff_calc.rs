@@ -756,6 +756,14 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                         h.find_list_chunks_in(idx, IdSpan::new(id.peer, id.counter, target_end));
                     for c in chunks {
                         acc_len += c.length();
+                        match &c.values {
+                            Either::Left(_) => unreachable!(),
+                            Either::Right(r) => {
+                                if let LoroValue::Container(c) = r {
+                                    on_new_container(c)
+                                }
+                            }
+                        }
                         delta = delta.insert(c);
                     }
 
