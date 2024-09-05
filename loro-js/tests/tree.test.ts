@@ -1,12 +1,12 @@
 import { assert, describe, expect, it} from "vitest";
-import { Loro, LoroTree, LoroTreeNode } from "../src";
+import { LoroDoc, LoroTree, LoroTreeNode } from "../src";
 
 function assertEquals(a: any, b: any) {
   expect(a).toStrictEqual(b);
 }
 
 describe("loro tree", () => {
-  const loro = new Loro();
+  const loro = new LoroDoc();
   const tree = loro.getTree("root");
 
   it("create", () => {
@@ -76,7 +76,7 @@ describe("loro tree", () => {
   });
 
   it("toArray", ()=>{
-    const loro2 = new Loro();
+    const loro2 = new LoroDoc();
     const tree2 = loro2.getTree("root");
     const root = tree2.createNode();
     tree2.createNode(root.id);
@@ -119,7 +119,7 @@ describe("loro tree", () => {
 });
 
 describe("loro tree node", ()=>{
-    const loro = new Loro();
+    const loro = new LoroDoc();
     const tree = loro.getTree("root");
 
     it("create", () => {

@@ -3,7 +3,7 @@ import {
   Delta,
   getType,
   ListDiff,
-  Loro,
+  LoroDoc,
   LoroEventBatch,
   LoroList,
   LoroMap,
@@ -14,7 +14,7 @@ import {
 
 describe("event", () => {
   it("target", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       expect(event.by).toBe("local");
@@ -29,7 +29,7 @@ describe("event", () => {
   });
 
   it("path", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
@@ -52,7 +52,7 @@ describe("event", () => {
   });
 
   it("text diff", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
@@ -75,7 +75,7 @@ describe("event", () => {
   });
 
   it("list diff", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
@@ -98,7 +98,7 @@ describe("event", () => {
   });
 
   it("map diff", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
@@ -129,7 +129,7 @@ describe("event", () => {
   });
 
   it("tree", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
@@ -144,7 +144,7 @@ describe("event", () => {
 
   describe("subscribe container events", () => {
     it("text", async () => {
-      const loro = new Loro();
+      const loro = new LoroDoc();
       const text = loro.getText("text");
       let ran = 0;
       const sub = text.subscribe((event) => {
@@ -179,7 +179,7 @@ describe("event", () => {
     });
 
     it("map subscribe deep", async () => {
-      const loro = new Loro();
+      const loro = new LoroDoc();
       const map = loro.getMap("map");
       let times = 0;
       const sub = map.subscribe((event) => {
@@ -208,7 +208,7 @@ describe("event", () => {
     });
 
     it("list subscribe deep", async () => {
-      const loro = new Loro();
+      const loro = new LoroDoc();
       const list = loro.getList("list");
       let times = 0;
       const sub = list.subscribe((event) => {
@@ -236,7 +236,7 @@ describe("event", () => {
 
   describe("text event length should be utf16", () => {
     it("test", async () => {
-      const loro = new Loro();
+      const loro = new LoroDoc();
       const text = loro.getText("text");
       let string = "";
       text.subscribe((event) => {
@@ -285,7 +285,7 @@ describe("event", () => {
 
   describe("handler in event", () => {
     it("test", async () => {
-      const loro = new Loro();
+      const loro = new LoroDoc();
       const list = loro.getList("list");
       let first = true;
       loro.subscribe((e) => {
@@ -304,7 +304,7 @@ describe("event", () => {
   });
 
   it("diff can contain containers", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getList("list");
     let ran = false;
     doc.subscribe((event) => {
@@ -330,11 +330,11 @@ describe("event", () => {
   });
 
   it("remote event", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getList("list");
     list.insert(0, 123);
     {
-      const doc2 = new Loro();
+      const doc2 = new LoroDoc();
       let triggered = false;
       doc2.subscribe((event) => {
         expect(event.by).toBe("import");
@@ -345,7 +345,7 @@ describe("event", () => {
       expect(triggered).toBeTruthy();
     }
     {
-      const doc2 = new Loro();
+      const doc2 = new LoroDoc();
       let triggered = false;
       doc2.subscribe((event) => {
         expect(event.by).toBe("import");
@@ -358,7 +358,7 @@ describe("event", () => {
   });
 
   it("checkout event", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getList("list");
     list.insert(0, 123);
     doc.commit();
