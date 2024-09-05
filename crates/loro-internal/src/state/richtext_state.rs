@@ -116,6 +116,26 @@ impl RichtextState {
         }
     }
 
+    pub(crate) fn iter_raw(&self, callback: &mut dyn FnMut(&RichtextStateChunk)) {
+        let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;
+        let mut a;
+        let mut b;
+        match &self.state {
+            LazyLoad::Src(s) => {
+                a = Some(s.elements.iter());
+                iter = &mut *a.as_mut().unwrap();
+            }
+            LazyLoad::Dst(s) => {
+                b = Some(s.iter_chunk());
+                iter = &mut *b.as_mut().unwrap();
+            }
+        }
+
+        for c in iter {
+            callback(c);
+        }
+    }
+
     fn get_style_start(
         &mut self,
         style_starts: &mut FxHashMap<Arc<StyleOp>, Pos>,
