@@ -1,5 +1,5 @@
 use super::gen_action;
-use loro::LoroDoc;
+use loro::{Frontiers, LoroDoc, ID};
 
 #[test]
 fn test_gc() -> anyhow::Result<()> {
@@ -97,5 +97,53 @@ fn test_checkout_to_movable_list_that_were_created_before_gc() -> anyhow::Result
         new_doc.get_movable_list("list").to_vec(),
         vec![0.into(), 3.into(), 1.into(), 2.into()]
     );
+    Ok(())
+}
+
+#[test]
+fn gc_on_the_given_version_when_feasible() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    gen_action(&doc, 123, 64);
+    doc.commit();
+    let bytes = doc.export(loro::ExportMode::GcSnapshot(&Frontiers::from(ID::new(
+        1, 31,
+    ))));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes)?;
+    assert_eq!(new_doc.trimmed_vv().get(&1).copied().unwrap(), 31);
+    Ok(())
+}
+
+#[test]
+fn export_snapshot_on_a_trimmed_doc() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    gen_action(&doc, 123, 32);
+    doc.commit();
+
+    // Get the current frontiers
+    let frontiers = doc.oplog_frontiers();
+    let old_value = doc.get_deep_value();
+    gen_action(&doc, 123, 32);
+    doc.commit();
+
+    // Export using GcSnapshot mode
+    let bytes = doc.export(loro::ExportMode::GcSnapshot(&frontiers));
+
+    // Import into a new document
+    let trimmed_doc = LoroDoc::new();
+    trimmed_doc.import(&bytes)?;
+    assert_eq!(trimmed_doc.trimmed_vv().get(&1).copied().unwrap(), 31);
+    let new_snapshot = trimmed_doc.export(loro::ExportMode::Snapshot);
+
+    let new_doc = LoroDoc::new();
+    new_doc.import(&new_snapshot)?;
+    assert_eq!(new_doc.trimmed_vv().get(&1).copied().unwrap(), 31);
+    assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
+    new_doc.checkout(&frontiers)?;
+    assert_eq!(new_doc.get_deep_value(), old_value);
+    new_doc.checkout_to_latest();
+    assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
     Ok(())
 }

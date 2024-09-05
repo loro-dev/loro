@@ -1470,6 +1470,7 @@ impl LoroDoc {
         state.get_path(idx)
     }
 
+    #[instrument(skip(self))]
     pub fn export(&self, mode: ExportMode) -> Vec<u8> {
         self.commit_then_stop();
         let ans = match mode {
