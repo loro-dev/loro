@@ -1349,6 +1349,7 @@ dependencies = [
  "criterion 0.5.1",
  "fractional_index",
  "imbl",
+ "once_cell",
  "rand",
  "serde",
  "smallvec",

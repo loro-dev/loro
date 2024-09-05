@@ -14,7 +14,7 @@ use tracing::{debug, trace};
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
-    actor::{ActionExecutor, ActorTrait},
+    actor::{assert_value_eq, ActionExecutor, ActorTrait},
     crdt_fuzzer::FuzzValue,
     value::{ApplyDiff, ContainerTracker, MapTracker, Value},
 };
@@ -135,7 +135,11 @@ impl ActorTrait for TreeActor {
         let tree = loro.get_tree("tree");
         let result = tree.get_value_with_meta();
         let tracker = self.tracker.lock().unwrap().to_value();
-        assert_eq!(&result, tracker.into_map().unwrap().get("tree").unwrap());
+        assert_value_eq(
+            &result,
+            tracker.into_map().unwrap().get("tree").unwrap(),
+            None,
+        );
     }
 
     fn add_new_container(&mut self, container: Container) {

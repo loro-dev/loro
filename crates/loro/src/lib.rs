@@ -155,6 +155,12 @@ impl LoroDoc {
         self.doc.set_change_merge_interval(interval);
     }
 
+    /// Set whether to use fractional index for Tree Position.
+    #[inline]
+    pub fn set_with_fractional_index(&self, with_fractional_index: bool) {
+        self.doc.set_with_fractional_index(with_fractional_index);
+    }
+
     /// Set the jitter of the tree position(Fractional Index).
     ///
     /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.

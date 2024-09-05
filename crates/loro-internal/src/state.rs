@@ -3,7 +3,7 @@ use std::{
     collections::BTreeMap,
     io::Write,
     sync::{
-        atomic::{AtomicU64, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
         Arc, Mutex, RwLock, Weak,
     },
 };
@@ -310,8 +310,18 @@ impl State {
         Self::RichtextState(Box::new(RichtextState::new(idx, config)))
     }
 
-    pub fn new_tree(idx: ContainerIdx, peer: PeerID, jitter: Arc<AtomicU8>) -> Self {
-        Self::TreeState(Box::new(TreeState::new(idx, peer, jitter)))
+    pub fn new_tree(
+        idx: ContainerIdx,
+        peer: PeerID,
+        jitter: Arc<AtomicU8>,
+        with_fractional_index: Arc<AtomicBool>,
+    ) -> Self {
+        Self::TreeState(Box::new(TreeState::new(
+            idx,
+            peer,
+            jitter,
+            with_fractional_index,
+        )))
     }
 
     pub fn new_unknown(idx: ContainerIdx) -> Self {
@@ -1476,6 +1486,7 @@ fn create_state_(idx: ContainerIdx, config: &Configure, peer: u64) -> State {
             idx,
             peer,
             config.tree_position_jitter.clone(),
+            config.tree_with_fractional_index.clone(),
         ))),
         ContainerType::MovableList => State::MovableListState(Box::new(MovableListState::new(idx))),
         #[cfg(feature = "counter")]
