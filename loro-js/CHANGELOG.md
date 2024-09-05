@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.11
+
+### Patch Changes
+
+- dce00ab: Make loro-wasm work in cloudflare worker
+- Updated dependencies [dce00ab]
+  - loro-wasm@0.16.11
+
 ## 0.16.10
 
 ### Patch Changes
