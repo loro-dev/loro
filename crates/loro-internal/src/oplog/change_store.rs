@@ -44,6 +44,20 @@ const MAX_BLOCK_SIZE: usize = 128;
 /// - We don't allow holes in a block or between two blocks with the same peer id.
 ///   The [Change] should be continuous for each peer.
 /// - However, the first block of a peer can have counter > 0 so that we can trim the history.
+///
+/// # Encoding Schema
+///
+/// It's based on the underlying KV store.
+///
+/// The entries of the KV store is made up of the following fields
+///
+/// |Key                          |Value             |
+/// |:--                          |:----             |
+/// |b"vv"                        |VersionVector     |
+/// |b"fr"                        |Frontiers         |
+/// |b"sv"                        |Trimmed VV        |
+/// |b"sf"                        |Trimmed Frontiers |
+/// |12 bytes PeerID + Counter    |Encoded Block     |
 #[derive(Debug, Clone)]
 pub struct ChangeStore {
     inner: Arc<Mutex<ChangeStoreInner>>,
