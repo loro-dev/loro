@@ -355,9 +355,10 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
         values: value_bytes.into(),
     };
 
-    // diagnose_block(&out);
+    diagnose_block(&out);
     let ans = postcard::to_allocvec(&out).unwrap();
     // info!("block size = {}", ans.len());
+    println!("BLOCK SIZE = {}", ans.len());
     ans
 }
 
@@ -837,8 +838,26 @@ mod test {
     pub fn encode_single_text_edit() {
         let doc = LoroDoc::new();
         doc.start_auto_commit();
-        doc.get_text("text").insert(0, "Hi").unwrap();
+        doc.get_map("map").insert("x", 100).unwrap();
+        // doc.get_text("text").insert(0, "Hi").unwrap();
+        // let node = doc.get_tree("tree").create(None).unwrap();
+        // doc.get_tree("tree").create(node).unwrap();
+        diagnose(&doc);
+        doc.get_map("map").insert("y", 20).unwrap();
+        diagnose(&doc);
+        doc.get_map("map").insert("z", 1000).unwrap();
+        diagnose(&doc);
+        doc.get_text("text").insert(0, "Hello").unwrap();
+        diagnose(&doc);
+        doc.get_text("text").insert(2, "He").unwrap();
+        diagnose(&doc);
+        doc.get_text("text").delete(1, 4).unwrap();
+        diagnose(&doc);
+        doc.get_text("text").delete(0, 2).unwrap();
+        diagnose(&doc);
+    }
 
+    fn diagnose(doc: &LoroDoc) {
         let bytes = doc.export_from(&Default::default());
         println!("Old Update bytes {:?}", dev_utils::ByteSize(bytes.length()));
 
@@ -851,5 +870,15 @@ mod test {
         let bytes = doc.export(crate::loro::ExportMode::Snapshot);
         println!("Snapshot bytes {:?}", dev_utils::ByteSize(bytes.length()));
         // assert!(bytes.len() < 30);
+
+        let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+        let json_string = serde_json::to_string(&json.changes).unwrap();
+        println!(
+            "JSON string bytes {:?}",
+            dev_utils::ByteSize(json_string.len())
+        );
+        let bytes = postcard::to_allocvec(&json.changes).unwrap();
+        println!("JSON update bytes {:?}", dev_utils::ByteSize(bytes.len()));
+        println!("\n\n")
     }
 }
