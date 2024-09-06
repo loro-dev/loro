@@ -871,3 +871,22 @@ fn len_and_is_empty_inconsistency() {
     assert_eq!(map.len(), 0);
     assert!(map.is_empty());
 }
+
+#[test]
+fn test_tree_move() {
+    let doc = LoroDoc::new();
+    let tree = doc.get_tree("tree");
+    let root1 = tree.create(None).unwrap();
+    let node1 = tree.create(root1).unwrap();
+    let node2 = tree.create(root1).unwrap();
+    assert_eq!(tree.children(Some(root1)).unwrap(), vec![node1, node2]);
+    tree.mov_before(node2, node1).unwrap();
+    assert_eq!(tree.children(Some(root1)).unwrap(), vec![node2, node1]);
+    tree.mov_before(node2, node1).unwrap();
+    assert_eq!(tree.children(Some(root1)).unwrap(), vec![node2, node1]);
+
+    tree.mov_after(node2, node1).unwrap();
+    assert_eq!(tree.children(Some(root1)).unwrap(), vec![node1, node2]);
+    tree.mov_after(node2, node1).unwrap();
+    assert_eq!(tree.children(Some(root1)).unwrap(), vec![node1, node2]);
+}

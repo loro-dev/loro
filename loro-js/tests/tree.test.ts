@@ -182,6 +182,16 @@ describe("loro tree node", ()=>{
     });
 });
 
+describe("LoroTree", () => {
+  it ("move", () => {
+    const loro = new Loro();
+    const tree = loro.getTree("root");
+    const root = tree.createNode();
+    const child = tree.createNode(root.id);
+    tree.move(child.id, root.id);
+  })
+})
+
 function one_ms(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 1));
 }
