@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.12
+
+### Patch Changes
+
+- 46e21fc: Fix tree move issues
+- Updated dependencies [46e21fc]
+  - loro-wasm@0.16.12
+
 ## 0.16.11
 
 ### Patch Changes
