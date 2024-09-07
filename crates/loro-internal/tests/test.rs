@@ -8,6 +8,7 @@ use loro_internal::{
     handler::{Handler, TextDelta, ValueOrHandler},
     version::Frontiers,
     ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
+    TreeParentId,
 };
 use serde_json::json;
 
@@ -724,11 +725,11 @@ fn tree_checkout() {
     doc_a.subscribe_root(Arc::new(|_e| {}));
     doc_a.set_peer_id(1).unwrap();
     let tree = doc_a.get_tree("root");
-    let id1 = tree.create(None).unwrap();
-    let id2 = tree.create(id1).unwrap();
+    let id1 = tree.create(TreeParentId::Root).unwrap();
+    let id2 = tree.create(TreeParentId::Node(id1)).unwrap();
     let v1_state = tree.get_deep_value();
     let v1 = doc_a.oplog_frontiers();
-    let _id3 = tree.create(id2).unwrap();
+    let _id3 = tree.create(TreeParentId::Node(id2)).unwrap();
     let v2_state = tree.get_deep_value();
     let v2 = doc_a.oplog_frontiers();
     tree.delete(id2).unwrap();
@@ -757,7 +758,7 @@ fn tree_checkout() {
     );
 
     doc_a.attach();
-    tree.create(None).unwrap();
+    tree.create(TreeParentId::Root).unwrap();
 }
 
 #[test]
@@ -853,8 +854,8 @@ fn missing_event_when_checkout() {
 
     let doc2 = LoroDoc::new_auto_commit();
     let tree = doc2.get_tree("tree");
-    let node = tree.create_at(None, 0).unwrap();
-    let _ = tree.create_at(None, 0).unwrap();
+    let node = tree.create_at(TreeParentId::Root, 0).unwrap();
+    let _ = tree.create_at(TreeParentId::Root, 0).unwrap();
     let meta = tree.get_meta(node).unwrap();
     meta.insert("a", 0).unwrap();
     doc.import(&doc2.export_from(&doc.oplog_vv())).unwrap();
@@ -930,7 +931,7 @@ fn insert_attach_container() -> LoroResult<()> {
 #[test]
 fn tree_attach() {
     let tree = TreeHandler::new_detached();
-    let id = tree.create(None).unwrap();
+    let id = tree.create(TreeParentId::Root).unwrap();
     tree.get_meta(id).unwrap().insert("key", "value").unwrap();
     let doc = LoroDoc::new_auto_commit();
     doc.get_list("list").insert_container(0, tree).unwrap();

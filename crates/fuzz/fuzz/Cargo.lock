@@ -780,6 +780,7 @@ name = "loro_fractional_index"
 version = "0.16.2"
 dependencies = [
  "imbl",
+ "once_cell",
  "rand",
  "serde",
  "smallvec",

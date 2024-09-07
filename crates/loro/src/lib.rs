@@ -17,6 +17,7 @@ use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::DocState;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
+use loro_internal::TreeParentId;
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
@@ -1422,7 +1423,7 @@ impl LoroTree {
     /// // create a new child
     /// let child = tree.create(root).unwrap();
     /// ```
-    pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
+    pub fn create<T: Into<TreeParentId>>(&self, parent: T) -> LoroResult<TreeID> {
         let parent = parent.into();
         let index = self.children_num(parent).unwrap_or(0);
         self.handler.create_at(parent, index)
@@ -1450,12 +1451,8 @@ impl LoroTree {
     /// // create a new child at index 0
     /// let child = tree.create_at(root, 0).unwrap();
     /// ```
-    pub fn create_at<T: Into<Option<TreeID>>>(
-        &self,
-        parent: T,
-        index: usize,
-    ) -> LoroResult<TreeID> {
-        self.handler.create_at(parent, index)
+    pub fn create_at<T: Into<TreeParentId>>(&self, parent: T, index: usize) -> LoroResult<TreeID> {
+        self.handler.create_at(parent.into(), index)
     }
 
     /// Move the `target` node to be a child of the `parent` node.
@@ -1474,7 +1471,7 @@ impl LoroTree {
     /// // move `root2` to be a child of `root`.
     /// tree.mov(root2, root).unwrap();
     /// ```
-    pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
+    pub fn mov<T: Into<TreeParentId>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
         let parent = parent.into();
         let index = self.children_num(parent).unwrap_or(0);
         self.handler.move_to(target, parent, index)
@@ -1495,7 +1492,7 @@ impl LoroTree {
     /// // move `root2` to be a child of `root` at index 0.
     /// tree.mov_to(root2, root, 0).unwrap();
     /// ```
-    pub fn mov_to<T: Into<Option<TreeID>>>(
+    pub fn mov_to<T: Into<TreeParentId>>(
         &self,
         target: TreeID,
         parent: T,
@@ -1582,7 +1579,7 @@ impl LoroTree {
     ///
     /// - If the target node does not exist, return `None`.
     /// - If the target node is a root node, return `Some(None)`.
-    pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
+    pub fn parent(&self, target: TreeID) -> Option<TreeParentId> {
         self.handler.get_node_parent(&target)
     }
 
@@ -1599,13 +1596,14 @@ impl LoroTree {
     /// Return all children of the target node.
     ///
     /// If the parent node does not exist, return `None`.
-    pub fn children(&self, parent: Option<TreeID>) -> Option<Vec<TreeID>> {
-        self.handler.children(parent)
+    pub fn children<T: Into<TreeParentId>>(&self, parent: T) -> Option<Vec<TreeID>> {
+        self.handler.children(&parent.into())
     }
 
     /// Return the number of children of the target node.
-    pub fn children_num(&self, parent: Option<TreeID>) -> Option<usize> {
-        self.handler.children_num(parent)
+    pub fn children_num<T: Into<TreeParentId>>(&self, parent: T) -> Option<usize> {
+        let parent: TreeParentId = parent.into();
+        self.handler.children_num(&parent)
     }
 
     /// Return container id of the tree.

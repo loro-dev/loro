@@ -93,15 +93,16 @@ export type TreeDiffItem =
       action: "create";
       parent: TreeID | undefined;
       index: number;
-      position: string;
+      fractional_index: string;
     }
   | { target: TreeID; action: "delete" }
   | {
       target: TreeID;
       action: "move";
       parent: TreeID | undefined;
+      old_parent: TreeID | undefined;
       index: number;
-      position: string;
+      fractional_index: string;
     };
 
 export type TreeDiff = {

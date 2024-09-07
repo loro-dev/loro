@@ -1320,8 +1320,8 @@ impl ChangesBlockBytes {
 #[cfg(test)]
 mod test {
     use crate::{
-        oplog::convert_change_to_remote, ListHandler, LoroDoc, MovableListHandler, TextHandler,
-        TreeHandler,
+        oplog::convert_change_to_remote, state::TreeParentId, ListHandler, LoroDoc,
+        MovableListHandler, TextHandler, TreeHandler,
     };
 
     use super::*;
@@ -1399,10 +1399,10 @@ mod test {
             let tree = map
                 .insert_container("tree", TreeHandler::new_detached())
                 .unwrap();
-            let node_id = tree.create(None)?;
+            let node_id = tree.create(TreeParentId::Root)?;
             tree.get_meta(node_id)?.insert("key", "value")?;
-            let node_b = tree.create(None)?;
-            tree.move_to(node_b, None, 0).unwrap();
+            let node_b = tree.create(TreeParentId::Root)?;
+            tree.move_to(node_b, TreeParentId::Root, 0).unwrap();
 
             let movable_list = map
                 .insert_container("movable", MovableListHandler::new_detached())

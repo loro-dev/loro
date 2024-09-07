@@ -3,7 +3,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 mod tree {
     use super::*;
     use criterion::{AxisScale, BenchmarkId, PlotConfiguration};
-    use loro_internal::LoroDoc;
+    use loro_internal::{LoroDoc, TreeParentId};
     use rand::{rngs::StdRng, Rng};
 
     pub fn tree_move(c: &mut Criterion) {
@@ -22,7 +22,7 @@ mod tree {
                         let loro = LoroDoc::new_auto_commit();
                         let tree = loro.get_tree("tree");
                         for idx in 0..*i {
-                            tree.create_at(None, idx as usize).unwrap();
+                            tree.create_at(TreeParentId::Root, idx as usize).unwrap();
                         }
                     })
                 },
@@ -39,15 +39,16 @@ mod tree {
                     let mut ids = vec![];
                     for _ in 0..SIZE {
                         let pos = rng.gen::<usize>() % (ids.len() + 1);
-                        ids.push(tree.create_at(None, pos).unwrap());
+                        ids.push(tree.create_at(TreeParentId::Root, pos).unwrap());
                     }
 
                     b.iter(|| {
                         for _ in 0..*i {
-                            tree.create_at(None, 0).unwrap();
+                            tree.create_at(TreeParentId::Root, 0).unwrap();
                             let i = rng.gen::<usize>() % SIZE;
                             let j = rng.gen::<usize>() % SIZE;
-                            tree.mov(ids[i], ids[j]).unwrap_or_default();
+                            tree.mov(ids[i], TreeParentId::Node(ids[j]))
+                                .unwrap_or_default();
                         }
                     })
                 },
@@ -62,14 +63,14 @@ mod tree {
             let mut versions = vec![];
             let size = 1000;
             for _ in 0..size {
-                ids.push(tree.create(None).unwrap())
+                ids.push(tree.create(TreeParentId::Root).unwrap())
             }
             let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
             let mut n = 1000;
             while n > 0 {
                 let i = rng.gen::<usize>() % size;
                 let j = rng.gen::<usize>() % size;
-                if tree.mov(ids[i], ids[j]).is_ok() {
+                if tree.mov(ids[i], TreeParentId::Node(ids[j])).is_ok() {
                     versions.push(loro.oplog_frontiers());
                     n -= 1;
                 };
@@ -90,11 +91,13 @@ mod tree {
             let tree = loro.get_tree("tree");
             let mut ids = vec![];
             let mut versions = vec![];
-            let id1 = tree.create(None).unwrap();
+            let id1 = tree.create(TreeParentId::Root).unwrap();
             ids.push(id1);
             versions.push(loro.oplog_frontiers());
             for _ in 1..depth {
-                let id = tree.create(*ids.last().unwrap()).unwrap();
+                let id = tree
+                    .create(TreeParentId::Node(*ids.last().unwrap()))
+                    .unwrap();
                 ids.push(id);
                 versions.push(loro.oplog_frontiers());
             }
@@ -118,7 +121,7 @@ mod tree {
             let mut ids = vec![];
             let size = 1000;
             for _ in 0..size {
-                ids.push(tree_a.create(None).unwrap())
+                ids.push(tree_a.create(TreeParentId::Root).unwrap())
             }
             doc_b.import(&doc_a.export_snapshot()).unwrap();
             let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
@@ -128,10 +131,14 @@ mod tree {
                     let i = rng.gen::<usize>() % size;
                     let j = rng.gen::<usize>() % size;
                     if t % 2 == 0 {
-                        tree_a.mov(ids[i], ids[j]).unwrap_or_default();
+                        tree_a
+                            .mov(ids[i], TreeParentId::Node(ids[j]))
+                            .unwrap_or_default();
                         doc_b.import(&doc_a.export_from(&doc_b.oplog_vv())).unwrap();
                     } else {
-                        tree_b.mov(ids[i], ids[j]).unwrap_or_default();
+                        tree_b
+                            .mov(ids[i], TreeParentId::Node(ids[j]))
+                            .unwrap_or_default();
                         doc_a.import(&doc_b.export_from(&doc_a.oplog_vv())).unwrap();
                     }
                 }

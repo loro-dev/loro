@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
     io::Write,
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
@@ -49,9 +48,8 @@ pub(crate) use self::movable_list_state::{IndexType, MovableListState};
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
-pub(crate) use tree_state::{
-    get_meta_value, FractionalIndexGenResult, NodePosition, TreeParentId, TreeState,
-};
+pub use tree_state::TreeParentId;
+pub(crate) use tree_state::{get_meta_value, FractionalIndexGenResult, NodePosition, TreeState};
 
 use self::{container_store::ContainerWrapper, unknown_state::UnknownState};
 

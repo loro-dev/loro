@@ -11,7 +11,7 @@ use crate::{
     diff::{myers_diff, DiffHandler, OperateProxy},
     event::{Diff, TextDiffItem},
     op::ListSlice,
-    state::{ContainerState, IndexType, State},
+    state::{ContainerState, IndexType, State, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
 };
@@ -1171,7 +1171,7 @@ impl Handler {
                             index: _,
                             position,
                         } => {
-                            if let Some(p) = parent.as_mut() {
+                            if let TreeParentId::Node(p) = &mut parent {
                                 remap_tree_id(p, container_remap)
                             }
                             remap_tree_id(&mut target, container_remap);
@@ -1206,8 +1206,9 @@ impl Handler {
                             mut parent,
                             index: _,
                             position,
+                            old_parent: _,
                         } => {
-                            if let Some(p) = parent.as_mut() {
+                            if let TreeParentId::Node(p) = &mut parent {
                                 remap_tree_id(p, container_remap)
                             }
                             remap_tree_id(&mut target, container_remap);
@@ -3939,6 +3940,7 @@ mod test {
 
     use super::{HandlerTrait, TextDelta};
     use crate::loro::LoroDoc;
+    use crate::state::TreeParentId;
     use crate::version::Frontiers;
     use crate::{fx_map, ToJson};
     use loro_common::ID;
@@ -4104,7 +4106,7 @@ mod test {
         loro.set_peer_id(1).unwrap();
         let tree = loro.get_tree("root");
         let id = loro
-            .with_txn(|txn| tree.create_with_txn(txn, None, 0))
+            .with_txn(|txn| tree.create_with_txn(txn, TreeParentId::Root, 0))
             .unwrap();
         loro.with_txn(|txn| {
             let meta = tree.get_meta(id)?;
@@ -4134,11 +4136,11 @@ mod test {
         let tree = loro.get_tree("root");
         let text = loro.get_text("text");
         loro.with_txn(|txn| {
-            let id = tree.create_with_txn(txn, None, 0)?;
+            let id = tree.create_with_txn(txn, TreeParentId::Root, 0)?;
             let meta = tree.get_meta(id)?;
             meta.insert_with_txn(txn, "a", 1.into())?;
             text.insert_with_txn(txn, 0, "abc")?;
-            let _id2 = tree.create_with_txn(txn, None, 0)?;
+            let _id2 = tree.create_with_txn(txn, TreeParentId::Root, 0)?;
             meta.insert_with_txn(txn, "b", 2.into())?;
             Ok(id)
         })
