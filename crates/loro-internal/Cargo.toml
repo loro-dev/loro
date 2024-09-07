@@ -1,6 +1,6 @@
 [package]
 name = "loro-internal"
-version = "0.16.10"
+version = "0.16.12"
 edition = "2021"
 license = "MIT"
 description = "Loro internal library. Do not use it directly as it's not stable."
@@ -15,12 +15,12 @@ keywords = ["crdt", "local-first"]
 
 [dependencies]
 smallvec = { workspace = true }
-loro-delta = { path = "../delta", version = "0.16.10", package = "loro-delta" }
-rle = { path = "../rle", version = "0.16.10", package = "loro-rle" }
-loro-common = { path = "../loro-common", version = "0.16.10" }
+loro-delta = { path = "../delta", version = "0.16.12", package = "loro-delta" }
+rle = { path = "../rle", version = "0.16.12", package = "loro-rle" }
+loro-common = { path = "../loro-common", version = "0.16.12" }
 fractional_index = { path = "../fractional_index", features = [
   "serde",
-], version = "0.16.10", package = "loro_fractional_index" }
+], version = "0.16.12", package = "loro_fractional_index" }
 postcard = "1"
 fxhash = { workspace = true }
 serde = { workspace = true }

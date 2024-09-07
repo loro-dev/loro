@@ -140,7 +140,7 @@ dependencies = [
  "arbitrary",
  "enum-as-inner 0.5.1",
  "flate2",
- "loro-common 0.16.10",
+ "loro-common 0.16.12",
  "rand",
  "serde_json",
 ]
@@ -607,7 +607,7 @@ dependencies = [
  "criterion 0.4.0",
  "ctor 0.2.6",
  "flate2",
- "loro 0.16.10",
+ "loro 0.16.12",
  "serde_json",
  "tabled 0.15.0",
  "tracing",
@@ -660,7 +660,7 @@ dependencies = [
  "enum_dispatch",
  "fxhash",
  "itertools 0.12.1",
- "loro 0.16.10",
+ "loro 0.16.12",
  "loro 0.16.2",
  "rand",
  "serde_json",
@@ -994,7 +994,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "0.16.10"
+version = "0.16.12"
 dependencies = [
  "anyhow",
  "ctor 0.2.6",
@@ -1002,8 +1002,8 @@ dependencies = [
  "either",
  "enum-as-inner 0.6.0",
  "generic-btree",
- "loro-delta 0.16.10",
- "loro-internal 0.16.10",
+ "loro-delta 0.16.12",
+ "loro-internal 0.16.12",
  "serde_json",
  "tracing",
 ]
@@ -1026,13 +1026,13 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "0.16.10"
+version = "0.16.12"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
  "fxhash",
  "js-sys",
- "loro-rle 0.16.10",
+ "loro-rle 0.16.12",
  "nonmax",
  "serde",
  "serde_columnar",
@@ -1055,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "loro-delta"
-version = "0.16.10"
+version = "0.16.12"
 dependencies = [
  "arrayvec",
  "color-backtrace",
@@ -1106,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "0.16.10"
+version = "0.16.12"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -1128,10 +1128,10 @@ dependencies = [
  "itertools 0.12.1",
  "js-sys",
  "leb128",
- "loro-common 0.16.10",
- "loro-delta 0.16.10",
- "loro-rle 0.16.10",
- "loro_fractional_index 0.16.10",
+ "loro-common 0.16.12",
+ "loro-delta 0.16.12",
+ "loro-rle 0.16.12",
+ "loro_fractional_index 0.16.12",
  "md5",
  "miniz_oxide 0.7.1",
  "num",
@@ -1170,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "loro-rle"
-version = "0.16.10"
+version = "0.16.12"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -1198,8 +1198,8 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom",
  "js-sys",
- "loro-internal 0.16.10",
- "loro-rle 0.16.10",
+ "loro-internal 0.16.12",
+ "loro-rle 0.16.12",
  "serde",
  "serde-wasm-bindgen 0.6.5",
  "serde_json",
@@ -1222,7 +1222,7 @@ dependencies = [
 
 [[package]]
 name = "loro_fractional_index"
-version = "0.16.10"
+version = "0.16.12"
 dependencies = [
  "criterion 0.5.1",
  "fractional_index",

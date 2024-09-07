@@ -1,6 +1,6 @@
 [package]
 name = "loro_fractional_index"
-version = "0.16.10"
+version = "0.16.12"
 edition = "2021"
 license = "MIT"
 description = "Fraction index for Loro. Fork and modified from jamsocket/fractional_index"
