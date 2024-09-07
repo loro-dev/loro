@@ -1322,9 +1322,7 @@ impl LoroTree {
     /// tree.mov(root2, root).unwrap();
     /// ```
     pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
-        let parent = parent.into();
-        let index = self.children_num(parent).unwrap_or(0);
-        self.handler.move_to(target, parent, index)
+        self.handler.mov(target, parent)
     }
 
     /// Move the `target` node to be a child of the `parent` node at the given index.
