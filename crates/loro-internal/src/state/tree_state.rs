@@ -951,6 +951,7 @@ impl ContainerState for TreeState {
                     }
                     TreeInternalDiff::Move { parent, position } => {
                         let old_parent = self.trees.get(&target).unwrap().parent;
+                        let old_index = self.get_index_by_tree_id(&target).unwrap();
                         if need_check {
                             let was_alive = !self.is_node_deleted(&target);
                             if self
@@ -962,7 +963,10 @@ impl ContainerState for TreeState {
                                         // delete event
                                         ans.push(TreeDiffItem {
                                             target,
-                                            action: TreeExternalDiff::Delete,
+                                            action: TreeExternalDiff::Delete {
+                                                old_parent,
+                                                old_index,
+                                            },
                                         });
                                     }
                                     // Otherwise, it's a normal move inside deleted nodes, no event is needed
@@ -975,6 +979,7 @@ impl ContainerState for TreeState {
                                             index: self.get_index_by_tree_id(&target).unwrap(),
                                             position: position.clone(),
                                             old_parent,
+                                            old_index,
                                         },
                                     });
                                 } else {
@@ -1001,6 +1006,7 @@ impl ContainerState for TreeState {
                                     index,
                                     position: position.clone(),
                                     old_parent,
+                                    old_index,
                                 },
                             });
                         };
@@ -1010,15 +1016,17 @@ impl ContainerState for TreeState {
                         if need_check && self.is_node_deleted(&target) {
                             send_event = false;
                         }
-
-                        self.mov(target, *parent, last_move_op, position.clone(), false)
-                            .unwrap();
                         if send_event {
                             ans.push(TreeDiffItem {
                                 target,
-                                action: TreeExternalDiff::Delete,
+                                action: TreeExternalDiff::Delete {
+                                    old_parent: self.trees.get(&target).unwrap().parent,
+                                    old_index: self.get_index_by_tree_id(&target).unwrap(),
+                                },
                             });
                         }
+                        self.mov(target, *parent, last_move_op, position.clone(), false)
+                            .unwrap();
                     }
                     TreeInternalDiff::MoveInDelete { parent, position } => {
                         self.mov(target, *parent, last_move_op, position.clone(), false)
@@ -1029,7 +1037,10 @@ impl ContainerState for TreeState {
                         if !self.is_node_deleted(&target) {
                             ans.push(TreeDiffItem {
                                 target,
-                                action: TreeExternalDiff::Delete,
+                                action: TreeExternalDiff::Delete {
+                                    old_parent: self.trees.get(&target).unwrap().parent,
+                                    old_index: self.get_index_by_tree_id(&target).unwrap(),
+                                },
                             });
                         }
                         // delete it from state

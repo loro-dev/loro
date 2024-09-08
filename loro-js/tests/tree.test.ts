@@ -121,6 +121,7 @@ describe("loro tree", () => {
 
 describe("loro tree node", ()=>{
     const loro = new LoroDoc();
+    loro.setWithFractionalIndex(true);
     const tree = loro.getTree("root");
 
     it("create", () => {
@@ -190,7 +191,10 @@ describe("loro tree node", ()=>{
         const subID = tree.subscribe((e)=>{
           if(e.events[0].diff.type == "tree"){
             const diff = e.events[0].diff as TreeDiff;
-            assertEquals(diff.diff[0].old_parent, root.id);
+            if (diff.diff[0].action == "move"){
+                assertEquals(diff.diff[0].old_parent, root.id);
+                assertEquals(diff.diff[0].old_index, 1);
+            }
           }
         });
         child2.move(child);

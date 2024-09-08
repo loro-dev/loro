@@ -292,7 +292,10 @@ impl TreeHandler {
             crate::op::RawOpContent::Tree(Arc::new(TreeOp::Delete { target })),
             EventHint::Tree(smallvec![TreeDiffItem {
                 target,
-                action: TreeExternalDiff::Delete,
+                action: TreeExternalDiff::Delete {
+                    old_parent: self.get_node_parent(&target).unwrap(),
+                    old_index: self.get_index_by_tree_id(&target).unwrap(),
+                },
             }]),
             &inner.state,
         )
@@ -456,6 +459,7 @@ impl TreeHandler {
                         position: position.clone(),
                         // the old parent should be exist, so we can unwrap
                         old_parent: self.get_node_parent(&target).unwrap(),
+                        old_index: self.get_index_by_tree_id(&target).unwrap(),
                     },
                 }]),
                 &inner.state,
@@ -483,7 +487,7 @@ impl TreeHandler {
                         self.create_with_position(inner, txn, id, parent, index, position)?;
                         continue;
                     }
-                    self.mov_with_position(inner, txn, id, parent, index + i, position)?;
+                    self.mov_with_position(inner, txn, id, parent, index + i, position, index + i)?;
                 }
                 Ok(target)
             }
@@ -576,17 +580,18 @@ impl TreeHandler {
             }
             .into());
         }
+        let old_index = self.get_index_by_tree_id(&target).unwrap();
         if already_in_parent {
             self.delete_position(&parent, &target);
         }
 
         match self.generate_position_at(&target, &parent, index) {
             FractionalIndexGenResult::Ok(position) => {
-                self.mov_with_position(inner, txn, target, parent, index, position)
+                self.mov_with_position(inner, txn, target, parent, index, position, old_index)
             }
             FractionalIndexGenResult::Rearrange(ids) => {
                 for (i, (id, position)) in ids.into_iter().enumerate() {
-                    self.mov_with_position(inner, txn, id, parent, index + i, position)?;
+                    self.mov_with_position(inner, txn, id, parent, index + i, position, old_index)?;
                 }
                 Ok(())
             }
@@ -632,6 +637,7 @@ impl TreeHandler {
         parent: TreeParentId,
         index: usize,
         position: FractionalIndex,
+        old_index: usize,
     ) -> LoroResult<()> {
         txn.apply_local_op(
             inner.container_idx,
@@ -647,6 +653,7 @@ impl TreeHandler {
                     index,
                     position,
                     old_parent: self.get_node_parent(&target).unwrap(),
+                    old_index,
                 },
             }]),
             &inner.state,

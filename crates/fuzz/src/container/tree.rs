@@ -442,7 +442,7 @@ impl ApplyDiff for TreeTracker {
                     parent,
                     index,
                     position,
-                    old_parent,
+                    ..
                 } => {
                     let Some(node) = self.find_node_by_id(target) else {
                         self.create_node(target, &parent.tree_id(), position.to_string(), index);

@@ -572,14 +572,26 @@ pub mod wasm {
                         )
                         .unwrap();
                     }
-                    TreeExternalDiff::Delete { .. } => {
+                    TreeExternalDiff::Delete {
+                        old_parent,
+                        old_index,
+                    } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"delete".into()).unwrap();
+                        js_sys::Reflect::set(
+                            &obj,
+                            &"old_parent".into(),
+                            &JsValue::from(old_parent.tree_id()),
+                        )
+                        .unwrap();
+                        js_sys::Reflect::set(&obj, &"old_index".into(), &(*old_index).into())
+                            .unwrap();
                     }
                     TreeExternalDiff::Move {
                         parent,
                         index,
                         position,
                         old_parent,
+                        old_index,
                     } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"move".into()).unwrap();
                         js_sys::Reflect::set(
@@ -601,6 +613,8 @@ pub mod wasm {
                             &JsValue::from(old_parent.tree_id()),
                         )
                         .unwrap();
+                        js_sys::Reflect::set(&obj, &"old_index".into(), &(*old_index).into())
+                            .unwrap();
                     }
                 }
                 array.push(&obj);

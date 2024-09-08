@@ -30,8 +30,12 @@ pub enum TreeExternalDiff {
         index: usize,
         position: FractionalIndex,
         old_parent: TreeParentId,
+        old_index: usize,
     },
-    Delete,
+    Delete {
+        old_parent: TreeParentId,
+        old_index: usize,
+    },
 }
 
 impl TreeDiff {

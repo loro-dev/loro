@@ -1207,6 +1207,7 @@ impl Handler {
                             index: _,
                             position,
                             old_parent: _,
+                            old_index: _,
                         } => {
                             if let TreeParentId::Node(p) = &mut parent {
                                 remap_tree_id(p, container_remap)
@@ -1214,7 +1215,7 @@ impl Handler {
                             remap_tree_id(&mut target, container_remap);
                             x.move_at_with_target_for_apply_diff(parent, position, target)?;
                         }
-                        TreeExternalDiff::Delete => {
+                        TreeExternalDiff::Delete { .. } => {
                             remap_tree_id(&mut target, container_remap);
                             if x.contains(target) {
                                 x.delete(target)?;
