@@ -1908,6 +1908,25 @@ pub enum ValueOrContainer {
     Container(Container),
 }
 
+impl ValueOrContainer {
+    /// Get the deep value of the value or container.
+    pub fn get_deep_value(&self) -> LoroValue {
+        match self {
+            ValueOrContainer::Value(v) => v.clone(),
+            ValueOrContainer::Container(c) => match c {
+                Container::List(c) => c.get_deep_value(),
+                Container::Map(c) => c.get_deep_value(),
+                Container::Text(c) => c.to_string().into(),
+                Container::Tree(c) => c.get_value(),
+                Container::MovableList(c) => c.get_deep_value(),
+                #[cfg(feature = "counter")]
+                Container::Counter(c) => c.get_value(),
+                Container::Unknown(_) => LoroValue::Null,
+            },
+        }
+    }
+}
+
 /// UndoManager can be used to undo and redo the changes made to the document with a certain peer.
 #[derive(Debug)]
 #[repr(transparent)]

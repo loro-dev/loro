@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   Container,
+  Diff,
   getType,
   isContainer,
   Loro,
@@ -8,6 +9,8 @@ import {
   LoroMap,
   LoroText,
   LoroTree,
+  MapDiff,
+  TextDiff,
 } from "../src";
 
 it("basic example", () => {
@@ -92,7 +95,7 @@ it("basic sync example", () => {
 
 it("basic events", () => {
   const doc = new Loro();
-  doc.subscribe((event) => {});
+  doc.subscribe((event) => { });
   const list = doc.getList("list");
 });
 
@@ -475,3 +478,62 @@ it("fork", () => {
   doc.import(doc2.exportSnapshot());
   expect(doc.toJSON()).toStrictEqual({ map: { key: 2 } });
 });
+
+it("has correct map value #453", async () => {
+  {
+    const doc = new Loro();
+    const text = doc.getText("text");
+    text.insert(0, "Hello");
+    text.mark({ start: 0, end: 2 }, "bold", { b: {} });
+    expect(text.toDelta()).toStrictEqual([
+      { insert: "He", attributes: { bold: { b: {} } } },
+      { insert: "llo" }
+    ]);
+    let diff: Diff | undefined;
+    let expectedDiff: TextDiff = {
+      "type": "text",
+      "diff": [
+        { insert: "He", attributes: { bold: { b: {} } } },
+        { insert: "llo" }
+      ]
+    };
+    doc.subscribe(e => {
+      console.log("Text", e);
+      diff = e.events[0].diff;
+    })
+    doc.commit();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(diff).toStrictEqual(expectedDiff);
+  }
+  {
+    const map = new LoroMap();
+    map.set('a', { b: {} });
+    expect(map.toJSON()).toStrictEqual({ a: { b: {} } });
+  }
+  {
+    const doc = new Loro();
+    const map = doc.getMap("map");
+    map.set('a', { b: {} });
+    expect(map.toJSON()).toStrictEqual({ a: { b: {} } });
+  }
+  {
+    const doc = new Loro();
+    let diff: Diff | undefined;
+    const expectedDiff: MapDiff = {
+      "type": "map",
+      "updated": {
+        "a": {
+          "b": {}
+        }
+      }
+    };
+    doc.subscribe(e => {
+      diff = e.events[0].diff;
+    })
+    const map = doc.getMap("map");
+    map.set('a', { b: {} });
+    doc.commit();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(diff).toStrictEqual(expectedDiff);
+  }
+})

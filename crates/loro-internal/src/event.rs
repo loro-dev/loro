@@ -182,6 +182,12 @@ impl std::fmt::Display for Index {
     }
 }
 
+impl From<usize> for Index {
+    fn from(s: usize) -> Self {
+        Index::Seq(s)
+    }
+}
+
 impl TryFrom<&str> for Index {
     type Error = &'static str;
     fn try_from(s: &str) -> Result<Self, &'static str> {
