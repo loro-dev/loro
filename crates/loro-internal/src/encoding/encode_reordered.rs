@@ -1608,7 +1608,7 @@ struct EncodedChange {
     peer_idx: usize,
     #[columnar(strategy = "DeltaRle")]
     len: usize,
-    #[columnar(strategy = "DeltaRle")]
+    #[columnar(strategy = "DeltaOfDelta")]
     timestamp: i64,
     #[columnar(strategy = "DeltaRle")]
     deps_len: i32,
