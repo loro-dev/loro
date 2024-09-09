@@ -1,5 +1,5 @@
 import { assert, describe, expect, it} from "vitest";
-import { LoroDoc, LoroTree, LoroTreeNode } from "../src";
+import { LoroDoc, LoroTree, LoroTreeNode, TreeDiff } from "../src";
 
 function assertEquals(a: any, b: any) {
   expect(a).toStrictEqual(b);
@@ -8,6 +8,7 @@ function assertEquals(a: any, b: any) {
 describe("loro tree", () => {
   const loro = new LoroDoc();
   const tree = loro.getTree("root");
+  tree.setEnableFractionalIndex(0);
 
   it("create", () => {
     const root = tree.createNode();
@@ -121,6 +122,7 @@ describe("loro tree", () => {
 describe("loro tree node", ()=>{
     const loro = new LoroDoc();
     const tree = loro.getTree("root");
+    tree.setEnableFractionalIndex(0);
 
     it("create", () => {
         const root = tree.createNode();
@@ -179,6 +181,26 @@ describe("loro tree node", ()=>{
         const child2 = tree.createNode(root.id, 0);
         assertEquals(child.index(), 1);
         assertEquals(child2.index(), 0);
+    });
+
+    it("old parent", () => {
+        const root = tree.createNode();
+        const child = root.createNode();
+        const child2 = root.createNode();
+        loro.commit();
+        const subID = tree.subscribe((e)=>{
+          if(e.events[0].diff.type == "tree"){
+            const diff = e.events[0].diff as TreeDiff;
+            if (diff.diff[0].action == "move"){
+                assertEquals(diff.diff[0].old_parent, root.id);
+                assertEquals(diff.diff[0].old_index, 1);
+            }
+          }
+        });
+        child2.move(child);
+        loro.commit();
+        tree.unsubscribe(subID);
+        assertEquals(child2.parent()!.id, child.id);
     });
 });
 

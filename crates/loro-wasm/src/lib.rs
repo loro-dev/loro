@@ -24,7 +24,8 @@ use loro_internal::{
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
     ContainerType, DiffEvent, FxHashMap, HandlerTrait, LoroDoc as LoroDocInner, LoroValue,
-    MovableListHandler, UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
+    MovableListHandler, TreeParentId, UndoManager as InnerUndoManager,
+    VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
@@ -338,16 +339,6 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "setChangeMergeInterval")]
     pub fn set_change_merge_interval(&self, interval: f64) {
         self.0.set_change_merge_interval(interval as i64);
-    }
-
-    /// Set the jitter of the tree position(Fractional Index).
-    ///
-    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
-    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
-    /// Generally speaking, jitter will affect the growth rate of document size.
-    #[wasm_bindgen(js_name = "setFractionalIndexJitter")]
-    pub fn set_fractional_index_jitter(&self, jitter: u8) {
-        self.0.set_fractional_index_jitter(jitter);
     }
 
     /// Set the rich text format configuration of the document.
@@ -3043,9 +3034,9 @@ impl LoroTreeNode {
     #[wasm_bindgen(js_name = "createNode", skip_typescript)]
     pub fn create_node(&self, index: Option<usize>) -> JsResult<LoroTreeNode> {
         let id = if let Some(index) = index {
-            self.tree.create_at(Some(self.id), index)?
+            self.tree.create_at(TreeParentId::Node(self.id), index)?
         } else {
-            self.tree.create(Some(self.id))?
+            self.tree.create(TreeParentId::Node(self.id))?
         };
         let node = LoroTreeNode::from_tree(id, self.tree.clone(), self.doc.clone());
         Ok(node)
@@ -3075,9 +3066,10 @@ impl LoroTreeNode {
     pub fn mov(&self, parent: &JsTreeNodeOrUndefined, index: Option<usize>) -> JsResult<()> {
         let parent: Option<LoroTreeNode> = parse_js_tree_node(parent)?;
         if let Some(index) = index {
-            self.tree.move_to(self.id, parent.map(|x| x.id), index)?
+            self.tree
+                .move_to(self.id, parent.map(|x| x.id).into(), index)?
         } else {
-            self.tree.mov(self.id, parent.map(|x| x.id))?;
+            self.tree.mov(self.id, parent.map(|x| x.id).into())?;
         }
 
         Ok(())
@@ -3169,9 +3161,15 @@ impl LoroTreeNode {
     /// - The object returned is a new js object each time because it need to cross
     ///   the WASM boundary.
     #[wasm_bindgen]
-    pub fn parent(&self) -> Option<LoroTreeNode> {
-        let parent = self.tree.get_node_parent(&self.id).flatten();
-        parent.map(|p| LoroTreeNode::from_tree(p, self.tree.clone(), self.doc.clone()))
+    pub fn parent(&self) -> JsResult<Option<LoroTreeNode>> {
+        let parent = self
+            .tree
+            .get_node_parent(&self.id)
+            .ok_or(JsValue::from_str(&format!("TreeID({}) not found", self.id)))?;
+        let ans = parent
+            .tree_id()
+            .map(|p| LoroTreeNode::from_tree(p, self.tree.clone(), self.doc.clone()));
+        Ok(ans)
     }
 
     /// Get the children of this node.
@@ -3180,7 +3178,7 @@ impl LoroTreeNode {
     /// the WASM boundary.
     #[wasm_bindgen(skip_typescript)]
     pub fn children(&self) -> JsValue {
-        let Some(children) = self.tree.children(Some(self.id)) else {
+        let Some(children) = self.tree.children(&TreeParentId::Node(self.id)) else {
             return JsValue::undefined();
         };
         let children = children.into_iter().map(|c| {
@@ -3236,9 +3234,9 @@ impl LoroTree {
     ) -> JsResult<LoroTreeNode> {
         let parent: Option<TreeID> = parse_js_parent(parent)?;
         let id = if let Some(index) = index {
-            self.handler.create_at(parent, index)?
+            self.handler.create_at(parent.into(), index)?
         } else {
-            self.handler.create(parent)?
+            self.handler.create(parent.into())?
         };
         let node = LoroTreeNode::from_tree(id, self.handler.clone(), self.doc.clone());
         Ok(node)
@@ -3272,9 +3270,9 @@ impl LoroTree {
         let parent = parse_js_parent(parent)?;
 
         if let Some(index) = index {
-            self.handler.move_to(target, parent, index)?
+            self.handler.move_to(target, parent.into(), index)?
         } else {
-            self.handler.mov(target, parent)?
+            self.handler.mov(target, parent.into())?
         };
 
         Ok(())
@@ -3532,6 +3530,25 @@ impl LoroTree {
         } else {
             JsValue::UNDEFINED.into()
         }
+    }
+
+    /// Set whether to generate fractional index for Tree Position.
+    ///
+    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
+    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
+    ///
+    /// Generally speaking, jitter will affect the growth rate of document size.
+    /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
+    #[wasm_bindgen(js_name = "setEnableFractionalIndex")]
+    pub fn set_enable_fractional_index(&self, jitter: u8) {
+        self.handler.set_enable_fractional_index(jitter);
+    }
+
+    /// Disable the fractional index generation for Tree Position when
+    /// you don't need the Tree's siblings to be sorted. The fractional index will be always default.
+    #[wasm_bindgen(js_name = "setDisableFractionalIndex")]
+    pub fn set_disable_fractional_index(&self) {
+        self.handler.set_disable_fractional_index();
     }
 }
 

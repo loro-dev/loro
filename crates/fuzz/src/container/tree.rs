@@ -10,7 +10,6 @@ use loro::{
     event::Diff, Container, ContainerID, ContainerType, LoroDoc, LoroError, LoroTree, LoroValue,
     TreeExternalDiff, TreeID,
 };
-use tracing::{debug, trace};
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
@@ -117,6 +116,7 @@ impl TreeActor {
         );
 
         let root = loro.get_tree("tree");
+        root.set_enable_fractional_index(0);
         Self {
             loro,
             containers: vec![root],
@@ -184,7 +184,7 @@ impl Actionable for TreeAction {
                 }
                 *parent = (nodes[parent_idx].peer, nodes[parent_idx].counter);
                 *index %= tree
-                    .children_num(Some(TreeID::new(parent.0, parent.1)))
+                    .children_num(TreeID::new(parent.0, parent.1))
                     .unwrap_or(0)
                     + 1;
             }
@@ -426,7 +426,7 @@ impl ApplyDiff for TreeTracker {
                     index,
                     position,
                 } => {
-                    self.create_node(target, parent, position.to_string(), index);
+                    self.create_node(target, &parent.tree_id(), position.to_string(), index);
                 }
                 TreeExternalDiff::Delete { .. } => {
                     let node = self.find_node_by_id(target).unwrap();
@@ -442,9 +442,10 @@ impl ApplyDiff for TreeTracker {
                     parent,
                     index,
                     position,
+                    ..
                 } => {
                     let Some(node) = self.find_node_by_id(target) else {
-                        self.create_node(target, parent, position.to_string(), index);
+                        self.create_node(target, &parent.tree_id(), position.to_string(), index);
                         continue;
                     };
 
@@ -456,10 +457,10 @@ impl ApplyDiff for TreeTracker {
                         let index = self.tree.iter().position(|n| n.id == target).unwrap();
                         self.tree.remove(index)
                     };
-                    node.parent = *parent;
+                    node.parent = parent.tree_id();
                     node.position = position.to_string();
-                    if let Some(parent) = parent {
-                        let parent = self.find_node_by_id_mut(*parent).unwrap();
+                    if let Some(parent) = parent.tree_id() {
+                        let parent = self.find_node_by_id_mut(parent).unwrap();
                         parent.children.insert(*index, node);
                     } else {
                         if self.find_node_by_id_mut(target).is_some() {
