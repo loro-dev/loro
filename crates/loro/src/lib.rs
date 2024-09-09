@@ -12,6 +12,7 @@ use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
+use loro_internal::loro_common::LoroTreeError;
 use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::DocState;
 use loro_internal::LoroDoc as InnerLoroDoc;
@@ -1430,9 +1431,7 @@ impl LoroTree {
     /// let child = tree.create(root).unwrap();
     /// ```
     pub fn create<T: Into<TreeParentId>>(&self, parent: T) -> LoroResult<TreeID> {
-        let parent = parent.into();
-        let index = self.children_num(parent).unwrap_or(0);
-        self.handler.create_at(parent, index)
+        self.handler.create(parent.into())
     }
 
     /// Get the root nodes of the forest.
@@ -1458,6 +1457,9 @@ impl LoroTree {
     /// let child = tree.create_at(root, 0).unwrap();
     /// ```
     pub fn create_at<T: Into<TreeParentId>>(&self, parent: T, index: usize) -> LoroResult<TreeID> {
+        if !self.handler.is_fractional_index_enabled() {
+            return Err(LoroTreeError::FractionalIndexNotEnabled.into());
+        }
         self.handler.create_at(parent.into(), index)
     }
 
@@ -1478,9 +1480,7 @@ impl LoroTree {
     /// tree.mov(root2, root).unwrap();
     /// ```
     pub fn mov<T: Into<TreeParentId>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
-        let parent = parent.into();
-        let index = self.children_num(parent).unwrap_or(0);
-        self.handler.move_to(target, parent, index)
+        self.handler.mov(target, parent.into())
     }
 
     /// Move the `target` node to be a child of the `parent` node at the given index.
@@ -1504,8 +1504,10 @@ impl LoroTree {
         parent: T,
         to: usize,
     ) -> LoroResult<()> {
-        let parent = parent.into();
-        self.handler.move_to(target, parent, to)
+        if !self.handler.is_fractional_index_enabled() {
+            return Err(LoroTreeError::FractionalIndexNotEnabled.into());
+        }
+        self.handler.move_to(target, parent.into(), to)
     }
 
     /// Move the `target` node to be a child after the `after` node with the same parent.
@@ -1523,6 +1525,9 @@ impl LoroTree {
     /// tree.mov_after(root, root2).unwrap();
     /// ```
     pub fn mov_after(&self, target: TreeID, after: TreeID) -> LoroResult<()> {
+        if !self.handler.is_fractional_index_enabled() {
+            return Err(LoroTreeError::FractionalIndexNotEnabled.into());
+        }
         self.handler.mov_after(target, after)
     }
 
@@ -1541,6 +1546,9 @@ impl LoroTree {
     /// tree.mov_before(root, root2).unwrap();
     /// ```
     pub fn mov_before(&self, target: TreeID, before: TreeID) -> LoroResult<()> {
+        if !self.handler.is_fractional_index_enabled() {
+            return Err(LoroTreeError::FractionalIndexNotEnabled.into());
+        }
         self.handler.mov_before(target, before)
     }
 
@@ -1642,6 +1650,11 @@ impl LoroTree {
     #[allow(non_snake_case)]
     pub fn __internal__next_tree_id(&self) -> TreeID {
         self.handler.__internal__next_tree_id()
+    }
+
+    /// Whether the fractional index is enabled.
+    pub fn is_fractional_index_enabled(&self) -> bool {
+        self.handler.is_fractional_index_enabled()
     }
 }
 

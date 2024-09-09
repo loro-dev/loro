@@ -861,6 +861,13 @@ impl TreeState {
         }
     }
 
+    pub(crate) fn is_fractional_index_enabled(&self) -> bool {
+        !matches!(
+            &*self.fractional_index_config.read().unwrap(),
+            TreeFractionalIndexConfig::AlwaysDefault
+        )
+    }
+
     pub(crate) fn get_position(&self, target: &TreeID) -> Option<FractionalIndex> {
         self.trees.get(target).and_then(|x| x.position.clone())
     }

@@ -454,7 +454,7 @@ impl TreeHandler {
                 EventHint::Tree(smallvec![TreeDiffItem {
                     target,
                     action: TreeExternalDiff::Move {
-                        parent: TreeParentId::from(parent),
+                        parent,
                         index,
                         position: position.clone(),
                         // the old parent should be exist, so we can unwrap
@@ -865,6 +865,18 @@ impl TreeHandler {
                 unreachable!()
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| Ok(txn.next_idlp())).unwrap(),
+        }
+    }
+
+    pub fn is_fractional_index_enabled(&self) -> bool {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unreachable!()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.is_fractional_index_enabled()
+            }),
         }
     }
 }
