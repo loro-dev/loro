@@ -1,6 +1,4 @@
-use std::{
-    borrow::Cow, fmt::Debug, io::Write, ops::{Bound, Range}, sync::Arc
-};
+use std::{fmt::Debug, io::Write, ops::{Bound, Range}, sync::Arc};
 
 use bytes::{Buf,  Bytes};
 use loro_common::LoroResult;
@@ -25,11 +23,17 @@ impl LargeValueBlock{
     /// ││ bytes │      u32        │
     /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘│
     /// └──────────────────────────┘
-    fn encode(&self,  w: &mut Vec<u8>, compression_type: CompressionType){
+    fn encode(&self,  w: &mut Vec<u8>, mut compression_type: CompressionType)->CompressionType{
         let origin_len = w.len();
-        compress(w, Cow::Borrowed(&self.value_bytes), compression_type);
+        compress(w, &self.value_bytes, compression_type);
+        if !compression_type.is_none() && w.len() - origin_len > self.value_bytes.len(){
+            w.truncate(origin_len);
+            compress(w, &self.value_bytes, CompressionType::None);
+            compression_type = CompressionType::None;
+        }
         let checksum = xxhash_rust::xxh32::xxh32(&w[origin_len..], XXH_SEED);
         w.write_all(&checksum.to_le_bytes()).unwrap();
+        compression_type
     }
 
     fn decode(bytes:Bytes, key: Bytes, compression_type: CompressionType)->LoroResult<Self>{
@@ -59,17 +63,22 @@ impl NormalBlock {
     /// └────────────────────────────────────────────────────────────────────────────────────────┘
     /// 
     /// The block body may be compressed then we calculate its checksum (the checksum is not compressed).
-    fn encode(&self, w: &mut Vec<u8>, compression_type: CompressionType)  {
+    fn encode(&self, w: &mut Vec<u8>, mut compression_type: CompressionType)->CompressionType  {
         let origin_len = w.len();
         let mut buf = self.data.to_vec();
         for offset in &self.offsets {
             buf.extend_from_slice(&offset.to_le_bytes());
         }
-
         buf.extend_from_slice(&(self.offsets.len() as u16).to_le_bytes());
-        compress(w,Cow::Owned(buf), compression_type);
+        compress(w, &buf, compression_type);
+        if !compression_type.is_none() && w.len() - origin_len > buf.len(){
+            w.truncate(origin_len);
+            compress(w, &buf, CompressionType::None);
+            compression_type = CompressionType::None;
+        }
         let checksum = xxhash_rust::xxh32::xxh32(&w[origin_len..], XXH_SEED);
         w.extend_from_slice(&checksum.to_le_bytes());
+        compression_type
     }
 
     fn decode(raw_block_and_check: Bytes, first_key: Bytes, compression_type: CompressionType)-> LoroResult<NormalBlock>{
@@ -113,7 +122,7 @@ impl Block{
         }
     }
 
-    pub fn encode(&self,  w: &mut Vec<u8>, compression_type: CompressionType){
+    pub fn encode(&self,  w: &mut Vec<u8>, compression_type: CompressionType)->CompressionType{
         match self{
             Block::Normal(block)=>block.encode(w,compression_type),
             Block::Large(block)=>block.encode(w,compression_type),
