@@ -91,7 +91,7 @@ pub struct DefaultRandom;
 #[cfg(test)]
 use std::sync::atomic::AtomicU64;
 use std::sync::{
-    atomic::{AtomicBool, AtomicI64, AtomicU8},
+    atomic::{AtomicBool, AtomicI64},
     Arc, RwLock,
 };
 #[cfg(test)]

@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     io::Write,
     sync::{
-        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+        atomic::{AtomicU64, AtomicU8, Ordering},
         Arc, Mutex, RwLock, Weak,
     },
 };
@@ -14,7 +14,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
-use tracing::{info_span, instrument, trace};
+use tracing::{info_span, instrument};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator, TreeFractionalIndexConfig},

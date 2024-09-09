@@ -2,7 +2,7 @@ use std::{cmp::Ordering, sync::Arc};
 
 use loro_internal::{
     change::{Change, Lamport, Timestamp},
-    id::{Counter, ID},
+    id::ID,
     version::Frontiers,
 };
 

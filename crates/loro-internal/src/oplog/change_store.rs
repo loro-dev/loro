@@ -1320,7 +1320,7 @@ impl ChangesBlockBytes {
 #[cfg(test)]
 mod test {
     use crate::{
-        oplog::convert_change_to_remote, state::TreeParentId, HandlerTrait, ListHandler, LoroDoc,
+        oplog::convert_change_to_remote, state::TreeParentId, ListHandler, LoroDoc,
         MovableListHandler, TextHandler, TreeHandler,
     };
 

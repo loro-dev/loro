@@ -13,7 +13,6 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use super::{ContainerState, DiffApplyContext};

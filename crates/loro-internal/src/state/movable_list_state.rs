@@ -18,8 +18,7 @@ use crate::{
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp},
     state::movable_list_state::inner::PushElemInfo,
-    txn::Transaction,
-    ApplyDiff, DocState, ListDiff,
+    txn::Transaction, DocState, ListDiff,
 };
 
 use self::{

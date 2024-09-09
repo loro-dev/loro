@@ -31,7 +31,7 @@ use crate::{
         decode_snapshot, export_fast_snapshot, export_snapshot, json_schema::json::JsonSchema,
         parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
-    event::{str_to_path, EventTriggerKind, Index, InternalDocDiff, Path},
+    event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     obs::{Observer, SubID, Subscriber},

@@ -12,7 +12,6 @@ use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
-use loro_internal::json::JsonChange;
 use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::DocState;
 use loro_internal::LoroDoc as InnerLoroDoc;
