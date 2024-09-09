@@ -116,6 +116,7 @@ impl TreeActor {
         );
 
         let root = loro.get_tree("tree");
+        root.set_enable_fractional_index(0);
         Self {
             loro,
             containers: vec![root],

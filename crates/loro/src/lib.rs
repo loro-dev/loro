@@ -156,29 +156,6 @@ impl LoroDoc {
         self.doc.set_change_merge_interval(interval);
     }
 
-    /// Set whether to generate fractional index for Tree Position. The LoroDoc is set to disable fractional index by default.
-    ///
-    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
-    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
-    ///
-    /// Generally speaking, jitter will affect the growth rate of document size.
-    /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
-    #[inline]
-    pub fn set_enable_fractional_index(&self, jitter: u8) {
-        self.doc.set_enable_fractional_index(jitter);
-    }
-
-    /// Disable the fractional index generation for Tree Position when
-    /// you don't need the Tree's siblings to be sorted.
-    ///
-    /// The fractional index will be always default.
-    ///
-    /// The LoroDoc is set to disable fractional index by default.
-    #[inline]
-    pub fn set_disable_fractional_index(&self) {
-        self.doc.set_disable_fractional_index();
-    }
-
     /// Set the rich text format configuration of the document.
     ///
     /// You need to config it if you use rich text `mark` method.
@@ -1451,6 +1428,8 @@ impl LoroTree {
     ///
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
+    /// // enable generate fractional index
+    /// tree.set_enable_fractional_index(0);
     /// // create a root
     /// let root = tree.create(None).unwrap();
     /// // create a new child at index 0
@@ -1493,6 +1472,8 @@ impl LoroTree {
     ///
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
+    /// // enable generate fractional index
+    /// tree.set_enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root2` to be a child of `root` at index 0.
@@ -1519,6 +1500,8 @@ impl LoroTree {
     ///
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
+    /// // enable generate fractional index
+    /// tree.set_enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root` to be a child after `root2`.
@@ -1540,6 +1523,8 @@ impl LoroTree {
     ///
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
+    /// // enable generate fractional index
+    /// tree.set_enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root` to be a child before `root2`.
@@ -1655,6 +1640,25 @@ impl LoroTree {
     /// Whether the fractional index is enabled.
     pub fn is_fractional_index_enabled(&self) -> bool {
         self.handler.is_fractional_index_enabled()
+    }
+
+    /// Set whether to generate fractional index for Tree Position.
+    ///
+    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
+    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
+    ///
+    /// Generally speaking, jitter will affect the growth rate of document size.
+    /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
+    #[inline]
+    pub fn set_enable_fractional_index(&self, jitter: u8) {
+        self.handler.set_enable_fractional_index(jitter);
+    }
+
+    /// Disable the fractional index generation for Tree Position when
+    /// you don't need the Tree's siblings to be sorted. The fractional index will be always default.
+    #[inline]
+    pub fn set_disable_fractional_index(&self) {
+        self.handler.set_disable_fractional_index();
     }
 }
 

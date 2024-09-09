@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     io::Write,
     sync::{
-        atomic::{AtomicU64, AtomicU8, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc, Mutex, RwLock, Weak,
     },
 };
@@ -17,7 +17,7 @@ use loro_delta::DeltaItem;
 use tracing::{info_span, instrument};
 
 use crate::{
-    configure::{Configure, DefaultRandom, SecureRandomGenerator, TreeFractionalIndexConfig},
+    configure::{Configure, DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
     cursor::Cursor,
     delta::TreeExternalDiff,
@@ -308,17 +308,8 @@ impl State {
         Self::RichtextState(Box::new(RichtextState::new(idx, config)))
     }
 
-    pub fn new_tree(
-        idx: ContainerIdx,
-        peer: PeerID,
-        jitter: Arc<AtomicU8>,
-        tree_fractional_index_config: Arc<RwLock<TreeFractionalIndexConfig>>,
-    ) -> Self {
-        Self::TreeState(Box::new(TreeState::new(
-            idx,
-            peer,
-            tree_fractional_index_config,
-        )))
+    pub fn new_tree(idx: ContainerIdx, peer: PeerID) -> Self {
+        Self::TreeState(Box::new(TreeState::new(idx, peer)))
     }
 
     pub fn new_unknown(idx: ContainerIdx) -> Self {
@@ -1479,11 +1470,7 @@ fn create_state_(idx: ContainerIdx, config: &Configure, peer: u64) -> State {
             idx,
             config.text_style_config.clone(),
         ))),
-        ContainerType::Tree => State::TreeState(Box::new(TreeState::new(
-            idx,
-            peer,
-            config.tree_fractional_index_config.clone(),
-        ))),
+        ContainerType::Tree => State::TreeState(Box::new(TreeState::new(idx, peer))),
         ContainerType::MovableList => State::MovableListState(Box::new(MovableListState::new(idx))),
         #[cfg(feature = "counter")]
         ContainerType::Counter => {

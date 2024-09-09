@@ -13,10 +13,9 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use super::{ContainerState, DiffApplyContext};
-use crate::configure::TreeFractionalIndexConfig;
 use crate::container::idx::ContainerIdx;
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::DiffMode;
@@ -33,6 +32,16 @@ use crate::{
     op::RawOp,
 };
 
+#[derive(Clone, Debug, Default, EnumAsInner)]
+pub enum TreeFractionalIndexConfigInner {
+    GenerateFractionalIndex {
+        jitter: u8,
+        rng: Box<rand::rngs::StdRng>,
+    },
+    #[default]
+    AlwaysDefault,
+}
+
 /// The state of movable tree.
 ///
 /// using flat representation
@@ -41,8 +50,8 @@ pub struct TreeState {
     idx: ContainerIdx,
     trees: FxHashMap<TreeID, TreeStateNode>,
     children: TreeChildrenCache,
-    rng: Box<rand::rngs::StdRng>,
-    fractional_index_config: Arc<RwLock<TreeFractionalIndexConfig>>,
+    fractional_index_config: TreeFractionalIndexConfigInner,
+    peer_id: PeerID,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -617,17 +626,13 @@ impl NodePosition {
 }
 
 impl TreeState {
-    pub fn new(
-        idx: ContainerIdx,
-        peer_id: PeerID,
-        fractional_index_config: Arc<RwLock<TreeFractionalIndexConfig>>,
-    ) -> Self {
+    pub fn new(idx: ContainerIdx, peer_id: PeerID) -> Self {
         Self {
             idx,
             trees: FxHashMap::default(),
             children: Default::default(),
-            fractional_index_config,
-            rng: Box::new(rand::rngs::StdRng::seed_from_u64(peer_id)),
+            fractional_index_config: TreeFractionalIndexConfigInner::default(),
+            peer_id,
         }
     }
 
@@ -841,8 +846,8 @@ impl TreeState {
         parent: &TreeParentId,
         index: usize,
     ) -> FractionalIndexGenResult {
-        match &*self.fractional_index_config.read().unwrap() {
-            TreeFractionalIndexConfig::GenerateFractionalIndex { jitter } => {
+        match &mut self.fractional_index_config {
+            TreeFractionalIndexConfigInner::GenerateFractionalIndex { jitter, rng } => {
                 if *jitter == 0 {
                     self.children
                         .entry(*parent)
@@ -852,10 +857,10 @@ impl TreeState {
                     self.children
                         .entry(*parent)
                         .or_default()
-                        .generate_fi_at_jitter(index, target, self.rng.as_mut(), *jitter)
+                        .generate_fi_at_jitter(index, target, rng.as_mut(), *jitter)
                 }
             }
-            TreeFractionalIndexConfig::AlwaysDefault => {
+            TreeFractionalIndexConfigInner::AlwaysDefault => {
                 FractionalIndexGenResult::Ok(FractionalIndex::default())
             }
         }
@@ -863,9 +868,27 @@ impl TreeState {
 
     pub(crate) fn is_fractional_index_enabled(&self) -> bool {
         !matches!(
-            &*self.fractional_index_config.read().unwrap(),
-            TreeFractionalIndexConfig::AlwaysDefault
+            self.fractional_index_config,
+            TreeFractionalIndexConfigInner::AlwaysDefault
         )
+    }
+
+    pub(crate) fn enable_generate_fractional_index(&mut self, jitter: u8) {
+        if let TreeFractionalIndexConfigInner::GenerateFractionalIndex {
+            jitter: old_jitter, ..
+        } = &mut self.fractional_index_config
+        {
+            *old_jitter = jitter;
+            return;
+        }
+        self.fractional_index_config = TreeFractionalIndexConfigInner::GenerateFractionalIndex {
+            jitter,
+            rng: Box::new(rand::rngs::StdRng::seed_from_u64(self.peer_id)),
+        };
+    }
+
+    pub(crate) fn disable_generate_fractional_index(&mut self) {
+        self.fractional_index_config = TreeFractionalIndexConfigInner::AlwaysDefault;
     }
 
     pub(crate) fn get_position(&self, target: &TreeID) -> Option<FractionalIndex> {
@@ -1533,11 +1556,7 @@ mod snapshot {
                 peers.push(PeerID::from_le_bytes(buf));
             }
 
-            let mut tree = TreeState::new(
-                idx,
-                ctx.peer,
-                ctx.configure.tree_fractional_index_config.clone(),
-            );
+            let mut tree = TreeState::new(idx, ctx.peer);
             let encoded: EncodedTree = serde_columnar::from_bytes(bytes)?;
             let fractional_indexes = PositionArena::decode(&encoded.fractional_indexes).unwrap();
             let fractional_indexes = fractional_indexes.parse_to_positions();

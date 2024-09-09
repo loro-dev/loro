@@ -7,8 +7,8 @@ function assertEquals(a: any, b: any) {
 
 describe("loro tree", () => {
   const loro = new LoroDoc();
-  loro.setEnableFractionalIndex(0);
   const tree = loro.getTree("root");
+  tree.setEnableFractionalIndex(0);
 
   it("create", () => {
     const root = tree.createNode();
@@ -121,8 +121,8 @@ describe("loro tree", () => {
 
 describe("loro tree node", ()=>{
     const loro = new LoroDoc();
-    loro.setEnableFractionalIndex(0);
     const tree = loro.getTree("root");
+    tree.setEnableFractionalIndex(0);
 
     it("create", () => {
         const root = tree.createNode();

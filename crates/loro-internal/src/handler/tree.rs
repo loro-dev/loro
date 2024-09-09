@@ -879,4 +879,39 @@ impl TreeHandler {
             }),
         }
     }
+
+    /// Set whether to generate fractional index for Tree Position. The LoroDoc is set to disable fractional index by default.
+    ///
+    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
+    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
+    ///
+    /// Generally speaking, jitter will affect the growth rate of document size.
+    /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
+    pub fn set_enable_fractional_index(&self, jitter: u8) {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unreachable!()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state_mut().unwrap();
+                a.enable_generate_fractional_index(jitter);
+            }),
+        }
+    }
+
+    /// Disable the fractional index generation for Tree Position when
+    /// you don't need the Tree's siblings to be sorted. The fractional index will be always default.
+    ///
+    /// The LoroDoc is set to disable fractional index by default.
+    pub fn set_disable_fractional_index(&self) {
+        match &self.inner {
+            MaybeDetached::Detached(_) => {
+                unreachable!()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state_mut().unwrap();
+                a.disable_generate_fractional_index();
+            }),
+        }
+    }
 }

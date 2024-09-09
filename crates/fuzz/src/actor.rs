@@ -45,7 +45,6 @@ impl Actor {
     pub fn new(id: PeerID) -> Self {
         let loro = LoroDoc::new();
         loro.set_peer_id(id).unwrap();
-        loro.set_disable_fractional_index();
         let undo = UndoManager::new(&loro);
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(MapTracker::empty(
             ContainerID::new_root("sys:root", ContainerType::Map),
@@ -120,6 +119,9 @@ impl Actor {
         }
 
         if let Some(idx) = idx {
+            if let Container::Tree(tree) = &idx {
+                tree.set_enable_fractional_index(0);
+            }
             self.add_new_container(idx);
         }
     }
