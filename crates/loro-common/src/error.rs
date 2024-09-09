@@ -88,7 +88,7 @@ pub enum LoroTreeError {
     TreeNodeNotExist(TreeID),
     #[error("The index({index}) should be <= the length of children ({len})")]
     IndexOutOfBound { len: usize, index: usize },
-    #[error("Fractional index is not enabled, you should enable it on the doc first.")]
+    #[error("Fractional index is not enabled, you should enable it first by `LoroTree::set_enable_fractional_index`")]
     FractionalIndexNotEnabled,
 }
 
