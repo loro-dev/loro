@@ -14,9 +14,10 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use super::{ContainerState, DiffApplyContext};
+use crate::configure::TreeFractionalIndexConfig;
 use crate::container::idx::ContainerIdx;
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::DiffMode;
@@ -41,10 +42,8 @@ pub struct TreeState {
     idx: ContainerIdx,
     trees: FxHashMap<TreeID, TreeStateNode>,
     children: TreeChildrenCache,
-    /// Whether the tree has fractional index. If false, the fractional index is always [`FractionalIndex::default`]
-    with_fractional_index: Arc<AtomicBool>,
-    rng: Option<rand::rngs::StdRng>,
-    jitter: Arc<AtomicU8>,
+    rng: Box<rand::rngs::StdRng>,
+    fractional_index_config: Arc<RwLock<TreeFractionalIndexConfig>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -622,19 +621,14 @@ impl TreeState {
     pub fn new(
         idx: ContainerIdx,
         peer_id: PeerID,
-        jitter_config: Arc<AtomicU8>,
-        with_fractional_index: Arc<AtomicBool>,
+        fractional_index_config: Arc<RwLock<TreeFractionalIndexConfig>>,
     ) -> Self {
-        let jitter = jitter_config.load(Ordering::Relaxed);
-        let use_jitter = jitter != 1;
-
         Self {
             idx,
             trees: FxHashMap::default(),
             children: Default::default(),
-            with_fractional_index,
-            rng: use_jitter.then_some(rand::rngs::StdRng::seed_from_u64(peer_id)),
-            jitter: jitter_config,
+            fractional_index_config,
+            rng: Box::new(rand::rngs::StdRng::seed_from_u64(peer_id)),
         }
     }
 
@@ -848,20 +842,23 @@ impl TreeState {
         parent: &TreeParentId,
         index: usize,
     ) -> FractionalIndexGenResult {
-        if !self.with_fractional_index.load(Ordering::Relaxed) {
-            return FractionalIndexGenResult::Ok(FractionalIndex::default());
-        }
-
-        if let Some(rng) = self.rng.as_mut() {
-            self.children
-                .entry(*parent)
-                .or_default()
-                .generate_fi_at_jitter(index, target, rng, self.jitter.load(Ordering::Relaxed))
-        } else {
-            self.children
-                .entry(*parent)
-                .or_default()
-                .generate_fi_at(index, target)
+        match &*self.fractional_index_config.read().unwrap() {
+            TreeFractionalIndexConfig::GenerateFractionalIndex { jitter } => {
+                if *jitter == 0 {
+                    self.children
+                        .entry(*parent)
+                        .or_default()
+                        .generate_fi_at(index, target)
+                } else {
+                    self.children
+                        .entry(*parent)
+                        .or_default()
+                        .generate_fi_at_jitter(index, target, self.rng.as_mut(), *jitter)
+                }
+            }
+            TreeFractionalIndexConfig::AlwaysDefault => {
+                FractionalIndexGenResult::Ok(FractionalIndex::default())
+            }
         }
     }
 
@@ -1533,8 +1530,7 @@ mod snapshot {
             let mut tree = TreeState::new(
                 idx,
                 ctx.peer,
-                ctx.configure.tree_position_jitter.clone(),
-                ctx.configure.tree_with_fractional_index.clone(),
+                ctx.configure.tree_fractional_index_config.clone(),
             );
             let encoded: EncodedTree = serde_columnar::from_bytes(bytes)?;
             let fractional_indexes = PositionArena::decode(&encoded.fractional_indexes).unwrap();

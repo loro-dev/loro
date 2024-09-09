@@ -17,7 +17,7 @@ use loro_delta::DeltaItem;
 use tracing::{info_span, instrument, trace};
 
 use crate::{
-    configure::{Configure, DefaultRandom, SecureRandomGenerator},
+    configure::{Configure, DefaultRandom, SecureRandomGenerator, TreeFractionalIndexConfig},
     container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
     cursor::Cursor,
     delta::TreeExternalDiff,
@@ -312,13 +312,12 @@ impl State {
         idx: ContainerIdx,
         peer: PeerID,
         jitter: Arc<AtomicU8>,
-        with_fractional_index: Arc<AtomicBool>,
+        tree_fractional_index_config: Arc<RwLock<TreeFractionalIndexConfig>>,
     ) -> Self {
         Self::TreeState(Box::new(TreeState::new(
             idx,
             peer,
-            jitter,
-            with_fractional_index,
+            tree_fractional_index_config,
         )))
     }
 
@@ -1483,8 +1482,7 @@ fn create_state_(idx: ContainerIdx, config: &Configure, peer: u64) -> State {
         ContainerType::Tree => State::TreeState(Box::new(TreeState::new(
             idx,
             peer,
-            config.tree_position_jitter.clone(),
-            config.tree_with_fractional_index.clone(),
+            config.tree_fractional_index_config.clone(),
         ))),
         ContainerType::MovableList => State::MovableListState(Box::new(MovableListState::new(idx))),
         #[cfg(feature = "counter")]

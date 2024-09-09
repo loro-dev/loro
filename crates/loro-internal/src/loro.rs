@@ -19,7 +19,7 @@ use tracing::{debug, debug_span, info, info_span, instrument, trace, warn};
 use crate::{
     arena::SharedArena,
     change::Timestamp,
-    configure::Configure,
+    configure::{Configure, TreeFractionalIndexConfig},
     container::{
         idx::ContainerIdx, list::list_op::InnerListOp, richtext::config::StyleConfigMap,
         IntoContainerId,
@@ -172,20 +172,28 @@ impl LoroDoc {
         self.config.set_merge_interval(interval);
     }
 
-    /// Set whether to use fractional index for Tree Position.
-    #[inline]
-    pub fn set_with_fractional_index(&self, with_fractional_index: bool) {
-        self.config.set_with_fractional_index(with_fractional_index);
-    }
-
-    /// Set the jitter of the tree position(Fractional Index).
+    /// Set whether to generate fractional index for Tree Position.
     ///
     /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
     /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
+    ///
     /// Generally speaking, jitter will affect the growth rate of document size.
+    /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
     #[inline]
-    pub fn set_fractional_index_jitter(&self, jitter: u8) {
-        self.config.set_fractional_index_jitter(jitter);
+    pub fn set_enable_fractional_index(&self, jitter: u8) {
+        self.config.set_tree_fractional_index_config(
+            TreeFractionalIndexConfig::GenerateFractionalIndex { jitter },
+        );
+    }
+
+    /// Disable the fractional index generation for Tree Position when
+    /// you don't need the Tree's siblings to be sorted.
+    ///
+    /// The fractional index will be always default.
+    #[inline]
+    pub fn set_disable_fractional_index(&self) {
+        self.config
+            .set_tree_fractional_index_config(TreeFractionalIndexConfig::AlwaysDefault);
     }
 
     #[inline]
