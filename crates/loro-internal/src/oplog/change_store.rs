@@ -197,10 +197,8 @@ impl ChangeStore {
         new_store.encode_from(start_vv, &start_frontiers, latest_vv, latest_frontiers)
     }
 
-    pub(super) fn export_from_fast_in_range(&self, spans: &[IdSpan]) -> Bytes {
+    pub(super) fn export_blocks_in_range<W: std::io::Write>(&self, spans: &[IdSpan], w: &mut W) {
         let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
-        let latest_vv: VersionVector = spans.iter().map(|x| x.id_last()).collect();
-        let start_vv: VersionVector = spans.iter().map(|x| x.id_start()).collect();
         for span in spans {
             let mut span = *span;
             span.normalize_();
@@ -216,12 +214,7 @@ impl ChangeStore {
             }
         }
 
-        new_store.encode_from(
-            &start_vv,
-            &Default::default(),
-            &latest_vv,
-            &Default::default(),
-        )
+        encode_blocks_in_store(new_store, &self.arena, w);
     }
 
     fn encode_from(
@@ -266,6 +259,32 @@ impl ChangeStore {
 
         Ok(changes)
     }
+
+    pub(crate) fn decode_block_bytes(
+        bytes: Bytes,
+        arena: &SharedArena,
+        self_vv: &VersionVector,
+    ) -> LoroResult<Vec<Change>> {
+        let mut ans = ChangesBlockBytes::new(bytes).parse(arena)?;
+        if ans.is_empty() {
+            return Ok(ans);
+        }
+
+        let start = self_vv.get(&ans[0].peer()).copied().unwrap_or(0);
+        ans.retain_mut(|c| {
+            if c.id.counter >= start {
+                true
+            } else if c.ctr_end() > start {
+                *c = c.slice((start - c.id.counter) as usize, c.atom_len());
+                true
+            } else {
+                false
+            }
+        });
+
+        Ok(ans)
+    }
+
     pub fn get_dag_nodes_that_contains(&self, id: ID) -> Option<Vec<AppDagNode>> {
         let block = self.get_block_that_contains(id)?;
         Some(block.content.iter_dag_nodes())
@@ -465,6 +484,48 @@ impl ChangeStore {
             .scan(Bound::Unbounded, Bound::Unbounded)
             .map(|(k, v)| k.len() + v.len())
             .sum()
+    }
+
+    pub(crate) fn export_blocks_from<W: std::io::Write>(
+        &self,
+        start_vv: &VersionVector,
+        latest_vv: &VersionVector,
+        w: &mut W,
+    ) {
+        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        for span in latest_vv.sub_iter(start_vv) {
+            // PERF: this can be optimized by reusing the current encoded blocks
+            // In the current method, it needs to parse and re-encode the blocks
+            for c in self.iter_changes(span) {
+                let start = ((start_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
+                    as usize)
+                    .min(c.atom_len());
+                let end = ((latest_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
+                    as usize)
+                    .min(c.atom_len());
+
+                assert_ne!(start, end);
+                let ch = c.slice(start, end);
+                new_store.insert_change(ch, false);
+            }
+        }
+
+        let arena = &self.arena;
+        encode_blocks_in_store(new_store, arena, w);
+    }
+}
+
+fn encode_blocks_in_store<W: std::io::Write>(
+    new_store: ChangeStore,
+    arena: &SharedArena,
+    w: &mut W,
+) {
+    let mut inner = new_store.inner.lock().unwrap();
+    for (_id, block) in inner.mem_parsed_kv.iter_mut() {
+        let bytes = block.to_bytes(&arena);
+        leb128::write::unsigned(w, bytes.bytes.len() as u64).unwrap();
+        trace!("encoded block_bytes = {:?}", &bytes.bytes);
+        w.write_all(&bytes.bytes).unwrap();
     }
 }
 

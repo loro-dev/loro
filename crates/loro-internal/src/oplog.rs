@@ -366,14 +366,19 @@ impl OpLog {
     }
 
     #[inline(always)]
-    pub(crate) fn export_from_fast(&self, vv: &VersionVector) -> Bytes {
+    pub(crate) fn export_oplog_from(&self, vv: &VersionVector) -> Bytes {
         self.change_store
             .export_from(vv, self.vv(), self.frontiers())
     }
 
     #[inline(always)]
-    pub(crate) fn export_from_fast_in_range(&self, spans: &[IdSpan]) -> Bytes {
-        self.change_store.export_from_fast_in_range(spans)
+    pub(crate) fn export_blocks_from<W: std::io::Write>(&self, vv: &VersionVector, w: &mut W) {
+        self.change_store.export_blocks_from(vv, self.vv(), w)
+    }
+
+    #[inline(always)]
+    pub(crate) fn export_blocks_in_range<W: std::io::Write>(&self, spans: &[IdSpan], w: &mut W) {
+        self.change_store.export_blocks_in_range(spans, w)
     }
 
     #[inline(always)]
@@ -545,7 +550,7 @@ impl OpLog {
 
     pub fn get_timestamp_for_next_txn(&self) -> Timestamp {
         if self.configure.record_timestamp() {
-            get_sys_timestamp()
+            (get_sys_timestamp() + 500) / 1000
         } else {
             0
         }

@@ -1566,3 +1566,15 @@ fn test_gc_can_remove_unreachable_states() -> LoroResult<()> {
 
     Ok(())
 }
+
+#[test]
+fn small_update_size() {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, "h").unwrap();
+    let bytes = doc.export(loro::ExportMode::Updates {
+        from: &Default::default(),
+    });
+    println!("Update bytes {:?}", dev_utils::ByteSize(bytes.len()));
+    assert!(bytes.len() < 90, "Large update size {}", bytes.len());
+}

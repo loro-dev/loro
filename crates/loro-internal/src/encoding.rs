@@ -178,9 +178,8 @@ pub(crate) fn decode_oplog(
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     match mode {
         EncodeMode::Rle | EncodeMode::Snapshot => encode_reordered::decode_updates(oplog, body),
-        EncodeMode::FastSnapshot | EncodeMode::FastUpdates => {
-            fast_snapshot::decode_oplog(oplog, body)
-        }
+        EncodeMode::FastSnapshot => fast_snapshot::decode_oplog(oplog, body),
+        EncodeMode::FastUpdates => fast_snapshot::decode_updates(oplog, body.to_vec().into()),
         EncodeMode::Auto => unreachable!(),
     }
 }
@@ -268,69 +267,39 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
 }
 
 pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
-    // HEADER
-    let mut ans = Vec::with_capacity(MIN_HEADER_SIZE);
-    ans.extend(MAGIC_BYTES);
-    let checksum = [0; 16];
-    ans.extend(checksum);
-    ans.extend(EncodeMode::FastSnapshot.to_bytes());
-
-    // BODY
-    fast_snapshot::encode_snapshot(doc, &mut ans);
-
-    // CHECKSUM in HEADER
-    let checksum_body = &ans[20..];
-    let checksum = xxhash_rust::xxh32::xxh32(checksum_body, XXH_SEED);
-    ans[16..20].copy_from_slice(&checksum.to_le_bytes());
-    ans
+    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+        fast_snapshot::encode_snapshot(doc, ans);
+    })
 }
 
 pub(crate) fn export_fast_updates(doc: &LoroDoc, vv: &VersionVector) -> Vec<u8> {
-    // HEADER
-    let mut ans = Vec::with_capacity(MIN_HEADER_SIZE);
-    ans.extend(MAGIC_BYTES);
-    let checksum = [0; 16];
-    ans.extend(checksum);
-    ans.extend(EncodeMode::FastUpdates.to_bytes());
-
-    // BODY
-    fast_snapshot::encode_updates(doc, vv, &mut ans);
-
-    // CHECKSUM in HEADER
-    let checksum_body = &ans[20..];
-    let checksum = xxhash_rust::xxh32::xxh32(checksum_body, XXH_SEED);
-    ans[16..20].copy_from_slice(&checksum.to_le_bytes());
-    ans
+    encode_with(EncodeMode::FastUpdates, &mut |ans| {
+        fast_snapshot::encode_updates(doc, vv, ans);
+    })
 }
 
 pub(crate) fn export_fast_updates_in_range(oplog: &OpLog, spans: &[IdSpan]) -> Vec<u8> {
-    // HEADER
-    let mut ans = Vec::with_capacity(MIN_HEADER_SIZE);
-    ans.extend(MAGIC_BYTES);
-    let checksum = [0; 16];
-    ans.extend(checksum);
-    ans.extend(EncodeMode::FastUpdates.to_bytes());
-
-    // BODY
-    fast_snapshot::encode_updates_in_range(oplog, spans, &mut ans);
-
-    // CHECKSUM in HEADER
-    let checksum_body = &ans[20..];
-    let checksum = xxhash_rust::xxh32::xxh32(checksum_body, XXH_SEED);
-    ans[16..20].copy_from_slice(&checksum.to_le_bytes());
-    ans
+    encode_with(EncodeMode::FastUpdates, &mut |ans| {
+        fast_snapshot::encode_updates_in_range(oplog, spans, ans);
+    })
 }
 
 pub(crate) fn export_gc_snapshot(doc: &LoroDoc, f: &Frontiers) -> Vec<u8> {
+    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+        gc::export_gc_snapshot(doc, f, ans).unwrap();
+    })
+}
+
+fn encode_with(mode: EncodeMode, f: &mut dyn FnMut(&mut Vec<u8>)) -> Vec<u8> {
     // HEADER
     let mut ans = Vec::with_capacity(MIN_HEADER_SIZE);
     ans.extend(MAGIC_BYTES);
     let checksum = [0; 16];
     ans.extend(checksum);
-    ans.extend(EncodeMode::FastSnapshot.to_bytes());
+    ans.extend(mode.to_bytes());
 
     // BODY
-    gc::export_gc_snapshot(doc, f, &mut ans).unwrap();
+    f(&mut ans);
 
     // CHECKSUM in HEADER
     let checksum_body = &ans[20..];
