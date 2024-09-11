@@ -1312,6 +1312,7 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(0)?;
     let tree = doc.get_tree("tree");
+    tree.enable_fractional_index(0);
     let root = tree.create(None)?;
     let child1 = tree.create(None)?;
     tree.mov(child1, root)?;
@@ -1439,6 +1440,7 @@ fn test_tree_with_other_ops_checkout_on_trimmed_doc() -> LoroResult<()> {
     doc.set_peer_id(0)?;
     let tree = doc.get_tree("tree");
     let root = tree.create(None)?;
+    tree.enable_fractional_index(0);
     let child1 = tree.create(None)?;
     tree.mov(child1, root)?;
     let child2 = tree.create(None).unwrap();

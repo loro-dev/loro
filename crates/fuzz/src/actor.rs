@@ -120,7 +120,7 @@ impl Actor {
 
         if let Some(idx) = idx {
             if let Container::Tree(tree) = &idx {
-                tree.set_enable_fractional_index(0);
+                tree.enable_fractional_index(0);
             }
             self.add_new_container(idx);
         }
