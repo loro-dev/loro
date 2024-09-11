@@ -555,7 +555,7 @@ pub fn decode_block(
     } = doc;
     let n_changes = n_changes as usize;
     let mut changes = Vec::with_capacity(n_changes);
-    let timestamp_decoder = DeltaOfDeltaDecoder::<i64>::new(&change_meta);
+    let timestamp_decoder = DeltaOfDeltaDecoder::<i64>::new(&change_meta).unwrap();
     let (timestamps, bytes) = timestamp_decoder.take_n_finalize(n_changes).unwrap();
     let commit_msg_len_decoder = AnyRleDecoder::<u32>::new(bytes);
     let (commit_msg_lens, commit_msgs) = commit_msg_len_decoder.take_n_finalize(n_changes).unwrap();
