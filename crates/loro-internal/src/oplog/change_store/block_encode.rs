@@ -78,12 +78,12 @@ use once_cell::sync::OnceCell;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use serde_columnar::{
-    columnar, AnyRleDecoder, AnyRleEncoder, BoolRleDecoder, BoolRleEncoder, DeltaOfDeltaEncoder,
-    DeltaRleDecoder, DeltaRleEncoder, Itertools,
+    columnar, AnyRleDecoder, AnyRleEncoder, BoolRleDecoder, BoolRleEncoder, DeltaOfDeltaDecoder,
+    DeltaOfDeltaEncoder, DeltaRleDecoder, DeltaRleEncoder, Itertools,
 };
 use tracing::info;
 
-use super::block_meta_encode::EncodedBlockMeta;
+use super::block_meta_encode::decode_changes_header;
 use super::delta_rle_encode::{UnsignedDeltaDecoder, UnsignedDeltaEncoder};
 use crate::arena::SharedArena;
 use crate::change::{Change, Timestamp};
@@ -101,7 +101,12 @@ struct EncodedBlock<'a> {
     counter_len: u32,
     lamport_start: u32,
     lamport_len: u32,
-    change_meta: EncodedBlockMeta<'a>,
+    n_changes: u32,
+    #[serde(borrow)]
+    header: Cow<'a, [u8]>,
+    // timestamp and commit messages
+    #[serde(borrow)]
+    change_meta: Cow<'a, [u8]>,
     // ---------------------- Ops ----------------------
     #[serde(borrow)]
     cids: Cow<'a, [u8]>,
@@ -261,12 +266,12 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     //      └────────────────┴─────────────────────────────────────────────┘
 
     // PeerIDs
-    let peer_register = registers.peer_register;
+    let mut peer_register = registers.peer_register;
     // .unwrap_vec();
     // let peer_bytes: Vec<u8> = peers.iter().flat_map(|p| p.to_le_bytes()).collect();
 
     // Change meta
-    let change_meta = EncodedBlockMeta::from_changes(block, peer_register);
+    let (header, change_meta) = encode_changes(block, &mut peer_register);
 
     let value_bytes = value_writer.finish();
     let out = EncodedBlock {
@@ -274,7 +279,9 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
         counter_len: (block.last().unwrap().ctr_end() - block[0].id.counter) as u32,
         lamport_start: block[0].lamport(),
         lamport_len: block.last().unwrap().lamport_end() - block[0].lamport(),
-        change_meta,
+        n_changes: block.len() as u32,
+        header: header.into(),
+        change_meta: change_meta.into(),
         cids: container_arena.encode().into(),
         keys: keys_bytes.into(),
         positions: position_bytes.into(),
@@ -323,6 +330,7 @@ use crate::encoding::value::{
     RawTreeMove, Value, ValueDecodedArenasTrait, ValueEncodeRegister, ValueKind, ValueReader,
     ValueWriter,
 };
+use crate::oplog::change_store::block_meta_encode::encode_changes;
 use crate::version::Frontiers;
 impl ValueEncodeRegister for Registers {
     fn key_mut(&mut self) -> &mut ValueRegister<loro_common::InternalString> {
@@ -403,96 +411,23 @@ pub fn decode_header(m_bytes: &[u8]) -> LoroResult<ChangesBlockHeader> {
 // MARK: decode_block_from_doc
 fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, LoroError> {
     let EncodedBlock {
-        change_meta,
+        n_changes,
+        header,
         counter_len,
         counter_start,
         lamport_len,
         lamport_start,
         ..
     } = doc;
-
-    let first_counter = *counter_start as Counter;
-    let n_changes = *n_changes as usize;
-    let peer_num = peers_bytes.len() / 8;
-    let mut peers = Vec::with_capacity(peer_num);
-    for i in 0..peer_num {
-        let peer_id =
-            PeerID::from_le_bytes((&peers_bytes[(8 * i)..(8 * (i + 1))]).try_into().unwrap());
-        peers.push(peer_id);
-    }
-
-    // ┌───────────────────┬──────────────────────────────────────────┐    │
-    // │ LEB First Counter │         N LEB128 Change AtomLen          │◁───┼─────  Important metadata
-    // └───────────────────┴──────────────────────────────────────────┘    │
-    let mut lengths = Vec::with_capacity(n_changes);
-    let mut lengths_bytes: &[u8] = lengths_bytes;
-    for _ in 0..n_changes {
-        lengths.push(leb128::read::unsigned(&mut lengths_bytes).unwrap() as Counter);
-    }
-
-    // ┌───────────────────┬────────────────────────┬─────────────────┐    │
-    // │N DepOnSelf BoolRle│ N Delta Rle Deps Lens  │    N Dep IDs    │◁───┘
-    // └───────────────────┴────────────────────────┴─────────────────┘
-
-    let mut dep_self_decoder = BoolRleDecoder::new(dep_on_self);
-    let mut this_counter = first_counter;
-    let mut deps: Vec<Frontiers> = Vec::with_capacity(n_changes);
-    let n = n_changes;
-    let mut deps_len = AnyRleDecoder::<u64>::new(dep_len);
-    let deps_peers_decoder = AnyRleDecoder::<u32>::new(dep_peer_idxs);
-    let deps_counters_decoder = AnyRleDecoder::<u32>::new(dep_counters);
-    let mut deps_peers_iter = deps_peers_decoder;
-    let mut deps_counters_iter = deps_counters_decoder;
-    for i in 0..n {
-        let mut f = Frontiers::default();
-
-        if dep_self_decoder.next().unwrap().unwrap() {
-            f.push(ID::new(peers[0], this_counter - 1))
-        }
-
-        let len = deps_len.next().unwrap().unwrap() as usize;
-        for _ in 0..len {
-            let peer_idx = deps_peers_iter.next().unwrap().unwrap() as usize;
-            let peer = peers[peer_idx];
-            let counter = deps_counters_iter.next().unwrap().unwrap() as Counter;
-            f.push(ID::new(peer, counter));
-        }
-
-        deps.push(f);
-        this_counter += lengths[i];
-    }
-
-    let mut counters = Vec::with_capacity(n + 1);
-    let mut last = first_counter;
-    for i in 0..n {
-        counters.push(last);
-        last += lengths[i];
-    }
-    counters.push(last);
-    assert_eq!(last, (counter_start + counter_len) as Counter);
-    let mut lamport_decoder = UnsignedDeltaDecoder::new(lamports, n_changes);
-    let mut lamports = Vec::with_capacity(n + 1);
-    for _ in 0..n {
-        lamports.push(lamport_decoder.next().unwrap() as Lamport);
-    }
-
-    let last_lamport = *lamports.last().unwrap();
-    lamports.push(last_lamport + lengths.last().copied().unwrap() as Lamport);
-    assert_eq!(
-        *lamports.last().unwrap(),
-        (lamport_start + lamport_len) as Lamport
+    let ans: ChangesBlockHeader = decode_changes_header(
+        &header,
+        *n_changes as usize,
+        *counter_start as Counter,
+        *counter_len as Counter,
+        *lamport_start,
+        *lamport_len,
     );
-    Ok(ChangesBlockHeader {
-        peer: peers[0],
-        counter: first_counter,
-        n_changes,
-        peers,
-        counters,
-        deps_groups: deps,
-        lamports,
-        keys: OnceCell::new(),
-        cids: OnceCell::new(),
-    })
+    Ok(ans)
 }
 
 #[columnar(vec, ser, de, iterable)]
@@ -625,6 +560,9 @@ pub fn decode_block(
         header_on_stack.as_ref().unwrap()
     });
     let EncodedBlock {
+        n_changes,
+        counter_start: first_counter,
+        header: header_bytes,
         change_meta,
         cids,
         keys,
@@ -634,9 +572,12 @@ pub fn decode_block(
         positions,
         ..
     } = doc;
-    let mut changes = Vec::with_capacity(n_changes as usize);
-    let mut timestamp_decoder: DeltaRleDecoder<i64> = DeltaRleDecoder::new(&timestamps);
-    let mut commit_msg_len_decoder = AnyRleDecoder::<u32>::new(&commit_msg_lengths);
+    let n_changes = n_changes as usize;
+    let mut changes = Vec::with_capacity(n_changes);
+    let mut timestamp_decoder = DeltaOfDeltaDecoder::<i64>::new(&change_meta);
+    let (timestamps, bytes) = timestamp_decoder.take_n_finalize(n_changes).unwrap();
+    let mut commit_msg_len_decoder = AnyRleDecoder::<u32>::new(&bytes);
+    let (commit_msg_lens, commit_msgs) = commit_msg_len_decoder.take_n_finalize(n_changes).unwrap();
     let mut commit_msg_index = 0;
     let keys = header.keys.get_or_init(|| decode_keys(&keys));
     let decode_arena = ValueDecodeArena {
@@ -667,9 +608,9 @@ pub fn decode_block(
         .delete_start_ids
         .into_iter()
         .map(Ok);
-    for i in 0..(n_changes as usize) {
+    for i in 0..n_changes {
         let commit_msg: Option<Arc<str>> = {
-            let len = commit_msg_len_decoder.next().unwrap().unwrap();
+            let len = commit_msg_lens[i];
             if len == 0 {
                 None
             } else {
@@ -691,7 +632,7 @@ pub fn decode_block(
             deps: header.deps_groups[i].clone(),
             id: ID::new(header.peer, header.counters[i]),
             lamport: header.lamports[i],
-            timestamp: timestamp_decoder.next().unwrap().unwrap() as Timestamp,
+            timestamp: timestamps[i] as Timestamp,
             commit_msg,
         })
     }
