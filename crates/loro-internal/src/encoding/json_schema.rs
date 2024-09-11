@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use either::Either;
 use loro_common::{
-    ContainerID, ContainerType, HasCounterSpan, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID,
+    ContainerID, ContainerType, HasCounterSpan, IdLp, LoroError, LoroResult, LoroValue, PeerID,
+    TreeID, ID,
 };
 use rle::{HasLength, RleVec, Sliceable};
 
@@ -21,7 +22,7 @@ use crate::{
     OpLog, VersionVector,
 };
 
-use super::encode_reordered::{import_changes_to_oplog, ValueRegister};
+use super::encode_reordered::{import_changes_to_oplog, ImportChangesResult, ValueRegister};
 use json::{JsonOpContent, JsonSchema};
 
 const SCHEMA_VERSION: u8 = 1;
@@ -65,10 +66,18 @@ pub(crate) fn export_json<'a, 'c: 'a>(
 
 pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<()> {
     let changes = decode_changes(json, &oplog.arena)?;
-    let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
+    let ImportChangesResult {
+        latest_ids,
+        pending_changes,
+        changes_that_deps_on_trimmed_history,
+    } = import_changes_to_oplog(changes, oplog);
     oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
-    Ok(())
+    if changes_that_deps_on_trimmed_history.is_empty() {
+        Ok(())
+    } else {
+        Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion)
+    }
 }
 
 fn init_encode<'s, 'a: 's>(

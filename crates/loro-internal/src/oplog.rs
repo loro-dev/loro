@@ -108,7 +108,7 @@ impl OpLog {
             ),
             change_store: change_store.clone(),
             dag: self.dag.fork(change_store),
-            arena: self.arena.clone(),
+            arena,
             next_lamport: self.next_lamport,
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
@@ -348,9 +348,7 @@ impl OpLog {
         &mut self,
         remote_changes: Vec<Change>,
     ) -> Result<(), LoroError> {
-        let latest_vv = self.dag.vv().clone();
-        self.extend_pending_changes_with_unknown_lamport(remote_changes, &latest_vv);
-        Ok(())
+        self.extend_pending_changes_with_unknown_lamport(remote_changes)
     }
 
     /// lookup change by id.

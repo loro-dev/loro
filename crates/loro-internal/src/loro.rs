@@ -434,14 +434,10 @@ impl LoroDoc {
             }
 
             if !local_update_subs.is_empty() {
-                trace!("exporting fast updates");
                 let bytes =
                     { export_fast_updates_in_range(&oplog.try_lock().unwrap(), &[id_span]) };
-                trace!("exported fast updates");
                 local_update_subs.retain(&(), |callback| {
-                    trace!("calling callback");
                     callback(&bytes);
-                    trace!("called callback");
                     true
                 });
             }
@@ -491,7 +487,7 @@ impl LoroDoc {
     fn _import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
         let parsed = parse_header_and_body(bytes)?;
         info!("Importing with mode={:?}", &parsed.mode);
-        match parsed.mode {
+        let result = match parsed.mode {
             EncodeMode::Rle => {
                 if self.state.lock().unwrap().is_in_txn() {
                     return Err(LoroError::ImportWhenInTxn);
@@ -506,28 +502,28 @@ impl LoroDoc {
                 self.update_oplog_and_apply_delta_to_state_if_needed(
                     |oplog| oplog.decode(parsed),
                     origin,
-                )?;
+                )
             }
             EncodeMode::Snapshot => {
                 if self.can_reset_with_snapshot() {
                     tracing::info!("Init by snapshot {}", self.peer_id());
-                    decode_snapshot(self, parsed.mode, parsed.body)?;
+                    decode_snapshot(self, parsed.mode, parsed.body)
                 } else {
                     self.update_oplog_and_apply_delta_to_state_if_needed(
                         |oplog| oplog.decode(parsed),
                         origin,
-                    )?;
+                    )
                 }
             }
             EncodeMode::FastSnapshot => {
                 if self.can_reset_with_snapshot() {
                     tracing::info!("Init by fast snapshot {}", self.peer_id());
-                    decode_snapshot(self, parsed.mode, parsed.body)?;
+                    decode_snapshot(self, parsed.mode, parsed.body)
                 } else {
                     self.update_oplog_and_apply_delta_to_state_if_needed(
                         |oplog| oplog.decode(parsed),
                         origin,
-                    )?;
+                    )
 
                     // let new_doc = LoroDoc::new();
                     // new_doc.import(bytes)?;
@@ -535,19 +531,17 @@ impl LoroDoc {
                     // return self.import_with(updates.as_slice(), origin);
                 }
             }
-            EncodeMode::FastUpdates => {
-                self.update_oplog_and_apply_delta_to_state_if_needed(
-                    |oplog| oplog.decode(parsed),
-                    origin,
-                )?;
-            }
+            EncodeMode::FastUpdates => self.update_oplog_and_apply_delta_to_state_if_needed(
+                |oplog| oplog.decode(parsed),
+                origin,
+            ),
             EncodeMode::Auto => {
                 unreachable!()
             }
         };
 
         self.emit_events();
-        Ok(())
+        result
     }
 
     #[tracing::instrument(skip_all)]
@@ -660,16 +654,15 @@ impl LoroDoc {
     /// only supports backward compatibility but not forward compatibility.
     #[tracing::instrument(skip_all)]
     pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> LoroResult<()> {
-        trace!("cur_peer={}", self.peer_id());
         let json = json.try_into().map_err(|_| LoroError::InvalidJsonSchema)?;
         self.commit_then_stop();
-        self.update_oplog_and_apply_delta_to_state_if_needed(
+        let result = self.update_oplog_and_apply_delta_to_state_if_needed(
             |oplog| crate::encoding::json_schema::import_json(oplog, json),
             Default::default(),
-        )?;
+        );
         self.emit_events();
         self.renew_txn_if_auto_commit();
-        Ok(())
+        result
     }
 
     pub fn export_json_updates(
@@ -1144,11 +1137,6 @@ impl LoroDoc {
             return Err(LoroError::SwitchToTrimmedVersion);
         }
 
-        trace!(
-            "oplog: vv={:?} frontiers={:?}",
-            oplog.vv(),
-            oplog.frontiers()
-        );
         let mut state = self.state.lock().unwrap();
         self.detached.store(true, Release);
         let mut calc = self.diff_calculator.lock().unwrap();

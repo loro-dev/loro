@@ -1,3 +1,5 @@
+use std::sync::{atomic::AtomicBool, Arc};
+
 use super::gen_action;
 use loro::{Frontiers, LoroDoc, ID};
 
@@ -169,5 +171,48 @@ fn test_richtext_gc() -> anyhow::Result<()> {
     assert_eq!(new_doc.get_text("text").to_string(), "321");
     new_doc.checkout_to_latest();
     assert_eq!(new_doc.get_text("text").to_string(), "321456");
+    Ok(())
+}
+
+#[test]
+fn import_updates_depend_on_trimmed_history_should_raise_error() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    gen_action(&doc, 123, 4);
+    doc.commit();
+    let doc2 = doc.fork();
+    doc2.get_text("text").insert(0, "1")?;
+    doc2.commit();
+    gen_action(&doc, 123, 2);
+    doc.commit();
+    let gc_snapshot = doc.export(loro::ExportMode::GcSnapshot(&doc.oplog_frontiers()));
+    doc.get_text("hello").insert(0, "world").unwrap();
+    doc2.import(&doc.export(loro::ExportMode::Updates {
+        from: &doc2.oplog_vv(),
+    }))
+    .unwrap();
+
+    let new_doc = LoroDoc::new();
+    new_doc.import(&gc_snapshot).unwrap();
+
+    let ran = Arc::new(AtomicBool::new(false));
+    let ran_clone = ran.clone();
+    let _sub = new_doc.subscribe_root(Arc::new(move |e| {
+        ran_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(e.events.len() == 1);
+        match e.events[0].diff {
+            loro::event::Diff::Text(_) => {}
+            _ => {
+                unreachable!()
+            }
+        }
+    }));
+    let result = new_doc.import(&doc2.export(loro::ExportMode::Updates {
+        from: &new_doc.oplog_vv(),
+    }));
+    assert!(result.is_err());
+    // But updates from doc should be fine ("hello": "world")
+    assert_eq!(new_doc.get_text("hello").to_string(), *"world");
+    assert!(ran.load(std::sync::atomic::Ordering::Relaxed));
     Ok(())
 }
