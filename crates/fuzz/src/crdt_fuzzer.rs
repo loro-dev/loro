@@ -380,15 +380,13 @@ pub fn test_multi_sites_with_gc(
                 Action::Sync { from, to } => {
                     if *to == 0 {
                         *to = 1;
-                        if *from == *to {
-                            *from = 2;
-                        }
                     }
                 }
                 Action::SyncAll => {}
             }
         }
 
+        fuzzer.pre_process(action);
         info_span!("ApplyAction", ?action).in_scope(|| {
             applied.push(action.clone());
             info!("OptionsTable \n{}", (&applied).table());
