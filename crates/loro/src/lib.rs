@@ -13,12 +13,14 @@ use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::json::JsonChange;
+use loro_internal::loro_common::LoroTreeError;
 use loro_internal::obs::LocalUpdateCallback;
 use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
+use loro_internal::TreeParentId;
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
@@ -158,16 +160,6 @@ impl LoroDoc {
     #[inline]
     pub fn set_change_merge_interval(&self, interval: i64) {
         self.doc.set_change_merge_interval(interval);
-    }
-
-    /// Set the jitter of the tree position(Fractional Index).
-    ///
-    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
-    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
-    /// Generally speaking, jitter will affect the growth rate of document size.
-    #[inline]
-    pub fn set_fractional_index_jitter(&self, jitter: u8) {
-        self.doc.set_fractional_index_jitter(jitter);
     }
 
     /// Set the rich text format configuration of the document.
@@ -1465,10 +1457,8 @@ impl LoroTree {
     /// // create a new child
     /// let child = tree.create(root).unwrap();
     /// ```
-    pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
-        let parent = parent.into();
-        let index = self.children_num(parent).unwrap_or(0);
-        self.handler.create_at(parent, index)
+    pub fn create<T: Into<TreeParentId>>(&self, parent: T) -> LoroResult<TreeID> {
+        self.handler.create(parent.into())
     }
 
     /// Get the root nodes of the forest.
@@ -1488,17 +1478,18 @@ impl LoroTree {
     ///
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
+    /// // enable generate fractional index
+    /// tree.set_enable_fractional_index(0);
     /// // create a root
     /// let root = tree.create(None).unwrap();
     /// // create a new child at index 0
     /// let child = tree.create_at(root, 0).unwrap();
     /// ```
-    pub fn create_at<T: Into<Option<TreeID>>>(
-        &self,
-        parent: T,
-        index: usize,
-    ) -> LoroResult<TreeID> {
-        self.handler.create_at(parent, index)
+    pub fn create_at<T: Into<TreeParentId>>(&self, parent: T, index: usize) -> LoroResult<TreeID> {
+        if !self.handler.is_fractional_index_enabled() {
+            return Err(LoroTreeError::FractionalIndexNotEnabled.into());
+        }
+        self.handler.create_at(parent.into(), index)
     }
 
     /// Move the `target` node to be a child of the `parent` node.
@@ -1517,10 +1508,8 @@ impl LoroTree {
     /// // move `root2` to be a child of `root`.
     /// tree.mov(root2, root).unwrap();
     /// ```
-    pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
-        let parent = parent.into();
-        let index = self.children_num(parent).unwrap_or(0);
-        self.handler.move_to(target, parent, index)
+    pub fn mov<T: Into<TreeParentId>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
+        self.handler.mov(target, parent.into())
     }
 
     /// Move the `target` node to be a child of the `parent` node at the given index.
@@ -1533,19 +1522,23 @@ impl LoroTree {
     ///
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
+    /// // enable generate fractional index
+    /// tree.set_enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root2` to be a child of `root` at index 0.
     /// tree.mov_to(root2, root, 0).unwrap();
     /// ```
-    pub fn mov_to<T: Into<Option<TreeID>>>(
+    pub fn mov_to<T: Into<TreeParentId>>(
         &self,
         target: TreeID,
         parent: T,
         to: usize,
     ) -> LoroResult<()> {
-        let parent = parent.into();
-        self.handler.move_to(target, parent, to)
+        if !self.handler.is_fractional_index_enabled() {
+            return Err(LoroTreeError::FractionalIndexNotEnabled.into());
+        }
+        self.handler.move_to(target, parent.into(), to)
     }
 
     /// Move the `target` node to be a child after the `after` node with the same parent.
@@ -1557,12 +1550,17 @@ impl LoroTree {
     ///
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
+    /// // enable generate fractional index
+    /// tree.set_enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root` to be a child after `root2`.
     /// tree.mov_after(root, root2).unwrap();
     /// ```
     pub fn mov_after(&self, target: TreeID, after: TreeID) -> LoroResult<()> {
+        if !self.handler.is_fractional_index_enabled() {
+            return Err(LoroTreeError::FractionalIndexNotEnabled.into());
+        }
         self.handler.mov_after(target, after)
     }
 
@@ -1575,12 +1573,17 @@ impl LoroTree {
     ///
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
+    /// // enable generate fractional index
+    /// tree.set_enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root` to be a child before `root2`.
     /// tree.mov_before(root, root2).unwrap();
     /// ```
     pub fn mov_before(&self, target: TreeID, before: TreeID) -> LoroResult<()> {
+        if !self.handler.is_fractional_index_enabled() {
+            return Err(LoroTreeError::FractionalIndexNotEnabled.into());
+        }
         self.handler.mov_before(target, before)
     }
 
@@ -1625,7 +1628,7 @@ impl LoroTree {
     ///
     /// - If the target node does not exist, return `None`.
     /// - If the target node is a root node, return `Some(None)`.
-    pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
+    pub fn parent(&self, target: TreeID) -> Option<TreeParentId> {
         self.handler.get_node_parent(&target)
     }
 
@@ -1642,13 +1645,14 @@ impl LoroTree {
     /// Return all children of the target node.
     ///
     /// If the parent node does not exist, return `None`.
-    pub fn children(&self, parent: Option<TreeID>) -> Option<Vec<TreeID>> {
-        self.handler.children(parent)
+    pub fn children<T: Into<TreeParentId>>(&self, parent: T) -> Option<Vec<TreeID>> {
+        self.handler.children(&parent.into())
     }
 
     /// Return the number of children of the target node.
-    pub fn children_num(&self, parent: Option<TreeID>) -> Option<usize> {
-        self.handler.children_num(parent)
+    pub fn children_num<T: Into<TreeParentId>>(&self, parent: T) -> Option<usize> {
+        let parent: TreeParentId = parent.into();
+        self.handler.children_num(&parent)
     }
 
     /// Return container id of the tree.
@@ -1681,6 +1685,30 @@ impl LoroTree {
     #[allow(non_snake_case)]
     pub fn __internal__next_tree_id(&self) -> TreeID {
         self.handler.__internal__next_tree_id()
+    }
+
+    /// Whether the fractional index is enabled.
+    pub fn is_fractional_index_enabled(&self) -> bool {
+        self.handler.is_fractional_index_enabled()
+    }
+
+    /// Set whether to generate fractional index for Tree Position.
+    ///
+    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
+    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
+    ///
+    /// Generally speaking, jitter will affect the growth rate of document size.
+    /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
+    #[inline]
+    pub fn set_enable_fractional_index(&self, jitter: u8) {
+        self.handler.set_enable_fractional_index(jitter);
+    }
+
+    /// Disable the fractional index generation for Tree Position when
+    /// you don't need the Tree's siblings to be sorted. The fractional index will be always default.
+    #[inline]
+    pub fn set_disable_fractional_index(&self) {
+        self.handler.set_disable_fractional_index();
     }
 }
 

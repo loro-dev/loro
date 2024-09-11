@@ -1,14 +1,14 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { Loro } from "../src";
+import { LoroDoc } from "../src";
 import { Container, LoroText, OpId } from "../src";
 import { setDebug } from "loro-wasm";
 
 it("#211", () => {
-  const loro1 = new Loro();
+  const loro1 = new LoroDoc();
   loro1.setPeerId(0n);
   const text1 = loro1.getText("text");
 
-  const loro2 = new Loro();
+  const loro2 = new LoroDoc();
   loro2.setPeerId(1n);
   const text2 = loro2.getText("text");
 
@@ -59,7 +59,7 @@ it("#211", () => {
   show(text1, loro1, text2, loro2);
 });
 
-function show(text1: LoroText, loro1: Loro, text2: LoroText, loro2: Loro) {
+function show(text1: LoroText, loro1: LoroDoc, text2: LoroText, loro2: LoroDoc) {
   // console.log(`    #0 has content: ${JSON.stringify(text1.toString())}`);
   // console.log(`    #0 has frontiers: ${showFrontiers(loro1.frontiers())}`);
   // console.log(`    #1 has content: ${JSON.stringify(text2.toString())}`);

@@ -1,6 +1,4 @@
-#[cfg(feature = "counter")]
-use super::counter_state::CounterState;
-use super::{ContainerCreationContext, MovableListState, State, TreeState};
+use super::{ContainerCreationContext, State};
 use crate::{
     arena::SharedArena,
     configure::Configure,
@@ -504,7 +502,7 @@ mod encode {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{ListHandler, LoroDoc, MapHandler, MovableListHandler};
+    use crate::{state::TreeParentId, ListHandler, LoroDoc, MapHandler, MovableListHandler};
 
     fn decode_container_store(bytes: Bytes) -> ContainerStore {
         let mut new_store = ContainerStore::new(
@@ -529,8 +527,8 @@ mod test {
         list.push("item1").unwrap();
 
         let tree = doc.get_tree("tree");
-        let root = tree.create(None).unwrap();
-        tree.create_at(Some(root), 0).unwrap();
+        let root = tree.create(TreeParentId::Root).unwrap();
+        tree.create_at(TreeParentId::Node(root), 0).unwrap();
 
         let movable_list = doc.get_movable_list("movable_list");
         movable_list.insert(0, "movable_item").unwrap();

@@ -50,7 +50,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
 
     fn apply_change(
         &mut self,
-        _oplog: &OpLog,
+        oplog: &OpLog,
         op: crate::op::RichOp,
         _vv: Option<&crate::VersionVector>,
     ) {

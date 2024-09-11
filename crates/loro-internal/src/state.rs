@@ -1,9 +1,8 @@
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
     io::Write,
     sync::{
-        atomic::{AtomicU64, AtomicU8, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc, Mutex, RwLock, Weak,
     },
 };
@@ -15,7 +14,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
-use tracing::{info_span, instrument, trace};
+use tracing::{info_span, instrument};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -50,9 +49,8 @@ pub(crate) use container_store::GcStore;
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
-pub(crate) use tree_state::{
-    get_meta_value, FractionalIndexGenResult, NodePosition, TreeParentId, TreeState,
-};
+pub use tree_state::TreeParentId;
+pub(crate) use tree_state::{get_meta_value, FractionalIndexGenResult, NodePosition, TreeState};
 
 use self::{container_store::ContainerWrapper, unknown_state::UnknownState};
 
@@ -311,8 +309,8 @@ impl State {
         Self::RichtextState(Box::new(RichtextState::new(idx, config)))
     }
 
-    pub fn new_tree(idx: ContainerIdx, peer: PeerID, jitter: Arc<AtomicU8>) -> Self {
-        Self::TreeState(Box::new(TreeState::new(idx, peer, jitter)))
+    pub fn new_tree(idx: ContainerIdx, peer: PeerID) -> Self {
+        Self::TreeState(Box::new(TreeState::new(idx, peer)))
     }
 
     pub fn new_unknown(idx: ContainerIdx) -> Self {
@@ -494,7 +492,6 @@ impl DocState {
             panic!("apply_diff should not be called in a transaction");
         }
 
-        trace!("ApplyDiff {:?}", &diff.new_version);
         let is_recording = self.is_recording();
         self.pre_txn(diff.origin.clone(), diff.by);
         let Cow::Owned(mut diffs) = std::mem::take(&mut diff.diff) else {
@@ -1487,11 +1484,7 @@ fn create_state_(idx: ContainerIdx, config: &Configure, peer: u64) -> State {
             idx,
             config.text_style_config.clone(),
         ))),
-        ContainerType::Tree => State::TreeState(Box::new(TreeState::new(
-            idx,
-            peer,
-            config.tree_position_jitter.clone(),
-        ))),
+        ContainerType::Tree => State::TreeState(Box::new(TreeState::new(idx, peer))),
         ContainerType::MovableList => State::MovableListState(Box::new(MovableListState::new(idx))),
         #[cfg(feature = "counter")]
         ContainerType::Counter => {

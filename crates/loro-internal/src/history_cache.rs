@@ -254,7 +254,7 @@ impl ContainerHistoryCache {
                                             id: node.last_move_op,
                                             op: Arc::new(TreeOp::Create {
                                                 target: node.id,
-                                                parent: node.parent,
+                                                parent: node.parent.tree_id(),
                                                 position: node.position.clone(),
                                             }),
                                             effected: true,
