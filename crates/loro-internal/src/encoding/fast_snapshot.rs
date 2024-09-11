@@ -20,7 +20,7 @@ use bytes::{Buf, Bytes};
 use loro_common::{IdSpan, LoroError, LoroResult};
 use tracing::trace;
 
-use super::encode_reordered::import_changes_to_oplog;
+use super::encode_reordered::{import_changes_to_oplog, ImportChangesResult};
 
 pub(crate) const EMPTY_MARK: &[u8] = b"E";
 pub(super) struct Snapshot {
@@ -217,9 +217,16 @@ pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<(), LoroEr
         oplog.vv(),
     )?;
     changes.sort_unstable_by_key(|x| x.lamport);
-    let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
+    let ImportChangesResult {
+        latest_ids,
+        pending_changes,
+        changes_that_deps_on_trimmed_history,
+    } = import_changes_to_oplog(changes, oplog);
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
+    if !changes_that_deps_on_trimmed_history.is_empty() {
+        return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+    }
     Ok(())
 }

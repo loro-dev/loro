@@ -155,6 +155,10 @@ impl ImVersionVector {
     }
 
     pub(crate) fn includes_id(&self, x: ID) -> bool {
+        if self.is_empty() {
+            return false;
+        }
+
         self.get(&x.peer).copied().unwrap_or(0) > x.counter
     }
 }
