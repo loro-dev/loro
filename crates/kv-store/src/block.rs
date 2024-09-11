@@ -29,6 +29,7 @@ impl LargeValueBlock{
         if !compression_type.is_none() && w.len() - origin_len > self.value_bytes.len(){
             w.truncate(origin_len);
             compress(w, &self.value_bytes, CompressionType::None);
+            ensure_cov::notify_cov("kv_store::block::LargeValueBlock::encode::compress_fallback");
             compression_type = CompressionType::None;
         }
         let checksum = xxhash_rust::xxh32::xxh32(&w[origin_len..], XXH_SEED);
@@ -74,6 +75,7 @@ impl NormalBlock {
         if !compression_type.is_none() && w.len() - origin_len > buf.len(){
             w.truncate(origin_len);
             compress(w, &buf, CompressionType::None);
+            ensure_cov::notify_cov("kv_store::block::NormalBlock::encode::compress_fallback");
             compression_type = CompressionType::None;
         }
         let checksum = xxhash_rust::xxh32::xxh32(&w[origin_len..], XXH_SEED);
