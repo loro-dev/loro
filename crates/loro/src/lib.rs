@@ -1479,7 +1479,7 @@ impl LoroTree {
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
     /// // enable generate fractional index
-    /// tree.set_enable_fractional_index(0);
+    /// tree.enable_fractional_index(0);
     /// // create a root
     /// let root = tree.create(None).unwrap();
     /// // create a new child at index 0
@@ -1523,7 +1523,7 @@ impl LoroTree {
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
     /// // enable generate fractional index
-    /// tree.set_enable_fractional_index(0);
+    /// tree.enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root2` to be a child of `root` at index 0.
@@ -1551,7 +1551,7 @@ impl LoroTree {
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
     /// // enable generate fractional index
-    /// tree.set_enable_fractional_index(0);
+    /// tree.enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root` to be a child after `root2`.
@@ -1574,7 +1574,7 @@ impl LoroTree {
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
     /// // enable generate fractional index
-    /// tree.set_enable_fractional_index(0);
+    /// tree.enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root` to be a child before `root2`.
@@ -1701,14 +1701,14 @@ impl LoroTree {
     /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
     #[inline]
     pub fn enable_fractional_index(&self, jitter: u8) {
-        self.handler.set_enable_fractional_index(jitter);
+        self.handler.enable_fractional_index(jitter);
     }
 
     /// Disable the fractional index generation for Tree Position when
     /// you don't need the Tree's siblings to be sorted. The fractional index will be always default.
     #[inline]
     pub fn disable_fractional_index(&self) {
-        self.handler.set_disable_fractional_index();
+        self.handler.disable_fractional_index();
     }
 }
 

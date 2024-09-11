@@ -545,7 +545,7 @@ impl OpLog {
 
     pub fn get_timestamp_for_next_txn(&self) -> Timestamp {
         if self.configure.record_timestamp() {
-            get_sys_timestamp()
+            (get_sys_timestamp() + 500) / 1000
         } else {
             0
         }

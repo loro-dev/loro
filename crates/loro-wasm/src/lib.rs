@@ -3558,16 +3558,16 @@ impl LoroTree {
     ///
     /// Generally speaking, jitter will affect the growth rate of document size.
     /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
-    #[wasm_bindgen(js_name = "setEnableFractionalIndex")]
-    pub fn set_enable_fractional_index(&self, jitter: u8) {
-        self.handler.set_enable_fractional_index(jitter);
+    #[wasm_bindgen(js_name = "enableFractionalIndex")]
+    pub fn enable_fractional_index(&self, jitter: u8) {
+        self.handler.enable_fractional_index(jitter);
     }
 
     /// Disable the fractional index generation for Tree Position when
     /// you don't need the Tree's siblings to be sorted. The fractional index will be always default.
-    #[wasm_bindgen(js_name = "setDisableFractionalIndex")]
-    pub fn set_disable_fractional_index(&self) {
-        self.handler.set_disable_fractional_index();
+    #[wasm_bindgen(js_name = "disableFractionalIndex")]
+    pub fn disable_fractional_index(&self) {
+        self.handler.disable_fractional_index();
     }
 }
 

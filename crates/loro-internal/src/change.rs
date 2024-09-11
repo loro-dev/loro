@@ -264,7 +264,7 @@ pub(crate) fn get_sys_timestamp() -> Timestamp {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_secs()
+        .as_millis()
         .as_()
 }
 
@@ -281,7 +281,7 @@ pub fn get_sys_timestamp() -> Timestamp {
         pub fn now() -> f64;
     }
 
-    now() as Timestamp / 1000
+    now() as Timestamp
 }
 
 #[cfg(test)]

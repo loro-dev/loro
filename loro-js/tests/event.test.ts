@@ -3,6 +3,7 @@ import {
   Delta,
   getType,
   ListDiff,
+  Loro,
   LoroDoc,
   LoroEventBatch,
   LoroList,

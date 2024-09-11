@@ -360,7 +360,7 @@ it("enable timestamp", () => {
   doc.commit();
   {
     const c = doc.getChangeAt({ peer: "1", counter: 4 });
-    expect(c.timestamp).toBeCloseTo(Date.now(), -1);
+    expect(c.timestamp).toBeCloseTo(Date.now() / 1000, -1);
   }
 });
 
