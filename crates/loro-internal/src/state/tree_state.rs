@@ -979,7 +979,7 @@ impl ContainerState for TreeState {
                     }
                     TreeInternalDiff::Move { parent, position } => {
                         let old_parent = self.trees.get(&target).unwrap().parent;
-                        let old_index = self.get_index_by_tree_id(&target).unwrap();
+                        let old_index = self.get_index_by_tree_id(&target);
                         if need_check {
                             let was_alive = !self.is_node_deleted(&target);
                             if self
@@ -993,7 +993,7 @@ impl ContainerState for TreeState {
                                             target,
                                             action: TreeExternalDiff::Delete {
                                                 old_parent,
-                                                old_index,
+                                                old_index: old_index.unwrap(),
                                             },
                                         });
                                     }
@@ -1007,7 +1007,7 @@ impl ContainerState for TreeState {
                                             index: self.get_index_by_tree_id(&target).unwrap(),
                                             position: position.clone(),
                                             old_parent,
-                                            old_index,
+                                            old_index: old_index.unwrap(),
                                         },
                                     });
                                 } else {
@@ -1034,7 +1034,7 @@ impl ContainerState for TreeState {
                                     index,
                                     position: position.clone(),
                                     old_parent,
-                                    old_index,
+                                    old_index: old_index.unwrap(),
                                 },
                             });
                         };
