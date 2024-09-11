@@ -979,9 +979,10 @@ impl ContainerState for TreeState {
                     }
                     TreeInternalDiff::Move { parent, position } => {
                         let old_parent = self.trees.get(&target).unwrap().parent;
-                        let old_index = self.get_index_by_tree_id(&target).unwrap();
+                        // If this is some, the node is still alive at the moment
+                        let old_index = self.get_index_by_tree_id(&target);
                         if need_check {
-                            let was_alive = !self.is_node_deleted(&target);
+                            let was_alive = old_index.is_some();
                             if self
                                 .mov(target, *parent, last_move_op, Some(position.clone()), true)
                                 .is_ok()
@@ -993,7 +994,7 @@ impl ContainerState for TreeState {
                                             target,
                                             action: TreeExternalDiff::Delete {
                                                 old_parent,
-                                                old_index,
+                                                old_index: old_index.unwrap(),
                                             },
                                         });
                                     }
@@ -1007,7 +1008,7 @@ impl ContainerState for TreeState {
                                             index: self.get_index_by_tree_id(&target).unwrap(),
                                             position: position.clone(),
                                             old_parent,
-                                            old_index,
+                                            old_index: old_index.unwrap(),
                                         },
                                     });
                                 } else {
@@ -1027,16 +1028,30 @@ impl ContainerState for TreeState {
                                 .unwrap();
 
                             let index = self.get_index_by_tree_id(&target).unwrap();
-                            ans.push(TreeDiffItem {
-                                target,
-                                action: TreeExternalDiff::Move {
-                                    parent: *parent,
-                                    index,
-                                    position: position.clone(),
-                                    old_parent,
-                                    old_index,
-                                },
-                            });
+                            match old_index {
+                                Some(old_index) => {
+                                    ans.push(TreeDiffItem {
+                                        target,
+                                        action: TreeExternalDiff::Move {
+                                            parent: *parent,
+                                            index,
+                                            position: position.clone(),
+                                            old_parent,
+                                            old_index,
+                                        },
+                                    });
+                                }
+                                None => {
+                                    ans.push(TreeDiffItem {
+                                        target,
+                                        action: TreeExternalDiff::Create {
+                                            parent: *parent,
+                                            index,
+                                            position: position.clone(),
+                                        },
+                                    });
+                                }
+                            }
                         };
                     }
                     TreeInternalDiff::Delete { parent, position } => {
@@ -1424,7 +1439,7 @@ mod snapshot {
     use fractional_index::FractionalIndex;
     use fxhash::FxHashMap;
     use itertools::Itertools;
-    use loro_common::{IdFull, PeerID, TreeID};
+    use loro_common::{IdFull, Lamport, PeerID, TreeID};
 
     use serde_columnar::columnar;
 
@@ -1455,9 +1470,7 @@ mod snapshot {
         #[columnar(strategy = "DeltaRle")]
         last_set_counter: i32,
         #[columnar(strategy = "DeltaRle")]
-        last_set_lamport: u32,
-        #[columnar(strategy = "DeltaRle")]
-        index: u32,
+        last_set_lamport_sub_counter: i32,
         fractional_index_idx: usize,
     }
 
@@ -1506,8 +1519,7 @@ mod snapshot {
                 },
                 last_set_peer_idx: peers.register(&last_set_id.peer),
                 last_set_counter: last_set_id.counter,
-                last_set_lamport: last_set_id.lamport,
-                index: node.index as u32,
+                last_set_lamport_sub_counter: last_set_id.lamport as i32 - last_set_id.counter,
                 fractional_index_idx: position_register.register(&node.position),
             })
         }
@@ -1526,6 +1538,19 @@ mod snapshot {
     }
 
     impl FastStateSnapshot for TreeState {
+        /// Encodes the TreeState into a compact binary format for efficient serialization.
+        ///
+        /// The encoding schema:
+        /// 1. Encodes all nodes using a breadth-first search traversal, ensuring a consistent order.
+        /// 2. Uses a ValueRegister to deduplicate and index PeerIDs and TreeIDs, reducing redundancy.
+        ///    - PeerIDs are stored once and referenced by index.
+        ///    - TreeIDs are decomposed into peer index and counter for compact representation.
+        /// 3. Encodes fractional indexes using a PositionArena for space efficiency
+        /// 4. Utilizes delta encoding and run-length encoding for further size reduction:
+        ///    - Delta encoding stores differences between consecutive values.
+        ///    - Run-length encoding compresses sequences of repeated values.
+        /// 5. Stores parent relationships using indices, with special values for root and deleted nodes.
+        /// 6. Encodes last move operation details (peer_idx, counter[Delta], lamport clock[Delta]) for each node.
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
             let all_nodes = self.bfs_all_nodes_for_fast_snapshot();
             let (peers, encoded) = encode(self, all_nodes);
@@ -1582,7 +1607,7 @@ mod snapshot {
                     IdFull::new(
                         peers[node.last_set_peer_idx],
                         node.last_set_counter,
-                        node.last_set_lamport,
+                        (node.last_set_lamport_sub_counter + node.last_set_counter) as Lamport,
                     ),
                     Some(FractionalIndex::from_bytes(
                         fractional_indexes[node.fractional_index_idx].clone(),
@@ -1614,6 +1639,7 @@ mod snapshot {
             doc.set_peer_id(0).unwrap();
             doc.start_auto_commit();
             let tree = doc.get_tree("tree");
+            tree.enable_fractional_index(0);
             let a = tree.create(TreeParentId::Root).unwrap();
             let b = tree.create(TreeParentId::Root).unwrap();
             let _c = tree.create(TreeParentId::Root).unwrap();
@@ -1626,6 +1652,8 @@ mod snapshot {
                 tree_state.encode_snapshot_fast(&mut bytes);
                 (bytes, value)
             };
+
+            assert!(bytes.len() == 55, "{}", bytes.len());
             let mut new_tree_state = TreeState::decode_snapshot_fast(
                 ContainerIdx::from_index_and_type(0, loro_common::ContainerType::Tree),
                 (LoroValue::Null, &bytes),

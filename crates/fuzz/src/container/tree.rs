@@ -445,8 +445,9 @@ impl ApplyDiff for TreeTracker {
                     ..
                 } => {
                     let Some(node) = self.find_node_by_id(target) else {
-                        self.create_node(target, &parent.tree_id(), position.to_string(), index);
-                        continue;
+                        // self.create_node(target, &parent.tree_id(), position.to_string(), index);
+                        // continue;
+                        panic!("Expected move but the node needs to be created");
                     };
 
                     let mut node = if let Some(p) = node.parent {

@@ -939,7 +939,7 @@ mod snapshot {
         #[columnar(strategy = "DeltaRle")]
         counter: i32,
         #[columnar(strategy = "DeltaRle")]
-        lamport: u32,
+        lamport_sub_counter: i32,
         /// positive for text
         /// 0 for mark start
         /// -1 for mark end
@@ -950,7 +950,7 @@ mod snapshot {
     #[columnar(vec, ser, de, iterable)]
     #[derive(Debug, Clone)]
     struct EncodedMark {
-        key: InternalString,
+        key_idx: usize,
         value: LoroValue,
         info: u8,
     }
@@ -959,13 +959,27 @@ mod snapshot {
     struct EncodedText {
         #[columnar(class = "vec", iter = "EncodedTextSpan")]
         spans: Vec<EncodedTextSpan>,
-        #[columnar(class = "vec", iter = "EncodedMark")]
+        keys: Vec<InternalString>,
         marks: Vec<EncodedMark>,
     }
 
     impl FastStateSnapshot for RichtextState {
+        /// Encodes the RichtextState into a compact binary format for fast snapshot storage and retrieval.
+        ///
+        /// The encoding format consists of:
+        /// 1. The full text content as a string, encoded using postcard serialization.
+        /// 2. A series of EncodedTextSpan structs representing text chunks and style markers:
+        ///    - peer_idx: Index of the peer ID in a value register (delta-RLE encoded)
+        ///    - counter: Operation counter (delta-RLE encoded)
+        ///    - lamport_sub_counter: Lamport timestamp - counter (delta-RLE encoded)
+        ///    - len: Length of text chunk or marker type (-1 for end, 0 for start, positive for text)
+        /// 3. A list of unique style keys as InternalString.
+        /// 4. A series of EncodedMark structs for style information:
+        ///    - key_idx: Index of the style key in the keys list
+        ///    - value: The style value
+        ///    - info: Additional style information as a byte
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
-            let value = self.get_value();
+            let value = self.get_value().into_string().unwrap();
             postcard::to_io(&value, &mut w).unwrap();
             let mut spans = Vec::new();
             let mut marks = Vec::new();
@@ -985,6 +999,8 @@ mod snapshot {
                 }
             }
 
+            let mut keys: ValueRegister<InternalString> = ValueRegister::new();
+
             for chunk in iter {
                 match chunk {
                     RichtextStateChunk::Text(t) => {
@@ -993,7 +1009,7 @@ mod snapshot {
                         spans.push(EncodedTextSpan {
                             peer_idx: peers.register(&id.peer),
                             counter: id.counter,
-                            lamport: id.lamport,
+                            lamport_sub_counter: id.lamport as i32 - id.counter as i32,
                             len: t.unicode_len(),
                         })
                     }
@@ -1003,11 +1019,11 @@ mod snapshot {
                             spans.push(EncodedTextSpan {
                                 peer_idx: peers.register(&id.peer),
                                 counter: id.counter,
-                                lamport: id.lamport,
+                                lamport_sub_counter: id.lamport as i32 - id.counter as i32,
                                 len: 0,
                             });
                             marks.push(EncodedMark {
-                                key: style.key.clone(),
+                                key_idx: keys.register(&style.key),
                                 value: style.value.clone(),
                                 info: style.info.to_byte(),
                             })
@@ -1017,7 +1033,7 @@ mod snapshot {
                             spans.push(EncodedTextSpan {
                                 peer_idx: peers.register(&id.peer),
                                 counter: id.counter + 1,
-                                lamport: id.lamport + 1,
+                                lamport_sub_counter: id.lamport as i32 - id.counter as i32,
                                 len: -1,
                             })
                         }
@@ -1031,16 +1047,22 @@ mod snapshot {
                 w.write_all(&peer.to_le_bytes()).unwrap();
             }
 
-            let bytes = serde_columnar::to_vec(&EncodedText { spans, marks }).unwrap();
+            let bytes = serde_columnar::to_vec(&EncodedText {
+                spans,
+                keys: keys.unwrap_vec(),
+                marks,
+            })
+            .unwrap();
             w.write_all(&bytes).unwrap();
         }
 
         fn decode_value(bytes: &[u8]) -> loro_common::LoroResult<(loro_common::LoroValue, &[u8])> {
-            postcard::take_from_bytes(bytes).map_err(|_| {
+            let (value, bytes) = postcard::take_from_bytes(bytes).map_err(|_| {
                 loro_common::LoroError::DecodeError(
                     "Decode list value failed".to_string().into_boxed_str(),
                 )
-            })
+            })?;
+            Ok((LoroValue::String(value), bytes))
         }
 
         fn decode_snapshot_fast(
@@ -1064,6 +1086,7 @@ mod snapshot {
             let string = string.into_string().unwrap();
             let mut s = StrSlice::new_from_str(&string);
             let iters = serde_columnar::from_bytes::<EncodedText>(bytes).unwrap();
+            let keys = iters.keys;
             let span_iter = iters.spans.into_iter();
             let mut mark_iter = iters.marks.into_iter();
             let mut id_to_style = FxHashMap::default();
@@ -1071,19 +1094,27 @@ mod snapshot {
                 let EncodedTextSpan {
                     peer_idx,
                     counter,
-                    lamport,
+                    lamport_sub_counter,
                     len,
                 } = span;
-                let id_full = IdFull::new(peers[peer_idx], counter, lamport);
+                let id_full = IdFull::new(
+                    peers[peer_idx],
+                    counter,
+                    (lamport_sub_counter + counter as i32) as u32,
+                );
                 let chunk = match len {
                     0 => {
                         // Style Start
-                        let EncodedMark { key, value, info } = mark_iter.next().unwrap();
+                        let EncodedMark {
+                            key_idx,
+                            value,
+                            info,
+                        } = mark_iter.next().unwrap();
                         let style_op = Arc::new(StyleOp {
-                            lamport,
+                            lamport: (lamport_sub_counter + counter as i32) as u32,
                             peer: id_full.peer,
                             cnt: id_full.counter,
-                            key,
+                            key: keys[key_idx].clone(),
                             value,
                             info: TextStyleInfoFlag::from_byte(info),
                         });
@@ -1133,6 +1164,8 @@ mod snapshot {
                 .get_text("text")
                 .unwrap()
                 .encode_snapshot_fast(&mut bytes);
+            assert!(bytes.len() <= 76, "w.len() = {}", bytes.len());
+
             let delta = doc
                 .app_state()
                 .lock()
