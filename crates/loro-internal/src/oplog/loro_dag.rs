@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
-use tracing::trace;
+use tracing::{instrument, trace};
 
 use super::change_store::BatchDecodeInfo;
 use super::ChangeStore;
@@ -439,6 +439,7 @@ impl AppDag {
     /// 3. Lamport is correctly calculated
     /// 4. VV for each node is correctly calculated
     /// 5. Frontiers are correctly calculated
+    #[instrument(skip(self))]
     pub fn check_dag_correctness(&self) {
         {
             // parse all nodes
@@ -449,7 +450,8 @@ impl AppDag {
                 }
 
                 let mut end_cnt = *cnt;
-                while end_cnt > 0 {
+                let init_counter = self.trimmed_vv.get(peer).copied().unwrap_or(0);
+                while end_cnt > init_counter {
                     let cnt = end_cnt - 1;
                     self.ensure_lazy_load_node(ID::new(*peer, cnt), None);
                     end_cnt = self
@@ -469,10 +471,11 @@ impl AppDag {
             let map = self.map.try_lock().unwrap();
             let mut last_end_id = ID::new(0, 0);
             for (&id, node) in map.iter() {
+                let init_counter = self.trimmed_vv.get(&id.peer).copied().unwrap_or(0);
                 if id.peer == last_end_id.peer {
                     assert!(id.counter == last_end_id.counter);
                 } else {
-                    assert_eq!(id.counter, 0);
+                    assert_eq!(id.counter, init_counter);
                 }
 
                 last_end_id = id.inc(node.len as Counter);
@@ -486,9 +489,13 @@ impl AppDag {
         {
             // check property 3: Lamport is correctly calculated
             let map = self.map.try_lock().unwrap();
-            for (_, node) in map.iter() {
+            'outer: for (_, node) in map.iter() {
                 let mut this_lamport = 0;
                 for &dep in node.deps.iter() {
+                    if self.trimmed_vv.includes_id(dep) {
+                        continue 'outer;
+                    }
+
                     let (_, dep_node) = map.range(..=dep).next_back().unwrap();
                     this_lamport = this_lamport.max(dep_node.lamport_end());
                 }
@@ -499,10 +506,14 @@ impl AppDag {
         {
             // check property 4: VV for each node is correctly calculated
             let map = self.map.try_lock().unwrap().clone();
-            for (_, node) in map.iter() {
+            'outer: for (_, node) in map.iter() {
                 let actual_vv = self.ensure_vv_for(node);
                 let mut expected_vv = ImVersionVector::default();
                 for &dep in node.deps.iter() {
+                    if self.trimmed_vv.includes_id(dep) {
+                        continue 'outer;
+                    }
+
                     let (_, dep_node) = map.range(..=dep).next_back().unwrap();
                     expected_vv.extend_to_include_vv(dep_node.vv.get().unwrap().iter());
                     expected_vv.extend_to_include_last_id(dep);
@@ -546,7 +557,10 @@ impl AppDag {
 fn check_always_dep_on_last_id(map: &BTreeMap<ID, AppDagNode>) {
     for (_, node) in map.iter() {
         for &dep in node.deps.iter() {
-            let (&dep_id, dep_node) = map.range(..=dep).next_back().unwrap();
+            let Some((&dep_id, dep_node)) = map.range(..=dep).next_back() else {
+                // It's trimmed
+                continue;
+            };
             assert_eq!(dep_node.id_start(), dep_id);
             if dep_node.contains_id(dep) {
                 assert_eq!(dep_node.id_last(), dep);

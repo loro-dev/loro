@@ -34,8 +34,8 @@ const MAGIC_BYTES: [u8; 4] = *b"loro";
 pub(crate) enum EncodeMode {
     // This is a config option, it won't be used in encoding.
     Auto = 255,
-    Rle = 1,
-    Snapshot = 2,
+    OutdatedRle = 1,
+    OutdatedSnapshot = 2,
     FastSnapshot = 3,
     FastUpdates = 4,
 }
@@ -46,8 +46,8 @@ impl num_traits::FromPrimitive for EncodeMode {
     fn from_i64(n: i64) -> Option<Self> {
         match n {
             n if n == EncodeMode::Auto as i64 => Some(EncodeMode::Auto),
-            n if n == EncodeMode::Rle as i64 => Some(EncodeMode::Rle),
-            n if n == EncodeMode::Snapshot as i64 => Some(EncodeMode::Snapshot),
+            n if n == EncodeMode::OutdatedRle as i64 => Some(EncodeMode::OutdatedRle),
+            n if n == EncodeMode::OutdatedSnapshot as i64 => Some(EncodeMode::OutdatedSnapshot),
             n if n == EncodeMode::FastSnapshot as i64 => Some(EncodeMode::FastSnapshot),
             n if n == EncodeMode::FastUpdates as i64 => Some(EncodeMode::FastUpdates),
             _ => None,
@@ -65,8 +65,8 @@ impl num_traits::ToPrimitive for EncodeMode {
     fn to_i64(&self) -> Option<i64> {
         Some(match *self {
             EncodeMode::Auto => EncodeMode::Auto as i64,
-            EncodeMode::Rle => EncodeMode::Rle as i64,
-            EncodeMode::Snapshot => EncodeMode::Snapshot as i64,
+            EncodeMode::OutdatedRle => EncodeMode::OutdatedRle as i64,
+            EncodeMode::OutdatedSnapshot => EncodeMode::OutdatedSnapshot as i64,
             EncodeMode::FastSnapshot => EncodeMode::FastSnapshot as i64,
             EncodeMode::FastUpdates => EncodeMode::FastUpdates as i64,
         })
@@ -84,7 +84,7 @@ impl EncodeMode {
     }
 
     pub fn is_snapshot(self) -> bool {
-        matches!(self, EncodeMode::Snapshot)
+        matches!(self, EncodeMode::OutdatedSnapshot)
     }
 }
 
@@ -159,12 +159,12 @@ pub(crate) struct StateSnapshotDecodeContext<'a> {
 
 pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) -> Vec<u8> {
     let mode = match mode {
-        EncodeMode::Auto => EncodeMode::Rle,
+        EncodeMode::Auto => EncodeMode::OutdatedRle,
         mode => mode,
     };
 
     let body = match &mode {
-        EncodeMode::Rle => encode_reordered::encode_updates(oplog, vv),
+        EncodeMode::OutdatedRle => encode_reordered::encode_updates(oplog, vv),
         _ => unreachable!(),
     };
 
@@ -177,7 +177,9 @@ pub(crate) fn decode_oplog(
 ) -> Result<(), LoroError> {
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     match mode {
-        EncodeMode::Rle | EncodeMode::Snapshot => encode_reordered::decode_updates(oplog, body),
+        EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
+            encode_reordered::decode_updates(oplog, body)
+        }
         EncodeMode::FastSnapshot | EncodeMode::FastUpdates => {
             fast_snapshot::decode_oplog(oplog, body)
         }
@@ -197,7 +199,7 @@ impl ParsedHeaderAndBody<'_> {
     /// Return if the checksum is correct.
     fn check_checksum(&self) -> LoroResult<()> {
         match self.mode {
-            EncodeMode::Rle | EncodeMode::Snapshot => {
+            EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
                 if md5::compute(self.checksum_body).0 != self.checksum {
                     return Err(LoroError::DecodeChecksumMismatchError);
                 }
@@ -264,7 +266,7 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
         &Default::default(),
     );
 
-    encode_header_and_body(EncodeMode::Snapshot, body)
+    encode_header_and_body(EncodeMode::OutdatedSnapshot, body)
 }
 
 pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
@@ -345,7 +347,7 @@ pub(crate) fn decode_snapshot(
     body: &[u8],
 ) -> Result<(), LoroError> {
     match mode {
-        EncodeMode::Snapshot => encode_reordered::decode_snapshot(doc, body),
+        EncodeMode::OutdatedSnapshot => encode_reordered::decode_snapshot(doc, body),
         EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot(doc, body.to_vec().into()),
         _ => unreachable!(),
     }

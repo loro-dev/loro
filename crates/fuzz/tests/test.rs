@@ -8828,6 +8828,51 @@ fn fast_snapshot_3() {
 }
 
 #[test]
+fn gc_fuzz() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [Handle {
+            site: 3,
+            target: 251,
+            container: 251,
+            action: Generic(GenericAction {
+                value: Container(Unknown(86)),
+                bool: true,
+                key: 555819297,
+                pos: 18446744073709551615,
+                length: 1252228849668718591,
+                prop: 2449958197287707631,
+            }),
+        }],
+    )
+}
+
+#[test]
+fn gc_fuzz_1() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,

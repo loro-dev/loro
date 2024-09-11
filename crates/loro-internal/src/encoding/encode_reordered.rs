@@ -823,7 +823,7 @@ fn encode_snapshot_states(
                 });
                 pos_target_value += len as i32;
             },
-            mode: super::EncodeMode::Snapshot,
+            mode: super::EncodeMode::OutdatedSnapshot,
         });
 
         states.push(EncodedStateInfo {
@@ -915,7 +915,7 @@ fn decode_snapshot_states(
                 oplog,
                 ops: &mut next_ops,
                 blob: state_bytes,
-                mode: crate::encoding::EncodeMode::Snapshot,
+                mode: crate::encoding::EncodeMode::OutdatedSnapshot,
                 peers: &peers.peer_ids,
             },
         )?;

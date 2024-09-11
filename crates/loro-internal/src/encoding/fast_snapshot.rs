@@ -70,6 +70,7 @@ fn read_u32_le(r: &mut bytes::buf::Reader<Bytes>) -> u32 {
 }
 
 pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
+    ensure_cov::notify_cov("loro_internal::import::fast_snapshot::decode_snapshot");
     let mut state = doc.app_state().try_lock().map_err(|_| {
         LoroError::DecodeError(
             "decode_snapshot: failed to lock app state"

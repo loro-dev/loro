@@ -8,7 +8,7 @@ use std::{
 
 use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
-use loro::{ContainerType, Frontiers};
+use loro::{ContainerType, Frontiers, LoroError};
 use tabled::TableIteratorExt;
 use tracing::{info, info_span};
 
@@ -349,10 +349,26 @@ pub fn test_multi_sites_with_gc(
     fuzz_targets: Vec<FuzzTarget>,
     actions: &mut [Action],
 ) {
+    if actions.is_empty() {
+        return;
+    }
+
     ensure_cov::notify_cov("fuzz_gc");
     let mut fuzzer = CRDTFuzzer::new(site_num, fuzz_targets);
     let mut applied = Vec::new();
     let target_gc_index = actions.len() / 2;
+    actions[0] = Action::Handle {
+        site: 1,
+        target: 0,
+        container: 0,
+        action: ActionWrapper::Action(crate::actions::ActionInner::List(
+            crate::container::ListAction::Insert {
+                pos: 0,
+                value: FuzzValue::I32(10),
+            },
+        )),
+    };
+
     for (i, action) in actions.iter_mut().enumerate() {
         fuzzer.pre_process(action);
         if i <= target_gc_index {
@@ -399,6 +415,7 @@ pub fn test_multi_sites_with_gc(
                 fuzzer.actors[1].loro.attach();
                 let f = fuzzer.actors[1].loro.oplog_frontiers();
                 if !f.is_empty() {
+                    ensure_cov::notify_cov("export_gc_snapshot");
                     let bytes = fuzzer.actors[1]
                         .loro
                         .export(loro::ExportMode::GcSnapshot(&f));
@@ -410,7 +427,91 @@ pub fn test_multi_sites_with_gc(
 
     // println!("OpTable \n{}", (&applied).table());
     info_span!("check synced").in_scope(|| {
-        fuzzer.check_equal();
+        // peer 0 is a special case here
+        let this = &mut fuzzer;
+        for i in 1..this.site_num() - 1 {
+            for j in i + 1..this.site_num() {
+                let _s = info_span!("checking eq", ?i, ?j);
+                let _g = _s.enter();
+                let (a, b) = array_mut_ref!(&mut this.actors, [i, j]);
+                let a_doc = &mut a.loro;
+                let b_doc = &mut b.loro;
+                info_span!("Attach", peer = i).in_scope(|| {
+                    a_doc.attach();
+                });
+                info_span!("Attach", peer = j).in_scope(|| {
+                    b_doc.attach();
+                });
+                match (i + j) % 4 {
+                    0 => {
+                        info_span!("Updates", from = j, to = i).in_scope(|| {
+                            a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
+                        });
+                        info_span!("Updates", from = i, to = j).in_scope(|| {
+                            b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
+                        });
+                    }
+                    1 => {
+                        info_span!("Snapshot", from = i, to = j).in_scope(|| {
+                            b_doc.import(&a_doc.export_snapshot()).unwrap();
+                        });
+                        info_span!("Snapshot", from = j, to = i).in_scope(|| {
+                            a_doc.import(&b_doc.export_snapshot()).unwrap();
+                        });
+                    }
+                    2 => {
+                        info_span!("FastSnapshot", from = i, to = j).in_scope(|| {
+                            b_doc
+                                .import(&a_doc.export(loro::ExportMode::Snapshot))
+                                .unwrap();
+                        });
+                        info_span!("FastSnapshot", from = j, to = i).in_scope(|| {
+                            a_doc
+                                .import(&b_doc.export(loro::ExportMode::Snapshot))
+                                .unwrap();
+                        });
+                    }
+                    _ => {
+                        info_span!("JsonFormat", from = i, to = j).in_scope(|| {
+                            let a_json =
+                                a_doc.export_json_updates(&b_doc.oplog_vv(), &a_doc.oplog_vv());
+                            b_doc.import_json_updates(a_json).unwrap();
+                        });
+                        info_span!("JsonFormat", from = j, to = i).in_scope(|| {
+                            let b_json =
+                                b_doc.export_json_updates(&a_doc.oplog_vv(), &b_doc.oplog_vv());
+                            a_doc.import_json_updates(b_json).unwrap();
+                        });
+                    }
+                }
+                a.check_eq(b);
+                a.record_history();
+                b.record_history();
+            }
+        }
+
+        let (a, b) = array_mut_ref!(&mut this.actors, [0, 1]);
+        a.loro.attach();
+        b.loro.attach();
+        let result = a.loro.import(&b.loro.export(loro::ExportMode::Updates {
+            from: &a.loro.oplog_vv(),
+        }));
+        match result {
+            Ok(_) => {
+                b.loro
+                    .import(&a.loro.export(loro::ExportMode::Updates {
+                        from: &b.loro.oplog_vv(),
+                    }))
+                    .unwrap();
+                a.check_eq(b);
+                a.record_history();
+                b.record_history();
+            }
+            Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion) => {}
+            Err(e) => {
+                panic!("{}", e)
+            }
+        }
     });
     info_span!("check tracker").in_scope(|| {
         fuzzer.check_tracker();
@@ -423,19 +524,24 @@ pub fn test_multi_sites_with_gc(
     if COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 1_000 == 0 {
         let must_meet = [
             "fuzz_gc",
+            "export_gc_snapshot",
             "gc_snapshot::need_calc",
             "gc_snapshot::dont_need_calc",
             "loro_internal::history_cache::find_text_chunks_in",
             "loro_internal::history_cache::find_list_chunks_in",
             "loro_internal::import",
+            "loro_internal::import::fast_snapshot::decode_snapshot",
             "loro_internal::import::snapshot",
             "loro_internal::import::snapshot::gc",
             "loro_internal::import::snapshot::normal",
             "loro_internal::history_cache::init_cache_by_visit_all_change_slow::visit_gc",
         ];
         for v in must_meet {
-            if ensure_cov::get_cov_for(v) == 0 {
-                println!("[COV-FAILED] {}", v)
+            let count = ensure_cov::get_cov_for(v);
+            if count == 0 {
+                println!("[COV] FAILED {}", v)
+            } else {
+                println!("[COV] HIT    {} - {}", v, count)
             }
         }
     }

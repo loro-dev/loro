@@ -103,4 +103,8 @@ impl KvWrapper {
     pub(crate) fn insert(&self, k: &[u8], v: Bytes) {
         self.kv.lock().unwrap().set(k, v);
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.kv.lock().unwrap().is_empty()
+    }
 }

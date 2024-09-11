@@ -14,7 +14,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
-use tracing::{info_span, instrument};
+use tracing::{info_span, instrument, trace};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -898,8 +898,12 @@ impl DocState {
         self.in_txn
     }
 
-    pub fn is_empty(&self) -> bool {
-        !self.in_txn && self.store.is_empty() && self.arena.can_import_snapshot()
+    pub fn can_import_snapshot(&self) -> bool {
+        trace!("in_txn: {:?}", self.in_txn);
+        trace!("store: {:?}", self.store.is_empty());
+        trace!("arena: {:?}", self.arena.can_import_snapshot());
+
+        !self.in_txn && self.arena.can_import_snapshot()
     }
 
     pub fn get_deep_value(&mut self) -> LoroValue {
@@ -1257,7 +1261,7 @@ impl DocState {
             ));
         }
 
-        if !self.is_empty() {
+        if !self.can_import_snapshot() {
             return Err(LoroError::DecodeError(
                 "State is not empty, cannot import snapshot directly"
                     .to_string()

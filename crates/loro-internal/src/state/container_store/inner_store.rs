@@ -141,12 +141,14 @@ impl InnerStore {
         bytes_a: bytes::Bytes,
         bytes_b: bytes::Bytes,
     ) -> Result<(), loro_common::LoroError> {
-        assert!(self.len == 0);
+        assert!(self.kv.is_empty());
+        assert_eq!(self.len, self.store.len());
+        // TODO: add assert that all containers in the store should be empty right now
         self.kv.import(bytes_a);
         self.kv.import(bytes_b);
         self.kv.remove(FRONTIERS_KEY);
         self.kv.with_kv(|kv| {
-            let mut count = 0;
+            let mut count = self.len;
             let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
             for (k, v) in iter {
                 count += 1;
@@ -155,6 +157,9 @@ impl InnerStore {
                 let idx = self.arena.register_container(&cid);
                 let p = parent.as_ref().map(|p| self.arena.register_container(p));
                 self.arena.set_parent(idx, p);
+                if self.store.remove(&idx).is_some() {
+                    count -= 1;
+                }
             }
 
             self.len = count;
@@ -215,6 +220,7 @@ impl InnerStore {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
+        trace!("store len = {}", self.len);
         self.len == 0
     }
 

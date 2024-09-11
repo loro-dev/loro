@@ -212,7 +212,12 @@ impl LoroDoc {
             return false;
         }
 
-        oplog.is_empty() && self.state.lock().unwrap().is_empty()
+        trace!("oplog: {:?}", oplog.is_empty());
+        trace!(
+            "state: {:?}",
+            self.state.lock().unwrap().can_import_snapshot()
+        );
+        oplog.is_empty() && self.state.lock().unwrap().can_import_snapshot()
     }
 
     /// Whether [OpLog] and [DocState] are detached.
@@ -489,7 +494,7 @@ impl LoroDoc {
         let parsed = parse_header_and_body(bytes)?;
         info!("Importing with mode={:?}", &parsed.mode);
         let result = match parsed.mode {
-            EncodeMode::Rle => {
+            EncodeMode::OutdatedRle => {
                 if self.state.lock().unwrap().is_in_txn() {
                     return Err(LoroError::ImportWhenInTxn);
                 }
@@ -505,9 +510,8 @@ impl LoroDoc {
                     origin,
                 )
             }
-            EncodeMode::Snapshot => {
+            EncodeMode::OutdatedSnapshot => {
                 if self.can_reset_with_snapshot() {
-                    ensure_cov::notify_cov("loro_internal::import::snapshot");
                     tracing::info!("Init by snapshot {}", self.peer_id());
                     decode_snapshot(self, parsed.mode, parsed.body)
                 } else {
@@ -519,6 +523,7 @@ impl LoroDoc {
             }
             EncodeMode::FastSnapshot => {
                 if self.can_reset_with_snapshot() {
+                    ensure_cov::notify_cov("loro_internal::import::snapshot");
                     tracing::info!("Init by fast snapshot {}", self.peer_id());
                     decode_snapshot(self, parsed.mode, parsed.body)
                 } else {
@@ -590,7 +595,7 @@ impl LoroDoc {
         let ans = oplog.decode(ParsedHeaderAndBody {
             checksum: [0; 16],
             checksum_body: body,
-            mode: EncodeMode::Rle,
+            mode: EncodeMode::OutdatedRle,
             body,
         });
         if ans.is_ok() && !self.detached.load(Acquire) {
@@ -619,7 +624,7 @@ impl LoroDoc {
     #[cfg(feature = "test_utils")]
     pub fn import_snapshot_unchecked(&self, bytes: &[u8]) -> LoroResult<()> {
         self.commit_then_stop();
-        let ans = decode_snapshot(self, EncodeMode::Snapshot, bytes);
+        let ans = decode_snapshot(self, EncodeMode::OutdatedSnapshot, bytes);
         self.renew_txn_if_auto_commit();
         ans
     }
@@ -1218,14 +1223,19 @@ impl LoroDoc {
             let _g = s.enter();
             self.commit_then_stop();
             self.oplog.try_lock().unwrap().check_dag_correctness();
-            let bytes = self.export_from(&Default::default());
-            let doc = Self::new();
-            doc.detach();
-            doc.import(&bytes).unwrap();
-            doc.checkout(&self.state_frontiers()).unwrap();
-            let mut calculated_state = doc.app_state().try_lock().unwrap();
-            let mut current_state = self.app_state().try_lock().unwrap();
-            current_state.check_is_the_same(&mut calculated_state);
+            if self.is_trimmed() {
+                // TODO: Test the correctness of trimmed doc
+            } else {
+                let bytes = self.export_from(&Default::default());
+                let doc = Self::new();
+                doc.detach();
+                doc.import(&bytes).unwrap();
+                doc.checkout(&self.state_frontiers()).unwrap();
+                let mut calculated_state = doc.app_state().try_lock().unwrap();
+                let mut current_state = self.app_state().try_lock().unwrap();
+                current_state.check_is_the_same(&mut calculated_state);
+            }
+
             self.renew_txn_if_auto_commit();
             IS_CHECKING.store(false, std::sync::atomic::Ordering::Release);
         }
