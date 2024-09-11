@@ -899,9 +899,13 @@ impl TreeState {
 
     pub(crate) fn get_index_by_tree_id(&self, target: &TreeID) -> Option<usize> {
         let parent = self.parent(target)?;
-        self.children
-            .get(&parent)
-            .and_then(|x| x.get_index_by_child_id(target))
+        (!parent.is_deleted())
+            .then(|| {
+                self.children
+                    .get(&parent)
+                    .and_then(|x| x.get_index_by_child_id(target))
+            })
+            .flatten()
     }
 
     pub(crate) fn get_index_by_position(
@@ -975,9 +979,10 @@ impl ContainerState for TreeState {
                     }
                     TreeInternalDiff::Move { parent, position } => {
                         let old_parent = self.trees.get(&target).unwrap().parent;
+                        // If this is some, the node is still alive at the moment
                         let old_index = self.get_index_by_tree_id(&target);
                         if need_check {
-                            let was_alive = !self.is_node_deleted(&target);
+                            let was_alive = old_index.is_some();
                             if self
                                 .mov(target, *parent, last_move_op, Some(position.clone()), true)
                                 .is_ok()
@@ -1023,16 +1028,30 @@ impl ContainerState for TreeState {
                                 .unwrap();
 
                             let index = self.get_index_by_tree_id(&target).unwrap();
-                            ans.push(TreeDiffItem {
-                                target,
-                                action: TreeExternalDiff::Move {
-                                    parent: *parent,
-                                    index,
-                                    position: position.clone(),
-                                    old_parent,
-                                    old_index: old_index.unwrap(),
-                                },
-                            });
+                            match old_index {
+                                Some(old_index) => {
+                                    ans.push(TreeDiffItem {
+                                        target,
+                                        action: TreeExternalDiff::Move {
+                                            parent: *parent,
+                                            index,
+                                            position: position.clone(),
+                                            old_parent,
+                                            old_index,
+                                        },
+                                    });
+                                }
+                                None => {
+                                    ans.push(TreeDiffItem {
+                                        target,
+                                        action: TreeExternalDiff::Create {
+                                            parent: *parent,
+                                            index,
+                                            position: position.clone(),
+                                        },
+                                    });
+                                }
+                            }
                         };
                     }
                     TreeInternalDiff::Delete { parent, position } => {
