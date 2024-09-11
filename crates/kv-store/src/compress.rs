@@ -1,7 +1,4 @@
-use std::{
-    borrow::Cow,
-    io::{self, Write},
-};
+use std::io::{self, Write};
 
 use bytes::Bytes;
 use loro_common::LoroError;
@@ -41,14 +38,14 @@ impl From<CompressionType> for u8 {
     }
 }
 
-pub fn compress(w: &mut Vec<u8>, data: Cow<[u8]>, compression_type: CompressionType) {
+pub fn compress(w: &mut Vec<u8>, data: &[u8], compression_type: CompressionType) {
     match compression_type {
         CompressionType::None => {
-            w.write_all(&data).unwrap();
+            w.write_all(data).unwrap();
         }
         CompressionType::LZ4 => {
             let mut encoder = lz4_flex::frame::FrameEncoder::new(w);
-            encoder.write_all(&data).unwrap();
+            encoder.write_all(data).unwrap();
             let _w = encoder.finish().unwrap();
         }
     }
