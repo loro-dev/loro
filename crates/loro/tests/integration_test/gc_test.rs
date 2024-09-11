@@ -1,3 +1,5 @@
+use std::sync::{atomic::AtomicBool, Arc};
+
 use super::gen_action;
 use loro::{Frontiers, LoroDoc, ID};
 
@@ -192,13 +194,25 @@ fn import_updates_depend_on_trimmed_history_should_raise_error() -> anyhow::Resu
 
     let new_doc = LoroDoc::new();
     new_doc.import(&gc_snapshot).unwrap();
+
+    let ran = Arc::new(AtomicBool::new(false));
+    let ran_clone = ran.clone();
+    let _sub = new_doc.subscribe_root(Arc::new(move |e| {
+        ran_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(e.events.len() == 1);
+        match e.events[0].diff {
+            loro::event::Diff::Text(_) => {}
+            _ => {
+                unreachable!()
+            }
+        }
+    }));
     let result = new_doc.import(&doc2.export(loro::ExportMode::Updates {
         from: &new_doc.oplog_vv(),
     }));
     assert!(result.is_err());
-
     // But updates from doc should be fine ("hello": "world")
     assert_eq!(new_doc.get_text("hello").to_string(), *"world");
-
+    assert!(ran.load(std::sync::atomic::Ordering::Relaxed));
     Ok(())
 }
