@@ -378,3 +378,47 @@ impl LoroDoc {
         encode_reordered::decode_import_blob_meta(blob)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+
+    use loro_common::{loro_value, ContainerID, ContainerType, LoroValue, ID};
+
+    #[test]
+    fn test_value_encode_size() {
+        fn assert_size(value: LoroValue, max_size: usize) {
+            let size = postcard::to_allocvec(&value).unwrap().len();
+            assert!(
+                size <= max_size,
+                "value: {:?}, size: {}, max_size: {}",
+                value,
+                size,
+                max_size
+            );
+        }
+
+        assert_size(LoroValue::Null, 1);
+        assert_size(LoroValue::I64(1), 2);
+        assert_size(LoroValue::Double(1.), 9);
+        assert_size(LoroValue::Bool(true), 2);
+        assert_size(LoroValue::String(Arc::new("123".to_string())), 5);
+        assert_size(LoroValue::Binary(Arc::new(vec![1, 2, 3])), 5);
+        assert_size(
+            loro_value!({
+                "a": 1,
+                "b": 2,
+            }),
+            10,
+        );
+        assert_size(loro_value!([1, 2, 3]), 8);
+        assert_size(
+            LoroValue::Container(ContainerID::new_normal(ID::new(1, 1), ContainerType::Map)),
+            5,
+        );
+        assert_size(
+            LoroValue::Container(ContainerID::new_root("a", ContainerType::Map)),
+            5,
+        );
+    }
+}
