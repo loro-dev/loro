@@ -1,19 +1,14 @@
-#[cfg(feature = "counter")]
-use super::counter_state::CounterState;
-use super::{ContainerCreationContext, MovableListState, State, TreeState};
+use super::{ContainerCreationContext, State};
 use crate::{
     arena::SharedArena,
     configure::Configure,
     container::idx::ContainerIdx,
-    state::{FastStateSnapshot, RichtextState},
     utils::kv_wrapper::KvWrapper,
     version::Frontiers,
-    VersionVector,
 };
 use bytes::Bytes;
-use fxhash::{FxHashMap, FxHashSet};
 use inner_store::InnerStore;
-use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
+use loro_common::{LoroResult, LoroValue};
 use std::sync::{atomic::AtomicU64, Arc, Mutex};
 
 pub(crate) use container_wrapper::ContainerWrapper;

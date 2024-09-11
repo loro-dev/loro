@@ -10,7 +10,6 @@ use loro::{
     event::Diff, Container, ContainerID, ContainerType, LoroDoc, LoroError, LoroTree, LoroValue,
     TreeExternalDiff, TreeID,
 };
-use tracing::{debug, trace};
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},

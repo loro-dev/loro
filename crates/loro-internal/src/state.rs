@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
     io::Write,
     sync::{
         atomic::{AtomicU64, AtomicU8, Ordering},

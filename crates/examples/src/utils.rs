@@ -1,6 +1,6 @@
 use dev_utils::ByteSize;
 use loro::LoroDoc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub fn bench_fast_snapshot(doc: &LoroDoc) {
     let old_v;

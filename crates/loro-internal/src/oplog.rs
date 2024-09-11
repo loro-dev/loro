@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use tracing::{debug, instrument, trace, trace_span};
+use tracing::{debug, trace, trace_span};
 
 use self::change_store::iter::MergedChangeIter;
 use self::pending_changes::PendingChanges;
@@ -559,6 +559,7 @@ impl OpLog {
     #[inline(never)]
     pub(crate) fn idlp_to_id(&self, id: loro_common::IdLp) -> Option<ID> {
         let change = self.change_store.get_change_by_lamport_lte(id)?;
+
         if change.lamport > id.lamport || change.lamport_end() <= id.lamport {
             return None;
         }

@@ -1,5 +1,5 @@
 use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
-use super::{loro_dag::AppDagNodeInner, AppDag, AppDagNode};
+use super::{loro_dag::AppDagNodeInner, AppDagNode};
 use crate::{
     arena::SharedArena,
     change::{Change, Timestamp},
@@ -7,12 +7,12 @@ use crate::{
     kv_store::KvStore,
     op::Op,
     parent::register_container_and_parent_link,
-    version::{shrink_frontiers, Frontiers, ImVersionVector},
+    version::{Frontiers, ImVersionVector},
     VersionVector,
 };
 use block_encode::decode_block_range;
 use bytes::Bytes;
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{
     Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport, LoroError,
@@ -22,7 +22,6 @@ use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RlePush, RleVec, Sliceable};
 use std::{
-    borrow::BorrowMut,
     cmp::Ordering,
     collections::{BTreeMap, VecDeque},
     ops::{Bound, Deref},
@@ -31,6 +30,7 @@ use std::{
 use tracing::{debug, info_span, trace, warn};
 
 mod block_encode;
+mod block_meta_encode;
 mod delta_rle_encode;
 pub(super) mod iter;
 

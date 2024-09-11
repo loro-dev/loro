@@ -1,4 +1,3 @@
-use std::time::Instant;
 
 use dev_utils::{get_mem_usage, ByteSize};
 use loro::{CommitOptions, LoroCounter, LoroDoc, LoroMap};
