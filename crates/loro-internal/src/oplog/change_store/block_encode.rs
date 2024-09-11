@@ -123,22 +123,9 @@ struct EncodedBlock<'a> {
 }
 
 fn diagnose_block(block: &EncodedBlock) {
-    use std::mem;
-
     info!("Diagnosing EncodedBlock:");
-    // info!("  peers: {} bytes", block.peers.len());
-    // info!("  lengths: {} bytes", block.lengths.len());
-    // info!("  dep_on_self: {} bytes", block.dep_on_self.len());
-    // info!("  dep_len: {} bytes", block.dep_len.len());
-    // info!("  dep_peer_idxs: {} bytes", block.dep_peer_idxs.len());
-    // info!("  dep_counters: {} bytes", block.dep_counters.len());
-    // info!("  lamports: {} bytes", block.lamports.len());
-    // info!("  timestamps: {} bytes", block.timestamps.len());
-    // info!(
-    //     "  commit_msg_lengths: {} bytes",
-    //     block.commit_msg_lengths.len()
-    // );
-    // info!("  commit_msgs: {} bytes", block.commit_msgs.len());
+    info!("  header {} bytes", block.header.len());
+    info!("  change_meta {} bytes", block.change_meta.len());
     info!("  cids: {} bytes", block.cids.len());
     info!("  keys: {} bytes", block.keys.len());
     info!("  positions: {} bytes", block.positions.len());
@@ -562,7 +549,6 @@ pub fn decode_block(
     let EncodedBlock {
         n_changes,
         counter_start: first_counter,
-        header: header_bytes,
         change_meta,
         cids,
         keys,
@@ -574,9 +560,9 @@ pub fn decode_block(
     } = doc;
     let n_changes = n_changes as usize;
     let mut changes = Vec::with_capacity(n_changes);
-    let mut timestamp_decoder = DeltaOfDeltaDecoder::<i64>::new(&change_meta);
+    let timestamp_decoder = DeltaOfDeltaDecoder::<i64>::new(&change_meta);
     let (timestamps, bytes) = timestamp_decoder.take_n_finalize(n_changes).unwrap();
-    let mut commit_msg_len_decoder = AnyRleDecoder::<u32>::new(&bytes);
+    let commit_msg_len_decoder = AnyRleDecoder::<u32>::new(bytes);
     let (commit_msg_lens, commit_msgs) = commit_msg_len_decoder.take_n_finalize(n_changes).unwrap();
     let mut commit_msg_index = 0;
     let keys = header.keys.get_or_init(|| decode_keys(&keys));
@@ -679,7 +665,6 @@ pub fn decode_block(
             change_index += 1;
         }
     }
-
     Ok(changes)
 }
 

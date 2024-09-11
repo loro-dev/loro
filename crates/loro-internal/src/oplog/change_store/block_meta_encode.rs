@@ -31,10 +31,16 @@ pub(crate) fn encode_changes(
         peer_idx: AnyRleEncoder::new(),
         counter: AnyRleEncoder::new(),
     };
+    // First Counter + Change Len
+    let mut lengths_bytes = Vec::new();
 
-    for c in block {
+    for (i, c) in block.iter().enumerate() {
+        let is_last = i == block.len() - 1;
+        if !is_last {
+            leb128::write::unsigned(&mut lengths_bytes, c.atom_len() as u64).unwrap();
+            lamport_encoder.push(c.lamport() as u64);
+        }
         timestamp_encoder.append(c.timestamp()).unwrap();
-        lamport_encoder.push(c.lamport() as u64);
         if let Some(msg) = c.commit_msg.as_ref() {
             commit_msg_len_encoder.append(msg.len() as u32).unwrap();
             commit_msgs.push_str(msg);
@@ -62,15 +68,10 @@ pub(crate) fn encode_changes(
             })
             .unwrap();
     }
-    // First Counter + Change Len
-    let mut lengths_bytes = Vec::new();
-    for c in block {
-        leb128::write::unsigned(&mut lengths_bytes, c.atom_len() as u64).unwrap();
-    }
 
     // TODO: capacity
     let mut ans = Vec::with_capacity(block.len() * 15);
-    leb128::write::unsigned(&mut ans, peer_register.vec().len() as u64);
+    let _ = leb128::write::unsigned(&mut ans, peer_register.vec().len() as u64);
     ans.extend(peer_register.vec().iter().flat_map(|p| p.to_le_bytes()));
     ans.append(&mut lengths_bytes);
     ans.append(&mut dep_self_encoder.finish().unwrap());
@@ -112,9 +113,10 @@ pub(crate) fn decode_changes_header(
     // └───────────────────┴──────────────────────────────────────────┘    │
 
     let mut lengths = Vec::with_capacity(n_changes);
-    for _ in 0..n_changes {
+    for _ in 0..n_changes - 1 {
         lengths.push(leb128::read::unsigned(&mut bytes).unwrap() as Counter);
     }
+    lengths.push(counter_len - lengths.iter().sum::<i32>());
 
     // ┌───────────────────┬────────────────────────┬─────────────────┐    │
     // │N DepOnSelf BoolRle│ N Delta Rle Deps Lens  │    N Dep IDs    │◁───┘
@@ -138,7 +140,7 @@ pub(crate) fn decode_changes_header(
             f.push(ID::new(peers[0], this_counter - 1))
         }
 
-        let len = deps_len[i] as usize;
+        let len = deps_len[i];
         for _ in 0..len {
             let peer_idx = deps_peers_iter.next().unwrap();
             let peer = peers[peer_idx];
@@ -149,28 +151,25 @@ pub(crate) fn decode_changes_header(
         deps.push(f);
         this_counter += lengths[i];
     }
-    let mut counters = Vec::with_capacity(n_changes + 1);
+    let mut counters = Vec::with_capacity(n_changes);
     let mut last = first_counter;
     for i in 0..n_changes {
         counters.push(last);
         last += lengths[i];
     }
-    counters.push(last);
-    assert_eq!(last, (first_counter + counter_len) as Counter);
 
-    let mut lamport_decoder = UnsignedDeltaDecoder::new(bytes, n_changes);
-    let mut lamports = Vec::with_capacity(n_changes + 1);
-    for _ in 0..n_changes {
+    let mut lamport_decoder = UnsignedDeltaDecoder::new(bytes, n_changes - 1);
+    let mut lamports = Vec::with_capacity(n_changes);
+    for _ in 0..n_changes - 1 {
         lamports.push(lamport_decoder.next().unwrap() as Lamport);
     }
-    let last_lamport = *lamports.last().unwrap();
-    lamports.push(last_lamport + lengths.last().copied().unwrap() as Lamport);
-    assert_eq!(
-        *lamports.last().unwrap(),
-        (lamport_start + lamport_len) as Lamport
-    );
-    let rest = lamport_decoder.rest();
-    debug_assert!(rest.is_empty());
+    // the last lamport
+    lamports.push((lamport_start + lamport_len - *lengths.last().unwrap_or(&0) as u32) as Lamport);
+
+    // we need counter range, so encode
+    counters.push(first_counter + counter_len);
+    debug_assert!(lamport_decoder.rest().is_empty());
+
     ChangesBlockHeader {
         peer: peers[0],
         counter: first_counter,
