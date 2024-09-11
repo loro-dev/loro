@@ -906,8 +906,12 @@ fn fast_snapshot_for_updates() {
 
     doc_b.commit();
 
-    doc_b.import(&doc_a.export_fast_snapshot()).unwrap();
-    doc_a.import(&doc_b.export_fast_snapshot()).unwrap();
+    doc_b
+        .import(&doc_a.export(loro::ExportMode::Snapshot))
+        .unwrap();
+    doc_a
+        .import(&doc_b.export(loro::ExportMode::Snapshot))
+        .unwrap();
 
     assert_eq!(doc_a.get_deep_value(), doc_b.get_deep_value());
 }

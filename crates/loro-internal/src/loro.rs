@@ -489,6 +489,7 @@ impl LoroDoc {
 
     #[tracing::instrument(skip_all)]
     fn _import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
+        ensure_cov::notify_cov("loro_internal::import");
         let parsed = parse_header_and_body(bytes)?;
         info!("Importing with mode={:?}", &parsed.mode);
         match parsed.mode {
@@ -510,6 +511,7 @@ impl LoroDoc {
             }
             EncodeMode::Snapshot => {
                 if self.can_reset_with_snapshot() {
+                    ensure_cov::notify_cov("loro_internal::import::snapshot");
                     tracing::info!("Init by snapshot {}", self.peer_id());
                     decode_snapshot(self, parsed.mode, parsed.body)?;
                 } else {
@@ -643,14 +645,6 @@ impl LoroDoc {
     pub fn export_snapshot(&self) -> Vec<u8> {
         self.commit_then_stop();
         let ans = export_snapshot(self);
-        self.renew_txn_if_auto_commit();
-        ans
-    }
-
-    #[instrument(skip_all)]
-    pub fn export_fast_snapshot(&self) -> Vec<u8> {
-        self.commit_then_stop();
-        let ans = export_fast_snapshot(self);
         self.renew_txn_if_auto_commit();
         ans
     }
