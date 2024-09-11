@@ -900,6 +900,8 @@ impl LoroDoc {
 
     /// Export the snapshot of current version, it's include all content of
     /// operations and states
+    ///
+    /// @deprecated Use `export` instead
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
         Ok(self.0.export_snapshot())
@@ -4127,6 +4129,8 @@ export type TreeID = `${number}@${PeerID}`;
 interface LoroDoc {
     /**
      * Export updates from the specific version to the current version
+     * 
+     * @deprecated Use `export` instead
      *
      *  @example
      *  ```ts
