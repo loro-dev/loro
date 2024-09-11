@@ -1061,7 +1061,7 @@ dependencies = [
  "loro-rle 0.16.2",
  "nonmax",
  "serde",
- "serde_columnar 0.3.8",
+ "serde_columnar",
  "string_cache",
  "thiserror",
  "wasm-bindgen",
@@ -1078,7 +1078,7 @@ dependencies = [
  "loro-rle 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7)",
  "nonmax",
  "serde",
- "serde_columnar 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_columnar",
  "string_cache",
  "thiserror",
 ]
@@ -1094,7 +1094,7 @@ dependencies = [
  "loro-rle 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761)",
  "nonmax",
  "serde",
- "serde_columnar 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_columnar",
  "string_cache",
  "thiserror",
 ]
@@ -1182,7 +1182,7 @@ dependencies = [
  "rand",
  "serde",
  "serde-wasm-bindgen 0.5.0",
- "serde_columnar 0.3.8",
+ "serde_columnar",
  "serde_json",
  "smallvec",
  "static_assertions",
@@ -1222,7 +1222,7 @@ dependencies = [
  "postcard",
  "rand",
  "serde",
- "serde_columnar 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_columnar",
  "serde_json",
  "smallvec",
  "thiserror",
@@ -1257,7 +1257,7 @@ dependencies = [
  "postcard",
  "rand",
  "serde",
- "serde_columnar 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_columnar",
  "serde_json",
  "smallvec",
  "thiserror",
@@ -2024,36 +2024,15 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar"
-version = "0.3.8"
-dependencies = [
- "itertools 0.11.0",
- "postcard",
- "serde",
- "serde_columnar_derive 0.3.5",
- "thiserror",
-]
-
-[[package]]
-name = "serde_columnar"
-version = "0.3.8"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4695127babe1325d81258819f7d9f7dd13e07f2cc3c501553f0b01a4e133daea"
+checksum = "5fc88718f3773d8642f3e97bec101d1d44fb8072d26b48ffe1221194f1a09b4d"
 dependencies = [
  "itertools 0.11.0",
  "postcard",
  "serde",
- "serde_columnar_derive 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_columnar_derive",
  "thiserror",
-]
-
-[[package]]
-name = "serde_columnar_derive"
-version = "0.3.5"
-dependencies = [
- "darling",
- "proc-macro2 1.0.75",
- "quote 1.0.35",
- "syn 2.0.48",
 ]
 
 [[package]]
