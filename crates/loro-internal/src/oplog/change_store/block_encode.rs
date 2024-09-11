@@ -77,9 +77,7 @@ use loro_common::{
 use once_cell::sync::OnceCell;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use serde_columnar::{
-    columnar, AnyRleDecoder, DeltaOfDeltaDecoder, Itertools,
-};
+use serde_columnar::{columnar, AnyRleDecoder, DeltaOfDeltaDecoder, Itertools};
 use tracing::info;
 
 use super::block_meta_encode::decode_changes_header;
@@ -277,8 +275,7 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
 
     diagnose_block(&out);
     let ans = postcard::to_allocvec(&out).unwrap();
-    // info!("block size = {}", ans.len());
-    println!("BLOCK SIZE = {}", ans.len());
+    info!("block size = {}", ans.len());
     ans
 }
 
