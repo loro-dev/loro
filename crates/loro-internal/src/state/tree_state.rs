@@ -899,13 +899,9 @@ impl TreeState {
 
     pub(crate) fn get_index_by_tree_id(&self, target: &TreeID) -> Option<usize> {
         let parent = self.parent(target)?;
-        (!parent.is_deleted())
-            .then(|| {
-                self.children
-                    .get(&parent)
-                    .and_then(|x| x.get_index_by_child_id(target))
-            })
-            .flatten()
+        self.children
+            .get(&parent)
+            .and_then(|x| x.get_index_by_child_id(target))
     }
 
     pub(crate) fn get_index_by_position(
