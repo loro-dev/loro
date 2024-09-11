@@ -31,6 +31,7 @@ use std::{
 use tracing::{debug, info_span, trace, warn};
 
 mod block_encode;
+mod block_meta_encode;
 mod delta_rle_encode;
 pub(super) mod iter;
 
