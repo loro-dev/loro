@@ -5,7 +5,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use loro_kv_store::{compress::CompressionType, mem_store::MemKvConfig, MemKvStore};
+use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 
 use crate::kv_store::KvStore;
 

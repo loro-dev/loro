@@ -1,4 +1,4 @@
-use std::{fmt::Display, io::Write, str::Bytes, sync::Arc};
+use std::{fmt::Display, io::Write, sync::Arc};
 
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;

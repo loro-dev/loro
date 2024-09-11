@@ -1,12 +1,9 @@
-use std::borrow::Cow;
 
 use loro_common::{Counter, Lamport, PeerID, ID};
 use once_cell::sync::OnceCell;
 use rle::HasLength;
-use serde::{Deserialize, Serialize};
 use serde_columnar::{
-    columnar, AnyRleDecoder, AnyRleEncoder, BoolRleDecoder, BoolRleEncoder, DeltaOfDeltaEncoder,
-    DeltaRleDecoder, DeltaRleEncoder, Itertools,
+    AnyRleDecoder, AnyRleEncoder, BoolRleDecoder, BoolRleEncoder, DeltaOfDeltaEncoder,
 };
 
 use crate::{

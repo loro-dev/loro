@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use tracing::{debug, instrument, trace, trace_span};
+use tracing::{debug, trace, trace_span};
 
 use self::change_store::iter::MergedChangeIter;
 use self::pending_changes::PendingChanges;

@@ -78,13 +78,11 @@ use once_cell::sync::OnceCell;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use serde_columnar::{
-    columnar, AnyRleDecoder, AnyRleEncoder, BoolRleDecoder, BoolRleEncoder, DeltaOfDeltaDecoder,
-    DeltaOfDeltaEncoder, DeltaRleDecoder, DeltaRleEncoder, Itertools,
+    columnar, AnyRleDecoder, DeltaOfDeltaDecoder, Itertools,
 };
 use tracing::info;
 
 use super::block_meta_encode::decode_changes_header;
-use super::delta_rle_encode::{UnsignedDeltaDecoder, UnsignedDeltaEncoder};
 use crate::arena::SharedArena;
 use crate::change::{Change, Timestamp};
 use crate::container::tree::tree_op;
