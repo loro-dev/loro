@@ -105,7 +105,7 @@ fn test_commit_message_sync_via_fast_snapshot() {
     text1.insert(5, " world").unwrap();
     doc1.commit_with(CommitOptions::new().commit_msg("second edit"));
 
-    let snapshot = doc1.export_fast_snapshot();
+    let snapshot = doc1.export(loro::ExportMode::Snapshot);
     doc2.import(&snapshot).unwrap();
 
     // Verify the commit messages were preserved in the snapshot
@@ -120,7 +120,8 @@ fn test_commit_message_sync_via_fast_snapshot() {
     assert_eq!(text2.to_string(), "hello world");
     text2.delete(0, 10).unwrap();
     doc2.set_next_commit_message("From text2");
-    doc1.import(&doc2.export_fast_snapshot()).unwrap();
+    doc1.import(&doc2.export(loro::ExportMode::Snapshot))
+        .unwrap();
     let c = doc1.get_change(ID::new(doc2.peer_id(), 0)).unwrap();
     assert_eq!(c.message(), "From text2");
 }

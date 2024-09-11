@@ -209,6 +209,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
 
 [[package]]
+name = "ensure-cov"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33753185802e107b8fa907192af1f0eca13b1fb33327a59266d650fef29b2b4e"
+
+[[package]]
 name = "enum-as-inner"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -262,6 +268,7 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "bytes",
+ "ensure-cov",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
  "fxhash",
@@ -498,6 +505,7 @@ dependencies = [
  "generic-btree",
  "loro-delta 0.16.2",
  "loro-internal 0.16.2",
+ "loro-kv-store",
  "tracing",
 ]
 
@@ -618,6 +626,7 @@ dependencies = [
  "arref",
  "bytes",
  "either",
+ "ensure-cov",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
  "fxhash",
@@ -723,6 +732,7 @@ name = "loro-kv-store"
 version = "0.16.2"
 dependencies = [
  "bytes",
+ "ensure-cov",
  "fxhash",
  "loro-common 0.16.2",
  "lz4_flex",

@@ -8,6 +8,7 @@ use fuzz::{
     },
     container::{MapAction, TextAction, TextActionInner, TreeAction, TreeActionInner},
     crdt_fuzzer::{minify_error, test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
+    test_multi_sites_with_gc,
 };
 use loro::{ContainerType::*, LoroCounter, LoroDoc};
 

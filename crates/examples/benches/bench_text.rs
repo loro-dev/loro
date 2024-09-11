@@ -43,7 +43,7 @@ fn bench_text(c: &mut Criterion) {
                 doc
             },
             |doc| {
-                doc.export_fast_snapshot();
+                doc.export(loro::ExportMode::Snapshot);
             },
             criterion::BatchSize::SmallInput,
         )
@@ -53,7 +53,7 @@ fn bench_text(c: &mut Criterion) {
         b.iter_batched(
             || apply_text_actions(&actions, 1),
             |doc| {
-                doc.export_fast_snapshot();
+                doc.export(loro::ExportMode::Snapshot);
             },
             criterion::BatchSize::SmallInput,
         )
@@ -68,7 +68,7 @@ fn bench_text(c: &mut Criterion) {
                 }
                 if doc_snapshot.get().is_none() {
                     let doc = doc.get().unwrap();
-                    let snapshot = doc.export_fast_snapshot();
+                    let snapshot = doc.export(loro::ExportMode::Snapshot);
                     println!("B4 fast_snapshot size: {:?}", ByteSize(snapshot.len()));
                     doc_snapshot.set(snapshot).unwrap();
                 }
@@ -87,7 +87,7 @@ fn bench_text(c: &mut Criterion) {
             || {
                 if doc_x100_snapshot.get().is_none() {
                     let doc = apply_text_actions(&actions, 100);
-                    let snapshot = doc.export_fast_snapshot();
+                    let snapshot = doc.export(loro::ExportMode::Snapshot);
                     println!("B4x100 fast_snapshot size: {:?}", ByteSize(snapshot.len()));
                     doc_x100_snapshot.set(snapshot).unwrap();
                 }
@@ -107,7 +107,7 @@ fn bench_text(c: &mut Criterion) {
             || {
                 if doc_x100_snapshot.get().is_none() {
                     let doc = apply_text_actions(&actions, 100);
-                    let snapshot = doc.export_fast_snapshot();
+                    let snapshot = doc.export(loro::ExportMode::Snapshot);
                     println!("B4x100 fast_snapshot size: {:?}", ByteSize(snapshot.len()));
                     doc_x100_snapshot.set(snapshot).unwrap();
                 }

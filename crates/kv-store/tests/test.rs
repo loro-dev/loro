@@ -61,7 +61,7 @@ fn add_flush_add_scan() {
     }
 
     let bytes = store.export_all();
-    let mut store = MemKvStore::default();
+    let mut store = MemKvStore::new(MemKvConfig::new());
     store.import_all(bytes).unwrap();
     let mut iter = store.scan(std::ops::Bound::Unbounded, std::ops::Bound::Unbounded);
     assert_eq!(
@@ -83,12 +83,12 @@ fn large_value() {
     let large_value: Vec<u8> = (0..100_000).map(|_| rng.gen()).collect();
     let large_value = Bytes::from(large_value);
 
-    let mut store = MemKvStore::default();
+    let mut store = MemKvStore::new(MemKvConfig::new());
     store.set(key, large_value.clone());
 
     let bytes = store.export_all();
     ensure_cov::assert_cov("kv_store::block::LargeValueBlock::encode::compress_fallback");
-    let mut imported_store = MemKvStore::default();
+    let mut imported_store = MemKvStore::new(MemKvConfig::new());
     imported_store.import_all(bytes).unwrap();
 
     let retrieved_value = imported_store.get(key).unwrap();

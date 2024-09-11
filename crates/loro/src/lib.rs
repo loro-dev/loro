@@ -672,11 +672,6 @@ impl LoroDoc {
         self.doc.compact_change_store()
     }
 
-    /// Export the fast snapshot of the document.
-    pub fn export_fast_snapshot(&self) -> Vec<u8> {
-        self.doc.export_fast_snapshot()
-    }
-
     /// Export the document in the given mode.
     pub fn export(&self, mode: ExportMode) -> Vec<u8> {
         self.doc.export(mode)
