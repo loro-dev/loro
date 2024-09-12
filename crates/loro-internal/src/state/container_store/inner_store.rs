@@ -1,16 +1,12 @@
 use std::ops::Bound;
 
 use bytes::Bytes;
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use loro_common::ContainerID;
-use tracing::trace;
 
 use crate::{
-    arena::SharedArena,
-    container::idx::ContainerIdx,
-    state::{container_store::FRONTIERS_KEY, ContainerCreationContext},
-    utils::kv_wrapper::KvWrapper,
-    version::Frontiers,
+    arena::SharedArena, container::idx::ContainerIdx, state::container_store::FRONTIERS_KEY,
+    utils::kv_wrapper::KvWrapper, version::Frontiers,
 };
 
 use super::ContainerWrapper;
@@ -232,7 +228,6 @@ impl InnerStore {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        trace!("store len = {}", self.len);
         self.len == 0
     }
 

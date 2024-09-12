@@ -499,6 +499,22 @@ impl<'a> PositionArena<'a> {
     pub fn decode<'de: 'a>(bytes: &'de [u8]) -> LoroResult<Self> {
         Ok(serde_columnar::from_bytes(bytes)?)
     }
+
+    pub fn encode_v2(&self) -> Vec<u8> {
+        if self.positions.is_empty() {
+            return Vec::new();
+        }
+
+        serde_columnar::to_vec(&self).unwrap()
+    }
+
+    pub fn decode_v2<'de: 'a>(bytes: &'de [u8]) -> LoroResult<Self> {
+        if bytes.is_empty() {
+            return Ok(Self::default());
+        }
+
+        Ok(serde_columnar::from_bytes(bytes)?)
+    }
 }
 
 fn longest_common_prefix_length(a: &[u8], b: &[u8]) -> usize {

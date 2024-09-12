@@ -257,7 +257,7 @@ impl Change {
 }
 
 /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
-/// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
+/// It is the number of milliseconds that have elapsed since 00:00:00 UTC on 1 January 1970.
 #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
 pub(crate) fn get_sys_timestamp() -> Timestamp {
     use std::time::{SystemTime, UNIX_EPOCH};

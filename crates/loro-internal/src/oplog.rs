@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use tracing::{debug, instrument, trace, trace_span};
+use tracing::{debug, trace, trace_span};
 
 use self::change_store::iter::MergedChangeIter;
 use self::pending_changes::PendingChanges;
@@ -371,8 +371,13 @@ impl OpLog {
     }
 
     #[inline(always)]
-    pub(crate) fn export_from_fast_in_range(&self, spans: &[IdSpan]) -> Bytes {
-        self.change_store.export_from_fast_in_range(spans)
+    pub(crate) fn export_blocks_from<W: std::io::Write>(&self, vv: &VersionVector, w: &mut W) {
+        self.change_store.export_blocks_from(vv, self.vv(), w)
+    }
+
+    #[inline(always)]
+    pub(crate) fn export_blocks_in_range<W: std::io::Write>(&self, spans: &[IdSpan], w: &mut W) {
+        self.change_store.export_blocks_in_range(spans, w)
     }
 
     #[inline(always)]
@@ -557,6 +562,7 @@ impl OpLog {
     #[inline(never)]
     pub(crate) fn idlp_to_id(&self, id: loro_common::IdLp) -> Option<ID> {
         let change = self.change_store.get_change_by_lamport_lte(id)?;
+
         if change.lamport > id.lamport || change.lamport_end() <= id.lamport {
             return None;
         }
