@@ -165,6 +165,7 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
     assert_eq!(oplog.frontiers(), &state.frontiers);
 
     let oplog_bytes = oplog.encode_change_store();
+    state.ensure_all_alive_containers();
     let state_bytes = state.store.encode();
 
     if oplog.is_trimmed() {

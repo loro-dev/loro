@@ -1,10 +1,7 @@
 use super::{ContainerCreationContext, State};
 use crate::{
-    arena::SharedArena,
-    configure::Configure,
-    container::idx::ContainerIdx,
-    utils::kv_wrapper::KvWrapper,
-    version::Frontiers,
+    arena::SharedArena, configure::Configure, container::idx::ContainerIdx,
+    utils::kv_wrapper::KvWrapper, version::Frontiers,
 };
 use bytes::Bytes;
 use inner_store::InnerStore;
@@ -212,6 +209,18 @@ impl ContainerStore {
                 ContainerWrapper::new(state, &self.arena)
             })
             .get_state_mut(idx, ctx!(self))
+    }
+
+    pub(crate) fn ensure_container(&mut self, id: &loro_common::ContainerID) {
+        let idx = self.arena.register_container(id);
+        self.store.ensure_container(idx, || {
+            let state = super::create_state_(
+                idx,
+                &self.conf,
+                self.peer.load(std::sync::atomic::Ordering::Relaxed),
+            );
+            ContainerWrapper::new(state, &self.arena)
+        });
     }
 
     pub(super) fn get_or_create_imm(&mut self, idx: ContainerIdx) -> &State {

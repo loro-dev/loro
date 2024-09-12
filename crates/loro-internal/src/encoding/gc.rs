@@ -63,7 +63,7 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     drop(oplog);
     doc.checkout(&start_from)?;
     let mut state = doc.app_state().lock().unwrap();
-    let alive_containers = state.get_all_alive_containers();
+    let alive_containers = state.ensure_all_alive_containers();
     let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
     state.store.flush();
     let gc_state_kv = state.store.get_kv().clone();
@@ -71,6 +71,7 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     doc.checkout_to_latest();
     let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
         let mut state = doc.app_state().lock().unwrap();
+        state.ensure_all_alive_containers();
         state.store.encode();
         let new_kv = state.store.get_kv().clone();
         new_kv.remove_same(&gc_state_kv);

@@ -3,6 +3,7 @@ use std::ops::Bound;
 use bytes::Bytes;
 use fxhash::FxHashMap;
 use loro_common::ContainerID;
+use tracing::trace;
 
 use crate::{
     arena::SharedArena, container::idx::ContainerIdx, state::container_store::FRONTIERS_KEY,
@@ -54,6 +55,20 @@ impl InnerStore {
         }
 
         self.store.get_mut(&idx).unwrap()
+    }
+
+    pub(super) fn ensure_container(
+        &mut self,
+        idx: ContainerIdx,
+        f: impl FnOnce() -> ContainerWrapper,
+    ) {
+        if self.store.contains_key(&idx) {
+            return;
+        }
+
+        let c = f();
+        self.store.insert(idx, c);
+        self.len += 1;
     }
 
     pub(crate) fn get_mut(&mut self, idx: ContainerIdx) -> Option<&mut ContainerWrapper> {
@@ -121,6 +136,7 @@ impl InnerStore {
                 count += 1;
                 let cid = ContainerID::from_bytes(&k);
                 let parent = ContainerWrapper::decode_parent(&v);
+                trace!("decode register parent {:?} parent = {:?}", &cid, &parent);
                 let idx = self.arena.register_container(&cid);
                 let p = parent.as_ref().map(|p| self.arena.register_container(p));
                 self.arena.set_parent(idx, p);

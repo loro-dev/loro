@@ -745,6 +745,22 @@ impl DocState {
         self.store.get_container_mut(idx)
     }
 
+    /// Ensure the container is created and will be encoded in the next `encode` call
+    #[inline]
+    pub(crate) fn ensure_container(&mut self, id: &ContainerID) {
+        self.store.ensure_container(id);
+    }
+
+    /// Ensure all alive containers are created in DocState and will be encoded in the next `encode` call
+    pub(crate) fn ensure_all_alive_containers(&mut self) -> FxHashSet<ContainerID> {
+        let ans = self.get_all_alive_containers();
+        for id in ans.iter() {
+            self.ensure_container(id);
+        }
+
+        ans
+    }
+
     pub(crate) fn get_value_by_idx(&mut self, container_idx: ContainerIdx) -> LoroValue {
         self.store
             .get_value(container_idx)

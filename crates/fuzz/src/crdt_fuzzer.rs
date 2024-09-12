@@ -471,18 +471,21 @@ pub fn test_multi_sites_with_gc(
             }
         }
 
-        info_span!("Sync 0 <=> 1").in_scope(|| {
+        info_span!("SyncWithGC").in_scope(|| {
             let (a, b) = array_mut_ref!(&mut this.actors, [0, 1]);
             a.loro.attach();
             b.loro.attach();
-            b.loro
-                .import(&a.loro.export_from(&b.loro.oplog_vv()))
-                .unwrap();
+            info_span!("0 => 1").in_scope(|| {
+                b.loro
+                    .import(&a.loro.export_from(&b.loro.oplog_vv()))
+                    .unwrap();
+            });
             let json = b
                 .loro
                 .export_json_updates(&Default::default(), &b.loro.oplog_vv());
             trace!("Changes on 1 = {:#?}", json);
-            let result = a.loro.import(&b.loro.export_from(&a.loro.oplog_vv()));
+            let result = info_span!("1 => 0")
+                .in_scope(|| a.loro.import(&b.loro.export_from(&a.loro.oplog_vv())));
             match result {
                 Ok(_) => {
                     a.check_eq(b);
