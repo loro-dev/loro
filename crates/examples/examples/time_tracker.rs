@@ -1,4 +1,3 @@
-
 use dev_utils::{get_mem_usage, ByteSize};
 use loro::{CommitOptions, LoroCounter, LoroDoc, LoroMap};
 
@@ -53,7 +52,7 @@ pub fn main() {
     let snapshot = doc.export(loro::ExportMode::Snapshot);
     println!("Snapshot Size {}", ByteSize(snapshot.len()));
     println!("mem: {}", get_mem_usage());
-    let gc_snapshot = doc.export(loro::ExportMode::GcSnapshot(&doc.oplog_frontiers()));
+    let gc_snapshot = doc.export(loro::ExportMode::gc_snapshot(&doc.oplog_frontiers()));
     println!("GC Shallow Snapshot Size {}", ByteSize(gc_snapshot.len()));
     println!("mem: {}", get_mem_usage());
 

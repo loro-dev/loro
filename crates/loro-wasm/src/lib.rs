@@ -4,7 +4,7 @@
 #![allow(clippy::doc_lazy_continuation)]
 #![warn(missing_docs)]
 
-use convert::resolved_diff_to_js;
+use convert::{js_to_version_vector, resolved_diff_to_js};
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
     change::Lamport,
@@ -18,8 +18,8 @@ use loro_internal::{
     },
     id::{Counter, PeerID, TreeID, ID},
     json::JsonSchema,
-    loro::CommitOptions,
-    loro_common::check_root_container_name,
+    loro::{CommitOptions, ExportMode},
+    loro_common::{check_root_container_name, IdSpan},
     obs::SubID,
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
@@ -170,6 +170,8 @@ extern "C" {
     pub type JsJsonSchema;
     #[wasm_bindgen(typescript_type = "string | JsonSchema")]
     pub type JsJsonSchemaOrString;
+    #[wasm_bindgen(typescript_type = "ExportMode")]
+    pub type JsExportMode;
 }
 
 mod observer {
@@ -816,6 +818,14 @@ impl LoroDoc {
         VersionVector(self.0.state_vv())
     }
 
+    /// Get the version vector of the trimmed history
+    ///
+    /// All the ops in the trimmed history are removed from this doc.
+    #[wasm_bindgen(js_name = "trimmedVV")]
+    pub fn trimmed_vv(&self) -> VersionVector {
+        VersionVector(InternalVersionVector::from_im_vv(&self.0.trimmed_vv()))
+    }
+
     /// Get the encoded version vector of the latest version in OpLog.
     ///
     /// If you checkout to a specific version, the version vector will not change.
@@ -931,6 +941,45 @@ impl LoroDoc {
         } else {
             Ok(self.0.export_from(&Default::default()))
         }
+    }
+
+    /// Export the document based on the specified ExportMode.
+    ///
+    /// @param mode - The export mode to use. Can be one of:
+    ///   - `{ mode: "snapshot" }`: Export a full snapshot of the document.
+    ///   - `{ mode: "update", start_vv: VersionVector }`: Export updates from the given version vector.
+    ///   - `{ mode: "updates-in-range", spans: { id: ID, len: number }[] }`: Export updates within the specified ID spans.
+    ///   - `{ mode: "gc-snapshot", frontiers: Frontiers }`: Export a garbage-collected snapshot up to the given frontiers.
+    ///
+    /// @returns A byte array containing the exported data.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// doc.setText("text", "Hello World");
+    ///
+    /// // Export a full snapshot
+    /// const snapshotBytes = doc.export({ mode: "snapshot" });
+    ///
+    /// // Export updates from a specific version
+    /// const vv = doc.oplogVersion();
+    /// doc.setText("text", "Hello Loro");
+    /// const updateBytes = doc.export({ mode: "update", start_vv: vv });
+    ///
+    /// // Export a garbage-collected snapshot
+    /// const gcBytes = doc.export({ mode: "gc-snapshot", frontiers: doc.oplogFrontiers() });
+    ///
+    /// // Export updates within specific ID spans
+    /// const spanBytes = doc.export({
+    ///   mode: "updates-in-range",
+    ///   spans: [{ id: "1", len: 10 }, { id: "2", len: 5 }]
+    /// });
+    /// ```
+    pub fn export(&self, mode: JsExportMode) -> JsResult<Vec<u8>> {
+        let export_mode = js_to_export_mode(mode)?;
+        Ok(self.0.export(export_mode))
     }
 
     /// Export updates from the specific version to the current version with JSON format.
@@ -4085,6 +4134,48 @@ pub fn decode_import_blob_meta(blob: &[u8]) -> JsResult<JsImportBlobMetadata> {
     Ok(meta.into())
 }
 
+fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
+    let js_value: JsValue = js_mode.into();
+    let mode = js_sys::Reflect::get(&js_value, &JsValue::from_str("mode"))?
+        .as_string()
+        .ok_or_else(|| JsError::new("Invalid mode"))?;
+
+    match mode.as_str() {
+        "update" => {
+            let start_vv = js_sys::Reflect::get(&js_value, &JsValue::from_str("start_vv"))?;
+            let start_vv = js_to_version_vector(start_vv)?;
+            // TODO: PERF: avoid this clone
+            Ok(ExportMode::updates_owned(start_vv.0.clone()))
+        }
+        "snapshot" => Ok(ExportMode::Snapshot),
+        "gc-snapshot" => {
+            let frontiers: JsValue =
+                js_sys::Reflect::get(&js_value, &JsValue::from_str("frontiers"))?;
+            let frontiers: Vec<JsID> = js_sys::try_iter(&frontiers)?
+                .ok_or_else(|| JsError::new("frontiers is not iterable"))?
+                .map(|res| res.map(JsID::from))
+                .collect::<Result<_, _>>()?;
+            let frontiers = ids_to_frontiers(frontiers)?;
+            Ok(ExportMode::gc_snapshot_owned(frontiers))
+        }
+        "updates-in-range" => {
+            let spans = js_sys::Reflect::get(&js_value, &JsValue::from_str("spans"))?;
+            let spans: js_sys::Array = spans.dyn_into()?;
+            let mut rust_spans = Vec::new();
+            for span in spans.iter() {
+                let id = js_sys::Reflect::get(&span, &JsValue::from_str("id"))?;
+                let len = js_sys::Reflect::get(&span, &JsValue::from_str("len"))?
+                    .as_f64()
+                    .ok_or_else(|| JsError::new("Invalid len"))?;
+                let id = js_id_to_id(id.into())?;
+                rust_spans.push(id.to_span(len as usize));
+            }
+            Ok(ExportMode::updates_in_range(rust_spans))
+        }
+        _ => Err(JsError::new("Invalid export mode").into()),
+    }
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
 /**
@@ -4484,6 +4575,22 @@ export type JsonChange = {
   msg: string | null,
   ops: JsonOp[]
 }
+
+export type ExportMode = {
+    mode: "update",
+    start_vv: VersionVector,
+} | {
+    mode: "snapshot",
+} | {
+    mode: "gc-snapshot",
+    frontiers: Frontiers,
+} | {
+    mode: "updates-in-range",
+    spans: {
+        id: ID,
+        len: number,
+    }[],
+};
 
 export type JsonOp = {
   container: ContainerID,

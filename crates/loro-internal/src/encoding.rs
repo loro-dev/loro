@@ -2,6 +2,8 @@ pub(crate) mod arena;
 mod encode_reordered;
 pub(crate) mod value;
 pub(crate) mod value_register;
+use std::borrow::Cow;
+
 pub(crate) use encode_reordered::{
     decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
 };
@@ -13,19 +15,62 @@ use crate::op::OpWithId;
 use crate::version::Frontiers;
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{IdLpSpan, IdSpan, LoroResult, PeerID};
+use loro_common::{IdLpSpan, IdSpan, LoroResult, PeerID, ID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 use serde::{Deserialize, Serialize};
 pub(crate) use value::OwnedValue;
 
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum ExportMode<'a> {
     Snapshot,
-    Updates { from: &'a VersionVector },
-    UpdatesInRange { spans: &'a [IdSpan] },
-    GcSnapshot(&'a Frontiers),
+    Updates { from: Cow<'a, VersionVector> },
+    UpdatesInRange { spans: Cow<'a, [IdSpan]> },
+    GcSnapshot(Cow<'a, Frontiers>),
+}
+
+impl<'a> ExportMode<'a> {
+    pub fn snapshot() -> Self {
+        ExportMode::Snapshot
+    }
+
+    pub fn updates(from: &'a VersionVector) -> Self {
+        ExportMode::Updates {
+            from: Cow::Borrowed(from),
+        }
+    }
+
+    pub fn updates_owned(from: VersionVector) -> Self {
+        ExportMode::Updates {
+            from: Cow::Owned(from),
+        }
+    }
+
+    pub fn all_updates() -> Self {
+        ExportMode::Updates {
+            from: Cow::Owned(Default::default()),
+        }
+    }
+
+    pub fn updates_in_range(spans: impl Into<Cow<'a, [IdSpan]>>) -> Self {
+        ExportMode::UpdatesInRange {
+            spans: spans.into(),
+        }
+    }
+
+    pub fn gc_snapshot(frontiers: &'a Frontiers) -> Self {
+        ExportMode::GcSnapshot(Cow::Borrowed(frontiers))
+    }
+
+    pub fn gc_snapshot_owned(frontiers: Frontiers) -> Self {
+        ExportMode::GcSnapshot(Cow::Owned(frontiers))
+    }
+
+    pub fn gc_snapshot_from_id(id: ID) -> Self {
+        let frontiers = Frontiers::from_id(id);
+        ExportMode::GcSnapshot(Cow::Owned(frontiers))
+    }
 }
 
 const MAGIC_BYTES: [u8; 4] = *b"loro";

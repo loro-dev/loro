@@ -1,4 +1,7 @@
-use std::sync::{atomic::AtomicBool, Arc};
+use std::{
+    borrow::Cow,
+    sync::{atomic::AtomicBool, Arc},
+};
 
 use super::gen_action;
 use loro::{Frontiers, LoroDoc, ID};
@@ -12,7 +15,7 @@ fn test_gc() -> anyhow::Result<()> {
     let frontiers = doc.oplog_frontiers();
     gen_action(&doc, 123, 10);
     doc.commit();
-    let gc_bytes = doc.export(loro::ExportMode::GcSnapshot(&frontiers));
+    let gc_bytes = doc.export(loro::ExportMode::gc_snapshot(&frontiers));
 
     let new_doc = LoroDoc::new();
     new_doc.import(&gc_bytes)?;
@@ -31,7 +34,7 @@ fn test_gc_1() -> anyhow::Result<()> {
     let frontiers = doc.oplog_frontiers();
     doc.get_text("text").insert(3, "4")?;
     doc.commit();
-    let gc_bytes = doc.export(loro::ExportMode::GcSnapshot(&frontiers));
+    let gc_bytes = doc.export(loro::ExportMode::gc_snapshot(&frontiers));
 
     let new_doc = LoroDoc::new();
     new_doc.import(&gc_bytes)?;
@@ -50,7 +53,7 @@ fn test_checkout_to_text_that_were_created_before_gc() -> anyhow::Result<()> {
     doc.commit();
     let frontiers = doc.oplog_frontiers();
     doc.get_text("text").delete(0, 3)?;
-    let bytes = doc.export(loro::ExportMode::GcSnapshot(&frontiers));
+    let bytes = doc.export(loro::ExportMode::gc_snapshot(&frontiers));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes)?;
     new_doc.checkout(&frontiers)?;
@@ -69,7 +72,7 @@ fn test_checkout_to_list_that_were_created_before_gc() -> anyhow::Result<()> {
     doc.commit();
     let frontiers = doc.oplog_frontiers();
     doc.get_list("list").delete(0, 3)?;
-    let bytes = doc.export(loro::ExportMode::GcSnapshot(&frontiers));
+    let bytes = doc.export(loro::ExportMode::gc_snapshot(&frontiers));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes)?;
     new_doc.checkout(&frontiers)?;
@@ -91,7 +94,7 @@ fn test_checkout_to_movable_list_that_were_created_before_gc() -> anyhow::Result
     doc.commit();
     let frontiers = doc.oplog_frontiers();
     doc.get_movable_list("list").delete(0, 3)?;
-    let bytes = doc.export(loro::ExportMode::GcSnapshot(&frontiers));
+    let bytes = doc.export(loro::ExportMode::gc_snapshot(&frontiers));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes)?;
     new_doc.checkout(&frontiers)?;
@@ -108,9 +111,7 @@ fn gc_on_the_given_version_when_feasible() -> anyhow::Result<()> {
     doc.set_peer_id(1)?;
     gen_action(&doc, 123, 64);
     doc.commit();
-    let bytes = doc.export(loro::ExportMode::GcSnapshot(&Frontiers::from(ID::new(
-        1, 31,
-    ))));
+    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(1, 31)));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes)?;
     assert_eq!(new_doc.trimmed_vv().get(&1).copied().unwrap(), 31);
@@ -131,7 +132,7 @@ fn export_snapshot_on_a_trimmed_doc() -> anyhow::Result<()> {
     doc.commit();
 
     // Export using GcSnapshot mode
-    let bytes = doc.export(loro::ExportMode::GcSnapshot(&frontiers));
+    let bytes = doc.export(loro::ExportMode::gc_snapshot(&frontiers));
 
     // Import into a new document
     let trimmed_doc = LoroDoc::new();
@@ -161,10 +162,7 @@ fn test_richtext_gc() -> anyhow::Result<()> {
     text.mark(0..2, "bold", "value")?; // 3, 4
     doc.commit();
     text.insert(3, "456")?; // 5, 6, 7
-    let bytes = doc.export(loro::ExportMode::GcSnapshot(&Frontiers::from(ID::new(
-        1, 3,
-    ))));
-
+    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(1, 3)));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes)?;
     new_doc.checkout(&Frontiers::from(ID::new(1, 4)))?;
@@ -185,10 +183,10 @@ fn import_updates_depend_on_trimmed_history_should_raise_error() -> anyhow::Resu
     doc2.commit();
     gen_action(&doc, 123, 2);
     doc.commit();
-    let gc_snapshot = doc.export(loro::ExportMode::GcSnapshot(&doc.oplog_frontiers()));
+    let gc_snapshot = doc.export(loro::ExportMode::gc_snapshot(&doc.oplog_frontiers()));
     doc.get_text("hello").insert(0, "world").unwrap();
     doc2.import(&doc.export(loro::ExportMode::Updates {
-        from: &doc2.oplog_vv(),
+        from: Cow::Borrowed(&doc2.oplog_vv()),
     }))
     .unwrap();
 
@@ -207,9 +205,7 @@ fn import_updates_depend_on_trimmed_history_should_raise_error() -> anyhow::Resu
             }
         }
     }));
-    let result = new_doc.import(&doc2.export(loro::ExportMode::Updates {
-        from: &new_doc.oplog_vv(),
-    }));
+    let result = new_doc.import(&doc2.export(loro::ExportMode::updates_owned(new_doc.oplog_vv())));
     assert!(result.is_err());
     // But updates from doc should be fine ("hello": "world")
     assert_eq!(new_doc.get_text("hello").to_string(), *"world");

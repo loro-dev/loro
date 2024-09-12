@@ -1477,11 +1477,11 @@ impl LoroDoc {
         self.commit_then_stop();
         let ans = match mode {
             ExportMode::Snapshot => export_fast_snapshot(self),
-            ExportMode::Updates { from: vv } => export_fast_updates(self, vv),
+            ExportMode::Updates { from } => export_fast_updates(self, &from),
             ExportMode::UpdatesInRange { spans } => {
-                export_fast_updates_in_range(&self.oplog.lock().unwrap(), spans)
+                export_fast_updates_in_range(&self.oplog.lock().unwrap(), &spans)
             }
-            ExportMode::GcSnapshot(f) => export_gc_snapshot(self, f),
+            ExportMode::GcSnapshot(f) => export_gc_snapshot(self, &f),
         };
 
         self.renew_txn_if_auto_commit();

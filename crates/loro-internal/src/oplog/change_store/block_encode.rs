@@ -694,9 +694,7 @@ mod test {
         let bytes = doc.export_from(&Default::default());
         println!("Old Update bytes {:?}", dev_utils::ByteSize(bytes.length()));
 
-        let bytes = doc.export(crate::loro::ExportMode::Updates {
-            from: &Default::default(),
-        });
+        let bytes = doc.export(crate::loro::ExportMode::all_updates());
         println!("Update bytes {:?}", dev_utils::ByteSize(bytes.length()));
         // assert!(bytes.len() < 30);
 
