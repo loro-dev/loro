@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use arbitrary::Unstructured;
 use fuzz::{
     actions::{
         ActionInner,
@@ -7,7 +8,7 @@ use fuzz::{
         GenericAction,
     },
     container::{MapAction, TextAction, TextActionInner, TreeAction, TreeActionInner},
-    crdt_fuzzer::{minify_error, test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
+    crdt_fuzzer::{minify_error, test_multi_sites, Action, Action::*, FuzzTarget, FuzzValue::*},
     test_multi_sites_with_gc,
 };
 use loro::{ContainerType::*, LoroCounter, LoroDoc};
@@ -9207,6 +9208,24 @@ fn gc_fuzz_10() {
             },
         ],
     )
+}
+
+#[test]
+fn gc_arb_test() {
+    fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
+        let xs = u.arbitrary::<Vec<Action>>()?;
+        if let Err(e) = std::panic::catch_unwind(|| {
+            test_multi_sites_with_gc(site_num, vec![FuzzTarget::All], &mut xs.clone());
+        }) {
+            dbg!(xs);
+            println!("{:?}", e);
+            panic!()
+        } else {
+            Ok(())
+        }
+    }
+
+    arbtest::builder().budget_ms(1000).run(|u| prop(u, 5))
 }
 
 #[test]
