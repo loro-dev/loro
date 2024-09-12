@@ -491,9 +491,9 @@ dependencies = [
 
 [[package]]
 name = "darling"
-version = "0.20.3"
+version = "0.20.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0209d94da627ab5605dcccf08bb18afa5009cfbef48d8a8b7d7bdbc79be25c5e"
+checksum = "6f63b86c8a8826a49b8c21f08a2d07338eec8d900540f8630dc76284be802989"
 dependencies = [
  "darling_core",
  "darling_macro",
@@ -501,9 +501,9 @@ dependencies = [
 
 [[package]]
 name = "darling_core"
-version = "0.20.3"
+version = "0.20.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "177e3443818124b357d8e76f53be906d60937f0d3a90773a664fa63fa253e621"
+checksum = "95133861a8032aaea082871032f5815eb9e98cef03fa916ab4500513994df9e5"
 dependencies = [
  "fnv",
  "ident_case",
@@ -515,9 +515,9 @@ dependencies = [
 
 [[package]]
 name = "darling_macro"
-version = "0.20.3"
+version = "0.20.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "836a9bbc7ad63342d6d6e7b815ccab164bc77a2d95d84bc3117a8c0d5c98e2d5"
+checksum = "d336a2a514f6ccccaa3e09b02d41d35330c07ddf03a62165fcec10bb561c7806"
 dependencies = [
  "darling_core",
  "quote 1.0.35",
@@ -575,6 +575,12 @@ name = "embedded-io"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
+
+[[package]]
+name = "ensure-cov"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33753185802e107b8fa907192af1f0eca13b1fb33327a59266d650fef29b2b4e"
 
 [[package]]
 name = "enum-as-inner"
@@ -681,6 +687,7 @@ dependencies = [
  "color-backtrace",
  "ctor 0.2.6",
  "dev-utils",
+ "ensure-cov",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
  "fxhash",
@@ -1017,6 +1024,8 @@ dependencies = [
  "generic-btree",
  "loro-delta 0.16.2",
  "loro-internal 0.16.2",
+ "loro-kv-store",
+ "rand",
  "serde_json",
  "tracing",
 ]
@@ -1153,6 +1162,7 @@ dependencies = [
  "dev-utils",
  "dhat",
  "either",
+ "ensure-cov",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
  "fxhash",
@@ -1267,11 +1277,13 @@ name = "loro-kv-store"
 version = "0.16.2"
 dependencies = [
  "bytes",
+ "ensure-cov",
  "fxhash",
  "loro-common 0.16.2",
  "lz4_flex",
  "once_cell",
  "quick_cache",
+ "rand",
  "xxhash-rust",
 ]
 
@@ -2023,9 +2035,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar"
-version = "0.3.7"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3748cbf2b43a15ee9627881cabd7820d50508781cdebd3bb54cea49215d367a1"
+checksum = "6d4e3c0e46450edf7da174b610b9143eb8ca22059ace5016741fc9e20b88d1e7"
 dependencies = [
  "itertools 0.11.0",
  "postcard",
@@ -2036,9 +2048,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar_derive"
-version = "0.3.4"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e5eaacabbc55a397ffbb1ee32523f40f86fdefea8a8d9db19630d8b7c00edd1"
+checksum = "42c5d47942b2a7e76118b697fc0f94516a5d8366a3c0fee8d0e2b713e952e306"
 dependencies = [
  "darling",
  "proc-macro2 1.0.75",
@@ -2150,9 +2162,9 @@ dependencies = [
 
 [[package]]
 name = "strsim"
-version = "0.10.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
+checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "syn"

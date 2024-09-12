@@ -197,7 +197,7 @@ impl ContainerState for MapState {
 
     #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
-        assert_eq!(ctx.mode, EncodeMode::Snapshot);
+        assert_eq!(ctx.mode, EncodeMode::OutdatedSnapshot);
         for op in ctx.ops {
             debug_assert_eq!(
                 op.op.atom_len(),
@@ -294,8 +294,10 @@ impl MapState {
 }
 
 mod snapshot {
-    use fxhash::FxHashSet;
-    use loro_common::InternalString;
+    use std::sync::Arc;
+
+    use fxhash::{FxHashMap, FxHashSet};
+    use loro_common::{InternalString, LoroValue};
     use serde_columnar::Itertools;
 
     use crate::{
@@ -313,7 +315,7 @@ mod snapshot {
             // 3. leb128 peer_num + peers (in u64)
             // 3. Groups of (leb128 peer_idx, leb128 lamport), each has a respective map entry
             //    from either 1 or 2 when they all sorted by the key strings
-            let value = self.get_value();
+            let value = self.get_value().into_map().unwrap();
             postcard::to_io(&value, &mut w).unwrap();
 
             let keys_with_none_value = self
@@ -342,11 +344,13 @@ mod snapshot {
         }
 
         fn decode_value(bytes: &[u8]) -> loro_common::LoroResult<(loro_common::LoroValue, &[u8])> {
-            postcard::take_from_bytes(bytes).map_err(|_| {
+            let (value, bytes) = postcard::take_from_bytes::<FxHashMap<String, LoroValue>>(bytes)
+                .map_err(|_| {
                 loro_common::LoroError::DecodeError(
                     "Decode map value failed".to_string().into_boxed_str(),
                 )
-            })
+            })?;
+            Ok((LoroValue::Map(Arc::new(value)), bytes))
         }
 
         fn decode_snapshot_fast(
@@ -456,6 +460,7 @@ mod snapshot {
 
             let mut bytes = Vec::new();
             map.encode_snapshot_fast(&mut bytes);
+            assert!(bytes.len() <= 50);
 
             let (value, bytes) = MapState::decode_value(&bytes).unwrap();
             {

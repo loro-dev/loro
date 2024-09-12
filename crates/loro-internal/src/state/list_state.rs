@@ -381,11 +381,14 @@ impl ContainerState for ListState {
                 }
                 crate::delta::DeltaItem::Insert { insert: value, .. } => {
                     let mut arr = Vec::new();
-                    for slices in value.ranges.iter() {
-                        for i in slices.0.start..slices.0.end {
-                            let value = arena.get_value(i as usize).unwrap();
-                            arr.push(value);
+                    match &value.values {
+                        either::Either::Left(range) => {
+                            for i in range.to_range() {
+                                let value = arena.get_value(i as usize).unwrap();
+                                arr.push(value);
+                            }
                         }
+                        either::Either::Right(v) => arr.push(v.clone()),
                     }
                     for arr in ArrayVec::from_many(
                         arr.iter()
@@ -418,14 +421,17 @@ impl ContainerState for ListState {
                         }
                         crate::delta::DeltaItem::Insert { insert: value, .. } => {
                             let mut arr = Vec::new();
-                            for slices in value.ranges.iter() {
-                                for i in slices.0.start..slices.0.end {
-                                    let value = arena.get_value(i as usize).unwrap();
-                                    arr.push(value);
+                            match &value.values {
+                                either::Either::Left(range) => {
+                                    for i in range.to_range() {
+                                        let value = arena.get_value(i).unwrap();
+                                        arr.push(value);
+                                    }
                                 }
+                                either::Either::Right(v) => arr.push(v.clone()),
                             }
-                            let len = arr.len();
 
+                            let len = arr.len();
                             self.insert_batch(index, arr, value.id);
                             index += len;
                         }
@@ -520,7 +526,7 @@ impl ContainerState for ListState {
 
     #[doc = "Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
-        assert_eq!(ctx.mode, EncodeMode::Snapshot);
+        assert_eq!(ctx.mode, EncodeMode::OutdatedSnapshot);
         let mut index = 0;
         for op in ctx.ops {
             let value = op.op.content.as_list().unwrap().as_insert().unwrap().0;
@@ -546,8 +552,15 @@ mod snapshot {
     use super::*;
 
     impl FastStateSnapshot for ListState {
+        /// Encodes the ListState snapshot in a compact binary format:
+        /// 1. Encodes the list values using postcard serialization
+        /// 2. Encodes a table of unique peer IDs
+        /// 3. For each element, encodes its ID as:
+        ///    - Index of the peer ID in the table (LEB128)
+        ///    - Counter (LEB128)
+        ///    - Lamport timestamp (LEB128)
         fn encode_snapshot_fast<W: Write>(&mut self, mut w: W) {
-            let value = self.get_value();
+            let value = self.get_value().into_list().unwrap();
             postcard::to_io(&value, &mut w).unwrap();
             let mut peers: ValueRegister<PeerID> = ValueRegister::new();
             let mut id_bytes = Vec::new();
@@ -566,6 +579,14 @@ mod snapshot {
             }
 
             w.write_all(&id_bytes).unwrap();
+        }
+        fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
+            let (value, bytes) = postcard::take_from_bytes(bytes).map_err(|_| {
+                loro_common::LoroError::DecodeError(
+                    "Decode list value failed".to_string().into_boxed_str(),
+                )
+            })?;
+            Ok((LoroValue::List(Arc::new(value)), bytes))
         }
 
         fn decode_snapshot_fast(
@@ -604,14 +625,6 @@ mod snapshot {
             }
 
             Ok(ans)
-        }
-
-        fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
-            postcard::take_from_bytes(bytes).map_err(|_| {
-                loro_common::LoroError::DecodeError(
-                    "Decode list value failed".to_string().into_boxed_str(),
-                )
-            })
         }
     }
 }
@@ -657,6 +670,7 @@ mod test {
         list.insert(1, LoroValue::I64(2), IdFull::new(1, 1, 1));
         let mut w = Vec::new();
         list.encode_snapshot_fast(&mut w);
+        assert!(w.len() <= 28, "w.len() = {}", w.len());
         let (v, left) = ListState::decode_value(&w).unwrap();
         let mut new_list = ListState::decode_snapshot_fast(
             ContainerIdx::from_index_and_type(0, loro_common::ContainerType::List),

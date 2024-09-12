@@ -7,11 +7,11 @@ use crate::{
     span::{HasCounter, HasId, HasLamport},
 };
 use crate::{delta::DeltaValue, LoroValue};
+use either::Either;
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerType, CounterSpan, IdFull, IdLp, IdSpan};
+use loro_common::{CompactIdLp, ContainerType, CounterSpan, IdFull, IdLp, IdSpan};
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
-use smallvec::SmallVec;
 use std::{borrow::Cow, ops::Range};
 
 mod content;
@@ -544,25 +544,14 @@ impl<'a> Mergable for ListSlice<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct SliceRanges {
-    pub ranges: SmallVec<[SliceRange; 2]>,
+pub struct SliceWithId {
+    pub values: Either<SliceRange, LoroValue>,
+    /// This field is no-none when diff calculating movable list that need to handle_unknown
+    pub elem_id: Option<CompactIdLp>,
     pub id: IdFull,
 }
 
-impl Serialize for SliceRanges {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut s = serializer.serialize_seq(Some(self.ranges.len()))?;
-        for item in self.ranges.iter() {
-            s.serialize_element(item)?;
-        }
-        s.end()
-    }
-}
-
-impl DeltaValue for SliceRanges {
+impl DeltaValue for SliceWithId {
     fn value_extend(&mut self, other: Self) -> Result<(), Self> {
         if self.id.peer != other.id.peer {
             return Err(other);
@@ -576,41 +565,43 @@ impl DeltaValue for SliceRanges {
             return Err(other);
         }
 
-        self.ranges.extend(other.ranges);
-        Ok(())
+        match (&mut self.values, &other.values) {
+            (Either::Left(left_range), Either::Left(right_range))
+                if left_range.0.end == right_range.0.start =>
+            {
+                left_range.0.end = right_range.0.end;
+                Ok(())
+            }
+            _ => {
+                // If one is SliceRange and the other is LoroValue, we can't merge
+                Err(other)
+            }
+        }
     }
 
     fn take(&mut self, target_len: usize) -> Self {
-        let mut right = Self {
-            ranges: Default::default(),
-            id: self.id.inc(target_len as i32),
-        };
-
-        let right_target_len = self.length() - target_len;
-        let mut right_len = 0;
-        while right_len < right_target_len {
-            let range = self.ranges.pop().unwrap();
-            let range_len = range.content_len();
-            if right_len + range_len <= target_len {
-                right.ranges.push(range);
-                right_len += range_len;
-            } else {
-                let new_range = range.slice(right_len * 2 - right_target_len, range_len);
-                right.ranges.push(new_range);
-                self.ranges
-                    .push(range.slice(0, right_len * 2 - right_target_len));
-                right_len = right_target_len;
+        match &mut self.values {
+            Either::Left(range) => {
+                let ans = range.slice(0, target_len);
+                let this = range.slice(target_len, range.atom_len());
+                *range = this;
+                let old_id = self.id;
+                self.id = self.id.inc(target_len as i32);
+                Self {
+                    id: old_id,
+                    values: Either::Left(ans),
+                    elem_id: None,
+                }
             }
+            Either::Right(_) => unimplemented!(),
         }
-
-        std::mem::swap(self, &mut right);
-        let left = right;
-        #[allow(clippy::let_and_return)]
-        left
     }
 
     fn length(&self) -> usize {
-        self.ranges.iter().fold(0, |acc, x| acc + x.atom_len())
+        match &self.values {
+            Either::Left(r) => r.atom_len(),
+            Either::Right(_) => 1,
+        }
     }
 }
 

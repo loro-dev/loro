@@ -26,16 +26,16 @@ pub type Lamport = u32;
 // PERF change slice and getting length is kinda slow I guess
 #[derive(Debug, Clone, PartialEq)]
 pub struct Change<O = Op> {
-    pub(crate) ops: RleVec<[O; 1]>,
-    pub(crate) deps: Frontiers,
     /// id of the first op in the change
     pub(crate) id: ID,
     /// Lamport timestamp of the change. It can be calculated from deps
     pub(crate) lamport: Lamport,
+    pub(crate) deps: Frontiers,
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
     /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub(crate) timestamp: Timestamp,
     pub(crate) commit_msg: Option<Arc<str>>,
+    pub(crate) ops: RleVec<[O; 1]>,
 }
 
 impl<O> Change<O> {
@@ -159,6 +159,10 @@ impl<O: Mergable + HasLength + HasIndex + Debug> Change<O> {
     pub fn len(&self) -> usize {
         self.ops.span().as_()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.ops.is_empty()
+    }
 }
 
 use std::{fmt::Debug, sync::Arc};
@@ -252,6 +256,8 @@ impl Change {
     }
 }
 
+/// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
+/// It is the number of milliseconds that have elapsed since 00:00:00 UTC on 1 January 1970.
 #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
 pub(crate) fn get_sys_timestamp() -> Timestamp {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -262,6 +268,8 @@ pub(crate) fn get_sys_timestamp() -> Timestamp {
         .as_()
 }
 
+/// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
+/// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 pub fn get_sys_timestamp() -> Timestamp {
     use wasm_bindgen::prelude::wasm_bindgen;

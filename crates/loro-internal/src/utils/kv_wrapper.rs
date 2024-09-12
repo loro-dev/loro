@@ -1,7 +1,11 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeSet,
+    ops::Bound,
+    sync::{Arc, Mutex},
+};
 
 use bytes::Bytes;
-use loro_kv_store::MemKvStore;
+use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 
 use crate::kv_store::KvStore;
 
@@ -29,14 +33,16 @@ impl KvWrapper {
     pub fn new_mem() -> Self {
         Self {
             // kv: Arc::new(Mutex::new(BTreeMap::new())),
-            kv: Arc::new(Mutex::new(MemKvStore::default())),
+            kv: Arc::new(Mutex::new(MemKvStore::new(
+                // set false because it's depended by GC snapshot's import & export
+                MemKvConfig::default().should_encode_none(false),
+            ))),
         }
     }
 
     pub fn import(&self, bytes: Bytes) {
         let mut kv = self.kv.lock().unwrap();
-        assert!(kv.len() == 0);
-        kv.import_all(bytes);
+        kv.import_all(bytes).unwrap();
     }
 
     pub fn export(&self) -> Bytes {
@@ -63,5 +69,42 @@ impl KvWrapper {
 
     pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
         self.kv.lock().unwrap().contains_key(key)
+    }
+
+    pub(crate) fn remove_same(&self, old_kv: &KvWrapper) {
+        let other = old_kv.kv.lock().unwrap();
+        let mut this = self.kv.lock().unwrap();
+        for (k, v) in other.scan(Bound::Unbounded, Bound::Unbounded) {
+            if this.get(&k) == Some(v) {
+                this.remove(&k);
+            }
+        }
+    }
+
+    pub(crate) fn remove(&self, k: &[u8]) -> Option<Bytes> {
+        self.kv.lock().unwrap().remove(k)
+    }
+
+    /// Remove all keys not in the given set
+    pub(crate) fn retain_keys(&self, keys: &BTreeSet<Vec<u8>>) {
+        let mut kv = self.kv.lock().unwrap();
+        let mut to_remove = BTreeSet::new();
+        for (k, _) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
+            if !keys.contains(&*k) {
+                to_remove.insert(k);
+            }
+        }
+
+        for k in to_remove {
+            kv.remove(&k);
+        }
+    }
+
+    pub(crate) fn insert(&self, k: &[u8], v: Bytes) {
+        self.kv.lock().unwrap().set(k, v);
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.kv.lock().unwrap().is_empty()
     }
 }

@@ -6,7 +6,7 @@ use generic_btree::{
 };
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength as _;
-use tracing::{instrument, trace};
+use tracing::instrument;
 
 use crate::{cursor::AbsolutePosition, VersionVector};
 
@@ -82,12 +82,12 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, mut op_id: IdFull, mut pos: usize, mut content: RichtextChunk) {
-        trace!(
-            "TrackerInsert op_id = {:#?}, pos = {:#?}, content = {:#?}",
-            op_id,
-            &pos,
-            &content
-        );
+        // trace!(
+        //     "TrackerInsert op_id = {:#?}, pos = {:#?}, content = {:#?}",
+        //     op_id,
+        //     &pos,
+        //     &content
+        // );
         // tracing::span!(tracing::Level::INFO, "TrackerInsert");
         if let ControlFlow::Break(_) =
             self.skip_applied(op_id.id(), content.len(), |applied_counter_end| {

@@ -100,6 +100,23 @@ impl LoroValue {
     pub fn is_too_deep(&self) -> bool {
         self.get_depth() > MAX_DEPTH
     }
+
+    /// Visit the all list items or map's values
+    pub fn visit_children(&self, f: &mut dyn FnMut(&LoroValue)) {
+        match self {
+            LoroValue::List(list) => {
+                for v in list.iter() {
+                    f(v);
+                }
+            }
+            LoroValue::Map(m) => {
+                for (_k, v) in m.iter() {
+                    f(v)
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Index<&str> for LoroValue {

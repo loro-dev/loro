@@ -23,6 +23,7 @@ pub use oplog::OpLog;
 pub use state::DocState;
 pub use state::TreeParentId;
 pub use undo::UndoManager;
+pub use utils::subscription::Subscription;
 pub mod awareness;
 pub mod cursor;
 pub mod kv_store;

@@ -116,7 +116,7 @@ impl TreeActor {
         );
 
         let root = loro.get_tree("tree");
-        root.set_enable_fractional_index(0);
+        root.enable_fractional_index(0);
         Self {
             loro,
             containers: vec![root],
@@ -238,6 +238,7 @@ impl Actionable for TreeAction {
             peer: target.0,
             counter: target.1,
         };
+        tree.enable_fractional_index(0);
         match action {
             TreeActionInner::Create { index } => {
                 tree.create_at(None, *index).unwrap();
@@ -445,8 +446,9 @@ impl ApplyDiff for TreeTracker {
                     ..
                 } => {
                     let Some(node) = self.find_node_by_id(target) else {
-                        self.create_node(target, &parent.tree_id(), position.to_string(), index);
-                        continue;
+                        // self.create_node(target, &parent.tree_id(), position.to_string(), index);
+                        // continue;
+                        panic!("Expected move but the node needs to be created");
                     };
 
                     let mut node = if let Some(p) = node.parent {

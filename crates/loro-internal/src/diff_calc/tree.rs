@@ -108,6 +108,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
 
     fn calculate_diff(
         &mut self,
+        idx: ContainerIdx,
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
@@ -504,6 +505,18 @@ impl TreeCacheForDiff {
         self.current_vv.set_last(node.id.id());
         self.tree.entry(node.op.target()).or_default().insert(node);
         effected
+    }
+
+    pub(crate) fn init_tree_with_trimmed_version(&mut self, nodes: Vec<MoveLamportAndID>) {
+        if nodes.is_empty() {
+            return;
+        }
+
+        debug_assert!(self.tree.is_empty());
+        self.current_vv.set_last(nodes.last().unwrap().id.id());
+        for node in nodes.into_iter() {
+            self.tree.entry(node.op.target()).or_default().insert(node);
+        }
     }
 
     fn is_parent_deleted(&self, parent: TreeParentId) -> bool {

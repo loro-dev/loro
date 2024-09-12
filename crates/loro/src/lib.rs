@@ -12,8 +12,11 @@ use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
+use loro_internal::json::JsonChange;
 use loro_internal::loro_common::LoroTreeError;
+use loro_internal::obs::LocalUpdateCallback;
 use loro_internal::undo::{OnPop, OnPush};
+use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
@@ -38,6 +41,7 @@ pub use loro_internal::container::richtext::ExpandType;
 pub use loro_internal::container::{ContainerID, ContainerType};
 pub use loro_internal::cursor;
 pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
+pub use loro_internal::encoding::ExportMode;
 pub use loro_internal::event::Index;
 pub use loro_internal::handler::TextDelta;
 pub use loro_internal::id::{PeerID, TreeID, ID};
@@ -51,9 +55,11 @@ pub use loro_internal::oplog::FrontiersNotIncluded;
 pub use loro_internal::undo;
 pub use loro_internal::version::{Frontiers, VersionVector};
 pub use loro_internal::ApplyDiff;
+pub use loro_internal::Subscription;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
+pub use loro_kv_store as kv_store;
 
 #[cfg(feature = "counter")]
 mod counter;
@@ -374,12 +380,20 @@ impl LoroDoc {
     }
 
     /// Export all the ops not included in the given `VersionVector`
+    #[deprecated(
+        since = "1.0.0",
+        note = "Use `export` with `ExportMode::Updates` instead"
+    )]
     #[inline]
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
         self.doc.export_from(vv)
     }
 
     /// Export the current state and history of the document.
+    #[deprecated(
+        since = "1.0.0",
+        note = "Use `export` with `ExportMode::Snapshot` instead"
+    )]
     #[inline]
     pub fn export_snapshot(&self) -> Vec<u8> {
         self.doc.export_snapshot()
@@ -425,6 +439,14 @@ impl LoroDoc {
     #[inline]
     pub fn state_vv(&self) -> VersionVector {
         self.doc.state_vv()
+    }
+
+    /// Get the `VersionVector` of trimmed history
+    ///
+    /// The ops included by the trimmed history are not in the doc.
+    #[inline]
+    pub fn trimmed_vv(&self) -> ImVersionVector {
+        self.doc.trimmed_vv()
     }
 
     /// Get the total number of operations in the `OpLog`
@@ -559,6 +581,11 @@ impl LoroDoc {
         self.doc.unsubscribe(id)
     }
 
+    /// Subscribe the local update of the document.
+    pub fn subscribe_local_update(&self, callback: LocalUpdateCallback) -> Subscription {
+        self.doc.subscribe_local_update(callback)
+    }
+
     /// Estimate the size of the document states in memory.
     #[inline]
     pub fn log_estimate_size(&self) {
@@ -645,9 +672,9 @@ impl LoroDoc {
         self.doc.compact_change_store()
     }
 
-    /// Export the fast snapshot of the document.
-    pub fn export_fast_snapshot(&self) -> Vec<u8> {
-        self.doc.export_fast_snapshot()
+    /// Export the document in the given mode.
+    pub fn export(&self, mode: ExportMode) -> Vec<u8> {
+        self.doc.export(mode)
     }
 
     /// Analyze the container info of the doc
@@ -900,6 +927,32 @@ impl LoroList {
     pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
         self.handler.get_cursor(pos, side)
     }
+
+    /// Converts the LoroList to a Vec of LoroValue.
+    ///
+    /// This method unwraps the internal Arc and clones the data if necessary,
+    /// returning a Vec containing all the elements of the LoroList as LoroValue.
+    ///
+    /// # Returns
+    ///
+    /// A Vec<LoroValue> containing all elements of the LoroList.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use loro::{LoroDoc, LoroValue};
+    ///
+    /// let doc = LoroDoc::new();
+    /// let list = doc.get_list("my_list");
+    /// list.insert(0, 1).unwrap();
+    /// list.insert(1, "hello").unwrap();
+    /// list.insert(2, true).unwrap();
+    ///
+    /// let vec = list.to_vec();
+    /// ```
+    pub fn to_vec(&self) -> Vec<LoroValue> {
+        Arc::unwrap_or_clone(self.get_value().into_list().unwrap())
+    }
 }
 
 impl Default for LoroList {
@@ -1148,7 +1201,7 @@ impl LoroText {
 
     /// Insert a string at the given unicode position.
     pub fn insert(&self, pos: usize, s: &str) -> LoroResult<()> {
-        self.handler.insert(pos, s)
+        self.handler.insert_unicode(pos, s)
     }
 
     /// Insert a string at the given utf-8 position.
@@ -1158,7 +1211,7 @@ impl LoroText {
 
     /// Delete a range of text at the given unicode position with unicode length.
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
-        self.handler.delete(pos, len)
+        self.handler.delete_unicode(pos, len)
     }
 
     /// Delete a range of text at the given utf-8 position with utf-8 length.
@@ -1429,7 +1482,7 @@ impl LoroTree {
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
     /// // enable generate fractional index
-    /// tree.set_enable_fractional_index(0);
+    /// tree.enable_fractional_index(0);
     /// // create a root
     /// let root = tree.create(None).unwrap();
     /// // create a new child at index 0
@@ -1473,7 +1526,7 @@ impl LoroTree {
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
     /// // enable generate fractional index
-    /// tree.set_enable_fractional_index(0);
+    /// tree.enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root2` to be a child of `root` at index 0.
@@ -1501,7 +1554,7 @@ impl LoroTree {
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
     /// // enable generate fractional index
-    /// tree.set_enable_fractional_index(0);
+    /// tree.enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root` to be a child after `root2`.
@@ -1524,7 +1577,7 @@ impl LoroTree {
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
     /// // enable generate fractional index
-    /// tree.set_enable_fractional_index(0);
+    /// tree.enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root` to be a child before `root2`.
@@ -1642,7 +1695,7 @@ impl LoroTree {
         self.handler.is_fractional_index_enabled()
     }
 
-    /// Set whether to generate fractional index for Tree Position.
+    /// Enable fractional index for Tree Position.
     ///
     /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
     /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
@@ -1650,15 +1703,15 @@ impl LoroTree {
     /// Generally speaking, jitter will affect the growth rate of document size.
     /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
     #[inline]
-    pub fn set_enable_fractional_index(&self, jitter: u8) {
-        self.handler.set_enable_fractional_index(jitter);
+    pub fn enable_fractional_index(&self, jitter: u8) {
+        self.handler.enable_fractional_index(jitter);
     }
 
     /// Disable the fractional index generation for Tree Position when
     /// you don't need the Tree's siblings to be sorted. The fractional index will be always default.
     #[inline]
-    pub fn set_disable_fractional_index(&self) {
-        self.handler.set_disable_fractional_index();
+    pub fn disable_fractional_index(&self) {
+        self.handler.disable_fractional_index();
     }
 }
 
@@ -1869,6 +1922,37 @@ impl LoroMovableList {
     /// ```
     pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
         self.handler.get_cursor(pos, side)
+    }
+
+    /// Get the elements of the list as a vector of LoroValues.
+    ///
+    /// This method returns a vector containing all the elements in the list as LoroValues.
+    /// It provides a convenient way to access the entire contents of the LoroMovableList
+    /// as a standard Rust vector.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<LoroValue>` containing all elements of the list.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let list = doc.get_movable_list("mylist");
+    /// list.insert(0, 1).unwrap();
+    /// list.insert(1, "hello").unwrap();
+    /// list.insert(2, true).unwrap();
+    ///
+    /// let vec = list.to_vec();
+    /// assert_eq!(vec.len(), 3);
+    /// assert_eq!(vec[0], 1.into());
+    /// assert_eq!(vec[1], "hello".into());
+    /// assert_eq!(vec[2], true.into());
+    /// ```
+    pub fn to_vec(&self) -> Vec<LoroValue> {
+        Arc::unwrap_or_clone(self.get_value().into_list().unwrap())
     }
 }
 

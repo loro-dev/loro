@@ -15,6 +15,7 @@ keywords = ["crdt", "local-first"]
 
 [dependencies]
 loro-internal = { path = "../loro-internal", version = "0.16.2" }
+loro-kv-store = { path = "../kv-store", version = "0.16.2" }
 delta = { path = "../delta", package = "loro-delta", version = "0.16.2" }
 generic-btree = { version = "^0.10.5" }
 enum-as-inner = "0.6.0"
@@ -26,6 +27,7 @@ serde_json = "1.0.87"
 anyhow = "1.0.83"
 ctor = "0.2"
 dev-utils = { path = "../dev-utils" }
+rand = "0.8.5"
 
 [features]
 counter = ["loro-internal/counter"]

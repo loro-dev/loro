@@ -1530,7 +1530,7 @@ impl TextHandler {
         }
     }
 
-    pub(crate) fn insert_unicode(&self, pos: usize, s: &str) -> LoroResult<()> {
+    pub fn insert_unicode(&self, pos: usize, s: &str) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut t = t.try_lock().unwrap();
@@ -1635,7 +1635,7 @@ impl TextHandler {
         }
     }
 
-    /// If attr is specified, it will be used as the atribute of the inserted text.
+    /// If attr is specified, it will be used as the attribute of the inserted text.
     /// It will override the existing attribute of the text.
     fn insert_with_txn_and_attr(
         &self,

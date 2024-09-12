@@ -7,8 +7,6 @@ use bytes::Bytes;
 use std::ops::Bound;
 use std::{cmp::Ordering, collections::BTreeMap};
 
-const DEFAULT_BLOCK_SIZE: usize = 4 * 1024;
-
 #[derive(Debug, Clone)]
 pub struct MemKvStore {
     mem_table: BTreeMap<Bytes, Bytes>,
@@ -16,21 +14,61 @@ pub struct MemKvStore {
     ss_table: Vec<SsTable>,
     block_size: usize,
     compression_type: CompressionType,
+    /// It's only true when using it to fuzz.
+    /// Otherwise, importing and exporting GC snapshot relies on this field being false to work.
+    should_encode_none: bool,
 }
 
-impl Default for MemKvStore {
+pub struct MemKvConfig {
+    block_size: usize,
+    compression_type: CompressionType,
+    should_encode_none: bool,
+}
+
+impl Default for MemKvConfig {
     fn default() -> Self {
-        Self::new(DEFAULT_BLOCK_SIZE, CompressionType::LZ4)
+        Self {
+            block_size: MemKvStore::DEFAULT_BLOCK_SIZE,
+            compression_type: CompressionType::LZ4,
+            should_encode_none: false,
+        }
+    }
+}
+
+impl MemKvConfig {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn block_size(mut self, block_size: usize) -> Self {
+        self.block_size = block_size;
+        self
+    }
+
+    pub fn compression_type(mut self, compression_type: CompressionType) -> Self {
+        self.compression_type = compression_type;
+        self
+    }
+
+    pub fn should_encode_none(mut self, should_encode_none: bool) -> Self {
+        self.should_encode_none = should_encode_none;
+        self
+    }
+
+    pub fn build(self) -> MemKvStore {
+        MemKvStore::new(self)
     }
 }
 
 impl MemKvStore {
-    pub fn new(block_size: usize, compression_type: CompressionType) -> Self {
+    pub const DEFAULT_BLOCK_SIZE: usize = 4 * 1024;
+    pub fn new(config: MemKvConfig) -> Self {
         Self {
             mem_table: BTreeMap::new(),
             ss_table: Vec::new(),
-            block_size,
-            compression_type,
+            block_size: config.block_size,
+            compression_type: config.compression_type,
+            should_encode_none: config.should_encode_none,
         }
     }
 
@@ -177,7 +215,9 @@ impl MemKvStore {
             ),
             false,
         ) {
-            builder.add(k, v);
+            if !v.is_empty() || self.should_encode_none {
+                builder.add(k, v);
+            }
         }
 
         builder.finish_block();
@@ -336,7 +376,7 @@ where
 mod tests {
     use std::vec;
 
-    use crate::MemKvStore;
+    use crate::{mem_store::MemKvConfig, MemKvStore};
     use bytes::Bytes;
     #[test]
     fn test_mem_kv_store() {
@@ -345,7 +385,7 @@ mod tests {
 
         let key2 = &[0, 1];
         let value2 = Bytes::from_static(&[0, 1]);
-        let mut store = MemKvStore::default();
+        let mut store = new_store();
         store.set(key, value.clone());
         assert_eq!(store.get(key), Some(value));
         store.remove(key);
@@ -361,7 +401,7 @@ mod tests {
         assert_eq!(store.len(), 2);
         assert_eq!(store.size(), 7);
         let bytes = store.export_all();
-        let mut new_store = MemKvStore::default();
+        let mut new_store = new_store();
         assert_eq!(new_store.len(), 0);
         assert_eq!(new_store.size(), 0);
         new_store.import_all(bytes).unwrap();
@@ -387,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_large_block() {
-        let mut store = MemKvStore::default();
+        let mut store = new_store();
         let key = &[0];
         let value = Bytes::from_static(&[0]);
 
@@ -447,7 +487,7 @@ mod tests {
 
     #[test]
     fn same_key() {
-        let mut store = MemKvStore::default();
+        let mut store = new_store();
         let key = &[0];
         let value = Bytes::from_static(&[0]);
         store.set(key, value.clone());
@@ -469,17 +509,17 @@ mod tests {
         let c = Bytes::from_static(b"c");
         let d = Bytes::from_static(b"d");
         let e = Bytes::from_static(b"e");
-        let mut store = MemKvStore::default();
+        let mut store = new_store();
         store.set(&a, a.clone());
         store.export_all();
         store.set(&c, c.clone());
         let encode1 = store.export_all();
-        let mut store2 = MemKvStore::default();
+        let mut store2 = new_store();
         store2.set(&b, b.clone());
         store2.export_all();
         store2.set(&c, Bytes::new());
         let encode2 = store2.export_all();
-        let mut store3 = MemKvStore::default();
+        let mut store3 = new_store();
         store3.set(&d, d.clone());
         store3.set(&a, Bytes::new());
         store3.export_all();
@@ -487,7 +527,7 @@ mod tests {
         store3.set(&c, c.clone());
         let encode3 = store3.export_all();
 
-        let mut store = MemKvStore::default();
+        let mut store = new_store();
         store.import_all(encode1).unwrap();
         store.import_all(encode2).unwrap();
         store.import_all(encode3).unwrap();
@@ -496,5 +536,9 @@ mod tests {
         assert_eq!(store.get(&c), Some(c.clone()));
         assert_eq!(store.get(&d), Some(d.clone()));
         assert_eq!(store.get(&e), Some(e.clone()));
+    }
+
+    fn new_store() -> MemKvStore {
+        MemKvStore::new(MemKvConfig::default().should_encode_none(true))
     }
 }

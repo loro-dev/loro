@@ -2,11 +2,12 @@ mod change_store;
 pub(crate) mod loro_dag;
 mod pending_changes;
 
+use bytes::Bytes;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tracing::{debug, trace, trace_span};
 
 use self::change_store::iter::MergedChangeIter;
@@ -23,7 +24,8 @@ use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasLamportSpan};
-use crate::version::{Frontiers, VersionVector};
+use crate::state::GcStore;
+use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::BlockOpRef;
 use loro_common::{IdLp, IdSpan};
@@ -76,10 +78,7 @@ impl OpLog {
         let cfg = Configure::default();
         let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval.clone());
         Self {
-            history_cache: Mutex::new(ContainerHistoryCache::new(
-                arena.clone(),
-                change_store.clone(),
-            )),
+            history_cache: Mutex::new(ContainerHistoryCache::new(change_store.clone(), None)),
             dag: AppDag::new(change_store.clone()),
             change_store,
             arena,
@@ -91,7 +90,12 @@ impl OpLog {
         }
     }
 
-    pub(crate) fn fork(&self, arena: SharedArena, configure: Configure) -> Self {
+    pub(crate) fn fork(
+        &self,
+        arena: SharedArena,
+        configure: Configure,
+        gc: Option<Arc<GcStore>>,
+    ) -> Self {
         let change_store = self
             .change_store
             .fork(arena.clone(), configure.merge_interval.clone());
@@ -100,11 +104,11 @@ impl OpLog {
                 self.history_cache
                     .lock()
                     .unwrap()
-                    .fork(arena.clone(), change_store.clone()),
+                    .fork(change_store.clone(), gc),
             ),
             change_store: change_store.clone(),
             dag: self.dag.fork(change_store),
-            arena: self.arena.clone(),
+            arena,
             next_lamport: self.next_lamport,
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
@@ -163,7 +167,8 @@ impl OpLog {
         let s = trace_span!(
             "insert_new_change",
             id = ?change.id,
-            lamport = change.lamport
+            lamport = change.lamport,
+            deps = ?change.deps
         );
         let _enter = s.enter();
         self.dag.handle_new_change(&change);
@@ -344,9 +349,7 @@ impl OpLog {
         &mut self,
         remote_changes: Vec<Change>,
     ) -> Result<(), LoroError> {
-        let latest_vv = self.dag.vv().clone();
-        self.extend_pending_changes_with_unknown_lamport(remote_changes, &latest_vv);
-        Ok(())
+        self.extend_pending_changes_with_unknown_lamport(remote_changes)
     }
 
     /// lookup change by id.
@@ -359,6 +362,22 @@ impl OpLog {
     #[inline(always)]
     pub(crate) fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
         encode_oplog(self, vv, EncodeMode::Auto)
+    }
+
+    #[inline(always)]
+    pub(crate) fn export_from_fast(&self, vv: &VersionVector, f: &Frontiers) -> Bytes {
+        self.change_store
+            .export_from(vv, f, self.vv(), self.frontiers())
+    }
+
+    #[inline(always)]
+    pub(crate) fn export_blocks_from<W: std::io::Write>(&self, vv: &VersionVector, w: &mut W) {
+        self.change_store.export_blocks_from(vv, self.vv(), w)
+    }
+
+    #[inline(always)]
+    pub(crate) fn export_blocks_in_range<W: std::io::Write>(&self, spans: &[IdSpan], w: &mut W) {
+        self.change_store.export_blocks_in_range(spans, w)
     }
 
     #[inline(always)]
@@ -431,6 +450,10 @@ impl OpLog {
 
         debug!("from_frontiers={:?} vv={:?}", &from_frontiers, from);
         debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
+        trace!("trimmed vv = {:?}", self.dag.trimmed_vv());
+        self.change_store.visit_all_changes(&mut |c| {
+            trace!("change {:#?}", &c);
+        });
         let (common_ancestors, mut diff_mode) =
             self.dag.find_common_ancestor(from_frontiers, to_frontiers);
         if diff_mode == DiffMode::Checkout && to > from {
@@ -530,7 +553,7 @@ impl OpLog {
 
     pub fn get_timestamp_for_next_txn(&self) -> Timestamp {
         if self.configure.record_timestamp() {
-            get_sys_timestamp()
+            (get_sys_timestamp() + 500) / 1000
         } else {
             0
         }
@@ -539,6 +562,7 @@ impl OpLog {
     #[inline(never)]
     pub(crate) fn idlp_to_id(&self, id: loro_common::IdLp) -> Option<ID> {
         let change = self.change_store.get_change_by_lamport_lte(id)?;
+
         if change.lamport > id.lamport || change.lamport_end() <= id.lamport {
             return None;
         }
@@ -608,6 +632,18 @@ impl OpLog {
 
     pub fn check_dag_correctness(&self) {
         self.dag.check_dag_correctness();
+    }
+
+    pub fn trimmed_vv(&self) -> &ImVersionVector {
+        self.dag.trimmed_vv()
+    }
+
+    pub fn trimmed_frontiers(&self) -> &Frontiers {
+        self.dag.trimmed_frontiers()
+    }
+
+    pub fn is_trimmed(&self) -> bool {
+        !self.dag.trimmed_vv().is_empty()
     }
 }
 

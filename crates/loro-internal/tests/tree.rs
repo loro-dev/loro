@@ -15,7 +15,7 @@ fn tree_index() {
     let doc = LoroDoc::new_auto_commit();
     doc.set_peer_id(0).unwrap();
     let tree = doc.get_tree("tree");
-    tree.set_enable_fractional_index(0);
+    tree.enable_fractional_index(0);
     let root = tree.create(TreeParentId::Root).unwrap();
     let child = tree.create(root.into()).unwrap();
     let child2 = tree.create_at(root.into(), 0).unwrap();

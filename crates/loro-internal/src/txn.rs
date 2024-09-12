@@ -7,10 +7,11 @@ use std::{
 
 use enum_as_inner::EnumAsInner;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
-use loro_common::{ContainerType, IdLp, LoroResult};
+use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
+use tracing::trace;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -38,7 +39,8 @@ use super::{
     state::DocState,
 };
 
-pub type OnCommitFn = Box<dyn FnOnce(&Arc<Mutex<DocState>>) + Sync + Send>;
+pub(crate) type OnCommitFn =
+    Box<dyn FnOnce(&Arc<Mutex<DocState>>, &Arc<Mutex<OpLog>>, IdSpan) + Sync + Send>;
 
 pub struct Transaction {
     global_txn: Weak<Mutex<Option<Transaction>>>,
@@ -371,7 +373,7 @@ impl Transaction {
         drop(state);
         drop(oplog);
         if let Some(on_commit) = self.on_commit.take() {
-            on_commit(&self.state);
+            on_commit(&self.state, &self.oplog, self.id_span());
         }
         Ok(())
     }
@@ -501,6 +503,11 @@ impl Transaction {
             peer: self.peer,
             counter: self.next_counter,
         }
+    }
+
+    #[inline]
+    pub fn id_span(&self) -> IdSpan {
+        IdSpan::new(self.peer, self.start_counter, self.next_counter)
     }
 
     pub fn next_idlp(&self) -> IdLp {

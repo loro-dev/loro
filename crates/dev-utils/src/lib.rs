@@ -33,7 +33,7 @@ pub fn setup_test_log() {
                 // )
                 .with(
                     tracing_subscriber::fmt::Layer::default()
-                        .with_span_events(FmtSpan::NEW)
+                        .with_span_events(FmtSpan::NEW | FmtSpan::EXIT)
                         .without_time()
                         .with_line_number(true)
                         .with_target(false)

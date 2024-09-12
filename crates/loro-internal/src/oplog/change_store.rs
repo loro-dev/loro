@@ -12,12 +12,13 @@ use crate::{
 };
 use block_encode::decode_block_range;
 use bytes::Bytes;
+use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{
     Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport, LoroError,
     LoroResult, PeerID, ID,
 };
-use loro_kv_store::MemKvStore;
+use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RlePush, RleVec, Sliceable};
 use std::{
@@ -26,9 +27,10 @@ use std::{
     ops::{Bound, Deref},
     sync::{atomic::AtomicI64, Arc, Mutex},
 };
-use tracing::{info_span, trace, warn};
+use tracing::{debug, info_span, trace, warn};
 
 mod block_encode;
+mod block_meta_encode;
 mod delta_rle_encode;
 pub(super) mod iter;
 
@@ -42,6 +44,20 @@ const MAX_BLOCK_SIZE: usize = 128;
 /// - We don't allow holes in a block or between two blocks with the same peer id.
 ///   The [Change] should be continuous for each peer.
 /// - However, the first block of a peer can have counter > 0 so that we can trim the history.
+///
+/// # Encoding Schema
+///
+/// It's based on the underlying KV store.
+///
+/// The entries of the KV store is made up of the following fields
+///
+/// |Key                          |Value             |
+/// |:--                          |:----             |
+/// |b"vv"                        |VersionVector     |
+/// |b"fr"                        |Frontiers         |
+/// |b"sv"                        |Trimmed VV        |
+/// |b"sf"                        |Trimmed Frontiers |
+/// |12 bytes PeerID + Counter    |Encoded Block     |
 #[derive(Debug, Clone)]
 pub struct ChangeStore {
     inner: Arc<Mutex<ChangeStoreInner>>,
@@ -92,6 +108,8 @@ pub(crate) struct ChangesBlockBytes {
     header: OnceCell<Arc<ChangesBlockHeader>>,
 }
 
+pub const START_VV_KEY: &[u8] = b"sv";
+pub const START_FRONTIERS_KEY: &[u8] = b"sf";
 pub const VV_KEY: &[u8] = b"vv";
 pub const FRONTIERS_KEY: &[u8] = b"fr";
 
@@ -105,7 +123,7 @@ impl ChangeStore {
             })),
             arena: a.clone(),
             external_vv: Arc::new(Mutex::new(VersionVector::new())),
-            external_kv: Arc::new(Mutex::new(MemKvStore::default())),
+            external_kv: Arc::new(Mutex::new(MemKvStore::new(MemKvConfig::default()))),
             // external_kv: Arc::new(Mutex::new(BTreeMap::default())),
             merge_interval,
         }
@@ -120,6 +138,75 @@ impl ChangeStore {
         self.flush_and_compact(vv, frontiers);
         let mut kv = self.external_kv.lock().unwrap();
         kv.export_all()
+    }
+
+    #[tracing::instrument(skip(self), level = "debug")]
+    pub(super) fn export_from(
+        &self,
+        start_vv: &VersionVector,
+        f: &Frontiers,
+        latest_vv: &VersionVector,
+        latest_frontiers: &Frontiers,
+    ) -> Bytes {
+        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        for span in latest_vv.sub_iter(start_vv) {
+            // PERF: this can be optimized by reusing the current encoded blocks
+            // In the current method, it needs to parse and re-encode the blocks
+            for c in self.iter_changes(span) {
+                let start = ((start_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
+                    as usize)
+                    .min(c.atom_len());
+                let end = ((latest_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
+                    as usize)
+                    .min(c.atom_len());
+
+                assert_ne!(start, end);
+                let ch = c.slice(start, end);
+                new_store.insert_change(ch, false);
+            }
+        }
+
+        debug!("start_vv={:?} start_frontiers={:?}", &start_vv, f);
+        new_store.encode_from(start_vv, f, latest_vv, latest_frontiers)
+    }
+
+    pub(super) fn export_blocks_in_range<W: std::io::Write>(&self, spans: &[IdSpan], w: &mut W) {
+        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        for span in spans {
+            let mut span = *span;
+            span.normalize_();
+            // PERF: this can be optimized by reusing the current encoded blocks
+            // In the current method, it needs to parse and re-encode the blocks
+            for c in self.iter_changes(span) {
+                let start = ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
+                let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
+
+                assert_ne!(start, end);
+                let ch = c.slice(start, end);
+                new_store.insert_change(ch, false);
+            }
+        }
+
+        encode_blocks_in_store(new_store, &self.arena, w);
+    }
+
+    fn encode_from(
+        &self,
+        start_vv: &VersionVector,
+        start_frontiers: &Frontiers,
+        latest_vv: &VersionVector,
+        latest_frontiers: &Frontiers,
+    ) -> Bytes {
+        {
+            let mut store = self.external_kv.lock().unwrap();
+            store.set(START_VV_KEY, start_vv.encode().into());
+            store.set(START_FRONTIERS_KEY, start_frontiers.encode().into());
+            let mut inner = self.inner.lock().unwrap();
+            inner.start_frontiers = start_frontiers.clone();
+            inner.start_vv = ImVersionVector::from_vv(start_vv);
+        }
+        self.flush_and_compact(latest_vv, latest_frontiers);
+        self.external_kv.lock().unwrap().export_all()
     }
 
     pub(crate) fn decode_snapshot_for_updates(
@@ -145,6 +232,32 @@ impl ChangeStore {
 
         Ok(changes)
     }
+
+    pub(crate) fn decode_block_bytes(
+        bytes: Bytes,
+        arena: &SharedArena,
+        self_vv: &VersionVector,
+    ) -> LoroResult<Vec<Change>> {
+        let mut ans = ChangesBlockBytes::new(bytes).parse(arena)?;
+        if ans.is_empty() {
+            return Ok(ans);
+        }
+
+        let start = self_vv.get(&ans[0].peer()).copied().unwrap_or(0);
+        ans.retain_mut(|c| {
+            if c.id.counter >= start {
+                true
+            } else if c.ctr_end() > start {
+                *c = c.slice((start - c.id.counter) as usize, c.atom_len());
+                true
+            } else {
+                false
+            }
+        });
+
+        Ok(ans)
+    }
+
     pub fn get_dag_nodes_that_contains(&self, id: ID) -> Option<Vec<AppDagNode>> {
         let block = self.get_block_that_contains(id)?;
         Some(block.content.iter_dag_nodes())
@@ -168,7 +281,11 @@ impl ChangeStore {
         }
     }
 
-    pub fn iter_changes(&self, id_span: IdSpan) -> impl Iterator<Item = BlockChangeRef> + '_ {
+    pub fn iter_blocks(&self, id_span: IdSpan) -> Vec<(Arc<ChangesBlock>, usize, usize)> {
+        if id_span.counter.start == id_span.counter.end {
+            return vec![];
+        }
+
         self.ensure_block_loaded_in_range(
             Bound::Included(id_span.id_start()),
             Bound::Excluded(id_span.id_end()),
@@ -180,7 +297,7 @@ impl ChangeStore {
             .next_back()
             .map(|(id, _)| id.counter)
             .unwrap_or(0);
-        let iter = inner
+        let ans = inner
             .mem_parsed_kv
             .range_mut(
                 ID::new(id_span.peer, start_counter)..ID::new(id_span.peer, id_span.counter.end),
@@ -218,26 +335,31 @@ impl ChangeStore {
             // TODO: PERF avoid alloc
             .collect_vec();
 
+        ans
+    }
+
+    pub fn iter_changes(&self, id_span: IdSpan) -> impl Iterator<Item = BlockChangeRef> + '_ {
+        let v = self.iter_blocks(id_span);
         #[cfg(debug_assertions)]
         {
-            if !iter.is_empty() {
-                assert_eq!(iter[0].0.peer, id_span.peer);
+            if !v.is_empty() {
+                assert_eq!(v[0].0.peer, id_span.peer);
                 {
                     // Test start
-                    let (block, start, _end) = iter.first().unwrap();
+                    let (block, start, _end) = v.first().unwrap();
                     let changes = block.content.try_changes().unwrap();
                     assert!(changes[*start].id.counter <= id_span.counter.start);
                 }
                 {
                     // Test end
-                    let (block, _start, end) = iter.last().unwrap();
+                    let (block, _start, end) = v.last().unwrap();
                     let changes = block.content.try_changes().unwrap();
                     assert!(changes[*end - 1].ctr_end() >= id_span.counter.end);
                 }
             }
         }
 
-        iter.into_iter().flat_map(move |(block, start, end)| {
+        v.into_iter().flat_map(move |(block, start, end)| {
             (start..end).map(move |i| BlockChangeRef {
                 change_index: i,
                 block: block.clone(),
@@ -336,6 +458,48 @@ impl ChangeStore {
             .map(|(k, v)| k.len() + v.len())
             .sum()
     }
+
+    pub(crate) fn export_blocks_from<W: std::io::Write>(
+        &self,
+        start_vv: &VersionVector,
+        latest_vv: &VersionVector,
+        w: &mut W,
+    ) {
+        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        for span in latest_vv.sub_iter(start_vv) {
+            // PERF: this can be optimized by reusing the current encoded blocks
+            // In the current method, it needs to parse and re-encode the blocks
+            for c in self.iter_changes(span) {
+                let start = ((start_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
+                    as usize)
+                    .min(c.atom_len());
+                let end = ((latest_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
+                    as usize)
+                    .min(c.atom_len());
+
+                assert_ne!(start, end);
+                let ch = c.slice(start, end);
+                new_store.insert_change(ch, false);
+            }
+        }
+
+        let arena = &self.arena;
+        encode_blocks_in_store(new_store, arena, w);
+    }
+}
+
+fn encode_blocks_in_store<W: std::io::Write>(
+    new_store: ChangeStore,
+    arena: &SharedArena,
+    w: &mut W,
+) {
+    let mut inner = new_store.inner.lock().unwrap();
+    for (_id, block) in inner.mem_parsed_kv.iter_mut() {
+        let bytes = block.to_bytes(&arena);
+        leb128::write::unsigned(w, bytes.bytes.len() as u64).unwrap();
+        trace!("encoded block_bytes = {:?}", &bytes.bytes);
+        w.write_all(&bytes.bytes).unwrap();
+    }
 }
 
 mod mut_external_kv {
@@ -355,8 +519,14 @@ mod mut_external_kv {
             kv_store
                 .import_all(bytes)
                 .map_err(|e| LoroError::DecodeError(e.into_boxed_str()))?;
-            let vv_bytes = kv_store.get(b"vv").unwrap_or_default();
+            let vv_bytes = kv_store.get(VV_KEY).unwrap_or_default();
             let vv = VersionVector::decode(&vv_bytes).unwrap();
+            let start_vv_bytes = kv_store.get(START_VV_KEY).unwrap_or_default();
+            let start_vv = if start_vv_bytes.is_empty() {
+                Default::default()
+            } else {
+                VersionVector::decode(&start_vv_bytes).unwrap()
+            };
 
             #[cfg(test)]
             {
@@ -369,11 +539,23 @@ mod mut_external_kv {
             }
 
             *self.external_vv.lock().unwrap() = vv.clone();
-            let frontiers_bytes = kv_store.get(b"fr").unwrap_or_default();
+            let frontiers_bytes = kv_store.get(FRONTIERS_KEY).unwrap_or_default();
             let frontiers = Frontiers::decode(&frontiers_bytes).unwrap();
+            let start_frontiers = kv_store.get(START_FRONTIERS_KEY).unwrap_or_default();
+            let start_frontiers = if start_frontiers.is_empty() {
+                Default::default()
+            } else {
+                Frontiers::decode(&start_frontiers).unwrap()
+            };
+
             let mut max_lamport = None;
             let mut max_timestamp = 0;
             drop(kv_store);
+            trace!(
+                "frontiers = {:#?}\n start_frontiers={:#?}",
+                &frontiers,
+                &start_frontiers
+            );
             for id in frontiers.iter() {
                 let c = self.get_change(*id).unwrap();
                 debug_assert_ne!(c.atom_len(), 0);
@@ -400,6 +582,14 @@ mod mut_external_kv {
                     None => 0,
                 },
                 max_timestamp,
+                start_version: if start_vv.is_empty() {
+                    None
+                } else {
+                    let mut inner = self.inner.lock().unwrap();
+                    inner.start_frontiers = start_frontiers.clone();
+                    inner.start_vv = ImVersionVector::from_vv(&start_vv);
+                    Some((start_vv, start_frontiers))
+                },
             })
 
             // todo!("replace with kv store");
@@ -426,8 +616,11 @@ mod mut_external_kv {
                     let id_bytes = id.to_bytes();
                     let counter_start = external_vv.get(&id.peer).copied().unwrap_or(0);
                     assert!(
-                        counter_start >= block.counter_range.0
-                            && counter_start < block.counter_range.1
+                        counter_start < block.counter_range.1,
+                        "Peer={} Block Counter Range={:?}, counter_start={}",
+                        id.peer,
+                        &block.counter_range,
+                        counter_start
                     );
                     if counter_start > block.counter_range.0 {
                         assert!(store.get(&id_bytes).is_some());
@@ -439,7 +632,14 @@ mod mut_external_kv {
                 }
             }
 
-            assert_eq!(&*external_vv, vv);
+            if inner.start_vv.is_empty() {
+                assert_eq!(&*external_vv, vv);
+            } else {
+                #[cfg(debug_assertions)]
+                {
+                    // TODO: makes some assertions here?
+                }
+            }
             let vv_bytes = vv.encode();
             let frontiers_bytes = frontiers.encode();
             store.set(VV_KEY, vv_bytes.into());
@@ -882,6 +1082,7 @@ pub(crate) struct BatchDecodeInfo {
     pub frontiers: Frontiers,
     pub next_lamport: Lamport,
     pub max_timestamp: Timestamp,
+    pub start_version: Option<(VersionVector, Frontiers)>,
 }
 
 #[derive(Clone, Debug)]

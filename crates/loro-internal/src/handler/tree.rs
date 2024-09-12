@@ -887,7 +887,7 @@ impl TreeHandler {
     ///
     /// Generally speaking, jitter will affect the growth rate of document size.
     /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
-    pub fn set_enable_fractional_index(&self, jitter: u8) {
+    pub fn enable_fractional_index(&self, jitter: u8) {
         match &self.inner {
             MaybeDetached::Detached(_) => {
                 unreachable!()
@@ -903,7 +903,7 @@ impl TreeHandler {
     /// you don't need the Tree's siblings to be sorted. The fractional index will be always default.
     ///
     /// The LoroDoc is set to disable fractional index by default.
-    pub fn set_disable_fractional_index(&self) {
+    pub fn disable_fractional_index(&self) {
         match &self.inner {
             MaybeDetached::Detached(_) => {
                 unreachable!()

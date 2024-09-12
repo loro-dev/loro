@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    f32::consts::E,
     io::Write,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -14,7 +15,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
-use tracing::{info_span, instrument};
+use tracing::{info_span, instrument, trace, warn};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -34,7 +35,7 @@ use crate::{
 };
 
 pub(crate) mod analyzer;
-mod container_store;
+pub(crate) mod container_store;
 #[cfg(feature = "counter")]
 mod counter_state;
 mod list_state;
@@ -45,6 +46,7 @@ mod tree_state;
 mod unknown_state;
 
 pub(crate) use self::movable_list_state::{IndexType, MovableListState};
+pub(crate) use container_store::GcStore;
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
@@ -87,8 +89,8 @@ impl std::fmt::Debug for DocState {
 
 #[derive(Clone, Copy)]
 pub(crate) struct ContainerCreationContext<'a> {
-    configure: &'a Configure,
-    peer: PeerID,
+    pub configure: &'a Configure,
+    pub peer: PeerID,
 }
 
 pub(crate) struct DiffApplyContext<'a> {
@@ -490,6 +492,7 @@ impl DocState {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
+
         let is_recording = self.is_recording();
         self.pre_txn(diff.origin.clone(), diff.by);
         let Cow::Owned(mut diffs) = std::mem::take(&mut diff.diff) else {
@@ -522,13 +525,17 @@ impl DocState {
         // we should process each level alternately.
 
         // We need to ensure diff is processed in order
-        diffs.sort_by_cached_key(|diff| self.arena.get_depth(diff.idx).unwrap());
+        diffs.sort_by_cached_key(|diff| self.arena.get_depth(diff.idx));
         let mut to_revive_in_next_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
         let mut to_revive_in_this_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
         let mut last_depth = 0;
         let len = diffs.len();
         for mut diff in std::mem::replace(&mut diffs, Vec::with_capacity(len)) {
-            let this_depth = self.arena.get_depth(diff.idx).unwrap().get();
+            let Some(depth) = self.arena.get_depth(diff.idx) else {
+                warn!("{:?} is not in arena. It could be a dangling container that was deleted before the trimmed version.", self.arena.idx_to_id(diff.idx));
+                continue;
+            };
+            let this_depth = depth.get();
             while this_depth > last_depth {
                 // Clear `to_revive` when we are going to process a new level
                 // so that we can process the revival of the next level
@@ -675,7 +682,7 @@ impl DocState {
         }
 
         diff.diff = diffs.into();
-        (*diff.new_version).clone_into(&mut self.frontiers);
+        self.frontiers = diff.new_version.clone().into_owned();
         if self.is_recording() {
             self.record_diff(diff)
         }
@@ -738,6 +745,22 @@ impl DocState {
         self.store.get_container_mut(idx)
     }
 
+    /// Ensure the container is created and will be encoded in the next `encode` call
+    #[inline]
+    pub(crate) fn ensure_container(&mut self, id: &ContainerID) {
+        self.store.ensure_container(id);
+    }
+
+    /// Ensure all alive containers are created in DocState and will be encoded in the next `encode` call
+    pub(crate) fn ensure_all_alive_containers(&mut self) -> FxHashSet<ContainerID> {
+        let ans = self.get_all_alive_containers();
+        for id in ans.iter() {
+            self.ensure_container(id);
+        }
+
+        ans
+    }
+
     pub(crate) fn get_value_by_idx(&mut self, container_idx: ContainerIdx) -> LoroValue {
         self.store
             .get_value(container_idx)
@@ -771,11 +794,19 @@ impl DocState {
 
         if !unknown_containers.is_empty() {
             let mut diff_calc = DiffCalculator::new(false);
+            let stack_vv;
+            let vv = if oplog.frontiers() == &frontiers {
+                oplog.vv()
+            } else {
+                stack_vv = oplog.dag().frontiers_to_vv(&frontiers);
+                stack_vv.as_ref().unwrap()
+            };
+
             let unknown_diffs = diff_calc.calc_diff_internal(
                 oplog,
                 &Default::default(),
                 Some(&Default::default()),
-                oplog.vv(),
+                vv,
                 Some(&frontiers),
                 Some(&|idx| !idx.is_unknown() && unknown_containers.contains(&idx)),
             );
@@ -888,8 +919,12 @@ impl DocState {
         self.in_txn
     }
 
-    pub fn is_empty(&self) -> bool {
-        !self.in_txn && self.store.is_empty() && self.arena.can_import_snapshot()
+    pub fn can_import_snapshot(&self) -> bool {
+        trace!("in_txn: {:?}", self.in_txn);
+        trace!("store: {:?}", self.store.is_empty());
+        trace!("arena: {:?}", self.arena.can_import_snapshot());
+
+        !self.in_txn && self.arena.can_import_snapshot() && self.store.can_import_snapshot()
     }
 
     pub fn get_deep_value(&mut self) -> LoroValue {
@@ -1247,7 +1282,7 @@ impl DocState {
             ));
         }
 
-        if !self.is_empty() {
+        if !self.can_import_snapshot() {
             return Err(LoroError::DecodeError(
                 "State is not empty, cannot import snapshot directly"
                     .to_string()
@@ -1459,6 +1494,10 @@ impl DocState {
         };
 
         Some(value)
+    }
+
+    pub fn gc_store(&self) -> Option<&Arc<GcStore>> {
+        self.store.gc_store()
     }
 }
 

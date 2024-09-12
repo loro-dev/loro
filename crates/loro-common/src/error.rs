@@ -5,7 +5,7 @@ use crate::{InternalString, PeerID, TreeID, ID};
 
 pub type LoroResult<T> = Result<T, LoroError>;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum LoroError {
     #[error("Context's client_id({found:?}) does not match Container's client_id({expected:?})")]
     UnmatchedContext { expected: PeerID, found: PeerID },
@@ -76,9 +76,13 @@ pub enum LoroError {
     EndIndexLessThanStartIndex { start: usize, end: usize },
     #[error("Invalid root container name! Don't include '/' or '\\0'")]
     InvalidRootContainerName,
+    #[error("Import Failed: The dependencies of the importing updates are trimmed from the doc.")]
+    ImportUpdatesThatDependsOnOutdatedVersion,
+    #[error("You cannot switch a document to a version before the trimmed version.")]
+    SwitchToTrimmedVersion,
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum LoroTreeError {
     #[error("`Cycle move` occurs when moving tree nodes.")]
     CyclicMoveError,

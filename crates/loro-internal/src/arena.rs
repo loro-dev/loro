@@ -9,6 +9,7 @@ use std::{
 use append_only_bytes::BytesSlice;
 use fxhash::FxHashMap;
 use loro_common::PeerID;
+use tracing::trace;
 
 use crate::{
     change::Lamport,
@@ -195,7 +196,7 @@ impl SharedArena {
         }
     }
 
-    pub fn log_all_container(&self) {
+    pub fn log_all_containers(&self) {
         self.inner
             .container_id_to_idx
             .lock()
@@ -472,6 +473,13 @@ impl SharedArena {
             }
         }
         None
+    }
+
+    pub(crate) fn log_all_values(&self) {
+        let values = self.inner.values.lock().unwrap();
+        for (i, v) in values.iter().enumerate() {
+            tracing::trace!("value {} {:?}", i, v);
+        }
     }
 }
 

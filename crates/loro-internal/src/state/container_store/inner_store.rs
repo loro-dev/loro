@@ -3,8 +3,12 @@ use std::ops::Bound;
 use bytes::Bytes;
 use fxhash::FxHashMap;
 use loro_common::ContainerID;
+use tracing::trace;
 
-use crate::{arena::SharedArena, container::idx::ContainerIdx, utils::kv_wrapper::KvWrapper};
+use crate::{
+    arena::SharedArena, container::idx::ContainerIdx, state::container_store::FRONTIERS_KEY,
+    utils::kv_wrapper::KvWrapper, version::Frontiers,
+};
 
 use super::ContainerWrapper;
 
@@ -14,7 +18,7 @@ use super::ContainerWrapper;
 ///   it should only take 1 space in `len`.
 /// - `kv` is either the same or older than `store`.
 /// - if `all_loaded` is true, then `store` contains all the entries from `kv`
-pub(super) struct InnerStore {
+pub(crate) struct InnerStore {
     arena: SharedArena,
     store: FxHashMap<ContainerIdx, ContainerWrapper>,
     kv: KvWrapper,
@@ -53,6 +57,20 @@ impl InnerStore {
         self.store.get_mut(&idx).unwrap()
     }
 
+    pub(super) fn ensure_container(
+        &mut self,
+        idx: ContainerIdx,
+        f: impl FnOnce() -> ContainerWrapper,
+    ) {
+        if self.store.contains_key(&idx) {
+            return;
+        }
+
+        let c = f();
+        self.store.insert(idx, c);
+        self.len += 1;
+    }
+
     pub(crate) fn get_mut(&mut self, idx: ContainerIdx) -> Option<&mut ContainerWrapper> {
         if let std::collections::hash_map::Entry::Vacant(e) = self.store.entry(idx) {
             let id = self.arena.get_container_id(idx).unwrap();
@@ -76,25 +94,77 @@ impl InnerStore {
     }
 
     pub(crate) fn encode(&mut self) -> Bytes {
+        self.flush();
+        self.kv.export()
+    }
+
+    pub(crate) fn flush(&mut self) {
         self.kv
             .set_all(self.store.iter_mut().filter_map(|(idx, c)| {
                 if c.is_flushed() {
                     return None;
                 }
 
-                let key = self.arena.get_container_id(*idx).unwrap();
-                let key: Bytes = key.to_bytes().into();
+                let cid = self.arena.get_container_id(*idx).unwrap();
+                let cid: Bytes = cid.to_bytes().into();
                 let value = c.encode();
-                Some((key, value))
+                c.set_flushed(true);
+                Some((cid, value))
             }));
-        self.kv.export()
     }
 
-    pub(crate) fn decode(&mut self, bytes: bytes::Bytes) -> Result<(), loro_common::LoroError> {
-        assert!(self.len == 0);
+    pub(crate) fn get_kv(&self) -> &KvWrapper {
+        &self.kv
+    }
+
+    pub(crate) fn decode(
+        &mut self,
+        bytes: bytes::Bytes,
+    ) -> Result<Option<Frontiers>, loro_common::LoroError> {
+        assert!(self.kv.is_empty());
+        assert_eq!(self.len, self.store.len());
+        let mut fr = None;
         self.kv.import(bytes);
+        if let Some(f) = self.kv.remove(FRONTIERS_KEY) {
+            fr = Some(Frontiers::decode(&f)?);
+        }
+
         self.kv.with_kv(|kv| {
-            let mut count = 0;
+            let mut count = self.len;
+            let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
+            for (k, v) in iter {
+                count += 1;
+                let cid = ContainerID::from_bytes(&k);
+                let parent = ContainerWrapper::decode_parent(&v);
+                trace!("decode register parent {:?} parent = {:?}", &cid, &parent);
+                let idx = self.arena.register_container(&cid);
+                let p = parent.as_ref().map(|p| self.arena.register_container(p));
+                self.arena.set_parent(idx, p);
+                if self.store.remove(&idx).is_some() {
+                    count -= 1;
+                }
+            }
+
+            self.len = count;
+        });
+
+        self.all_loaded = false;
+        Ok(fr)
+    }
+
+    pub(crate) fn decode_twice(
+        &mut self,
+        bytes_a: bytes::Bytes,
+        bytes_b: bytes::Bytes,
+    ) -> Result<(), loro_common::LoroError> {
+        assert!(self.kv.is_empty());
+        assert_eq!(self.len, self.store.len());
+        // TODO: add assert that all containers in the store should be empty right now
+        self.kv.import(bytes_a);
+        self.kv.import(bytes_b);
+        self.kv.remove(FRONTIERS_KEY);
+        self.kv.with_kv(|kv| {
+            let mut count = self.len;
             let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
             for (k, v) in iter {
                 count += 1;
@@ -103,6 +173,9 @@ impl InnerStore {
                 let idx = self.arena.register_container(&cid);
                 let p = parent.as_ref().map(|p| self.arena.register_container(p));
                 self.arena.set_parent(idx, p);
+                if self.store.remove(&idx).is_some() {
+                    count -= 1;
+                }
             }
 
             self.len = count;
@@ -134,6 +207,14 @@ impl InnerStore {
         });
 
         self.all_loaded = true;
+    }
+
+    pub(crate) fn can_import_snapshot(&self) -> bool {
+        if !self.kv.is_empty() {
+            return false;
+        }
+
+        self.store.iter().all(|(_, c)| c.is_state_empty())
     }
 }
 

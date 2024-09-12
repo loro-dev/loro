@@ -18,7 +18,8 @@ use crate::{
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp},
     state::movable_list_state::inner::PushElemInfo,
-    txn::Transaction, DocState, ListDiff,
+    txn::Transaction,
+    DocState, ListDiff,
 };
 
 use self::{
@@ -37,14 +38,14 @@ pub struct MovableListState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListItem {
     pointed_by: Option<CompactIdLp>,
-    id: IdFull,
+    pub(crate) id: IdFull,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Element {
-    value: LoroValue,
-    value_id: IdLp,
-    pos: IdLp,
+    pub(crate) value: LoroValue,
+    pub(crate) value_id: IdLp,
+    pub(crate) pos: IdLp,
 }
 
 impl Element {
@@ -747,12 +748,12 @@ impl MovableListState {
     }
 
     #[inline]
-    fn list(&self) -> &BTree<MovableListTreeTrait> {
+    pub(crate) fn list(&self) -> &BTree<MovableListTreeTrait> {
         self.inner.list()
     }
 
     #[inline]
-    fn elements(&self) -> &FxHashMap<CompactIdLp, Element> {
+    pub(crate) fn elements(&self) -> &FxHashMap<CompactIdLp, Element> {
         self.inner.elements()
     }
 
@@ -870,7 +871,7 @@ impl MovableListState {
         Some(self.inner.get_index_of(c.cursor.leaf, to) as usize)
     }
 
-    fn get_list_item(&self, id: IdLp) -> Option<&ListItem> {
+    pub(crate) fn get_list_item(&self, id: IdLp) -> Option<&ListItem> {
         self.inner.get_list_item_by_id(id)
     }
 
@@ -910,6 +911,19 @@ impl MovableListState {
     pub fn iter(&self) -> impl Iterator<Item = &LoroValue> {
         // PERF: can be optimized
         (0..self.len()).map(move |i| self.get(i, IndexType::ForUser).unwrap())
+    }
+
+    pub fn iter_with_last_move_id_and_elem_id(
+        &self,
+    ) -> impl Iterator<Item = (IdFull, CompactIdLp, &LoroValue)> {
+        self.inner.list().iter().filter_map(|list_item| {
+            if let Some(elem_id) = list_item.pointed_by.as_ref() {
+                let elem = self.inner.elements().get(elem_id).unwrap();
+                Some((list_item.id, *elem_id, &elem.value))
+            } else {
+                None
+            }
+        })
     }
 
     pub fn len(&self) -> usize {
@@ -1534,7 +1548,7 @@ struct EncodedIdFull {
     #[columnar(strategy = "DeltaRle")]
     counter: i32,
     #[columnar(strategy = "DeltaRle")]
-    lamport: u32,
+    lamport_sub_counter: i32,
 }
 
 #[columnar(ser, de)]
@@ -1552,7 +1566,7 @@ struct EncodedFastSnapshot {
 mod snapshot {
     use std::io::Read;
 
-    use loro_common::{IdFull, IdLp, PeerID};
+    use loro_common::{IdFull, IdLp, LoroValue, PeerID};
 
     use crate::{
         encoding::value_register::ValueRegister,
@@ -1565,8 +1579,23 @@ mod snapshot {
     };
 
     impl FastStateSnapshot for MovableListState {
+        /// Encodes the MovableListState into a compact binary format for fast snapshot storage and retrieval.
+        ///
+        /// The encoding format consists of:
+        /// 1. The full value of the MovableListState, encoded using postcard serialization.
+        /// 2. A series of EncodedItemForFastSnapshot structs representing each visible list item:
+        ///    - invisible_list_item: Count of invisible items before this item (RLE encoded)
+        ///    - pos_id_eq_elem_id: Boolean indicating if position ID equals element ID (RLE encoded)
+        ///    - elem_id_eq_last_set_id: Boolean indicating if element ID equals last set ID (RLE encoded)
+        /// 3. A series of EncodedIdFull structs for list item IDs:
+        ///    - peer_idx: Index of the peer ID in a value register (delta-RLE encoded)
+        ///    - counter: Operation counter (delta-RLE encoded)
+        ///    - lamport: Lamport timestamp (delta-RLE encoded)
+        /// 4. EncodedId structs for element IDs (when different from position ID)
+        /// 5. EncodedId structs for last set IDs (when different from element ID)
+        /// 6. A list of unique peer IDs used in the encoding
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
-            let value = self.get_value();
+            let value = self.get_value().into_list().unwrap();
             postcard::to_io(&value, &mut w).unwrap();
             let mut peers: ValueRegister<PeerID> = ValueRegister::new();
             let len = self.len();
@@ -1584,20 +1613,20 @@ mod snapshot {
             for item in self.list().iter() {
                 if let Some(elem_id) = item.pointed_by {
                     let elem = self.elements().get(&elem_id).unwrap();
-                    let eq = elem_id.to_id() == item.id.idlp();
+                    let elem_eq_list_item = elem_id.to_id() == item.id.idlp();
                     let elem_id_eq_last_set_id = elem.value_id.compact() == elem_id;
                     items.push(EncodedItemForFastSnapshot {
                         invisible_list_item: 0,
-                        pos_id_eq_elem_id: eq,
+                        pos_id_eq_elem_id: elem_eq_list_item,
                         elem_id_eq_last_set_id,
                     });
 
                     list_item_ids.push(super::EncodedIdFull {
                         peer_idx: peers.register(&item.id.peer),
                         counter: item.id.counter,
-                        lamport: item.id.lamport,
+                        lamport_sub_counter: (item.id.lamport as i32 - item.id.counter),
                     });
-                    if !eq {
+                    if !elem_eq_list_item {
                         elem_ids.push(super::EncodedId {
                             peer_idx: peers.register(&elem_id.peer),
                             lamport: elem_id.lamport.get(),
@@ -1614,7 +1643,7 @@ mod snapshot {
                     list_item_ids.push(super::EncodedIdFull {
                         peer_idx: peers.register(&item.id.peer),
                         counter: item.id.counter,
-                        lamport: item.id.lamport,
+                        lamport_sub_counter: (item.id.lamport as i32 - item.id.counter),
                     });
                 }
             }
@@ -1636,11 +1665,13 @@ mod snapshot {
         }
 
         fn decode_value(bytes: &[u8]) -> loro_common::LoroResult<(loro_common::LoroValue, &[u8])> {
-            postcard::take_from_bytes(bytes).map_err(|_| {
-                loro_common::LoroError::DecodeError(
-                    "Decode list value failed".to_string().into_boxed_str(),
-                )
-            })
+            let (list_value, bytes) =
+                postcard::take_from_bytes::<Vec<LoroValue>>(bytes).map_err(|_| {
+                    loro_common::LoroError::DecodeError(
+                        "Decode list value failed".to_string().into_boxed_str(),
+                    )
+                })?;
+            Ok((list_value.into(), bytes))
         }
 
         fn decode_snapshot_fast(
@@ -1681,9 +1712,13 @@ mod snapshot {
                     let EncodedIdFull {
                         peer_idx,
                         counter,
-                        lamport,
+                        lamport_sub_counter,
                     } = list_item_id_iter.next().unwrap().unwrap();
-                    let id_full = IdFull::new(peers[peer_idx], counter, lamport);
+                    let id_full = IdFull::new(
+                        peers[peer_idx],
+                        counter,
+                        (lamport_sub_counter + counter) as u32,
+                    );
                     let elem_id = if pos_id_eq_elem_id {
                         id_full.idlp()
                     } else {
@@ -1715,9 +1750,13 @@ mod snapshot {
                     let EncodedIdFull {
                         peer_idx,
                         counter,
-                        lamport,
+                        lamport_sub_counter,
                     } = list_item_id_iter.next().unwrap().unwrap();
-                    let id_full = IdFull::new(peers[peer_idx], counter, lamport);
+                    let id_full = IdFull::new(
+                        peers[peer_idx],
+                        counter,
+                        (counter + lamport_sub_counter) as u32,
+                    );
                     ans.inner.push_inner(id_full, None);
                 }
             }
@@ -1783,6 +1822,7 @@ mod snapshot {
 
             let mut bytes = Vec::new();
             list.encode_snapshot_fast(&mut bytes);
+            assert!(bytes.len() <= 117, "{}", bytes.len());
 
             let (v, bytes) = MovableListState::decode_value(&bytes).unwrap();
             assert_eq!(

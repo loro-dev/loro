@@ -1,13 +1,12 @@
 use super::{ContainerCreationContext, State};
 use crate::{
-    arena::SharedArena,
-    configure::Configure,
-    container::idx::ContainerIdx,
+    arena::SharedArena, configure::Configure, container::idx::ContainerIdx,
+    utils::kv_wrapper::KvWrapper, version::Frontiers,
 };
 use bytes::Bytes;
 use inner_store::InnerStore;
 use loro_common::{LoroResult, LoroValue};
-use std::sync::{atomic::AtomicU64, Arc};
+use std::sync::{atomic::AtomicU64, Arc, Mutex};
 
 pub(crate) use container_wrapper::ContainerWrapper;
 
@@ -50,16 +49,24 @@ mod inner_store;
 pub(crate) struct ContainerStore {
     arena: SharedArena,
     store: InnerStore,
+    gc_store: Option<Arc<GcStore>>,
     conf: Configure,
     peer: Arc<AtomicU64>,
 }
 
+pub(crate) const FRONTIERS_KEY: &[u8] = b"fr";
 impl std::fmt::Debug for ContainerStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ContainerStore")
             .field("store", &self.store)
             .finish()
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct GcStore {
+    pub trimmed_frontiers: Frontiers,
+    pub store: Mutex<InnerStore>,
 }
 
 macro_rules! ctx {
@@ -77,8 +84,17 @@ impl ContainerStore {
             store: InnerStore::new(arena.clone()),
             arena,
             conf,
+            gc_store: None,
             peer,
         }
+    }
+
+    pub fn can_import_snapshot(&self) -> bool {
+        if self.gc_store.is_some() {
+            return false;
+        }
+
+        self.store.can_import_snapshot()
     }
 
     pub fn get_container_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
@@ -94,6 +110,10 @@ impl ContainerStore {
             .map(|x| x.get_state(idx, ctx!(self)))
     }
 
+    pub fn gc_store(&self) -> Option<&Arc<GcStore>> {
+        self.gc_store.as_ref()
+    }
+
     pub fn get_value(&mut self, idx: ContainerIdx) -> Option<LoroValue> {
         self.store
             .get_mut(idx)
@@ -104,8 +124,48 @@ impl ContainerStore {
         self.store.encode()
     }
 
-    pub fn decode(&mut self, bytes: Bytes) -> LoroResult<()> {
+    pub(crate) fn flush(&mut self) {
+        self.store.flush()
+    }
+
+    pub fn encode_gc(&mut self) -> Bytes {
+        if let Some(gc) = self.gc_store.as_mut() {
+            gc.store.try_lock().unwrap().get_kv().export()
+        } else {
+            Bytes::new()
+        }
+    }
+
+    pub fn trimmed_frontiers(&self) -> Option<&Frontiers> {
+        self.gc_store.as_ref().map(|x| &x.trimmed_frontiers)
+    }
+
+    pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<Option<Frontiers>> {
         self.store.decode(bytes)
+    }
+
+    pub(crate) fn decode_gc(
+        &mut self,
+        gc_bytes: Bytes,
+        start_frontiers: Frontiers,
+    ) -> LoroResult<Option<Frontiers>> {
+        assert!(self.gc_store.is_none());
+        let mut inner = InnerStore::new(self.arena.clone());
+        let f = inner.decode(gc_bytes)?;
+        self.gc_store = Some(Arc::new(GcStore {
+            trimmed_frontiers: start_frontiers,
+            store: Mutex::new(inner),
+        }));
+        Ok(f)
+    }
+
+    pub(crate) fn decode_state_by_two_bytes(
+        &mut self,
+        gc_bytes: Bytes,
+        state_bytes: Bytes,
+    ) -> LoroResult<()> {
+        self.store.decode_twice(gc_bytes.clone(), state_bytes)?;
+        Ok(())
     }
 
     pub fn iter_and_decode_all(&mut self) -> impl Iterator<Item = &mut State> {
@@ -118,6 +178,10 @@ impl ContainerStore {
                 },
             )
         })
+    }
+
+    pub fn get_kv(&self) -> &KvWrapper {
+        self.store.get_kv()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -145,6 +209,18 @@ impl ContainerStore {
                 ContainerWrapper::new(state, &self.arena)
             })
             .get_state_mut(idx, ctx!(self))
+    }
+
+    pub(crate) fn ensure_container(&mut self, id: &loro_common::ContainerID) {
+        let idx = self.arena.register_container(id);
+        self.store.ensure_container(idx, || {
+            let state = super::create_state_(
+                idx,
+                &self.conf,
+                self.peer.load(std::sync::atomic::Ordering::Relaxed),
+            );
+            ContainerWrapper::new(state, &self.arena)
+        });
     }
 
     pub(super) fn get_or_create_imm(&mut self, idx: ContainerIdx) -> &State {
@@ -175,6 +251,7 @@ impl ContainerStore {
             arena,
             conf: config,
             peer,
+            gc_store: None,
         }
     }
 
