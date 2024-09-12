@@ -95,6 +95,14 @@ impl ContainerStore {
         }
     }
 
+    pub fn can_import_snapshot(&self) -> bool {
+        if self.gc_store.is_some() {
+            return false;
+        }
+
+        self.store.can_import_snapshot()
+    }
+
     pub fn get_container_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
         self.store
             .get_mut(idx)

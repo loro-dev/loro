@@ -26,16 +26,16 @@ pub type Lamport = u32;
 // PERF change slice and getting length is kinda slow I guess
 #[derive(Debug, Clone, PartialEq)]
 pub struct Change<O = Op> {
-    pub(crate) ops: RleVec<[O; 1]>,
-    pub(crate) deps: Frontiers,
     /// id of the first op in the change
     pub(crate) id: ID,
     /// Lamport timestamp of the change. It can be calculated from deps
     pub(crate) lamport: Lamport,
+    pub(crate) deps: Frontiers,
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
     /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub(crate) timestamp: Timestamp,
     pub(crate) commit_msg: Option<Arc<str>>,
+    pub(crate) ops: RleVec<[O; 1]>,
 }
 
 impl<O> Change<O> {

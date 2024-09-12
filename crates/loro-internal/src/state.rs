@@ -903,7 +903,7 @@ impl DocState {
         trace!("store: {:?}", self.store.is_empty());
         trace!("arena: {:?}", self.arena.can_import_snapshot());
 
-        !self.in_txn && self.arena.can_import_snapshot()
+        !self.in_txn && self.arena.can_import_snapshot() && self.store.can_import_snapshot()
     }
 
     pub fn get_deep_value(&mut self) -> LoroValue {

@@ -2,11 +2,11 @@ use rle::HasLength;
 use std::collections::BTreeSet;
 
 use loro_common::LoroResult;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
     container::list::list_op::InnerListOp,
-    dag::DagUtils,
+    dag::{Dag, DagUtils},
     encoding::fast_snapshot::{Snapshot, _encode_snapshot},
     state::container_store::FRONTIERS_KEY,
     version::Frontiers,
@@ -27,17 +27,37 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     assert!(!doc.is_detached());
     let oplog = doc.oplog().lock().unwrap();
     let start_from = calc_gc_doc_start(&oplog, start_from);
+    trace!("gc_start_from {:?}", &start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
         start_vv.insert(id.peer, id.counter);
     }
+
+    #[cfg(debug_assertions)]
+    {
+        if !start_from.is_empty() {
+            assert!(start_from.len() == 1);
+            let node = oplog.dag.get(start_from[0]).unwrap();
+            if start_from[0].counter == node.cnt {
+                let vv = oplog.dag().frontiers_to_vv(&node.deps).unwrap();
+                assert_eq!(vv, start_vv);
+            } else {
+                let vv = oplog
+                    .dag()
+                    .frontiers_to_vv(&Frontiers::from(start_from[0].inc(-1)))
+                    .unwrap();
+                assert_eq!(vv, start_vv);
+            }
+        }
+    }
+
     debug!(
         "start version vv={:?} frontiers={:?}",
         &start_vv, &start_from,
     );
 
-    let oplog_bytes = oplog.export_from_fast(&start_vv);
+    let oplog_bytes = oplog.export_from_fast(&start_vv, &start_from);
     let latest_vv = oplog.vv();
     let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
     drop(oplog);
@@ -83,6 +103,12 @@ fn calc_gc_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
     let (mut start, _) = oplog
         .dag()
         .find_common_ancestor(frontiers, oplog.frontiers());
+    while start.len() > 1 {
+        start.drain(1..);
+        let (new_start, _) = oplog.dag().find_common_ancestor(&start, oplog.frontiers());
+        start = new_start;
+    }
+
     for id in start.iter_mut() {
         if let Some(op) = oplog.get_op_that_includes(*id) {
             if let crate::op::InnerContent::List(InnerListOp::StyleStart { .. }) = &op.content {

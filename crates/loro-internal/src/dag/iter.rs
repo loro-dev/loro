@@ -188,10 +188,6 @@ pub(crate) struct DagCausalIter<'a, Dag> {
 
 #[derive(Debug)]
 pub(crate) struct IterReturn<T> {
-    #[allow(unused)]
-    pub retreat: IdSpanVector,
-    #[allow(unused)]
-    pub forward: IdSpanVector,
     /// data is a reference, it need to be sliced by the counter_range to get the underlying data
     pub data: T,
     /// data[slice] is the data we want to return
@@ -201,6 +197,8 @@ pub(crate) struct IterReturn<T> {
 
 impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
     pub fn new(dag: &'a D, from: Frontiers, target: IdSpanVector) -> Self {
+        trace!("from: {:?}", &from);
+        trace!("target: {:?}", &target);
         let mut out_degrees: FxHashMap<ID, usize> = FxHashMap::default();
         let mut succ: BTreeMap<ID, Vec<ID>> = BTreeMap::default();
         let mut stack = Vec::new();
@@ -304,14 +302,6 @@ impl<'a, T: DagNode, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         let last_counter = node.id_last().counter;
         target_span.set_start(last_counter + 1);
 
-        let deps: SmallVec<[_; 2]> = if slice_from == 0 {
-            node.deps().iter().copied().collect()
-        } else {
-            smallvec::smallvec![node.id_start().inc(slice_from - 1)]
-        };
-
-        let path = self.dag.find_path(&self.frontier, &deps);
-
         // tracing::span!(tracing::Level::INFO, "Dag Causal");
 
         //
@@ -344,8 +334,6 @@ impl<'a, T: DagNode, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         }
 
         Some(IterReturn {
-            retreat: path.left,
-            forward: path.right,
             data: node,
             slice: slice_from..slice_end,
         })

@@ -130,11 +130,11 @@ impl ChangeStore {
     pub(super) fn export_from(
         &self,
         start_vv: &VersionVector,
+        f: &Frontiers,
         latest_vv: &VersionVector,
         latest_frontiers: &Frontiers,
     ) -> Bytes {
         let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
-        let mut start_frontiers: FxHashMap<PeerID, Counter> = FxHashMap::default();
         for span in latest_vv.sub_iter(start_vv) {
             // PERF: this can be optimized by reusing the current encoded blocks
             // In the current method, it needs to parse and re-encode the blocks
@@ -148,39 +148,12 @@ impl ChangeStore {
 
                 assert_ne!(start, end);
                 let ch = c.slice(start, end);
-                for dep in ch.deps.iter() {
-                    if start_vv.includes_id(*dep) {
-                        match start_frontiers.entry(dep.peer) {
-                            std::collections::hash_map::Entry::Occupied(v) => {
-                                if *v.get() < dep.counter {
-                                    *v.into_mut() = dep.counter;
-                                }
-                            }
-                            std::collections::hash_map::Entry::Vacant(v) => {
-                                v.insert(dep.counter);
-                            }
-                        }
-                    }
-                }
                 new_store.insert_change(ch, false);
             }
         }
 
-        let start_frontiers = if latest_vv == start_vv {
-            latest_frontiers.clone()
-        } else {
-            Frontiers::from_iter(
-                start_frontiers
-                    .into_iter()
-                    .map(|(peer, counter)| ID::new(peer, counter)),
-            )
-        };
-
-        debug!(
-            "start_vv={:?} start_frontiers={:?}",
-            &start_vv, &start_frontiers
-        );
-        new_store.encode_from(start_vv, &start_frontiers, latest_vv, latest_frontiers)
+        debug!("start_vv={:?} start_frontiers={:?}", &start_vv, f);
+        new_store.encode_from(start_vv, f, latest_vv, latest_frontiers)
     }
 
     pub(super) fn export_from_fast_in_range(&self, spans: &[IdSpan]) -> Bytes {
@@ -508,23 +481,21 @@ mod mut_external_kv {
                 &frontiers,
                 &start_frontiers
             );
-            if frontiers != start_frontiers {
-                for id in frontiers.iter() {
-                    let c = self.get_change(*id).unwrap();
-                    debug_assert_ne!(c.atom_len(), 0);
-                    let l = c.lamport_last();
-                    if let Some(x) = max_lamport {
-                        if l > x {
-                            max_lamport = Some(l);
-                        }
-                    } else {
+            for id in frontiers.iter() {
+                let c = self.get_change(*id).unwrap();
+                debug_assert_ne!(c.atom_len(), 0);
+                let l = c.lamport_last();
+                if let Some(x) = max_lamport {
+                    if l > x {
                         max_lamport = Some(l);
                     }
+                } else {
+                    max_lamport = Some(l);
+                }
 
-                    let t = c.timestamp;
-                    if t > max_timestamp {
-                        max_timestamp = t;
-                    }
+                let t = c.timestamp;
+                if t > max_timestamp {
+                    max_timestamp = t;
                 }
             }
 

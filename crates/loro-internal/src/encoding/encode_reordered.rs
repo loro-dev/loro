@@ -1120,10 +1120,14 @@ mod encode {
         vv: &'_ VersionVector,
         peer_register: &mut ValueRegister<PeerID>,
     ) -> (Vec<i32>, Vec<Either<Change, BlockChangeRef>>) {
-        let self_vv = oplog.vv();
-        let start_vv = vv.trim(oplog.vv());
-        let mut start_counters = Vec::new();
+        let mut start_vv = vv.trim(oplog.vv());
+        for (p, c) in oplog.trimmed_vv().iter() {
+            let start_c = start_vv.entry(*p).or_default();
+            *start_c = (*start_c).max(*c);
+        }
 
+        let mut start_counters = Vec::new();
+        let self_vv = oplog.vv();
         let mut diff_changes: Vec<Either<Change, BlockChangeRef>> = Vec::new();
         for change in oplog.iter_changes_peer_by_peer(&start_vv, self_vv) {
             let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);

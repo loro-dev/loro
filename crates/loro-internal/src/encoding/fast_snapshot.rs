@@ -185,7 +185,7 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
 
 pub(crate) fn encode_updates<W: std::io::Write>(doc: &LoroDoc, vv: &VersionVector, w: &mut W) {
     let oplog = doc.oplog().try_lock().unwrap();
-    let bytes = oplog.export_from_fast(vv);
+    let bytes = oplog.export_from_fast(vv, &Default::default());
     _encode_snapshot(
         Snapshot {
             oplog_bytes: bytes,

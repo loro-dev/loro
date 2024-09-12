@@ -1188,15 +1188,8 @@ mod dag_partial_iter {
                 }
                 let mut target_vv = vv.clone();
                 target_vv.forward(&diff_spans);
-                let mut vv = vv.clone();
 
-                for IterReturn {
-                    data,
-                    forward,
-                    retreat,
-                    slice,
-                } in a.iter_causal(&[node.id], diff_spans.clone())
-                {
+                for IterReturn { data, slice } in a.iter_causal(&[node.id], diff_spans.clone()) {
                     let sliced = data.slice(slice.start as usize, slice.end as usize);
                     {
                         // println!("-----------------------------------");
@@ -1206,8 +1199,6 @@ mod dag_partial_iter {
                         .get(&data.id.peer)
                         .unwrap()
                         .contains(sliced.id.counter));
-                    vv.forward(&forward);
-                    vv.retreat(&retreat);
                     let mut data_vv = map.get(&data.id).unwrap().clone();
                     data_vv.extend_to_include(IdSpan::new(
                         sliced.id.peer,
@@ -1219,7 +1210,6 @@ mod dag_partial_iter {
                         sliced.id.counter,
                         sliced.ctr_end(),
                     ));
-                    assert_eq!(vv, data_vv, "{} {}", data.id, sliced.id);
                 }
             }
         }

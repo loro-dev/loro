@@ -238,6 +238,7 @@ impl Actionable for TreeAction {
             peer: target.0,
             counter: target.1,
         };
+        tree.enable_fractional_index(0);
         match action {
             TreeActionInner::Create { index } => {
                 tree.create_at(None, *index).unwrap();

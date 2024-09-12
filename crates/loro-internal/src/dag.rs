@@ -16,6 +16,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use loro_common::IdSpanVector;
 use rle::{HasLength, Sliceable};
 use smallvec::{smallvec, SmallVec};
+use tracing::trace;
 mod iter;
 mod mermaid;
 #[cfg(test)]
@@ -100,9 +101,11 @@ impl<T: Dag + ?Sized> DagUtils for T {
 
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff {
         let mut ans = VersionVectorDiff::default();
+        trace!("find_path from={:?} to={:?}", from, to);
         if from == to {
             return ans;
         }
+
         if from.len() == 1 && to.len() == 1 {
             let from = from[0];
             let to = to[0];
@@ -214,7 +217,6 @@ where
     }
 
     while let Some(node_id) = stack.pop() {
-        
         let node = get(node_id).unwrap();
         let node_id_start = node.id_start();
         if !visited.contains(&node_id_start) {
@@ -333,6 +335,7 @@ where
     F: Fn(ID) -> Option<D>,
     G: FnMut(IdSpan, NodeType),
 {
+    trace!("a {:?} b {:?}", a_ids, b_ids);
     let mut ans: FxHashMap<PeerID, Counter> = Default::default();
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
     for id in a_ids {
@@ -482,6 +485,7 @@ where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<D>,
 {
+    trace!("find_common_ancestor_new left={:?} right={:?}", left, right);
     if right.is_empty() {
         return (Default::default(), DiffMode::Checkout);
     }
@@ -535,22 +539,34 @@ where
     fn ids_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
         ids: &[ID],
         get: &'a F,
-    ) -> SmallVec<[OrdIdSpan<'a>; 1]> {
-        let mut ans: SmallVec<[OrdIdSpan<'a>; 1]> = ids
-            .iter()
-            .map(|&id| OrdIdSpan::from_dag_node(id, get).unwrap())
-            .collect();
+    ) -> Option<SmallVec<[OrdIdSpan<'a>; 1]>> {
+        trace!("ids_to_ord_id_spans {:?}", ids);
+        let mut ans: SmallVec<[OrdIdSpan<'a>; 1]> = SmallVec::with_capacity(ids.len());
+        for &id in ids {
+            if let Some(node) = OrdIdSpan::from_dag_node(id, get) {
+                ans.push(node);
+            } else {
+                return None;
+            }
+        }
+
         if ans.len() > 1 {
             ans.sort_unstable_by(|a, b| b.cmp(a));
         }
 
-        ans
+        Some(ans)
     }
 
-    queue.push((ids_to_ord_id_spans(left, get), NodeType::A));
-    queue.push((ids_to_ord_id_spans(right, get), NodeType::B));
+    queue.push((ids_to_ord_id_spans(left, get).unwrap(), NodeType::A));
+    queue.push((ids_to_ord_id_spans(right, get).unwrap(), NodeType::B));
     while let Some((mut node, mut node_type)) = queue.pop() {
+        trace!(
+            "find_common_ancestor_new queue pop {:?} {:?}",
+            node,
+            node_type
+        );
         while let Some((other_node, other_type)) = queue.peek() {
+            trace!("find_common_ancestor_new queue peek {:?}", other_node);
             if node == *other_node {
                 if node_type != *other_type {
                     node_type = NodeType::Shared;
@@ -573,6 +589,7 @@ where
             break;
         }
 
+        trace!("find_common_ancestor_new node_type {:?}", node_type);
         // if node_type is A, then the left side is greater or parallel to the right side
         if node_type == NodeType::A {
             is_right_greater = false;
@@ -609,7 +626,13 @@ where
         }
 
         if node[0].deps.len() > 0 {
-            queue.push((ids_to_ord_id_spans(node[0].deps.as_ref(), get), node_type));
+            if let Some(deps) = ids_to_ord_id_spans(node[0].deps.as_ref(), get) {
+                queue.push((deps, node_type));
+            } else {
+                // dep on trimmed history
+                panic!("deps on trimmed history");
+            }
+
             is_linear = false;
         } else {
             is_right_greater = false;

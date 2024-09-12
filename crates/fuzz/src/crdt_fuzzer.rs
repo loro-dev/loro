@@ -8,9 +8,9 @@ use std::{
 
 use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
-use loro::{ContainerType, Frontiers, LoroError};
+use loro::{ContainerType, Frontiers, LoroError, LoroResult};
 use tabled::TableIteratorExt;
-use tracing::{info, info_span};
+use tracing::{debug, info, info_span};
 
 use crate::{actions::ActionWrapper, array_mut_ref};
 
@@ -110,18 +110,16 @@ impl CRDTFuzzer {
                 for i in 1..self.site_num() {
                     info_span!("Importing", "importing to 0 from {}", i).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
-                        a.loro
-                            .import(&b.loro.export_from(&a.loro.oplog_vv()))
-                            .unwrap();
+                        handle_import_result(
+                            a.loro.import(&b.loro.export_from(&a.loro.oplog_vv())),
+                        );
                     });
                 }
 
                 for i in 1..self.site_num() {
                     info_span!("Importing", "importing to {} from {}", i, 0).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
-                        b.loro
-                            .import(&a.loro.export_from(&b.loro.oplog_vv()))
-                            .unwrap();
+                        handle_import_result(b.loro.import(&a.loro.export_from(&b.loro.oplog_vv())))
                     });
                 }
                 self.actors.iter_mut().for_each(|a| a.record_history());
@@ -131,12 +129,8 @@ impl CRDTFuzzer {
             }
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(&mut self.actors, [*from as usize, *to as usize]);
-                a.loro
-                    .import(&b.loro.export_from(&a.loro.oplog_vv()))
-                    .unwrap();
-                b.loro
-                    .import(&a.loro.export_from(&b.loro.oplog_vv()))
-                    .unwrap();
+                handle_import_result(a.loro.import(&b.loro.export_from(&a.loro.oplog_vv())));
+                handle_import_result(b.loro.import(&a.loro.export_from(&b.loro.oplog_vv())));
                 a.record_history();
                 b.record_history();
             }
@@ -144,7 +138,11 @@ impl CRDTFuzzer {
                 let actor = &mut self.actors[*site as usize];
                 let f = actor.history.keys().nth(*to as usize).unwrap();
                 let f = Frontiers::from(f);
-                actor.loro.checkout(&f).unwrap();
+                match actor.loro.checkout(&f) {
+                    Ok(_) => {}
+                    Err(LoroError::SwitchToTrimmedVersion) => {}
+                    Err(e) => panic!("{}", e),
+                }
             }
             Action::Handle {
                 site,
@@ -168,18 +166,18 @@ impl CRDTFuzzer {
                 for i in 1..self.site_num() {
                     info_span!("Importing", "importing to 0 from {}", i).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
-                        a.loro
-                            .import(&b.loro.export_from(&a.loro.oplog_vv()))
-                            .unwrap();
+                        handle_import_result(
+                            a.loro.import(&b.loro.export_from(&a.loro.oplog_vv())),
+                        );
                     });
                 }
 
                 for i in 1..self.site_num() {
                     info_span!("Importing", "importing to {} from {}", i, 0).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
-                        b.loro
-                            .import(&a.loro.export_from(&b.loro.oplog_vv()))
-                            .unwrap();
+                        handle_import_result(
+                            b.loro.import(&a.loro.export_from(&b.loro.oplog_vv())),
+                        );
                     });
                 }
                 self.actors.iter_mut().for_each(|a| a.record_history());
@@ -270,6 +268,16 @@ impl CRDTFuzzer {
 
     fn site_num(&self) -> usize {
         self.actors.len()
+    }
+}
+
+fn handle_import_result(e: LoroResult<()>) {
+    match e {
+        Ok(_) => {}
+        Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion) => {
+            info!("Failed Import Due to ImportUpdatesThatDependsOnOutdatedVersion");
+        }
+        Err(e) => panic!("{}", e),
     }
 }
 
@@ -493,15 +501,11 @@ pub fn test_multi_sites_with_gc(
         let (a, b) = array_mut_ref!(&mut this.actors, [0, 1]);
         a.loro.attach();
         b.loro.attach();
-        let result = a.loro.import(&b.loro.export(loro::ExportMode::Updates {
-            from: &a.loro.oplog_vv(),
-        }));
+        let result = a.loro.import(&b.loro.export_from(&a.loro.oplog_vv()));
         match result {
             Ok(_) => {
                 b.loro
-                    .import(&a.loro.export(loro::ExportMode::Updates {
-                        from: &b.loro.oplog_vv(),
-                    }))
+                    .import(&a.loro.export_from(&b.loro.oplog_vv()))
                     .unwrap();
                 a.check_eq(b);
                 a.record_history();
