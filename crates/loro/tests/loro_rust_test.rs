@@ -1025,12 +1025,14 @@ fn apply_random_ops(doc: &LoroDoc, seed: u64, mut op_len: usize) {
 #[test]
 fn test_gc_sync() {
     let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
     apply_random_ops(&doc, 123, 11);
     let bytes = doc.export(loro::ExportMode::GcSnapshot(
         &ID::new(doc.peer_id(), 10).into(),
     ));
 
     let new_doc = LoroDoc::new();
+    new_doc.set_peer_id(2).unwrap();
     new_doc.import(&bytes).unwrap();
     assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
     let trim_end = new_doc.trimmed_vv().get(&doc.peer_id()).copied().unwrap();

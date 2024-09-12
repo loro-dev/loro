@@ -84,17 +84,7 @@ impl ImVersionVector {
     ///
     /// When self is greater than dag.vv
     pub fn to_frontiers(&self, dag: &AppDag) -> Frontiers {
-        let last_ids: Vec<ID> = self
-            .iter()
-            .filter_map(|(client_id, cnt)| {
-                if *cnt == 0 {
-                    return None;
-                }
-                Some(ID::new(*client_id, cnt - 1))
-            })
-            .collect();
-
-        shrink_frontiers(last_ids, dag)
+        dag.im_vv_to_frontiers(self)
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -170,6 +160,10 @@ pub struct Frontiers(SmallVec<[ID; 1]>);
 
 impl PartialEq for Frontiers {
     fn eq(&self, other: &Self) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+
         if self.len() <= 1 {
             self.0 == other.0
         } else if self.len() <= 10 {
@@ -898,17 +892,7 @@ impl VersionVector {
     ///
     /// When self is greater than dag.vv
     pub fn to_frontiers(&self, dag: &AppDag) -> Frontiers {
-        let last_ids: Vec<ID> = self
-            .iter()
-            .filter_map(|(client_id, cnt)| {
-                if *cnt == 0 {
-                    return None;
-                }
-                Some(ID::new(*client_id, cnt - 1))
-            })
-            .collect();
-
-        shrink_frontiers(last_ids, dag)
+        dag.vv_to_frontiers(self)
     }
 
     pub(crate) fn trim(&self, vv: &VersionVector) -> VersionVector {
@@ -931,7 +915,7 @@ impl VersionVector {
 }
 
 /// Use minimal set of ids to represent the frontiers
-pub fn shrink_frontiers(mut last_ids: Vec<ID>, dag: &AppDag) -> Frontiers {
+pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Frontiers {
     // it only keep the ids of ops that are concurrent to each other
 
     let mut frontiers = Frontiers::default();
@@ -946,6 +930,7 @@ pub fn shrink_frontiers(mut last_ids: Vec<ID>, dag: &AppDag) -> Frontiers {
         return frontiers;
     }
 
+    let mut last_ids = last_ids.to_vec();
     // sort by lamport, ascending
     last_ids.sort_by_cached_key(|x| ((dag.get_lamport(x).unwrap() as isize), x.peer));
 

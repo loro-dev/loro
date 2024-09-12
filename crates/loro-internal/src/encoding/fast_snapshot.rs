@@ -71,6 +71,7 @@ fn read_u32_le(r: &mut bytes::buf::Reader<Bytes>) -> u32 {
 }
 
 pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
+    ensure_cov::notify_cov("loro_internal::import::fast_snapshot::decode_snapshot");
     let mut state = doc.app_state().try_lock().map_err(|_| {
         LoroError::DecodeError(
             "decode_snapshot: failed to lock app state"
@@ -241,10 +242,13 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<(), LoroE
     let ImportChangesResult {
         latest_ids,
         pending_changes,
-        changes_that_deps_on_trimmed_history: _,
+        changes_that_deps_on_trimmed_history,
     } = import_changes_to_oplog(changes, oplog);
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
+    if !changes_that_deps_on_trimmed_history.is_empty() {
+        return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+    }
     Ok(())
 }

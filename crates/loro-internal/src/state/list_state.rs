@@ -526,7 +526,7 @@ impl ContainerState for ListState {
 
     #[doc = "Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
-        assert_eq!(ctx.mode, EncodeMode::Snapshot);
+        assert_eq!(ctx.mode, EncodeMode::OutdatedSnapshot);
         let mut index = 0;
         for op in ctx.ops {
             let value = op.op.content.as_list().unwrap().as_insert().unwrap().0;

@@ -2,7 +2,7 @@ use crate::change::{Change, Lamport};
 use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
-use crate::version::{Frontiers, ImVersionVector, VersionVector};
+use crate::version::{shrink_frontiers, Frontiers, ImVersionVector, VersionVector};
 use fxhash::FxHashSet;
 use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, PeerID};
 use once_cell::sync::OnceCell;
@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
-use tracing::trace;
+use tracing::{instrument, trace};
 
 use super::change_store::BatchDecodeInfo;
 use super::ChangeStore;
@@ -31,9 +31,11 @@ pub struct AppDag {
     frontiers: Frontiers,
     /// The latest known version vectorG
     vv: VersionVector,
-    /// The latest known frontiers
+    /// The earliest known frontiers
     trimmed_frontiers: Frontiers,
-    /// The latest known version vectorG
+    /// The deps of the trimmed frontiers
+    trimmed_frontiers_deps: Frontiers,
+    /// The vv of trimmed_frontiers_deps
     trimmed_vv: ImVersionVector,
     /// Ops included in the version vector but not parsed yet
     ///
@@ -100,6 +102,7 @@ impl AppDag {
             unparsed_vv: Mutex::new(VersionVector::default()),
             unhandled_dep_points: Mutex::new(BTreeSet::new()),
             trimmed_frontiers: Default::default(),
+            trimmed_frontiers_deps: Default::default(),
             trimmed_vv: Default::default(),
         }
     }
@@ -412,6 +415,7 @@ impl AppDag {
             unhandled_dep_points: Mutex::new(self.unhandled_dep_points.try_lock().unwrap().clone()),
             trimmed_frontiers: self.trimmed_frontiers.clone(),
             trimmed_vv: self.trimmed_vv.clone(),
+            trimmed_frontiers_deps: self.trimmed_frontiers_deps.clone(),
         }
     }
 
@@ -425,6 +429,13 @@ impl AppDag {
         self.vv = v.vv;
         self.frontiers = v.frontiers;
         if let Some((vv, f)) = v.start_version {
+            if !f.is_empty() {
+                assert!(f.len() == 1);
+                self.ensure_lazy_load_node(f[0], None);
+                let node = self.get(f[0]).unwrap();
+                assert!(node.cnt == f[0].counter);
+                self.trimmed_frontiers_deps = node.deps.clone();
+            }
             self.trimmed_frontiers = f;
             self.trimmed_vv = ImVersionVector::from_vv(&vv);
         }
@@ -439,6 +450,7 @@ impl AppDag {
     /// 3. Lamport is correctly calculated
     /// 4. VV for each node is correctly calculated
     /// 5. Frontiers are correctly calculated
+    #[instrument(skip(self))]
     pub fn check_dag_correctness(&self) {
         {
             // parse all nodes
@@ -449,7 +461,8 @@ impl AppDag {
                 }
 
                 let mut end_cnt = *cnt;
-                while end_cnt > 0 {
+                let init_counter = self.trimmed_vv.get(peer).copied().unwrap_or(0);
+                while end_cnt > init_counter {
                     let cnt = end_cnt - 1;
                     self.ensure_lazy_load_node(ID::new(*peer, cnt), None);
                     end_cnt = self
@@ -469,10 +482,11 @@ impl AppDag {
             let map = self.map.try_lock().unwrap();
             let mut last_end_id = ID::new(0, 0);
             for (&id, node) in map.iter() {
+                let init_counter = self.trimmed_vv.get(&id.peer).copied().unwrap_or(0);
                 if id.peer == last_end_id.peer {
                     assert!(id.counter == last_end_id.counter);
                 } else {
-                    assert_eq!(id.counter, 0);
+                    assert_eq!(id.counter, init_counter);
                 }
 
                 last_end_id = id.inc(node.len as Counter);
@@ -486,9 +500,13 @@ impl AppDag {
         {
             // check property 3: Lamport is correctly calculated
             let map = self.map.try_lock().unwrap();
-            for (_, node) in map.iter() {
+            'outer: for (_, node) in map.iter() {
                 let mut this_lamport = 0;
                 for &dep in node.deps.iter() {
+                    if self.trimmed_vv.includes_id(dep) {
+                        continue 'outer;
+                    }
+
                     let (_, dep_node) = map.range(..=dep).next_back().unwrap();
                     this_lamport = this_lamport.max(dep_node.lamport_end());
                 }
@@ -499,11 +517,16 @@ impl AppDag {
         {
             // check property 4: VV for each node is correctly calculated
             let map = self.map.try_lock().unwrap().clone();
-            for (_, node) in map.iter() {
+            'outer: for (_, node) in map.iter() {
                 let actual_vv = self.ensure_vv_for(node);
                 let mut expected_vv = ImVersionVector::default();
                 for &dep in node.deps.iter() {
+                    if self.trimmed_vv.includes_id(dep) {
+                        continue 'outer;
+                    }
+
                     let (_, dep_node) = map.range(..=dep).next_back().unwrap();
+                    self.ensure_vv_for(dep_node);
                     expected_vv.extend_to_include_vv(dep_node.vv.get().unwrap().iter());
                     expected_vv.extend_to_include_last_id(dep);
                 }
@@ -531,6 +554,10 @@ impl AppDag {
     }
 
     pub(crate) fn is_on_trimmed_history(&self, deps: &Frontiers) -> bool {
+        trace!("Is on trimmed history? deps={:?}", deps);
+        trace!("self.trimmed_vv {:?}", &self.trimmed_vv);
+        trace!("self.trimmed_frontiers {:?}", &self.trimmed_frontiers);
+
         if self.trimmed_vv.is_empty() {
             return false;
         }
@@ -539,14 +566,25 @@ impl AppDag {
             return true;
         }
 
-        deps.iter().any(|x| self.trimmed_vv.includes_id(*x))
+        if deps.iter().any(|x| self.trimmed_vv.includes_id(*x)) {
+            return true;
+        }
+
+        if deps.iter().any(|x| self.trimmed_frontiers.contains(x)) {
+            return deps != &self.trimmed_frontiers;
+        }
+
+        false
     }
 }
 
 fn check_always_dep_on_last_id(map: &BTreeMap<ID, AppDagNode>) {
     for (_, node) in map.iter() {
         for &dep in node.deps.iter() {
-            let (&dep_id, dep_node) = map.range(..=dep).next_back().unwrap();
+            let Some((&dep_id, dep_node)) = map.range(..=dep).next_back() else {
+                // It's trimmed
+                continue;
+            };
             assert_eq!(dep_node.id_start(), dep_id);
             if dep_node.contains_id(dep) {
                 assert_eq!(dep_node.id_last(), dep);
@@ -695,12 +733,15 @@ impl AppDag {
         }
 
         let mut ans_vv = ImVersionVector::default();
-        if node.deps == self.trimmed_frontiers {
+        trace!("deps={:?}", &node.deps);
+        trace!("this.trimmed_f_deps={:?}", &self.trimmed_frontiers_deps);
+        if node.deps == self.trimmed_frontiers_deps {
             for (&p, &c) in self.trimmed_vv.iter() {
                 ans_vv.insert(p, c);
             }
         } else {
             for id in node.deps.iter() {
+                trace!("id {}", id);
                 let node = self.get(*id).expect("deps should be in the dag");
                 let dep_vv = self.ensure_vv_for(&node);
                 if ans_vv.is_empty() {
@@ -713,6 +754,7 @@ impl AppDag {
             }
         }
 
+        trace!("ans_vv={:?}", &ans_vv);
         node.vv.set(ans_vv.clone()).unwrap();
         ans_vv
     }
@@ -755,7 +797,7 @@ impl AppDag {
     ///
     /// If the frontiers version is not found in the dag, return None
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
-        if frontiers == &self.trimmed_frontiers {
+        if frontiers == &self.trimmed_frontiers_deps {
             let vv = VersionVector::from_im_vv(&self.trimmed_vv);
             return Some(vv);
         }
@@ -798,9 +840,60 @@ impl AppDag {
         vv
     }
 
-    #[inline(always)]
+    pub fn im_vv_to_frontiers(&self, vv: &ImVersionVector) -> Frontiers {
+        if vv.is_empty() {
+            return Default::default();
+        }
+
+        let this = vv;
+        let last_ids: Vec<ID> = this
+            .iter()
+            .filter_map(|(client_id, cnt)| {
+                if *cnt == 0 {
+                    return None;
+                }
+
+                if self.trimmed_vv.includes_id(ID::new(*client_id, *cnt - 1)) {
+                    return None;
+                }
+
+                Some(ID::new(*client_id, cnt - 1))
+            })
+            .collect();
+
+        if last_ids.is_empty() {
+            return self.trimmed_frontiers.clone();
+        }
+
+        shrink_frontiers(&last_ids, self)
+    }
+
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
-        vv.to_frontiers(self)
+        if vv.is_empty() {
+            return Default::default();
+        }
+
+        let this = vv;
+        let last_ids: Vec<ID> = this
+            .iter()
+            .filter_map(|(client_id, cnt)| {
+                if *cnt == 0 {
+                    return None;
+                }
+
+                if self.trimmed_vv.includes_id(ID::new(*client_id, *cnt - 1)) {
+                    return None;
+                }
+
+                Some(ID::new(*client_id, cnt - 1))
+            })
+            .collect();
+
+        if last_ids.is_empty() {
+            return self.trimmed_frontiers.clone();
+        }
+
+        shrink_frontiers(&last_ids, self)
     }
 
     pub(crate) fn frontiers_to_next_lamport(&self, frontiers: &Frontiers) -> Lamport {

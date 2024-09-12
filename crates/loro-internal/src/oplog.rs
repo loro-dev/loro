@@ -167,7 +167,8 @@ impl OpLog {
         let s = trace_span!(
             "insert_new_change",
             id = ?change.id,
-            lamport = change.lamport
+            lamport = change.lamport,
+            deps = ?change.deps
         );
         let _enter = s.enter();
         self.dag.handle_new_change(&change);
@@ -364,9 +365,9 @@ impl OpLog {
     }
 
     #[inline(always)]
-    pub(crate) fn export_oplog_from(&self, vv: &VersionVector) -> Bytes {
+    pub(crate) fn export_from_fast(&self, vv: &VersionVector, f: &Frontiers) -> Bytes {
         self.change_store
-            .export_from(vv, self.vv(), self.frontiers())
+            .export_from(vv, f, self.vv(), self.frontiers())
     }
 
     #[inline(always)]
@@ -449,6 +450,10 @@ impl OpLog {
 
         debug!("from_frontiers={:?} vv={:?}", &from_frontiers, from);
         debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
+        trace!("trimmed vv = {:?}", self.dag.trimmed_vv());
+        self.change_store.visit_all_changes(&mut |c| {
+            trace!("change {:#?}", &c);
+        });
         let (common_ancestors, mut diff_mode) =
             self.dag.find_common_ancestor(from_frontiers, to_frontiers);
         if diff_mode == DiffMode::Checkout && to > from {

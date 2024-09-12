@@ -5,11 +5,8 @@ use fxhash::FxHashMap;
 use loro_common::ContainerID;
 
 use crate::{
-    arena::SharedArena,
-    container::idx::ContainerIdx,
-    state::container_store::FRONTIERS_KEY,
-    utils::kv_wrapper::KvWrapper,
-    version::Frontiers,
+    arena::SharedArena, container::idx::ContainerIdx, state::container_store::FRONTIERS_KEY,
+    utils::kv_wrapper::KvWrapper, version::Frontiers,
 };
 
 use super::ContainerWrapper;
@@ -109,7 +106,8 @@ impl InnerStore {
         &mut self,
         bytes: bytes::Bytes,
     ) -> Result<Option<Frontiers>, loro_common::LoroError> {
-        assert!(self.len == 0);
+        assert!(self.kv.is_empty());
+        assert_eq!(self.len, self.store.len());
         let mut fr = None;
         self.kv.import(bytes);
         if let Some(f) = self.kv.remove(FRONTIERS_KEY) {
@@ -117,7 +115,7 @@ impl InnerStore {
         }
 
         self.kv.with_kv(|kv| {
-            let mut count = 0;
+            let mut count = self.len;
             let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
             for (k, v) in iter {
                 count += 1;
@@ -126,6 +124,9 @@ impl InnerStore {
                 let idx = self.arena.register_container(&cid);
                 let p = parent.as_ref().map(|p| self.arena.register_container(p));
                 self.arena.set_parent(idx, p);
+                if self.store.remove(&idx).is_some() {
+                    count -= 1;
+                }
             }
 
             self.len = count;
@@ -140,12 +141,14 @@ impl InnerStore {
         bytes_a: bytes::Bytes,
         bytes_b: bytes::Bytes,
     ) -> Result<(), loro_common::LoroError> {
-        assert!(self.len == 0);
+        assert!(self.kv.is_empty());
+        assert_eq!(self.len, self.store.len());
+        // TODO: add assert that all containers in the store should be empty right now
         self.kv.import(bytes_a);
         self.kv.import(bytes_b);
         self.kv.remove(FRONTIERS_KEY);
         self.kv.with_kv(|kv| {
-            let mut count = 0;
+            let mut count = self.len;
             let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
             for (k, v) in iter {
                 count += 1;
@@ -154,6 +157,9 @@ impl InnerStore {
                 let idx = self.arena.register_container(&cid);
                 let p = parent.as_ref().map(|p| self.arena.register_container(p));
                 self.arena.set_parent(idx, p);
+                if self.store.remove(&idx).is_some() {
+                    count -= 1;
+                }
             }
 
             self.len = count;
@@ -185,6 +191,14 @@ impl InnerStore {
         });
 
         self.all_loaded = true;
+    }
+
+    pub(crate) fn can_import_snapshot(&self) -> bool {
+        if !self.kv.is_empty() {
+            return false;
+        }
+
+        self.store.iter().all(|(_, c)| c.is_state_empty())
     }
 }
 

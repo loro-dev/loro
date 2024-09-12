@@ -9,7 +9,8 @@ use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro::{
-    Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, UndoManager, ID,
+    Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroError, LoroValue, PeerID,
+    UndoManager, ID,
 };
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use tracing::info_span;
@@ -186,7 +187,15 @@ impl Actor {
             let to = &f;
             let peer = self.peer;
             tracing::info_span!("Checkout", ?from, ?to, ?peer).in_scope(|| {
-                self.loro.checkout(&f).unwrap();
+                match self.loro.checkout(&f) {
+                    Ok(_) => {}
+                    Err(LoroError::SwitchToTrimmedVersion) => {
+                        return;
+                    }
+                    Err(e) => {
+                        panic!("{}", e);
+                    }
+                }
                 // self.loro.check_state_correctness_slow();
                 let actual = self.loro.get_deep_value();
                 assert_value_eq(
@@ -211,13 +220,20 @@ impl Actor {
             return;
         }
 
-        self.loro.checkout(&f).unwrap();
-        // check snapshot correctness after checkout
-        self.loro.checkout_to_latest();
-        let new_doc = LoroDoc::new();
-        new_doc.import(&self.loro.export_snapshot()).unwrap();
-        new_doc.checkout(&f).unwrap();
-        new_doc.check_state_correctness_slow();
+        match self.loro.checkout(&f) {
+            Ok(_) => {
+                // check snapshot correctness after checkout
+                self.loro.checkout_to_latest();
+                let new_doc = LoroDoc::new();
+                new_doc
+                    .import(&self.loro.export(loro::ExportMode::Snapshot))
+                    .unwrap();
+                new_doc.checkout(&f).unwrap();
+                new_doc.check_state_correctness_slow();
+            }
+            Err(LoroError::SwitchToTrimmedVersion) => {}
+            Err(e) => panic!("{}", e),
+        }
     }
 
     fn rand_frontiers(&mut self) -> Frontiers {

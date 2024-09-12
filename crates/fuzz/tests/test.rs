@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use arbitrary::Unstructured;
 use fuzz::{
     actions::{
         ActionInner,
@@ -7,7 +8,7 @@ use fuzz::{
         GenericAction,
     },
     container::{MapAction, TextAction, TextActionInner, TreeAction, TreeActionInner},
-    crdt_fuzzer::{minify_error, test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},
+    crdt_fuzzer::{minify_error, test_multi_sites, Action, Action::*, FuzzTarget, FuzzValue::*},
     test_multi_sites_with_gc,
 };
 use loro::{ContainerType::*, LoroCounter, LoroDoc};
@@ -8822,6 +8823,708 @@ fn fast_snapshot_3() {
             Undo {
                 site: 123,
                 op_len: 2071690107,
+            },
+        ],
+    )
+}
+
+#[test]
+fn fast_snapshot_4() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 239,
+                target: 59,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(-16711680),
+                    bool: true,
+                    key: 335544832,
+                    pos: 18446744073709551615,
+                    length: 7740398493674204159,
+                    prop: 18400863652505714539,
+                }),
+            },
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 21,
+                target: 239,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 18446744073709551615,
+                    length: 71777218572845055,
+                    prop: 18446744073709551615,
+                }),
+            },
+            Undo {
+                site: 107,
+                op_len: 4294929259,
+            },
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 21,
+                target: 239,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 18446744073709551615,
+                    length: 281474976710655,
+                    prop: 18446744073709551615,
+                }),
+            },
+            Handle {
+                site: 239,
+                target: 59,
+                container: 59,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 18412122651574140927,
+                    length: 18446744073709551615,
+                    prop: 7740561859543039999,
+                }),
+            },
+            Undo {
+                site: 107,
+                op_len: 4294967295,
+            },
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 25,
+                target: 25,
+                container: 25,
+                action: Generic(GenericAction {
+                    value: I32(739842329),
+                    bool: true,
+                    key: 0,
+                    pos: 9794485864112324608,
+                    length: 1808504320952179997,
+                    prop: 1808504324825808852,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn gc_fuzz() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [Handle {
+            site: 3,
+            target: 251,
+            container: 251,
+            action: Generic(GenericAction {
+                value: Container(Unknown(86)),
+                bool: true,
+                key: 555819297,
+                pos: 18446744073709551615,
+                length: 1252228849668718591,
+                prop: 2449958197287707631,
+            }),
+        }],
+    )
+}
+
+#[test]
+fn gc_fuzz_1() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn gc_fuzz_2() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            SyncAll,
+            Handle {
+                site: 13,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn gc_fuzz_3() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Sync { from: 15, to: 231 },
+            Sync { from: 231, to: 15 },
+            Checkout { site: 0, to: 0 },
+        ],
+    )
+}
+
+#[test]
+fn gc_fuzz_4() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Checkout {
+                site: 255,
+                to: 4294967263,
+            },
+            Checkout {
+                site: 65,
+                to: 1094795585,
+            },
+            Checkout {
+                site: 65,
+                to: 1094795585,
+            },
+            Checkout {
+                site: 65,
+                to: 4294959103,
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn gc_fuzz_5() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 4294967087,
+                    pos: 144115188075855872,
+                    length: 18446744073692774400,
+                    prop: 13092193914696237055,
+                }),
+            },
+            SyncAll,
+        ],
+    )
+}
+
+#[test]
+fn gc_fuzz_6() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 39,
+                target: 35,
+                container: 39,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 0,
+                    pos: 0,
+                    length: 18446744073705569536,
+                    prop: 4467570830337114111,
+                }),
+            },
+            Handle {
+                site: 39,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 3250700737,
+                    pos: 13961440319825297857,
+                    length: 13961653383518601665,
+                    prop: 4224835641023766945,
+                }),
+            },
+            Sync { from: 29, to: 214 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn gc_fuzz_8() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 0,
+                target: 0,
+                container: 3,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 4279625703,
+                    pos: 16992045493947160921,
+                    length: 12731870089881583615,
+                    prop: 72057593937267210,
+                }),
+            },
+            Handle {
+                site: 192,
+                target: 89,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(List),
+                    bool: true,
+                    key: 3031741695,
+                    pos: 5931894172722287193,
+                    length: 18446691156916567897,
+                    prop: 6438458614484300239,
+                }),
+            },
+            Sync { from: 255, to: 255 },
+            Handle {
+                site: 99,
+                target: 10,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn gc_fuzz_7() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn gc_fuzz_9() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Sync { from: 203, to: 203 },
+            Sync { from: 211, to: 211 },
+            Handle {
+                site: 29,
+                target: 151,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: I32(1962876415),
+                    bool: true,
+                    key: 7453,
+                    pos: 7049764864459276288,
+                    length: 18446743039114868234,
+                    prop: 2098070993983872557,
+                }),
+            },
+            Handle {
+                site: 126,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(253581597),
+                    bool: true,
+                    key: 2653814783,
+                    pos: 1737577045257614837,
+                    length: 0,
+                    prop: 15263776468834131248,
+                }),
+            },
+            Sync { from: 29, to: 29 },
+            SyncAllUndo {
+                site: 61,
+                op_len: 1962876415,
+            },
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 13,
+                target: 29,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn gc_fuzz_10() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            SyncAll,
+            Handle {
+                site: 207,
+                target: 97,
+                container: 10,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 2307492175,
+                    pos: 7047857333582417895,
+                    length: 9910603677835267850,
+                    prop: 9486702363886423311,
+                }),
+            },
+            Checkout {
+                site: 79,
+                to: 267865931,
+            },
+            Sync { from: 207, to: 91 },
+            Handle {
+                site: 15,
+                target: 13,
+                container: 79,
+                action: Generic(GenericAction {
+                    value: Container(MovableList),
+                    bool: true,
+                    key: 2206443401,
+                    pos: 22250883543303043,
+                    length: 9478258114588936448,
+                    prop: 9910603588334613508,
+                }),
+            },
+            SyncAllUndo {
+                site: 139,
+                op_len: 2341178251,
+            },
+            SyncAllUndo {
+                site: 137,
+                op_len: 2307492343,
+            },
+            Undo {
+                site: 101,
+                op_len: 13595768,
+            },
+        ],
+    )
+}
+
+#[test]
+fn gc_arb_test() {
+    fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
+        let xs = u.arbitrary::<Vec<Action>>()?;
+        if let Err(e) = std::panic::catch_unwind(|| {
+            test_multi_sites_with_gc(site_num, vec![FuzzTarget::All], &mut xs.clone());
+        }) {
+            dbg!(xs);
+            println!("{:?}", e);
+            panic!()
+        } else {
+            Ok(())
+        }
+    }
+
+    arbtest::builder().budget_ms(1000).run(|u| prop(u, 5))
+}
+
+#[test]
+fn gc_fuzz_11() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Sync { from: 193, to: 193 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 193,
+                action: Generic(GenericAction {
+                    value: Container(MovableList),
+                    bool: false,
+                    key: 2711724449,
+                    pos: 13961618035398779297,
+                    length: 1008805371638175261,
+                    prop: 18446744073697722215,
+                }),
+            },
+            Undo {
+                site: 27,
+                op_len: 201271077,
+            },
+            Handle {
+                site: 64,
+                target: 0,
+                container: 251,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 4278222847,
+                    pos: 2669297569253097472,
+                    length: 11357407135578062631,
+                    prop: 14987979538418368581,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 255,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(MovableList),
+                    bool: true,
+                    key: 2374864269,
+                    pos: 13907115649332789645,
+                    length: 13961486231981375937,
+                    prop: 11646767826930540993,
+                }),
+            },
+            Sync { from: 193, to: 65 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn gc_fuzz_12() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 45,
+                target: 213,
+                container: 97,
+                action: Generic(GenericAction {
+                    value: I32(1628047969),
+                    bool: true,
+                    key: 488447261,
+                    pos: 2097865012304218831,
+                    length: 2097865012304223517,
+                    prop: 2097944487810827395,
+                }),
+            },
+            Handle {
+                site: 29,
+                target: 29,
+                container: 29,
+                action: Generic(GenericAction {
+                    value: I32(-1627389952),
+                    bool: true,
+                    key: 2678038431,
+                    pos: 14816736806998876063,
+                    length: 723498258358181791,
+                    prop: 2097939697176227169,
+                }),
+            },
+            Sync { from: 10, to: 29 },
+            Handle {
+                site: 25,
+                target: 29,
+                container: 29,
+                action: Generic(GenericAction {
+                    value: I32(1946452765),
+                    bool: false,
+                    key: 488465765,
+                    pos: 2821267465459197725,
+                    length: 2821266723505121319,
+                    prop: 18446743142358525735,
+                }),
+            },
+            Undo {
+                site: 15,
+                op_len: 3486502887,
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn gc_fuzz_13() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Checkout {
+                site: 81,
+                to: 1364283729,
+            },
+            Sync { from: 81, to: 81 },
+            Checkout {
+                site: 81,
+                to: 1364283729,
+            },
+            Undo {
+                site: 101,
+                op_len: 131329,
+            },
+            Handle {
+                site: 81,
+                target: 81,
+                container: 81,
+                action: Generic(GenericAction {
+                    value: Container(List),
+                    bool: true,
+                    key: 2907787693,
+                    pos: 5859553999884210605,
+                    length: 5859553999884210513,
+                    prop: 564055461160273,
+                }),
+            },
+            Undo {
+                site: 101,
+                op_len: 1701144063,
+            },
+            Undo {
+                site: 101,
+                op_len: 1364328334,
+            },
+            Sync { from: 81, to: 193 },
+            SyncAll,
+            Handle {
+                site: 1,
+                target: 66,
+                container: 221,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(221)),
+                    bool: true,
+                    key: 150929629,
+                    pos: 11646767925714553343,
+                    length: 10458374703202721,
+                    prop: 0,
+                }),
             },
         ],
     )

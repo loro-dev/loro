@@ -150,6 +150,10 @@ impl DiffCalculator {
         after_frontiers: Option<&Frontiers>,
         container_filter: Option<&dyn Fn(ContainerIdx) -> bool>,
     ) -> Vec<InternalContainerDiff> {
+        if before == after {
+            return Vec::new();
+        }
+
         let s = tracing::span!(tracing::Level::INFO, "DiffCalc", ?before, ?after,);
         let _e = s.enter();
 
