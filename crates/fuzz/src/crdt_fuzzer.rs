@@ -365,51 +365,7 @@ pub fn test_multi_sites_with_gc(
     let mut fuzzer = CRDTFuzzer::new(site_num, fuzz_targets);
     let mut applied = Vec::new();
     let target_gc_index = actions.len() / 2;
-    actions[0] = Action::Handle {
-        site: 1,
-        target: 0,
-        container: 0,
-        action: ActionWrapper::Action(crate::actions::ActionInner::List(
-            crate::container::ListAction::Insert {
-                pos: 0,
-                value: FuzzValue::I32(10),
-            },
-        )),
-    };
-
     for (i, action) in actions.iter_mut().enumerate() {
-        fuzzer.pre_process(action);
-        if i <= target_gc_index {
-            match action {
-                Action::Handle { site, .. } => {
-                    if *site == 0 {
-                        *site = 1
-                    }
-                }
-                Action::Checkout { site, to } => {
-                    if *site == 0 {
-                        *site = 1;
-                    }
-                }
-                Action::Undo { site, op_len } => {
-                    if *site == 0 {
-                        *site = 1;
-                    }
-                }
-                Action::SyncAllUndo { site, op_len } => {
-                    if *site == 0 {
-                        *site = 1;
-                    }
-                }
-                Action::Sync { from, to } => {
-                    if *to == 0 {
-                        *to = 1;
-                    }
-                }
-                Action::SyncAll => {}
-            }
-        }
-
         fuzzer.pre_process(action);
         info_span!("ApplyAction", ?action).in_scope(|| {
             applied.push(action.clone());
@@ -515,24 +471,30 @@ pub fn test_multi_sites_with_gc(
             }
         }
 
-        let (a, b) = array_mut_ref!(&mut this.actors, [0, 1]);
-        a.loro.attach();
-        b.loro.attach();
-        let result = a.loro.import(&b.loro.export_from(&a.loro.oplog_vv()));
-        match result {
-            Ok(_) => {
-                b.loro
-                    .import(&a.loro.export_from(&b.loro.oplog_vv()))
-                    .unwrap();
-                a.check_eq(b);
-                a.record_history();
-                b.record_history();
+        info_span!("Sync 0 <=> 1").in_scope(|| {
+            let (a, b) = array_mut_ref!(&mut this.actors, [0, 1]);
+            a.loro.attach();
+            b.loro.attach();
+            b.loro
+                .import(&a.loro.export_from(&b.loro.oplog_vv()))
+                .unwrap();
+            let json = b
+                .loro
+                .export_json_updates(&Default::default(), &b.loro.oplog_vv());
+            trace!("Changes on 1 = {:#?}", json);
+            let result = a.loro.import(&b.loro.export_from(&a.loro.oplog_vv()));
+            match result {
+                Ok(_) => {
+                    a.check_eq(b);
+                    a.record_history();
+                    b.record_history();
+                }
+                Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion) => {}
+                Err(e) => {
+                    panic!("{}", e)
+                }
             }
-            Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion) => {}
-            Err(e) => {
-                panic!("{}", e)
-            }
-        }
+        });
     });
     info_span!("check tracker").in_scope(|| {
         fuzzer.check_tracker();
