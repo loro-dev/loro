@@ -839,7 +839,34 @@ impl AppDag {
         vv
     }
 
-    #[inline(always)]
+    pub fn im_vv_to_frontiers(&self, vv: &ImVersionVector) -> Frontiers {
+        if vv.is_empty() {
+            return Default::default();
+        }
+
+        let this = vv;
+        let last_ids: Vec<ID> = this
+            .iter()
+            .filter_map(|(client_id, cnt)| {
+                if *cnt == 0 {
+                    return None;
+                }
+
+                if self.trimmed_vv.includes_id(ID::new(*client_id, *cnt - 1)) {
+                    return None;
+                }
+
+                Some(ID::new(*client_id, cnt - 1))
+            })
+            .collect();
+
+        if last_ids.is_empty() {
+            return self.trimmed_frontiers.clone();
+        }
+
+        shrink_frontiers(&last_ids, self)
+    }
+
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
         if vv.is_empty() {
             return Default::default();

@@ -9156,6 +9156,60 @@ fn gc_fuzz_9() {
 }
 
 #[test]
+fn gc_fuzz_10() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            SyncAll,
+            Handle {
+                site: 207,
+                target: 97,
+                container: 10,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 2307492175,
+                    pos: 7047857333582417895,
+                    length: 9910603677835267850,
+                    prop: 9486702363886423311,
+                }),
+            },
+            Checkout {
+                site: 79,
+                to: 267865931,
+            },
+            Sync { from: 207, to: 91 },
+            Handle {
+                site: 15,
+                target: 13,
+                container: 79,
+                action: Generic(GenericAction {
+                    value: Container(MovableList),
+                    bool: true,
+                    key: 2206443401,
+                    pos: 22250883543303043,
+                    length: 9478258114588936448,
+                    prop: 9910603588334613508,
+                }),
+            },
+            SyncAllUndo {
+                site: 139,
+                op_len: 2341178251,
+            },
+            SyncAllUndo {
+                site: 137,
+                op_len: 2307492343,
+            },
+            Undo {
+                site: 101,
+                op_len: 13595768,
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,

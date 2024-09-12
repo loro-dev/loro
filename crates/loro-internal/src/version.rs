@@ -84,17 +84,7 @@ impl ImVersionVector {
     ///
     /// When self is greater than dag.vv
     pub fn to_frontiers(&self, dag: &AppDag) -> Frontiers {
-        let last_ids: Vec<ID> = self
-            .iter()
-            .filter_map(|(client_id, cnt)| {
-                if *cnt == 0 {
-                    return None;
-                }
-                Some(ID::new(*client_id, cnt - 1))
-            })
-            .collect();
-
-        shrink_frontiers(&last_ids, dag)
+        dag.im_vv_to_frontiers(self)
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -902,17 +892,7 @@ impl VersionVector {
     ///
     /// When self is greater than dag.vv
     pub fn to_frontiers(&self, dag: &AppDag) -> Frontiers {
-        let last_ids: Vec<ID> = self
-            .iter()
-            .filter_map(|(client_id, cnt)| {
-                if *cnt == 0 {
-                    return None;
-                }
-                Some(ID::new(*client_id, cnt - 1))
-            })
-            .collect();
-
-        shrink_frontiers(&last_ids, dag)
+        dag.vv_to_frontiers(self)
     }
 
     pub(crate) fn trim(&self, vv: &VersionVector) -> VersionVector {
