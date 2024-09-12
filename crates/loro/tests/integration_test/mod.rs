@@ -1,4 +1,3 @@
-use dev_utils::setup_test_log;
 use loro::LoroDoc;
 
 mod gc_test;
@@ -6,7 +5,7 @@ mod undo_test;
 
 fn gen_action(doc: &LoroDoc, seed: u64, mut ops_len: usize) {
     let mut rng = StdRng::seed_from_u64(seed);
-    use loro::{ContainerType, LoroValue};
+    use loro::LoroValue;
     use rand::prelude::*;
 
     let root_map = doc.get_map("root");

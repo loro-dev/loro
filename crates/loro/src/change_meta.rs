@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, sync::Arc, time::Instant};
+use std::{cmp::Ordering, sync::Arc};
 
 use loro_internal::{
     change::{Change, Lamport, Timestamp},

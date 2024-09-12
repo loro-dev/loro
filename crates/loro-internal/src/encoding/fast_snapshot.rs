@@ -18,6 +18,7 @@ use std::io::{Read, Write};
 use crate::{oplog::ChangeStore, LoroDoc, OpLog, VersionVector};
 use bytes::{Buf, Bytes};
 use loro_common::{IdSpan, LoroError, LoroResult};
+use tracing::trace;
 
 use super::encode_reordered::{import_changes_to_oplog, ImportChangesResult};
 
@@ -182,35 +183,6 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
     );
 }
 
-pub(crate) fn encode_updates<W: std::io::Write>(doc: &LoroDoc, vv: &VersionVector, w: &mut W) {
-    let oplog = doc.oplog().try_lock().unwrap();
-    let bytes = oplog.export_from_fast(vv);
-    _encode_snapshot(
-        Snapshot {
-            oplog_bytes: bytes,
-            state_bytes: None,
-            gc_bytes: Bytes::new(),
-        },
-        w,
-    );
-}
-
-pub(crate) fn encode_updates_in_range<W: std::io::Write>(
-    oplog: &OpLog,
-    spans: &[IdSpan],
-    w: &mut W,
-) {
-    let bytes = oplog.export_from_fast_in_range(spans);
-    _encode_snapshot(
-        Snapshot {
-            oplog_bytes: bytes,
-            state_bytes: None,
-            gc_bytes: Bytes::new(),
-        },
-        w,
-    );
-}
-
 pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<(), LoroError> {
     let oplog_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
     let oplog_bytes = &bytes[4..4 + oplog_len as usize];
@@ -231,5 +203,48 @@ pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<(), LoroEr
     if !changes_that_deps_on_trimmed_history.is_empty() {
         return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
     }
+    Ok(())
+}
+
+pub(crate) fn encode_updates<W: std::io::Write>(doc: &LoroDoc, vv: &VersionVector, w: &mut W) {
+    let oplog = doc.oplog().try_lock().unwrap();
+    oplog.export_blocks_from(vv, w);
+}
+
+pub(crate) fn encode_updates_in_range<W: std::io::Write>(
+    oplog: &OpLog,
+    spans: &[IdSpan],
+    w: &mut W,
+) {
+    oplog.export_blocks_in_range(spans, w);
+}
+
+pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<(), LoroError> {
+    let mut reader: &[u8] = body.as_ref();
+    let mut index = 0;
+    let self_vv = oplog.vv();
+    let mut changes = Vec::new();
+    while !reader.is_empty() {
+        let old_reader_len = reader.len();
+        let len = leb128::read::unsigned(&mut reader).unwrap() as usize;
+        index += old_reader_len - reader.len();
+        trace!("index={}", index);
+        let block_bytes = body.slice(index..index + len);
+        trace!("decoded block_bytes = {:?}", &block_bytes);
+        let new_changes = ChangeStore::decode_block_bytes(block_bytes, &oplog.arena, self_vv)?;
+        changes.extend(new_changes);
+        index += len;
+        reader = &reader[len..];
+    }
+
+    changes.sort_unstable_by_key(|x| x.lamport);
+    let ImportChangesResult {
+        latest_ids,
+        pending_changes,
+        changes_that_deps_on_trimmed_history: _,
+    } = import_changes_to_oplog(changes, oplog);
+    // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
+    oplog.try_apply_pending(latest_ids);
+    oplog.import_unknown_lamport_pending_changes(pending_changes)?;
     Ok(())
 }

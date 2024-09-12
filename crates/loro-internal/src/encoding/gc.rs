@@ -37,7 +37,7 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
         &start_vv, &start_from,
     );
 
-    let oplog_bytes = oplog.export_from_fast(&start_vv);
+    let oplog_bytes = oplog.export_oplog_from(&start_vv);
     let latest_vv = oplog.vv();
     let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
     drop(oplog);

@@ -1,5 +1,5 @@
 use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
-use super::{loro_dag::AppDagNodeInner, AppDag, AppDagNode};
+use super::{loro_dag::AppDagNodeInner, AppDagNode};
 use crate::{
     arena::SharedArena,
     change::{Change, Timestamp},
@@ -7,12 +7,12 @@ use crate::{
     kv_store::KvStore,
     op::Op,
     parent::register_container_and_parent_link,
-    version::{shrink_frontiers, Frontiers, ImVersionVector},
+    version::{Frontiers, ImVersionVector},
     VersionVector,
 };
 use block_encode::decode_block_range;
 use bytes::Bytes;
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{
     Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport, LoroError,
@@ -22,7 +22,6 @@ use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RlePush, RleVec, Sliceable};
 use std::{
-    borrow::BorrowMut,
     cmp::Ordering,
     collections::{BTreeMap, VecDeque},
     ops::{Bound, Deref},
@@ -31,6 +30,7 @@ use std::{
 use tracing::{debug, info_span, trace, warn};
 
 mod block_encode;
+mod block_meta_encode;
 mod delta_rle_encode;
 pub(super) mod iter;
 
@@ -44,6 +44,20 @@ const MAX_BLOCK_SIZE: usize = 128;
 /// - We don't allow holes in a block or between two blocks with the same peer id.
 ///   The [Change] should be continuous for each peer.
 /// - However, the first block of a peer can have counter > 0 so that we can trim the history.
+///
+/// # Encoding Schema
+///
+/// It's based on the underlying KV store.
+///
+/// The entries of the KV store is made up of the following fields
+///
+/// |Key                          |Value             |
+/// |:--                          |:----             |
+/// |b"vv"                        |VersionVector     |
+/// |b"fr"                        |Frontiers         |
+/// |b"sv"                        |Trimmed VV        |
+/// |b"sf"                        |Trimmed Frontiers |
+/// |12 bytes PeerID + Counter    |Encoded Block     |
 #[derive(Debug, Clone)]
 pub struct ChangeStore {
     inner: Arc<Mutex<ChangeStoreInner>>,
@@ -183,10 +197,8 @@ impl ChangeStore {
         new_store.encode_from(start_vv, &start_frontiers, latest_vv, latest_frontiers)
     }
 
-    pub(super) fn export_from_fast_in_range(&self, spans: &[IdSpan]) -> Bytes {
+    pub(super) fn export_blocks_in_range<W: std::io::Write>(&self, spans: &[IdSpan], w: &mut W) {
         let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
-        let latest_vv: VersionVector = spans.iter().map(|x| x.id_last()).collect();
-        let start_vv: VersionVector = spans.iter().map(|x| x.id_start()).collect();
         for span in spans {
             let mut span = *span;
             span.normalize_();
@@ -202,12 +214,7 @@ impl ChangeStore {
             }
         }
 
-        new_store.encode_from(
-            &start_vv,
-            &Default::default(),
-            &latest_vv,
-            &Default::default(),
-        )
+        encode_blocks_in_store(new_store, &self.arena, w);
     }
 
     fn encode_from(
@@ -252,6 +259,32 @@ impl ChangeStore {
 
         Ok(changes)
     }
+
+    pub(crate) fn decode_block_bytes(
+        bytes: Bytes,
+        arena: &SharedArena,
+        self_vv: &VersionVector,
+    ) -> LoroResult<Vec<Change>> {
+        let mut ans = ChangesBlockBytes::new(bytes).parse(arena)?;
+        if ans.is_empty() {
+            return Ok(ans);
+        }
+
+        let start = self_vv.get(&ans[0].peer()).copied().unwrap_or(0);
+        ans.retain_mut(|c| {
+            if c.id.counter >= start {
+                true
+            } else if c.ctr_end() > start {
+                *c = c.slice((start - c.id.counter) as usize, c.atom_len());
+                true
+            } else {
+                false
+            }
+        });
+
+        Ok(ans)
+    }
+
     pub fn get_dag_nodes_that_contains(&self, id: ID) -> Option<Vec<AppDagNode>> {
         let block = self.get_block_that_contains(id)?;
         Some(block.content.iter_dag_nodes())
@@ -451,6 +484,48 @@ impl ChangeStore {
             .scan(Bound::Unbounded, Bound::Unbounded)
             .map(|(k, v)| k.len() + v.len())
             .sum()
+    }
+
+    pub(crate) fn export_blocks_from<W: std::io::Write>(
+        &self,
+        start_vv: &VersionVector,
+        latest_vv: &VersionVector,
+        w: &mut W,
+    ) {
+        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        for span in latest_vv.sub_iter(start_vv) {
+            // PERF: this can be optimized by reusing the current encoded blocks
+            // In the current method, it needs to parse and re-encode the blocks
+            for c in self.iter_changes(span) {
+                let start = ((start_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
+                    as usize)
+                    .min(c.atom_len());
+                let end = ((latest_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
+                    as usize)
+                    .min(c.atom_len());
+
+                assert_ne!(start, end);
+                let ch = c.slice(start, end);
+                new_store.insert_change(ch, false);
+            }
+        }
+
+        let arena = &self.arena;
+        encode_blocks_in_store(new_store, arena, w);
+    }
+}
+
+fn encode_blocks_in_store<W: std::io::Write>(
+    new_store: ChangeStore,
+    arena: &SharedArena,
+    w: &mut W,
+) {
+    let mut inner = new_store.inner.lock().unwrap();
+    for (_id, block) in inner.mem_parsed_kv.iter_mut() {
+        let bytes = block.to_bytes(&arena);
+        leb128::write::unsigned(w, bytes.bytes.len() as u64).unwrap();
+        trace!("encoded block_bytes = {:?}", &bytes.bytes);
+        w.write_all(&bytes.bytes).unwrap();
     }
 }
 
