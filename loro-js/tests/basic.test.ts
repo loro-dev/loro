@@ -8,6 +8,7 @@ import {
   LoroMap,
   LoroText,
   LoroTree,
+  VersionVector,
 } from "../src";
 
 it("basic example", () => {
@@ -92,7 +93,7 @@ it("basic sync example", () => {
 
 it("basic events", () => {
   const doc = new LoroDoc();
-  doc.subscribe((event) => {});
+  doc.subscribe((event) => { });
   const list = doc.getList("list");
 });
 
@@ -476,3 +477,46 @@ it("fork", () => {
   doc.import(doc2.exportSnapshot());
   expect(doc.toJSON()).toStrictEqual({ map: { key: 2 } });
 });
+
+describe("export", () => {
+  it("test export update", () => {
+    const doc = new LoroDoc();
+    doc.getText("text").insert(0, "123");
+    doc.commit();
+    const updates = doc.export({ mode: "update", start_vv: new VersionVector(null) });
+    const doc2 = new LoroDoc();
+    doc2.import(updates);
+    expect(doc2.toJSON()).toStrictEqual({ text: "123" });
+  })
+
+  it("test export snapshot", () => {
+    const doc = new LoroDoc();
+    doc.getText("text").insert(0, "123");
+    doc.commit();
+    const snapshot = doc.export({ mode: "snapshot" });
+    const doc2 = new LoroDoc();
+    doc2.import(snapshot);
+    expect(doc2.toJSON()).toStrictEqual({ text: "123" });
+  })
+
+  it("test export gc-snapshot", () => {
+    const doc = new LoroDoc();
+    doc.getText("text").insert(0, "123");
+    doc.commit();
+    const snapshot = doc.export({ mode: "gc-snapshot", frontiers: doc.oplogFrontiers() });
+    const doc2 = new LoroDoc();
+    doc2.import(snapshot);
+    expect(doc2.toJSON()).toStrictEqual({ text: "123" });
+  })
+
+  it("test export updates-in-range", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    doc.getText("text").insert(0, "123");
+    doc.commit();
+    const bytes = doc.export({ mode: "updates-in-range", spans: [{ id: { peer: "1", counter: 0 }, len: 1 }] });
+    const doc2 = new LoroDoc();
+    doc2.import(bytes);
+    expect(doc2.toJSON()).toStrictEqual({ text: "1" });
+  })
+})
