@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.16.12
+
+### Patch Changes
+
+- 46e21fc: Fix tree move issues
+
+## 0.16.11
+
+### Patch Changes
+
+- dce00ab: Make loro-wasm work in cloudflare worker
+
 ## 0.16.10
 
 ### Patch Changes

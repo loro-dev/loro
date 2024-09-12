@@ -530,7 +530,7 @@ impl TreeHandler {
             .ok_or(LoroTreeError::TreeNodeNotExist(other))?;
         let mut index = self.get_index_by_tree_id(&other).unwrap();
         if self.is_parent(&target, &parent)
-            && index > 1
+            && index >= 1
             && self.get_index_by_tree_id(&target).unwrap() < index
         {
             index -= 1;

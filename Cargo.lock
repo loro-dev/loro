@@ -153,7 +153,7 @@ dependencies = [
  "arbitrary",
  "enum-as-inner 0.5.1",
  "flate2",
- "loro-common 0.16.2",
+ "loro-common 0.16.12",
  "rand",
  "serde_json",
 ]
@@ -635,7 +635,7 @@ dependencies = [
  "ctor 0.2.6",
  "dev-utils",
  "flate2",
- "loro 0.16.2",
+ "loro 0.16.12",
  "rand",
  "serde_json",
  "tabled 0.15.0",
@@ -692,7 +692,7 @@ dependencies = [
  "enum_dispatch",
  "fxhash",
  "itertools 0.12.1",
- "loro 0.16.2",
+ "loro 0.16.12",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7)",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761)",
  "num_cpus",
@@ -1015,24 +1015,6 @@ dependencies = [
 [[package]]
 name = "loro"
 version = "0.16.2"
-dependencies = [
- "anyhow",
- "ctor 0.2.6",
- "dev-utils",
- "either",
- "enum-as-inner 0.6.0",
- "generic-btree",
- "loro-delta 0.16.2",
- "loro-internal 0.16.2",
- "loro-kv-store",
- "rand",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "loro"
-version = "0.16.2"
 source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
 dependencies = [
  "either",
@@ -1057,21 +1039,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-common"
-version = "0.16.2"
+name = "loro"
+version = "0.16.12"
 dependencies = [
- "arbitrary",
+ "anyhow",
+ "ctor 0.2.6",
+ "dev-utils",
+ "either",
  "enum-as-inner 0.6.0",
- "fxhash",
- "js-sys",
- "leb128",
- "loro-rle 0.16.2",
- "nonmax",
- "serde",
- "serde_columnar",
- "string_cache",
- "thiserror",
- "wasm-bindgen",
+ "generic-btree",
+ "loro-delta 0.16.12",
+ "loro-internal 0.16.12",
+ "loro-kv-store",
+ "rand",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -1107,19 +1089,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-delta"
-version = "0.16.2"
+name = "loro-common"
+version = "0.16.12"
 dependencies = [
- "arrayvec",
- "color-backtrace",
- "criterion 0.4.0",
- "ctor 0.2.6",
- "enum-as-inner 0.5.1",
- "generic-btree",
- "heapless 0.8.0",
- "rand",
- "tracing",
- "tracing-subscriber",
+ "arbitrary",
+ "enum-as-inner 0.6.0",
+ "fxhash",
+ "js-sys",
+ "leb128",
+ "loro-rle 0.16.12",
+ "nonmax",
+ "serde",
+ "serde_columnar",
+ "string_cache",
+ "thiserror",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1147,59 +1131,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-internal"
-version = "0.16.2"
+name = "loro-delta"
+version = "0.16.12"
 dependencies = [
- "append-only-bytes",
- "arbitrary",
- "arbtest",
- "arref",
- "base64",
- "bench-utils",
- "bytes",
- "criterion 0.5.1",
- "ctor 0.1.26",
- "dev-utils",
- "dhat",
- "either",
- "ensure-cov",
+ "arrayvec",
+ "color-backtrace",
+ "criterion 0.4.0",
+ "ctor 0.2.6",
  "enum-as-inner 0.5.1",
- "enum_dispatch",
- "fxhash",
  "generic-btree",
- "getrandom",
- "im",
- "itertools 0.12.1",
- "js-sys",
- "leb128",
- "loro-common 0.16.2",
- "loro-delta 0.16.2",
- "loro-kv-store",
- "loro-rle 0.16.2",
- "loro_fractional_index 0.16.2",
- "md5",
- "miniz_oxide 0.7.1",
- "nonmax",
- "num",
- "num-derive",
- "num-traits",
- "once_cell",
- "postcard",
- "proptest",
- "proptest-derive",
+ "heapless 0.8.0",
  "rand",
- "serde",
- "serde-wasm-bindgen 0.5.0",
- "serde_columnar",
- "serde_json",
- "smallvec",
- "static_assertions",
- "tabled 0.10.0",
- "thiserror",
  "tracing",
- "wasm-bindgen",
- "xxhash-rust",
- "zstd",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1273,13 +1217,69 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-internal"
+version = "0.16.12"
+dependencies = [
+ "append-only-bytes",
+ "arbitrary",
+ "arbtest",
+ "arref",
+ "base64",
+ "bench-utils",
+ "bytes",
+ "criterion 0.5.1",
+ "ctor 0.1.26",
+ "dev-utils",
+ "dhat",
+ "either",
+ "ensure-cov",
+ "enum-as-inner 0.5.1",
+ "enum_dispatch",
+ "fxhash",
+ "generic-btree",
+ "getrandom",
+ "im",
+ "itertools 0.12.1",
+ "js-sys",
+ "leb128",
+ "loro-common 0.16.12",
+ "loro-delta 0.16.12",
+ "loro-kv-store",
+ "loro-rle 0.16.12",
+ "loro_fractional_index 0.16.12",
+ "md5",
+ "miniz_oxide 0.7.1",
+ "nonmax",
+ "num",
+ "num-derive",
+ "num-traits",
+ "once_cell",
+ "postcard",
+ "proptest",
+ "proptest-derive",
+ "rand",
+ "serde",
+ "serde-wasm-bindgen 0.5.0",
+ "serde_columnar",
+ "serde_json",
+ "smallvec",
+ "static_assertions",
+ "tabled 0.10.0",
+ "thiserror",
+ "tracing",
+ "wasm-bindgen",
+ "xxhash-rust",
+ "zstd",
+]
+
+[[package]]
 name = "loro-kv-store"
 version = "0.16.2"
 dependencies = [
  "bytes",
  "ensure-cov",
  "fxhash",
- "loro-common 0.16.2",
+ "loro-common 0.16.12",
  "lz4_flex",
  "once_cell",
  "quick_cache",
@@ -1290,6 +1290,32 @@ dependencies = [
 [[package]]
 name = "loro-rle"
 version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
+dependencies = [
+ "append-only-bytes",
+ "arref",
+ "enum-as-inner 0.6.0",
+ "fxhash",
+ "num",
+ "smallvec",
+]
+
+[[package]]
+name = "loro-rle"
+version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761#90470658435ec4c62b5af59ebb82fe9e1f5aa761"
+dependencies = [
+ "append-only-bytes",
+ "arref",
+ "enum-as-inner 0.6.0",
+ "fxhash",
+ "num",
+ "smallvec",
+]
+
+[[package]]
+name = "loro-rle"
+version = "0.16.12"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -1305,32 +1331,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-rle"
-version = "0.16.2"
-source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
-dependencies = [
- "append-only-bytes",
- "arref",
- "enum-as-inner 0.6.0",
- "fxhash",
- "num",
- "smallvec",
-]
-
-[[package]]
-name = "loro-rle"
-version = "0.16.2"
-source = "git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761#90470658435ec4c62b5af59ebb82fe9e1f5aa761"
-dependencies = [
- "append-only-bytes",
- "arref",
- "enum-as-inner 0.6.0",
- "fxhash",
- "num",
- "smallvec",
-]
-
-[[package]]
 name = "loro-thunderdome"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1343,8 +1343,8 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom",
  "js-sys",
- "loro-internal 0.16.2",
- "loro-rle 0.16.2",
+ "loro-internal 0.16.12",
+ "loro-rle 0.16.12",
  "serde",
  "serde-wasm-bindgen 0.6.5",
  "serde_json",
@@ -1352,19 +1352,6 @@ dependencies = [
  "tracing-wasm",
  "wasm-bindgen",
  "wasm-bindgen-derive",
-]
-
-[[package]]
-name = "loro_fractional_index"
-version = "0.16.2"
-dependencies = [
- "criterion 0.5.1",
- "fractional_index",
- "imbl",
- "once_cell",
- "rand",
- "serde",
- "smallvec",
 ]
 
 [[package]]
@@ -1384,6 +1371,19 @@ version = "0.16.2"
 source = "git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761#90470658435ec4c62b5af59ebb82fe9e1f5aa761"
 dependencies = [
  "imbl",
+ "rand",
+ "serde",
+ "smallvec",
+]
+
+[[package]]
+name = "loro_fractional_index"
+version = "0.16.12"
+dependencies = [
+ "criterion 0.5.1",
+ "fractional_index",
+ "imbl",
+ "once_cell",
  "rand",
  "serde",
  "smallvec",

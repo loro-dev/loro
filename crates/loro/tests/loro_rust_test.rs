@@ -1572,3 +1572,46 @@ fn small_update_size() {
     println!("Update bytes {:?}", dev_utils::ByteSize(bytes.len()));
     assert!(bytes.len() < 90, "Large update size {}", bytes.len());
 }
+
+fn test_tree_move() {
+    let doc = LoroDoc::new();
+    let tree = doc.get_tree("tree");
+    let root1 = tree.create(None).unwrap();
+    let node1 = tree.create(root1).unwrap();
+    let node2 = tree.create(root1).unwrap();
+    assert_eq!(tree.children(Some(root1)).unwrap(), vec![node1, node2]);
+    tree.mov_before(node2, node1).unwrap();
+    assert_eq!(tree.children(Some(root1)).unwrap(), vec![node2, node1]);
+    tree.mov_before(node2, node1).unwrap();
+    assert_eq!(tree.children(Some(root1)).unwrap(), vec![node2, node1]);
+
+    tree.mov_after(node2, node1).unwrap();
+    assert_eq!(tree.children(Some(root1)).unwrap(), vec![node1, node2]);
+    tree.mov_after(node2, node1).unwrap();
+    assert_eq!(tree.children(Some(root1)).unwrap(), vec![node1, node2]);
+}
+
+#[test]
+fn richtext_map_value() {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    text.mark(0..2, "comment", loro_value!({"b": {}})).unwrap();
+    let delta = text.to_delta();
+    assert_eq!(
+        delta,
+        loro_value!([
+            {
+                "insert": "He",
+                "attributes": {
+                    "comment": {
+                        "b": {}
+                    }
+                }
+            },
+            {
+                "insert": "llo",
+            }
+        ])
+    );
+}

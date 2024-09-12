@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   Container,
+  Diff,
   getType,
   isContainer,
   LoroDoc,
@@ -9,6 +10,8 @@ import {
   LoroText,
   LoroTree,
   VersionVector,
+  MapDiff,
+  TextDiff,
 } from "../src";
 
 it("basic example", () => {
@@ -519,4 +522,63 @@ describe("export", () => {
     doc2.import(bytes);
     expect(doc2.toJSON()).toStrictEqual({ text: "1" });
   })
+})
+it("has correct map value #453", async () => {
+  {
+    const doc = new LoroDoc();
+    const text = doc.getText("text");
+    text.insert(0, "Hello");
+    text.mark({ start: 0, end: 2 }, "bold", { b: {} });
+    expect(text.toDelta()).toStrictEqual([
+      { insert: "He", attributes: { bold: { b: {} } } },
+      { insert: "llo" }
+    ]);
+    let diff: Diff | undefined;
+    let expectedDiff: TextDiff = {
+      "type": "text",
+      "diff": [
+        { insert: "He", attributes: { bold: { b: {} } } },
+        { insert: "llo" }
+      ]
+    };
+    doc.subscribe(e => {
+      console.log("Text", e);
+      diff = e.events[0].diff;
+    })
+    doc.commit();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(diff).toStrictEqual(expectedDiff);
+  }
+  {
+    const map = new LoroMap();
+    map.set('a', { b: {} });
+    expect(map.toJSON()).toStrictEqual({ a: { b: {} } });
+  }
+  {
+    const doc = new LoroDoc();
+    const map = doc.getMap("map");
+    map.set('a', { b: {} });
+    doc.commit();
+    expect(map.toJSON()).toStrictEqual({ a: { b: {} } });
+  }
+  {
+    const doc = new LoroDoc();
+    let diff: Diff | undefined;
+    const expectedDiff: MapDiff = {
+      "type": "map",
+      "updated": {
+        "a": {
+          "b": {}
+        }
+      }
+    };
+    doc.subscribe(e => {
+      diff = e.events[0].diff;
+    })
+    const map = doc.getMap("map");
+    map.set('a', { b: {} });
+    doc.commit();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(diff).toStrictEqual(expectedDiff);
+  }
 })
