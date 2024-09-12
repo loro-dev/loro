@@ -195,12 +195,12 @@ impl SsTableBuilder {
             std::mem::replace(&mut self.block_builder, BlockBuilder::new(self.block_size));
         let block = builder.build();
         let offset = self.data.len();
-        block.encode(&mut self.data, self.compression_type);
+        let real_compression_type = block.encode(&mut self.data, self.compression_type);
         let is_large = block.is_large();
         let meta = BlockMeta {
             offset,
             is_large,
-            compression_type: self.compression_type,
+            compression_type: real_compression_type,
             first_key: std::mem::take(&mut self.first_key),
             last_key: if is_large {
                 None

@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
     fmt::{Debug, Display},
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicUsize, Arc, Mutex},
     thread,
     time::Instant,
 };
@@ -225,10 +225,14 @@ impl CRDTFuzzer {
                     }
                     2 => {
                         info_span!("FastSnapshot", from = i, to = j).in_scope(|| {
-                            b_doc.import(&a_doc.export_fast_snapshot()).unwrap();
+                            b_doc
+                                .import(&a_doc.export(loro::ExportMode::Snapshot))
+                                .unwrap();
                         });
                         info_span!("FastSnapshot", from = j, to = i).in_scope(|| {
-                            a_doc.import(&b_doc.export_fast_snapshot()).unwrap();
+                            a_doc
+                                .import(&b_doc.export(loro::ExportMode::Snapshot))
+                                .unwrap();
                         });
                     }
                     _ => {
@@ -269,7 +273,7 @@ impl CRDTFuzzer {
     }
 }
 
-#[derive(Eq, Hash, PartialEq)]
+#[derive(Eq, Hash, PartialEq, Clone)]
 pub enum FuzzTarget {
     Map,
     List,
@@ -338,6 +342,103 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
     info_span!("check history").in_scope(|| {
         fuzzer.check_history();
     });
+}
+
+pub fn test_multi_sites_with_gc(
+    site_num: u8,
+    fuzz_targets: Vec<FuzzTarget>,
+    actions: &mut [Action],
+) {
+    ensure_cov::notify_cov("fuzz_gc");
+    let mut fuzzer = CRDTFuzzer::new(site_num, fuzz_targets);
+    let mut applied = Vec::new();
+    let target_gc_index = actions.len() / 2;
+    for (i, action) in actions.iter_mut().enumerate() {
+        fuzzer.pre_process(action);
+        if i <= target_gc_index {
+            match action {
+                Action::Handle { site, .. } => {
+                    if *site == 0 {
+                        *site = 1
+                    }
+                }
+                Action::Checkout { site, to } => {
+                    if *site == 0 {
+                        *site = 1;
+                    }
+                }
+                Action::Undo { site, op_len } => {
+                    if *site == 0 {
+                        *site = 1;
+                    }
+                }
+                Action::SyncAllUndo { site, op_len } => {
+                    if *site == 0 {
+                        *site = 1;
+                    }
+                }
+                Action::Sync { from, to } => {
+                    if *to == 0 {
+                        *to = 1;
+                    }
+                }
+                Action::SyncAll => {}
+            }
+        }
+
+        fuzzer.pre_process(action);
+        info_span!("ApplyAction", ?action).in_scope(|| {
+            applied.push(action.clone());
+            info!("OptionsTable \n{}", (&applied).table());
+            // info!("Apply Action {:?}", applied);
+            fuzzer.apply_action(action);
+        });
+
+        if i == target_gc_index {
+            info_span!("GC 1 => 0").in_scope(|| {
+                fuzzer.actors[1].loro.attach();
+                let f = fuzzer.actors[1].loro.oplog_frontiers();
+                if !f.is_empty() {
+                    let bytes = fuzzer.actors[1]
+                        .loro
+                        .export(loro::ExportMode::GcSnapshot(&f));
+                    fuzzer.actors[0].loro.import(&bytes).unwrap();
+                }
+            })
+        }
+    }
+
+    // println!("OpTable \n{}", (&applied).table());
+    info_span!("check synced").in_scope(|| {
+        fuzzer.check_equal();
+    });
+    info_span!("check tracker").in_scope(|| {
+        fuzzer.check_tracker();
+    });
+    info_span!("check history").in_scope(|| {
+        fuzzer.check_history();
+    });
+
+    static COUNT: AtomicUsize = AtomicUsize::new(0);
+    if COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 1_000 == 0 {
+        let must_meet = [
+            "fuzz_gc",
+            "gc_snapshot::need_calc",
+            "gc_snapshot::dont_need_calc",
+            "loro_internal::history_cache::find_text_chunks_in",
+            "loro_internal::history_cache::find_list_chunks_in",
+            "loro_internal::import",
+            "loro_internal::import::snapshot",
+            "loro_internal::import::snapshot::gc",
+            "loro_internal::import::snapshot::normal",
+            "loro_internal::history_cache::init_cache_by_visit_all_change_slow::visit_gc",
+        ];
+        for v in must_meet {
+            if ensure_cov::get_cov_for(v) == 0 {
+                println!("[COV-FAILED] {}", v)
+            }
+        }
+    }
 }
 
 pub fn minify_error<T, F, N>(site_num: u8, f: F, normalize: N, actions: Vec<T>)

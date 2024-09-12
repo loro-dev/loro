@@ -18,9 +18,8 @@ use std::io::{Read, Write};
 use crate::{oplog::ChangeStore, LoroDoc, OpLog, VersionVector};
 use bytes::{Buf, Bytes};
 use loro_common::{IdSpan, LoroError, LoroResult};
-use tracing::trace;
 
-use super::encode_reordered::import_changes_to_oplog;
+use super::encode_reordered::{import_changes_to_oplog, ImportChangesResult};
 
 pub(crate) const EMPTY_MARK: &[u8] = b"E";
 pub(super) struct Snapshot {
@@ -103,11 +102,13 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
     let need_calc = state_bytes.is_none();
     let state_frontiers;
     if gc_bytes.is_empty() {
+        ensure_cov::notify_cov("loro_internal::import::snapshot::normal");
         if let Some(bytes) = state_bytes {
             state.store.decode(bytes)?;
         }
         state_frontiers = oplog.frontiers().clone();
     } else {
+        ensure_cov::notify_cov("loro_internal::import::snapshot::gc");
         let gc_state_frontiers = state
             .store
             .decode_gc(gc_bytes.clone(), oplog.dag().trimmed_frontiers().clone())?;
@@ -121,8 +122,10 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
         });
 
         if need_calc {
+            ensure_cov::notify_cov("gc_snapshot::need_calc");
             state_frontiers = gc_state_frontiers.unwrap();
         } else {
+            ensure_cov::notify_cov("gc_snapshot::dont_need_calc");
             state_frontiers = oplog.frontiers().clone();
         }
     }
@@ -188,10 +191,17 @@ pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<(), LoroEr
         oplog.vv(),
     )?;
     changes.sort_unstable_by_key(|x| x.lamport);
-    let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
+    let ImportChangesResult {
+        latest_ids,
+        pending_changes,
+        changes_that_deps_on_trimmed_history,
+    } = import_changes_to_oplog(changes, oplog);
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
+    if !changes_that_deps_on_trimmed_history.is_empty() {
+        return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+    }
     Ok(())
 }
 

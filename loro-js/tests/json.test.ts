@@ -1,12 +1,12 @@
 import { expect, it } from "vitest";
 import {
-  Loro,
+  LoroDoc,
   LoroMap,
   TextOp,
 } from "../src";
 
 it("json encoding", () => {
-  const doc = new Loro();
+  const doc = new LoroDoc();
   const text = doc.getText("text");
   text.insert(0, "123");
   const map = doc.getMap("map");
@@ -26,7 +26,7 @@ it("json encoding", () => {
   text.mark({ start: 0, end: 3 }, "bold", true);
   const json = doc.exportJsonUpdates();
   // console.log(json.changes[0].ops);
-  const doc2 = new Loro();
+  const doc2 = new LoroDoc();
   doc2.importJsonUpdates(json);
 });
 
@@ -134,13 +134,13 @@ it("json decoding", () => {
       }
     ]
   }`;
-  const doc = new Loro();
+  const doc = new LoroDoc();
   doc.importJsonUpdates(v15Json);
   // console.log(doc.exportJsonUpdates());
 });
 
 it("test some type correctness", () => {
-  const doc = new Loro();
+  const doc = new LoroDoc();
   doc.setPeerId(0);
   doc.getText("text").insert(0, "123");
   doc.commit();

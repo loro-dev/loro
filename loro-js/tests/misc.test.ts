@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Loro, LoroList, LoroMap, LoroText, VersionVector } from "../src";
+import { LoroDoc, LoroList, LoroMap, LoroText, VersionVector } from "../src";
 import { expectTypeOf } from "vitest";
 
 function assertEquals(a: any, b: any) {
@@ -8,7 +8,7 @@ function assertEquals(a: any, b: any) {
 
 describe("transaction", () => {
   it("transaction", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     const text = loro.getText("text");
     let count = 0;
     const sub = loro.subscribe(() => {
@@ -26,7 +26,7 @@ describe("transaction", () => {
   });
 
   it("transaction origin", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     const text = loro.getText("text");
     let count = 0;
     const sub = loro.subscribe((event: { origin: string }) => {
@@ -48,7 +48,7 @@ describe("transaction", () => {
 
 describe("subscribe", () => {
   it("subscribe_lock", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     const text = loro.getText("text");
     const list = loro.getList("list");
     let count = 0;
@@ -80,7 +80,7 @@ describe("subscribe", () => {
   });
 
   it("subscribe_lock2", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     const text = loro.getText("text");
     let count = 0;
     const sub = loro.subscribe(() => {
@@ -101,7 +101,7 @@ describe("subscribe", () => {
   });
 
   it("subscribe", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     const text = loro.getText("text");
     let count = 0;
     const sub = loro.subscribe(() => {
@@ -125,8 +125,8 @@ describe("subscribe", () => {
 
 describe("sync", () => {
   it("two insert at beginning", async () => {
-    const a = new Loro();
-    const b = new Loro();
+    const a = new LoroDoc();
+    const b = new LoroDoc();
     let a_version: undefined | VersionVector = undefined;
     let b_version: undefined | VersionVector = undefined;
     a.subscribe((e) => {
@@ -153,11 +153,11 @@ describe("sync", () => {
   });
 
   it("sync", () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     const text = loro.getText("text");
     text.insert(0, "hello world");
 
-    const loro_bk = new Loro();
+    const loro_bk = new LoroDoc();
     loro_bk.import(loro.exportFrom(undefined));
     assertEquals(loro_bk.toJSON(), loro.toJSON());
     const text_bk = loro_bk.getText("text");
@@ -172,7 +172,7 @@ describe("sync", () => {
 });
 
 describe("wasm", () => {
-  const loro = new Loro();
+  const loro = new LoroDoc();
   const a = loro.getText("ha");
   a.insert(0, "hello world");
   a.delete(6, 5);
@@ -208,14 +208,14 @@ describe("wasm", () => {
 
 describe("type", () => {
   it("test map type", () => {
-    const loro = new Loro<{ map: LoroMap<{ name: "he" }> }>();
+    const loro = new LoroDoc<{ map: LoroMap<{ name: "he" }> }>();
     const map = loro.getMap("map");
     const v = map.get("name");
     expectTypeOf(v).toEqualTypeOf<"he">();
   });
 
   it("test recursive map type", () => {
-    const loro = new Loro<{ map: LoroMap<{ map: LoroMap<{ name: "he" }> }> }>();
+    const loro = new LoroDoc<{ map: LoroMap<{ map: LoroMap<{ name: "he" }> }> }>();
     const map = loro.getMap("map");
     map.setContainer("map", new LoroMap());
 
@@ -225,7 +225,7 @@ describe("type", () => {
   });
 
   it("works for list type", () => {
-    const loro = new Loro<{ list: LoroList<string> }>();
+    const loro = new LoroDoc<{ list: LoroList<string> }>();
     const list = loro.getList("list");
     list.insert(0, "123");
     const v0 = list.get(0);
@@ -233,7 +233,7 @@ describe("type", () => {
   });
 
   it("test binary type", () => {
-    const loro = new Loro<{ list: LoroList<Uint8Array> }>();
+    const loro = new LoroDoc<{ list: LoroList<Uint8Array> }>();
     const list = loro.getList("list");
     list.insert(0, new Uint8Array(10));
     const v0 = list.get(0);
@@ -245,7 +245,7 @@ describe("type", () => {
 
 describe("list stable position", () => {
   it("basic tests", () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     const list = loro.getList("list");
     list.insert(0, "a");
     const pos0 = list.getCursor(0);

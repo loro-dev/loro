@@ -2,7 +2,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   Delta,
   ListDiff,
-  Loro,
+  LoroDoc,
   LoroList,
   LoroMap,
   LoroMovableList,
@@ -12,7 +12,7 @@ import {
 
 describe("movable list", () => {
   it("should work like list", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getMovableList("list");
     expect(list.length).toBe(0);
     list.push("a");
@@ -24,7 +24,7 @@ describe("movable list", () => {
   });
 
   it("can be synced", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getMovableList("list");
     list.push("a");
     list.push("b");
@@ -32,7 +32,7 @@ describe("movable list", () => {
     expect(list.toArray()).toEqual(["a", "b", "c"]);
     list.set(2, "d");
     list.move(0, 1);
-    const doc2 = new Loro();
+    const doc2 = new LoroDoc();
     const list2 = doc2.getMovableList("list");
     expect(list2.length).toBe(0);
     doc2.import(doc.exportFrom());
@@ -43,7 +43,7 @@ describe("movable list", () => {
   });
 
   it("should support move", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getMovableList("list");
     list.push("a");
     list.push("b");
@@ -54,7 +54,7 @@ describe("movable list", () => {
   });
 
   it("should support set", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getMovableList("list");
     list.push("a");
     list.push("b");
@@ -65,7 +65,7 @@ describe("movable list", () => {
   });
 
   it.todo("should support get cursor", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     doc.setPeerId(1);
     const list = doc.getMovableList("list");
     list.push("a");
@@ -88,7 +88,7 @@ describe("movable list", () => {
   });
 
   it("inserts sub-container", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getMovableList("list");
     list.push("a");
     list.push("b");
@@ -105,7 +105,7 @@ describe("movable list", () => {
   });
 
   it("can be inserted into a list as an attached container", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getMovableList("list");
     list.push("a");
     list.push("b");
@@ -121,12 +121,12 @@ describe("movable list", () => {
   });
 
   it("length should be correct when there are concurrent move", () => {
-    const docA = new Loro();
+    const docA = new LoroDoc();
     const list = docA.getMovableList("list");
     list.push("a");
     list.push("b");
     list.push("c");
-    const docB = new Loro();
+    const docB = new LoroDoc();
     const listB = docB.getMovableList("list");
     docB.import(docA.exportFrom());
     listB.move(0, 1);
@@ -137,13 +137,13 @@ describe("movable list", () => {
   });
 
   it("concurrent set the one with larger peer id win", () => {
-    const docA = new Loro();
+    const docA = new LoroDoc();
     docA.setPeerId(0);
     const listA = docA.getMovableList("list");
     listA.push("a");
     listA.push("b");
     listA.push("c");
-    const docB = new Loro();
+    const docB = new LoroDoc();
     docB.setPeerId(1);
     const listB = docB.getMovableList("list");
     docB.import(docA.exportFrom());
@@ -158,7 +158,7 @@ describe("movable list", () => {
   });
 
   it("can be subscribe", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getMovableList("list");
     list.push("a");
     list.push("b");
@@ -198,7 +198,7 @@ describe("movable list", () => {
   });
 
   it("has the right type", () => {
-    const doc = new Loro<
+    const doc = new LoroDoc<
       { list: LoroMovableList<LoroMap<{ name: string }>> }
     >();
     const list = doc.getMovableList("list");
@@ -209,7 +209,7 @@ describe("movable list", () => {
   });
 
   it("set container", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getMovableList("list");
     list.insert(0, 100);
     const text = list.setContainer(0, new LoroText());

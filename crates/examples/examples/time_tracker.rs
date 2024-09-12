@@ -50,7 +50,7 @@ pub fn main() {
 
     println!("total_time: {}", total_time);
     println!("mem: {}", get_mem_usage());
-    let snapshot = doc.export_fast_snapshot();
+    let snapshot = doc.export(loro::ExportMode::Snapshot);
     println!("Snapshot Size {}", ByteSize(snapshot.len()));
     println!("mem: {}", get_mem_usage());
     let gc_snapshot = doc.export(loro::ExportMode::GcSnapshot(&doc.oplog_frontiers()));

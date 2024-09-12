@@ -391,7 +391,10 @@ impl AppDag {
             return;
         }
 
-        trace!("Trying to get id={}", id);
+        if self.trimmed_vv.includes_id(id) {
+            return;
+        }
+
         let Some(nodes) = self.change_store.get_dag_nodes_that_contains(id) else {
             panic!("unparsed vv don't match with change store. Id:{id} is not in change store")
         };

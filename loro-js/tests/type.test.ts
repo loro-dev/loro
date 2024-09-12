@@ -1,5 +1,5 @@
 import {
-  Loro,
+  LoroDoc,
   LoroList,
   LoroMap,
   LoroMovableList,
@@ -16,7 +16,7 @@ test("Container should not match Value", () => {
 });
 
 test("A non-numeric string is not a valid peer id", () => {
-  const doc = new Loro();
+  const doc = new LoroDoc();
   expectTypeOf(doc.peerIdStr).toMatchTypeOf<PeerID>();
   expectTypeOf("123" as const).toMatchTypeOf<PeerID>();
   expectTypeOf("a123" as const).not.toMatchTypeOf<PeerID>();
@@ -34,7 +34,7 @@ test("Expect container type", () => {
 });
 
 test("doc type and container type", () => {
-  const doc = new Loro<{
+  const doc = new LoroDoc<{
     text: LoroText;
     map: LoroMap<{
       name?: string;

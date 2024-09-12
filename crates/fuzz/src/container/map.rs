@@ -7,7 +7,7 @@ use loro::{Container, ContainerID, ContainerType, LoroDoc, LoroMap, LoroValue};
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
-    actor::{ActionExecutor, ActorTrait},
+    actor::{assert_value_eq, ActionExecutor, ActorTrait},
     crdt_fuzzer::FuzzValue,
     value::{ApplyDiff, ContainerTracker, MapTracker, Value},
 };
@@ -66,7 +66,11 @@ impl ActorTrait for MapActor {
         let map = self.loro.get_map("map");
         let value_a = map.get_deep_value();
         let value_b = self.tracker.lock().unwrap().to_value();
-        assert_eq!(&value_a, value_b.into_map().unwrap().get("map").unwrap());
+        assert_value_eq(
+            &value_a,
+            value_b.into_map().unwrap().get("map").unwrap(),
+            None,
+        );
     }
 
     fn container_len(&self) -> u8 {

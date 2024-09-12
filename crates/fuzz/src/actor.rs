@@ -119,6 +119,9 @@ impl Actor {
         }
 
         if let Some(idx) = idx {
+            if let Container::Tree(tree) = &idx {
+                tree.enable_fractional_index(0);
+            }
             self.add_new_container(idx);
         }
     }

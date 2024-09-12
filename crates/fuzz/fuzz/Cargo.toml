@@ -31,6 +31,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "gc_fuzz"
+path = "fuzz_targets/gc_fuzz.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "mov"
 path = "fuzz_targets/mov.rs"
 test = false

@@ -163,10 +163,18 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
         deps,
         ops_map,
     )?;
-    let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
+    let ImportChangesResult {
+        latest_ids,
+        pending_changes,
+        changes_that_deps_on_trimmed_history,
+    } = import_changes_to_oplog(changes, oplog);
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
+    if !changes_that_deps_on_trimmed_history.is_empty() {
+        return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+    }
+
     Ok(())
 }
 
@@ -226,13 +234,20 @@ pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
     })
 }
 
+pub(crate) struct ImportChangesResult {
+    pub latest_ids: Vec<ID>,
+    pub pending_changes: Vec<Change>,
+    pub changes_that_deps_on_trimmed_history: Vec<Change>,
+}
+
 /// NOTE: This method expects that the remote_changes are already sorted by lamport value
 pub(crate) fn import_changes_to_oplog(
     changes: Vec<Change>,
     oplog: &mut OpLog,
-) -> Result<(Vec<ID>, Vec<Change>), LoroError> {
+) -> ImportChangesResult {
     let mut pending_changes = Vec::new();
     let mut latest_ids = Vec::new();
+    let mut changes_that_deps_on_trimmed_history = Vec::new();
     for mut change in changes {
         if change.ctr_end() <= oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
             // skip included changes
@@ -240,7 +255,8 @@ pub(crate) fn import_changes_to_oplog(
         }
 
         if oplog.dag.is_on_trimmed_history(&change.deps) {
-            return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+            changes_that_deps_on_trimmed_history.push(change);
+            continue;
         }
 
         latest_ids.push(change.id_last());
@@ -260,7 +276,11 @@ pub(crate) fn import_changes_to_oplog(
         oplog.insert_new_change(change);
     }
 
-    Ok((latest_ids, pending_changes))
+    ImportChangesResult {
+        latest_ids,
+        pending_changes,
+        changes_that_deps_on_trimmed_history,
+    }
 }
 
 fn decode_changes<'a>(
@@ -680,8 +700,13 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         deps,
         ops_map,
     )?;
-    let (new_ids, pending_changes) = import_changes_to_oplog(changes, &mut oplog)?;
 
+    let ImportChangesResult {
+        latest_ids,
+        pending_changes,
+        changes_that_deps_on_trimmed_history,
+    } = import_changes_to_oplog(changes, &mut oplog);
+    assert!(changes_that_deps_on_trimmed_history.is_empty());
     for op in ops.iter_mut() {
         // update op's lamport
         op.lamport = oplog.get_lamport_at(op.id());
@@ -708,7 +733,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         // TODO: Fix this origin value
         doc.update_oplog_and_apply_delta_to_state_if_needed(
             |oplog| {
-                oplog.try_apply_pending(new_ids);
+                oplog.try_apply_pending(latest_ids);
                 Ok(())
             },
             "".into(),

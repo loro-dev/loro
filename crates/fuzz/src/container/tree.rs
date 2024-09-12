@@ -13,7 +13,7 @@ use loro::{
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
-    actor::{ActionExecutor, ActorTrait},
+    actor::{assert_value_eq, ActionExecutor, ActorTrait},
     crdt_fuzzer::FuzzValue,
     value::{ApplyDiff, ContainerTracker, MapTracker, Value},
 };
@@ -116,6 +116,7 @@ impl TreeActor {
         );
 
         let root = loro.get_tree("tree");
+        root.enable_fractional_index(0);
         Self {
             loro,
             containers: vec![root],
@@ -134,7 +135,11 @@ impl ActorTrait for TreeActor {
         let tree = loro.get_tree("tree");
         let result = tree.get_value_with_meta();
         let tracker = self.tracker.lock().unwrap().to_value();
-        assert_eq!(&result, tracker.into_map().unwrap().get("tree").unwrap());
+        assert_value_eq(
+            &result,
+            tracker.into_map().unwrap().get("tree").unwrap(),
+            None,
+        );
     }
 
     fn add_new_container(&mut self, container: Container) {
@@ -179,7 +184,7 @@ impl Actionable for TreeAction {
                 }
                 *parent = (nodes[parent_idx].peer, nodes[parent_idx].counter);
                 *index %= tree
-                    .children_num(Some(TreeID::new(parent.0, parent.1)))
+                    .children_num(TreeID::new(parent.0, parent.1))
                     .unwrap_or(0)
                     + 1;
             }
@@ -421,7 +426,7 @@ impl ApplyDiff for TreeTracker {
                     index,
                     position,
                 } => {
-                    self.create_node(target, parent, position.to_string(), index);
+                    self.create_node(target, &parent.tree_id(), position.to_string(), index);
                 }
                 TreeExternalDiff::Delete { .. } => {
                     let node = self.find_node_by_id(target).unwrap();
@@ -437,10 +442,12 @@ impl ApplyDiff for TreeTracker {
                     parent,
                     index,
                     position,
+                    ..
                 } => {
                     let Some(node) = self.find_node_by_id(target) else {
-                        self.create_node(target, parent, position.to_string(), index);
-                        continue;
+                        // self.create_node(target, &parent.tree_id(), position.to_string(), index);
+                        // continue;
+                        panic!("Expected move but the node needs to be created");
                     };
 
                     let mut node = if let Some(p) = node.parent {
@@ -451,10 +458,10 @@ impl ApplyDiff for TreeTracker {
                         let index = self.tree.iter().position(|n| n.id == target).unwrap();
                         self.tree.remove(index)
                     };
-                    node.parent = *parent;
+                    node.parent = parent.tree_id();
                     node.position = position.to_string();
-                    if let Some(parent) = parent {
-                        let parent = self.find_node_by_id_mut(*parent).unwrap();
+                    if let Some(parent) = parent.tree_id() {
+                        let parent = self.find_node_by_id_mut(parent).unwrap();
                         parent.children.insert(*index, node);
                     } else {
                         if self.find_node_by_id_mut(target).is_some() {

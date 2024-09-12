@@ -906,8 +906,12 @@ fn fast_snapshot_for_updates() {
 
     doc_b.commit();
 
-    doc_b.import(&doc_a.export_fast_snapshot()).unwrap();
-    doc_a.import(&doc_b.export_fast_snapshot()).unwrap();
+    doc_b
+        .import(&doc_a.export(loro::ExportMode::Snapshot))
+        .unwrap();
+    doc_a
+        .import(&doc_b.export(loro::ExportMode::Snapshot))
+        .unwrap();
 
     assert_eq!(doc_a.get_deep_value(), doc_b.get_deep_value());
 }
@@ -1312,6 +1316,7 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(0)?;
     let tree = doc.get_tree("tree");
+    tree.enable_fractional_index(0);
     let root = tree.create(None)?;
     let child1 = tree.create(None)?;
     tree.mov(child1, root)?;
@@ -1439,6 +1444,7 @@ fn test_tree_with_other_ops_checkout_on_trimmed_doc() -> LoroResult<()> {
     doc.set_peer_id(0)?;
     let tree = doc.get_tree("tree");
     let root = tree.create(None)?;
+    tree.enable_fractional_index(0);
     let child1 = tree.create(None)?;
     tree.mov(child1, root)?;
     let child2 = tree.create(None).unwrap();

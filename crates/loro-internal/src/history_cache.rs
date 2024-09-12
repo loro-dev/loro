@@ -204,7 +204,11 @@ impl ContainerHistoryCache {
             configure: &Default::default(),
             peer: 0,
         };
+
         if let Some(state) = self.gc.as_ref() {
+            ensure_cov::notify_cov(
+                "loro_internal::history_cache::init_cache_by_visit_all_change_slow::visit_gc",
+            );
             let mut store = state.store.try_lock().unwrap();
             for (idx, c) in store.iter_all_containers_mut() {
                 match idx.get_type() {
@@ -254,7 +258,7 @@ impl ContainerHistoryCache {
                                             id: node.last_move_op,
                                             op: Arc::new(TreeOp::Create {
                                                 target: node.id,
-                                                parent: node.parent,
+                                                parent: node.parent.tree_id(),
                                                 position: node.position.clone(),
                                             }),
                                             effected: true,
@@ -309,6 +313,7 @@ impl ContainerHistoryCache {
         idx: ContainerIdx,
         target_span: loro_common::IdSpan,
     ) -> Vec<RichtextStateChunk> {
+        ensure_cov::notify_cov("loro_internal::history_cache::find_text_chunks_in");
         let Some(state) = self.gc.as_ref() else {
             return Vec::new();
         };
@@ -348,6 +353,7 @@ impl ContainerHistoryCache {
         idx: ContainerIdx,
         target_span: loro_common::IdSpan,
     ) -> Vec<SliceWithId> {
+        ensure_cov::notify_cov("loro_internal::history_cache::find_list_chunks_in");
         let Some(state) = self.gc.as_ref() else {
             return Vec::new();
         };
