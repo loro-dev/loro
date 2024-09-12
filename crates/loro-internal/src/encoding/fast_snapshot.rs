@@ -18,6 +18,7 @@ use std::io::{Read, Write};
 use crate::{oplog::ChangeStore, LoroDoc, OpLog, VersionVector};
 use bytes::{Buf, Bytes};
 use loro_common::{IdSpan, LoroError, LoroResult};
+use tracing::trace;
 
 use super::encode_reordered::{import_changes_to_oplog, ImportChangesResult};
 
@@ -237,7 +238,11 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<(), LoroE
     }
 
     changes.sort_unstable_by_key(|x| x.lamport);
-    let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
+    let ImportChangesResult {
+        latest_ids,
+        pending_changes,
+        changes_that_deps_on_trimmed_history: _,
+    } = import_changes_to_oplog(changes, oplog);
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
