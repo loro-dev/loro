@@ -10,7 +10,7 @@ use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
 use loro::{ContainerType, Frontiers, LoroError, LoroResult};
 use tabled::TableIteratorExt;
-use tracing::{debug, info, info_span};
+use tracing::{debug, info, info_span, trace};
 
 use crate::{actions::ActionWrapper, array_mut_ref};
 
@@ -453,9 +453,11 @@ pub fn test_multi_sites_with_gc(
                 match (i + j) % 4 {
                     0 => {
                         info_span!("Updates", from = j, to = i).in_scope(|| {
+                            trace!("a.vv = {:?}", a_doc.oplog_vv());
                             a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
                         });
                         info_span!("Updates", from = i, to = j).in_scope(|| {
+                            trace!("b.vv = {:?}", b_doc.oplog_vv());
                             b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
                         });
                     }
@@ -492,6 +494,21 @@ pub fn test_multi_sites_with_gc(
                         });
                     }
                 }
+
+                if a.loro.oplog_vv() != b.loro.oplog_vv() {
+                    // There is chance this happens when a pending update is applied because of the previous import
+                    let a_doc = &mut a.loro;
+                    let b_doc = &mut b.loro;
+                    info_span!("Updates", from = j, to = i).in_scope(|| {
+                        trace!("a.vv = {:?}", a_doc.oplog_vv());
+                        a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
+                    });
+                    info_span!("Updates", from = i, to = j).in_scope(|| {
+                        trace!("b.vv = {:?}", b_doc.oplog_vv());
+                        b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
+                    });
+                }
+
                 a.check_eq(b);
                 a.record_history();
                 b.record_history();

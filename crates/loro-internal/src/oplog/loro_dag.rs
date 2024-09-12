@@ -526,6 +526,7 @@ impl AppDag {
                     }
 
                     let (_, dep_node) = map.range(..=dep).next_back().unwrap();
+                    self.ensure_vv_for(dep_node);
                     expected_vv.extend_to_include_vv(dep_node.vv.get().unwrap().iter());
                     expected_vv.extend_to_include_last_id(dep);
                 }
