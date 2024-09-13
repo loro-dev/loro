@@ -160,7 +160,10 @@ impl ChangeStore {
                     as usize)
                     .min(c.atom_len());
 
-                assert_ne!(start, end);
+                if start == end {
+                    continue;
+                }
+
                 let ch = c.slice(start, end);
                 new_store.insert_change(ch, false);
             }

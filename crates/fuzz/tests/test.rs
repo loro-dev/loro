@@ -10124,6 +10124,69 @@ fn gc_fuzz_15() {
 }
 
 #[test]
+fn gc_fuzz_16() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            SyncAll,
+            Handle {
+                site: 41,
+                target: 252,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Tree),
+                    bool: true,
+                    key: 2981212593,
+                    pos: 7276179889,
+                    length: 12804210589391912960,
+                    prop: 4035225269105177009,
+                }),
+            },
+            Sync { from: 177, to: 177 },
+            Sync { from: 177, to: 177 },
+            Sync { from: 177, to: 177 },
+            Sync { from: 177, to: 177 },
+            Sync { from: 177, to: 177 },
+            Sync { from: 177, to: 177 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(17)),
+                    bool: false,
+                    key: 3590258688,
+                    pos: 18434875764103304661,
+                    length: 18446744073709540821,
+                    prop: 18446744073706788309,
+                }),
+            },
+            SyncAll,
+            SyncAll,
+            SyncAllUndo {
+                site: 151,
+                op_len: 2543294359,
+            },
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,
