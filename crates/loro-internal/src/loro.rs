@@ -1247,7 +1247,38 @@ impl LoroDoc {
             self.commit_then_stop();
             self.oplog.try_lock().unwrap().check_dag_correctness();
             if self.is_trimmed() {
-                // TODO: Test the correctness of trimmed doc
+                // For documents that have been garbage collected (trimmed),
+                // we cannot replay from the beginning as the history is not complete.
+                // Instead, we:
+                // 1. Export the initial state from the GC snapshot.
+                // 2. Create a new document and import the initial snapshot.
+                // 3. Export updates from the trimmed version vector to the current version.
+                // 4. Import these updates into the new document.
+                // 5. Compare the states of the new document and the current document.
+
+                // Step 1: Export the initial state from the GC snapshot.
+                let initial_snapshot = self.export(ExportMode::GcSnapshot(Cow::Borrowed(
+                    &self.trimmed_frontiers(),
+                )));
+
+                // Step 2: Create a new document and import the initial snapshot.
+                let doc = LoroDoc::new();
+                doc.detach();
+                doc.import(&initial_snapshot).unwrap();
+
+                // Step 3: Export updates from the trimmed version vector to the current version.
+                let updates = self.export(ExportMode::updates_owned(VersionVector::from_im_vv(
+                    &self.trimmed_vv(),
+                )));
+
+                // Step 4: Import these updates into the new document.
+                doc.import(&updates).unwrap();
+
+                // Step 5: Checkout to the current state's frontiers and compare the states.
+                doc.checkout(&self.state_frontiers()).unwrap();
+                let mut calculated_state = doc.app_state().try_lock().unwrap();
+                let mut current_state = self.app_state().try_lock().unwrap();
+                current_state.check_is_the_same(&mut calculated_state);
             } else {
                 let bytes = self.export_from(&Default::default());
                 let doc = Self::new();
