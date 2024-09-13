@@ -10047,10 +10047,87 @@ fn gc_fuzz_14() {
 }
 
 #[test]
+fn gc_fuzz_15() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 7,
+                target: 7,
+                container: 7,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(186)),
+                    bool: true,
+                    key: 117901063,
+                    pos: 2965947086361134855,
+                    length: 2965947086361143593,
+                    prop: 3388685387995481904,
+                }),
+            },
+            Handle {
+                site: 7,
+                target: 7,
+                container: 7,
+                action: Generic(GenericAction {
+                    value: I32(1745291055),
+                    bool: true,
+                    key: 117911303,
+                    pos: 8144486177886908167,
+                    length: 8216543772599977735,
+                    prop: 2956339408958288498,
+                }),
+            },
+            Handle {
+                site: 7,
+                target: 7,
+                container: 7,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 3217014719,
+                    pos: 13816973012072644543,
+                    length: 13816973012072644543,
+                    prop: 13816973012072644543,
+                }),
+            },
+            Sync { from: 191, to: 191 },
+            Handle {
+                site: 41,
+                target: 43,
+                container: 7,
+                action: Generic(GenericAction {
+                    value: I32(-876939015),
+                    bool: true,
+                    key: 117901063,
+                    pos: 2965947086361143559,
+                    length: 10964339960146635049,
+                    prop: 3388685387995481904,
+                }),
+            },
+            Handle {
+                site: 7,
+                target: 7,
+                container: 7,
+                action: Generic(GenericAction {
+                    value: I32(1745291055),
+                    bool: true,
+                    key: 117911303,
+                    pos: 506381209866546951,
+                    length: 8246661594435503367,
+                    prop: 2965909556371288690,
+                }),
+            },
+            SyncAll,
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,
-        |n, actions| test_multi_sites(n, vec![FuzzTarget::All], actions),
+        |n, actions| test_multi_sites_with_gc(n, vec![FuzzTarget::All], actions),
         |_, actions| actions.to_vec(),
         vec![],
     )
