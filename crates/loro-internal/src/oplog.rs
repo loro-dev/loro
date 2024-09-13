@@ -451,9 +451,6 @@ impl OpLog {
         debug!("from_frontiers={:?} vv={:?}", &from_frontiers, from);
         debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
         trace!("trimmed vv = {:?}", self.dag.trimmed_vv());
-        self.change_store.visit_all_changes(&mut |c| {
-            trace!("change {:#?}", &c);
-        });
         let (common_ancestors, mut diff_mode) =
             self.dag.find_common_ancestor(from_frontiers, to_frontiers);
         if diff_mode == DiffMode::Checkout && to > from {

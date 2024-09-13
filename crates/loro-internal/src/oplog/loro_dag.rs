@@ -218,7 +218,7 @@ impl AppDag {
     }
 
     pub(crate) fn find_deps_of_id(&self, id: ID) -> Frontiers {
-        self.ensure_lazy_load_node(id, None);
+        self.ensure_lazy_load_node(id);
         let Some(node) = self.get(id) else {
             return Frontiers::default();
         };
@@ -283,8 +283,10 @@ impl AppDag {
             map_guard.as_mut().unwrap()
         });
         let new_dag_start_counter_for_the_peer = nodes[0].cnt;
+        let nodes_cnt_end = nodes.last().unwrap().ctr_end();
         let mut unparsed_vv = self.unparsed_vv.try_lock().unwrap();
         let end_counter = unparsed_vv[&peer];
+        assert!(end_counter <= nodes_cnt_end);
         let mut deps_on_others = vec![];
         let mut break_point_set = self.unhandled_dep_points.try_lock().unwrap();
         for mut node in nodes {
@@ -389,20 +391,32 @@ impl AppDag {
         }
     }
 
-    fn ensure_lazy_load_node(&self, id: ID, map: Option<&mut BTreeMap<ID, AppDagNode>>) {
-        if !self.unparsed_vv.try_lock().unwrap().includes_id(id) {
-            return;
-        }
-
+    fn ensure_lazy_load_node(&self, id: ID) {
         if self.trimmed_vv.includes_id(id) {
             return;
         }
 
-        let Some(nodes) = self.change_store.get_dag_nodes_that_contains(id) else {
-            panic!("unparsed vv don't match with change store. Id:{id} is not in change store")
-        };
+        loop {
+            // We need to load all the dag nodes that has the same peer and greater counter than the given `id`
+            // Because we only record the end counter of the unparsed version on `unparsed_vv`
+            let unparsed_end = {
+                let unparsed_vv = self.unparsed_vv.try_lock().unwrap();
+                unparsed_vv.get(&id.peer).copied().unwrap_or(0)
+            };
+            if unparsed_end <= id.counter {
+                return;
+            }
 
-        self.lazy_load_nodes_internal(nodes, id.peer, map);
+            let last_unparsed_id = ID::new(id.peer, unparsed_end - 1);
+            let Some(nodes) = self
+                .change_store
+                .get_dag_nodes_that_contains(last_unparsed_id)
+            else {
+                panic!("unparsed vv don't match with change store. Id:{id} is not in change store")
+            };
+
+            self.lazy_load_nodes_internal(nodes, id.peer, None);
+        }
     }
 
     pub(super) fn fork(&self, change_store: ChangeStore) -> AppDag {
@@ -431,7 +445,7 @@ impl AppDag {
         if let Some((vv, f)) = v.start_version {
             if !f.is_empty() {
                 assert!(f.len() == 1);
-                self.ensure_lazy_load_node(f[0], None);
+                self.ensure_lazy_load_node(f[0]);
                 let node = self.get(f[0]).unwrap();
                 assert!(node.cnt == f[0].counter);
                 self.trimmed_frontiers_deps = node.deps.clone();
@@ -464,7 +478,7 @@ impl AppDag {
                 let init_counter = self.trimmed_vv.get(peer).copied().unwrap_or(0);
                 while end_cnt > init_counter {
                     let cnt = end_cnt - 1;
-                    self.ensure_lazy_load_node(ID::new(*peer, cnt), None);
+                    self.ensure_lazy_load_node(ID::new(*peer, cnt));
                     end_cnt = self
                         .unparsed_vv
                         .try_lock()
@@ -698,7 +712,7 @@ impl Dag for AppDag {
     }
 
     fn get(&self, id: ID) -> Option<Self::Node> {
-        self.ensure_lazy_load_node(id, None);
+        self.ensure_lazy_load_node(id);
         let binding = self.map.try_lock().unwrap();
         let x = binding.range(..=id).next_back()?;
         if x.1.contains_id(id) {
@@ -733,15 +747,18 @@ impl AppDag {
         }
 
         let mut ans_vv = ImVersionVector::default();
-        trace!("deps={:?}", &node.deps);
-        trace!("this.trimmed_f_deps={:?}", &self.trimmed_frontiers_deps);
+        // trace!("deps={:?}", &node.deps);
+        // trace!("this.trimmed_f_deps={:?}", &self.trimmed_frontiers_deps);
+        // trace!("this.vv={:?}", &self.vv);
+        // trace!("this.unparsed_vv={:?}", &self.unparsed_vv);
+        // trace!("this.trimmed_vv={:?}", &self.trimmed_vv);
         if node.deps == self.trimmed_frontiers_deps {
             for (&p, &c) in self.trimmed_vv.iter() {
                 ans_vv.insert(p, c);
             }
         } else {
             for id in node.deps.iter() {
-                trace!("id {}", id);
+                // trace!("id {}", id);
                 let node = self.get(*id).expect("deps should be in the dag");
                 let dep_vv = self.ensure_vv_for(&node);
                 if ans_vv.is_empty() {
@@ -754,7 +771,7 @@ impl AppDag {
             }
         }
 
-        trace!("ans_vv={:?}", &ans_vv);
+        // trace!("ans_vv={:?}", &ans_vv);
         node.vv.set(ans_vv.clone()).unwrap();
         ans_vv
     }
@@ -772,7 +789,7 @@ impl AppDag {
     }
 
     pub fn get_lamport(&self, id: &ID) -> Option<Lamport> {
-        self.ensure_lazy_load_node(*id, None);
+        self.ensure_lazy_load_node(*id);
         self.get(*id).and_then(|node| {
             assert!(id.counter >= node.cnt);
             if node.cnt + node.len as Counter > id.counter {
@@ -813,6 +830,7 @@ impl AppDag {
         Some(vv)
     }
 
+    #[allow(unused)]
     pub(crate) fn frontiers_to_im_vv(&self, frontiers: &Frontiers) -> ImVersionVector {
         if frontiers.is_empty() {
             return Default::default();

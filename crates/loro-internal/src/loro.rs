@@ -560,9 +560,6 @@ impl LoroDoc {
         if !self.detached.load(Acquire) {
             debug!("checkout from {:?} to {:?}", old_vv, oplog.vv());
             let mut diff = DiffCalculator::new(false);
-            oplog.change_store().visit_all_changes(&mut |c| {
-                trace!("change {:#?}", &c);
-            });
             if &old_vv != oplog.vv() {
                 let diff = diff.calc_diff_internal(
                     &oplog,

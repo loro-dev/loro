@@ -12,6 +12,7 @@ use loro::{
     Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroError, LoroValue, PeerID,
     UndoManager, ID,
 };
+use pretty_assertions::assert_eq;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use tracing::info_span;
 
