@@ -513,8 +513,10 @@ impl TreeCacheForDiff {
         }
 
         debug_assert!(self.tree.is_empty());
-        self.current_vv.set_last(nodes.last().unwrap().id.id());
         for node in nodes.into_iter() {
+            self.current_vv.extend_to_include_last_id(node.id.id());
+            self.current_vv
+                .extend_to_include_last_id(node.op.target().id());
             self.tree.entry(node.op.target()).or_default().insert(node);
         }
     }

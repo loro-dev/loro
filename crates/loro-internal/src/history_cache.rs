@@ -14,6 +14,7 @@ use loro_common::{
     ContainerType, Counter, HasLamport, IdFull, IdLp, InternalString, LoroValue, PeerID, ID,
 };
 use rle::HasLength;
+use tracing::trace;
 
 use crate::{
     change::{Change, Lamport},
@@ -205,7 +206,9 @@ impl ContainerHistoryCache {
             peer: 0,
         };
 
+        trace!("init_cache_by_visit_all_change_slow");
         if let Some(state) = self.gc.as_ref() {
+            trace!("init_cache_by_visit_all_change_slow with gc");
             ensure_cov::notify_cov(
                 "loro_internal::history_cache::init_cache_by_visit_all_change_slow::visit_gc",
             );
@@ -250,22 +253,23 @@ impl ContainerHistoryCache {
                     crate::state::State::TreeState(t) => {
                         if for_importing {
                             let c = self.for_importing.as_mut().unwrap();
-                            if let Some(HistoryCacheForImporting::Tree(tree)) = c.get_mut(idx) {
-                                tree.record_gc_state(
-                                    t.tree_nodes()
-                                        .into_iter()
-                                        .map(|node| MoveLamportAndID {
-                                            id: node.last_move_op,
-                                            op: Arc::new(TreeOp::Create {
-                                                target: node.id,
-                                                parent: node.parent.tree_id(),
-                                                position: node.position.clone(),
-                                            }),
-                                            effected: true,
-                                        })
-                                        .collect(),
-                                );
-                            }
+                            let tree = c.entry(*idx).or_insert_with(|| {
+                                HistoryCacheForImporting::Tree(Default::default())
+                            });
+                            tree.as_tree_mut().unwrap().record_gc_state(
+                                t.tree_nodes()
+                                    .into_iter()
+                                    .map(|node| MoveLamportAndID {
+                                        id: node.last_move_op,
+                                        op: Arc::new(TreeOp::Create {
+                                            target: node.id,
+                                            parent: node.parent.tree_id(),
+                                            position: node.position.clone(),
+                                        }),
+                                        effected: true,
+                                    })
+                                    .collect(),
+                            );
                         }
                     }
                     _ => unreachable!(),

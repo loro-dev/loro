@@ -1058,6 +1058,7 @@ dependencies = [
  "loro-delta 0.16.12",
  "loro-internal 0.16.12",
  "loro-kv-store",
+ "pretty_assertions",
  "rand",
  "serde_json",
  "tracing",

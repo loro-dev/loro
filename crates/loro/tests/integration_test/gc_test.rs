@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::gen_action;
-use loro::{Frontiers, LoroDoc, ID};
+use loro::{ExportMode, Frontiers, LoroDoc, ID};
 
 #[test]
 fn test_gc() -> anyhow::Result<()> {
@@ -210,5 +210,33 @@ fn import_updates_depend_on_trimmed_history_should_raise_error() -> anyhow::Resu
     // But updates from doc should be fine ("hello": "world")
     assert_eq!(new_doc.get_text("hello").to_string(), *"world");
     assert!(ran.load(std::sync::atomic::Ordering::Relaxed));
+    Ok(())
+}
+
+#[test]
+fn the_vv_on_gc_doc() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    gen_action(&doc, 0, 10);
+    doc.commit();
+    let snapshot = doc.export(loro::ExportMode::gc_snapshot(&doc.oplog_frontiers()));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&snapshot).unwrap();
+    assert!(!new_doc.trimmed_vv().is_empty());
+    assert_eq!(new_doc.oplog_vv(), new_doc.state_vv());
+    assert_eq!(new_doc.oplog_vv(), doc.state_vv());
+    assert_eq!(new_doc.oplog_frontiers(), doc.oplog_frontiers());
+    assert_eq!(new_doc.oplog_frontiers(), new_doc.state_frontiers());
+    assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
+
+    gen_action(&doc, 0, 10);
+    doc.commit();
+    let bytes = doc.export(ExportMode::all_updates());
+    new_doc.import(&bytes).unwrap();
+    assert_eq!(new_doc.oplog_vv(), new_doc.state_vv());
+    assert_eq!(new_doc.oplog_vv(), doc.state_vv());
+    assert_eq!(new_doc.oplog_frontiers(), doc.oplog_frontiers());
+    assert_eq!(new_doc.oplog_frontiers(), new_doc.state_frontiers());
+    assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
+
     Ok(())
 }
