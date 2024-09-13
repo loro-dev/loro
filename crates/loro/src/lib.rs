@@ -12,7 +12,6 @@ use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
-use loro_internal::json::JsonChange;
 use loro_internal::loro_common::LoroTreeError;
 use loro_internal::obs::LocalUpdateCallback;
 use loro_internal::undo::{OnPop, OnPush};
@@ -459,6 +458,12 @@ impl LoroDoc {
     #[inline]
     pub fn len_changes(&self) -> usize {
         self.doc.len_changes()
+    }
+
+    /// Get the shallow value of the document.
+    #[inline]
+    pub fn get_value(&self) -> LoroValue {
+        self.doc.get_value()
     }
 
     /// Get the current state of the document.

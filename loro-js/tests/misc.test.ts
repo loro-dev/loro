@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 import { LoroDoc, LoroList, LoroMap, LoroText, VersionVector } from "../src";
 import { expectTypeOf } from "vitest";
 
@@ -270,6 +270,23 @@ describe("list stable position", () => {
       expect(ans.side).toEqual(-1);
       expect(ans.update).toBeDefined();
     }
+  });
+});
+
+describe("to json", () => {
+  it("to shallow json", async () => {
+    const loro = new LoroDoc();
+    loro.getText("text");
+    loro.getMap("map");
+    loro.getList("list");
+    loro.getTree("tree");
+    loro.getMovableList("movable_list");
+    const value = loro.getShallowValue();
+    assert(Object.keys(value).includes("text"));
+    assert(Object.keys(value).includes("map"));
+    assert(Object.keys(value).includes("list"));
+    assert(Object.keys(value).includes("tree"));
+    assert(Object.keys(value).includes("movable_list"));
   });
 });
 

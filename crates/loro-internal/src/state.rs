@@ -927,6 +927,25 @@ impl DocState {
         !self.in_txn && self.arena.can_import_snapshot() && self.store.can_import_snapshot()
     }
 
+    pub fn get_value(&self) -> LoroValue {
+        let roots = self.arena.root_containers();
+        let ans = roots
+            .into_iter()
+            .map(|idx| {
+                let id = self.arena.idx_to_id(idx).unwrap();
+                let ContainerID::Root {
+                    name,
+                    container_type: _,
+                } = &id
+                else {
+                    unreachable!()
+                };
+                (name.to_string(), LoroValue::Container(id))
+            })
+            .collect();
+        LoroValue::Map(Arc::new(ans))
+    }
+
     pub fn get_deep_value(&mut self) -> LoroValue {
         let roots = self.arena.root_containers();
         let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());

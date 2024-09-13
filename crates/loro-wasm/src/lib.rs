@@ -1081,6 +1081,28 @@ impl LoroDoc {
         Ok(self.0.import_batch(&data)?)
     }
 
+    /// Get the shallow json format of the document state.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const list = doc.getList("list");
+    /// const tree = doc.getTree("tree");
+    /// const map = doc.getMap("map");
+    /// const shallowValue = doc.toShallowJSON();
+    /// /*
+    /// {"list": ..., "tree": ..., "map": ...}
+    ///  *\/
+    /// console.log(shallowValue);
+    /// ```
+    #[wasm_bindgen(js_name = "getShallowValue")]
+    pub fn get_shallow_value(&self) -> JsResult<JsValue> {
+        let json = self.0.get_value();
+        Ok(json.into())
+    }
+
     /// Get the json format of the document state.
     ///
     /// @example
