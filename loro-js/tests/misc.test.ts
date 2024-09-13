@@ -281,7 +281,7 @@ describe("to json", () => {
     loro.getList("list");
     loro.getTree("tree");
     loro.getMovableList("movable_list");
-    const value = loro.toShallowJSON();
+    const value = loro.getShallowValue();
     assert(Object.keys(value).includes("text"));
     assert(Object.keys(value).includes("map"));
     assert(Object.keys(value).includes("list"));

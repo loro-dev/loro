@@ -1097,8 +1097,8 @@ impl LoroDoc {
     ///  *\/
     /// console.log(shallowValue);
     /// ```
-    #[wasm_bindgen(js_name = "toShallowJSON")]
-    pub fn to_shallow_json(&self) -> JsResult<JsValue> {
+    #[wasm_bindgen(js_name = "getShallowValue")]
+    pub fn get_shallow_value(&self) -> JsResult<JsValue> {
         let json = self.0.get_value();
         Ok(json.into())
     }
