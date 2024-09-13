@@ -365,14 +365,26 @@ impl OpLog {
     }
 
     #[inline(always)]
-    pub(crate) fn export_from_fast(&self, vv: &VersionVector, f: &Frontiers) -> Bytes {
+    pub(crate) fn export_change_store_from(&self, vv: &VersionVector, f: &Frontiers) -> Bytes {
         self.change_store
             .export_from(vv, f, self.vv(), self.frontiers())
     }
 
     #[inline(always)]
+    pub(crate) fn export_change_store_in_range(
+        &self,
+        vv: &VersionVector,
+        f: &Frontiers,
+        to_vv: &VersionVector,
+        to_frontiers: &Frontiers,
+    ) -> Bytes {
+        self.change_store.export_from(vv, f, to_vv, to_frontiers)
+    }
+
+    #[inline(always)]
     pub(crate) fn export_blocks_from<W: std::io::Write>(&self, vv: &VersionVector, w: &mut W) {
-        self.change_store.export_blocks_from(vv, self.vv(), w)
+        self.change_store
+            .export_blocks_from(vv, self.trimmed_vv(), self.vv(), w)
     }
 
     #[inline(always)]

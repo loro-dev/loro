@@ -28,6 +28,7 @@ pub enum ExportMode<'a> {
     Updates { from: Cow<'a, VersionVector> },
     UpdatesInRange { spans: Cow<'a, [IdSpan]> },
     GcSnapshot(Cow<'a, Frontiers>),
+    StateOnly(Option<Cow<'a, Frontiers>>),
 }
 
 impl<'a> ExportMode<'a> {
@@ -70,6 +71,10 @@ impl<'a> ExportMode<'a> {
     pub fn gc_snapshot_from_id(id: ID) -> Self {
         let frontiers = Frontiers::from_id(id);
         ExportMode::GcSnapshot(Cow::Owned(frontiers))
+    }
+
+    pub fn state_only(frontiers: Option<&'a Frontiers>) -> Self {
+        ExportMode::StateOnly(frontiers.map(Cow::Borrowed))
     }
 }
 
@@ -334,6 +339,12 @@ pub(crate) fn export_fast_updates_in_range(oplog: &OpLog, spans: &[IdSpan]) -> V
 pub(crate) fn export_gc_snapshot(doc: &LoroDoc, f: &Frontiers) -> Vec<u8> {
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
         gc::export_gc_snapshot(doc, f, ans).unwrap();
+    })
+}
+
+pub(crate) fn export_state_only_snapshot(doc: &LoroDoc, f: &Frontiers) -> Vec<u8> {
+    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+        gc::export_state_only_snapshot(doc, f, ans).unwrap();
     })
 }
 

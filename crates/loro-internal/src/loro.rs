@@ -29,8 +29,8 @@ use crate::{
     diff_calc::DiffCalculator,
     encoding::{
         decode_snapshot, export_fast_snapshot, export_fast_updates, export_fast_updates_in_range,
-        export_gc_snapshot, export_snapshot, json_schema::json::JsonSchema, parse_header_and_body,
-        EncodeMode, ParsedHeaderAndBody,
+        export_gc_snapshot, export_snapshot, export_state_only_snapshot,
+        json_schema::json::JsonSchema, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
@@ -1257,25 +1257,25 @@ impl LoroDoc {
                 // 5. Compare the states of the new document and the current document.
 
                 // Step 1: Export the initial state from the GC snapshot.
-                let initial_snapshot = self.export(ExportMode::GcSnapshot(Cow::Borrowed(
-                    &self.trimmed_frontiers(),
-                )));
+                let initial_snapshot =
+                    self.export(ExportMode::state_only(Some(&self.trimmed_frontiers())));
 
                 // Step 2: Create a new document and import the initial snapshot.
                 let doc = LoroDoc::new();
-                doc.detach();
                 doc.import(&initial_snapshot).unwrap();
+                self.checkout(&self.trimmed_frontiers()).unwrap();
+                assert_eq!(self.get_deep_value(), doc.get_deep_value());
 
                 // Step 3: Export updates from the trimmed version vector to the current version.
-                let updates = self.export(ExportMode::updates_owned(VersionVector::from_im_vv(
-                    &self.trimmed_vv(),
-                )));
+                let updates = self.export(ExportMode::all_updates());
 
                 // Step 4: Import these updates into the new document.
                 doc.import(&updates).unwrap();
+                self.checkout_to_latest();
 
                 // Step 5: Checkout to the current state's frontiers and compare the states.
-                doc.checkout(&self.state_frontiers()).unwrap();
+                // doc.checkout(&self.state_frontiers()).unwrap();
+                assert_eq!(doc.get_deep_value(), self.get_deep_value());
                 let mut calculated_state = doc.app_state().try_lock().unwrap();
                 let mut current_state = self.app_state().try_lock().unwrap();
                 current_state.check_is_the_same(&mut calculated_state);
@@ -1516,6 +1516,10 @@ impl LoroDoc {
                 export_fast_updates_in_range(&self.oplog.lock().unwrap(), &spans)
             }
             ExportMode::GcSnapshot(f) => export_gc_snapshot(self, &f),
+            ExportMode::StateOnly(f) => match f {
+                Some(f) => export_state_only_snapshot(self, &f),
+                None => export_state_only_snapshot(self, &self.oplog_frontiers()),
+            },
         };
 
         self.renew_txn_if_auto_commit();

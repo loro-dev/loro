@@ -144,7 +144,7 @@ impl ChangeStore {
     pub(super) fn export_from(
         &self,
         start_vv: &VersionVector,
-        f: &Frontiers,
+        start_frontiers: &Frontiers,
         latest_vv: &VersionVector,
         latest_frontiers: &Frontiers,
     ) -> Bytes {
@@ -166,8 +166,11 @@ impl ChangeStore {
             }
         }
 
-        debug!("start_vv={:?} start_frontiers={:?}", &start_vv, f);
-        new_store.encode_from(start_vv, f, latest_vv, latest_frontiers)
+        debug!(
+            "start_vv={:?} start_frontiers={:?}",
+            &start_vv, start_frontiers
+        );
+        new_store.encode_from(start_vv, start_frontiers, latest_vv, latest_frontiers)
     }
 
     pub(super) fn export_blocks_in_range<W: std::io::Write>(&self, spans: &[IdSpan], w: &mut W) {
@@ -462,11 +465,19 @@ impl ChangeStore {
     pub(crate) fn export_blocks_from<W: std::io::Write>(
         &self,
         start_vv: &VersionVector,
+        trimmed_vv: &ImVersionVector,
         latest_vv: &VersionVector,
         w: &mut W,
     ) {
         let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
-        for span in latest_vv.sub_iter(start_vv) {
+        for mut span in latest_vv.sub_iter(start_vv) {
+            let counter_lower_bound = trimmed_vv.get(&span.peer).copied().unwrap_or(0);
+            span.counter.start = span.counter.start.max(counter_lower_bound);
+            span.counter.end = span.counter.end.max(counter_lower_bound);
+            if span.counter.start >= span.counter.end {
+                continue;
+            }
+
             // PERF: this can be optimized by reusing the current encoded blocks
             // In the current method, it needs to parse and re-encode the blocks
             for c in self.iter_changes(span) {
@@ -497,7 +508,6 @@ fn encode_blocks_in_store<W: std::io::Write>(
     for (_id, block) in inner.mem_parsed_kv.iter_mut() {
         let bytes = block.to_bytes(&arena);
         leb128::write::unsigned(w, bytes.bytes.len() as u64).unwrap();
-        trace!("encoded block_bytes = {:?}", &bytes.bytes);
         w.write_all(&bytes.bytes).unwrap();
     }
 }

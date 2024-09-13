@@ -1323,6 +1323,10 @@ impl DocState {
             arena: &SharedArena,
             state: &mut State,
         ) -> Option<(ContainerID, (ContainerIdx, LoroValue))> {
+            if state.is_state_empty() {
+                return None;
+            }
+
             let id = arena.idx_to_id(state.container_idx()).unwrap();
             let value = match state {
                 State::RichtextState(s) => s.get_richtext_value(),
@@ -1367,7 +1371,12 @@ impl DocState {
             let (_, other_value) = match other_id_to_states.remove(&id) {
                 Some(x) => x,
                 None => {
-                    panic!("id: {:?}, path: {:?} is missing", id, self.get_path(idx));
+                    panic!(
+                        "id: {:?}, path: {:?} is missing, value={:?}",
+                        id,
+                        self.get_path(idx),
+                        &this_value
+                    );
                 }
             };
 

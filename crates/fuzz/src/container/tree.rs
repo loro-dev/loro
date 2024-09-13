@@ -427,6 +427,10 @@ impl ApplyDiff for TreeTracker {
                     index,
                     position,
                 } => {
+                    if self.find_node_by_id(target).is_some() {
+                        panic!("{:?} node already exists", target);
+                    }
+
                     self.create_node(target, &parent.tree_id(), position.to_string(), index);
                 }
                 TreeExternalDiff::Delete { .. } => {

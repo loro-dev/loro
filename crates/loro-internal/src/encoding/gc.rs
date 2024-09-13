@@ -57,7 +57,7 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
         &start_vv, &start_from,
     );
 
-    let oplog_bytes = oplog.export_from_fast(&start_vv, &start_from);
+    let oplog_bytes = oplog.export_change_store_from(&start_vv, &start_from);
     let latest_vv = oplog.vv();
     let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
     drop(oplog);
@@ -85,6 +85,56 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     gc_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
     let gc_state_bytes = gc_state_kv.export();
 
+    let snapshot = Snapshot {
+        oplog_bytes,
+        state_bytes,
+        gc_bytes: gc_state_bytes,
+    };
+
+    _encode_snapshot(snapshot, w);
+    Ok(start_from)
+}
+
+pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
+    doc: &LoroDoc,
+    start_from: &Frontiers,
+    w: &mut W,
+) -> LoroResult<Frontiers> {
+    assert!(!doc.is_detached());
+    let oplog = doc.oplog().lock().unwrap();
+    let start_from = calc_gc_doc_start(&oplog, start_from);
+    trace!("gc_start_from {:?}", &start_from);
+    let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
+    for id in start_from.iter() {
+        // we need to include the ops in start_from, this can make things easier
+        start_vv.insert(id.peer, id.counter);
+    }
+
+    debug!(
+        "start version vv={:?} frontiers={:?}",
+        &start_vv, &start_from,
+    );
+
+    let mut to_vv = start_vv.clone();
+    for id in start_from.iter() {
+        to_vv.insert(id.peer, id.counter + 1);
+    }
+
+    let oplog_bytes =
+        oplog.export_change_store_in_range(&start_vv, &start_from, &to_vv, &start_from);
+    drop(oplog);
+    doc.checkout(&start_from)?;
+    let mut state = doc.app_state().lock().unwrap();
+    let alive_containers = state.ensure_all_alive_containers();
+    let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
+    state.store.flush();
+    let gc_state_kv = state.store.get_kv().clone();
+    drop(state);
+    doc.checkout_to_latest();
+    let state_bytes = None;
+    gc_state_kv.retain_keys(&alive_c_bytes);
+    gc_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+    let gc_state_bytes = gc_state_kv.export();
     let snapshot = Snapshot {
         oplog_bytes,
         state_bytes,

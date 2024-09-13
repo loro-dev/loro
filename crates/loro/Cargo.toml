@@ -28,6 +28,7 @@ anyhow = "1.0.83"
 ctor = "0.2"
 dev-utils = { path = "../dev-utils" }
 rand = "0.8.5"
+pretty_assertions = "1.4.0"
 
 [features]
 counter = ["loro-internal/counter"]
