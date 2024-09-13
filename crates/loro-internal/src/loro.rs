@@ -1087,6 +1087,12 @@ impl LoroDoc {
         Ok(())
     }
 
+    /// Get shallow value of the document.
+    #[inline]
+    pub fn get_value(&self) -> LoroValue {
+        self.state.lock().unwrap().get_value()
+    }
+
     /// Get deep value of the document.
     #[inline]
     pub fn get_deep_value(&self) -> LoroValue {

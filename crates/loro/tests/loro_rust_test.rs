@@ -1573,9 +1573,11 @@ fn small_update_size() {
     assert!(bytes.len() < 90, "Large update size {}", bytes.len());
 }
 
+#[test]
 fn test_tree_move() {
     let doc = LoroDoc::new();
     let tree = doc.get_tree("tree");
+    tree.enable_fractional_index(0);
     let root1 = tree.create(None).unwrap();
     let node1 = tree.create(root1).unwrap();
     let node2 = tree.create(root1).unwrap();
@@ -1614,4 +1616,21 @@ fn richtext_map_value() {
             }
         ])
     );
+}
+
+#[test]
+fn test_get_shallow_value() {
+    let doc = LoroDoc::new();
+    let _tree = doc.get_tree("tree");
+    let _list = doc.get_list("list");
+    let _map = doc.get_map("map");
+    let _text = doc.get_text("text");
+    let _movable_list = doc.get_movable_list("movable_list");
+    let v = doc.get_value();
+    let v = v.as_map().unwrap();
+    assert!(v.contains_key("tree"));
+    assert!(v.contains_key("list"));
+    assert!(v.contains_key("map"));
+    assert!(v.contains_key("text"));
+    assert!(v.contains_key("movable_list"));
 }
