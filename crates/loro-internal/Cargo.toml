@@ -53,7 +53,7 @@ md5 = "0.7.0"
 arref = "0.1.0"
 tracing = { version = "0.1" }
 nonmax = "0.5.5"
-ensure-cov = "0.1.0"
+ensure-cov = { workspace = true }
 
 
 [dev-dependencies]

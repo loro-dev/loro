@@ -197,6 +197,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "diff"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
+
+[[package]]
 name = "either"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -273,10 +279,11 @@ dependencies = [
  "enum_dispatch",
  "fxhash",
  "itertools 0.12.1",
- "loro 0.16.2",
+ "loro 0.16.12",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7)",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761)",
  "num_cpus",
+ "pretty_assertions",
  "rand",
  "rayon",
  "serde_json",
@@ -290,7 +297,7 @@ version = "0.0.0"
 dependencies = [
  "fuzz",
  "libfuzzer-sys",
- "loro 0.16.2",
+ "loro 0.16.12",
 ]
 
 [[package]]
@@ -499,19 +506,6 @@ dependencies = [
 [[package]]
 name = "loro"
 version = "0.16.2"
-dependencies = [
- "either",
- "enum-as-inner 0.6.0",
- "generic-btree",
- "loro-delta 0.16.2",
- "loro-internal 0.16.2",
- "loro-kv-store",
- "tracing",
-]
-
-[[package]]
-name = "loro"
-version = "0.16.2"
 source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
 dependencies = [
  "either",
@@ -536,19 +530,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-common"
-version = "0.16.2"
+name = "loro"
+version = "0.16.12"
 dependencies = [
- "arbitrary",
+ "either",
  "enum-as-inner 0.6.0",
- "fxhash",
- "leb128",
- "loro-rle 0.16.2",
- "nonmax",
- "serde",
- "serde_columnar",
- "string_cache",
- "thiserror",
+ "generic-btree",
+ "loro-delta 0.16.12",
+ "loro-internal 0.16.12",
+ "loro-kv-store",
+ "tracing",
 ]
 
 [[package]]
@@ -584,14 +575,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-delta"
-version = "0.16.2"
+name = "loro-common"
+version = "0.16.12"
 dependencies = [
- "arrayvec",
- "enum-as-inner 0.5.1",
- "generic-btree",
- "heapless 0.8.0",
- "tracing",
+ "arbitrary",
+ "enum-as-inner 0.6.0",
+ "fxhash",
+ "leb128",
+ "loro-rle 0.16.12",
+ "nonmax",
+ "serde",
+ "serde_columnar",
+ "string_cache",
+ "thiserror",
 ]
 
 [[package]]
@@ -619,42 +615,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-internal"
-version = "0.16.2"
+name = "loro-delta"
+version = "0.16.12"
 dependencies = [
- "append-only-bytes",
- "arref",
- "bytes",
- "either",
- "ensure-cov",
+ "arrayvec",
  "enum-as-inner 0.5.1",
- "enum_dispatch",
- "fxhash",
  "generic-btree",
- "getrandom",
- "im",
- "itertools 0.12.1",
- "leb128",
- "loro-common 0.16.2",
- "loro-delta 0.16.2",
- "loro-kv-store",
- "loro-rle 0.16.2",
- "loro_fractional_index 0.16.2",
- "md5",
- "nonmax",
- "num",
- "num-derive",
- "num-traits",
- "once_cell",
- "postcard",
- "rand",
- "serde",
- "serde_columnar",
- "serde_json",
- "smallvec",
- "thiserror",
+ "heapless 0.8.0",
  "tracing",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -728,29 +696,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-internal"
+version = "0.16.12"
+dependencies = [
+ "append-only-bytes",
+ "arref",
+ "bytes",
+ "either",
+ "ensure-cov",
+ "enum-as-inner 0.5.1",
+ "enum_dispatch",
+ "fxhash",
+ "generic-btree",
+ "getrandom",
+ "im",
+ "itertools 0.12.1",
+ "leb128",
+ "loro-common 0.16.12",
+ "loro-delta 0.16.12",
+ "loro-kv-store",
+ "loro-rle 0.16.12",
+ "loro_fractional_index 0.16.12",
+ "md5",
+ "nonmax",
+ "num",
+ "num-derive",
+ "num-traits",
+ "once_cell",
+ "postcard",
+ "rand",
+ "serde",
+ "serde_columnar",
+ "serde_json",
+ "smallvec",
+ "thiserror",
+ "tracing",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "loro-kv-store"
 version = "0.16.2"
 dependencies = [
  "bytes",
  "ensure-cov",
  "fxhash",
- "loro-common 0.16.2",
+ "loro-common 0.16.12",
  "lz4_flex",
  "once_cell",
  "quick_cache",
  "xxhash-rust",
-]
-
-[[package]]
-name = "loro-rle"
-version = "0.16.2"
-dependencies = [
- "append-only-bytes",
- "arref",
- "enum-as-inner 0.6.0",
- "fxhash",
- "num",
- "smallvec",
 ]
 
 [[package]]
@@ -770,6 +765,18 @@ dependencies = [
 name = "loro-rle"
 version = "0.16.2"
 source = "git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761#90470658435ec4c62b5af59ebb82fe9e1f5aa761"
+dependencies = [
+ "append-only-bytes",
+ "arref",
+ "enum-as-inner 0.6.0",
+ "fxhash",
+ "num",
+ "smallvec",
+]
+
+[[package]]
+name = "loro-rle"
+version = "0.16.12"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -788,17 +795,6 @@ checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
 [[package]]
 name = "loro_fractional_index"
 version = "0.16.2"
-dependencies = [
- "imbl",
- "once_cell",
- "rand",
- "serde",
- "smallvec",
-]
-
-[[package]]
-name = "loro_fractional_index"
-version = "0.16.2"
 source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
 dependencies = [
  "imbl",
@@ -813,6 +809,17 @@ version = "0.16.2"
 source = "git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761#90470658435ec4c62b5af59ebb82fe9e1f5aa761"
 dependencies = [
  "imbl",
+ "rand",
+ "serde",
+ "smallvec",
+]
+
+[[package]]
+name = "loro_fractional_index"
+version = "0.16.12"
+dependencies = [
+ "imbl",
+ "once_cell",
  "rand",
  "serde",
  "smallvec",
@@ -1019,6 +1026,16 @@ name = "precomputed-hash"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
+
+[[package]]
+name = "pretty_assertions"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af7cee1a6c8a5b9208b3cb1061f10c0cb689087b3d8ce85fb9d2dd7a29b6ba66"
+dependencies = [
+ "diff",
+ "yansi",
+]
 
 [[package]]
 name = "proc-macro-error"
@@ -1490,6 +1507,12 @@ name = "xxhash-rust"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a5cbf750400958819fb6178eaa83bee5cd9c29a26a40cc241df8c70fdd46984"
+
+[[package]]
+name = "yansi"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09041cd90cf85f7f8b2df60c646f853b7f535ce68f85244eb6731cf89fa498ec"
 
 [[package]]
 name = "zerocopy"

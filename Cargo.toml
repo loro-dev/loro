@@ -29,3 +29,4 @@ serde = "1"
 bytes = "1"
 once_cell = "1.18.0"
 xxhash-rust = { version = "0.8.12", features = ["xxh32"] }
+ensure-cov = "0.1.0"

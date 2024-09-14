@@ -521,6 +521,13 @@ pub fn test_multi_sites_with_gc(
             "loro_internal::import::snapshot::gc",
             "loro_internal::import::snapshot::normal",
             "loro_internal::history_cache::init_cache_by_visit_all_change_slow::visit_gc",
+            "kv-store::SstableIter::new_scan::start included",
+            "kv-store::SstableIter::new_scan::start excluded",
+            "kv-store::SstableIter::new_scan::start unbounded",
+            "kv-store::SstableIter::new_scan::end included",
+            "kv-store::SstableIter::new_scan::end excluded",
+            "kv-store::SstableIter::new_scan::end unbounded",
+            "kv-store::SstableIter::new_scan::end unbounded equal",
         ];
         for v in must_meet {
             let count = ensure_cov::get_cov_for(v);
