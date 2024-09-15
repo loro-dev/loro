@@ -10267,11 +10267,251 @@ fn gc_fuzz_17() {
 }
 
 #[test]
+fn gc_fuzz_18() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            SyncAll,
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(286989083),
+                    bool: true,
+                    key: 4288224017,
+                    pos: 1953436334768717823,
+                    length: 1956843841325308699,
+                    prop: 1953184666628070171,
+                }),
+            },
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(-1994712289),
+                    bool: true,
+                    key: 461970203,
+                    pos: 1953184666628070170,
+                    length: 1953184722462645019,
+                    prop: 9879520012645636895,
+                }),
+            },
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(454764571),
+                    bool: true,
+                    key: 454761243,
+                    pos: 1953185035995257627,
+                    length: 8150137753889872667,
+                    prop: 13093571283691877813,
+                }),
+            },
+            Sync { from: 181, to: 181 },
+            Handle {
+                site: 255,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(232)),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 13093571280777456127,
+                    length: 13093571283691877813,
+                    prop: 13093401958901200309,
+                }),
+            },
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(-400876773),
+                    bool: false,
+                    key: 3907578088,
+                    pos: 1984146914073451291,
+                    length: 1953184666628070170,
+                    prop: 1953184722462645019,
+                }),
+            },
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(454761243),
+                    bool: true,
+                    key: 3044088603,
+                    pos: 576460752303423487,
+                    length: 37167066886380315,
+                    prop: 1808504322244529934,
+                }),
+            },
+            SyncAllUndo {
+                site: 137,
+                op_len: 454761243,
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,
         |n, actions| test_multi_sites_with_gc(n, vec![FuzzTarget::All], actions),
         |_, actions| actions.to_vec(),
-        vec![],
+        vec![
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(286989083),
+                    bool: true,
+                    key: 4288224017,
+                    pos: 1953436334768717823,
+                    length: 1956843841325308699,
+                    prop: 1953184666628070171,
+                }),
+            },
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(-1994712289),
+                    bool: true,
+                    key: 461970203,
+                    pos: 1953184666628070170,
+                    length: 1953184722462645019,
+                    prop: 9879520012645636895,
+                }),
+            },
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(454764571),
+                    bool: true,
+                    key: 454761243,
+                    pos: 1953185035995257627,
+                    length: 8150137753889872667,
+                    prop: 13093571283691877813,
+                }),
+            },
+            Sync { from: 181, to: 181 },
+            Sync { from: 181, to: 181 },
+            Sync { from: 181, to: 181 },
+            Undo {
+                site: 113,
+                op_len: 460419441,
+            },
+            Sync { from: 181, to: 181 },
+            Sync { from: 181, to: 181 },
+            Sync { from: 181, to: 181 },
+            Sync { from: 181, to: 181 },
+            Undo {
+                site: 113,
+                op_len: 1903260017,
+            },
+            Handle {
+                site: 255,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(232)),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 13093571280777456127,
+                    length: 13093571283691877813,
+                    prop: 13093401958901200309,
+                }),
+            },
+            Sync { from: 181, to: 181 },
+            Sync { from: 113, to: 113 },
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(-400876773),
+                    bool: false,
+                    key: 3907578088,
+                    pos: 1984146914073451291,
+                    length: 1953184666628070170,
+                    prop: 1953184722462645019,
+                }),
+            },
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(454761243),
+                    bool: true,
+                    key: 3044088603,
+                    pos: 576460752303423487,
+                    length: 37167066886380315,
+                    prop: 1808504322244529934,
+                }),
+            },
+            Handle {
+                site: 255,
+                target: 255,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 1808504320961354239,
+                    length: 14378174507281619225,
+                    prop: 14395694394777257927,
+                }),
+            },
+            Checkout {
+                site: 50,
+                to: 842150450,
+            },
+            Sync { from: 199, to: 199 },
+            SyncAllUndo {
+                site: 137,
+                op_len: 454761243,
+            },
+            Handle {
+                site: 27,
+                target: 27,
+                container: 27,
+                action: Generic(GenericAction {
+                    value: I32(-1987475063),
+                    bool: true,
+                    key: 2307507147,
+                    pos: 15553137160186484565,
+                    length: 8215691624525624023,
+                    prop: 1953184666635301490,
+                }),
+            },
+            Handle {
+                site: 35,
+                target: 35,
+                container: 35,
+                action: Generic(GenericAction {
+                    value: I32(589505315),
+                    bool: true,
+                    key: 589505315,
+                    pos: 590711300899,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+        ],
     )
 }
