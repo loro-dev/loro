@@ -528,6 +528,8 @@ pub fn test_multi_sites_with_gc(
             "kv-store::SstableIter::new_scan::end excluded",
             "kv-store::SstableIter::new_scan::end unbounded",
             "kv-store::SstableIter::new_scan::end unbounded equal",
+            "loro_internal::handler::movable_list_apply_delta::process_replacements::mov_0",
+            "loro_internal::handler::movable_list_apply_delta::process_replacements::mov_1",
         ];
         for v in must_meet {
             let count = ensure_cov::get_cov_for(v);

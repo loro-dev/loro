@@ -196,12 +196,14 @@ impl MovableListHandler {
 
                     if let Some(old_index) = context.to_delete.remove(&old_id) {
                         if old_index > *context.index {
+                            ensure_cov::notify_cov("loro_internal::handler::movable_list_apply_delta::process_replacements::mov_0");
                             self.mov(old_index, *context.index)?;
                             context.next_deleted.push(Reverse(old_index));
                             *context.index += 1;
                             *context.index_shift += 1;
                         } else {
                             // Adjust the index since old_index < *index.
+                            ensure_cov::notify_cov("loro_internal::handler::movable_list_apply_delta::process_replacements::mov_1");
                             self.mov(old_index, *context.index - 1)?;
                         }
                         context.deleted_indices.push(old_index);
