@@ -14,7 +14,7 @@ use loro::{
 };
 use pretty_assertions::assert_eq;
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use tracing::info_span;
+use tracing::{info_span, trace};
 
 use crate::{
     container::{CounterActor, ListActor, MovableListActor, TextActor, TreeActor},
@@ -136,17 +136,20 @@ impl Actor {
         self.loro.attach();
         let before_undo = self.loro.get_deep_value();
 
+        // trace!("BeforeUndo {:#?}", self.loro.get_deep_value_with_id());
         // println!("\n\nstart undo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.undo(&self.loro).unwrap();
             self.loro.commit();
         }
+        // trace!("AfterUndo {:#?}", self.loro.get_deep_value_with_id());
 
         // println!("\n\nstart redo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.redo(&self.loro).unwrap();
             self.loro.commit();
         }
+        // trace!("AfterRedo {:#?}", self.loro.get_deep_value_with_id());
 
         let after_undo = self.loro.get_deep_value();
 

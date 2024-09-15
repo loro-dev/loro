@@ -10187,6 +10187,86 @@ fn gc_fuzz_16() {
 }
 
 #[test]
+fn gc_fuzz_17() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 146,
+                target: 29,
+                container: 29,
+                action: Generic(GenericAction {
+                    value: I32(-256),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 18446744073709551615,
+                    length: 18446744073709551615,
+                    prop: 18446744073709551615,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 159,
+                target: 159,
+                container: 159,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 181345565,
+                    pos: 2097865012304223517,
+                    length: 325135608980512029,
+                    prop: 12474158554978546292,
+                }),
+            },
+            Handle {
+                site: 29,
+                target: 0,
+                container: 159,
+                action: Generic(GenericAction {
+                    value: I32(9570),
+                    bool: false,
+                    key: 2678038431,
+                    pos: 11502087481254191007,
+                    length: 748113402599022495,
+                    prop: 2116984339537158410,
+                }),
+            },
+            Handle {
+                site: 159,
+                target: 159,
+                container: 159,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 168452565,
+                    pos: 2097939697176227169,
+                    length: 18446743659775762187,
+                    prop: 18446744073709551615,
+                }),
+            },
+            Handle {
+                site: 29,
+                target: 29,
+                container: 29,
+                action: Generic(GenericAction {
+                    value: I32(488447261),
+                    bool: true,
+                    key: 1701999620,
+                    pos: 32985348447589,
+                    length: 2097865012302774272,
+                    prop: 11460961887305145630,
+                }),
+            },
+            SyncAllUndo {
+                site: 159,
+                op_len: 2678000543,
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,

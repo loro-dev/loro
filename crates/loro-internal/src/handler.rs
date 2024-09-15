@@ -1142,7 +1142,7 @@ impl Handler {
             }
             Self::MovableList(x) => {
                 let delta = diff.into_list().unwrap();
-                x.apply_delta(delta, on_container_remap)?;
+                x.apply_delta(delta, container_remap)?;
             }
             Self::Tree(x) => {
                 fn remap_tree_id(
@@ -3315,13 +3315,14 @@ impl MovableListHandler {
             loro_delta::array_vec::ArrayVec<ValueOrHandler, 8>,
             crate::event::ListDeltaMeta,
         >,
-        on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
+        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
     ) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(_) => {
                 unimplemented!();
             }
             MaybeDetached::Attached(_) => {
+                debug!("movable list value {:#?}", self.get_deep_value_with_id());
                 debug!("movable list apply_delta {:#?}", &delta);
                 // preprocess all deletions. They will be used to infer the move ops
                 let mut index = 0;
@@ -3406,7 +3407,11 @@ impl MovableListHandler {
                                         index_shift += 1;
                                     }
                                     ValueOrHandler::Handler(h) => {
-                                        let old_id = h.id();
+                                        let mut old_id = h.id();
+                                        while let Some(new_id) = container_remap.get(&old_id) {
+                                            old_id = new_id.clone();
+                                        }
+
                                         if let Some(old_index) = to_delete.remove(&old_id) {
                                             if old_index > index {
                                                 self.mov(old_index, index)?;
@@ -3430,7 +3435,7 @@ impl MovableListHandler {
                                                 Handler::new_unattached(old_id.container_type()),
                                             )?;
                                             let new_id = new_h.id();
-                                            on_container_remap(old_id, new_id);
+                                            container_remap.insert(old_id, new_id);
                                             update_on_insert(&mut to_delete, index, 1);
                                             index += 1;
                                             index_shift += 1;
