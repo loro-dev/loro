@@ -1,6 +1,7 @@
 use std::{fmt::Debug, ops::Bound, sync::Arc};
 
 use bytes::{Buf, BufMut, Bytes};
+use ensure_cov::*;
 use loro_common::{LoroError, LoroResult};
 
 use super::block::BlockIter;
@@ -472,18 +473,21 @@ impl<'a> SsTableIter<'a> {
     pub fn new_scan(table: &'a SsTable, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Self {
         let (table_idx, mut iter, excluded) = match start {
             Bound::Included(start) => {
+                notify_cov("kv-store::SstableIter::new_scan::start included");
                 let idx = table.find_block_idx(start);
                 let block = table.read_block_cached(idx);
                 let iter = BlockIter::new_seek_to_key(block, start);
                 (idx, iter, None)
             }
             Bound::Excluded(start) => {
+                notify_cov("kv-store::SstableIter::new_scan::start excluded");
                 let idx = table.find_block_idx(start);
                 let block = table.read_block_cached(idx);
                 let iter = BlockIter::new_seek_to_key(block, start);
                 (idx, iter, Some(start))
             }
             Bound::Unbounded => {
+                notify_cov("kv-store::SstableIter::new_scan::start unbounded");
                 let block = table.read_block_cached(0);
                 let iter = BlockIter::new(block);
                 (0, iter, None)
@@ -491,6 +495,7 @@ impl<'a> SsTableIter<'a> {
         };
         let (end_idx, end_iter, end_excluded) = match end {
             Bound::Included(end) => {
+                notify_cov("kv-store::SstableIter::new_scan::end included");
                 let end_idx = table.find_back_block_idx(end);
                 if end_idx == table_idx {
                     iter.back_to_key(end);
@@ -506,6 +511,7 @@ impl<'a> SsTableIter<'a> {
                 }
             }
             Bound::Excluded(end) => {
+                notify_cov("kv-store::SstableIter::new_scan::end excluded");
                 let end_idx = table.find_back_block_idx(end);
                 if end_idx == table_idx {
                     iter.back_to_key(end);
@@ -521,8 +527,10 @@ impl<'a> SsTableIter<'a> {
                 }
             }
             Bound::Unbounded => {
+                notify_cov("kv-store::SstableIter::new_scan::end unbounded");
                 let end_idx = table.meta.len() - 1;
                 if end_idx == table_idx {
+                    notify_cov("kv-store::SstableIter::new_scan::unbounded equal");
                     (end_idx, None, None)
                 } else {
                     let block = table.read_block_cached(end_idx);

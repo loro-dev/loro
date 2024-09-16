@@ -100,7 +100,6 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     start_from: &Frontiers,
     w: &mut W,
 ) -> LoroResult<Frontiers> {
-    assert!(!doc.is_detached());
     let oplog = doc.oplog().lock().unwrap();
     let start_from = calc_gc_doc_start(&oplog, start_from);
     trace!("gc_start_from {:?}", &start_from);

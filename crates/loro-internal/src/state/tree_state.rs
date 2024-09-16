@@ -956,10 +956,8 @@ impl ContainerState for TreeState {
         let need_check = !matches!(ctx.mode, DiffMode::Checkout | DiffMode::Linear);
         let mut ans = vec![];
         if let InternalDiff::Tree(tree) = &diff {
-            // println!("before {:?}", self.children);
             // assert never cause cycle move
             for diff in tree.diff.iter() {
-                // println!("\ndiff {:?}", diff);
                 let last_move_op = diff.last_effective_move_op_id;
                 let target = diff.target;
                 // create associated metadata container
@@ -981,8 +979,8 @@ impl ContainerState for TreeState {
                         let old_parent = self.trees.get(&target).unwrap().parent;
                         // If this is some, the node is still alive at the moment
                         let old_index = self.get_index_by_tree_id(&target);
+                        let was_alive = !self.is_node_deleted(&target);
                         if need_check {
-                            let was_alive = old_index.is_some();
                             if self
                                 .mov(target, *parent, last_move_op, Some(position.clone()), true)
                                 .is_ok()
@@ -1028,8 +1026,8 @@ impl ContainerState for TreeState {
                                 .unwrap();
 
                             let index = self.get_index_by_tree_id(&target).unwrap();
-                            match old_index {
-                                Some(old_index) => {
+                            match was_alive {
+                                true => {
                                     ans.push(TreeDiffItem {
                                         target,
                                         action: TreeExternalDiff::Move {
@@ -1037,11 +1035,11 @@ impl ContainerState for TreeState {
                                             index,
                                             position: position.clone(),
                                             old_parent,
-                                            old_index,
+                                            old_index: old_index.unwrap(),
                                         },
                                     });
                                 }
-                                None => {
+                                false => {
                                     ans.push(TreeDiffItem {
                                         target,
                                         action: TreeExternalDiff::Create {
@@ -1096,11 +1094,9 @@ impl ContainerState for TreeState {
                                     .delete_child(&target);
                             }
                         }
-                        // println!("after {:?}", self.children);
                         continue;
                     }
                 };
-                // println!("after {:?}", self.children);
             }
         }
 

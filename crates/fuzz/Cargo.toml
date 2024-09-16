@@ -22,7 +22,7 @@ serde_json = "1"
 num_cpus = "1.16.0"
 rayon = "1.10.0"
 bytes = "1"
-ensure-cov = "0.1.0"
+ensure-cov = { workspace = true }
 pretty_assertions = "1.4.0"
 
 [dev-dependencies]
