@@ -570,12 +570,15 @@ impl LoroDoc {
                     None,
                 );
                 let mut state = self.state.lock().unwrap();
-                state.apply_diff(InternalDocDiff {
-                    origin,
-                    diff: (diff).into(),
-                    by: EventTriggerKind::Import,
-                    new_version: Cow::Owned(oplog.frontiers().clone()),
-                });
+                state.apply_diff(
+                    InternalDocDiff {
+                        origin,
+                        diff: (diff).into(),
+                        by: EventTriggerKind::Import,
+                        new_version: Cow::Owned(oplog.frontiers().clone()),
+                    },
+                    false,
+                );
             }
         } else {
             tracing::info!("Detached");
@@ -607,12 +610,15 @@ impl LoroDoc {
                 None,
             );
             let mut state = self.state.lock().unwrap();
-            state.apply_diff(InternalDocDiff {
-                origin: "".into(),
-                diff: (diff).into(),
-                by: EventTriggerKind::Import,
-                new_version: Cow::Owned(oplog.frontiers().clone()),
-            });
+            state.apply_diff(
+                InternalDocDiff {
+                    origin: "".into(),
+                    diff: (diff).into(),
+                    by: EventTriggerKind::Import,
+                    new_version: Cow::Owned(oplog.frontiers().clone()),
+                },
+                false,
+            );
         }
         self.renew_txn_if_auto_commit();
         ans
@@ -1182,12 +1188,15 @@ impl LoroDoc {
             Some(&frontiers),
             None,
         );
-        state.apply_diff(InternalDocDiff {
-            origin: "checkout".into(),
-            diff: Cow::Owned(diff),
-            by: EventTriggerKind::Checkout,
-            new_version: Cow::Owned(frontiers.clone()),
-        });
+        state.apply_diff(
+            InternalDocDiff {
+                origin: "checkout".into(),
+                diff: Cow::Owned(diff),
+                by: EventTriggerKind::Checkout,
+                new_version: Cow::Owned(frontiers.clone()),
+            },
+            true,
+        );
         Ok(())
     }
 

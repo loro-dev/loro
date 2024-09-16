@@ -112,11 +112,10 @@ impl Actionable for ListAction {
                 let pos = *pos as usize;
                 match value {
                     FuzzValue::Container(c) => {
-                        let container = list.insert_container(pos, Container::new(*c)).unwrap();
-                        Some(container)
+                        super::unwrap(list.insert_container(pos, Container::new(*c)))
                     }
                     FuzzValue::I32(v) => {
-                        list.insert(pos, *v).unwrap();
+                        super::unwrap(list.insert(pos, *v));
                         None
                     }
                 }
@@ -124,7 +123,7 @@ impl Actionable for ListAction {
             ListAction::Delete { pos, len } => {
                 let pos = *pos as usize;
                 let len = *len as usize;
-                list.delete(pos, len).unwrap();
+                super::unwrap(list.delete(pos, len));
                 None
             }
         }

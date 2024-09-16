@@ -113,7 +113,7 @@ impl Actionable for CounterAction {
     fn apply(&self, actor: &mut ActionExecutor, container: usize) -> Option<Container> {
         let actor = actor.as_counter_actor_mut().unwrap();
         let counter = actor.containers.get(container).unwrap();
-        counter.increment(self.0 as f64).unwrap();
+        super::unwrap(counter.increment(self.0 as f64));
         None
     }
 

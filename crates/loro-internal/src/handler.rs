@@ -293,6 +293,13 @@ impl BasicHandler {
     pub fn parent(&self) -> Option<Handler> {
         self.get_parent()
     }
+
+    fn is_deleted(&self) -> bool {
+        match self.state.upgrade() {
+            None => false,
+            Some(state) => state.lock().unwrap().is_deleted(self.container_idx),
+        }
+    }
 }
 
 /// Flatten attributes that allow overlap
@@ -579,7 +586,7 @@ impl HandlerTrait for MapHandler {
 impl std::fmt::Debug for MapHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.inner {
-            MaybeDetached::Detached(_) => write!(f, "MapHandler Dettached"),
+            MaybeDetached::Detached(_) => write!(f, "MapHandler Detached"),
             MaybeDetached::Attached(a) => write!(f, "MapHandler {}", a.id),
         }
     }
@@ -705,7 +712,7 @@ impl std::fmt::Debug for MovableListHandler {
 impl std::fmt::Debug for ListHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.inner {
-            MaybeDetached::Detached(_) => write!(f, "ListHandler Dettached"),
+            MaybeDetached::Detached(_) => write!(f, "ListHandler Detached"),
             MaybeDetached::Attached(a) => write!(f, "ListHandler {}", a.id),
         }
     }
@@ -816,6 +823,12 @@ pub struct UnknownHandler {
 impl Debug for UnknownHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "UnknownHandler")
+    }
+}
+
+impl UnknownHandler {
+    pub fn is_deleted(&self) -> bool {
+        self.inner.is_deleted()
     }
 }
 
@@ -2265,6 +2278,13 @@ impl TextHandler {
         })
         .unwrap()
     }
+
+    pub fn is_deleted(&self) -> bool {
+        match &self.inner {
+            MaybeDetached::Detached(_) => false,
+            MaybeDetached::Attached(a) => a.is_deleted(),
+        }
+    }
 }
 
 fn event_len(s: &str) -> usize {
@@ -2677,6 +2697,13 @@ impl ListHandler {
         }
 
         Ok(())
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        match &self.inner {
+            MaybeDetached::Detached(_) => false,
+            MaybeDetached::Attached(a) => a.is_deleted(),
+        }
     }
 }
 
@@ -3310,6 +3337,13 @@ impl MovableListHandler {
             }
         }
     }
+
+    pub fn is_deleted(&self) -> bool {
+        match &self.inner {
+            MaybeDetached::Detached(_) => false,
+            MaybeDetached::Attached(a) => a.is_deleted(),
+        }
+    }
 }
 
 impl MapHandler {
@@ -3612,6 +3646,13 @@ impl MapHandler {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    pub fn is_deleted(&self) -> bool {
+        match &self.inner {
+            MaybeDetached::Detached(_) => false,
+            MaybeDetached::Attached(a) => a.is_deleted(),
+        }
+    }
 }
 
 #[inline(always)]
@@ -3683,12 +3724,19 @@ pub mod counter {
                 &inner.state,
             )
         }
+
+        pub fn is_deleted(&self) -> bool {
+            match &self.inner {
+                MaybeDetached::Detached(_) => false,
+                MaybeDetached::Attached(a) => a.is_deleted(),
+            }
+        }
     }
 
     impl std::fmt::Debug for CounterHandler {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match &self.inner {
-                MaybeDetached::Detached(_) => write!(f, "CounterHandler Dettached"),
+                MaybeDetached::Detached(_) => write!(f, "CounterHandler Detached"),
                 MaybeDetached::Attached(a) => write!(f, "CounterHandler {}", a.id),
             }
         }

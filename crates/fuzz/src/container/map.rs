@@ -135,22 +135,22 @@ impl Actionable for MapAction {
     fn apply(&self, actor: &mut ActionExecutor, container: usize) -> Option<Container> {
         let actor = actor.as_map_actor_mut().unwrap();
         let handler = actor.get_create_container_mut(container);
+        use super::unwrap;
         match self {
             MapAction::Insert { key, value, .. } => {
                 let key = &key.to_string();
                 match value {
                     FuzzValue::I32(v) => {
-                        handler.insert(key, LoroValue::from(*v)).unwrap();
+                        unwrap(handler.insert(key, LoroValue::from(*v)));
                         None
                     }
                     FuzzValue::Container(c) => {
-                        let container = handler.insert_container(key, Container::new(*c)).unwrap();
-                        Some(container)
+                        unwrap(handler.insert_container(key, Container::new(*c)))
                     }
                 }
             }
             MapAction::Delete { key, .. } => {
-                handler.delete(&key.to_string()).unwrap();
+                unwrap(handler.delete(&key.to_string()));
                 None
             }
         }

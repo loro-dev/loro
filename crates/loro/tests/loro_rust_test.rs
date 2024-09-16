@@ -1634,3 +1634,31 @@ fn test_get_shallow_value() {
     assert!(v.contains_key("text"));
     assert!(v.contains_key("movable_list"));
 }
+
+#[test]
+fn perform_action_on_deleted_container_should_return_error() {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("list");
+    let text = list.push_container(LoroText::new()).unwrap();
+    list.set(0, 1).unwrap();
+    let result = text.insert(0, "Hello");
+    match result {
+        Ok(_) => panic!("Expected error, but operation succeeded"),
+        Err(LoroError::ContainerDeleted { .. }) => {}
+        _ => panic!("Expected ContainerDeleted error, but got something else"),
+    }
+    assert!(text.is_deleted());
+}
+
+#[test]
+fn checkout_should_reset_container_deleted_cache() {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("list");
+    let text = list.push_container(LoroText::new()).unwrap();
+    doc.commit();
+    let f = doc.state_frontiers();
+    list.set(0, 1).unwrap();
+    assert!(text.is_deleted());
+    doc.checkout(&f).unwrap();
+    assert!(!text.is_deleted());
+}

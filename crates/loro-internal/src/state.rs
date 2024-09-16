@@ -9,6 +9,7 @@ use std::{
 };
 
 use container_store::ContainerStore;
+use dead_containers_cache::DeadContainersCache;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
@@ -38,6 +39,7 @@ pub(crate) mod analyzer;
 pub(crate) mod container_store;
 #[cfg(feature = "counter")]
 mod counter_state;
+mod dead_containers_cache;
 mod list_state;
 mod map_state;
 mod movable_list_state;
@@ -77,6 +79,8 @@ pub struct DocState {
 
     // diff related stuff
     event_recorder: EventRecorder,
+
+    dead_containers_cache: DeadContainersCache,
 }
 
 impl std::fmt::Debug for DocState {
@@ -354,6 +358,7 @@ impl DocState {
                 in_txn: false,
                 changed_idx_in_txn: FxHashSet::default(),
                 event_recorder: Default::default(),
+                dead_containers_cache: Default::default(),
             })
         })
     }
@@ -377,6 +382,7 @@ impl DocState {
                 in_txn: false,
                 changed_idx_in_txn: FxHashSet::default(),
                 event_recorder: Default::default(),
+                dead_containers_cache: Default::default(),
             })
         })
     }
@@ -488,9 +494,17 @@ impl DocState {
     /// It's expected that diff only contains [`InternalDiff`]
     ///
     #[instrument(skip_all)]
-    pub(crate) fn apply_diff(&mut self, mut diff: InternalDocDiff<'static>) {
+    pub(crate) fn apply_diff(
+        &mut self,
+        mut diff: InternalDocDiff<'static>,
+        need_clear_dead_container_cache: bool,
+    ) {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
+        }
+
+        if need_clear_dead_container_cache {
+            self.dead_containers_cache.clear();
         }
 
         let is_recording = self.is_recording();
@@ -810,12 +824,15 @@ impl DocState {
                 Some(&frontiers),
                 Some(&|idx| !idx.is_unknown() && unknown_containers.contains(&idx)),
             );
-            self.apply_diff(InternalDocDiff {
-                origin: Default::default(),
-                by: EventTriggerKind::Import,
-                diff: unknown_diffs.into(),
-                new_version: Cow::Owned(frontiers.clone()),
-            })
+            self.apply_diff(
+                InternalDocDiff {
+                    origin: Default::default(),
+                    by: EventTriggerKind::Import,
+                    diff: unknown_diffs.into(),
+                    new_version: Cow::Owned(frontiers.clone()),
+                },
+                false,
+            )
         }
 
         if self.is_recording() {

@@ -914,4 +914,11 @@ impl TreeHandler {
             }),
         }
     }
+
+    pub fn is_deleted(&self) -> bool {
+        match &self.inner {
+            MaybeDetached::Detached(_) => false,
+            MaybeDetached::Attached(a) => a.is_deleted(),
+        }
+    }
 }
