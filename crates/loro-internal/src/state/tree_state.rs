@@ -1026,8 +1026,8 @@ impl ContainerState for TreeState {
                                 .unwrap();
 
                             let index = self.get_index_by_tree_id(&target).unwrap();
-                            match old_index {
-                                Some(old_index) => {
+                            match was_alive {
+                                true => {
                                     ans.push(TreeDiffItem {
                                         target,
                                         action: TreeExternalDiff::Move {
@@ -1035,11 +1035,11 @@ impl ContainerState for TreeState {
                                             index,
                                             position: position.clone(),
                                             old_parent,
-                                            old_index,
+                                            old_index: old_index.unwrap(),
                                         },
                                     });
                                 }
-                                None => {
+                                false => {
                                     ans.push(TreeDiffItem {
                                         target,
                                         action: TreeExternalDiff::Create {
