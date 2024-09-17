@@ -98,6 +98,8 @@ pub enum LoroTreeError {
     IndexOutOfBound { len: usize, index: usize },
     #[error("Fractional index is not enabled, you should enable it first by `LoroTree::set_enable_fractional_index`")]
     FractionalIndexNotEnabled,
+    #[error("TreeID {0:?} is deleted or does not exist")]
+    TreeNodeDeletedOrNotExist(TreeID),
 }
 
 #[cfg(feature = "wasm")]

@@ -3,7 +3,8 @@ use std::{collections::VecDeque, sync::Arc};
 use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, ContainerType, Counter, IdLp, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
+    ContainerID, ContainerType, Counter, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue,
+    PeerID, TreeID,
 };
 use smallvec::smallvec;
 
@@ -580,7 +581,11 @@ impl TreeHandler {
             }
             .into());
         }
-        let old_index = self.get_index_by_tree_id(&target).unwrap();
+        let Some(old_index) = self.get_index_by_tree_id(&target) else {
+            return Err(LoroError::TreeError(
+                LoroTreeError::TreeNodeDeletedOrNotExist(target),
+            ));
+        };
         if already_in_parent {
             self.delete_position(&parent, &target);
         }
