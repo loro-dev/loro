@@ -7,10 +7,10 @@
   "scripts": {
     "check-all": "cargo hack check --each-feature",
     "build": "cargo build",
-    "test": "cargo nextest run --features=test_utils && cargo test --doc",
+    "test": "cargo nextest run --features=test_utils,jsonpath && cargo test --doc",
     "test-all": "nr test && nr test-wasm",
     "test-wasm": "cd crates/loro-wasm && deno task dev && cd ../../loro-js && pnpm i && pnpm run test",
-    "coverage": "mkdir -p coverage && cargo llvm-cov nextest --features test_utils --lcov > coverage/lcov-nextest.info && cargo llvm-cov report",
+    "coverage": "mkdir -p coverage && cargo llvm-cov nextest --features test_utils,jsonpath --lcov > coverage/lcov-nextest.info && cargo llvm-cov report",
     "release-wasm": "cd crates/loro-wasm && deno task release && cd ../../loro-js && pnpm i && pnpm build && pnpm run test",
     "check": "cargo clippy --all-features",
     "run-fuzz-corpus": "cd crates/fuzz && cargo +nightly fuzz run all -- -max_total_time=1",

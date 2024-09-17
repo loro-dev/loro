@@ -60,6 +60,11 @@ pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
 pub use loro_kv_store as kv_store;
 
+#[cfg(feature = "jsonpath")]
+pub use loro_internal::jsonpath;
+#[cfg(feature = "jsonpath")]
+pub use loro_internal::jsonpath::JsonPathError;
+
 #[cfg(feature = "counter")]
 mod counter;
 #[cfg(feature = "counter")]
@@ -692,6 +697,48 @@ impl LoroDoc {
     /// Get the path from the root to the container
     pub fn get_path_to_container(&self, id: &ContainerID) -> Option<Vec<(ContainerID, Index)>> {
         self.doc.get_path_to_container(id)
+    }
+
+    /// Evaluate a JSONPath expression on the document and return matching values or handlers.
+    ///
+    /// This method allows querying the document structure using JSONPath syntax.
+    /// It returns a vector of `ValueOrHandler` which can represent either primitive values
+    /// or container handlers, depending on what the JSONPath expression matches.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - A string slice containing the JSONPath expression to evaluate.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing either:
+    /// - `Ok(Vec<ValueOrHandler>)`: A vector of matching values or handlers.
+    /// - `Err(String)`: An error message if the JSONPath expression is invalid or evaluation fails.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use loro::LoroDoc;
+    /// let doc = LoroDoc::new();
+    /// let map = doc.get_map("users");
+    /// map.insert("alice", 30).unwrap();
+    /// map.insert("bob", 25).unwrap();
+    ///
+    /// let result = doc.jsonpath("$.users.alice").unwrap();
+    /// assert_eq!(result.len(), 1);
+    /// assert_eq!(result[0].to_json_value(), serde_json::json!(30));
+    /// ```
+    #[inline]
+    #[cfg(feature = "jsonpath")]
+    pub fn jsonpath(&self, path: &str) -> Result<Vec<ValueOrContainer>, JsonPathError> {
+        self.doc.jsonpath(path).map(|vec| {
+            vec.into_iter()
+                .map(|v| match v {
+                    ValueOrHandler::Value(v) => ValueOrContainer::Value(v),
+                    ValueOrHandler::Handler(h) => ValueOrContainer::Container(h.into()),
+                })
+                .collect()
+        })
     }
 }
 

@@ -25,20 +25,21 @@ pub use state::TreeParentId;
 pub use undo::UndoManager;
 pub use utils::subscription::Subscription;
 pub mod awareness;
-pub mod cursor;
-pub mod kv_store;
-pub mod loro;
-pub mod obs;
-pub mod oplog;
-pub mod txn;
-
 pub mod change;
 pub mod configure;
 pub mod container;
+pub mod cursor;
 pub mod dag;
 pub mod encoding;
 pub mod id;
+#[cfg(feature = "jsonpath")]
+pub mod jsonpath;
+pub mod kv_store;
+pub mod loro;
+pub mod obs;
 pub mod op;
+pub mod oplog;
+pub mod txn;
 pub mod version;
 
 mod error;
