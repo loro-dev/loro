@@ -15,6 +15,7 @@ keywords = ["crdt", "local-first"]
 
 [dependencies]
 loro-internal = { path = "../loro-internal", version = "0.16.2" }
+loro-common = { path = "../loro-common", version = "0.16.2", features = ["serde_json"] }
 loro-kv-store = { path = "../kv-store", version = "0.16.2" }
 delta = { path = "../delta", package = "loro-delta", version = "0.16.2" }
 generic-btree = { version = "^0.10.5" }

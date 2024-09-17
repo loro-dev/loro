@@ -29,8 +29,10 @@ enum JSONPathToken {
     Child(String),
     RecursiveDescend,
     Wildcard,
-    Index(usize),
-    Slice(Option<usize>, Option<usize>, Option<isize>),
+    Index(isize),
+    UnionIndex(Vec<isize>),
+    UnionKey(Vec<String>),
+    Slice(Option<isize>, Option<isize>, Option<isize>),
     Filter(Box<dyn for<'a> Fn(&'a ValueOrHandler) -> bool>),
 }
 
@@ -47,6 +49,8 @@ impl fmt::Debug for JSONPathToken {
             JSONPathToken::Slice(start, end, step) => {
                 write!(f, "Slice({:?}, {:?}, {:?})", start, end, step)
             }
+            JSONPathToken::UnionIndex(indices) => write!(f, "UnionIndex({:?})", indices),
+            JSONPathToken::UnionKey(keys) => write!(f, "UnionKey({:?})", keys),
             JSONPathToken::Filter(_) => write!(f, "Filter(<function>)"),
         }
     }
@@ -117,7 +121,7 @@ fn parse_jsonpath(path: &str) -> Result<Vec<JSONPathToken>, JsonPathError> {
 
                 if content == "*" {
                     tokens.push(JSONPathToken::Wildcard);
-                } else if let Ok(index) = content.parse::<usize>() {
+                } else if let Ok(index) = content.parse::<isize>() {
                     tokens.push(JSONPathToken::Index(index));
                 } else if content.contains(':') {
                     let slice: Vec<&str> = content.split(':').collect();
@@ -137,6 +141,10 @@ fn parse_jsonpath(path: &str) -> Result<Vec<JSONPathToken>, JsonPathError> {
                     tokens.push(JSONPathToken::Child(
                         content[1..content.len() - 1].to_string(),
                     ));
+                } else if let Some(ans) = try_parse_union_index(&content) {
+                    tokens.push(JSONPathToken::UnionIndex(ans));
+                } else if let Some(ans) = try_parse_union_key(&content) {
+                    tokens.push(JSONPathToken::UnionKey(ans));
                 } else {
                     return Err(JsonPathError::InvalidJsonPath(format!(
                         "Invalid array accessor: [{}]",
@@ -171,6 +179,35 @@ fn parse_jsonpath(path: &str) -> Result<Vec<JSONPathToken>, JsonPathError> {
     }
 
     Ok(tokens)
+}
+
+fn try_parse_union_key(content: &str) -> Option<Vec<String>> {
+    let keys = content
+        .split(',')
+        .map(|s| {
+            let trimmed = s.trim();
+            if trimmed.starts_with('\'') || trimmed.starts_with('"') {
+                let stripped = trimmed.trim_matches(|c| c == '\'' || c == '"');
+                if stripped.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    Some(stripped.to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect::<Option<Vec<_>>>();
+    keys
+}
+
+fn try_parse_union_index(content: &str) -> Option<Vec<isize>> {
+    let indices = content
+        .split(',')
+        .map(|s| s.trim().parse().ok())
+        .collect::<Option<Vec<_>>>();
+
+    indices
 }
 
 // Evaluate JSONPath against a LoroDoc
@@ -229,9 +266,50 @@ fn evaluate_tokens(
                 evaluate_tokens(&child, &tokens[1..], results);
             }
         }
+        JSONPathToken::UnionIndex(indices) => {
+            for index in indices {
+                if let Some(child) = value.get_by_index(*index) {
+                    evaluate_tokens(&child, &tokens[1..], results);
+                }
+            }
+        }
+        JSONPathToken::UnionKey(keys) => {
+            for key in keys {
+                if let Some(child) = value.get_by_key(key) {
+                    evaluate_tokens(&child, &tokens[1..], results);
+                }
+            }
+        }
         JSONPathToken::Slice(start, end, step) => {
-            // Implement slice logic
-            // This is a placeholder and needs to be implemented
+            let len = value.length_for_path() as isize;
+            let start = start.unwrap_or(0);
+            let start = if start < 0 {
+                (len + start).max(0).min(len)
+            } else {
+                start.max(0).min(len)
+            };
+
+            let end = end.unwrap_or(len);
+            let end = if end < 0 {
+                (len + end).max(0).min(len)
+            } else {
+                end.max(0).min(len)
+            };
+
+            let step = step.unwrap_or(1);
+            if step > 0 {
+                for i in (start..end).step_by(step as usize) {
+                    if let Some(child) = value.get_by_index(i) {
+                        evaluate_tokens(&child, &tokens[1..], results);
+                    }
+                }
+            } else {
+                for i in (start..end).rev().step_by((-step) as usize) {
+                    if let Some(child) = value.get_by_index(i) {
+                        evaluate_tokens(&child, &tokens[1..], results);
+                    }
+                }
+            }
         }
         JSONPathToken::Filter(predicate) => {
             // Implement filter logic
@@ -252,7 +330,7 @@ fn evaluate_tokens(
 // Implement necessary trait bounds for PathValue
 pub trait PathValue {
     fn get_by_key(&self, key: &str) -> Option<ValueOrHandler>;
-    fn get_by_index(&self, index: usize) -> Option<ValueOrHandler>;
+    fn get_by_index(&self, index: isize) -> Option<ValueOrHandler>;
     fn for_each_for_path(&self, f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>);
     fn length_for_path(&self) -> usize;
     fn get_child_by_id(&self, id: ContainerID) -> Option<Handler>;
@@ -268,7 +346,7 @@ impl PathValue for ValueOrHandler {
         }
     }
 
-    fn get_by_index(&self, index: usize) -> Option<ValueOrHandler> {
+    fn get_by_index(&self, index: isize) -> Option<ValueOrHandler> {
         match self {
             ValueOrHandler::Value(v) => v.get_by_index(index).cloned().map(ValueOrHandler::Value),
             ValueOrHandler::Handler(h) => h.get_by_index(index),
@@ -310,7 +388,7 @@ impl PathValue for LoroDoc {
         self.get_by_str_path(key)
     }
 
-    fn get_by_index(&self, _index: usize) -> Option<ValueOrHandler> {
+    fn get_by_index(&self, _index: isize) -> Option<ValueOrHandler> {
         None // LoroDoc doesn't support index-based access
     }
 
@@ -349,7 +427,7 @@ impl PathValue for Handler {
         }
     }
 
-    fn get_by_index(&self, index: usize) -> Option<ValueOrHandler> {
+    fn get_by_index(&self, index: isize) -> Option<ValueOrHandler> {
         match self {
             Handler::List(h) => h.get_by_index(index),
             Handler::MovableList(h) => h.get_by_index(index),
@@ -399,7 +477,7 @@ impl PathValue for MapHandler {
         self.get_(key)
     }
 
-    fn get_by_index(&self, _index: usize) -> Option<ValueOrHandler> {
+    fn get_by_index(&self, _index: isize) -> Option<ValueOrHandler> {
         None
     }
 
@@ -433,8 +511,12 @@ impl PathValue for ListHandler {
         None
     }
 
-    fn get_by_index(&self, index: usize) -> Option<ValueOrHandler> {
-        self.get_(index)
+    fn get_by_index(&self, index: isize) -> Option<ValueOrHandler> {
+        if index < 0 {
+            self.get_(self.len() - (-index) as usize)
+        } else {
+            self.get_(index as usize)
+        }
     }
 
     fn for_each_for_path(&self, f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>) {
@@ -467,8 +549,16 @@ impl PathValue for MovableListHandler {
         None
     }
 
-    fn get_by_index(&self, index: usize) -> Option<ValueOrHandler> {
-        self.get_(index)
+    fn get_by_index(&self, index: isize) -> Option<ValueOrHandler> {
+        if index < 0 {
+            if self.len() > (-index) as usize {
+                self.get_(self.len() - (-index) as usize)
+            } else {
+                None
+            }
+        } else {
+            self.get_(index as usize)
+        }
     }
 
     fn for_each_for_path(&self, f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>) {
@@ -501,7 +591,7 @@ impl PathValue for TextHandler {
         None
     }
 
-    fn get_by_index(&self, _index: usize) -> Option<ValueOrHandler> {
+    fn get_by_index(&self, _index: isize) -> Option<ValueOrHandler> {
         None
     }
 
@@ -527,7 +617,7 @@ impl PathValue for TreeHandler {
         None
     }
 
-    fn get_by_index(&self, _index: usize) -> Option<ValueOrHandler> {
+    fn get_by_index(&self, _index: isize) -> Option<ValueOrHandler> {
         None
     }
 
@@ -556,9 +646,20 @@ impl PathValue for LoroValue {
         }
     }
 
-    fn get_by_index(&self, index: usize) -> Option<ValueOrHandler> {
+    fn get_by_index(&self, index: isize) -> Option<ValueOrHandler> {
         match self {
-            LoroValue::List(list) => list.get(index).map(|v| ValueOrHandler::Value(v.clone())),
+            LoroValue::List(list) => {
+                let index = if index < 0 {
+                    if list.len() > (-index) as usize {
+                        list.len() - (-index) as usize
+                    } else {
+                        return None;
+                    }
+                } else {
+                    index as usize
+                };
+                list.get(index).map(|v| ValueOrHandler::Value(v.clone()))
+            }
             _ => None,
         }
     }
