@@ -4704,4 +4704,12 @@ export type UnknownOp = {
     data: Uint8Array
   }
 };
+
+export function newContainerID(id: OpId, type: ContainerType): ContainerID {
+    return `cid:${id.counter}@${id.peer}:${type}`;
+}
+
+export function newRootContainerID(name: string, type: ContainerType): ContainerID {
+    return `cid:root-${name}:${type}`;
+}
 "#;

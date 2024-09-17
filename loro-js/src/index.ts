@@ -1,4 +1,13 @@
-export * from "loro-wasm";
+export {
+  AwarenessWasm, Change, Container, ContainerID, ContainerType,
+  Cursor, Delta, ExportMode, ImportBlobMetadata,
+  JsonChange, JsonContainerID, JsonOp, JsonOpID, JsonSchema,
+  JsonValue, ListOp, LoroCounter, LoroList, LoroMap,
+  LoroMovableList, LoroText, LoroTree, LoroTreeNode, MapOp, MovableListOp,
+  OpId, PeerID, Side, TextOp, TreeID, TreeNodeValue, TreeOp, UndoConfig,
+  UndoManager, UnknownOp, Value, VersionVector, decodeImportBlobMeta, setDebug,
+  newContainerID, newRootContainerID
+} from "loro-wasm";
 import {
   Container,
   ContainerID,
@@ -17,7 +26,7 @@ import {
 /**
  * @deprecated Please use LoroDoc
  */
-export class Loro extends LoroDoc {}
+export class Loro extends LoroDoc { }
 export { Awareness } from "./awareness";
 
 export type Frontiers = OpId[];
@@ -89,22 +98,22 @@ export type MapDiff = {
 
 export type TreeDiffItem =
   | {
-      target: TreeID;
-      action: "create";
-      parent: TreeID | undefined;
-      index: number;
-      fractional_index: string;
-    }
+    target: TreeID;
+    action: "create";
+    parent: TreeID | undefined;
+    index: number;
+    fractional_index: string;
+  }
   | { target: TreeID; action: "delete"; old_parent: TreeID | undefined; old_index: number }
   | {
-      target: TreeID;
-      action: "move";
-      parent: TreeID | undefined;
-      index: number;
-      fractional_index: string;
-      old_parent: TreeID | undefined;
-      old_index: number;
-    };
+    target: TreeID;
+    action: "move";
+    parent: TreeID | undefined;
+    index: number;
+    fractional_index: string;
+    old_parent: TreeID | undefined;
+    old_index: number;
+  };
 
 export type TreeDiff = {
   type: "tree";
@@ -127,8 +136,6 @@ const CONTAINER_TYPES = ["Map", "Text", "List", "Tree", "MovableList", "Counter"
 export function isContainerId(s: string): s is ContainerID {
   return s.startsWith("cid:");
 }
-
-export { LoroDoc };
 
 /**  Whether the value is a container.
  *
@@ -181,13 +188,13 @@ export function getType<T>(
 ): T extends LoroText
   ? "Text"
   : T extends LoroMap<any>
-    ? "Map"
-    : T extends LoroTree<any>
-      ? "Tree"
-      : T extends LoroList<any>
-        ? "List"
-        :T extends LoroCounter?"Counter"
-        : "Json" {
+  ? "Map"
+  : T extends LoroTree<any>
+  ? "Tree"
+  : T extends LoroList<any>
+  ? "List"
+  : T extends LoroCounter ? "Counter"
+  : "Json" {
   if (isContainer(value)) {
     return value.kind() as unknown as any;
   }
@@ -292,7 +299,7 @@ declare module "loro-wasm" {
   }
 
   interface LoroList<T = unknown> {
-    new (): LoroList<T>;
+    new(): LoroList<T>;
     /**
      *  Get elements of the list. If the value is a child container, the corresponding
      *  `Container` will be returned.
@@ -368,7 +375,7 @@ declare module "loro-wasm" {
   }
 
   interface LoroMovableList<T = unknown> {
-    new (): LoroMovableList<T>;
+    new(): LoroMovableList<T>;
     /**
      *  Get elements of the list. If the value is a child container, the corresponding
      *  `Container` will be returned.
@@ -490,7 +497,7 @@ declare module "loro-wasm" {
   interface LoroMap<
     T extends Record<string, unknown> = Record<string, unknown>,
   > {
-    new (): LoroMap<T>;
+    new(): LoroMap<T>;
     /**
      *  Get the value of the key. If the value is a child container, the corresponding
      *  `Container` will be returned.
@@ -568,7 +575,7 @@ declare module "loro-wasm" {
   }
 
   interface LoroText {
-    new (): LoroText;
+    new(): LoroText;
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
     subscribe(listener: Listener): number;
@@ -577,7 +584,7 @@ declare module "loro-wasm" {
   interface LoroTree<
     T extends Record<string, unknown> = Record<string, unknown>,
   > {
-    new (): LoroTree<T>;
+    new(): LoroTree<T>;
     /**
      * Create a new tree node as the child of parent and return a `LoroTreeNode` instance.
      * If the parent is undefined, the tree node will be a root node.
@@ -635,7 +642,7 @@ declare module "loro-wasm" {
      * //    /  \
      * // node2 node
      * ```
-     */ 
+     */
     createNode(index?: number): LoroTreeNode<T>;
     move(parent?: LoroTreeNode<T>, index?: number): void;
     parent(): LoroTreeNode<T> | undefined;
