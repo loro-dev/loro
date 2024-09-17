@@ -241,11 +241,11 @@ impl Actionable for TreeAction {
         tree.enable_fractional_index(0);
         match action {
             TreeActionInner::Create { index } => {
-                tree.create_at(None, *index).unwrap();
+                super::unwrap(tree.create_at(None, *index));
                 None
             }
             TreeActionInner::Delete => {
-                tree.delete(target).unwrap();
+                super::unwrap(tree.delete(target));
                 None
             }
             TreeActionInner::Move { parent, index } => {
@@ -268,7 +268,7 @@ impl Actionable for TreeAction {
                     peer: before.0,
                     counter: before.1,
                 };
-                tree.mov_before(target, before).unwrap();
+                super::unwrap(tree.mov_before(target, before));
                 None
             }
             TreeActionInner::MoveAfter { target, after } => {
@@ -280,19 +280,18 @@ impl Actionable for TreeAction {
                     peer: after.0,
                     counter: after.1,
                 };
-                tree.mov_after(target, after).unwrap();
+                super::unwrap(tree.mov_after(target, after));
                 None
             }
             TreeActionInner::Meta { meta: (k, v) } => {
-                let meta = tree.get_meta(target).unwrap();
+                let meta = super::unwrap(tree.get_meta(target))?;
                 match v {
                     FuzzValue::I32(i) => {
-                        meta.insert(k, LoroValue::from(*i)).unwrap();
+                        super::unwrap(meta.insert(k, LoroValue::from(*i)));
                         None
                     }
                     FuzzValue::Container(c) => {
-                        let container = meta.insert_container(k, Container::new(*c)).unwrap();
-                        Some(container)
+                        super::unwrap(meta.insert_container(k, Container::new(*c)))
                     }
                 }
             }

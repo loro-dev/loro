@@ -1,7 +1,7 @@
 use serde_columnar::ColumnarError;
 use thiserror::Error;
 
-use crate::{InternalString, PeerID, TreeID, ID};
+use crate::{ContainerID, InternalString, PeerID, TreeID, ID};
 
 pub type LoroResult<T> = Result<T, LoroError>;
 
@@ -80,6 +80,10 @@ pub enum LoroError {
     ImportUpdatesThatDependsOnOutdatedVersion,
     #[error("You cannot switch a document to a version before the trimmed version.")]
     SwitchToTrimmedVersion,
+    #[error(
+        "The container {container} is deleted. You cannot apply the op on a deleted container."
+    )]
+    ContainerDeleted { container: Box<ContainerID> },
 }
 
 #[derive(Error, Debug, PartialEq)]

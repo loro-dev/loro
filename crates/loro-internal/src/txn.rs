@@ -416,6 +416,11 @@ impl Transaction {
         };
 
         let mut state = self.state.lock().unwrap();
+        if state.is_deleted(container) {
+            return Err(LoroError::ContainerDeleted {
+                container: Box::new(state.arena.idx_to_id(container).unwrap()),
+            });
+        }
         let op = self.arena.convert_raw_op(&raw_op);
         state.apply_local_op(&raw_op, &op)?;
         drop(state);

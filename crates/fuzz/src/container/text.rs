@@ -121,14 +121,16 @@ impl Actionable for TextAction {
         let actor = actor.as_text_actor_mut().unwrap();
         let text = actor.containers.get(container).unwrap();
         let TextAction { pos, len, action } = self;
+        use super::unwrap;
         match action {
-            TextActionInner::Insert => text.insert(*pos, &format!("[{}]", len)).unwrap(),
+            TextActionInner::Insert => {
+                unwrap(text.insert(*pos, &format!("[{}]", len)));
+            }
             TextActionInner::Delete => {
-                text.delete(*pos, *len).unwrap();
+                unwrap(text.delete(*pos, *len));
             }
             TextActionInner::Mark(i) => {
-                text.mark(*pos..*pos + *len, STYLES_NAME[*i], *pos as i32)
-                    .unwrap();
+                unwrap(text.mark(*pos..*pos + *len, STYLES_NAME[*i], *pos as i32));
             }
         }
         None

@@ -1382,6 +1382,11 @@ impl LoroText {
     pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
         self.handler.get_cursor(pos, side)
     }
+
+    /// Whether the text container is deleted.
+    pub fn is_deleted(&self) -> bool {
+        self.handler.is_deleted()
+    }
 }
 
 impl Default for LoroText {
