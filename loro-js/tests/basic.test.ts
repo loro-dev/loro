@@ -202,7 +202,7 @@ describe("map", () => {
     map.set("foo", "bar");
     map.set("baz", "bar");
     const entries = map.keys();
-    expect(entries).toStrictEqual(["foo", "baz"]);
+    expect(entries).toStrictEqual(["baz", "foo"]);
   });
 
   it("values", () => {
@@ -223,8 +223,8 @@ describe("map", () => {
     map.delete("new");
     const entries = map.entries();
     expect(entries).toStrictEqual([
-      ["foo", "bar"],
       ["baz", "bar"],
+      ["foo", "bar"],
     ]);
   });
 
@@ -234,7 +234,7 @@ describe("map", () => {
     map.setContainer("text", new LoroText());
     map.set("foo", "bar");
     const entries = map.entries();
-    expect((entries[0][1]! as Container).kind() === "Text").toBeTruthy();
+    expect((entries[1][1]! as Container).kind() === "Text").toBeTruthy();
   });
 });
 

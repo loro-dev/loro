@@ -6,7 +6,7 @@ export {
   LoroMovableList, LoroText, LoroTree, LoroTreeNode, MapOp, MovableListOp,
   OpId, PeerID, Side, TextOp, TreeID, TreeNodeValue, TreeOp, UndoConfig,
   UndoManager, UnknownOp, Value, VersionVector, decodeImportBlobMeta, setDebug,
-  newContainerID, newRootContainerID
+  newContainerID, newRootContainerID, LoroDoc
 } from "loro-wasm";
 import {
   Container,
