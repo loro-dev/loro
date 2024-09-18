@@ -1645,12 +1645,21 @@ impl LoroTree {
         self.handler.get_node_parent(&target)
     }
 
-    /// Return whether target node exists.
+    /// Return whether target node exists. including deleted node.
     pub fn contains(&self, target: TreeID) -> bool {
         self.handler.contains(target)
     }
 
-    /// Return all nodes
+    /// Return whether target node is deleted.
+    ///
+    /// # Errors
+    ///
+    /// - If the target node does not exist, return `LoroTreeError::TreeNodeNotExist`.
+    pub fn is_node_deleted(&self, target: TreeID) -> LoroResult<bool> {
+        self.handler.is_node_deleted(&target)
+    }
+
+    /// Return all nodes, including deleted nodes
     pub fn nodes(&self) -> Vec<TreeID> {
         self.handler.nodes()
     }
