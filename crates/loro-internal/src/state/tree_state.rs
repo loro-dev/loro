@@ -14,6 +14,7 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, Weak};
+use tracing::trace;
 
 use super::{ContainerState, DiffApplyContext};
 use crate::container::idx::ContainerIdx;
@@ -969,6 +970,7 @@ impl ContainerState for TreeState {
                                 if self.is_node_deleted(&target).unwrap() {
                                     if was_alive {
                                         // delete event
+                                        trace!("DEL from c");
                                         ans.push(TreeDiffItem {
                                             target,
                                             action: TreeExternalDiff::Delete {
@@ -1035,10 +1037,11 @@ impl ContainerState for TreeState {
                     }
                     TreeInternalDiff::Delete { parent, position } => {
                         let mut send_event = true;
-                        if need_check && self.is_node_deleted(&target).unwrap() {
+                        if self.is_node_deleted(&target).unwrap() {
                             send_event = false;
                         }
                         if send_event {
+                            trace!("DEL from A");
                             ans.push(TreeDiffItem {
                                 target,
                                 action: TreeExternalDiff::Delete {
@@ -1057,6 +1060,8 @@ impl ContainerState for TreeState {
                     TreeInternalDiff::UnCreate => {
                         // maybe the node created and moved to the parent deleted
                         if !self.is_node_deleted(&target).unwrap() {
+                            trace!("tree {:#?}", &self.trees);
+                            trace!("DEL from b {:?}", target);
                             ans.push(TreeDiffItem {
                                 target,
                                 action: TreeExternalDiff::Delete {
