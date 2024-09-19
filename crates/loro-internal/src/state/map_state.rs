@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     mem,
     sync::{Arc, Mutex, Weak},
 };
@@ -25,7 +26,7 @@ use super::{ContainerState, DiffApplyContext};
 #[derive(Debug, Clone)]
 pub struct MapState {
     idx: ContainerIdx,
-    map: FxHashMap<InternalString, MapValue>,
+    map: BTreeMap<InternalString, MapValue>,
     size: usize,
 }
 
@@ -35,7 +36,7 @@ impl ContainerState for MapState {
     }
 
     fn estimate_size(&self) -> usize {
-        self.map.capacity() * (mem::size_of::<MapValue>() + mem::size_of::<InternalString>())
+        self.map.len() * (mem::size_of::<MapValue>() + mem::size_of::<InternalString>())
     }
 
     fn is_state_empty(&self) -> bool {
@@ -223,7 +224,7 @@ impl MapState {
     pub fn new(idx: ContainerIdx) -> Self {
         Self {
             idx,
-            map: FxHashMap::default(),
+            map: Default::default(),
             size: 0,
         }
     }
@@ -251,17 +252,14 @@ impl MapState {
 
     pub fn remove(&mut self, key: &InternalString) {
         let result = self.map.remove(key);
-        match result {
-            Some(x) => {
-                if let Some(_) = x.value {
-                    self.size -= 1;
-                }
+        if let Some(x) = result {
+            if x.value.is_some() {
+                self.size -= 1;
             }
-            None => {}
         };
     }
 
-    pub fn iter(&self) -> std::collections::hash_map::Iter<'_, InternalString, MapValue> {
+    pub fn iter(&self) -> std::collections::btree_map::Iter<'_, InternalString, MapValue> {
         self.map.iter()
     }
 
