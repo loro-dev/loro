@@ -227,6 +227,7 @@ impl Actor {
         match self.loro.checkout(&f) {
             Ok(_) => {
                 // check snapshot correctness after checkout
+                self.loro.check_state_correctness_slow();
                 self.loro.checkout_to_latest();
                 let new_doc = LoroDoc::new();
                 new_doc
@@ -560,8 +561,6 @@ impl Node {
 }
 
 pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
-    // trace!("a = {:#?}", a);
-    // trace!("b = {:#?}", b);
     let a_tree = Node::from_loro_value(a);
     let b_tree = Node::from_loro_value(b);
     let mut a_q = VecDeque::from_iter([a_tree]);

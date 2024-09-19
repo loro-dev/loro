@@ -9,12 +9,6 @@ use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 
 use crate::kv_store::KvStore;
 
-pub(crate) enum Status {
-    BytesOnly,
-    ImmBoth,
-    MutState,
-}
-
 /// This thin wrapper aims to limit the ability to modify the kv store and make
 /// it easy to find all the modifications.
 pub(crate) struct KvWrapper {

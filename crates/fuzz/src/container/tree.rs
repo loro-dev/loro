@@ -151,7 +151,11 @@ impl Actionable for TreeAction {
     fn pre_process(&mut self, actor: &mut ActionExecutor, container: usize) {
         let actor = actor.as_tree_actor().unwrap();
         let tree = actor.containers.get(container).unwrap();
-        let nodes = tree.nodes();
+        let nodes = tree
+            .nodes()
+            .into_iter()
+            .filter(|x| !tree.is_node_deleted(*x).unwrap())
+            .collect::<Vec<_>>();
         let node_num = nodes.len();
         let TreeAction { target, action } = self;
         if node_num == 0
