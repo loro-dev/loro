@@ -1177,7 +1177,6 @@ impl Handler {
                         )
                     }
                 }
-
                 for diff in diff.into_tree().unwrap().diff {
                     let mut target = diff.target;
                     match diff.action {
@@ -1190,8 +1189,7 @@ impl Handler {
                                 remap_tree_id(p, container_remap)
                             }
                             remap_tree_id(&mut target, container_remap);
-
-                            if x.contains(target) {
+                            if !x.is_node_unexist(&target) && !x.is_node_deleted(&target)? {
                                 // 1@0 is the parent of 2@1
                                 // ┌────┐    ┌───────────────┐
                                 // │xxxx│◀───│Move 2@1 to 0@0◀┐
@@ -1232,7 +1230,7 @@ impl Handler {
                         }
                         TreeExternalDiff::Delete { .. } => {
                             remap_tree_id(&mut target, container_remap);
-                            if x.contains(target) {
+                            if !x.is_node_deleted(&target).unwrap() {
                                 x.delete(target)?;
                             }
                         }

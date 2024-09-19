@@ -52,12 +52,16 @@ describe("loro tree", () => {
     const child = tree.createNode(root.id);
     assertEquals(tree.has(child.id), true);
     tree.delete(child.id);
-    assertEquals(tree.has(child.id), false);
+    assertEquals(tree.has(child.id), true);
+    assertEquals(tree.isNodeDeleted(child.id), true);
   });
 
   it("getNodeByID", () => {
     const root = tree.createNode();
     const child = tree.createNode(root.id);
+    assertEquals(tree.getNodeByID(child.id).id, child.id);
+    tree.delete(child.id);
+    assertEquals(child.isDeleted(), true);
     assertEquals(tree.getNodeByID(child.id).id, child.id);
   });
 

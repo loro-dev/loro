@@ -699,26 +699,23 @@ impl TreeState {
         }
     }
 
-    pub fn contains(&self, target: TreeID) -> bool {
-        !self.is_node_deleted(&target)
-    }
-
     /// Get the parent of the node, if the node is deleted or does not exist, return None
     pub fn parent(&self, target: &TreeID) -> Option<TreeParentId> {
         self.trees.get(target).map(|x| x.parent)
     }
 
-    /// If the node exists and is not deleted, return false.
-    fn is_node_deleted(&self, target: &TreeID) -> bool {
-        match self.trees.get(target) {
-            Some(x) => match x.parent {
-                TreeParentId::Deleted => true,
-                TreeParentId::Root => false,
-                TreeParentId::Node(p) => self.is_node_deleted(&p),
-                TreeParentId::Unexist => unreachable!(),
-            },
-            None => true,
+    /// If the node is unexist, return None. If the node is deleted, return true.
+    pub(crate) fn is_node_deleted(&self, target: &TreeID) -> Option<bool> {
+        match self.trees.get(target).map(|x| x.parent)? {
+            TreeParentId::Deleted => Some(true),
+            TreeParentId::Root => Some(false),
+            TreeParentId::Node(p) => self.is_node_deleted(&p),
+            TreeParentId::Unexist => unreachable!(),
         }
+    }
+
+    pub(crate) fn is_node_unexist(&self, target: &TreeID) -> bool {
+        !self.trees.contains_key(target)
     }
 
     pub(crate) fn tree_nodes(&self) -> Vec<TreeNode> {
@@ -734,13 +731,7 @@ impl TreeState {
         let mut ans = vec![];
         let children = self.children.get(&root);
         let mut q = children
-            .map(|x| {
-                VecDeque::from_iter(
-                    x.iter()
-                        .enumerate()
-                        .zip(std::iter::repeat(TreeParentId::Root)),
-                )
-            })
+            .map(|x| VecDeque::from_iter(x.iter().enumerate().zip(std::iter::repeat(root))))
             .unwrap_or_default();
 
         while let Some(((index, (position, &target)), parent)) = q.pop_front() {
@@ -792,18 +783,14 @@ impl TreeState {
     }
 
     pub fn nodes(&self) -> Vec<TreeID> {
-        self.trees
-            .keys()
-            .filter(|&k| !self.is_node_deleted(k))
-            .copied()
-            .collect::<Vec<_>>()
+        self.trees.keys().copied().collect::<Vec<_>>()
     }
 
     #[cfg(feature = "test_utils")]
     pub fn max_counter(&self) -> i32 {
         self.trees
             .keys()
-            .filter(|&k| !self.is_node_deleted(k))
+            .filter(|&k| !self.is_node_deleted(k).unwrap())
             .map(|k| k.counter)
             .max()
             .unwrap_or(0)
@@ -820,16 +807,10 @@ impl TreeState {
         self.children.get(parent).map(|x| x.len())
     }
 
-    pub fn children(&self, parent: &TreeParentId) -> Option<Vec<TreeID>> {
-        self.children
-            .get(parent)
-            .map(|x| x.iter().map(|x| *x.1).collect())
-    }
-
     /// Determine whether the target is the child of the node
     ///
     /// O(1)
-    pub fn is_parent(&self, parent: &TreeParentId, target: &TreeID) -> bool {
+    pub fn is_parent(&self, target: &TreeID, parent: &TreeParentId) -> bool {
         self.trees
             .get(target)
             .map_or(false, |x| x.parent == *parent)
@@ -979,13 +960,13 @@ impl ContainerState for TreeState {
                         let old_parent = self.trees.get(&target).unwrap().parent;
                         // If this is some, the node is still alive at the moment
                         let old_index = self.get_index_by_tree_id(&target);
-                        let was_alive = !self.is_node_deleted(&target);
+                        let was_alive = !self.is_node_deleted(&target).unwrap();
                         if need_check {
                             if self
                                 .mov(target, *parent, last_move_op, Some(position.clone()), true)
                                 .is_ok()
                             {
-                                if self.is_node_deleted(&target) {
+                                if self.is_node_deleted(&target).unwrap() {
                                     if was_alive {
                                         // delete event
                                         ans.push(TreeDiffItem {
@@ -1054,7 +1035,7 @@ impl ContainerState for TreeState {
                     }
                     TreeInternalDiff::Delete { parent, position } => {
                         let mut send_event = true;
-                        if need_check && self.is_node_deleted(&target) {
+                        if need_check && self.is_node_deleted(&target).unwrap() {
                             send_event = false;
                         }
                         if send_event {
@@ -1075,7 +1056,7 @@ impl ContainerState for TreeState {
                     }
                     TreeInternalDiff::UnCreate => {
                         // maybe the node created and moved to the parent deleted
-                        if !self.is_node_deleted(&target) {
+                        if !self.is_node_deleted(&target).unwrap() {
                             ans.push(TreeDiffItem {
                                 target,
                                 action: TreeExternalDiff::Delete {
@@ -1238,7 +1219,7 @@ impl ContainerState for TreeState {
             peer: *id.0,
             counter: *id.1,
         };
-        if !self.trees.contains_key(&tree_id) || self.is_node_deleted(&tree_id) {
+        if !self.trees.contains_key(&tree_id) || self.is_node_deleted(&tree_id).unwrap() {
             None
         } else {
             Some(Index::Node(tree_id))
@@ -1251,7 +1232,7 @@ impl ContainerState for TreeState {
             peer: *id.0,
             counter: *id.1,
         };
-        self.trees.contains_key(&tree_id) && !self.is_node_deleted(&tree_id)
+        self.trees.contains_key(&tree_id) && !self.is_node_deleted(&tree_id).unwrap()
     }
 
     fn get_child_containers(&self) -> Vec<ContainerID> {

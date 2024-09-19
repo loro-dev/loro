@@ -3279,6 +3279,13 @@ impl LoroTreeNode {
         });
         Array::from_iter(children).into()
     }
+
+    /// Check if the node is deleted.
+    #[wasm_bindgen(js_name = "isDeleted")]
+    pub fn is_deleted(&self) -> JsResult<bool> {
+        let ans = self.tree.is_node_deleted(&self.id)?;
+        Ok(ans)
+    }
 }
 
 #[wasm_bindgen]
@@ -3393,15 +3400,14 @@ impl LoroTree {
     pub fn get_node_by_id(&self, target: &JsTreeID) -> Option<LoroTreeNode> {
         let target: JsValue = target.into();
         let target = TreeID::try_from(target).ok()?;
-        if self.handler.contains(target) {
-            Some(LoroTreeNode::from_tree(
-                target,
-                self.handler.clone(),
-                self.doc.clone(),
-            ))
-        } else {
-            None
+        if self.handler.is_node_unexist(&target) {
+            return None;
         }
+        Some(LoroTreeNode::from_tree(
+            target,
+            self.handler.clone(),
+            self.doc.clone(),
+        ))
     }
 
     /// Get the id of the container.
@@ -3411,11 +3417,20 @@ impl LoroTree {
         value.into()
     }
 
-    /// Return `true` if the tree contains the TreeID, `false` if the target is deleted or wrong.
+    /// Return `true` if the tree contains the TreeID, include deleted node.
     #[wasm_bindgen(js_name = "has")]
     pub fn contains(&self, target: &JsTreeID) -> bool {
         let target: JsValue = target.into();
         self.handler.contains(target.try_into().unwrap())
+    }
+
+    /// Return `None` if the node is not exist, otherwise return `Some(true)` if the node is deleted.
+    #[wasm_bindgen(js_name = "isNodeDeleted")]
+    pub fn is_node_deleted(&self, target: &JsTreeID) -> JsResult<bool> {
+        let target: JsValue = target.into();
+        let target = TreeID::try_from(target).unwrap();
+        let ans = self.handler.is_node_deleted(&target)?;
+        Ok(ans)
     }
 
     /// Get the flat array of the forest.
@@ -3479,7 +3494,7 @@ impl LoroTree {
         self.handler.get_deep_value().into()
     }
 
-    /// Get all tree ids of the forest.
+    /// Get all tree nodes of the forest, including deleted nodes.
     ///
     /// @example
     /// ```ts

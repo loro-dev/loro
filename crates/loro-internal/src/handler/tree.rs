@@ -337,7 +337,7 @@ impl TreeHandler {
             }
             match p {
                 TreeParentId::Node(p) => {
-                    if self.contains(p) {
+                    if !self.is_node_unexist(&target) && !self.is_node_deleted(&p)? {
                         return self.move_at_with_target_for_apply_diff(parent, position, target);
                     }
                 }
@@ -348,7 +348,9 @@ impl TreeHandler {
             }
         }
 
-        let with_event = !parent.tree_id().is_some_and(|p| !self.contains(p));
+        let with_event = !parent
+            .tree_id()
+            .is_some_and(|p| self.is_node_deleted(&p).unwrap());
         if !with_event {
             return Ok(false);
         }
@@ -413,7 +415,7 @@ impl TreeHandler {
         };
 
         // the move node does not exist, create it
-        if !self.contains(target) {
+        if self.is_node_unexist(&target) || self.is_node_deleted(&target).unwrap() {
             return self.create_at_with_target_for_apply_diff(parent, position, target);
         }
 
@@ -432,7 +434,9 @@ impl TreeHandler {
                 },
             )
             .unwrap_or(0);
-        let with_event = !parent.tree_id().is_some_and(|p| !self.contains(p));
+        let with_event = !parent
+            .tree_id()
+            .is_some_and(|p| self.is_node_deleted(&p).unwrap());
 
         if !with_event {
             return Ok(false);
@@ -676,13 +680,44 @@ impl TreeHandler {
                     .ok_or(LoroTreeError::TreeNodeNotExist(target).into())
             }
             MaybeDetached::Attached(a) => {
-                if !self.contains(target) {
+                if self.is_node_unexist(&target) {
                     return Err(LoroTreeError::TreeNodeNotExist(target).into());
                 }
                 let map_container_id = target.associated_meta_container();
                 let handler = create_handler(a, map_container_id);
                 Ok(handler.into_map().unwrap())
             }
+        }
+    }
+
+    pub fn is_node_unexist(&self, target: &TreeID) -> bool {
+        match &self.inner {
+            MaybeDetached::Detached(d) => {
+                let d = d.try_lock().unwrap();
+                d.value.map.get(target).is_none()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.is_node_unexist(target)
+            }),
+        }
+    }
+
+    pub fn is_node_deleted(&self, target: &TreeID) -> LoroResult<bool> {
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = t.try_lock().unwrap();
+                t.value
+                    .map
+                    .get(target)
+                    .and(Some(true))
+                    .ok_or(LoroTreeError::TreeNodeNotExist(*target).into())
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.is_node_deleted(target)
+                    .ok_or(LoroTreeError::TreeNodeNotExist(*target).into())
+            }),
         }
     }
 
@@ -709,7 +744,7 @@ impl TreeHandler {
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
-                a.children(parent)
+                a.get_children(parent).map(|x| x.collect())
             }),
         }
     }
@@ -727,6 +762,7 @@ impl TreeHandler {
         }
     }
 
+    /// Check if the node is exist. include deleted node.
     pub fn contains(&self, target: TreeID) -> bool {
         match &self.inner {
             MaybeDetached::Detached(t) => {
@@ -735,20 +771,20 @@ impl TreeHandler {
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
-                a.contains(target)
+                !a.is_node_unexist(&target)
             }),
         }
     }
 
-    pub fn get_child_at(&self, parent: Option<TreeID>, index: usize) -> Option<TreeID> {
+    pub fn get_child_at(&self, parent: &TreeParentId, index: usize) -> Option<TreeID> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.try_lock().unwrap();
-                t.value.get_id_by_index(&parent, index)
+                t.value.get_id_by_index(&parent.tree_id(), index)
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
-                a.get_id_by_index(&TreeParentId::from(parent), index)
+                a.get_id_by_index(parent, index)
             }),
         }
     }
@@ -761,11 +797,12 @@ impl TreeHandler {
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
-                a.is_parent(parent, target)
+                a.is_parent(target, parent)
             }),
         }
     }
 
+    /// Get all nodes in the tree, including deleted nodes
     pub fn nodes(&self) -> Vec<TreeID> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
