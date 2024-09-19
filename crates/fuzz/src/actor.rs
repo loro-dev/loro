@@ -227,6 +227,7 @@ impl Actor {
         match self.loro.checkout(&f) {
             Ok(_) => {
                 // check snapshot correctness after checkout
+                self.loro.check_state_correctness_slow();
                 self.loro.checkout_to_latest();
                 let new_doc = LoroDoc::new();
                 new_doc

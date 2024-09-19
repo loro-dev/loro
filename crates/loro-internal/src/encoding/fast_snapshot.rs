@@ -15,7 +15,7 @@
 //!
 use std::io::{Read, Write};
 
-use crate::{oplog::ChangeStore, LoroDoc, OpLog, VersionVector};
+use crate::{encoding::gc, oplog::ChangeStore, LoroDoc, OpLog, VersionVector};
 use bytes::{Buf, Bytes};
 use loro_common::{IdSpan, LoroError, LoroResult};
 use tracing::trace;
@@ -161,12 +161,19 @@ impl OpLog {
 pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
     let mut state = doc.app_state().try_lock().unwrap();
     let oplog = doc.oplog().try_lock().unwrap();
+    let is_gc = state.store.gc_store().is_some();
+    if is_gc {
+        let f = oplog.trimmed_frontiers().clone();
+        drop(oplog);
+        drop(state);
+        gc::export_gc_snapshot(doc, &f, w).unwrap();
+        return;
+    }
     assert!(!state.is_in_txn());
     assert_eq!(oplog.frontiers(), &state.frontiers);
 
     let oplog_bytes = oplog.encode_change_store();
     state.ensure_all_alive_containers();
-    let state_bytes = state.store.encode();
 
     if oplog.is_trimmed() {
         assert_eq!(
@@ -175,11 +182,12 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
         );
     }
 
+    let state_bytes = state.store.encode();
     _encode_snapshot(
         Snapshot {
             oplog_bytes,
             state_bytes: Some(state_bytes),
-            gc_bytes: state.store.encode_gc(),
+            gc_bytes: Bytes::new(),
         },
         w,
     );

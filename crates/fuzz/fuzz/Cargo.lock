@@ -536,6 +536,7 @@ dependencies = [
  "either",
  "enum-as-inner 0.6.0",
  "generic-btree",
+ "loro-common 0.16.12",
  "loro-delta 0.16.12",
  "loro-internal 0.16.12",
  "loro-kv-store",
@@ -586,6 +587,7 @@ dependencies = [
  "nonmax",
  "serde",
  "serde_columnar",
+ "serde_json",
  "string_cache",
  "thiserror",
 ]

@@ -128,14 +128,6 @@ impl ContainerStore {
         self.store.flush()
     }
 
-    pub fn encode_gc(&mut self) -> Bytes {
-        if let Some(gc) = self.gc_store.as_mut() {
-            gc.store.try_lock().unwrap().get_kv().export()
-        } else {
-            Bytes::new()
-        }
-    }
-
     pub fn trimmed_frontiers(&self) -> Option<&Frontiers> {
         self.gc_store.as_ref().map(|x| &x.trimmed_frontiers)
     }
