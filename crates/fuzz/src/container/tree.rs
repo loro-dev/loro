@@ -10,6 +10,7 @@ use loro::{
     event::Diff, Container, ContainerID, ContainerType, LoroDoc, LoroError, LoroTree, LoroValue,
     TreeExternalDiff, TreeID,
 };
+use tracing::trace;
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
@@ -420,8 +421,8 @@ impl ApplyDiff for TreeTracker {
     }
 
     fn apply_diff(&mut self, diff: Diff) {
-        // trace!("current tree: {:#?}", &self.tree);
-        // trace!("applying diff: {:#?}", &diff);
+        trace!("current tree: {:#?}", &self.tree);
+        trace!("applying diff: {:#?}", &diff);
         let diff = diff.as_tree().unwrap();
         for diff in &diff.diff {
             let target = diff.target;
@@ -438,6 +439,7 @@ impl ApplyDiff for TreeTracker {
                     self.create_node(target, &parent.tree_id(), position.to_string(), index);
                 }
                 TreeExternalDiff::Delete { .. } => {
+                    trace!("To delete {:?}", &target);
                     let node = self.find_node_by_id(target).unwrap();
                     if let Some(parent) = node.parent {
                         let parent = self.find_node_by_id_mut(parent).unwrap();

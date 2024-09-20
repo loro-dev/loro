@@ -1226,7 +1226,21 @@ impl Handler {
                                 remap_tree_id(p, container_remap)
                             }
                             remap_tree_id(&mut target, container_remap);
-                            x.move_at_with_target_for_apply_diff(parent, position, target)?;
+                            // determine if the target is deleted
+                            if x.is_node_unexist(&target) || x.is_node_deleted(&target).unwrap() {
+                                // create the target node, we should use the new target id
+                                let new_target = x.__internal__next_tree_id();
+                                if x.create_at_with_target_for_apply_diff(
+                                    parent, position, new_target,
+                                )? {
+                                    container_remap.insert(
+                                        target.associated_meta_container(),
+                                        new_target.associated_meta_container(),
+                                    );
+                                }
+                            } else {
+                                x.move_at_with_target_for_apply_diff(parent, position, target)?;
+                            }
                         }
                         TreeExternalDiff::Delete { .. } => {
                             remap_tree_id(&mut target, container_remap);
