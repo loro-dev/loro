@@ -17,8 +17,10 @@ use loro_internal::obs::LocalUpdateCallback;
 use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
+use loro_internal::FractionalIndex;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
+use loro_internal::TreeNode as TreeNodeWithId;
 use loro_internal::TreeParentId;
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
@@ -1481,6 +1483,14 @@ impl ContainerTrait for LoroTree {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct TreeNode {
+    pub id: TreeID,
+    pub parent: TreeParentId,
+    pub fractional_index: FractionalIndex,
+    pub index: usize,
+}
+
 impl LoroTree {
     /// Create a new container that is detached from the document.
     ///
@@ -1709,6 +1719,22 @@ impl LoroTree {
     /// Return all nodes, including deleted nodes
     pub fn nodes(&self) -> Vec<TreeID> {
         self.handler.nodes()
+    }
+
+    /// Return all nodes, if `with_deleted` is true, the deleted nodes will be included.
+    pub fn get_nodes(&self, with_deleted: bool) -> Vec<TreeNode> {
+        let mut ans = self.handler.get_nodes_under(TreeParentId::Root);
+        if with_deleted {
+            ans.extend(self.handler.get_nodes_under(TreeParentId::Deleted));
+        }
+        ans.into_iter()
+            .map(|x| TreeNode {
+                id: x.id,
+                parent: x.parent,
+                fractional_index: x.fractional_index,
+                index: x.index,
+            })
+            .collect()
     }
 
     /// Return all children of the target node.

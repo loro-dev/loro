@@ -741,7 +741,7 @@ impl TreeState {
             ans.push(TreeNode {
                 id: target,
                 parent,
-                position: position.position.clone(),
+                fractional_index: position.position.clone(),
                 index,
                 last_move_op: self.trees.get(&target).map(|x| x.last_move_op).unwrap(),
             });
@@ -793,7 +793,7 @@ impl TreeState {
                 ans.push(TreeNode {
                     id: *target,
                     parent: root,
-                    position: position.position.clone(),
+                    fractional_index: position.position.clone(),
                     index,
                     last_move_op: self.trees.get(target).map(|x| x.last_move_op).unwrap(),
                 });
@@ -1320,12 +1320,13 @@ pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
     }
 }
 
-pub(crate) struct TreeNode {
-    pub(crate) id: TreeID,
-    pub(crate) parent: TreeParentId,
-    pub(crate) position: FractionalIndex,
-    pub(crate) index: usize,
-    pub(crate) last_move_op: IdFull,
+#[derive(Debug, Clone)]
+pub struct TreeNode {
+    pub id: TreeID,
+    pub parent: TreeParentId,
+    pub fractional_index: FractionalIndex,
+    pub index: usize,
+    pub last_move_op: IdFull,
 }
 
 #[derive(Debug, Clone)]
@@ -1512,7 +1513,7 @@ mod snapshot {
         let mut position_register = ValueRegister::new();
         let mut id_to_idx = FxHashMap::default();
         for node in input.iter() {
-            position_set.insert(node.position.clone());
+            position_set.insert(node.fractional_index.clone());
             let idx = node_ids.len();
             node_ids.push(EncodedTreeNodeId {
                 peer_idx: peers.register(&node.id.peer),
@@ -1538,7 +1539,7 @@ mod snapshot {
                 last_set_peer_idx: peers.register(&last_set_id.peer),
                 last_set_counter: last_set_id.counter,
                 last_set_lamport_sub_counter: last_set_id.lamport as i32 - last_set_id.counter,
-                fractional_index_idx: position_register.register(&node.position),
+                fractional_index_idx: position_register.register(&node.fractional_index),
             })
         }
 

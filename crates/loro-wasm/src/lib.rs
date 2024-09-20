@@ -3433,7 +3433,7 @@ impl LoroTree {
         Ok(ans)
     }
 
-    /// Get the flat array of the forest.
+    /// Get the hierarchy array of the forest.
     ///
     /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
     /// but also the metadata, you should use `toJson()`.
@@ -3445,6 +3445,23 @@ impl LoroTree {
             .handler
             .get_all_hierarchy_nodes_under(TreeParentId::Root);
         self.get_node_with_children(value)
+    }
+
+    /// Get the flat array of the forest. If `with_deleted` is true, the deleted nodes will be included.
+    #[wasm_bindgen(js_name = "getNodes", skip_typescript)]
+    pub fn get_nodes(&self, with_deleted: bool) -> JsResult<Array> {
+        let nodes = Array::new();
+        for v in self.handler.get_nodes_under(TreeParentId::Root) {
+            let node = LoroTreeNode::from_tree(v.id, self.handler.clone(), self.doc.clone());
+            nodes.push(&node.into());
+        }
+        if with_deleted {
+            for v in self.handler.get_nodes_under(TreeParentId::Deleted) {
+                let node = LoroTreeNode::from_tree(v.id, self.handler.clone(), self.doc.clone());
+                nodes.push(&node.into());
+            }
+        }
+        Ok(nodes)
     }
 
     fn get_node_with_children(&self, value: Vec<TreeNodeWithChildren>) -> JsResult<Array> {
@@ -3477,7 +3494,7 @@ impl LoroTree {
         Ok(ans)
     }
 
-    /// Get the flat array with metadata of the forest.
+    /// Get the hierarchy array with metadata of the forest.
     ///
     /// @example
     /// ```ts
@@ -3487,7 +3504,7 @@ impl LoroTree {
     /// const tree = doc.getTree("tree");
     /// const root = tree.createNode();
     /// root.data.set("color", "red");
-    /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: { color: 'red' } } ]
+    /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: { color: 'red' }, children: [] } ]
     /// console.log(tree.toJSON());
     /// ```
     #[wasm_bindgen(js_name = "toJSON")]
@@ -4536,6 +4553,7 @@ export type TreeNodeValue = {
 
 interface LoroTree{
     toArray(): TreeNodeValue[];
+    getNodes(with_deleted: boolean = false): LoroTreeNode[];
 }
 
 interface LoroMovableList {

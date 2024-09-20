@@ -52,7 +52,7 @@ pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
 pub(crate) use tree_state::{get_meta_value, FractionalIndexGenResult, NodePosition, TreeState};
-pub use tree_state::{TreeNodeWithChildren, TreeParentId};
+pub use tree_state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 
 use self::{container_store::ContainerWrapper, unknown_state::UnknownState};
 

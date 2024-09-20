@@ -21,7 +21,7 @@ pub use loro::LoroDoc;
 pub use loro_common;
 pub use oplog::OpLog;
 pub use state::DocState;
-pub use state::{TreeNodeWithChildren, TreeParentId};
+pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 pub use undo::UndoManager;
 pub use utils::subscription::Subscription;
 pub mod awareness;
@@ -70,6 +70,7 @@ pub(crate) use loro_common::InternalString;
 
 pub use container::ContainerType;
 pub use encoding::json_schema::json;
+pub use fractional_index::FractionalIndex;
 pub use loro_common::{loro_value, to_value};
 #[cfg(feature = "wasm")]
 pub use value::wasm;
