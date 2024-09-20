@@ -1027,27 +1027,29 @@ impl DocState {
         match value {
             LoroValue::Container(_) => unreachable!(),
             LoroValue::List(mut list) => {
-                // FIXME: doesn't work for tree
-                if list.iter().all(|x| !x.is_container()) {
-                    return LoroValue::Map(Arc::new(fx_map!(
-                        "cid".into() => cid_str,
-                        "value".into() => LoroValue::List(list)
-                    )));
-                }
+                if container.get_type() == ContainerType::Tree {
+                    get_meta_value(Arc::make_mut(&mut list), self);
+                } else {
+                    if list.iter().all(|x| !x.is_container()) {
+                        return LoroValue::Map(Arc::new(fx_map!(
+                            "cid".into() => cid_str,
+                            "value".into() =>  LoroValue::List(list)
+                        )));
+                    }
 
-                let list_mut = Arc::make_mut(&mut list);
-                for item in list_mut.iter_mut() {
-                    if item.is_container() {
-                        let container = item.as_container().unwrap();
-                        let container_idx = self.arena.register_container(container);
-                        let value = self.get_container_deep_value_with_id(
-                            container_idx,
-                            Some(container.clone()),
-                        );
-                        *item = value;
+                    let list_mut = Arc::make_mut(&mut list);
+                    for item in list_mut.iter_mut() {
+                        if item.is_container() {
+                            let container = item.as_container().unwrap();
+                            let container_idx = self.arena.register_container(container);
+                            let value = self.get_container_deep_value_with_id(
+                                container_idx,
+                                Some(container.clone()),
+                            );
+                            *item = value;
+                        }
                     }
                 }
-
                 LoroValue::Map(Arc::new(fx_map!(
                     "cid".into() => cid_str,
                     "value".into() => LoroValue::List(list)
