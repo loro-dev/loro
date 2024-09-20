@@ -439,7 +439,7 @@ impl ApplyDiff for TreeTracker {
                     self.create_node(target, &parent.tree_id(), position.to_string(), index);
                 }
                 TreeExternalDiff::Delete { .. } => {
-                    trace!("Todelete {:?}", &target);
+                    trace!("To delete {:?}", &target);
                     let node = self.find_node_by_id(target).unwrap();
                     if let Some(parent) = node.parent {
                         let parent = self.find_node_by_id_mut(parent).unwrap();

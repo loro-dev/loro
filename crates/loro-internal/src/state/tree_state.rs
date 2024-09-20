@@ -700,7 +700,7 @@ impl TreeState {
         }
     }
 
-    /// Get the parent of the node, if the node is deleted or does not exist, return None
+    /// Get the parent of the node, if the node does not exist, return None
     pub fn parent(&self, target: &TreeID) -> Option<TreeParentId> {
         self.trees.get(target).map(|x| x.parent)
     }
@@ -1301,6 +1301,7 @@ pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct TreeNode {
     pub(crate) id: TreeID,
     pub(crate) parent: TreeParentId,
