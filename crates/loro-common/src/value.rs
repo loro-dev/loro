@@ -56,9 +56,15 @@ impl LoroValue {
         }
     }
 
-    pub fn get_by_index(&self, index: usize) -> Option<&LoroValue> {
+    pub fn get_by_index(&self, index: isize) -> Option<&LoroValue> {
         match self {
-            LoroValue::List(list) => list.get(index),
+            LoroValue::List(list) => {
+                if index < 0 {
+                    list.get(list.len() - (-index) as usize)
+                } else {
+                    list.get(index as usize)
+                }
+            }
             _ => None,
         }
     }
@@ -737,4 +743,61 @@ impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
 
 pub fn to_value<T: Into<LoroValue>>(value: T) -> LoroValue {
     value.into()
+}
+
+#[cfg(feature = "serde_json")]
+mod serde_json_impl {
+    use std::sync::Arc;
+
+    use serde_json::{Number, Value};
+
+    use super::LoroValue;
+
+    impl From<Value> for LoroValue {
+        fn from(value: Value) -> Self {
+            match value {
+                Value::Null => LoroValue::Null,
+                Value::Bool(b) => LoroValue::Bool(b),
+                Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        LoroValue::I64(i)
+                    } else {
+                        LoroValue::Double(n.as_f64().unwrap())
+                    }
+                }
+                Value::String(s) => LoroValue::String(Arc::new(s)),
+                Value::Array(arr) => {
+                    LoroValue::List(Arc::new(arr.into_iter().map(LoroValue::from).collect()))
+                }
+                Value::Object(obj) => LoroValue::Map(Arc::new(
+                    obj.into_iter()
+                        .map(|(k, v)| (k, LoroValue::from(v)))
+                        .collect(),
+                )),
+            }
+        }
+    }
+
+    use super::LORO_CONTAINER_ID_PREFIX;
+    impl From<LoroValue> for Value {
+        fn from(value: LoroValue) -> Self {
+            match value {
+                LoroValue::Null => Value::Null,
+                LoroValue::Bool(b) => Value::Bool(b),
+                LoroValue::Double(d) => Value::Number(Number::from_f64(d).unwrap()),
+                LoroValue::I64(i) => Value::Number(Number::from(i)),
+                LoroValue::String(s) => Value::String(s.to_string()),
+                LoroValue::List(l) => Value::Array(l.iter().cloned().map(Value::from).collect()),
+                LoroValue::Map(m) => Value::Object(
+                    m.iter()
+                        .map(|(k, v)| (k.clone(), Value::from(v.clone())))
+                        .collect(),
+                ),
+                LoroValue::Container(id) => {
+                    Value::String(format!("{}{}", LORO_CONTAINER_ID_PREFIX, id))
+                }
+                LoroValue::Binary(b) => Value::Array(b.iter().copied().map(Value::from).collect()),
+            }
+        }
+    }
 }

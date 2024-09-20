@@ -1,6 +1,8 @@
 use loro::LoroDoc;
 
 mod gc_test;
+#[cfg(feature = "jsonpath")]
+mod jsonpath_test;
 mod undo_test;
 
 fn gen_action(doc: &LoroDoc, seed: u64, mut ops_len: usize) {

@@ -84,6 +84,7 @@ wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen", "loro-common/wasm"]
 test_utils = ["arbitrary", "tabled"]
 # whether enable the counter container
 counter = ["loro-common/counter"]
+jsonpath = []
 
 [[bench]]
 name = "text_r"

@@ -53,7 +53,7 @@
     "DEBUG": "*"
   },
   "rust-analyzer.cargo.features": [
-    // "test_utils",
+    "jsonpath",
     "counter"
   ],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
