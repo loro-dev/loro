@@ -392,6 +392,14 @@ impl OpLog {
         self.change_store.export_blocks_in_range(spans, w)
     }
 
+    pub(crate) fn fork_changes_up_to(&self, frontiers: &Frontiers) -> Option<Bytes> {
+        let vv = self.dag.frontiers_to_vv(frontiers)?;
+        Some(
+            self.change_store
+                .fork_changes_up_to(self.dag.trimmed_vv(), frontiers, &vv),
+        )
+    }
+
     #[inline(always)]
     pub(crate) fn decode(&mut self, data: ParsedHeaderAndBody) -> Result<(), LoroError> {
         decode_oplog(self, data)

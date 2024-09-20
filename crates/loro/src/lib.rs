@@ -740,6 +740,13 @@ impl LoroDoc {
                 .collect()
         })
     }
+
+    /// Fork the document at the given frontiers.
+    pub fn fork_at(&self, frontiers: &Frontiers) -> LoroDoc {
+        let new_doc = self.doc.fork_at(frontiers);
+        new_doc.start_auto_commit();
+        LoroDoc::_new(new_doc)
+    }
 }
 
 /// It's used to prevent the user from implementing the trait directly.

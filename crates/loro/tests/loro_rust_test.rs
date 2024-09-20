@@ -1662,3 +1662,33 @@ fn checkout_should_reset_container_deleted_cache() {
     doc.checkout(&f).unwrap();
     assert!(!text.is_deleted());
 }
+
+#[test]
+fn test_fork_at_target_frontiers() {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("list");
+    let _text = list.push_container(LoroText::new()).unwrap();
+    doc.commit();
+    let f = doc.state_frontiers();
+    list.set(0, 1).unwrap();
+    doc.commit();
+    let snapshot = doc.export(loro::ExportMode::snapshot_at(&f));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&snapshot).unwrap();
+    assert_eq!(new_doc.state_frontiers(), f);
+    assert_eq!(
+        new_doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [""]
+        })
+    );
+    new_doc
+        .import(&doc.export(loro::ExportMode::all_updates()))
+        .unwrap();
+    assert_eq!(
+        new_doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [1]
+        })
+    );
+}

@@ -102,6 +102,12 @@ pub enum LoroTreeError {
     TreeNodeDeletedOrNotExist(TreeID),
 }
 
+#[derive(Error, Debug, PartialEq)]
+pub enum LoroEncodeError {
+    #[error("The frontiers are not found in this doc: {0}")]
+    FrontiersNotFound(String),
+}
+
 #[cfg(feature = "wasm")]
 pub mod wasm {
     use wasm_bindgen::JsValue;

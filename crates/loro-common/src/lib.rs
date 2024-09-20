@@ -13,7 +13,7 @@ mod macros;
 mod span;
 mod value;
 
-pub use error::{LoroError, LoroResult, LoroTreeError};
+pub use error::{LoroEncodeError, LoroError, LoroResult, LoroTreeError};
 #[doc(hidden)]
 pub use fxhash::FxHashMap;
 pub use internal_string::InternalString;
