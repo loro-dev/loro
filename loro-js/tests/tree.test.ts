@@ -87,13 +87,15 @@ describe("loro tree", () => {
     tree2.createNode(root.id);
     tree2.createNode(root.id);
     const arr = tree2.toArray();
-    assertEquals(arr.length, 3);
+    assertEquals(arr.length, 1);
+    assertEquals(arr[0].children.length, 2)
     const keys = Object.keys(arr[0]);
     assert(keys.includes("id"));
     assert(keys.includes("parent"));
     assert(keys.includes("index"));
     assert(keys.includes("fractional_index"));
     assert(keys.includes("meta"));
+    assert(keys.includes("children"));
   });
 
   it("subscribe", async () => {

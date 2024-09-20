@@ -21,7 +21,7 @@ pub use loro::LoroDoc;
 pub use loro_common;
 pub use oplog::OpLog;
 pub use state::DocState;
-pub use state::TreeParentId;
+pub use state::{TreeNodeWithChildren, TreeParentId};
 pub use undo::UndoManager;
 pub use utils::subscription::Subscription;
 pub mod awareness;

@@ -479,64 +479,41 @@ struct Node {
     position: String,
 }
 
-struct FlatNode {
-    id: String,
-    parent: Option<String>,
-    meta: FxHashMap<String, LoroValue>,
-    index: usize,
-    position: String,
-}
-
-impl FlatNode {
-    fn from_loro_value(value: &LoroValue) -> Self {
-        let map = value.as_map().unwrap();
-        let id = map.get("id").unwrap().as_string().unwrap().to_string();
-        let parent = map
-            .get("parent")
-            .unwrap()
-            .as_string()
-            .map(|x| x.to_string());
-
-        let meta = map.get("meta").unwrap().as_map().unwrap().as_ref().clone();
-        let index = *map.get("index").unwrap().as_i64().unwrap() as usize;
-        let position = map
-            .get("fractional_index")
-            .unwrap()
-            .as_string()
-            .unwrap()
-            .to_string();
-        FlatNode {
-            id,
-            parent,
-            meta,
-            index,
-            position,
-        }
-    }
-}
-
 impl Node {
     fn from_loro_value(value: &[LoroValue]) -> Vec<Self> {
         let mut node_map = FxHashMap::default();
         let mut parent_child_map = FxHashMap::default();
+        for node in value.iter() {
+            let map = node.as_map().unwrap();
+            let id = map.get("id").unwrap().as_string().unwrap().to_string();
+            let parent = map
+                .get("parent")
+                .unwrap()
+                .as_string()
+                .map(|x| x.to_string());
 
-        for flat_node in value.iter() {
-            let flat_node = FlatNode::from_loro_value(flat_node);
+            let meta = map.get("meta").unwrap().as_map().unwrap().as_ref().clone();
+            let index = *map.get("index").unwrap().as_i64().unwrap() as usize;
+            let position = map
+                .get("fractional_index")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_string();
+            let children = map.get("children").unwrap().as_list().unwrap();
+            let children = Node::from_loro_value(children);
             let tree_node = Node {
-                // id: flat_node.id.clone(),
-                // parent: flat_node.parent.clone(),
-                children: vec![],
-                meta: flat_node.meta,
-                // index: flat_node.index,
-                position: flat_node.position,
+                children,
+                meta,
+                position,
             };
 
-            node_map.insert(flat_node.id.clone(), tree_node);
+            node_map.insert(id.clone(), tree_node);
 
             parent_child_map
-                .entry(flat_node.parent)
+                .entry(parent)
                 .or_insert_with(Vec::new)
-                .push((flat_node.index, flat_node.id));
+                .push((index, id));
         }
         let mut node_map_clone = node_map.clone();
         for (parent_id, child_ids) in parent_child_map.iter() {

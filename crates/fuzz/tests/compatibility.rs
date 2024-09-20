@@ -30,8 +30,21 @@ fn updates_with_commit_message_can_be_imported_to_016() {
     let doc2 = loro_016::LoroDoc::new();
     doc2.import(&doc1.export_snapshot()).unwrap();
     assert_eq!(
-        doc2.get_deep_value().to_json(),
-        doc1.get_deep_value().to_json()
+        doc2.get_text("text").to_string(),
+        doc1.get_text("text").to_string()
+    );
+
+    assert_eq!(
+        doc2.get_tree("tree")
+            .nodes()
+            .into_iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<_>>(),
+        doc1.get_tree("tree")
+            .nodes()
+            .into_iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<_>>()
     );
 
     {

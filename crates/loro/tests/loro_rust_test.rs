@@ -402,7 +402,7 @@ fn tree() {
     root_meta.insert("color", "red").unwrap();
     assert_eq!(
         tree.get_value_with_meta().to_json(),
-        r#"[{"parent":null,"meta":{"color":"red"},"id":"0@1","index":0,"fractional_index":"80"},{"parent":"0@1","meta":{},"id":"1@1","index":0,"fractional_index":"80"}]"#
+        r#"[{"parent":null,"meta":{"color":"red"},"id":"0@1","index":0,"children":[{"parent":"0@1","meta":{},"id":"1@1","index":0,"children":[],"fractional_index":"80"}],"fractional_index":"80"}]"#
     )
 }
 
@@ -1332,21 +1332,22 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
                     "meta":{},
                     "id": "0@0",
                     "index": 0,
+                    "children": [{
+                        "parent": "0@0",
+                        "meta":{},
+                        "id": "1@0",
+                        "index": 0,
+                        "children": [],
+                        "fractional_index": "80",
+                    },{
+                        "parent": "0@0",
+                        "meta":{},
+                        "id": "3@0",
+                        "index": 1,
+                        "children": [],
+                        "fractional_index": "8180",
+                    },],
                     "fractional_index": "80",
-                },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "1@0",
-                    "index": 0,
-                    "fractional_index": "80",
-                },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "3@0",
-                    "index": 1,
-                    "fractional_index": "8180",
                 },
             ]
         })
@@ -1361,15 +1362,17 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
                     "meta":{},
                     "id": "0@0",
                     "index": 0,
+                    "children":[{
+                        "parent": "0@0",
+                        "meta":{},
+                        "id": "1@0",
+                        "index": 0,
+                        "children": [],
+                        "fractional_index": "80",
+                    }],
                     "fractional_index": "80",
                 },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "1@0",
-                    "index": 0,
-                    "fractional_index": "80",
-                },
+
             ]
         })
     );
@@ -1383,6 +1386,7 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
                     "meta":{},
                     "id": "0@0",
                     "index": 0,
+                    "children": [],
                     "fractional_index": "80",
                 },
                 {
@@ -1390,6 +1394,7 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
                     "meta":{},
                     "id": "1@0",
                     "index": 1,
+                    "children": [],
                     "fractional_index": "8180",
                 },
             ]
@@ -1405,22 +1410,27 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
                     "meta":{},
                     "id": "0@0",
                     "index": 0,
+                    "children": [
+                        {
+                            "parent": "0@0",
+                            "meta":{},
+                            "id": "1@0",
+                            "index": 0,
+                            "children": [],
+                            "fractional_index": "80",
+                        },
+                        {
+                            "parent": "0@0",
+                            "meta":{},
+                            "id": "3@0",
+                            "index": 1,
+                            "children": [],
+                            "fractional_index": "8180",
+                        },
+                    ],
                     "fractional_index": "80",
                 },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "1@0",
-                    "index": 0,
-                    "fractional_index": "80",
-                },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "3@0",
-                    "index": 1,
-                    "fractional_index": "8180",
-                },
+
             ]
         })
     );
@@ -1473,22 +1483,25 @@ fn test_tree_with_other_ops_checkout_on_trimmed_doc() -> LoroResult<()> {
                     "meta":{},
                     "id": "0@0",
                     "index": 0,
+                    "children": [{
+                        "parent": "0@0",
+                        "meta":{},
+                        "id": "1@0",
+                        "index": 0,
+                        "children": [],
+                        "fractional_index": "80",
+                    },
+                    {
+                        "parent": "0@0",
+                        "meta":{},
+                        "id": "3@0",
+                        "index": 1,
+                        "children": [],
+                        "fractional_index": "8180",
+                    },],
                     "fractional_index": "80",
                 },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "1@0",
-                    "index": 0,
-                    "fractional_index": "80",
-                },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "3@0",
-                    "index": 1,
-                    "fractional_index": "8180",
-                },
+
             ]
             }
         )

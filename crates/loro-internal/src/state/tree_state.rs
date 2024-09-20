@@ -718,15 +718,18 @@ impl TreeState {
         !self.trees.contains_key(target)
     }
 
+    // Get all flat tree nodes, excluding deleted nodes.
     pub(crate) fn tree_nodes(&self) -> Vec<TreeNode> {
         self.get_all_tree_nodes_under(TreeParentId::Root)
     }
 
+    // Get all flat deleted nodes
     #[allow(unused)]
     pub(crate) fn deleted_tree_nodes(&self) -> Vec<TreeNode> {
         self.get_all_tree_nodes_under(TreeParentId::Deleted)
     }
 
+    // Get all flat tree nodes under the parent
     pub(crate) fn get_all_tree_nodes_under(&self, root: TreeParentId) -> Vec<TreeNode> {
         let mut ans = vec![];
         let children = self.children.get(&root);
@@ -752,6 +755,26 @@ impl TreeState {
                         }),
                 );
             }
+        }
+        ans
+    }
+
+    pub(crate) fn get_all_hierarchy_nodes_under(
+        &self,
+        root: TreeParentId,
+    ) -> Vec<TreeNodeWithChildren> {
+        let mut ans = vec![];
+        let Some(children) = self.children.get(&root) else {
+            return ans;
+        };
+        for (index, (position, &target)) in children.iter().enumerate() {
+            ans.push(TreeNodeWithChildren {
+                id: target,
+                parent: root,
+                fractional_index: position.position.clone(),
+                index,
+                children: self.get_all_hierarchy_nodes_under(TreeParentId::Node(target)),
+            })
         }
         ans
     }
@@ -1205,7 +1228,7 @@ impl ContainerState for TreeState {
     }
 
     fn get_value(&mut self) -> LoroValue {
-        self.tree_nodes()
+        self.get_all_hierarchy_nodes_under(TreeParentId::Root)
             .into_iter()
             .map(|x| x.into_value())
             .collect::<Vec<_>>()
@@ -1286,13 +1309,14 @@ impl ContainerState for TreeState {
 }
 
 // convert map container to LoroValue
-#[allow(clippy::ptr_arg)]
 pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
     for node in nodes.iter_mut() {
         let map = Arc::make_mut(node.as_map_mut().unwrap());
         let meta = map.get_mut("meta").unwrap();
         let id = meta.as_container().unwrap();
         *meta = state.get_container_deep_value(state.arena.register_container(id));
+        let children = map.get_mut("children").unwrap().as_list_mut().unwrap();
+        get_meta_value(Arc::make_mut(children), state);
     }
 }
 
@@ -1304,7 +1328,16 @@ pub(crate) struct TreeNode {
     pub(crate) last_move_op: IdFull,
 }
 
-impl TreeNode {
+#[derive(Debug, Clone)]
+pub struct TreeNodeWithChildren {
+    pub id: TreeID,
+    pub parent: TreeParentId,
+    pub fractional_index: FractionalIndex,
+    pub index: usize,
+    pub children: Vec<TreeNodeWithChildren>,
+}
+
+impl TreeNodeWithChildren {
     fn into_value(self) -> LoroValue {
         let mut t = FxHashMap::default();
         t.insert("id".to_string(), self.id.to_string().into());
@@ -1321,7 +1354,15 @@ impl TreeNode {
         t.insert("index".to_string(), (self.index as i64).into());
         t.insert(
             "fractional_index".to_string(),
-            self.position.to_string().into(),
+            self.fractional_index.to_string().into(),
+        );
+        t.insert(
+            "children".to_string(),
+            self.children
+                .into_iter()
+                .map(|x| x.into_value())
+                .collect::<Vec<_>>()
+                .into(),
         );
         t.into()
     }

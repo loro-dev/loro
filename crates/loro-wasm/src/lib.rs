@@ -24,7 +24,7 @@ use loro_internal::{
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
     ContainerType, DiffEvent, FxHashMap, HandlerTrait, LoroDoc as LoroDocInner, LoroValue,
-    MovableListHandler, TreeParentId, UndoManager as InnerUndoManager,
+    MovableListHandler, TreeNodeWithChildren, TreeParentId, UndoManager as InnerUndoManager,
     VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
@@ -3440,26 +3440,25 @@ impl LoroTree {
     ///
     // TODO: perf
     #[wasm_bindgen(js_name = "toArray", skip_typescript)]
-    pub fn to_array(&mut self) -> JsResult<Array> {
-        let value = self.handler.get_value().into_list().unwrap();
+    pub fn to_array(&self) -> JsResult<Array> {
+        let value = self
+            .handler
+            .get_all_hierarchy_nodes_under(TreeParentId::Root);
+        self.get_node_with_children(value)
+    }
+
+    fn get_node_with_children(&self, value: Vec<TreeNodeWithChildren>) -> JsResult<Array> {
         let ans = Array::new();
-        for v in value.as_ref() {
-            let v = v.as_map().unwrap();
-            let id: JsValue = TreeID::try_from(v["id"].as_string().unwrap().as_str())
-                .unwrap()
-                .into();
+        for v in value {
+            let id: JsValue = v.id.into();
             let id: JsTreeID = id.into();
-            let parent = if let LoroValue::String(p) = &v["parent"] {
-                Some(TreeID::try_from(p.as_str())?)
-            } else {
-                None
-            };
+            let parent = v.parent.tree_id();
             let parent: JsParentTreeID = parent
                 .map(|x| LoroTreeNode::from_tree(x, self.handler.clone(), self.doc.clone()).into())
                 .unwrap_or(JsValue::undefined())
                 .into();
-            let index = *v["index"].as_i64().unwrap() as u32;
-            let position = v["fractional_index"].as_string().unwrap();
+            let index = v.index;
+            let position = v.fractional_index.to_string();
             let map: LoroMap = self.get_node_by_id(&id).unwrap().data()?;
             let obj = Object::new();
             js_sys::Reflect::set(&obj, &"id".into(), &id)?;
@@ -3468,9 +3467,11 @@ impl LoroTree {
             js_sys::Reflect::set(
                 &obj,
                 &"fractional_index".into(),
-                &JsValue::from_str(position),
+                &JsValue::from_str(&position),
             )?;
             js_sys::Reflect::set(&obj, &"meta".into(), &map.into())?;
+            let children = self.get_node_with_children(v.children)?;
+            js_sys::Reflect::set(&obj, &"children".into(), &children)?;
             ans.push(&obj);
         }
         Ok(ans)
@@ -4530,6 +4531,7 @@ export type TreeNodeValue = {
     index: number,
     fractionalIndex: string,
     meta: LoroMap,
+    children: TreeNodeValue[],
 }
 
 interface LoroTree{

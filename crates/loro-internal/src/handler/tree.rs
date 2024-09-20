@@ -11,7 +11,7 @@ use smallvec::smallvec;
 use crate::{
     container::tree::tree_op::TreeOp,
     delta::{TreeDiffItem, TreeExternalDiff},
-    state::{FractionalIndexGenResult, NodePosition, TreeParentId},
+    state::{FractionalIndexGenResult, NodePosition, TreeNodeWithChildren, TreeParentId},
     txn::{EventHint, Transaction},
     BasicHandler, HandlerTrait, MapHandler,
 };
@@ -818,6 +818,19 @@ impl TreeHandler {
 
     pub fn roots(&self) -> Vec<TreeID> {
         self.children(&TreeParentId::Root).unwrap_or_default()
+    }
+
+    pub fn get_all_hierarchy_nodes_under(&self, parent: TreeParentId) -> Vec<TreeNodeWithChildren> {
+        match &self.inner {
+            MaybeDetached::Detached(_t) => {
+                // TODO: implement
+                unimplemented!()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.get_all_hierarchy_nodes_under(parent)
+            }),
+        }
     }
 
     #[allow(non_snake_case)]
