@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.0.0-alpha.1
+
+### Patch Changes
+
+- ### 🚀 Features
+
+  - Get shallow value of doc (#463)
+  - Add state only snapshot & refine check slow test
+  - Add new cid method to js binding
+  - Jsonpath experimental support (#466)
+
+  ### 🐛 Bug Fixes
+
+  - Raise error if perform action on a deleted container (#465)
+  - Raise error if moving a deleted node
+  - Export snapshot error on a gc doc
+
+  ### 🚜 Refactor
+
+  - Tree contains & isDeleted (#467)
+
+  ### 🧪 Testing
+
+  - Check state correctness on trimmed doc
+
+## 1.0.0-alpha.0
+
+- Better encode schema that can be 100x faster
+- Less memory usage
+- You can trim needless history in snapshot now
+- Better architecture and extensibility
+
 ## 0.16.12
 
 ### Patch Changes

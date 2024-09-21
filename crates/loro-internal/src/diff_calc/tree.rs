@@ -467,10 +467,21 @@ impl Ord for MoveLamportAndID {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct TreeCacheForDiff {
     tree: FxHashMap<TreeID, BTreeSet<MoveLamportAndID>>,
     current_vv: VersionVector,
+}
+
+impl std::fmt::Debug for TreeCacheForDiff {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "TreeCacheForDiff {{ tree: ")?;
+        for (id, ops) in self.tree.iter() {
+            writeln!(f, "  {} -> {:?}", id, ops)?;
+        }
+        writeln!(f, "  current_vv: {:?}", self.current_vv)?;
+        Ok(())
+    }
 }
 
 impl TreeCacheForDiff {

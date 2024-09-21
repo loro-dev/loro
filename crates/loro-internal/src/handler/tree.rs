@@ -414,10 +414,10 @@ impl TreeHandler {
             unreachable!();
         };
 
-        // the move node does not exist, create it
-        if self.is_node_unexist(&target) || self.is_node_deleted(&target).unwrap() {
-            return self.create_at_with_target_for_apply_diff(parent, position, target);
-        }
+        // // the move node does not exist, create it
+        // if self.is_node_unexist(&target) || self.is_node_deleted(&target).unwrap() {
+        //     return self.create_at_with_target_for_apply_diff(parent, position, target);
+        // }
 
         if let Some(p) = self.get_node_parent(&target) {
             if p == parent {
@@ -721,7 +721,7 @@ impl TreeHandler {
         }
     }
 
-    /// Get the parent of the node, if the node is deleted or does not exist, return None
+    /// Get the parent of the node, if the node does not exist, return None
     pub fn get_node_parent(&self, target: &TreeID) -> Option<TreeParentId> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
