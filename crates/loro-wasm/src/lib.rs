@@ -29,7 +29,7 @@ use loro_internal::{
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, option, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 
@@ -102,6 +102,8 @@ extern "C" {
     pub type JsTreeID;
     #[wasm_bindgen(typescript_type = "TreeID | undefined")]
     pub type JsParentTreeID;
+    #[wasm_bindgen(typescript_type = "{ withDelted: boolean }")]
+    pub type JsGetNodesProp;
     #[wasm_bindgen(typescript_type = "LoroTreeNode | undefined")]
     pub type JsTreeNodeOrUndefined;
     #[wasm_bindgen(typescript_type = "string | undefined")]
@@ -3449,7 +3451,14 @@ impl LoroTree {
 
     /// Get the flat array of the forest. If `with_deleted` is true, the deleted nodes will be included.
     #[wasm_bindgen(js_name = "getNodes", skip_typescript)]
-    pub fn get_nodes(&self, with_deleted: bool) -> JsResult<Array> {
+    pub fn get_nodes(&self, options: JsGetNodesProp) -> JsResult<Array> {
+        let with_deleted = if options.is_undefined() {
+            false
+        } else {
+            Reflect::get(&options.into(), &JsValue::from_str("withDeleted"))?
+                .as_bool()
+                .unwrap_or(false)
+        };
         let nodes = Array::new();
         for v in self.handler.get_nodes_under(TreeParentId::Root) {
             let node = LoroTreeNode::from_tree(v.id, self.handler.clone(), self.doc.clone());
@@ -4553,7 +4562,7 @@ export type TreeNodeValue = {
 
 interface LoroTree{
     toArray(): TreeNodeValue[];
-    getNodes(with_deleted: boolean = false): LoroTreeNode[];
+    getNodes(options?: { withDeleted: boolean = false }): LoroTreeNode[];
 }
 
 interface LoroMovableList {
